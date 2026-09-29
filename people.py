@@ -220,6 +220,35 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
     }
     if include_pay:
         out["pay_rate"] = _pay_rate(restaurant_id, row.get("role"), db)
+    # What else is known about them (memory audit 9/29/26): the roles they
+    # hold beyond the shifts (a promotion, "trained on bar"), their record
+    # of taking covers, the guests who named them (confirmed by the owner),
+    # and their attendance on the shifts somebody watched — "unknown", never
+    # a clean record, when nobody did.
+    try:
+        out["roles_held"] = [{"role": r["role"], "since": r["since"], "primary": r["primary"]}
+                             for r in held_roles(restaurant_id, name, db_path=db_path)]
+    except Exception:
+        out["roles_held"] = []
+    try:
+        cov = cover_record(restaurant_id, db_path=db_path).get(k) or {}
+        out["covers"] = {"taken": int(cov.get("accepted") or 0), "declined": int(cov.get("declined") or 0),
+                         "days": 180}
+    except Exception:
+        out["covers"] = None
+    try:
+        out["guest_mentions"] = [m for m in mentions(restaurant_id, status="confirmed", db_path=db_path)
+                                 if staff_settings.name_key(m["name"]) == k][:5]
+    except Exception:
+        out["guest_mentions"] = []
+    try:
+        rel = {staff_settings.name_key(n): r for n, r in staff_settings.reliability(restaurant_id, db_path=db).items()}.get(k)
+        out["attendance"] = ({"known": True, "shifts": rel["shifts"], "missed": rel["no_shows"],
+                              "late": rel.get("late", 0), "no_show_rate": rel["no_show_rate"],
+                              "unreliable": rel["unreliable"], "last_miss": rel.get("last_miss")}
+                             if rel else {"known": False})
+    except Exception:
+        out["attendance"] = {"known": False}
     return out
 
 
@@ -1665,3 +1694,309 @@ def external_ids(restaurant_id, source, db_path=None) -> dict:
         for k in idx.keys_of(pid) | {idx.people[pid]["name_key"]}:
             out.setdefault(k, ext)
     return out
+
+
+# ═══ What else is known about a person (memory audit 9/29/26, uncaptured) ═══
+#
+# Roles a person is trained for or promoted into (person_roles — a server
+# trained on bar was never offered a bartender gap until she had worked bar
+# shifts), who takes a cover when asked (person_signals cover_accepted /
+# cover_declined — suggestions ignored who said yes last time), and guests
+# naming them in reviews (review_mention, proposed until the owner confirms
+# — "Maria was amazing" never reached Maria).
+
+SIGNAL_KINDS = ("cover_accepted", "cover_declined", "review_mention")
+
+
+def _person_for(conn, restaurant_id, name):
+    idx = _Index(conn, restaurant_id)
+    cands = idx.for_key(_nk(name))
+    if len(cands) == 1:
+        pid = next(iter(cands))
+        return pid, idx.people[pid]["display_name"]
+    return None, _clean(name)
+
+
+def add_role(restaurant_id, name, role, since=None, primary=False, created_by=None, source="owner",
+             db_path=None) -> dict:
+    """A role this person holds — "trained on bar from 9/1" — that every
+    reader of who-can-work-what sees (staff_settings.roles_for, the
+    replacement picker, the roster's role when `primary`: a promotion). A
+    second primary role replaces the first as primary."""
+    role = " ".join(str(role or "").split())[:60]
+    if not role:
+        raise PeopleError("Name the role.")
+    try:
+        import models
+        since_iso = models._iso_or_none(since) if since else None
+    except Exception:
+        since_iso = None
+    if since and not since_iso:
+        raise PeopleError("That start date isn't a date — use M/D/YY.")
+    conn = _conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        pid, display = _person_for(conn, restaurant_id, name)
+        key = _nk(display)
+        if primary:
+            conn.execute("UPDATE person_roles SET is_primary=0 WHERE restaurant_id=? AND employee_key=?",
+                         (restaurant_id, key))
+        conn.execute("INSERT INTO person_roles (restaurant_id, person_id, employee_name, employee_key, role, source, "
+                     "qualified_since, is_primary, created_by) VALUES (?,?,?,?,?,?,?,?,?) "
+                     "ON CONFLICT(restaurant_id, employee_key, role) DO UPDATE SET removed_at=NULL, "
+                     "qualified_since=COALESCE(excluded.qualified_since, qualified_since), "
+                     "is_primary=excluded.is_primary, source=excluded.source, person_id=excluded.person_id",
+                     (restaurant_id, pid, display, key, role, source, since_iso, 1 if primary else 0, created_by))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    try:
+        import change_log
+        change_log.record(restaurant_id, "roster", display, None,
+                          {"role": role, "since": since_iso, "primary": bool(primary)},
+                          actor_user_id=created_by, source=source)
+    except Exception as e:
+        _log.warning("[people] change_log failed rid=%s: %s", restaurant_id, e)
+    return {"name": display, "role": role, "since": since_iso, "primary": bool(primary)}
+
+
+def remove_role(restaurant_id, name, role, db_path=None) -> bool:
+    conn = _conn(db_path)
+    try:
+        cur = conn.execute("UPDATE person_roles SET removed_at=datetime('now'), is_primary=0 WHERE restaurant_id=? "
+                           "AND employee_key=? AND lower(role)=lower(?) AND removed_at IS NULL",
+                           (restaurant_id, canonical_key(restaurant_id, name, db_path=db_path),
+                            " ".join(str(role or "").split())))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
+    """[{name, role, since, primary, source}] in force (not removed, and its
+    start date reached) — one person's, or everyone's."""
+    from datetime import date as _d
+    day = (today or _d.today()).isoformat()
+    conn = _conn(db_path)
+    try:
+        sql = ("SELECT employee_name, employee_key, role, qualified_since, is_primary, source FROM person_roles "
+               "WHERE restaurant_id=? AND removed_at IS NULL AND (qualified_since IS NULL OR qualified_since <= ?)")
+        args = [restaurant_id, day]
+        if name is not None:
+            sql += " AND employee_key=?"
+            args.append(_nk(name))
+        rows = conn.execute(sql + " ORDER BY is_primary DESC, role", args).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    return [{"name": r["employee_name"], "key": r["employee_key"], "role": r["role"], "since": r["qualified_since"],
+             "primary": bool(r["is_primary"]), "source": r["source"]} for r in rows]
+
+
+def record_signal(restaurant_id, name, kind, signal_date, ref="", polarity=None, status="confirmed", detail=None,
+                  created_by=None, db_path=None) -> bool:
+    """One thing that happened to a person (SIGNAL_KINDS). Idempotent per
+    (kind, ref, person); a confirmed or rejected signal is never downgraded
+    back to proposed."""
+    if kind not in SIGNAL_KINDS:
+        raise ValueError(f"unknown person signal {kind!r}")
+    conn = _conn(db_path)
+    try:
+        pid, display = _person_for(conn, restaurant_id, name)
+        cur = conn.execute(
+            "INSERT INTO person_signals (restaurant_id, person_id, employee_name, employee_key, kind, polarity, "
+            "signal_date, ref, status, detail, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(restaurant_id, kind, ref, employee_key) DO UPDATE SET "
+            "status=CASE WHEN person_signals.status='proposed' THEN excluded.status ELSE person_signals.status END, "
+            "polarity=COALESCE(excluded.polarity, person_signals.polarity)",
+            (restaurant_id, pid, display, _nk(display), kind, polarity, str(signal_date)[:10], str(ref or ""),
+             status, (detail or "")[:300] or None, created_by))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def cover_record(restaurant_id, days=180, db_path=None) -> dict:
+    """{name_key: {"accepted": n, "declined": n}} over `days` — covers they
+    took when asked (a coverage issue's ask, then a punch that day, or the
+    manager's word) and claims of an open shift that went through."""
+    from datetime import date as _d, timedelta as _td
+    since = (_d.today() - _td(days=days)).isoformat()
+    out = {}
+    conn = _conn(db_path)
+    try:
+        for r in conn.execute("SELECT employee_key, kind, COUNT(*) AS n FROM person_signals WHERE restaurant_id=? "
+                              "AND kind IN ('cover_accepted','cover_declined') AND status='confirmed' AND signal_date>=? "
+                              "GROUP BY employee_key, kind", (restaurant_id, since)).fetchall():
+            e = out.setdefault(r["employee_key"], {"accepted": 0, "declined": 0})
+            e["accepted" if r["kind"] == "cover_accepted" else "declined"] += int(r["n"])
+        for r in conn.execute("SELECT replacement_name, COUNT(*) AS n FROM shift_change_requests WHERE "
+                              "restaurant_id=? AND status='covered' AND replacement_name IS NOT NULL AND date>=? "
+                              "GROUP BY replacement_name", (restaurant_id, since)).fetchall():
+            e = out.setdefault(_nk(r["replacement_name"]), {"accepted": 0, "declined": 0})
+            e["accepted"] += int(r["n"])
+    except Exception:
+        return out
+    finally:
+        conn.close()
+    return out
+
+
+def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int:
+    """From the coverage issues the live check opened: everyone asked to
+    cover who then worked that day took it (cover_accepted); asked and did
+    not work by the end of the day, cover_declined. Returns signals written."""
+    import json as _j
+    from datetime import date as _d, timedelta as _td
+    today = today or _d.today()
+    since = (today - _td(days=days)).isoformat()
+    conn = _conn(db_path)
+    try:
+        issues_ = conn.execute("SELECT id, source_key, meta_json FROM ops_issues WHERE restaurant_id=? AND "
+                               "kind='coverage' AND source_key >= ?", (restaurant_id, f"coverage:{since}")).fetchall()
+    except Exception:
+        issues_ = []
+    finally:
+        conn.close()
+    n = 0
+    for iss in issues_:
+        try:
+            meta = _j.loads(iss["meta_json"] or "null") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        asked = meta.get("asked") or []
+        day = (iss["source_key"] or "").split(":")[1] if (iss["source_key"] or "").count(":") >= 2 else None
+        if not asked or not day:
+            continue
+        try:
+            import shift_facts
+            worked = {_nk(r["employee"]) for r in shift_facts.rows(restaurant_id, since=day, until=day, db_path=db_path)}
+        except Exception:
+            worked = set()
+        for a in asked:
+            who = a.get("name")
+            if not who:
+                continue
+            if _nk(canonical_names(restaurant_id, [who], db_path=db_path).get(who) or who) in worked:
+                kind = "cover_accepted"
+            elif day < today.isoformat():
+                kind = "cover_declined"
+            else:
+                continue
+            if record_signal(restaurant_id, who, kind, day, ref=f"issue:{iss['id']}",
+                             detail=f"asked to cover {meta.get('missing') or 'a shift'}", db_path=db_path):
+                n += 1
+    return n
+
+
+# Everyday words that are also first names: a review saying "will be back"
+# or "a real joy" names nobody. Such a name counts only with its last name
+# or last initial beside it.
+_WORD_NAMES = frozenset(
+    "will grace hope joy faith mark bill rose may june april summer dawn art chase hunter rich pat sue don ray "
+    "max jack sky star chip gene guy ivy jade lane reed wade drew sage rob robin holly iris lily daisy bo "
+    "ben dean frank grant hank jay kit lee les lou mac mo ned nick norm pearl rusty sandy scott sonny stan "
+    "ted tom ty val van victor wes will".split())
+
+
+def _mention_patterns(restaurant_id, db_path=None):
+    """(first name, full name, display) for each active roster person whose
+    first name is theirs alone — two Marias on staff is never guessed."""
+    import re
+    import staff_settings
+    firsts = {}
+    for e in staff_settings.roster(restaurant_id, db_path=db_path or DB_PATH):
+        toks = [t for t in re.split(r"[^A-Za-z'\-]+", e["name"]) if t]
+        if not toks:
+            continue
+        firsts.setdefault(toks[0].lower(), []).append((toks, e["name"]))
+    out = []
+    for first, people_ in firsts.items():
+        if len(first) < 3 or len(people_) != 1:
+            continue
+        toks, display = people_[0]
+        last = toks[-1] if len(toks) > 1 else ""
+        out.append((first, last, display))
+    return out
+
+
+def match_review_mentions(restaurant_id, days=30, db_path=None) -> int:
+    """Guests naming a staff member (memory audit 9/29/26, uncaptured): each
+    recent analysed review whose text names someone on the roster — their
+    first name, when it is theirs alone and not an everyday word, else their
+    first name with their last name or initial — becomes a PROPOSED
+    review_mention (+1 positive, −1 negative), the owner's to confirm
+    before it counts. Returns proposals written."""
+    import re
+    pats = _mention_patterns(restaurant_id, db_path)
+    if not pats:
+        return 0
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute("SELECT id, text, sentiment, COALESCE(NULLIF(review_date,''), fetched_at) AS at FROM reviews "
+                            "WHERE restaurant_id=? AND deleted_at IS NULL AND processed=1 AND text IS NOT NULL AND "
+                            "COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)",
+                            (restaurant_id, f"-{int(days)} days")).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    n = 0
+    for r in rows:
+        text = str(r["text"] or "")
+        for first, last, display in pats:
+            f = re.escape(first.capitalize())
+            if first in _WORD_NAMES:
+                # "Will" is a verb at the start of half the reviews: only
+                # with the last name or its initial beside it.
+                if not last:
+                    continue
+                hit = re.search(rf"\b{f}\s+{re.escape(last[0].upper())}(?:{re.escape(last[1:])}\b|\.|\b)", text)
+            else:
+                hit = re.search(rf"\b{f}\b", text)
+            if not hit:
+                continue
+            pol = {"positive": 1, "negative": -1}.get(str(r["sentiment"] or "").lower(), 0)
+            snippet = text[max(0, hit.start() - 60): hit.end() + 80].replace("\n", " ").strip()
+            if record_signal(restaurant_id, display, "review_mention", str(r["at"] or "")[:10], ref=f"review:{r['id']}",
+                             polarity=pol, status="proposed", detail=snippet, db_path=db_path):
+                n += 1
+    return n
+
+
+def mentions(restaurant_id, status="proposed", db_path=None, limit=50) -> list:
+    """Guest mentions of staff: [{id, name, key, date, polarity, review_id,
+    snippet, status}] — "proposed" ones wait on the owner's confirmation."""
+    from time_utils import mdy
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM person_signals WHERE restaurant_id=? AND kind='review_mention' AND status=? "
+                            "ORDER BY signal_date DESC, id DESC LIMIT ?", (restaurant_id, status, int(limit))).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    return [{"id": r["id"], "name": r["employee_name"], "key": person_key(r["employee_name"]),
+             "date": mdy(r["signal_date"]) if r["signal_date"] else None, "date_iso": r["signal_date"],
+             "polarity": r["polarity"], "review_id": (r["ref"] or "").split(":", 1)[-1] or None,
+             "snippet": r["detail"], "status": r["status"]} for r in rows]
+
+
+def answer_mention(restaurant_id, signal_id, confirm: bool, user=None, db_path=None) -> bool:
+    """The owner confirms a guest's mention is about this person, or not."""
+    conn = _conn(db_path)
+    try:
+        cur = conn.execute("UPDATE person_signals SET status=?, created_by=COALESCE(created_by, ?) WHERE id=? AND "
+                           "restaurant_id=? AND kind='review_mention' AND status='proposed'",
+                           ("confirmed" if confirm else "rejected",
+                            (user or {}).get("id") if isinstance(user, dict) else None, int(signal_id), restaurant_id))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()

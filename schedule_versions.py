@@ -510,15 +510,37 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
     reads from each week's draft-to-final change (retime_start /
     retime_end, headcount_add / headcount_cut, role_change, leader_swap,
     up to 8). Returned as facts, and rendered into the prompt so the next
-    draft starts where the manager keeps ending up."""
-    from shift_quality import present_dayparts
+    draft starts where the manager keeps ending up.
+
+    Each carries `editors` ({who saved those weeks: weeks}) — per editor as
+    well as per restaurant (memory audit 9/29/26, standing_patterns): two
+    GMs with opposite habits on alternate weeks used to blend into one
+    "manager"."""
     from schedule_learning import edited_weeks
+    week_edits = edited_weeks(restaurant_id, weeks, db_path)
+    out = _patterns_from_weeks(restaurant_id, week_edits, min_repeats, db_path)
+    by_editor = {}
+    for w in week_edits:
+        by_editor.setdefault(w.get("editor") or "", []).append(w)
+    import schedule_intel as _si
+    for editor, wks in by_editor.items():
+        mine = {_si.pattern_key(p): p["times"] for p in _patterns_from_weeks(restaurant_id, wks, 1, db_path)}
+        for p in out:
+            k = _si.pattern_key(p)
+            if k in mine:
+                p.setdefault("editors", {})[editor or "unknown"] = mine[k]
+    return out
+
+
+def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PATH) -> list:
+    """learned_patterns' core over a given set of edited weeks."""
+    from shift_quality import present_dayparts
     # Once per WEEK, from that week's net change between the draft and the
     # manager's final version: counted per save, taking Bob off, putting him
     # back and taking him off again in one week read as "2 times recently",
     # and an undone edit taught the opposite of what the manager kept.
     counts = {}
-    for w in edited_weeks(restaurant_id, weeks, db_path):
+    for w in week_edits:
         d = w.get("diff") or {}
         seen = set()
 
@@ -554,10 +576,294 @@ def learned_patterns(restaurant_id, weeks=8, min_repeats=2, db_path=DB_PATH) -> 
     # prompt block, the dismissal key and the Roster screen read them as is.
     try:
         import schedule_learning as _sl
-        out += _sl.edit_patterns(restaurant_id, weeks=weeks, min_repeats=min_repeats, db_path=db_path)
+        out += _sl.edit_patterns(restaurant_id, min_repeats=min_repeats, db_path=db_path, week_edits=week_edits)
     except Exception as e:          # a read; the draft still gets the patterns above
         log.warning("edit patterns unavailable for restaurant %s: %s", restaurant_id, e)
     return out
+
+
+# ── what the draft has learned and keeps (memory audit 9/29/26,
+#    standing_patterns) ─────────────────────────────────────────────────────
+#
+# learned_patterns reads only the last EDIT_WEEKS weeks in which the manager
+# still had to make the correction. Once the draft learned "Bob off Tuesday
+# dinner" no edit repeated it, the evidence aged out after 8 weeks, and Bob
+# came back until the manager corrected it twice more. A pattern that
+# crosses the repeat floor is now a standing row (schedule_standing_
+# patterns): every published week that keeps it confirms it, and it retires
+# only when a manager reverses it STANDING_RETIRE_AFTER times — never
+# because nobody had to make the correction again. "Make it a rule" writes
+# it into the person's own availability (staff_settings) with its author.
+
+STANDING_RETIRE_AFTER = 2
+_PERSON_KINDS = ("moved_off", "moved_on")
+
+
+def _standing_rows(conn, restaurant_id):
+    try:
+        return [dict(r) for r in conn.execute("SELECT * FROM schedule_standing_patterns WHERE restaurant_id=? "
+                                              "ORDER BY id", (restaurant_id,)).fetchall()]
+    except sqlite3.OperationalError:
+        return []
+
+
+def _respects(p, rows) -> bool:
+    """Whether a week's rows keep the pattern (person kinds and retimes)."""
+    from shift_quality import present_dayparts
+    kind = p["kind"]
+
+    def _on(r):
+        try:
+            day = datetime.strptime(r.get("date") or "", "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            day = r.get("day") or ""
+        return day == p.get("day") and p.get("daypart") in present_dayparts(r)
+    if kind in _PERSON_KINDS:
+        who = (p.get("employee") or "").strip().lower()
+        there = any(_on(r) and (r.get("employee") or "").strip().lower() == who for r in rows)
+        return (not there) if kind == "moved_off" else there
+    if kind == "retime_start":
+        want = (p.get("time") or "").replace(" ", "").lower()
+        mine = [r for r in rows if _on(r) and (r.get("role") or "").strip().lower() == (p.get("role") or "").strip().lower()]
+        if not mine or not want:
+            return None
+        from schedule_learning import _clock
+        return all(_clock(r.get("shift_start")).replace(" ", "").lower() == want for r in mine)
+    return None                          # headcount, role changes, leader swaps: read by the live window only
+
+
+def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
+    """Keep the standing patterns current: every pattern the live window
+    learned (not dismissed) becomes, or re-confirms, a standing row; then
+    each published week since a row was last checked confirms it (the
+    week kept it — times_applied, last_confirmed) or, when a manager's own
+    edit put back what it took away, counts an override
+    (STANDING_RETIRE_AFTER retire it). Returns {learned, confirmed,
+    overridden, retired}."""
+    import schedule_intel as _si
+    from schedule_learning import edited_weeks
+    stats = {"learned": 0, "confirmed": 0, "overridden": 0, "retired": 0}
+    gone = _si.dismissed_patterns(restaurant_id, db_path)
+    live = [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        have = {r["pattern_key"]: r for r in _standing_rows(conn, restaurant_id)}
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        for p in live:
+            k = _si.pattern_key(p)
+            editors = json.dumps(p.get("editors") or {})
+            row = have.get(k)
+            if row is None:
+                conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, "
+                             "day, daypart, time, text, editors, first_learned, last_confirmed) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (restaurant_id, k, p["kind"], p.get("employee") or None, p.get("role") or None,
+                              p.get("day"), p.get("daypart"), p.get("time") or None, p.get("text"), editors, now, now))
+                stats["learned"] += 1
+            elif row["status"] == "retired":
+                # Made again after it was retired: the manager wants it back.
+                conn.execute("UPDATE schedule_standing_patterns SET status='active', times_overridden=0, text=?, "
+                             "editors=?, last_confirmed=?, updated_at=datetime('now') WHERE id=?",
+                             (p.get("text"), editors, now, row["id"]))
+                stats["learned"] += 1
+            elif row["status"] == "active":
+                conn.execute("UPDATE schedule_standing_patterns SET text=?, editors=?, last_confirmed=?, "
+                             "updated_at=datetime('now') WHERE id=?", (p.get("text"), editors, now, row["id"]))
+        conn.commit()
+        rows = [r for r in _standing_rows(conn, restaurant_id) if r["status"] == "active"]
+    finally:
+        conn.close()
+    if not rows:
+        return stats
+    # The published weeks each row has not yet been checked against, with
+    # their generated draft and the manager's final.
+    oldest = min(int(r["checked_through"] or 0) for r in rows)
+    conn = get_conn(db_path)
+    try:
+        weeks = conn.execute(
+            "SELECT h.id, h.published_at FROM schedule_history h WHERE h.restaurant_id=? AND h.published_at IS NOT NULL "
+            "AND h.id > ? ORDER BY h.id", (restaurant_id, oldest)).fetchall()
+        vers = {}
+        if weeks:
+            marks = ",".join("?" for _ in weeks)
+            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE "
+                                  f"restaurant_id=? AND history_id IN ({marks}) ORDER BY version",
+                                  (restaurant_id, *[w["id"] for w in weeks])).fetchall():
+                vers.setdefault(v["history_id"], []).append(v)
+    finally:
+        conn.close()
+    updates = {}
+    for w in weeks:
+        vs = vers.get(w["id"]) or []
+        gen = next((v for v in vs if v["reason"] == "generated"), None)
+        pub = next((v for v in reversed(vs) if v["reason"] == "published"), None) or (vs[-1] if vs else None)
+        if pub is None:
+            continue
+        final = rows_from_csv(pub["schedule_csv"])
+        edited = any(v["reason"] == "edited" for v in vs)
+        draft = rows_from_csv(gen["schedule_csv"]) if gen else None
+        for r in rows:
+            if int(r["checked_through"] or 0) >= w["id"]:
+                continue
+            u = updates.setdefault(r["id"], {"applied": 0, "over": 0, "through": int(r["checked_through"] or 0),
+                                             "confirmed": None})
+            u["through"] = max(u["through"], w["id"])
+            kept = _respects(r, final)
+            if kept is None:
+                continue
+            if kept:
+                u["applied"] += 1
+                u["confirmed"] = str(w["published_at"])[:19]
+            elif edited and draft is not None and _respects(r, draft):
+                # The draft kept it and a manager's edit undid it.
+                u["over"] += 1
+    conn = get_conn(db_path)
+    try:
+        for rid_, u in updates.items():
+            cur = conn.execute("SELECT times_overridden FROM schedule_standing_patterns WHERE id=?", (rid_,)).fetchone()
+            over = int(cur["times_overridden"] or 0) + u["over"] if cur else u["over"]
+            retire = over >= STANDING_RETIRE_AFTER
+            conn.execute("UPDATE schedule_standing_patterns SET times_applied=times_applied+?, times_overridden=?, "
+                         "last_confirmed=COALESCE(?, last_confirmed), checked_through=?, status=CASE WHEN ? THEN "
+                         "'retired' ELSE status END, updated_at=datetime('now') WHERE id=?",
+                         (u["applied"], over, u["confirmed"], u["through"], 1 if retire else 0, rid_))
+            stats["confirmed"] += u["applied"]
+            stats["overridden"] += u["over"]
+            stats["retired"] += 1 if retire else 0
+        conn.commit()
+    finally:
+        conn.close()
+    return stats
+
+
+def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> list:
+    """The standing patterns for the owner's screen: [{key, kind, employee,
+    role, day, daypart, text, editors, first_learned, last_confirmed (M/D/YY
+    and ISO), times_applied, times_overridden, status, can_be_rule, rule}]."""
+    from time_utils import mdy
+    conn = get_conn(db_path)
+    try:
+        rows = _standing_rows(conn, restaurant_id)
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        if r["status"] == "retired" and not include_retired:
+            continue
+        try:
+            editors = json.loads(r["editors"] or "{}") or {}
+        except (TypeError, ValueError):
+            editors = {}
+        out.append({"key": r["pattern_key"], "kind": r["kind"], "employee": r["employee"], "role": r["role"],
+                    "day": r["day"], "daypart": r["daypart"], "time": r["time"], "text": r["text"], "editors": editors,
+                    "first_learned": mdy(r["first_learned"]), "first_learned_iso": str(r["first_learned"])[:10],
+                    "last_confirmed": mdy(r["last_confirmed"]), "last_confirmed_iso": str(r["last_confirmed"])[:10],
+                    "times_applied": r["times_applied"], "times_overridden": r["times_overridden"],
+                    "status": r["status"], "can_be_rule": r["kind"] in _PERSON_KINDS and r["status"] == "active",
+                    "rule": ({"note": r["rule_note"], "by": r["ruled_by"]} if r["status"] == "ruled" else None)})
+    return out
+
+
+def patterns_for_draft(restaurant_id, db_path=DB_PATH) -> tuple:
+    """(patterns, conflicts) the next draft reads: the live window's
+    patterns plus every active standing one it no longer shows (worded as
+    standing, with when it was learned and last kept), less what the owner
+    dismissed and less any pair two editors pull opposite ways — those are
+    `conflicts`, for the owner to settle, never the model to guess."""
+    import schedule_intel as _si
+    gone = _si.dismissed_patterns(restaurant_id, db_path)
+    live = [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
+    keys = {_si.pattern_key(p) for p in live}
+    out = list(live)
+    for s_ in standing_patterns(restaurant_id, db_path=db_path, include_retired=False):
+        if s_["key"] in keys or s_["key"] in gone or s_["status"] != "active":
+            continue
+        p = {k: s_[k] for k in ("kind", "employee", "role", "day", "daypart", "time", "editors")}
+        p["times"] = s_["times_applied"]
+        p["standing"] = True
+        p["text"] = (f"Standing preference (learned {s_['first_learned']}, last kept {s_['last_confirmed']}): "
+                     + (s_["text"] or "").split(" — ")[0].replace("The manager has ", "the manager ").rstrip(".")
+                     + (" — keep it." if s_["kind"] != "moved_on" else " — a good default."))
+        out.append(p)
+    # Opposite moves on one person, day and daypart: two editors disagree.
+    conflicts, drop = [], set()
+    idx = {}
+    for p in out:
+        if p.get("kind") in _PERSON_KINDS:
+            idx.setdefault(((p.get("employee") or "").strip().lower(), p.get("day"), p.get("daypart")), []).append(p)
+    for (who, day, part), ps in idx.items():
+        kinds = {p["kind"] for p in ps}
+        if kinds == set(_PERSON_KINDS):
+            off = next(p for p in ps if p["kind"] == "moved_off")
+            on = next(p for p in ps if p["kind"] == "moved_on")
+            conflicts.append({"employee": off.get("employee"), "day": day, "daypart": part,
+                              "off_by": sorted((off.get("editors") or {}).keys()),
+                              "on_by": sorted((on.get("editors") or {}).keys()),
+                              "text": f"{off.get('employee')} on {day} {part}: taken off in some weeks and put on in "
+                                      f"others — which should the draft do?"})
+            drop |= {id(off), id(on)}
+    return [p for p in out if id(p) not in drop], conflicts
+
+
+def make_rule(restaurant_id, pattern_key, user=None, db_path=DB_PATH) -> dict:
+    """The owner's "make it a rule": a person pattern written into that
+    person's own settings, with its author — taken off a day and daypart
+    becomes that daypart unavailable on that day; put on becomes a
+    preferred daypart. The standing row is marked `ruled` and the rule reads
+    from then on as the person's availability, not a learned habit."""
+    import staff_settings
+    conn = get_conn(db_path)
+    try:
+        row = next((r for r in _standing_rows(conn, restaurant_id) if r["pattern_key"] == pattern_key), None)
+    finally:
+        conn.close()
+    if row is None:
+        # A live pattern the nightly job has not stored yet.
+        refresh_standing_patterns(restaurant_id, db_path=db_path)
+        conn = get_conn(db_path)
+        try:
+            row = next((r for r in _standing_rows(conn, restaurant_id) if r["pattern_key"] == pattern_key), None)
+        finally:
+            conn.close()
+    if row is None:
+        raise ValueError("That pattern isn't one the draft has learned.")
+    if row["kind"] not in _PERSON_KINDS or not row["employee"]:
+        raise ValueError("Only a pattern about one person can become their rule.")
+    who = (user or {}).get("username") or (user or {}).get("email") or "owner"
+    name, day, part = row["employee"], row["day"], row["daypart"]
+    st = staff_settings.for_name(restaurant_id, name, db_path=db_path) or {}
+    if row["kind"] == "moved_off":
+        avail = dict(st.get("daypart_availability") or {})
+        cur = avail.get(day, "any")
+        other = "morning" if part == "night" else "night"
+        # Not `part` on `day` any more: from "any" that leaves the other
+        # daypart; if `part` was all they could do that day, the day is off;
+        # already unable to work it, nothing changes.
+        avail[day] = other if cur == "any" else ("off" if cur == part else cur)
+        if all(v == "off" for v in {**{d: "any" for d in staff_settings.DAYS}, **avail}.values()):
+            raise ValueError(f"That would leave {name} no day they can work.")
+        staff_settings.upsert(restaurant_id, name, daypart_availability=avail, updated_by=who, db_path=db_path)
+        note = f"{day}: {avail[day]} only" if avail[day] != "off" else f"{day}: off"
+    else:
+        prefs = sorted(set(st.get("preferred_dayparts") or []) | {part})
+        staff_settings.upsert(restaurant_id, name, preferred_dayparts=prefs, updated_by=who, db_path=db_path)
+        note = f"prefers {part}s"
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE schedule_standing_patterns SET status='ruled', rule_note=?, ruled_by=?, "
+                     "updated_at=datetime('now') WHERE id=?", (note, who[:120], row["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        import change_log
+        import people
+        change_log.record(restaurant_id, "roster", name, {"pattern": row["text"]}, {"rule": note},
+                          actor_user_id=(user or {}).get("id"), source=people.change_source(user) if user else "owner")
+    except Exception as e:
+        log.warning("change_log failed for restaurant %s: %s", restaurant_id, e)
+    return {"ok": True, "employee": name, "rule": note}
 
 
 def prompt_block(patterns: list) -> str:

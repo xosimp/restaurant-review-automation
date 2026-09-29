@@ -2322,7 +2322,17 @@ def _do_learned_patterns(u):
     for p in _sv.learned_patterns(rid, min_repeats=1):
         key = _si.pattern_key(p)
         out.append({**p, "key": key, "active": p["times"] >= 2 and key not in dismissed, "dismissed": key in dismissed})
-    return {"ok": True, "patterns": out, "can_edit": _may_draft(u)}, 200
+    # What the draft keeps after the manager stopped correcting it, with
+    # who taught it, when it was learned and last kept, and whether it can
+    # become the person's rule (memory audit 9/29/26, standing_patterns);
+    # and the pairs two editors pull opposite ways, for the owner to settle.
+    try:
+        standing = _sv.standing_patterns(rid)
+        conflicts = _sv.patterns_for_draft(rid)[1]
+    except Exception:
+        standing, conflicts = [], []
+    return {"ok": True, "patterns": out, "standing": standing, "conflicts": conflicts,
+            "can_edit": _may_draft(u)}, 200
 
 
 def _do_learned_pattern_set(u):
@@ -2333,6 +2343,14 @@ def _do_learned_pattern_set(u):
     key = (b.get("key") or "").strip()
     if not key:
         return {"ok": False, "error": "key required"}, 400
+    if b.get("rule"):
+        # "Make it a rule": the person's own availability, with its author.
+        import schedule_versions as _sv
+        try:
+            out = _sv.make_rule(_rid(u), key, user=u)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "key": key, **{k: v for k, v in out.items() if k != "ok"}}, 200
     if b.get("dismissed", True):
         _si.dismiss_pattern(_rid(u), key, actor=_who(u))
     else:
@@ -2697,6 +2715,77 @@ def _do_people_merge(u):
     from client_api import log_account_event
     log_account_event(_rid(u), "people_merged", current_user=u, detail=f"{out['from']} → {out['into']}")
     return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_roles(u, key):
+    """{role, since?, primary?, remove?} — a role this person holds beyond
+    the shifts they have worked: "trained on bar from 9/1" (a candidate for
+    a bartender gap from then), or a promotion (`primary`: their role on
+    the roster). Memory audit 9/29/26, uncaptured."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their roles.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    b = _body()
+    if b.get("remove"):
+        ok = _people.remove_role(_rid(u), p["name"], b.get("role"))
+        return ({"ok": True, "removed": True}, 200) if ok else ({"ok": False, "error": "They don't hold that role."}, 404)
+    try:
+        out = _people.add_role(_rid(u), p["name"], b.get("role"), since=b.get("since"),
+                               primary=bool(b.get("primary")), created_by=u.get("id"),
+                               source=_people.change_source(u))
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 400
+    from time_utils import mdy
+    return {"ok": True, **out, "since_label": mdy(out["since"]) if out.get("since") else None}, 200
+
+
+def _do_people_mentions(u):
+    """Guests naming someone on staff, waiting on the owner's confirmation
+    before they count on the person's record."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "mentions": _people.mentions(_rid(u)), "can_confirm": _may_rate(u)}, 200
+
+
+def _do_people_mention_answer(u, signal_id):
+    """{confirm: true|false} — this review is (or is not) about them."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their record.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("confirm"), bool):
+        return {"ok": False, "error": "confirm is true or false"}, 400
+    if not _people.answer_mention(_rid(u), int(signal_id), b["confirm"], user=u):
+        return {"ok": False, "error": "That mention was already answered."}, 409
+    return {"ok": True, "confirmed": b["confirm"]}, 200
+
+
+def _do_issue_cover_answer(u, issue_id):
+    """{name, accepted} — the person asked to cover said yes or no (the
+    manager's word; otherwise a punch that day says yes). Their record of
+    taking covers ranks the next suggestions (labor_replacements)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can do this.")
+    import issues as _issues
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("name"), str) or not isinstance(b.get("accepted"), bool):
+        return {"ok": False, "error": "name and accepted are required"}, 400
+    issue = _issues.get_issue(_rid(u), int(issue_id))
+    if not issue or issue.get("kind") != "coverage":
+        return {"ok": False, "error": "That coverage issue wasn't found."}, 404
+    day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
+        else _local_today(u).isoformat()
+    _people.record_signal(_rid(u), b["name"], "cover_accepted" if b["accepted"] else "cover_declined", day,
+                          ref=f"issue:{issue_id}", detail="the manager's word", created_by=u.get("id"))
+    return {"ok": True}, 200
 
 
 def _do_person_rename(u, key):
@@ -4566,6 +4655,10 @@ _ROUTES = [
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
     ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
+    ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
+    ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
+    ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
+    ("/issues/<int:issue_id>/cover-answer", ["POST"], _do_issue_cover_answer, "issue_cover_answer"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),

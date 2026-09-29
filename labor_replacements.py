@@ -70,6 +70,23 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
     unavailable = get_unavailability_map(restaurant_id, db_path=db_path) or {}
     names = {c["employee_name"] for c in (get_staff_contacts(restaurant_id, db_path=db_path) or []) if c.get("employee_name")}
     names |= set(scores.keys())
+    # Everyone on the active roster too: an unrated person with no contact
+    # row was never suggested at all (memory audit 9/29/26, PEOPLE-11).
+    try:
+        import staff_settings as _ss_r
+        names |= {e["name"] for e in _ss_r.roster(restaurant_id, db_path=db_path)}
+    except Exception:
+        pass
+    # Beside the rating: who took a cover when asked (people.cover_record)
+    # and who turns up (the recency-weighted reliability) — the suggestions
+    # ignored both, and ranked by rating then alphabetically.
+    try:
+        import people as _people_r
+        import staff_settings as _ss_r2
+        covers = _people_r.cover_record(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+        reliab = {_ss_r2.name_key(n): r for n, r in (_ss_r2.reliability(restaurant_id, db_path=db_path) or {}).items()}
+    except Exception:
+        covers, reliab, _ss_r2 = {}, {}, None
     excluded = {str(x).strip().lower() for x in (exclude or []) if x}
     try:
         import staff_settings as _ss
@@ -100,8 +117,16 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
                 roles = set()
             if roles and want not in roles:
                 continue
-        out.append({"name": key, "score": scores.get(key)})
-    out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
+        k = _ss_r2.name_key(key) if _ss_r2 is not None else key.lower()
+        cov = covers.get(k) or {}
+        rel = reliab.get(k) or {}
+        out.append({"name": key, "score": scores.get(key),
+                    "covers_taken": int(cov.get("accepted") or 0), "covers_declined": int(cov.get("declined") or 0),
+                    "no_show_rate": rel.get("no_show_rate")})
+    # The owner's rating first (their judgment), then who takes covers when
+    # asked, then who turns up — a known low no-show rate before no record.
+    out.sort(key=lambda m: (-(m["score"] or 0), -(m["covers_taken"] - m["covers_declined"]),
+                            (m["no_show_rate"] if m["no_show_rate"] is not None else 0.5), m["name"]))
     # Every suggestion is a move an open-shift claim would allow: the same
     # replacement_is_legal check, on the published week with the missing
     # person's row. It named a minor for a shift ending 11:30pm that the

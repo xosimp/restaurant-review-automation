@@ -338,14 +338,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     except Exception as _sfx:
         _soft_fail('reliability', _sfx, restaurant_id)
         reliability = {}
-    learned = []
+    learned, pattern_conflicts = [], []
     try:
-        import schedule_intel as _intel
-        _gone = _intel.dismissed_patterns(restaurant_id)     # one read, not one per pattern
-        learned = [p for p in _versions.learned_patterns(restaurant_id) if _intel.pattern_key(p) not in _gone]
+        # The live window's patterns and the standing ones the draft keeps
+        # after the manager stopped having to correct them (memory audit
+        # 9/29/26, standing_patterns), less the owner's dismissals and any
+        # two editors pull opposite ways (those go to the owner).
+        learned, pattern_conflicts = _versions.patterns_for_draft(restaurant_id)
     except Exception as _sfx:
         _soft_fail('learned', _sfx, restaurant_id)
-        learned = []
+        learned, pattern_conflicts = [], []
     # The money and the record: what a holiday did here last time, sales per
     # labor hour by daypart, what published weeks actually did, who has
     # carried the weekends, what staff want, who could hold a station.
@@ -514,6 +516,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["pairs"] = pairs
     result["reliability"] = reliability
     result["learned_patterns"] = learned
+    result["pattern_conflicts"] = pattern_conflicts
     result["prior_published_rows"] = prior_published_rows
     result["weather_forecast"] = weather_forecast or []
     result["pending_time_off"] = {n: sorted(d) for n, d in constraints.pending_off.items()}
@@ -942,16 +945,23 @@ def _pairs_block(pairs: dict, roster_pairs: list) -> str:
 
 
 def _reliability_block(reliability: dict) -> str:
+    if not reliability:
+        # Nobody's attendance has been watched here (no clock-in check, no
+        # published week against the punches yet): said so, never implied
+        # to be good (memory audit 9/29/26, attendance).
+        return ("\n\nATTENDANCE: not watched yet at this restaurant — nobody's no-show record is known. Do "
+                "not assume anyone is reliable or unreliable.")
     risky = sorted(((n, r) for n, r in (reliability or {}).items()
                     if float(r.get("no_show_rate") or 0) >= 0.2), key=lambda kv: -kv[1]["no_show_rate"])
     if not risky:
         return ""
     # Chosen on the smoothed rate (staff_settings.reliability); said with the
     # raw count, which is what actually happened.
-    lines = [f"  {n}: missed {r['no_shows']} of {r['shifts']} clocked shifts" if r.get("no_shows") is not None
-             else f"  {n}: missed {int(round(r['no_show_rate'] * 100))}% of {r['shifts']} clocked shifts"
+    lines = [f"  {n}: missed {r['no_shows']} of {r['shifts']} watched shifts" if r.get("no_shows") is not None
+             else f"  {n}: missed {int(round(r['no_show_rate'] * 100))}% of {r['shifts']} watched shifts"
              for n, r in risky[:8]]
-    return ("\n\nATTENDANCE (from clock-ins): the people below miss shifts often. Do not leave any of them alone in "
+    return ("\n\nATTENDANCE (from shifts somebody watched, recent ones counting most): the people below miss "
+            "shifts often. Do not leave any of them alone in "
             "a role, and do not rely on them for the busiest shift of the week; a second body alongside them is the fix, "
             "not fewer hours:\n" + "\n".join(lines))
 
@@ -2607,7 +2617,10 @@ def _pattern_likely_edits(restaurant_id, rows: list, patterns: list = None) -> l
     """The repeated-edit matches likely_edits starts from."""
     import shift_quality as _sq
     if patterns is None:
-        patterns = _versions.learned_patterns(restaurant_id)
+        try:
+            patterns = _versions.patterns_for_draft(restaurant_id)[0]
+        except Exception:
+            patterns = _versions.learned_patterns(restaurant_id)
     try:
         import schedule_intel as _si
         gone = _si.dismissed_patterns(restaurant_id)

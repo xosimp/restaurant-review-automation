@@ -3018,40 +3018,52 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     understaffed = analysis.get("understaffed_days", [])[:3]
     dow = analysis.get("dow_summary", {})
 
-    # Compute no-show risk per DOW from shifts where actual_hours is 0 (employee didn't work).
-    # Only rows that actually carry a clock-in reading can testify to this.
-    # A CSV with no actual_hours column at all used to read as a 100%
-    # no-show rate on every single day, which told the scheduler to add a
-    # standby flex staffer seven days a week off the back of a missing
-    # column. The overtime pass two functions up already read the column
-    # tolerantly; this one asserted from its absence.
+    # No-show risk per weekday, from the shifts somebody WATCHED (memory
+    # audit 9/29/26, attendance): the outcomes the live check, the close-out
+    # and the published-week-vs-punches join recorded, and shifts from a
+    # source with a real schedule. It read "scheduled > 0 and actual 0" off
+    # the shifts file, which at a POS restaurant (scheduled copied from
+    # actual) could never find one — and before that, a missing actual_hours
+    # column read as a 100% no-show rate on every day.
     _noshows = {}
     _dow_shift_counts = {}
-    for s in shifts:
-        if not _has_actual_hours(s):
-            continue
-        _actual = float(s.get("actual_hours") or 0)
-        _sched  = float(s.get("scheduled_hours") or s.get("hours") or 0)
-        _date = s.get("date","")
-        _dn = ""
+    _events = []
+    if restaurant_id:
+        try:
+            import attendance as _att
+            _since = (date.today() - timedelta(weeks=26)).isoformat()
+            _events = _att.reliability_events(restaurant_id, since=_since)
+        except Exception as _ae:
+            print(f"[schedule] attendance unavailable for {restaurant_id}: {_ae}")
+            _events = []
+    else:
+        for s in shifts:
+            if not _has_actual_hours(s) or str(s.get("schedule_known", "")).strip() == "0":
+                continue
+            _sched = float(s.get("scheduled_hours") or s.get("hours") or 0)
+            if _sched > 0:
+                _events.append((s.get("employee"), s.get("date", ""),
+                                "no_show" if float(s.get("actual_hours") or 0) == 0 else "worked"))
+    for _who, _date, _outcome in _events:
         try:
             from datetime import datetime as _dt3
-            _dn = _dt3.strptime(_date, "%Y-%m-%d").strftime("%A")
+            _dn = _dt3.strptime(str(_date)[:10], "%Y-%m-%d").strftime("%A")
         except Exception:
-            _dn = s.get("day","")
-        if _dn and _sched > 0:
-            _dow_shift_counts[_dn] = _dow_shift_counts.get(_dn, 0) + 1
-            if _actual == 0:
-                _noshows[_dn] = _noshows.get(_dn, 0) + 1
+            continue
+        _dow_shift_counts[_dn] = _dow_shift_counts.get(_dn, 0) + 1
+        if _outcome in ("no_show", "called_out"):
+            _noshows[_dn] = _noshows.get(_dn, 0) + 1
     _noshows_block = ""
     _high_risk_days = []
     for _dn, _cnt in _noshows.items():
         _total = _dow_shift_counts.get(_dn, 1)
+        if _total < 10:
+            continue                  # a rate from a handful of watched shifts is not a risk
         _rate = round(_cnt / _total * 100)
         if _rate >= 10:
-            _high_risk_days.append(f"{_dn} ({_rate}% historical no-show rate)")
+            _high_risk_days.append(f"{_dn} ({_rate}% of {_total} watched shifts missed)")
     if _high_risk_days:
-        _noshows_block = (f"\n\nNO-SHOW RISK (from historical data): {', '.join(_high_risk_days)}. "
+        _noshows_block = (f"\n\nNO-SHOW RISK (from shifts somebody watched): {', '.join(_high_risk_days)}. "
                           f"On these days, say in the summary that a standby should be on call — do not add "
                           f"a person beyond the requirements for it.")
 

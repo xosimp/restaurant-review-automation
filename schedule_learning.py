@@ -132,7 +132,7 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
             return []
         marks = ",".join("?" for _ in ids)
         versions = conn.execute(
-            f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
+            f"SELECT history_id, version, reason, schedule_csv, saved_by FROM schedule_versions WHERE restaurant_id=? "
             f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
     finally:
         conn.close()
@@ -153,7 +153,11 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         if final["version"] <= base["version"]:
             continue
         b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(final["schedule_csv"])
-        out.append({"history_id": hid, "base": b, "final": f, "diff": diff(b, f)})
+        # Who settled on it (memory audit 9/29/26, standing_patterns): two
+        # GMs with opposite habits on alternate weeks blended into one
+        # "manager". The editor of the week's last manager save.
+        editor = (str(final["saved_by"] or "").strip() if "saved_by" in final.keys() else "") or None
+        out.append({"history_id": hid, "base": b, "final": f, "diff": diff(b, f), "editor": editor})
     return out
 
 
@@ -1062,27 +1066,21 @@ def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs
 
 def _attendance_tally(restaurant_id) -> dict:
     """{name: {"all": [shifts, no_shows], weekday: [shifts, no_shows]}} from
-    clocked shifts — the same rows and rule staff_settings.reliability uses
-    (a scheduled shift with actual_hours of zero is a no-show)."""
-    from models import _cached_shifts
-    from labor import _has_actual_hours
+    the shifts somebody WATCHED — the same events staff_settings.reliability
+    reads (attendance.reliability_events; memory audit 9/29/26): recorded
+    outcomes, and shifts from a source with a real schedule. A no-show or a
+    call-out is a miss. A person nobody watched is absent (unknown)."""
+    import attendance
+    from datetime import date as _date_at, timedelta as _td_at
+    from staff_settings import RELIABILITY_WINDOW_DAYS
+    since = (_date_at.today() - _td_at(days=RELIABILITY_WINDOW_DAYS)).isoformat()
     tally = {}
-    for s in _cached_shifts(restaurant_id) or []:
-        n = (s.get("employee") or "").strip()
-        if not n or not _has_actual_hours(s):
-            continue
-        try:
-            sched = float(s.get("scheduled_hours") or s.get("hours") or 0)
-            actual = float(s.get("actual_hours") or 0)
-        except (TypeError, ValueError):
-            continue
-        if sched <= 0:
-            continue
-        wd = _weekday(s.get("date"))
-        if not wd:
+    for n, day, outcome in attendance.reliability_events(restaurant_id, since=since):
+        wd = _weekday(day)
+        if not n or not wd:
             continue
         t = tally.setdefault(n, {"all": [0, 0]})
-        miss = 1 if actual == 0 else 0
+        miss = 1 if outcome in attendance.MISSES else 0
         for k in ("all", wd):
             e = t.setdefault(k, [0, 0])
             e[0] += 1

@@ -128,6 +128,12 @@ JOBS = {
         cadence="Mon 4am CT", sla_minutes=_W, sends=False, runnable=True,
         label="Schedule outcomes", description="Record what each published week actually did, by daypart",
         target=("strategy_jobs", "run_schedule_outcomes"), max_minutes=30, retry=True),
+    "people_nightly": dict(
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="People memory",
+        description="Attendance from last night's punches and checks, covers taken, guest mentions, "
+                    "standing schedule patterns and the per-person quarterly summaries",
+        target=("strategy_jobs", "run_people_nightly"), max_minutes=30, retry=True),
     "inventory_depletion": dict(
         cadence="5am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Depletion", description="Deplete inventory from POS sales",

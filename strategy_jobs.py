@@ -1228,6 +1228,78 @@ OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
 OUTCOMES_MAX_SECONDS = 20 * 60
 
 
+def run_people_nightly(db_path=DB_PATH, today=None):
+    """5am, after the POS sync: what last night taught about the people
+    (memory audit 9/29/26 — identity, attendance, shift_facts, uncaptured,
+    standing_patterns), for every Labor restaurant:
+
+      * people and per-shift facts for a restaurant that has none yet, and a
+        person_id on every name-keyed store (people.stamp_person_ids);
+      * attendance: each published night of the last week against the POS
+        punches, once its POS day is final (attendance.join_published — the
+        only attendance RPOWER can have), and what the live clock-in check
+        saw (attendance.from_coverage_issues);
+      * who took a cover when asked (people.record_cover_signals) and guests
+        naming staff, proposed for the owner (people.match_review_mentions);
+      * the schedule's standing patterns kept current (schedule_versions.
+        refresh_standing_patterns);
+      * the per-person quarterly summaries kept forever (shift_facts.
+        rollup_quarters).
+
+    Bounded and resumable (resumable_sweep, a cursor in job_cursors). Sends
+    nothing."""
+    import attendance
+    import people
+    import shift_facts
+    import scheduler as _sched
+    from datetime import date as _date, timedelta as _td
+    try:
+        people.backfill_people(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        shift_facts.backfill_from_csv(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="people_nightly", context="backfill")
+    by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)}
+    tally = {"attempted": 0, "failed": 0, "attendance": 0, "signals": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        with lock:
+            tally["attempted"] += 1
+        try:
+            from time_utils import restaurant_now_by_id
+            day = today or restaurant_now_by_id(rid, naive=True).date()
+            people.stamp_person_ids(rid)
+            n = 0
+            for back in range(1, attendance.JOIN_DAYS + 1):
+                n += attendance.join_published(rid, (day - _td(days=back)).isoformat())["recorded"]
+            n += attendance.from_coverage_issues(rid, today=day)
+            sig = people.record_cover_signals(rid, today=day) + people.match_review_mentions(rid)
+            try:
+                import schedule_versions
+                schedule_versions.refresh_standing_patterns(rid)
+            except Exception as e:
+                import ops
+                ops.capture(e, job="people_nightly", context=f"restaurant_id={rid} standing patterns")
+            shift_facts.rollup_quarters(rid, today=day)
+            with lock:
+                tally["attendance"] += n
+                tally["signals"] += sig
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
+
+    _done, ran_out = _sched.resumable_sweep(PEOPLE_CURSOR_KEY, sorted(by_id), _one, PEOPLE_MAX_SECONDS,
+                                            workers=1, job="people_nightly")
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
+                   hit_bound=ran_out, attendance=tally["attendance"], signals=tally["signals"])
+
+
+PEOPLE_CURSOR_KEY = "people_nightly_cursor"
+PEOPLE_MAX_SECONDS = 20 * 60
+
+
 # Used only when a restaurant hasn't set its hours: without a fallback the
 # intraday features would silently never run for them, which reads exactly
 # like the POS not being supported.

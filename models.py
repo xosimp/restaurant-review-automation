@@ -3329,6 +3329,8 @@ def init_db(db_path: str = DB_PATH):
     # audit 9/29/26, identity).
     from shift_facts import init_shift_facts
     init_shift_facts(db_path)
+    from attendance import init_attendance
+    init_attendance(db_path)
     import people as _people_boot
     _people_boot.init_people(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
@@ -6827,13 +6829,24 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """
     try:
         out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if name:
-                out[name] = out.get(name, 0) + 1
-        # The upload is a rolling window; staff_first_seen remembers the
-        # earliest date and the most shifts ever counted for each name, so
-        # a person here since March is not "still new" in October.
+        # Every shift they have ever worked here (shift_facts — memory audit
+        # 9/29/26): the stored file was a rolling window, and an upload
+        # replaced it, so a 3-year employee read as a dozen shifts.
+        try:
+            import shift_facts as _sf
+            facts = _sf.tenure(restaurant_id)
+        except Exception:
+            facts = {}
+        if facts:
+            out = {n: v["shifts"] for n, v in facts.items()}
+        else:
+            for sh in _cached_shifts(restaurant_id):
+                name = (sh.get("employee") or "").strip()
+                if name:
+                    out[name] = out.get(name, 0) + 1
+        # staff_first_seen remembers the earliest date and the most shifts
+        # ever counted for each name from before the facts began, so a
+        # person here since March is not "still new" in October.
         try:
             import schedule_intel as _si
             out = _si.tenure(restaurant_id, out, db_path=db_path)
@@ -6866,7 +6879,14 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from a stated preference nobody keeps up to date.
     """
     try:
-        return usual_pattern(_cached_shifts(restaurant_id), today=_restaurant_today(restaurant_id))
+        from datetime import timedelta as _td_pp
+        import shift_facts as _sf
+        today = _restaurant_today(restaurant_id)
+        # The last USUAL_WEEKS weeks of the per-shift history (memory audit
+        # 9/29/26): what they work now, from every source, whatever an
+        # upload's window was.
+        rows = _sf.person_rows(restaurant_id, since=(today - _td_pp(weeks=USUAL_WEEKS)).isoformat())
+        return usual_pattern(rows, today=today)
     except Exception:
         return {}
 

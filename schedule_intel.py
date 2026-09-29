@@ -39,6 +39,7 @@ def get_conn(db_path=None):
 OUTCOME_WEEKS = 12
 LEDGER_WEEKS = 8
 MENTOR_SHIFTS_TO_HOLD = 8
+MENTOR_WINDOW_DAYS = 365          # the shifts that count toward holding a station
 SUGGEST_MIN_SHARED = 6
 SUGGEST_MIN_CLEAN = 0.8
 SUPPRESS_AFTER_SHOWN = 10
@@ -633,10 +634,16 @@ def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
     role that is not their usual one, on the same date and daypart as
     somebody authorised to close. At MENTOR_SHIFTS_TO_HOLD they could hold
     the station."""
-    from models import _cached_shifts, get_leader_flags
+    from models import get_leader_flags
     try:
         closers = {n.lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
-        shifts = _cached_shifts(restaurant_id)
+        # A year of shifts from the per-shift history (memory audit 9/29/26,
+        # shift_facts): the stored file was a rolling window an upload could
+        # shrink to a fortnight, and the evidence for "could hold the bar"
+        # went with it.
+        import shift_facts as _sf
+        since = (date.today() - timedelta(days=MENTOR_WINDOW_DAYS)).isoformat()
+        shifts = _sf.person_rows(restaurant_id, since=since)
     except Exception:
         return {}
     if not closers or not shifts:
@@ -1055,6 +1062,34 @@ def init_schedule_intel(db_path: str = DB_PATH):
         dismissed_by   TEXT,
         created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, key)
+    )""")
+    # What the draft has learned and keeps (memory audit 9/29/26,
+    # standing_patterns): a move the manager made in enough weeks becomes a
+    # row here, confirmed by every published week that keeps it and retired
+    # only when a manager reverses it twice — never because nobody had to
+    # make the correction again. Kept forever (one row per pattern).
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_standing_patterns (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
+        pattern_key      TEXT    NOT NULL,
+        kind             TEXT    NOT NULL,
+        employee         TEXT,
+        role             TEXT,
+        day              TEXT,
+        daypart          TEXT,
+        time             TEXT,
+        text             TEXT,
+        editors          TEXT,
+        first_learned    TEXT    NOT NULL,
+        last_confirmed   TEXT    NOT NULL,
+        times_applied    INTEGER NOT NULL DEFAULT 0,
+        times_overridden INTEGER NOT NULL DEFAULT 0,
+        status           TEXT    NOT NULL DEFAULT 'active',
+        rule_note        TEXT,
+        ruled_by         TEXT,
+        checked_through  INTEGER NOT NULL DEFAULT 0,
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, pattern_key)
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),

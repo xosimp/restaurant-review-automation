@@ -334,12 +334,22 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
     except Exception:
         pass
     settings = {name_key(n): st for n, st in get_all(restaurant_id, db_path=db_path).items()}
+    # A promotion the owner recorded (people.add_role, primary) is the
+    # person's role from its date — before, a role came only from the shifts
+    # someone had already worked (memory audit 9/29/26, uncaptured).
+    try:
+        import people as _people
+        primary = {r["key"]: r["role"] for r in _people.held_roles(restaurant_id) if r["primary"]}
+    except Exception:
+        primary = {}
     out = []
     for k, e in seen.items():
         st = settings.get(k) or {}
         active = st.get("active", True)
         if not active and not include_inactive:
             continue
+        if primary.get(k):
+            e = {**e, "role": primary[k]}
         out.append({**e, "active": bool(active), "settings": st})
     out.sort(key=lambda e: (not e["active"], e["name"].lower()))
     return out
@@ -361,6 +371,14 @@ def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
         for m in get_manual_team_members(restaurant_id, db_path=db_path):
             if (m.get("name") or "").strip().lower() == low and (m.get("role") or "").strip():
                 out.add(m["role"].strip().lower())
+    except Exception:
+        pass
+    # Roles they were trained for or promoted into (people.person_roles):
+    # a server trained on bar is a bartender candidate before her first
+    # bar shift (memory audit 9/29/26, uncaptured).
+    try:
+        import people as _people
+        out |= {r["role"].strip().lower() for r in _people.held_roles(restaurant_id, name) if r["role"].strip()}
     except Exception:
         pass
     return out
@@ -530,22 +548,17 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     says nothing about attendance (the same rule labor.py's no-show block
     applies).
     """
-    from models import _cached_shifts
-    from labor import _has_actual_hours
-    events = []
-    for s in _cached_shifts(restaurant_id):
-        n = (s.get("employee") or "").strip()
-        if not n or not _has_actual_hours(s):
-            continue
-        try:
-            sched = float(s.get("scheduled_hours") or s.get("hours") or 0)
-            actual = float(s.get("actual_hours") or 0)
-        except (TypeError, ValueError):
-            continue
-        if sched <= 0:
-            continue
-        events.append((n, s.get("date"), "no_show" if actual == 0 else
-                       ("short" if sched - actual >= 1.5 else "worked")))
+    # Every shift somebody WATCHED (attendance.reliability_events — memory
+    # audit 9/29/26): the outcomes the live check, the close-out and the
+    # nightly published-week-vs-punches join recorded, and the shifts from a
+    # source with a real schedule. A POS row whose "scheduled" hours were its
+    # actual hours copied (RPOWER, Square, Clover, Toast without a schedule)
+    # can never show a no-show, and reading it made everyone "reliable".
+    import attendance
+    today = today or _today(restaurant_id)
+    from datetime import timedelta as _td_rel
+    events = attendance.reliability_events(restaurant_id, since=(today - _td_rel(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
+                                           db_path=None if db_path == DB_PATH else db_path)
     # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
     # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
     # misses in six shifts read as a flat 33%, and the engine then treated
@@ -554,7 +567,7 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     # (shift_quality.UNRELIABLE_RATE), so a client colours a row red exactly
     # when the scheduler treats that person as unreliable — the web used 10%
     # against the engine's 20%.
-    return weighted_attendance(events, today=today or _today(restaurant_id), min_shifts=min_shifts)
+    return weighted_attendance(events, today=today, min_shifts=min_shifts)
 
 
 def _today(restaurant_id):

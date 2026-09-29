@@ -4464,6 +4464,15 @@ def scheduler_loop():
                 from strategy_jobs import run_schedule_outcomes
                 _ops.run_job("schedule_outcomes", run_schedule_outcomes)
 
+            # 5am daily, once the 3am POS sync (45 minutes at most) is in —
+            # what last night taught about the people: attendance from the
+            # punches and the checks, covers taken, guest mentions, standing
+            # schedule patterns, the quarterly summaries (memory audit
+            # 9/29/26). Sends nothing.
+            if _due(now, 5) and _ops.claim_period("people_nightly", str(today)):
+                from strategy_jobs import run_people_nightly
+                _ops.run_job("people_nightly", run_people_nightly)
+
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the
             # Wednesday run served only the Thursday draft). No provider is

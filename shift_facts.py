@@ -409,43 +409,55 @@ def _quarter_start(q) -> date:
     return date(int(y), (int(n) - 1) * 3 + 1, 1)
 
 
+def _whole_since(table, default_days, today) -> date:
+    """The first day of the oldest quarter whose raw `table` rows are all
+    still here (the retention registry's window, less a safety margin)."""
+    try:
+        import ops
+        days = int(ops._RETENTION_DAYS.get(table, default_days))
+    except Exception:
+        days = default_days
+    edge = today - timedelta(days=max(0, days - QUARTER_SAFETY_DAYS))
+    first = _quarter_start(_quarter(edge))
+    if first < edge:                               # that quarter is already partly gone
+        first = _quarter_start(_quarter(first + timedelta(days=100)))
+    return first
+
+
 def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
-    """Per person per quarter — shifts, hours, scheduled shifts, roles,
-    dayparts, weekdays, and (from attendance_events) watched shifts and each
-    outcome — into people's person_quarters, for every quarter whose raw
-    rows are all still here. A quarter older than that was summarised while
-    it was whole and is never rewritten from what is left of it. Returns
-    the quarters written."""
+    """Per person per quarter into people's person_quarters, kept forever:
+    shifts, hours, scheduled shifts, roles, dayparts and weekdays from
+    shift_facts, and watched shifts and each outcome from attendance_events
+    — each half written only for quarters whose raw rows are ALL still here
+    (their own retention windows differ), so a quarter summarised while
+    whole is never rewritten from what is left of it. Returns the
+    (person, quarter) rows touched."""
     import json
     from shift_quality import daypart_of
     today = today or date.today()
-    oldest_whole = today - timedelta(days=RETAIN_DAYS - QUARTER_SAFETY_DAYS)
-    first_q = _quarter_start(_quarter(oldest_whole))
-    if first_q < oldest_whole:                    # that quarter is already partly gone
-        first_q = _quarter_start(_quarter(first_q + timedelta(days=100)))
-    since = first_q.isoformat()
+    shifts_since = _whole_since("shift_facts", RETAIN_DAYS, today).isoformat()
+    att_since = _whole_since("attendance_events", 730, today).isoformat()
     conn = get_conn(db_path)
     try:
         got = conn.execute("SELECT * FROM shift_facts WHERE restaurant_id=? AND business_date >= ?",
-                           (restaurant_id, since)).fetchall()
-        att = []
+                           (restaurant_id, shifts_since)).fetchall()
         try:
-            att = conn.execute("SELECT employee_key, business_date, outcome FROM attendance_events "
-                               "WHERE restaurant_id=? AND business_date >= ?", (restaurant_id, since)).fetchall()
+            att = conn.execute("SELECT employee_key, employee_name, person_id, business_date, outcome "
+                               "FROM attendance_events WHERE restaurant_id=? AND business_date >= ?",
+                               (restaurant_id, att_since)).fetchall()
         except Exception:
             att = []
     finally:
         conn.close()
-    agg = {}
+    shifts, outcomes = {}, {}
     for r in got:
         try:
             d = date.fromisoformat(r["business_date"])
         except ValueError:
             continue
-        k = (r["employee_key"], _quarter(d))
-        a = agg.setdefault(k, {"name": r["employee_name"], "pid": r["person_id"], "shifts": 0, "hours": 0.0,
-                               "scheduled": 0, "roles": {}, "dayparts": {}, "weekdays": {}, "first": r["business_date"],
-                               "last": r["business_date"], "att": {}})
+        a = shifts.setdefault((r["employee_key"], _quarter(d)), {
+            "name": r["employee_name"], "pid": r["person_id"], "shifts": 0, "hours": 0.0, "scheduled": 0,
+            "roles": {}, "dayparts": {}, "weekdays": {}, "first": r["business_date"], "last": r["business_date"]})
         a["shifts"] += 1
         a["hours"] += float(r["actual_hours"] if r["actual_hours"] is not None else (r["scheduled_hours"] or 0))
         if r["scheduled_hours"] is not None:
@@ -463,31 +475,36 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
             q = _quarter(date.fromisoformat(r["business_date"]))
         except ValueError:
             continue
-        a = agg.get((r["employee_key"], q))
-        if a is not None:
-            a["att"][r["outcome"]] = a["att"].get(r["outcome"], 0) + 1
-    if not agg:
+        o = outcomes.setdefault((r["employee_key"], q), {"name": r["employee_name"], "pid": r["person_id"], "n": {}})
+        o["n"][r["outcome"]] = o["n"].get(r["outcome"], 0) + 1
+    if not shifts and not outcomes:
         return 0
     conn = get_conn(db_path)
     try:
-        for (key, q), a in agg.items():
-            watched = sum(a["att"].values())
+        for (key, q), a in shifts.items():
             conn.execute(
-                "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, shifts, hours, "
-                "scheduled_shifts, roles_json, dayparts_json, weekdays_json, watched, no_shows, called_out, late, "
-                "left_early, covered, first_date, last_date, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
-                "datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) DO UPDATE SET person_id=excluded.person_id, "
-                "employee_name=excluded.employee_name, shifts=excluded.shifts, hours=excluded.hours, "
-                "scheduled_shifts=excluded.scheduled_shifts, roles_json=excluded.roles_json, "
-                "dayparts_json=excluded.dayparts_json, weekdays_json=excluded.weekdays_json, watched=excluded.watched, "
-                "no_shows=excluded.no_shows, called_out=excluded.called_out, late=excluded.late, "
-                "left_early=excluded.left_early, covered=excluded.covered, first_date=excluded.first_date, "
-                "last_date=excluded.last_date, updated_at=excluded.updated_at",
+                "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, shifts, "
+                "hours, scheduled_shifts, roles_json, dayparts_json, weekdays_json, first_date, last_date, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) "
+                "DO UPDATE SET person_id=excluded.person_id, employee_name=excluded.employee_name, "
+                "shifts=excluded.shifts, hours=excluded.hours, scheduled_shifts=excluded.scheduled_shifts, "
+                "roles_json=excluded.roles_json, dayparts_json=excluded.dayparts_json, "
+                "weekdays_json=excluded.weekdays_json, first_date=excluded.first_date, last_date=excluded.last_date, "
+                "updated_at=excluded.updated_at",
                 (restaurant_id, a["pid"], a["name"], key, q, a["shifts"], round(a["hours"], 2), a["scheduled"],
-                 json.dumps(a["roles"]), json.dumps(a["dayparts"]), json.dumps(a["weekdays"]), watched,
-                 a["att"].get("no_show", 0), a["att"].get("called_out", 0), a["att"].get("late", 0),
-                 a["att"].get("left_early", 0), a["att"].get("covered", 0), a["first"], a["last"]))
+                 json.dumps(a["roles"]), json.dumps(a["dayparts"]), json.dumps(a["weekdays"]), a["first"], a["last"]))
+        for (key, q), o in outcomes.items():
+            n = o["n"]
+            conn.execute(
+                "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, watched, "
+                "no_shows, called_out, late, left_early, covered, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,"
+                "datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) DO UPDATE SET "
+                "watched=excluded.watched, no_shows=excluded.no_shows, called_out=excluded.called_out, "
+                "late=excluded.late, left_early=excluded.left_early, covered=excluded.covered, "
+                "updated_at=excluded.updated_at",
+                (restaurant_id, o["pid"], o["name"], key, q, sum(n.values()), n.get("no_show", 0), n.get("called_out", 0),
+                 n.get("late", 0), n.get("left_early", 0), n.get("covered", 0)))
         conn.commit()
     finally:
         conn.close()
-    return len(agg)
+    return len(set(shifts) | set(outcomes))

@@ -2132,6 +2132,17 @@ _RETENTION_DAYS = {
     # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
     # the table — after this module's own boot init, so it is not made here.
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # People memory (memory audit 9/29/26). Every shift every person worked
+    # for three years, then their per-quarter summary in person_quarters,
+    # kept forever — shift_facts.rollup_quarters writes each quarter while
+    # all of it is still here, and never rewrites one from what is left.
+    # Attendance outcomes and the signals about a person (covers taken,
+    # guests naming them) for two years, their quarterly rates the same way.
+    # people, person_aliases, person_questions, person_merges, person_roles,
+    # person_quarters and schedule_standing_patterns are kept forever.
+    "shift_facts":        int(os.getenv("RETAIN_SHIFT_FACTS_DAYS", "1095")),
+    "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
+    "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
 }
@@ -2153,6 +2164,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
