@@ -266,7 +266,43 @@ def run_outcome(result):
         blob = _json.dumps(blob_counts, default=str)[:500]
     except (TypeError, ValueError):
         blob = None
-    return state, blob
+    return state, _with_held_back(blob, blob_counts, result)
+
+
+# What a run held back, kept beside its counts (memory audit 9/29/26):
+# prune_ledgers returns `refused` (windows under their floor — nothing
+# deleted) and `capped` (tables the per-pass cap stopped). The Jobs page
+# reads a run from its stored counts alone, so without them it could not
+# say which tables a partial prune left.
+_HELD_BACK_KEYS = ("refused", "capped")
+
+
+def _with_held_back(blob, blob_counts, result):
+    """`blob` with each non-empty _HELD_BACK_KEYS list added, as valid JSON
+    within the 500-character column budget: a list that would not fit is
+    cut, and `<key>_n` says how many there were."""
+    import json as _json
+    held = {k: result.get(k) for k in _HELD_BACK_KEYS if isinstance(result.get(k), list) and result.get(k)}
+    if not held or blob is None or len(blob) >= 500:
+        return blob
+    body = dict(blob_counts)
+    for k, items in held.items():
+        body[k + "_n"] = len(items)
+        body[k] = []
+        for it in items:
+            body[k].append(it)
+            try:
+                if len(_json.dumps(body, default=str)) > 500:
+                    body[k].pop()
+                    break
+            except (TypeError, ValueError):
+                body[k].pop()
+                break
+    try:
+        out = _json.dumps(body, default=str)
+    except (TypeError, ValueError):
+        return blob
+    return out if len(out) <= 500 else blob
 
 
 def _record_run_start(name, context="", db_path=None, claim=None, restaurant_id=None, request_id=None):
