@@ -439,12 +439,31 @@ def _check_dashboard():
 
 
 def _check_ai_drafting():
+    """The public "AI Review Drafting" row, from what the AI layer is doing
+    (ai_utils.ai_service_status): the last hour's error rate for calls that
+    reached the provider, the breaker (this process's, and the last one any
+    process recorded), a recent credential or credit failure, and the
+    global budget. It used to read "operational" whenever ANTHROPIC_API_KEY
+    was set — through a revoked key, a dead balance and a provider outage
+    alike (#104)."""
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         update_service_status("ai_drafting", "outage", "API key not configured")
         return
-    # Key present = operational (drafts only happen when new reviews arrive)
-    update_service_status("ai_drafting", "operational", None)
+    try:
+        import ai_utils
+        state, message = ai_utils.ai_service_status()
+    except Exception as e:
+        log.error(f"AI status unavailable: {e}")
+        state, message = "operational", None
+    update_service_status("ai_drafting", state, message)
+    # A breaker that has stayed open pages again (cooled down), from this
+    # periodic check rather than from a call that may never come (#48).
+    try:
+        import ai_utils
+        ai_utils.check_ai_alerts()
+    except Exception as e:
+        log.error(f"AI alert check failed: {e}")
 
 
 # Scheduled review fetches (admin_ops.REVIEW_FETCH_SLOTS) a location may miss

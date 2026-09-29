@@ -62,15 +62,33 @@ _build_default_schema()
 
 @pytest.fixture(autouse=True)
 def _reset_ai_rate_limiter():
-    """ai_utils._ai_call_log is a process-global sliding window keyed by
-    restaurant_id, and every test gets a fresh database whose ids start at 1 —
-    so one test's calls counted against the next test's budget and a route
-    would 429 only when the whole file ran, never in isolation. Cleared
-    between tests so a rate limit is something a test asks for on purpose."""
+    """The AI rate limiter's window is keyed by restaurant_id, and every test
+    gets a fresh database whose ids start at 1 — so one test's calls counted
+    against the next test's budget and a route would 429 only when the whole
+    file ran, never in isolation. Since fix round G the window lives in the
+    database (ai_rate_events) with ai_utils._ai_call_log as its fallback,
+    and the process also remembers breakers, budget totals and warning
+    claims; ai_utils.reset_process_state clears all of it, in the default
+    database too (a test that redirects nothing writes there). The default
+    database's ledger is emptied as well, so Places and AI ceilings never
+    trip on spend earlier tests left behind."""
     import ai_utils
-    ai_utils._ai_call_log.clear()
+    import models
+
+    def _reset():
+        ai_utils.reset_process_state(models.DB_PATH)
+        try:
+            conn = models.get_conn(models.DB_PATH)
+            try:
+                conn.execute("DELETE FROM ai_usage")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    _reset()
     yield
-    ai_utils._ai_call_log.clear()
+    ai_utils.reset_process_state()
 
 
 @pytest.fixture(autouse=True)

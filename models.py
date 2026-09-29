@@ -3051,6 +3051,11 @@ def init_db(db_path: str = DB_PATH):
     # boot, not on each claim (DATA-6).
     import ops as _ops
     _ops.init_ops(db_path)
+    # The AI-operations tables (trace, quality events, health events, the
+    # daily usage rollup, the rate limiter) and ai_usage's outcome and
+    # attribution columns — at boot, never on a call path (fix round G).
+    from ai_utils import init_ai_ops
+    init_ai_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -4345,6 +4350,32 @@ def count_stalled_reviews(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     conn.close()
     return {"unanalysed": (row["unanalysed"] or 0) if row else 0,
             "undrafted": (row["undrafted"] or 0) if row else 0}
+
+
+def reset_stalled_reviews(restaurant_id: int, kinds=("analysis", "draft"), db_path: str = DB_PATH) -> dict:
+    """Put reviews that gave up after MAX_AI_ATTEMPTS back in their queue
+    (#124): their attempt counter goes to 0, so the next review cycle
+    analyses or drafts them again. Only stalled rows are touched — a review
+    still under the ceiling keeps its count. Returns {"analysis": n,
+    "draft": n}, the rows put back."""
+    out = {"analysis": 0, "draft": 0}
+    conn = get_conn(db_path)
+    try:
+        if "analysis" in kinds:
+            cur = conn.execute(
+                "UPDATE reviews SET analysis_attempts=0 WHERE restaurant_id=? AND processed=0 "
+                "AND COALESCE(analysis_attempts,0) >= ? AND deleted_at IS NULL", (restaurant_id, MAX_AI_ATTEMPTS))
+            out["analysis"] = cur.rowcount or 0
+        if "draft" in kinds:
+            cur = conn.execute(
+                "UPDATE reviews SET draft_attempts=0 WHERE restaurant_id=? AND processed=1 "
+                "AND response_status='pending' AND COALESCE(draft_attempts,0) >= ? AND deleted_at IS NULL",
+                (restaurant_id, MAX_AI_ATTEMPTS))
+            out["draft"] = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    return out
 
 
 
@@ -9222,6 +9253,18 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
     to prune, and the table would grow forever with nobody the wiser.
     """
     deleted, problems = {}, []
+    # AI history outlives its raw rows (#70): the daily rollup is rebuilt
+    # from ai_usage / ai_validation_log BEFORE they are pruned, on its own
+    # connection, before this one opens a write transaction.
+    try:
+        import ai_utils
+        ai_utils.rollup_usage(db_path=db_path)
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="prune_operational_logs", context="ai usage rollup")
+        except Exception:
+            pass
     conn = get_conn(db_path)
     try:
         existing = {r["name"] for r in conn.execute(

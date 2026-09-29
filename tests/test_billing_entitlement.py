@@ -105,11 +105,19 @@ def _burn(db_path, rid, dollars, n=1):
 
 
 def test_an_unpaid_account_has_its_own_smaller_ceiling(db_path):
-    rid = _restaurant(db_path, 1, billing_status="trial")
-    st = ai_utils.ai_budget_status(rid, db_path)
+    """A trial is a sale in progress and has its own ceiling (owner decision
+    2, fix round G #122); every other account off the paid plan keeps the
+    unpaid one. Both are left out of the global pool."""
+    trial = _restaurant(db_path, 1, billing_status="trial")
+    st = ai_utils.ai_budget_status(trial, db_path)
+    assert st["day"]["budget"] == ai_utils.AI_TRIAL_DAILY_BUDGET_USD
+    assert st["month"]["budget"] == ai_utils.AI_TRIAL_MONTHLY_BUDGET_USD
+    assert st["paid"] is False and st["tier"] == "trial"
+    lapsed = _restaurant(db_path, 2, billing_status="canceled")
+    st = ai_utils.ai_budget_status(lapsed, db_path)
     assert st["day"]["budget"] == ai_utils.AI_UNPAID_DAILY_BUDGET_USD
     assert st["month"]["budget"] == ai_utils.AI_UNPAID_MONTHLY_BUDGET_USD
-    assert st["paid"] is False
+    assert st["paid"] is False and st["tier"] == "unpaid"
 
 
 def test_a_paying_account_keeps_the_full_ceiling(db_path):
