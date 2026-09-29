@@ -1195,8 +1195,10 @@ def _ly_holiday_gaps(a, b):
 def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
     """Every other change that could move this tracker's number:
     [{kind, label, date}] with kind one of tracker | accepted_rec |
-    price_change | event | holiday | closure | sales_move. Any one of them
-    caps the attribution at "associated" (grade).
+    price_change | event | holiday | closure | sales_move, or a change_log
+    kind — menu_add_change, menu_remove_change, roster_add_change,
+    roster_leave_change, pay_change, hours_change, supplier_change … Any
+    one of them caps the attribution at "associated" (grade).
 
     Lasting changes (another tracker, an accepted recommendation, a price)
     count anywhere in [start, end]. One-day ones (an event, a holiday, a
@@ -1263,6 +1265,7 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                         "date": _iso(ev["at"])})
         # The reprice tracker IS the price change; every other tracker on a
         # price-moved number sees the prices that moved under it.
+        repriced = set()
         if fam in _PRICE_FAMILIES and not reprice:
             try:
                 for p in conn.execute("SELECT dish, created_at FROM reprice_decisions WHERE restaurant_id=? "
@@ -1270,8 +1273,22 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                                       (rid, s, _next_day(e))).fetchall():
                     out.append({"kind": "price_change", "label": f"{p['dish'] or 'A dish'} repriced",
                                 "date": _iso(p["created_at"])})
+                    repriced.add((str(p["dish"] or "").strip().lower(), _iso(p["created_at"])))
             except Exception as ex:
                 print(f"[outcomes] price changes unreadable for {rid}: {ex}")
+        # Every other change on this number from the lasting change log
+        # (memory audit 9/29/26, "change_log"): a price typed on Food Cost
+        # or synced from Back Office, a dish added or taken off, someone
+        # joining or leaving, new pay rates or hours, a supplier. The
+        # reprice tracker's own price moves are its change, not another.
+        try:
+            import change_log as _chlog
+            for c in _chlog.concurrent_changes(rid, fam, s, e, conn=conn, skip_prices=repriced):
+                if reprice and c["kind"] == "price_change":
+                    continue
+                out.append(c)
+        except Exception as ex:
+            print(f"[outcomes] change log unreadable for {rid}: {ex}")
         if fam in _VOLUME_FAMILIES:
             try:
                 for ev in conn.execute("SELECT date, label FROM demand_signals WHERE restaurant_id=? "

@@ -360,7 +360,10 @@ def dish_reference(restaurant) -> dict | None:
     common = {"target_label": tgt["label"], "target_source": tgt["source"]}
     if tgt["alerts_allowed"]:
         return dict(common, pct=tgt["pct"], kind="target",
-                    basis=(f"your food-cost target, {tgt['pct']:g}%" if tgt["source"] == "set"
+                    basis=((f"your food-cost target, {tgt['pct']:g}%"
+                            if tgt["label"] == "your target"
+                            else f"{tgt['label']} for food cost, {tgt['pct']:g}%")
+                           if tgt["source"] == "set"
                            else f"{_thr.STARTING_TARGET_LABEL}, {tgt['pct']:g}%"))
     ind = _engine_industry_food_cost(restaurant)
     if ind and ind.get("high") is not None and ind.get("comparable") is True:

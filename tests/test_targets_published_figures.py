@@ -145,7 +145,7 @@ def test_a_stale_seed_is_reset_to_the_default_value_and_alerts_go_off(db):
 def test_target_for_names_whose_target_it_is():
     d = thresholds.target_for(Restaurant(name="D", owner_email="d@x.test"), "food")
     assert d == {"pct": 30.0, "source": "default", "label": "Cavnar AI's starting target", "alerts_allowed": False,
-                 "phrase": "Cavnar AI's starting target of 30%"}
+                 "phrase": "Cavnar AI's starting target of 30%", "setter": None}
     s = thresholds.target_for(Restaurant(name="S", owner_email="s@x.test", food_cost_target=28.0), "food")
     assert s["source"] == "set" and s["label"] == "your target" and s["alerts_allowed"]
 

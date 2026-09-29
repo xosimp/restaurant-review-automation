@@ -4288,7 +4288,17 @@ def _bind_log_context(user, with_restaurant=True):
     the login — and, for an owner's request, the restaurant, which is also
     what a 5xx sample is attributed to. An admin request binds the login
     only: its restaurant is the one the URL names, not the admin's home.
-    Never raises."""
+    Never raises.
+
+    Also keeps the resolved login on flask.g (`cavnar_current_user`) for
+    the request's lifetime, so a write deep in a helper can say who made it
+    without re-reading the session (change_log.actor_context — memory audit
+    9/29/26, "change_log")."""
+    try:
+        from flask import g as _g_bind
+        _g_bind.cavnar_current_user = user
+    except Exception:
+        pass
     try:
         import logging_setup
         fields = {"user_id": (user or {}).get("id")}

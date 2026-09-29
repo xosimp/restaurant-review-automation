@@ -650,6 +650,17 @@ class Restaurant:
     profile_confirmed_at: Optional[str] = None
     # Test and internal accounts: never part of any cross-restaurant figure.
     exclude_from_learning: int = 0
+    # Learning eligibility (memory audit 9/29/26, "eligibility"):
+    # learning_since — rows recorded before it teach no learner, own or
+    # cross-restaurant (stamped when a demo becomes a real account);
+    # learning_override — the admin's word over the automatic test/internal
+    # rule: 'include' | 'exclude' | NULL (automatic). models.learning_eligible.
+    learning_since: Optional[str] = None
+    learning_override: Optional[str] = None
+    # Who set each target stamped 'set' — {<target field>: "principal" |
+    # "delegate" | "admin"}: "your target" is said only for a principal's
+    # (thresholds.target_label; memory audit 9/29/26, "change_log").
+    target_setters_json: Optional[str] = None
     # Where a target came from: set (the owner) | seeded (the published
     # median for a confirmed type) | default (Cavnar's starting target).
     labor_target_source: Optional[str] = None
@@ -1007,6 +1018,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "profile_source", "TEXT"),
         ("restaurants", "profile_confirmed_at", "TEXT"),
         ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
+        # Memory audit 9/29/26: learning eligibility and who set a target.
+        ("restaurants", "learning_since", "TEXT"),
+        ("restaurants", "learning_override", "TEXT"),
+        ("restaurants", "target_setters_json", "TEXT"),
         # gmb.get_valid_token's invalid_grant stamp (fix round C, #44).
         ("restaurants", "gmb_revoked_at", "TEXT"),
         ("restaurants", "labor_target_source", "TEXT"),
@@ -3312,6 +3327,11 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # The lasting, attributed change history (change_log, kept forever) and
+    # the one-time carry-over of the target and profile changes activity_log
+    # holds — memory audit 9/29/26. At boot, never on a write path.
+    import change_log as _change_log
+    _change_log.init_change_log(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3663,6 +3683,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "changelog_seen_at","notifications_seen_at", "category",
         "service_model","concept","bar_led","ownership","opened_year","profile_source","profile_confirmed_at",
         "exclude_from_learning","labor_target_source","food_cost_target_source","hourly_rate_source","google_types","google_price_level",
+        "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3681,6 +3702,12 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    # Who is making this change (memory audit 9/29/26, "change_log"):
+    # resolved BEFORE the write transaction opens, from the login the
+    # request's auth decorator resolved (or a change_log.attributed block).
+    import change_log as _chlog
+    _tracked = {k: v for k, v in updates.items() if k in _chlog.RESTAURANT_FIELD_KINDS}
+    _actor = _chlog.actor_context() if (_tracked or any(t in updates for t in TARGET_SOURCE_FIELDS)) else None
     _mark =[(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
              if _tf in updates and _sf not in updates and updates[_tf] not in (None, "")]
     if _mark:
@@ -3702,6 +3729,27 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                     updates[_sf] = "set"
             except (TypeError, ValueError):
                 pass
+    # A target stamped 'set' — by the rule above or by a form that names it
+    # — records WHO set it (target_setters_json: principal | delegate |
+    # admin), so "your target" is said only when an account holder chose it:
+    # Will setting 28% at onboarding read to the owner as "your 28% target"
+    # (thresholds.target_label; memory audit "change_log", PEOPLE-6).
+    _set_now = [t for t, s in TARGET_SOURCE_FIELDS.items() if t in updates and updates.get(s) == "set"]
+    if _set_now and "target_setters_json" not in updates:
+        try:
+            _c1 = get_conn(db_path)
+            try:
+                _row_s = _c1.execute("SELECT target_setters_json FROM restaurants WHERE id=?",
+                                     (restaurant_id,)).fetchone()
+            finally:
+                _c1.close()
+            _setters = json.loads((_row_s["target_setters_json"] if _row_s else None) or "{}") or {}
+        except Exception:
+            _setters = {}
+        _who = (_actor or {}).get("authority") or (_actor or {}).get("source") or "system"
+        for _t in _set_now:
+            _setters[_t] = _who
+        updates["target_setters_json"] = json.dumps(_setters, sort_keys=True)
     _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
@@ -3720,6 +3768,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     _hist = {k: updates[k] for k in BILLING_HISTORY_FIELDS if k in updates}
     _hist_ctx = _billing_history_context(db_path) if _hist else None
     _hist_err = None
+    _chlog_errors = []
     conn = get_conn(db_path)
     try:
         _old_hist = None
@@ -3761,6 +3810,16 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                 _old_targets = dict(_row_t) if _row_t else None
             except Exception:
                 _old_targets = None
+        # The tracked fields' values as they stand, read inside this
+        # transaction, for the change log written after the UPDATE below.
+        _old_tracked = None
+        if _tracked:
+            try:
+                _row_c = conn.execute(f"SELECT {', '.join(_tracked)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_tracked = dict(_row_c) if _row_c else None
+            except Exception as _ct_e:
+                _chlog_errors.append(_ct_e)
         if expected_version is None:
             conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
                          values + [restaurant_id])
@@ -3795,6 +3854,20 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                  (restaurant_id, "profile_changed", json.dumps(_changes)))
                 except Exception as _pc_e:
                     print(f"[update_restaurant] profile change not recorded for {restaurant_id}: {_pc_e}")
+        if _old_tracked is not None:
+            # The lasting, attributed record (change_log, kept forever): in
+            # the same transaction as the change, so the two land together.
+            # A target seeded from a published median is 'seeded', a reset
+            # to Cavnar AI's default the system's — not whoever's request
+            # happened to trigger it.
+            _srcs = {}
+            for _tf, _sf in TARGET_SOURCE_FIELDS.items():
+                if updates.get(_sf) == "seeded":
+                    _srcs[_tf] = "seeded"
+                elif updates.get(_sf) == "default":
+                    _srcs[_tf] = "system"
+            _chlog.record_restaurant_changes(conn, restaurant_id, _old_tracked, _tracked, sources=_srcs,
+                                             errors=_chlog_errors)
         if _old_hist is not None:
             # Same transaction as the change itself: a billing move and its
             # history row land together or not at all.
@@ -3817,6 +3890,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
             conn.close()
         except Exception:
             pass
+    for _ce in _chlog_errors:
+        # After the commit, as the billing history's: never fails the write
+        # it describes, and never silent.
+        _chlog.report(_ce, restaurant_id, "restaurant", ",".join(_tracked)[:120],
+                      db_path=db_path if db_path != DB_PATH else None)
     if _hist_err is not None:
         # Never fails the billing write it describes, and never silent: after
         # the commit, so the capture's own write is not queued behind ours.
@@ -4274,6 +4352,9 @@ def _restaurant_from_row(row) -> Restaurant:
         profile_source=row["profile_source"] if "profile_source" in row.keys() else None,
         profile_confirmed_at=row["profile_confirmed_at"] if "profile_confirmed_at" in row.keys() else None,
         exclude_from_learning=(row["exclude_from_learning"] or 0) if "exclude_from_learning" in row.keys() else 0,
+        learning_since=row["learning_since"] if "learning_since" in row.keys() else None,
+        learning_override=row["learning_override"] if "learning_override" in row.keys() else None,
+        target_setters_json=row["target_setters_json"] if "target_setters_json" in row.keys() else None,
         labor_target_source=row["labor_target_source"] if "labor_target_source" in row.keys() else None,
         food_cost_target_source=row["food_cost_target_source"] if "food_cost_target_source" in row.keys() else None,
         hourly_rate_source=row["hourly_rate_source"] if "hourly_rate_source" in row.keys() else None,
