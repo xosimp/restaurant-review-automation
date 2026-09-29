@@ -19,6 +19,12 @@ struct ScheduleWeekNotes: View {
             if let source = result.projectedRevenueSource, !source.isEmpty {
                 caption("Revenue basis: \(source).")
             }
+            // Which labor target the budget was built against — the owner's
+            // goal ("your goal of 26% by 12/31/26") or the setting.
+            if let label = Self.targetLine(label: result.laborTargetLabel?.value,
+                                           source: result.laborTargetSource?.value) {
+                caption(label)
+            }
             // How the demand forecast behind that basis has held up (K8).
             if let record = (result.demandAccuracy ?? demandAccuracy)?.sentence {
                 caption(record + ".")
@@ -30,6 +36,8 @@ struct ScheduleWeekNotes: View {
                 notice(through.date.map { "Demand blind since \(CavnarDate.mdy($0)): the forecast has no sales newer than that." }
                        ?? "Demand blind: the forecast has no recent sales to read.", tone: .cavnarAmber)
             }
+            if let conflicts = result.patternConflicts?.items, !conflicts.isEmpty { conflictsBlock(conflicts) }
+            if let reqs = result.softRequirements?.items, !reqs.isEmpty { softRequirementsBlock(reqs) }
             if !result.trimmedShifts.isEmpty { trimmedBlock }
             if !result.staggeredStarts.isEmpty { staggeredBlock }
             if let departments = result.departments, !departments.isEmpty {
@@ -190,6 +198,64 @@ struct ScheduleWeekNotes: View {
         .background(
             RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                 .fill(Color.cavnarBlue.opacity(0.06)))
+    }
+
+    // MARK: Soft requirements and pattern conflicts (memory round, 9/29/26)
+
+    /// "Labor target: your goal of 26% by 12/31/26." — nil with no label.
+    static func targetLine(label: String?, source: String?) -> String? {
+        guard let label, !label.isEmpty else { return nil }
+        let words = label.prefix(1).uppercased() + label.dropFirst()
+        return "Labor target: \(words)" + (source == "goal" && !label.lowercased().contains("goal")
+                                             ? " (your goal)" : "") + "."
+    }
+
+    /// What the reviews diagnosis and the nightly reports asked of this
+    /// week — "+1 server Friday dinner" — each marked Applied / Not applied
+    /// from the rows themselves, never from what the model says it did.
+    private func softRequirementsBlock(_ reqs: [SoftRequirement]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.badge.plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                let done = reqs.filter { $0.applied == true }.count
+                HomeMixedText.make("Asked of this week \u{2014} \(done) of \(reqs.count) applied",
+                                   size: 14, weight: 700, color: .cavnarInk)
+            }
+            ForEach(reqs) { req in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        HomeMixedText.make(req.text, size: 13.5, weight: 600, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        if let applied = req.appliedLabel {
+                            AccountChip(text: applied, tint: req.applied == true ? .cavnarGreen : .cavnarAmber)
+                        }
+                    }
+                    HomeMixedText.make([req.sourceLabel, req.confirm.map { "to confirm: " + $0 },
+                                        req.expires.map { "until " + CavnarDate.mdy($0) }]
+                                        .compactMap { $0 }.joined(separator: " \u{00B7} "),
+                                       size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                .fill(Color.cavnarEmber.opacity(0.06)))
+    }
+
+    /// Pairs two editors pull opposite ways — left out of this draft for
+    /// the owner to settle.
+    private func conflictsBlock(_ conflicts: [PatternConflict]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(conflicts) { c in
+                notice(c.line + " \u{2014} left out of this draft; settle it in the roster.", tone: .cavnarAmber)
+            }
+        }
     }
 
     // MARK: Small lines

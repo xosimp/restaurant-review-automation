@@ -17,6 +17,9 @@ struct LaborView: View {
     // the generator, kept outside the Overview/Analytics branch for the
     // same reason LaborViewModel is (see scheduleResultExpanded).
     @State private var setupViewModel = ScheduleSetupViewModel()
+    // Scheduling notes, who-is-who questions and guest mentions (memory
+    // round, 9/29/26): answered in Scheduling setup, nudged from Needs you.
+    @State private var teamMemory = TeamMemoryViewModel()
     @State private var subTab: LaborSubTab = .overview
     @State private var showDataInfo = false
     // The schedule row whose "why this person" is open.
@@ -93,6 +96,10 @@ struct LaborView: View {
                                                   },
                                                   onOpenDraft: { draftToSend = DraftToSend(id: $0) })
                                 .id(Self.waitingID)
+                                // What the team memory asks the owner — stale
+                                // notes, a person listed twice, a guest naming
+                                // someone — answered in Scheduling setup.
+                                TeamMemoryNudge(viewModel: teamMemory) { showingSetup = true }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                         .id(Self.scheduleID)
@@ -199,6 +206,7 @@ struct LaborView: View {
                     await setupViewModel.loadShiftRequests()
                     await setupViewModel.loadRoster()
                     await setupViewModel.loadSignals()
+                    await teamMemory.load()
                 }
                 // A push or card about a request, the schedule or overtime
                 // opens its section and scrolls to it once the page is in.
@@ -211,7 +219,7 @@ struct LaborView: View {
         .cavnarModuleBackground()
         .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
         .sheet(isPresented: $showingSetup, onDismiss: { setupFocusPerson = nil }) {
-            LaborSetupSheet(viewModel: viewModel, setupViewModel: setupViewModel,
+            LaborSetupSheet(viewModel: viewModel, setupViewModel: setupViewModel, teamMemory: teamMemory,
                             focusPerson: $setupFocusPerson)
         }
         // The ribbon itself always shows once there's a hero card, even
@@ -345,6 +353,7 @@ struct LaborView: View {
             await setupViewModel.loadRoster()
             await setupViewModel.loadSignals()
         }
+        .task { await teamMemory.load() }
         .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
@@ -1737,11 +1746,13 @@ enum LaborFocus: Equatable {
 private struct LaborSetupSheet: View {
     let viewModel: LaborViewModel
     let setupViewModel: ScheduleSetupViewModel
+    let teamMemory: TeamMemoryViewModel
     /// A "person/<key>" link's person, opened over the roster.
     @Binding var focusPerson: PersonSheetTarget?
     @Environment(\.dismiss) private var dismiss
 
     private static let rosterID = "setup-roster"
+    private static let notesID = "setup-notes"
     private static let availabilityID = "setup-availability"
     private static let demandID = "setup-demand"
     private static let teamID = "setup-team"
@@ -1754,6 +1765,9 @@ private struct LaborSetupSheet: View {
                     VStack(alignment: .leading, spacing: 20) {
                         RosterSection(viewModel: setupViewModel) { reveal(Self.rosterID, proxy) }
                             .id(Self.rosterID)
+                        TeamMemorySection(viewModel: teamMemory,
+                                          names: setupViewModel.roster.map(\.name)) { reveal(Self.notesID, proxy) }
+                            .id(Self.notesID)
                         AvailabilityManagerSection(viewModel: viewModel) { reveal(Self.availabilityID, proxy) }
                             .id(Self.availabilityID)
                         DemandSignalsSection(viewModel: setupViewModel) { reveal(Self.demandID, proxy) }

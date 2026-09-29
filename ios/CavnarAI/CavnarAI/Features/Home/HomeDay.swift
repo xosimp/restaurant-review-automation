@@ -141,6 +141,12 @@ struct HomeDayCard: View {
                                     if let note = viewModel.coverNote[issue.id] {
                                         Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
                                     }
+                                    // Whoever was asked: "Did Zed take it?" —
+                                    // the manager's word counts on their
+                                    // record of covers (memory round).
+                                    ForEach(issue.askedNames, id: \.self) { name in
+                                        CoverAnswerRow(issueId: issue.id, name: name)
+                                    }
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -273,6 +279,11 @@ final class HomeDayViewModel {
         var tone: Color {
             if status != "open" { return .cavnarInk3 }
             return severity == "high" ? .cavnarRed : .cavnarAmber
+        }
+        /// Who was asked to cover, while the issue is open (at most two).
+        var askedNames: [String] {
+            guard status != "resolved" else { return [] }
+            return Array((meta?.asked ?? []).compactMap(\.name).filter { !$0.isEmpty }.prefix(2))
         }
     }
     private struct BriefResponse: Decodable {

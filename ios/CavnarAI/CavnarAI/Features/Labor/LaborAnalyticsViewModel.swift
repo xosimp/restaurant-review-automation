@@ -25,6 +25,10 @@ struct LaborTrendWeek: Decodable, Identifiable {
     let sales: Double
     let start: String
     let end: String
+    /// False for a payroll week still in progress (memory round, 9/29/26:
+    /// labor periods are calendar weeks) — drawn as partial, never read
+    /// as a trend. Nil on an older server.
+    var complete: Bool? = nil
 
     var id: String { label }
 }

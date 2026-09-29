@@ -83,6 +83,8 @@ struct DemandSignalsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                if !viewModel.nightLessons.isEmpty { nightsTaughtCard }
+
                 if viewModel.isLoadingSignals && viewModel.signals.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
                 } else if viewModel.signals.isEmpty {
@@ -143,9 +145,43 @@ struct DemandSignalsSection: View {
                         .lineLimit(1)
                 }
                 HomeMixedText.make(detail(signal), size: 13, color: .cavnarInk3)
+                // Its measured record here, when the nights have one.
+                if let measured = signal.measured {
+                    HomeMixedText.make(measured.line, size: 12.5, weight: 500,
+                                       color: measured.applies ? .cavnarEmber2 : .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
         }
+    }
+
+    /// WHAT YOUR NIGHTS HAVE TAUGHT — each recurring effect's sentence
+    /// (event_memory.summaries: M/D/YY, "before and after, not proof").
+    /// The ones past the sample floor lead, lit; the rest are dimmer.
+    private var nightsTaughtCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT YOUR NIGHTS HAVE TAUGHT")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.4)
+                .foregroundStyle(Color.cavnarEmber2)
+            ForEach(viewModel.nightLessons.prefix(6)) { lesson in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle()
+                        .fill(lesson.applies ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.6))
+                        .frame(width: 6, height: 6)
+                    HomeMixedText.make(lesson.text, size: 13.5, color: lesson.applies ? .cavnarInk2 : .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text("Measured on your own nights against a typical same weekday. The forecast uses one only once it has enough nights.")
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarEmber.opacity(0.06)))
     }
 
     private func detail(_ signal: DemandSignal) -> String {

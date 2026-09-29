@@ -76,6 +76,10 @@ struct RosterSection: View {
                 if !viewModel.openSuggestions.isEmpty { suggestedPairsBlock }
 
                 if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
+
+                if !viewModel.standingPatterns.isEmpty || !viewModel.patternConflicts.isEmpty {
+                    standingPatternsBlock
+                }
             }
         }
         .sheet(item: $selected) { member in
@@ -369,6 +373,114 @@ extension RosterSection {
         }
         .padding(.vertical, 9)
         .opacity(dismissed ? 0.7 : 1)
+    }
+}
+
+// MARK: - Standing patterns (memory round, 9/29/26)
+
+extension RosterSection {
+    /// What the draft keeps after the manager stopped correcting it — with
+    /// who taught it, when it was learned and last kept — and "Make it a
+    /// rule" where the pattern is about one person. Pairs two editors pull
+    /// opposite ways come first: the owner settles them, never the model.
+    fileprivate var standingPatternsBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Standing patterns")
+                .font(.cavnarBody(14.5, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+            Text("What the draft keeps doing because your edits taught it. Two reversals retire one; a rule makes it the person\u{2019}s own availability.")
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(viewModel.patternConflicts) { conflict in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .frame(width: 18)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HomeMixedText.make(conflict.line, size: 14, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Left out of the draft until you settle it \u{2014} set their availability above.")
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(Color.cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarAmber.opacity(0.06)))
+            }
+            VStack(spacing: 0) {
+                ForEach(viewModel.standingPatterns) { pattern in
+                    standingRow(pattern)
+                    if pattern.id != viewModel.standingPatterns.last?.id {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    }
+                }
+            }
+            if let message = viewModel.patternMessage {
+                Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func standingRow(_ pattern: StandingPattern) -> some View {
+        let retired = pattern.status == "retired"
+        let ruled = pattern.status == "ruled"
+        let busy = viewModel.patternBusyKey == pattern.key
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: ruled ? "checkmark.seal.fill" : (retired ? "arrow.uturn.backward" : "repeat"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3 : Color.cavnarEmber2))
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    HomeMixedText.make(pattern.text, size: 14, color: retired ? .cavnarInk3 : .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let history = pattern.historyLine {
+                        HomeMixedText.make(history, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 6) {
+                        if let applied = pattern.timesApplied {
+                            HomeMixedText.make("kept \(applied) \(applied == 1 ? "time" : "times")", size: 12.5,
+                                               color: .cavnarInk3)
+                        }
+                        if let overridden = pattern.timesOverridden, overridden > 0 {
+                            HomeMixedText.make("undone \(overridden)", size: 12.5, color: .cavnarInk3)
+                        }
+                        Text(pattern.statusLabel)
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3 : Color.cavnarEmber2))
+                    }
+                    if ruled, let note = pattern.rule?.note {
+                        HomeMixedText.make("Rule: " + note + (pattern.rule?.by.map { " \u{00B7} by " + $0 } ?? ""),
+                                           size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if pattern.canBeRule && viewModel.canEditPatterns {
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.makeRule(pattern) }
+                } label: {
+                    Group {
+                        if busy { CavnarShimmerText(text: "Saving\u{2026}") } else { Text("Make it a rule") }
+                    }
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .padding(.leading, 26)
+            }
+        }
+        .padding(.vertical, 9)
+        .opacity(retired ? 0.7 : 1)
     }
 }
 

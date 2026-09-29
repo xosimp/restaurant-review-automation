@@ -2989,6 +2989,12 @@ def _do_mobile_labor(restaurant_id):
         "money_went": (analysis.get("money_went") or []) if analysis.get("is_live") else [],
         # The rate the board's "Explain why" divides by (hours to trim).
         "blended_rate": analysis.get("blended_rate"),
+        # What "over target" means for a day here: the margin fitted to this
+        # restaurant's own daily swing, never below the stated one, and its
+        # basis in words (restaurant_thresholds; memory audit 9/29/26,
+        # "thresholds"). The phone says it under the ribbon. Live only.
+        "over_margin": analysis.get("over_margin") if analysis.get("is_live") else None,
+        "over_margin_basis": analysis.get("over_margin_basis") if analysis.get("is_live") else None,
     }, 200
 
 
