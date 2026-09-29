@@ -241,7 +241,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     if not _resend_key():
         log.warning("send_2fa_code: RESEND_API_KEY not set — nothing sent")
         return not_sent("not_configured", "RESEND_API_KEY not set")
-    greeting = f"Hi {owner_name}," if owner_name else "Hi,"
+    greeting = f"Hi {esc(owner_name)}," if owner_name else "Hi,"
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">

@@ -1993,8 +1993,11 @@ def _onboarding_outcome(r, key, result, claim_period=None):
         return False
     if getattr(result, "refused", False):
         mark_onboarding_sent(r.id, key, status="failed", error=err)
-    _ops.capture(RuntimeError(f"onboarding {key} not sent: {err}"), job="onboarding_email",
-                 context=f"restaurant_id={r.id}")
+    # A missing postal address is reported once a day by emails.deliver
+    # itself; one capture per restaurant per day on top would bury it.
+    if getattr(result, "reason", None) != "no_postal_address":
+        _ops.capture(RuntimeError(f"onboarding {key} not sent: {err}"), job="onboarding_email",
+                     context=f"restaurant_id={r.id}")
     return False
 
 
