@@ -782,8 +782,11 @@ def _load_with(conn):
                        FROM device_tokens GROUP BY restaurant_id""", label="device_tokens")
     alerts = per_rid("SELECT restaurant_id, COUNT(*) AS fired_7d, MAX(fired_at) AS last_at FROM alert_log "
                      "WHERE fired_at >= ? GROUP BY restaurant_id", (w["week"],), label="alert_log")
+    # last_success_at (fix round E): the last delivery the endpoint took;
+    # last_fired_at is the last attempt, failed or not.
+    hook_success = ", last_success_at" if "last_success_at" in _columns(conn, "webhooks") else ""
     webhooks = per_rid("SELECT restaurant_id, url, is_active, consecutive_failures, last_status, last_fired_at, "
-                       "disabled_reason FROM webhooks", label="webhooks")
+                       f"disabled_reason{hook_success} FROM webhooks", label="webhooks")
     client_data = per_rid("SELECT restaurant_id, shifts_csv IS NOT NULL AND shifts_csv != '' AS has_shifts, "
                           "inventory_csv IS NOT NULL AND inventory_csv != '' AS has_inventory, updated_at "
                           "FROM client_data", label="client_data")
@@ -1322,6 +1325,20 @@ def _gbp_state(r, d):
     return None, None, None
 
 
+def _hook_last_success(hook):
+    """An outbound webhook's last delivery the endpoint took: E's
+    last_success_at, or — on a row from before that column was written —
+    its last fire, only when that fire answered 2xx. last_fired_at alone
+    read a webhook failing every delivery as succeeding just now."""
+    if hook.get("last_success_at"):
+        return hook["last_success_at"]
+    try:
+        took = 200 <= int(hook.get("last_status")) < 300
+    except (TypeError, ValueError):
+        took = False
+    return hook.get("last_fired_at") if took and not hook.get("consecutive_failures") else None
+
+
 def _integrations_for(r, hooks, d=None):
     """Every external connection, in one shape: state, last success (Z), the
     error, and when the error began (error_since, UTC) where it is known."""
@@ -1366,7 +1383,7 @@ def _integrations_for(r, hooks, d=None):
     out.append({"key": "webhook", "label": "Outbound webhook",
                 "connected": bool(hook and hook.get("is_active")),
                 "configured": bool(hook),
-                "last_success": _iso_z(hook.get("last_fired_at"), "UTC") if hook else None,
+                "last_success": _iso_z(_hook_last_success(hook), "UTC") if hook else None,
                 "error": (hook.get("disabled_reason") or (f"{hook['consecutive_failures']} consecutive failures" if hook.get("consecutive_failures") else None)) if hook else None,
                 "error_since": None,
                 "auth": "secret" if hook else "none"})
@@ -2871,7 +2888,8 @@ def client_detail(rid):
             emails = _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
             pushes = _rows_dict(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
             devices = _rows_dict(conn, "SELECT id, user_id, environment, created_at, last_success_at, consecutive_failures, disabled_reason FROM device_tokens WHERE restaurant_id=?", (rid,))
-            alerts = _rows_dict(conn, "SELECT alert_type, review_id, fired_at FROM alert_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+            a_ch = ", channels" if "channels" in _columns(conn, "alert_log") else ""
+            alerts = _rows_dict(conn, f"SELECT alert_type, review_id, fired_at{a_ch} FROM alert_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
             acts = _rows_dict(conn, "SELECT event_type, event_data, created_at FROM activity_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
             logins = _rows_dict(conn, "SELECT event, ip_address, user_agent, device_type, created_at FROM login_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 30", (rid,))
             for l in logins:
@@ -2940,8 +2958,9 @@ def _client_messaging(rid):
     """E's per-restaurant messaging reads for the client page: every
     suppressed address its mail goes to, with the role it plays there and
     whether it is an operator address (#45, #101); its texts (last four
-    digits only) and their outcomes over the week (#14)."""
-    out = {"suppressions": [], "sms": [], "sms_stats": None}
+    digits only) and their outcomes over the week (#14); and its issue
+    texts that could not reach their assignee (#91)."""
+    out = {"suppressions": [], "sms": [], "sms_stats": None, "issue_texts": None}
     path = _current_db_path()
     try:
         import models as _m_msg
@@ -2956,6 +2975,11 @@ def _client_messaging(rid):
         out["sms_stats"] = _n_msg.sms_stats(hours=24 * 7, restaurant_id=rid, db_path=path)
     except Exception as e:
         _note_failure("sms_log", e)
+    conn = get_conn()
+    try:
+        out["issue_texts"] = _issue_texts(conn, _windows(), rid=rid)
+    finally:
+        conn.close()
     return out
 
 
@@ -3722,6 +3746,35 @@ def emails(limit=200):
             "windows": _window_meta(), **_merge_problems(bucket)}
 
 
+def _issue_texts(conn, w, rid=None):
+    """The texts that tell an issue's assignee (fix round E, #91): given up
+    on after the retries or a permanent error (notify_failed_at — the owner
+    was told by push and email instead), still backing off (notify_next_at),
+    and open issues the owner chose not to text (notify_suppressed). None
+    on a database from before those columns."""
+    if "notify_failed_at" not in _columns(conn, "ops_issues"):
+        return None
+    scope, args = ("AND i.restaurant_id=? ", (rid,)) if rid is not None else ("", ())
+    counts = _one_dict(conn, "SELECT "
+                             "SUM(CASE WHEN i.notify_failed_at >= ? THEN 1 ELSE 0 END) AS failed_7d, "
+                             "SUM(CASE WHEN i.status='open' AND i.notify_failed_at IS NULL "
+                             "AND i.notify_next_at IS NOT NULL THEN 1 ELSE 0 END) AS retrying, "
+                             "SUM(CASE WHEN i.status='open' AND COALESCE(i.notify_suppressed,0)=1 "
+                             "THEN 1 ELSE 0 END) AS not_texted_open, "
+                             "MAX(i.notify_failed_at) AS last_failed_at "
+                             "FROM ops_issues i WHERE 1=1 " + scope, (w["week"],) + args, label="ops_issues") or {}
+    recent = _rows_dict(conn, "SELECT i.id, i.restaurant_id, r.name AS restaurant, i.title, i.assignee_name, "
+                              "i.status, i.notify_attempts, i.notify_error, i.notify_failed_at "
+                              "FROM ops_issues i LEFT JOIN restaurants r ON r.id=i.restaurant_id "
+                              "WHERE i.notify_failed_at IS NOT NULL " + scope +
+                              "ORDER BY i.notify_failed_at DESC LIMIT 20", args, label="ops_issues")
+    for row in recent:
+        row["notify_failed_at"] = _iso_z(row.get("notify_failed_at"), "UTC")
+    return {"failed_7d": int(counts.get("failed_7d") or 0), "retrying": int(counts.get("retrying") or 0),
+            "not_texted_open": int(counts.get("not_texted_open") or 0),
+            "last_failed_at": _iso_z(counts.get("last_failed_at"), "UTC"), "recent": recent}
+
+
 def notifications(limit=200):
     """The Push & alerts page. The opened rate divides opens by pushes that
     were DELIVERED — not by every alert raised on any channel (#160). Storms
@@ -3734,7 +3787,10 @@ def notifications(limit=200):
             pushes = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.device_token_id, d.user_id, u.username, p.alert_type, p.status, p.ok, p.attempts, p.error, p.created_at FROM push_deliveries p LEFT JOIN restaurants r ON r.id=p.restaurant_id LEFT JOIN device_tokens d ON d.id=p.device_token_id LEFT JOIN users u ON u.id=d.user_id ORDER BY p.id DESC LIMIT ?", (limit,))
             devices = _rows_dict(conn, "SELECT d.id, d.restaurant_id, r.name AS restaurant, u.username, d.environment, d.created_at, d.last_success_at, d.consecutive_failures, d.disabled_reason FROM device_tokens d LEFT JOIN restaurants r ON r.id=d.restaurant_id LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 500")
             devices_total = (_one_dict(conn, "SELECT COUNT(*) AS n FROM device_tokens") or {}).get("n") or 0
-            alerts = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
+            # channels (fix round E, #14): "sms,email,push" as they went
+            # out, or "none"; NULL on a row from before it was recorded.
+            a_ch = ", a.channels" if "channels" in _columns(conn, "alert_log") else ""
+            alerts = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at{a_ch} FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
             by_type = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE fired_at >= ? GROUP BY alert_type ORDER BY n DESC", (w["week"],))
             storms = _rows_dict(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (w["today"],))
             # Storm days over a week, bucketed on Central days (the offset of
@@ -3746,6 +3802,7 @@ def notifications(limit=200):
                                     (f"{off} hours", w["week"]))
             caps = _rows_dict(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
             auto_caps, auto_supported = _auto_caps(conn)
+            issue_texts = _issue_texts(conn, w)
             # E's outboxes (#75): what is queued, in flight, failed.
             try:
                 import push as _push_ob
@@ -3783,6 +3840,7 @@ def notifications(limit=200):
             "storm_counts": {"today": len(storms), "storm_days_7d": len(storm_days),
                              "restaurants_7d": len({s["restaurant_id"] for s in storm_days})},
             "auto_caps": auto_caps, "auto_caps_supported": auto_supported, "outboxes": outboxes,
+            "issue_texts": issue_texts,
             "scheduled_posts": scheduled,
             "posts_failed_total": post_totals.get("failed") or 0,
             "posts_scheduled_total": post_totals.get("scheduled") or 0,
@@ -5107,27 +5165,33 @@ EMAIL_COMPLAINT_CRIT_PCT = float(os.getenv("EMAIL_COMPLAINT_CRIT_PCT", "0.3"))
 EMAIL_RATE_MIN_SENDS = int(os.getenv("EMAIL_RATE_MIN_SENDS", "50"))
 
 
-def _email_rates(conn, w):
+def _email_rates(conn, w, db_path=None):
+    """7- and 30-day delivery from E's models.email_delivery_stats — the one
+    definition, which E's own alerting reads too: `accepted` is what Resend
+    took (sent, delayed, delivered, bounced, complained), and a bounce is
+    not a delivery (#59) — beside when the last bounce and complaint came."""
+    import models as _m_rates
     out = {"thresholds": {"bounce_warn_pct": EMAIL_BOUNCE_WARN_PCT, "bounce_crit_pct": EMAIL_BOUNCE_CRIT_PCT,
                           "complaint_warn_pct": EMAIL_COMPLAINT_WARN_PCT,
                           "complaint_crit_pct": EMAIL_COMPLAINT_CRIT_PCT, "min_sends": EMAIL_RATE_MIN_SENDS}}
-    for label, since in (("7d", w["week"]), ("30d", w["month"])):
-        row = _one_dict(conn, "SELECT COUNT(*) AS n, "
-                              "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
-                              "SUM(CASE WHEN status='bounced' THEN 1 ELSE 0 END) AS bounces, "
-                              "SUM(CASE WHEN status='complained' THEN 1 ELSE 0 END) AS complaints, "
-                              "SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) AS delivered, "
-                              "MAX(CASE WHEN status='bounced' THEN sent_at END) AS last_bounce_at, "
-                              "MAX(CASE WHEN status='complained' THEN sent_at END) AS last_complaint_at "
-                              "FROM email_log WHERE sent_at >= ?", (since,), label="email_log") or {}
-        accepted = int(row.get("n") or 0) - int(row.get("failed") or 0)
-        b, c = int(row.get("bounces") or 0), int(row.get("complaints") or 0)
-        out[label] = {"sent": int(row.get("n") or 0), "accepted": accepted, "failed": int(row.get("failed") or 0),
-                      "bounces": b, "complaints": c, "delivered": int(row.get("delivered") or 0),
-                      "bounce_rate": round(100.0 * b / accepted, 2) if accepted else None,
-                      "complaint_rate": round(100.0 * c / accepted, 2) if accepted else None,
+    for label, days, since in (("7d", 7, w["week"]), ("30d", 30, w["month"])):
+        try:
+            st = _m_rates.email_delivery_stats(days=days, db_path=db_path or _current_db_path())
+        except Exception as e:
+            _note_failure("email_delivery_stats", e)
+            out[label] = None
+            continue
+        last = _one_dict(conn, "SELECT MAX(CASE WHEN status='bounced' THEN sent_at END) AS last_bounce_at, "
+                               "MAX(CASE WHEN status='complained' THEN sent_at END) AS last_complaint_at "
+                               "FROM email_log WHERE sent_at >= ?", (since,), label="email_log") or {}
+        accepted = int(st.get("accepted") or 0)
+        out[label] = {"sent": int(st.get("attempted") or 0), "accepted": accepted,
+                      "failed": int(st.get("failed") or 0), "bounces": int(st.get("bounced") or 0),
+                      "complaints": int(st.get("complained") or 0), "delivered": int(st.get("delivered") or 0),
+                      "in_flight": int(st.get("in_flight") or 0),
+                      "bounce_rate": st.get("bounce_rate"), "complaint_rate": st.get("complaint_rate"),
                       "enough": accepted >= EMAIL_RATE_MIN_SENDS,
-                      "last_bounce_at": row.get("last_bounce_at"), "last_complaint_at": row.get("last_complaint_at")}
+                      "last_bounce_at": last.get("last_bounce_at"), "last_complaint_at": last.get("last_complaint_at")}
     return out
 
 
@@ -6309,7 +6373,7 @@ def ops_state():
         mine = [m for m in messaging if "Resend" in m or "Operator address" in m]
         conn = get_conn(path)
         try:
-            rates = _email_rates(conn, _windows()).get("7d") or {}
+            rates = _email_rates(conn, _windows(), db_path=path).get("7d") or {}
             today = _one_dict(conn, "SELECT SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, COUNT(*) AS n "
                                     "FROM email_log WHERE sent_at >= datetime('now','-1 day')", label="email_log") or {}
         finally:

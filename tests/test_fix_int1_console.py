@@ -331,3 +331,52 @@ def test_webhook_health_reads_the_inbound_ledger_first_and_the_verifications_aft
         ("inbound_webhook_health", None, "signature mismatch", True)
     assert by["resend"]["source"] == "derived" and by["resend"]["failures_since_verified"] is None
     assert wh["ledger"] == "inbound_webhook_health, webhook_verifications"
+
+
+# ── E's other columns: one delivery definition, alert channels, a webhook's
+#    real last success, issue texts that never reached anyone ──────────────
+
+def test_delivery_rates_are_es_definition_accepted_is_what_resend_took(db_path):
+    rid = _mk(db_path, "Mail Co")
+    for i, status in enumerate(["delivered"] * 20 + ["bounced"] * 2 + ["skipped"] * 5 + ["failed"] * 3):
+        _sql(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, status, sent_at) "
+                      "VALUES (?, 'digest', ?, 's', ?, datetime('now','-1 hours'))", (rid, f"m{i}@x.test", status))
+    wk = admin_ops.emails()["rates"]["7d"]
+    # A skipped row was never handed to Resend: not accepted, so not in the rate.
+    assert (wk["sent"], wk["accepted"], wk["failed"], wk["bounces"]) == (30, 22, 3, 2)
+    assert wk["bounce_rate"] == round(100.0 * 2 / 22, 2) and wk["last_bounce_at"]
+
+
+def test_alert_rows_say_which_channels_they_went_out_on(db_path):
+    rid = _mk(db_path, "Alert Co")
+    _sql(db_path, "INSERT INTO alert_log (restaurant_id, alert_type, fired_at, channels) "
+                  "VALUES (?, '1star', datetime('now'), 'sms,push')", (rid,))
+    assert admin_ops.notifications()["alerts"][0]["channels"] == "sms,push"
+    assert admin_ops.client_detail(rid)["alerts"][0]["channels"] == "sms,push"
+
+
+def test_an_outbound_webhook_failing_every_delivery_is_not_a_fresh_success(db_path):
+    rid = _mk(db_path, "Hook Co")
+    two_days = _utc(datetime.now(timezone.utc) - timedelta(days=2))
+    _sql(db_path, "INSERT INTO webhooks (restaurant_id, url, secret, last_fired_at, last_status, "
+                  "consecutive_failures, last_success_at) VALUES (?, 'https://h.test/x', 's', datetime('now'), "
+                  "500, 3, ?)", (rid, two_days))
+    hook = next(i for i in _rec(rid)["integrations"] if i["key"] == "webhook")
+    assert hook["last_success"] == two_days.replace(" ", "T") + "Z" and hook["state"] == "error"
+    # A row from before last_success_at: its last fire counts only if it took.
+    _sql(db_path, "UPDATE webhooks SET last_success_at=NULL WHERE restaurant_id=?", (rid,))
+    admin_ops.invalidate_fleet_cache()
+    assert next(i for i in _rec(rid)["integrations"] if i["key"] == "webhook")["last_success"] is None
+
+
+def test_issue_texts_that_never_reached_their_assignee(db_path):
+    rid = _mk(db_path, "Issue Co")
+    _sql(db_path, "INSERT INTO ops_issues (restaurant_id, kind, title, status, notify_attempts, notify_error, "
+                  "notify_failed_at) VALUES (?, 'equipment', 'Walk-in at 45F', 'open', 3, 'Twilio 21610: "
+                  "unsubscribed', datetime('now','-2 hours'))", (rid,))
+    _sql(db_path, "INSERT INTO ops_issues (restaurant_id, kind, title, status, notify_attempts, notify_next_at) "
+                  "VALUES (?, 'staffing', 'Short a line cook', 'open', 1, datetime('now','+5 minutes'))", (rid,))
+    it = admin_ops.notifications()["issue_texts"]
+    assert (it["failed_7d"], it["retrying"]) == (1, 1) and it["last_failed_at"].endswith("Z")
+    mine = admin_ops.client_detail(rid)["issue_texts"]
+    assert [r["title"] for r in mine["recent"]] == ["Walk-in at 45F"] and mine["recent"][0]["notify_attempts"] == 3
