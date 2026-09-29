@@ -25,6 +25,8 @@ struct HomeOneThingCard: View {
     /// An attention lead's action — the deck's own handler (publish asks
     /// first, anything else opens its nav).
     var onPrimary: (NeedsAttentionItem) -> Void = { _ in }
+    /// Something changed server-side (a conflict settled) — reload Home.
+    var onChanged: () -> Void = {}
     @State private var explaining = false
     @State private var toast: String?
 
@@ -54,6 +56,10 @@ struct HomeOneThingCard: View {
                 }
                 if let c = item.confidence {
                     ConfidenceLine(confidence: c, recKey: item.recKey, surface: "home", module: "home")
+                }
+                RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer)
+                if let conflict = item.conflict {
+                    RecConflictPanel(conflict: conflict, onSettled: { Task { await viewModel.load() } })
                 }
                 if let cta = item.cta {
                     Button {
@@ -89,6 +95,10 @@ struct HomeOneThingCard: View {
                 HomeMixedText.make(rec.title, size: 18, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if rec.modelWritten == true { ClaimKindTag(kind: nil, modelWritten: true) }
+                if let caution = rec.caution {
+                    RecCautionLine(text: caution)
+                }
+                RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer, retest: rec.retest == true)
                 if let why = rec.why, !why.isEmpty {
                     HomeMixedText.make(why, size: 13.5, weight: 500, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -117,6 +127,9 @@ struct HomeOneThingCard: View {
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle())
                     .disabled(viewModel.tracked.contains(rec.key))
+                }
+                if let conflict = rec.conflict {
+                    RecConflictPanel(conflict: conflict, onSettled: onChanged)
                 }
                 RecAnswerRow(key: rec.key, surface: "home", module: rec.module ?? "home",
                              answers: [.completed, .notForUs])
@@ -224,6 +237,13 @@ struct HomeOneThingCard: View {
                             }
                             .buttonStyle(.plain)
                         }
+                    }
+                    // Advice the hero pulls against (memory round 9/29/26).
+                    if let conflict = ff.conflict {
+                        RecConflictPanel(conflict: conflict, onSettled: {
+                            Task { await viewModel.load() }
+                            onChanged()
+                        })
                     }
                     HomeAskLink(question: "Walk me through this: \(what)")
                     if ff.answerable == true, let key = ff.answerKey {

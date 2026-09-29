@@ -519,6 +519,10 @@ final class HomeFollowThroughViewModel {
             /// What the figure covers (dollars_basis, B4 H7): the whole
             /// schedule's gap, one driver alone …
             var dollarsBasis: String? = nil
+            /// Advice the hero pulls against, for the owner to settle
+            /// (memory round 9/29/26, lever_conflicts). Absent on an older
+            /// server.
+            var conflict: RecConflict? = nil
             /// The monthly figure the hero states — calibrated when sent.
             var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
             var dollarsNote: String? {
@@ -550,7 +554,7 @@ final class HomeFollowThroughViewModel {
                 }
             }
             enum CodingKeys: String, CodingKey {
-                case key, what, why, modules, evidence, alternative, answerable, confidence, money
+                case key, what, why, modules, evidence, alternative, answerable, confidence, money, conflict
                 case dollarsMonthly = "dollars_monthly"
                 case confirmBy = "confirm_by"
                 case linkHeadline = "link_headline"
@@ -581,6 +585,7 @@ final class HomeFollowThroughViewModel {
                 confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
                 claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
                 money = try? c.decodeIfPresent(Money.self, forKey: .money)
+                conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
             }
             /// The key its answer row posts — rec_key, else the pick's own key.
             var answerKey: String? { recKey ?? key }
@@ -821,8 +826,12 @@ final class HomeFollowThroughViewModel {
             let ok: Bool; let outcome: Outcome?; let error: String?
             let tracker: RecTracker?
             let trackerRefused: RecTrackerRefused?
+            /// What the answer does, in the server's words (rec_ledger.
+            /// silence_message — "Noted — Cavnar AI will bring it back in
+            /// 4 weeks", "hidden for you; the owner still sees it").
+            var message: String? = nil
             enum CodingKeys: String, CodingKey {
-                case ok, outcome, error, tracker
+                case ok, outcome, error, tracker, message
                 case trackerRefused = "tracker_refused"
             }
         }
@@ -836,39 +845,61 @@ final class HomeFollowThroughViewModel {
                 retryTransient: false)
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
             await Haptic.success()
-            if kind == "done" {
-                // What Done started measuring, or why nothing did (another
-                // change already on the same number).
-                if let line = RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused) {
-                    return "Marked done \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
-                }
-                if let on = r.outcome?.evaluateOn {
-                    return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
-                }
-            }
-            switch kind {
-            case "done": return "Marked done"
-            case "recommendation": return "Hidden for two weeks"
-            default: return "Noted — it won\u{2019}t come back"
-            }
+            return Self.answerLine(kind: kind, message: r.message,
+                                   trackerLine: RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused),
+                                   evaluateOn: r.outcome?.evaluateOn)
         } catch { errorMessage = "Couldn\u{2019}t save that."; return nil }
+    }
+
+    /// The line an answer leaves on Home: the server's own sentence for what
+    /// the answer does (memory round 9/29/26 — it holds 60 days, a year,
+    /// until the next count …), then, on a Done, what it started measuring.
+    /// The local words are only for an older server that sends no message.
+    static func answerLine(kind: String, message: String?, trackerLine: String?, evaluateOn: String?) -> String {
+        let said = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let said, !said.isEmpty {
+            guard kind == "done" else { return said }
+            if let line = trackerLine { return said + ". " + line }
+            if let on = evaluateOn { return said + ". Measuring from today, result on \(CavnarDate.mdy(on))" }
+            return said
+        }
+        if kind == "done" {
+            // What Done started measuring, or why nothing did (another
+            // change already on the same number).
+            if let line = trackerLine {
+                return "Marked done \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
+            }
+            if let on = evaluateOn {
+                return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
+            }
+        }
+        switch kind {
+        case "done": return "Marked done"
+        case "recommendation": return "Hidden for two weeks"
+        case "snooze": return "Not today \u{2014} it\u{2019}s back tomorrow"
+        default: return "Noted — it won\u{2019}t come back"
+        }
     }
 
     /// Not today (kind "snooze") or hide (kind "recommendation") on a
     /// Needs-attention item — the same answer, through the same route, as a
     /// recommendation. Never offered for a critical item. A second hide
     /// asks why, and that answer arrives as not_for_us with its reason code.
+    /// Returns the line to show — the server's `message` for what the
+    /// answer does, else the local words — or nil when it did not save.
     @discardableResult
     func answerAttention(_ item: NeedsAttentionItem, kind: String, reason: String? = nil,
-                         reasonCode: String? = nil) async -> Bool {
-        let r: OKResponse? = try? await client.send(
+                         reasonCode: String? = nil) async -> String? {
+        struct Resp: Decodable { let ok: Bool; let message: String? }
+        let r: Resp? = try? await client.send(
             "/mobile/api/home/dismiss", method: .post,
             body: DismissBody(key: item.recKey ?? item.type, kind: kind,
                               title: (reason != nil || reasonCode != nil) ? item.title : nil, metric: nil,
                               reason: reason, reasonCode: reasonCode),
             retryTransient: false)
-        if r?.ok == true { await Haptic.success() }
-        return r?.ok == true
+        guard r?.ok == true else { return nil }
+        await Haptic.success()
+        return Self.answerLine(kind: kind, message: r?.message, trackerLine: nil, evaluateOn: nil)
     }
 
     private struct AssignBody: Encodable {

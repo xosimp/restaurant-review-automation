@@ -147,6 +147,11 @@ struct HomeRecommendations: View {
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(quieter) { q in
+                if let back = RecMemoryLines.reviewOn(q.reviewOn) {
+                    HomeMixedText.make("\(q.label): \(back)", size: CavnarType.caption, weight: 500,
+                                       color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Button {
                     Haptic.light()
                     Task {
@@ -217,6 +222,15 @@ struct HomeRecommendations: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HomeMixedText.make(rec.title, size: CavnarType.body, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
+                    // What another module knows against it (M3's trim
+                    // guard) and what was said before about it (memory
+                    // round 9/29/26, M1) — on the row, never behind
+                    // Details: they change how the owner answers.
+                    if let caution = rec.caution {
+                        RecCautionLine(text: caution)
+                    }
+                    RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
+                                  retest: rec.retest == true)
                     if let stake = Self.stake(rec) {
                         HomeMixedText.make(stake, size: CavnarType.secondary, weight: 700,
                                            color: .cavnarInk2, numberColor: .cavnarInk)
@@ -225,6 +239,11 @@ struct HomeRecommendations: View {
                     if let c = rec.confidence {
                         ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
                                        compact: true)
+                    }
+                    // Advice that pulls against other advice: a decision,
+                    // so it stays on the row (DS §12).
+                    if let conflict = rec.conflict {
+                        RecConflictPanel(conflict: conflict, onSettled: onChanged)
                     }
                     HStack(spacing: 16) {
                         primaryButton(rec)
@@ -436,7 +455,7 @@ struct HomeRecommendations: View {
                         submit(rec, kind: kind)
                     }
                 } label: {
-                    Text(kind == "done" ? "Done" : "Pass")
+                    Text(kind == "done" ? "Done" : RecAnswer.notForUs.label)
                         .font(.cavnarBody(12.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }

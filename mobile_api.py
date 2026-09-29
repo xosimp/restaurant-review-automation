@@ -1376,6 +1376,14 @@ def _do_mobile_home(current_user):
                 # critical item (home_brief.attention_answerable).
                 "answerable": bool(a.get("answerable")),
                 "times_hidden": int(a.get("times_hidden") or 0),
+                # What was said before about the item (memory round
+                # 9/29/26, M1): the owner's own earlier answer, a
+                # delegate's decline, and a conflict with other advice —
+                # web Home reads them off the same item. The remap dropped
+                # them, so the phone could not say them.
+                "previous_answer": a.get("previous_answer"),
+                "delegate_answer": a.get("delegate_answer"),
+                "conflict": a.get("conflict"),
             } for a in _attn]
             # home_brief's payload key is "recommendations". This read
             # "recs" — a key that has never existed in it — so the mobile
