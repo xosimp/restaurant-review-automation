@@ -209,3 +209,21 @@ def test_health_route_returns_ai_health(client, monkeypatch, db_path):
     out = client.get("/admin/api/ai/health").get_json()
     assert out["ok"] and set(out["vendors"]) == {"anthropic", "perplexity", "google_places"}
     assert out["status"] in ("operational", "degraded", "outage")
+
+
+def test_budget_and_anomaly_issues_are_in_the_issue_shape(db_path):
+    import admin_ops
+    watch = [{"restaurant_id": 3, "name": "T", "tier": "trial", "scope": "ai_day", "spend": 4.2, "budget": 5.0,
+              "pct": 84.0, "over": False},
+             {"restaurant_id": 3, "name": "T", "tier": "trial", "scope": "places_month", "spend": 31.0,
+              "budget": 30.0, "pct": 103.3, "over": True}]
+    issues = admin_ops.ai_budget_issues(watch)
+    assert [(i["key"], i["severity"]) for i in issues] == [("3:ai_budget:ai_day", "warning"),
+                                                            ("3:ai_budget:places_month", "critical")]
+    assert issues[0]["title"] == "84% of today's AI budget used"
+    assert issues[1]["title"].startswith("Paused:")
+    anomalies = [{"kind": "rate", "restaurant_id": 3, "restaurant": "T", "action": "weather_geocode",
+                  "day": "2026-09-29", "detail": "weather_geocode ran 30x"},
+                 {"kind": "spike", "restaurant_id": 3, "restaurant": "T", "detail": "x"}]
+    (a,) = admin_ops.ai_anomaly_issues(anomalies)
+    assert a["key"] == "ai_anomaly:rate:3:weather_geocode:2026-09-29" and a["severity"] == "warning"

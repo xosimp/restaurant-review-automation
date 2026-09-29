@@ -1005,7 +1005,7 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
             # and an AI-quality event) — not a failing job (#58).
             import ai_utils as _ai_q
             _ai_q.record_quality_event("competitor_insight", "truncated", restaurant_id=restaurant_id,
-                                       detail="the weekly read stopped at max_tokens; no read stored")
+                                       detail="competitor insight was truncated at max_tokens; no read stored")
             return ""
         text = extract_text(msg).strip()
         return finish_competitor_insight(text, prompt, competitors, restaurant_name,

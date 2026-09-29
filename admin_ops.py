@@ -1248,6 +1248,47 @@ def ai_anomalies(days=7, conn=None):
     return out
 
 
+_BUDGET_SCOPE_WORDS = {"ai_day": "today's AI budget", "ai_month": "this month's AI budget",
+                       "places_day": "today's Google Places budget",
+                       "places_month": "this month's Google Places budget"}
+
+
+def ai_budget_issues(watch=None):
+    """budget_watch as issue rows in _issues_for's shape (key, title,
+    severity, detail, action), for the client page and Overview (#122): a
+    warning at AI_BUDGET_WARN_PCT of a ceiling, critical once it is reached
+    (the client's AI or Google lookups are paused until it resets). Keys are
+    "<rid>:ai_budget:<scope>". The integration wave splices these into
+    _issues_for in place of the old "$25 in 30 days" rule."""
+    out = []
+    for w in (budget_watch() if watch is None else watch):
+        over = w["over"]
+        words = _BUDGET_SCOPE_WORDS.get(w["scope"], w["scope"])
+        out.append({"key": f"{w['restaurant_id']}:ai_budget:{w['scope']}", "restaurant_id": w["restaurant_id"],
+                    "title": (f"Paused: {words} is spent" if over else f"{int(w['pct'])}% of {words} used"),
+                    "detail": f"${w['spend']:.2f} of ${w['budget']:.2f} ({w['tier']} ceiling)",
+                    "severity": "critical" if over else "warning", "severity_rank": 2 if over else 1,
+                    "action": "Open AI ops", "action_route": None})
+    return out
+
+
+def ai_anomaly_issues(anomalies=None):
+    """ai_anomalies as platform issue rows for Overview (#140): cost and
+    rate anomalies and loops are warnings, keyed by kind, restaurant, action
+    and day so a new occurrence is a new issue."""
+    out = []
+    for a in (ai_anomalies(days=2) if anomalies is None else anomalies):
+        if a["kind"] not in ("cost", "rate", "loop"):
+            continue
+        out.append({"key": f"ai_anomaly:{a['kind']}:{a['restaurant_id']}:{a.get('action') or ''}:{a.get('day') or ''}",
+                    "restaurant_id": a["restaurant_id"], "restaurant": a.get("restaurant"),
+                    "title": {"cost": "AI spend well above its usual day", "rate": "An AI action running far more "
+                              "often than usual", "loop": "An AI action is looping"}[a["kind"]],
+                    "detail": a["detail"], "severity": "critical" if a["kind"] == "loop" else "warning",
+                    "severity_rank": 2 if a["kind"] == "loop" else 1, "action": "Open AI ops", "action_route": None})
+    return out
+
+
 def ai_ops(days=30):
     """The AI page (Operations → AI): spend, calls and every outcome by
     vendor, action and client; blocked calls by reason; p50/p95 latency by

@@ -900,9 +900,11 @@ TRIGGERS = ("owner", "scheduler", "admin", "system")
 
 _CTX = contextvars.ContextVar("cavnar_ai_ctx", default=None)
 # The last provider call made in this context — what validation rows and
-# stored reads link to (#117).
+# stored reads link to (#117). A request thread is reused, so the link only
+# holds for a short while: a verdict or a stored read follows its call within
+# seconds, and an older call on the same thread is some other request's.
 _LAST_CALL = contextvars.ContextVar("cavnar_ai_last_call", default=None)
-_LAST_CALL_LINK_SECONDS = 600
+_LAST_CALL_LINK_SECONDS = 120
 
 
 @contextlib.contextmanager
