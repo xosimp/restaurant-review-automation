@@ -1275,8 +1275,17 @@ final class AccountViewModel {
 
     // MARK: - Settings audit additions
 
-    private struct ActivityResponse: Decodable { let ok: Bool; let events: [AccountActivityEvent] }
+    private struct ActivityResponse: Decodable {
+        let ok: Bool
+        let events: [AccountActivityEvent]
+        /// The lasting, attributed change history (change_log.for_viewer —
+        /// memory round 9/29/26, M7). Read element by element; absent on
+        /// an older server.
+        var changes: HomeLenientList<AccountChange>? = nil
+    }
     var activity: [AccountActivityEvent] = []
+    /// "Labor target: 30 → 28, by the owner on 9/12/26", newest first.
+    var changes: [AccountChange] = []
     var isLoadingActivity = false
 
     func loadActivity() async {
@@ -1285,6 +1294,7 @@ final class AccountViewModel {
         do {
             let response: ActivityResponse = try await client.send("/mobile/api/account/activity", hapticOnError: false)
             activity = response.events
+            changes = response.changes?.items ?? []
         } catch {}
     }
 

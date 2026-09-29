@@ -130,20 +130,34 @@ struct AccountAutomationView: View {
     private var trust: some View {
         AccountSection(kicker: "Why it stopped asking") {
             if let t = viewModel.trust {
-                AccountKVRow(label: "Review replies") {
+                // What went back to the owner, and why — asked again rather
+                // than an automation going quiet on its own (M1 trust_ledger).
+                ForEach(Array(t.lapsed.enumerated()), id: \.offset) { _, lapse in
+                    CavnarCaveat(title: "Back to you", detail: lapse.text)
+                        .padding(.vertical, 6)
+                }
+                AccountKVRow(label: "Review replies", showsDivider: t.bandsDetail == nil) {
                     AccountPill(text: t.earnedBands.isEmpty ? "Not yet" : "Trusted on " + t.earnedBands.joined(separator: ", "),
                                 on: !t.earnedBands.isEmpty)
                 }
-                AccountKVRow(label: "Schedule publishing", showsDivider: !t.suppliers.isEmpty || !t.invoices.isEmpty) {
+                if let detail = t.bandsDetail { trustDetail(detail) }
+                let undone = t.schedule?.undoneOn.map { "You undid an automatic publish on \($0) \u{2014} the clean runs count again from there" }
+                AccountKVRow(label: "Schedule publishing",
+                             showsDivider: undone == nil && (!t.suppliers.isEmpty || !t.invoices.isEmpty)) {
                     AccountPill(text: t.schedule.map { $0.uneditedInARow >= $0.needed ? "Earned" : "\($0.uneditedInARow) of \($0.needed)" } ?? "—",
                                 on: (t.schedule?.uneditedInARow ?? 0) >= (t.schedule?.needed ?? 1))
                 }
+                if let undone { trustDetail(undone, showsDivider: !t.suppliers.isEmpty || !t.invoices.isEmpty) }
                 ForEach(Array(t.suppliers.enumerated()), id: \.offset) { i, s in
-                    AccountKVRow(label: "Orders to \(s.name ?? "supplier")",
-                                 showsDivider: i < t.suppliers.count - 1 || !t.invoices.isEmpty) {
+                    let more = i < t.suppliers.count - 1 || !t.invoices.isEmpty
+                    let undoneLine = s.undoneAt.map { at in
+                        "Undone \(CavnarDate.mdyLocal(at))" + (s.cleanSinceUndo.map { " \u{00B7} \($0) clean since" } ?? "")
+                    }
+                    AccountKVRow(label: "Orders to \(s.name ?? "supplier")", showsDivider: undoneLine == nil && more) {
                         AccountPill(text: (s.trusted ?? false) ? "Earned" : "\(s.orders ?? 0) of \((s.orders ?? 0) + (s.needed ?? 0))",
                                     on: s.trusted ?? false)
                     }
+                    if let undoneLine { trustDetail(undoneLine, showsDivider: more) }
                 }
                 ForEach(Array(t.invoices.enumerated()), id: \.offset) { i, v in
                     AccountKVRow(label: "Invoices from \(v.supplier ?? "supplier")", showsDivider: i < t.invoices.count - 1) {
@@ -165,6 +179,17 @@ struct AccountAutomationView: View {
 }
 
 extension AccountAutomationView {
+    /// A record's detail under its row — dates M/D/YY, figures in the
+    /// number face — then the row's divider.
+    fileprivate func trustDetail(_ text: String, showsDivider: Bool = true) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HomeMixedText.make(text, size: 13.5, weight: 500, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 9)
+            if showsDivider { AccountRowDivider() }
+        }
+    }
+
     /// What Cavnar AI remembers moved to its own sheet, Account → Memory
     /// (memory round 9/29/26, M2): who said each fact, who may read it,
     /// until when, the lanes and the archive. This row opens it.
@@ -208,13 +233,60 @@ final class AccountAutomationViewModel {
     }
     struct WeeklyPlan: Decodable { let ok: Bool; let enabled: Bool }
     struct SendDelay: Decodable { let ok: Bool; let minutes: Int; let choices: [Int] }
-    struct TrustBand: Decodable { let trusted: Bool? }
+    /// One reply band's record (models.auto_approve_trust): when it earned
+    /// trust, the lapse that took it back, and how much of the record is
+    /// auto-posts left standing a week (each counts half) — memory round
+    /// 9/29/26, M1 trust_ledger. All lenient.
+    struct TrustBand: Decodable {
+        let trusted: Bool?
+        var earnedAt: String? = nil
+        var lapsed: Lapse? = nil
+        var weakCredit: Double? = nil
+        struct Lapse: Decodable { let at: String?; let reason: String? }
+        enum CodingKeys: String, CodingKey {
+            case trusted, lapsed
+            case earnedAt = "earned_at"
+            case weakCredit = "weak_credit"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            trusted = (try? c.decodeIfPresent(Bool.self, forKey: .trusted)) ?? nil
+            earnedAt = (try? c.decodeIfPresent(String.self, forKey: .earnedAt)) ?? nil
+            lapsed = (try? c.decodeIfPresent(Lapse.self, forKey: .lapsed)) ?? nil
+            weakCredit = (try? c.decodeIfPresent(Double.self, forKey: .weakCredit)) ?? nil
+        }
+    }
     struct TrustSchedule: Decodable {
         let enabled: Bool?; let uneditedInARow: Int; let needed: Int
-        enum CodingKeys: String, CodingKey { case enabled, needed; case uneditedInARow = "unedited_in_a_row" }
+        /// When the owner last undid an automatic publish (M/D/YY): the
+        /// clean runs count again from there (M1 "undo").
+        var undoneOn: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case enabled, needed
+            case uneditedInARow = "unedited_in_a_row"
+            case undoneOn = "undone_on"
+        }
     }
     struct TrustAutoApprove: Decodable { let enabled: Bool?; let bands: [String: TrustBand]? }
-    struct TrustSupplier: Decodable { let name: String?; let trusted: Bool?; let orders: Int?; let needed: Int? }
+    struct TrustSupplier: Decodable {
+        let name: String?; let trusted: Bool?; let orders: Int?; let needed: Int?
+        /// The last undone automatic order to this supplier, and the clean
+        /// orders since (ordering.supplier_trust — M1 "undo").
+        var undoneAt: String? = nil
+        var cleanSinceUndo: Int? = nil
+        enum CodingKeys: String, CodingKey {
+            case name, trusted, orders, needed
+            case undoneAt = "undone_at"
+            case cleanSinceUndo = "clean_since_undo"
+        }
+    }
+    /// An automation whose trust lapsed and has not been earned back —
+    /// what the owner is re-asked about (automation_trust.lapsed_items).
+    struct TrustLapse: Decodable, Hashable {
+        let text: String
+        var lapsedOn: String? = nil
+        enum CodingKeys: String, CodingKey { case text; case lapsedOn = "lapsed_on" }
+    }
     struct TrustInvoice: Decodable {
         let supplier: String?; let trusted: Bool?; let fullAccepts: Int?; let needed: Int?
         enum CodingKeys: String, CodingKey { case supplier, trusted, needed; case fullAccepts = "full_accepts" }
@@ -225,9 +297,38 @@ final class AccountAutomationViewModel {
         let schedule: TrustSchedule?
         let suppliers: [TrustSupplier]
         let invoices: [TrustInvoice]
-        enum CodingKeys: String, CodingKey { case ok, schedule, suppliers, invoices; case autoApprove = "auto_approve" }
+        var lapsed: [TrustLapse] = []
+        enum CodingKeys: String, CodingKey {
+            case ok, schedule, suppliers, invoices, lapsed
+            case autoApprove = "auto_approve"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            autoApprove = (try? c.decodeIfPresent(TrustAutoApprove.self, forKey: .autoApprove)) ?? nil
+            schedule = (try? c.decodeIfPresent(TrustSchedule.self, forKey: .schedule)) ?? nil
+            suppliers = (try? c.decodeIfPresent([TrustSupplier].self, forKey: .suppliers)) ?? []
+            invoices = (try? c.decodeIfPresent([TrustInvoice].self, forKey: .invoices)) ?? []
+            lapsed = (try? c.decodeIfPresent([TrustLapse].self, forKey: .lapsed)) ?? []
+        }
         var earnedBands: [String] {
             (autoApprove?.bands ?? [:]).filter { $0.value.trusted ?? false }.keys.sorted(by: >).map { "\($0)★" }
+        }
+
+        /// "5★ since 9/2/26 · 4★ since 9/10/26 · 1.5 of the record is
+        /// auto-posts left standing a week (each counts half)" — nil with
+        /// nothing earned.
+        var bandsDetail: String? {
+            let bands = (autoApprove?.bands ?? [:]).filter { $0.value.trusted ?? false }
+                .sorted { $0.key > $1.key }
+            guard !bands.isEmpty else { return nil }
+            var parts = bands.compactMap { k, b in b.earnedAt.map { "\(k)★ since \(CavnarDate.mdyLocal($0))" } }
+            let weak = bands.map { $0.value.weakCredit ?? 0 }.reduce(0, +)
+            if weak > 0 {
+                let w = weak == weak.rounded() ? String(Int(weak)) : String(format: "%.1f", weak)
+                parts.append("\(w) of the record is auto-posts left standing a week (each counts half)")
+            }
+            return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
         }
     }
     private struct EnabledBody: Encodable { let enabled: Bool }
