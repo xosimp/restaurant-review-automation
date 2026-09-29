@@ -1368,6 +1368,28 @@ DSR_EMAIL_ACTIONS = 3
 DSR_EMAIL_INSIGHTS = 2
 
 
+def _dsr_days(d: dict):
+    """(the report night's weekday, the next day's) from its business date —
+    the report is read the morning after, so it names the day ("Monday's
+    score"), never "Today's" or "tonight" (owner, 9/29/26)."""
+    from datetime import date as _date, timedelta as _td
+    try:
+        day = _date.fromisoformat(str(d.get("business_date"))[:10])
+    except (TypeError, ValueError):
+        return None, None
+    return day.strftime("%A"), (day + _td(days=1)).strftime("%A")
+
+
+def _dsr_label(d: dict, key: str, fallback: str) -> str:
+    card = d.get("scorecard") if isinstance(d.get("scorecard"), dict) else {}
+    lab = (card.get("labels") or {}).get(key)
+    if lab:
+        return esc(lab).replace("\u2019", "&rsquo;").replace("’", "&rsquo;")
+    day, nxt = _dsr_days(d)
+    name = nxt if key == "priorities" else day
+    return f"{esc(name)}&rsquo;s {fallback}" if name else f"The night&rsquo;s {fallback}"
+
+
 def dsr_scorecard_sections(card: dict, d: dict) -> list:
     """The Owner DSR's top, in the email (dsr.scorecard), SCORE FIRST
     (9/25/26, ID1-20/23): Today's score — the verdict, the overall score out
@@ -1382,7 +1404,7 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
     verdict = card.get("verdict")
     sales = next((c for c in card.get("components") or [] if c.get("key") == "sales"), None)
     hero_sales = bool(sales and sales.get("measured") and d.get("net_label"))
-    head = report_eyebrow("Today&rsquo;s score")
+    head = report_eyebrow(_dsr_label(d, "score", "score"))
     if verdict and card.get("overall") is not None:
         color = tones.get(verdict.get("tone"), BRAND["ink"])
         head += (f'<p style="font-family:{_SANS};font-size:24px;font-weight:700;color:{BRAND["ink"]};margin:0">'
@@ -1427,9 +1449,9 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
     wins = [esc(w["text"]) for w in card.get("wins") or [] if w.get("text")][:SHOWN_ITEMS]
     risks = [esc(r["text"]) for r in card.get("risks") or [] if r.get("text")][:SHOWN_ITEMS]
     if wins:
-        out.append(report_eyebrow("Today&rsquo;s wins", BRAND["good"]) + report_bullets(wins, BRAND["good"]))
+        out.append(report_eyebrow(_dsr_label(d, "wins", "wins"), BRAND["good"]) + report_bullets(wins, BRAND["good"]))
     if risks:
-        out.append(report_eyebrow("Today&rsquo;s risks", BRAND["warn"]) + report_bullets(risks, BRAND["warn"]))
+        out.append(report_eyebrow(_dsr_label(d, "risks", "risks"), BRAND["warn"]) + report_bullets(risks, BRAND["warn"]))
     return out
 
 
@@ -1476,7 +1498,7 @@ def dsr_tomorrow_sections(d: dict) -> list:
             # The weekday and its M/D/YY date, as the app's Tomorrow card.
             from time_utils import mdy as _mdy
             when = esc(t.get("weekday") or "") + (f" {esc(_mdy(t['date']))}" if t.get("date") else "")
-            out.append(report_eyebrow(f"Tomorrow &middot; {when}", BRAND["warn"])
+            out.append(report_eyebrow(f"The day after &middot; {when}", BRAND["warn"])
                        + report_bullets(lines, BRAND["warn"]))
     return out
 
@@ -1521,7 +1543,7 @@ def dsr_manager_sections(d: dict) -> list:
         if verdict and verdict.get("text"):
             line = (f'<p style="font-family:{_SANS};font-size:16px;font-weight:700;margin:0 0 14px;'
                     f'color:{tones.get(verdict.get("tone"), BRAND["ink"])}">{esc(verdict["text"])}</p>')
-        out.append(report_eyebrow("Today&rsquo;s shift") + line
+        out.append(report_eyebrow(_dsr_label(d, "shift", "shift")) + line
                    + report_stats([(esc(r["value_text"]), esc(r["label"]), tones.get(r.get("tone")))
                                    for r in sh.get("rows") or []]))
     return out
@@ -1647,7 +1669,7 @@ def dsr_email(d: dict):
                                    for a in actions[1:]])
             more = (f'<div style="font-family:{_SANS};font-size:12.5px;color:{BRAND["muted"]};margin-top:4px">'
                     f'{more_actions} more in the full report</div>' if more_actions else "")
-            sections.append(report_action("Tomorrow&rsquo;s priorities", first)
+            sections.append(report_action(_dsr_label(d, "priorities", "priorities"), first)
                             + (f'<div style="margin-top:14px">{rest}</div>' if rest else "") + more)
         sections.extend(dsr_tomorrow_sections(d))
         if kp:

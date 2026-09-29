@@ -4,6 +4,23 @@ import SwiftUI
 /// "—" everywhere and never "$0", "0%" or a blank (DESIGN_SYSTEM.md §10:
 /// unknown is never zero).
 enum DSRFormat {
+    /// The weekday of an ISO business date ("Monday"), `offset` days on —
+    /// the report names the night it is about, never "Today" (owner, 9/29/26).
+    static func weekday(_ iso: String?, offset: Int = 0) -> String? {
+        guard let iso, isISODate(iso) else { return nil }
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: String(iso.prefix(10))) else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        guard let day = cal.date(byAdding: .day, value: offset, to: d) else { return nil }
+        f.dateFormat = "EEEE"
+        return f.string(from: day)
+    }
+
     static let dash = "\u{2014}"
     private static let minus = "\u{2212}"
 

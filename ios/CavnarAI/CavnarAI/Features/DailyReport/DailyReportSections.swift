@@ -84,10 +84,11 @@ struct DSRInsight: Decodable, Hashable, Identifiable {
 }
 
 struct DSRTomorrow: Decodable, Hashable {
-    /// "Tomorrow · Friday · 9/26/26" — the weekday AND the M/D/YY date, as
-    /// the web heads it (D3-13).
+    /// "The day after · Friday · 9/26/26" — the weekday AND the M/D/YY date,
+    /// as the web heads it (D3-13). Not "Tomorrow": the report is read the
+    /// morning after the night it covers (owner, 9/29/26).
     var heading: String {
-        ["Tomorrow", weekday, date.flatMap { DSRFormat.isISODate($0) ? CavnarDate.mdy($0) : nil }]
+        ["The day after", weekday, date.flatMap { DSRFormat.isISODate($0) ? CavnarDate.mdy($0) : nil }]
             .compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
@@ -260,9 +261,11 @@ struct DSRKPIGrid: View {
 
 struct DSRShiftCard: View {
     let shift: DSRShift
+    /// The report night's weekday, so the kicker reads "Monday's shift".
+    var dayName: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: "Today's shift")
+            DSRKicker(text: dayName.map { "\($0)'s shift" } ?? "The night's shift")
             if let verdict = shift.verdict, !verdict.isEmpty {
                 HomeMixedText.make(verdict, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)

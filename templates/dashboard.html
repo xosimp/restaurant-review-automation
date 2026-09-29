@@ -6954,7 +6954,8 @@ svg:hover .hb-xh{opacity:1}
     for(i=0;i<cs.length;i++)if(cs[i]&&cs[i].key==='sales')sales=cs[i];
     var sb=p&&p.facts&&p.facts.blocks&&p.facts.blocks.sales,net=sb&&sb.status==='ready'&&sb.metrics?sb.metrics.net:null;
     var heroSales=!!(sales&&sales.measured&&isNum(net));
-    var h='<section class="hb-card hero dr-score" aria-label="Today\u2019s score"><div class="hb-kicker">Today\u2019s score</div><div class="top"><div class="lh">';
+    var lb=c.labels||{},sk=lb.score||'The night\u2019s score';
+    var h='<section class="hb-card hero dr-score" aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+'</div><div class="top"><div class="lh">';
     h+=v?'<span class="verdict '+esc(v.tone||'')+'"><i aria-hidden="true"></i>'+esc(v.label)+'</span>':'<span class="verdict"><i aria-hidden="true"></i>Not scored yet</span>';
     if(heroSales){var vs=isNum(sales.score)?sales.value:sales.detail;
       h+='<div class="net">'+hn(esc(money(net)))+'<small>net</small></div>'
@@ -6993,11 +6994,13 @@ svg:hover .hb-xh{opacity:1}
     b.innerHTML=open?'Show less':hn(n)+' more'+(noun?' '+esc(noun):'');
   });
   function winsRisksHtml(c){
-    var w=c.wins||[],r=c.risks||[];
-    return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>Today\u2019s wins</span></div>'
-      +(w.length?wrItems(w,'win','<i class="cv-ok"></i>'):'<div class="hb-empty">Nothing stood out tonight.</div>')+'</div>'
-      +'<div class="hb-card"><div class="hb-h3"><span>Today\u2019s risks</span></div>'
-      +(r.length?wrItems(r,'risk','<i class="cv-warn"></i>'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
+    // The report is about a night already over (owner, 9/29/26): the
+    // server names the day - "Monday's wins" - never "Today's" or "tonight".
+    var w=c.wins||[],r=c.risks||[],lb=c.labels||{};
+    return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>'+esc(lb.wins||'The night\u2019s wins')+'</span></div>'
+      +(w.length?wrItems(w,'win','<i class="cv-ok"></i>'):'<div class="hb-empty">'+esc(lb.no_wins||'Nothing stood out that night.')+'</div>')+'</div>'
+      +'<div class="hb-card"><div class="hb-h3"><span>'+esc(lb.risks||'The night\u2019s risks')+'</span></div>'
+      +(r.length?wrItems(r,'risk','<i class="cv-warn"></i>'):'<div class="hb-empty">'+esc(lb.no_risks||'Nothing to watch from that night.')+'</div>')+'</div></div>';
   }
   // The night's report, top to bottom (SCORE FIRST, 9/25/26 owner decision;
   // DESIGN_SYSTEM.md "The nightly report's order"). Owner: Today's score as
@@ -7019,7 +7022,7 @@ svg:hover .hb-xh{opacity:1}
     var h='',mgr=p&&p.view==='manager',sc=p&&p.scorecard;
     if(sc)h+=scoreHtml(sc,p)+leadHtml(n,ck,mgr,false)+winsRisksHtml(sc);
     else h+=leadHtml(n,ck,mgr,true);
-    if(mgr){h+=shiftHtml(p.shift);h+=kpisHtml(notIn(p.kpis,p.operations),p);h+=opsHtml(p.operations);}
+    if(mgr){h+=shiftHtml(p.shift,drDayNames(p));h+=kpisHtml(notIn(p.kpis,p.operations),p);h+=opsHtml(p.operations);}
     n=n||{};
     if(!sc){var ww=n.went_well||[],na=n.needs_attention||[];
       if(ww.length||na.length){h+='<div class="dr-two">';
@@ -7027,7 +7030,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
     var acts=n.actions_tomorrow||[];
     if(acts.length){
-      h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>Tomorrow\u2019s priorities <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
+      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+' <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
         // The first three show; the rest wait hidden in the same grid, and
         // "N more" under it reveals them above itself (ID1-15, 9/28/26).
@@ -7132,12 +7135,22 @@ svg:hover .hb-xh{opacity:1}
     return h;
   }
   // Manager: Today's shift and Operations.
-  function shiftHtml(sh){
+  // The night's weekday and the next one, from the report's own business
+  // date: labels for views without the owner's scorecard (the manager's).
+  var DR_DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function drDayNames(p){
+    var bd=(p&&p.business_date)||(p&&p.facts&&p.facts.business_date),m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(bd||''));
+    if(!m)return null;
+    var d=new Date(+m[1],+m[2]-1,+m[3]);
+    return {day:DR_DAYS[d.getDay()],next:DR_DAYS[(d.getDay()+1)%7]};
+  }
+  function shiftHtml(sh,dn){
     if(!sh)return '';
     // The one verdict line (dsr.kpis.shift_verdict, ID1-21): labor against
     // its target, then what went wrong on the floor.
     var sv=sh.verdict&&sh.verdict.text?'<div class="dr-shift-v '+esc(sh.verdict.tone||'')+'">'+prose(sh.verdict.text)+'</div>':'';
-    var h='<section class="hb-card dr-shift" aria-label="Today\u2019s shift"><div class="hb-kicker">Today\u2019s shift</div>'+sv+'<div class="dr-shift-rows">';
+    var sk=dn?dn.day+'\u2019s shift':'The night\u2019s shift';
+    var h='<section class="hb-card dr-shift" aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+'</div>'+sv+'<div class="dr-shift-rows">';
     for(var i=0;i<(sh.rows||[]).length;i++){var r=sh.rows[i];h+='<div class="c '+esc(r.tone||'')+'"><div class="v">'+hn(esc(r.value_text))+'</div><div class="k">'+esc(r.label)+'</div></div>';}
     h+='</div>'+(sh.note?'<div class="dr-note">'+esc(sh.note)+'</div>':'')+'</section>';
     return h;
@@ -7152,7 +7165,7 @@ svg:hover .hb-xh{opacity:1}
   function tomorrowHtml(t,n){
     if(!t)return '';
     var it=t.items||[],fc=t.forecast,cf=t.confidence;
-    var h='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>'+esc(t.weekday||'Tomorrow')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
+    var h='<div class="hb-sh"><div><div class="k">The day after</div><h2>'+esc(t.weekday||'The day after')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
     h+='<div class="hb-card"><div class="hb-h3"><span>Get ready for</span></div>';
     if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'<i class="cv-warn"></i>':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
     else h+='<div class="hb-empty">Nothing on the books to prep for.</div>';
@@ -7257,12 +7270,12 @@ svg:hover .hb-xh{opacity:1}
       // claimed at all), and whether the night landed inside it (K8).
       if(isNum(m.forecast_net)){var fb=bl.forecast||{};
         if(isNum(m.forecast_low)&&isNum(m.forecast_high)){var inR=isNum(m.net)&&m.net>=m.forecast_low&&m.net<=m.forecast_high;
-          h+=note('The forecast was '+hn(money(m.forecast_net))+(fb.basis?' ('+esc(fb.basis)+')':'')+', with a likely range of '+hn(money(m.forecast_low))+'–'+hn(money(m.forecast_high))+(isNum(m.net)?' — tonight landed '+(inR?'inside':'outside')+' it.':'.'));}
+          h+=note('The forecast was '+hn(money(m.forecast_net))+(fb.basis?' ('+esc(fb.basis)+')':'')+', with a likely range of '+hn(money(m.forecast_low))+'–'+hn(money(m.forecast_high))+(isNum(m.net)?' — the night landed '+(inR?'inside':'outside')+' it.':'.'));}
         else if(has(m,'forecast_low'))h+=note('The forecast was '+hn(money(m.forecast_net))+(fb.basis?' ('+esc(fb.basis)+')':'')+' — too few past nights to state a range yet.');
         // What the night's measured effects moved it from (baselines.
         // forecast base_net and effects, event_memory - memory round
         // 9/29/26): the typical night first, then each effect as a chip.
-        if(isNum(fb.base_net)&&(fb.effects||[]).length)h+=note('Before tonight\u2019s measured effects, a typical night here was '+hn(money(fb.base_net))+'.')+drEffects(fb.effects);}
+        if(isNum(fb.base_net)&&(fb.effects||[]).length)h+=note('Before that night\u2019s measured effects, a typical night here was '+hn(money(fb.base_net))+'.')+drEffects(fb.effects);}
       // No forecast to compare with, and why (demand.forecast_net's reason).
       else if(bl.forecast&&bl.forecast.reason)h+=note('No forecast to compare with: '+prose(cap(String(bl.forecast.reason).replace(/\.$/,'')))+'.');
       return h;},

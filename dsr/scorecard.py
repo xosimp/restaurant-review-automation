@@ -35,6 +35,7 @@ are still scored, but their tone never goes red (Benchmarking re-audit #10).
 Owner view only: the budget and the food estimate are the owner's
 (dsr.access), so the manager's report keeps its own layout.
 """
+import re
 from datetime import date, timedelta
 
 import dsr
@@ -338,9 +339,53 @@ def _signals(blocks, restaurant, day, db_path, comps):
     return wins, risks
 
 
+# What each measured line is about, so a narrative line on the same subject
+# is not listed again in other words ("8.03 overtime hours" and "Overtime hit
+# 8.03 hours on a night that also ran a full crew" were both Monday's risks;
+# owner, 9/29/26). Exact-text matching let every rewording through.
+_TOPIC = {
+    "overtime": r"\bovertime\b",
+    "replies": r"\brepl(?:y|ies)\b",
+    "labor_target": r"\blabor\b[^.]*\b(?:target|goal)\b",
+    "no_shows": r"never clocked in|no[- ]?shows?\b",
+    "sales_budget": r"\bbudget\b",
+    "avg_ticket": r"\baverage (?:ticket|check)\b",
+    "food_target": r"\bfood cost\b",
+    "rating": r"\brated\b|\brating\b",
+    "five_star": r"\bfive[- ]star\b|\b5[- ]?star\b|\b5★",
+    "negative": r"\bnegative reviews?\b|\b[12][- ]?star\b",
+    "stock:more": r"\bcritically low\b|\brunning low\b",
+}
+
+
+def _topic_rx(key):
+    if not key:
+        return None
+    if key in _TOPIC:
+        return _TOPIC[key]
+    if key.startswith("cat:"):
+        return r"\b" + re.escape(key[4:]) + r"\b[^.]*\bsales\b"
+    if key.startswith("stock:"):
+        return r"\b" + re.escape(key[6:]) + r"\b|\brunning low\b|\bcritically low\b"
+    return None
+
+
+def _same_subject(text, items):
+    t = (text or "").lower()
+    for o in items:
+        if t == (o.get("text") or "").lower():
+            return True
+        rx = _topic_rx(o.get("key"))
+        if rx and re.search(rx, t, re.I):
+            return True
+    return False
+
+
 def _top(scored, extra, limit=MAX_ITEMS):
     """The strongest signals first, then the narrative's verified lines to
-    fill the list, each once."""
+    fill the list — each subject once: a narrative line about something a
+    measured line already says (overtime, replies waiting, labor against
+    target, ...) is left out, however it is worded."""
     out, seen = [], set()
     for _w, item in sorted(scored, key=lambda t: -t[0]):
         if item["key"] in seen:
@@ -349,10 +394,11 @@ def _top(scored, extra, limit=MAX_ITEMS):
         out.append(dict(item, source="measured"))
         if len(out) >= limit:
             return out
+    measured = list(out)
     for t in extra:
         if len(out) >= limit:
             break
-        if t and t.lower() not in {o["text"].lower() for o in out}:
+        if t and not _same_subject(t, measured) and t.lower() not in {o["text"].lower() for o in out}:
             out.append({"text": t, "key": None, "source": "narrative"})
     return out
 
@@ -386,14 +432,23 @@ def build(facts, restaurant, narrative=None, db_path=None) -> dict:
         wins, risks = [], []
     n = narrative or {}
     measured = sum(1 for c in comps if c.get("measured") and _num(c.get("score")))
+    # The report is about a night already over, read the next morning: its
+    # labels name the day ("Monday's score"), never "Today's" or "tonight"
+    # (owner, 9/29/26). The priorities are for the day after it.
+    day_name = day.strftime("%A")
+    next_name = (day + timedelta(days=1)).strftime("%A")
     return {
+        "labels": {"score": f"{day_name}’s score", "wins": f"{day_name}’s wins",
+                   "risks": f"{day_name}’s risks", "shift": f"{day_name}’s shift",
+                   "priorities": f"{next_name}’s priorities", "day": day_name, "next_day": next_name,
+                   "no_wins": "Nothing stood out that night.", "no_risks": "Nothing to watch from that night."},
         "overall": score,
         "verdict": verdict,
         "components": comps,
         "wins": _top(wins, _texts(n.get("went_well"))),
         "risks": _top(risks, _texts(n.get("needs_attention"))),
-        "basis": ("A weighted score of what was measured tonight — sales 40, labor 25, food cost 15, guests 20"
+        "basis": ("A weighted score of what was measured that night — sales 40, labor 25, food cost 15, guests 20"
                   if score is not None else
-                  "Not enough was measured tonight to score the day (sales plus one more are needed)"),
+                  "Not enough was measured that night to score it (sales plus one more are needed)"),
         "scored_components": measured,
     }

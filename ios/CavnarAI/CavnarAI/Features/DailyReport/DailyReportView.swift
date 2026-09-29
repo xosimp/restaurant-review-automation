@@ -350,7 +350,7 @@ struct DailyReportView: View {
             DSRWinsRisks(card: card)
         }
         if !report.isOwnerView, let shift = report.shift {
-            DSRShiftCard(shift: shift)
+            DSRShiftCard(shift: shift, dayName: DSRFormat.weekday(report.businessDate))
         }
         if report.scorecard == nil, let n = report.narrative {
             if !n.wentWell.isEmpty {
@@ -360,7 +360,7 @@ struct DailyReportView: View {
                 titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
             }
         }
-        if let n = report.narrative { narrativeSections(n) }
+        if let n = report.narrative { narrativeSections(n, report: report) }
         if let t = report.tomorrow {
             DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
         }
@@ -478,9 +478,11 @@ struct DailyReportView: View {
     /// Tomorrow's priorities (the narrative's ranked actions) and the
     /// verification footer; the lead, lists and insights render above.
     @ViewBuilder
-    private func narrativeSections(_ n: DSRNarrative) -> some View {
+    private func narrativeSections(_ n: DSRNarrative, report: DSRReport) -> some View {
         if !n.actionsTomorrow.isEmpty {
-            titledCard("Tomorrow's priorities") {
+            titledCard(report.scorecard?.labels["priorities"]
+                       ?? DSRFormat.weekday(report.businessDate, offset: 1).map { "\($0)'s priorities" }
+                       ?? "Next priorities") {
                 VStack(alignment: .leading, spacing: 14) {
                     // The top 3 visible (density #2); the rest one tap away.
                     let actions = showingAllPriorities ? n.actionsTomorrow

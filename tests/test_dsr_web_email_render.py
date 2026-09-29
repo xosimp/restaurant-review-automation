@@ -216,7 +216,7 @@ def test_the_email_puts_the_priorities_before_at_most_two_insights():
     acts = [{"text": "Move a server to the patio.", "key": None, "why": None, "confidence": None}]
     _s, html, _p = emails.dsr_email(_digest(insights=ins, actions=acts))
     assert "AI insights" in html and "Patio needs a runner." in html and "Third insight." not in html
-    assert html.index("Tomorrow&rsquo;s priorities") < html.index("AI insights")
+    assert html.index("&rsquo;s priorities") < html.index("AI insights")
 
 
 def test_insights_never_restate_a_win_a_risk_or_a_priority():
@@ -271,7 +271,7 @@ def test_the_email_tomorrow_carries_its_date():
     import emails
     t = {"date": "2026-09-20", "weekday": "Sunday", "items": [{"text": "School football game"}]}
     _s, html, _p = emails.dsr_email(_digest(tomorrow=t))
-    assert "Tomorrow &middot; Sunday 9/20/26" in html
+    assert "The day after &middot; Sunday 9/20/26" in html
 
 
 def test_the_managers_email_never_repeats_an_operations_kpi():
@@ -328,8 +328,8 @@ def _plain(html):
 
 def test_the_owner_report_reads_score_first_then_the_actions():
     html = _render(_owner_night())
-    order = [html.index(k) for k in ('aria-label="Today’s score"', 'aria-label="Executive summary"',
-                                     "Today’s wins", "Tomorrow’s priorities", ">Sunday", "Top KPIs",
+    order = [html.index(k) for k in ('’s score"><div class="hb-kicker">', 'aria-label="Executive summary"',
+                                     "’s wins", "’s priorities", "The day after</div><h2>Sunday", "Top KPIs",
                                      "AI insights", "Block by block", "How the night was built")]
     assert order == sorted(order)
     # The score is the hero, with the night's net the biggest figure on it;
@@ -381,7 +381,7 @@ def test_the_manager_report_leads_with_labor_against_target():
                  shift={"rows": [{"key": "no_shows", "label": "No-shows", "value_text": "1", "tone": "warn"}],
                         "verdict": {"text": "Labor 31.0%, 1.0 pts over starting target · 1 no-show", "tone": "warn"}})
     html = _render(p)
-    assert html.index("Today’s shift") < html.index("Top KPIs") < html.index(">Operations<")
+    assert html.index("’s shift") < html.index("Top KPIs") < html.index(">Operations<")
     assert 'class="dr-shift-v warn"' in html and "1 no-show" in html
 
 
@@ -437,8 +437,8 @@ def test_the_email_reads_score_first_with_three_wins_and_four_kpis():
                                             kpis_headline=["prime_pct", "avg_ticket", "guests", "splh"],
                                             tomorrow={"weekday": "Sunday", "date": "2026-09-20",
                                                       "items": [{"text": "Game day"}]}))
-    order = [html.index(k) for k in ("Today&rsquo;s score", "$9,000", "Executive summary", "Today&rsquo;s wins",
-                                     "Today&rsquo;s risks", "Tomorrow&rsquo;s priorities", "Tomorrow &middot;",
+    order = [html.index(k) for k in ("&rsquo;s score", "$9,000", "Executive summary", "&rsquo;s wins",
+                                     "&rsquo;s risks", "&rsquo;s priorities", "The day after &middot;",
                                      "Top KPIs", "Yesterday&rsquo;s predictions:")]
     assert order == sorted(order)
     assert "Win 3." in html and "Win 4." not in html and "Risk 4." not in html

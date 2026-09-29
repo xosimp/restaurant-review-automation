@@ -35,8 +35,14 @@ struct DSRScorecard: Decodable, Hashable {
     let wins: [Item]
     let risks: [Item]
     let basis: String?
+    /// The report names the night it is about ("Monday's score"), never
+    /// "Today's" — it is read the morning after (owner, 9/29/26). The server
+    /// sends the labels; the fallbacks are neutral.
+    let labels: [String: String]
 
-    enum CodingKeys: String, CodingKey { case overall, verdict, components, wins, risks, basis }
+    func label(_ key: String, _ fallback: String) -> String { labels[key] ?? fallback }
+
+    enum CodingKeys: String, CodingKey { case overall, verdict, components, wins, risks, basis, labels }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -46,6 +52,7 @@ struct DSRScorecard: Decodable, Hashable {
         wins = (try? c.decodeIfPresent([Item].self, forKey: .wins)) ?? []
         risks = (try? c.decodeIfPresent([Item].self, forKey: .risks)) ?? []
         basis = try? c.decodeIfPresent(String.self, forKey: .basis)
+        labels = (try? c.decodeIfPresent([String: String].self, forKey: .labels)) ?? [:]
     }
 
     static func color(_ tone: String?) -> Color? {
@@ -78,7 +85,7 @@ struct DSRScorecardCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DSRKicker(text: "Today's score")
+            DSRKicker(text: card.label("score", "The night's score"))
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Circle()
                     .fill(DSRScorecard.color(card.verdict?.tone) ?? Color.cavnarInk3)
@@ -157,14 +164,15 @@ struct DSRScorecardCard: View {
     }
 }
 
-/// Today's wins and Today's risks, each a short checklist.
+/// The night's wins and risks, each a short checklist, labelled with its weekday.
 struct DSRWinsRisks: View {
     let card: DSRScorecard
 
     var body: some View {
-        list("Today's wins", card.wins, glyph: "checkmark", tint: .cavnarGreen, empty: "Nothing stood out tonight.")
-        list("Today's risks", card.risks, glyph: "exclamationmark.triangle.fill", tint: .cavnarAmber,
-             empty: "Nothing to watch tonight.")
+        list(card.label("wins", "The night's wins"), card.wins, glyph: "checkmark", tint: .cavnarGreen,
+             empty: card.label("no_wins", "Nothing stood out that night."))
+        list(card.label("risks", "The night's risks"), card.risks, glyph: "exclamationmark.triangle.fill",
+             tint: .cavnarAmber, empty: card.label("no_risks", "Nothing to watch from that night."))
     }
 
     private func list(_ title: String, _ items: [DSRScorecard.Item], glyph: String, tint: Color,

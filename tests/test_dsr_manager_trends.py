@@ -315,7 +315,7 @@ def test_both_emails_follow_the_new_order(db):
     _s, owner, _p = emails.dsr_email(deliver.digest(access.render(rep, {"role": "owner"}, r), r))
     # SCORE FIRST (9/25/26 owner decision — this pinned the summary first):
     # the score, the summary, tomorrow, the KPIs, yesterday as one line.
-    order = [owner.index(k) for k in ("Today&rsquo;s score", "Executive summary", "Tomorrow &middot; Sunday",
+    order = [owner.index(k) for k in ("&rsquo;s score", "Executive summary", "The day after &middot; Sunday",
                                       "Yesterday&rsquo;s predictions:")]
     assert order == sorted(order)
     # The owner's KPIs skip the score's components (labor is one): its
@@ -324,12 +324,12 @@ def test_both_emails_follow_the_new_order(db):
     assert "1 of 1 correct" in owner and "AI confidence 70%" in owner
     _s, mgr, _p = emails.dsr_email(deliver.digest(access.render(rep, {"role": "manager"}, r), r))
     # The manager's Top KPIs (labor against target) above Operations (ID1-21).
-    order = [mgr.index(k) for k in ("Operations summary", "Today&rsquo;s shift", "Top KPIs", ">Operations<")]
+    order = [mgr.index(k) for k in ("Operations summary", "&rsquo;s shift", "Top KPIs", ">Operations<")]
     assert order == sorted(order)
     assert "↓ 1.4 pts vs last Saturday" in mgr and "Best Saturday in 5 weeks" in mgr
     assert "Saturday ran 300 guests on 17 people." in mgr and "Sales beat budget" not in mgr
     # "No-shows", as the Labor block calls them (D1-17) — this pinned "Call-offs".
-    assert "Employees scheduled" in mgr and "No-shows" in mgr and "Today&rsquo;s score" not in mgr
+    assert "Employees scheduled" in mgr and "No-shows" in mgr and "&rsquo;s score" not in mgr
 
 
 # ── fix round 9/25/26: what a manager's payload may carry ──────────────────

@@ -194,7 +194,7 @@ def test_the_email_and_push_lead_with_the_score(db):
     subject, html, pre = emails.dsr_email(d)
     assert subject == f"Simple EJ's · Sat 9/19/26 · Excellent day {card['overall']}/100 · $9,200 net"
     assert pre.startswith(f"Excellent day {card['overall']}/100 · $9,200 net · +$720 vs budget")
-    i = [html.index(k) for k in ("Today&rsquo;s score", "Today&rsquo;s wins", "Today&rsquo;s risks")]
+    i = [html.index(k) for k in ("&rsquo;s score", "&rsquo;s wins", "&rsquo;s risks")]
     assert i == sorted(i) and "Miller Lite keg running low" in html
     assert "Went well" not in html and "Needs attention" not in html
     title, body = deliver.push_text(d)
@@ -208,4 +208,27 @@ def test_the_manager_email_keeps_its_layout(db):
     r = _rest(db)
     d = deliver.digest(access.render(_big_night(db, r), {"role": "manager"}, r), r)
     subject, html, _pre = emails.dsr_email(d)
-    assert d["scorecard"] is None and "/100" not in subject and "Today&rsquo;s score" not in html
+    assert d["scorecard"] is None and "/100" not in subject and "&rsquo;s score" not in html
+
+
+# ── 9/29/26 (owner): one subject once, and the night named, not "today" ─────
+
+def test_a_narrative_risk_on_a_measured_subject_is_not_listed_again():
+    from dsr import scorecard as sc
+    measured = [(20, {"text": "8.03 overtime hours", "key": "overtime"}),
+                (15, {"text": "6 review replies waiting to go out", "key": "replies"})]
+    narrative = ["Overtime hit 8.03 hours on a night that also ran a full crew of 204.25 total hours.",
+                 "Six review replies are drafted and waiting, none posted yet.",
+                 "Evening hours were only 57.8% of labor time against 67.7% of sales after 6pm."]
+    got = [x["text"] for x in sc._top(measured, narrative, limit=6)]
+    assert got == ["8.03 overtime hours", "6 review replies waiting to go out",
+                   "Evening hours were only 57.8% of labor time against 67.7% of sales after 6pm."]
+
+
+def test_the_labels_name_the_night_and_the_day_after():
+    from dsr import scorecard as sc
+    card = sc.build({"business_date": "2026-09-28", "blocks": {}}, None)
+    lb = card["labels"]
+    assert lb["score"] == "Monday’s score" and lb["risks"] == "Monday’s risks"
+    assert lb["priorities"] == "Tuesday’s priorities"
+    assert "tonight" not in card["basis"]
