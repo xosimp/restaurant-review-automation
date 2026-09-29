@@ -11,6 +11,7 @@ below), and holds the support workspace's own ledgers: support notes and
 in-app bug reports.
 """
 import json
+import re
 
 def _ensure(conn):
     """admin_events is created by models.init_db now; kept so callers read the same."""
@@ -384,6 +385,21 @@ def _is_sensitive(key) -> bool:
     return k in _SENSITIVE_KEYS or any(part in k for part in _SENSITIVE_PARTS)
 
 
+def _is_phone_key(key) -> bool:
+    """A phone number is personal data, not a secret: the audit keeps its last
+    four digits — the same rule the typed rows, the SMS ledger and the console
+    use — so a stored request body never holds a whole number (INT-2)."""
+    return "phone" in str(key).lower()
+
+
+def _mask_phone(value):
+    """A whole number becomes "…" and its last four digits; a value of four
+    digits or fewer is already no more than that (a stored phone_last4) and
+    is left as it is."""
+    digits = re.sub(r"\D", "", str(value))
+    return "…" + digits[-4:] if len(digits) > 4 else value
+
+
 def _redact(obj, max_str=1000, _depth=0):
     """`obj` with every secret-bearing value replaced by "[redacted]": by
     key name at any depth, and inside strings by ai_guard.redact_secrets
@@ -394,6 +410,7 @@ def _redact(obj, max_str=1000, _depth=0):
         # A true/false can't be a secret ("password_changed": false stays
         # readable); a number can (a PIN), so only booleans pass.
         return {str(k): ("[redacted]" if _is_sensitive(k) and v not in (None, "") and not isinstance(v, bool) else
+                         _mask_phone(v) if _is_phone_key(k) and isinstance(v, (str, int)) and v != "" else
                          _redact(v, max_str, _depth + 1))
                 for k, v in list(obj.items())[:120]}
     if isinstance(obj, (list, tuple, set)):
