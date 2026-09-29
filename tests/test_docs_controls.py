@@ -470,8 +470,8 @@ def test_a_backup_is_stale_after_26_hours_and_the_drill_checks_both_copies():
 # ── /health, paging, the monitors ────────────────────────────────────────────
 
 _HEALTH_ERRORS = ("db_unavailable", "db_unreadable", "schema_mismatch", "db_not_writable", "data_missing")
-_HEALTH_PROBLEMS = ("db_busy", "db_not_wal", "scheduler_stale", "jobs_overdue", "backup_stale",
-                    "offsite_backup_stale")
+_HEALTH_PROBLEMS = ("db_busy", "db_not_wal", "scheduler_stale", "scheduler_wedged", "scheduler_stalled",
+                    "jobs_overdue", "backup_stale", "offsite_backup_stale")
 
 
 def test_every_health_code_the_runbook_names_is_one_the_code_answers():
@@ -703,6 +703,53 @@ def test_the_ai_breaker_reset_is_admin_only_and_this_process_only():
     assert "Admins only" in src and "reset_breaker(" in src
     assert "_breakers" in inspect.getsource(ai_utils.reset_breaker)
     _says(RECOVERY, "closes it now — in this process only")
+
+
+# ── the scheduler's supervisor, billing jobs, offboarding ─────────────────────
+
+def test_the_supervisor_restarts_the_scheduler_with_its_lease_keeper():
+    """A restarted loop without the lease keeper let its lease look
+    abandoned after 4 minutes (D #134): the supervisor starts the thread
+    body start_scheduler uses, with backoff, and flips /status's scheduler
+    row while the heartbeat is stale."""
+    import platform_monitor
+    import scheduler
+    src = _read("hosted_dashboard.py")
+    body = src[src.index("def _restart_scheduler_loop"):]
+    body = body[:body.index("\ndef ", 1)]
+    assert "target=_sched_mod._run_scheduler_thread" in body
+    assert "_LEASE_KEEPER.start()" in inspect.getsource(scheduler._run_scheduler_thread)
+    assert platform_monitor.PlatformSupervisor()._backoff == 30.0
+    assert "min(600.0, self._backoff * 2)" in inspect.getsource(platform_monitor.PlatformSupervisor._watch_scheduler)
+    assert "check_scheduler_liveness" in inspect.getsource(platform_monitor.PlatformSupervisor._check_liveness)
+    _says(RECOVERY, "the lease keeper and then the loop (`scheduler._run_scheduler_thread`)",
+          "backoff (30 seconds, doubling to 10 minutes)", "(`status_manager.check_scheduler_liveness`)")
+
+
+def test_the_billing_jobs_the_runbook_names_are_registered():
+    import jobs_registry
+    assert jobs_registry.JOBS["stripe_reconcile"]["target"] == ("billing_jobs", "reconcile_stripe")
+    assert jobs_registry.JOBS["owed_sends"]["cadence"] == "every tick"
+    assert jobs_registry.JOBS["provider_probes"]["target"] == ("provider_health", "run_probes")
+    assert "reconcile_stripe" not in jobs_registry.JOBS
+    _says(RECOVERY, "the `stripe_reconcile` job (3:30am ct, `billing_jobs.reconcile_stripe`)",
+          "the `owed_sends` job drains due rows on every tick", "probed hourly by the `provider_probes` job")
+
+
+def test_the_offboarding_steps_that_act_and_their_refusals():
+    import offboarding
+    src = inspect.getsource(offboarding.set_step)
+    assert 'code = 409 if (detail.get("covered") or detail.get("local_backend")) else 502' in src
+    void = inspect.getsource(offboarding._void_open_envelope)
+    assert '"local_backend": True' in void and "already signed" in void and "}, 502)" in void
+    delete = inspect.getsource(offboarding.delete_restaurant_now)
+    assert "admin_homes(" in delete and 'state["outstanding"]' in delete
+    withdraw = inspect.getsource(offboarding.withdraw_deletion_request)
+    assert withdraw.count("}, 409") == 2
+    _says(RECOVERY, "409 for a location billed under another's subscription",
+          "when the envelope is already signed (skip it with that note)",
+          "409 if there is none, or it changed while you looked",
+          "while an admin or support login calls it home")
 
 
 # ── outbound ─────────────────────────────────────────────────────────────────

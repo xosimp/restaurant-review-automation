@@ -4,7 +4,9 @@ What to do when production is broken. Written during resiliency audit #21,
 which found working, integrity-checked backups and **no procedure anywhere
 for using one**. A backup nobody has restored is a hypothesis. Updated after
 the admin-console fix round (9/29/26): off-site copies, operator paging, the
-`/health` contract and the break-glass variables.
+`/health` contract and the break-glass variables; the console paths below
+are its five areas (Overview, Operations, Customers, Engineering,
+Analytics).
 
 Read `SYSTEM_ARCHITECTURE.md` for how the pieces fit, `SECURITY.md` (beside
 this file) for the controls. This file is only the emergency path.
@@ -25,7 +27,7 @@ ways; the body names the problem by code.
 | `500`, `"error": "db_not_writable"` | The database refuses a write (read-only or failing storage, or a full volume) | [Volume full](#volume-full), then [Database recovery](#database-recovery) |
 | `500`, `"error": "data_missing"` | The database holds no client restaurants, but the volume's marker says it held some — an emptied or replaced database | [Database recovery](#database-recovery) |
 | `200`, `"status": "degraded"`, `problems` has `disk_low` / `disk_critical` | Volume filling or nearly full — **writes fail before reads do** | [Volume full](#volume-full) |
-| `200`, `"status": "degraded"`, `scheduler_stale` or `jobs_overdue` | Web is fine, background jobs have stopped or fallen behind | [Scheduler stopped](#scheduler-stopped) |
+| `200`, `"status": "degraded"`, `scheduler_stale`, `scheduler_wedged`, `scheduler_stalled` or `jobs_overdue` | Web is fine, background jobs have stopped, are stuck in one job, or have fallen behind | [Scheduler stopped](#scheduler-stopped) |
 | `200`, `"status": "degraded"`, `backup_stale` or `offsite_backup_stale` | No good backup (or no off-site copy) in 26 hours | [The backup](#the-backup) |
 | `200`, `"status": "degraded"`, `db_busy` / `db_not_wal` | A write lock held past two seconds, or the database is not in WAL mode | [Something specific](#something-specific-is-broken) |
 | `200`, `"status": "ok"` | The platform is healthy; the problem is narrower | [Something specific](#something-specific-is-broken) |
@@ -38,10 +40,13 @@ total, database and WAL sizes and both thresholds), the scheduler heartbeat
 age, backup and off-site ages, and the overdue jobs; it is cached 5 seconds.
 
 `/status` (public) and `/admin` → Overview carry the same signals with more
-detail, including per-restaurant fetch coverage; `/admin` → Engineering has
-the system card (`GET /admin/api/system`: keys, disk, database, volume,
-backup, drill, lease, heartbeat, AI, supervisor, 5xx by route, boots,
-providers).
+detail — Overview's *Needs you* list names the restaurants the review fetch
+stopped reaching (`fleet:fetch_coverage`); `/admin` → Operations states each
+system from the server's own verdict (`GET /admin/api/ops/state`); and
+`/admin` → Engineering → Overview has the System, Scheduler, Providers,
+Backups and Boots cards (`GET /admin/api/system`: keys, disk, database,
+volume, backup, drill, lease, heartbeat, AI, supervisor, 5xx by route,
+boots, providers).
 
 **Reaching the container.** Every command below that touches `/app/data`
 runs *inside* the Railway container: `railway ssh -- <command>` (the CLI
@@ -71,8 +76,8 @@ Three things page, and they fail independently:
    refused write, a stale / failed / off-site-less backup, a DSR night
    missing past its deadline — at most once an hour per problem, and only
    on Railway. The same unresolved problem repeats hourly until it is
-   fixed. Every page is an `operator_alerts` row (the Jobs page shows the
-   last one and whether it went). Owners are never paged.
+   fixed. Every page is an `operator_alerts` row (Operations → Jobs shows
+   the last one and whether it went). Owners are never paged.
 2. **The dead-man ping** (`HEALTHCHECK_PING_URL`, e.g. healthchecks.io or
    Better Stack with a period of about 5 minutes and a grace of about 10):
    the scheduler pings at the end of every tick and during a long job that
@@ -122,9 +127,11 @@ Railway outage or a crashed process.
      schema. A lock is usually another process holding the file — an
      overlapped container, `worker.py`, or an open `railway ssh sqlite3`
      session; close it and redeploy.
-5. A scheduler thread that dies is restarted by the supervisor (with
-   backoff, never beside a live one); a thread alive but wedged is left
-   alone and shows as `wedged` on the Jobs page.
+5. A scheduler thread that dies is restarted by the supervisor — the lease
+   keeper and then the loop (`scheduler._run_scheduler_thread`), with
+   backoff (30 seconds, doubling to 10 minutes), never beside a live one; a
+   thread alive but wedged is left alone and shows as Wedged on Operations →
+   Jobs.
 
 **What keeps working:** nothing. This is a full outage.
 **Data loss:** none — the volume survives.
@@ -150,7 +157,7 @@ railway ssh -- sqlite3 /app/data/reviews.db "PRAGMA integrity_check;"
 
 Three copies exist, newest first in the backup ledger
 (`SELECT id, finished_at, local_ok, offsite_ok, offsite_target, sha256 FROM backup_runs ORDER BY id DESC LIMIT 5;`,
-or `/admin` → Engineering → Backup, `GET /admin/api/backup`):
+or `/admin` → Engineering → Overview → Backups, `GET /admin/api/backup`):
 
 - **The local snapshot** on the volume, taken at 2am and kept
   `BACKUP_RETAIN_DAYS` days (14 in production; the code default is 7):
@@ -301,10 +308,10 @@ loads.
 | Google / Toast / Square / Clover / RPOWER / Instagram / reservations / Back Office | Same (an off-site copy nulls them all) | If nulled, each owner must reconnect in Account → Connections (RPOWER and Back Office are re-entered by Cavnar in the console) |
 | Link-signing secrets (`app_secrets`) | Kept (local) or GONE (off-site copy) | From an off-site copy new kept secrets are minted: pay links, table-tent join QR codes, issue links and unsubscribe links issued before the backup no longer verify — resend pay links and reprint QR codes |
 | Customer webhook secrets | Kept (local) or blanked (off-site copy) | Owners re-save their outbound webhook |
-| Stripe | `stripe_customer_id` nulled in an off-site copy | Re-link from the Stripe dashboard (Customers → the client → Attach Stripe customer), then run `reconcile_stripe` from Jobs so the subscription mirror is refilled |
+| Stripe | `stripe_customer_id` nulled in an off-site copy | Re-link it in the console (Customers → the client → Billing → **Attach Stripe customer**, with the `cus_` id from the Stripe dashboard), then run the `stripe_reconcile` job (Operations → Jobs → Run now) so the subscription mirror is refilled |
 | Data since the snapshot | Lost | Reviews re-fetch on the next pass (`UNIQUE(restaurant_id, platform, external_id)` makes that safe). Uploaded CSVs and manual edits do not come back |
 | Job claims | Restored to snapshot state | Jobs already run that day **may run again**. Check `job_period_claims` before a digest hour |
-| Owed billing emails | Restored to snapshot state | Check `owed_sends` for rows the snapshot has as pending that already went (sent after the snapshot) and mark them `cancelled` before the billing jobs drain them |
+| Owed billing emails | Restored to snapshot state | Check `owed_sends` for rows the snapshot has as pending that already went (sent after the snapshot) and mark them `cancelled` before you delete `RESTORE_FROM`: the `owed_sends` job drains due rows on every tick once the scheduler is back |
 
 The job-claims row is the one most likely to cause a visible mistake:
 restoring a 2am snapshot at 9am can re-send that morning's digests. To
@@ -339,12 +346,12 @@ write — and every save, draft and send fails until space is freed.
    (**never the newest**), or grow the volume in Railway. Once the off-site
    copy is reliably running, fewer local days are needed.
 4. `ops.prune_ledgers` trims old ledger rows nightly after each backup
-   (chunked, bounded); it can be run early from `/admin` → Jobs →
-   `prune_ledgers`.
+   (chunked, bounded); it can be run early from `/admin` → Operations →
+   Jobs → `prune_ledgers`.
 5. The backup refuses to START with less than 3.5 × the database free
    (`BACKUP_FREE_SPACE_FACTOR`) — it fails and pages rather than filling the
-   volume at 2am. Engineering → Storage shows growth per day and days to
-   full (`ops.storage_trend`, from each night's backup row).
+   volume at 2am. Engineering → Overview → Backups shows growth per day and
+   days to full (`ops.storage_trend`, from each night's backup row).
 
 A full volume is the one failure where doing nothing gets worse quietly.
 
@@ -352,11 +359,18 @@ A full volume is the one failure where doing nothing gets worse quietly.
 
 ## Scheduler stopped
 
-`/health` shows `"scheduler": "stale"` (`scheduler_stale`) or
+`/health` shows `"scheduler": "stale"`, `"wedged"` or `"stalled"`
+(`scheduler_stale`, `scheduler_wedged`, `scheduler_stalled`) or
 `jobs_overdue`. The web app is fine; briefs, digests, fetches and scheduled
-posts are not running.
+posts are not running. Stale: no heartbeat for 15 minutes. Wedged: the
+loop has been inside one job past that job's own bound
+(`jobs_registry.max_minutes`). Stalled: no tick has COMPLETED in 15
+minutes and no job is running to explain it — a tick failing part-way.
+The web process's supervisor also flips the public `/status` page's
+scheduler row to an outage while the heartbeat is stale
+(`status_manager.check_scheduler_liveness`); `/health` itself only reads.
 
-1. `/admin` → Jobs shows every job in the registry with its last runs and
+1. `/admin` → Operations → Jobs shows every job in the registry with its last runs and
    state (ok / partial / failed / running / stuck / overdue / never), the
    heartbeat (`wedged` — a job past its own bound; `loop_stalled` — no tick
    completed with nothing running; `stale`), the lease, the last operator
@@ -370,12 +384,13 @@ posts are not running.
    for 4 minutes is taken over automatically, an unkept one after
    `SCHEDULER_LEASE_STALE_SECONDS` (30 min). A clean exit releases it
    (`ops.shutdown_scheduler`).
-3. A dead scheduler thread is restarted by the supervisor with backoff
-   (Engineering → System → supervisor shows restarts). A thread stuck in a
+3. A dead scheduler thread is restarted by the supervisor, with its lease
+   keeper, with backoff (Engineering → Overview → Scheduler shows the
+   thread and its restarts). A thread stuck in a
    job is not restarted — a second loop would run every job twice; the
    lease keeper stops renewing once the job is past twice its bound, and a
    restart of the service is the fix.
-4. A job that failed: `/admin` → Jobs, then **Run now** there. On Railway
+4. A job that failed: `/admin` → Operations → Jobs, then **Run now** there. On Railway
    the run is handed to the scheduler (a request row it picks up on its
    next tick, under the lease); a request not taken in 30 minutes expires.
    A non-sending job that failed is retried by the loop after 10, 30 and 90
@@ -398,7 +413,7 @@ monitor — when the snapshot fails, there is no room, `BACKUP_ENCRYPTION_KEY`
 is unset, or no off-site copy was made. One `backup_runs` row per run either
 way.
 
-- **State**: `/admin` → Engineering → Backup (`GET /admin/api/backup`) —
+- **State**: `/admin` → Engineering → Overview → Backups (`GET /admin/api/backup`; Operations → Jobs carries a summary) —
   `ok` / `stale` (the newest good snapshot is older than 26 hours) /
   `no_offsite` / `failed` / `never`, with the last error, the targets
   configured, the last 30 runs and the storage trend. `/health` reports
@@ -410,7 +425,7 @@ way.
   about 35 days. A single object is at most 5 GB (no multipart yet).
 - **Email**: skipped above `BACKUP_EMAIL_MAX_BYTES` (25 MB of encrypted
   file); the skip is in the run's `offsite_error`.
-- **Re-run**: `/admin` → Jobs → `backup_db` → Run now.
+- **Re-run**: `/admin` → Operations → Jobs → `backup_db` → Run now.
 
 ---
 
@@ -437,9 +452,10 @@ The admin console needs a password, and — once enrolled or with
    `will`) and `ADMIN_PASSWORD` (it must pass the password policy), on its own
    "Cavnar AI Admin" restaurant row. It never runs while any admin exists,
    so renaming the admin cannot re-arm it.
-4. **A session that expired mid-task**: admin sessions last 12 hours; a
-   sensitive action asks for the password again (15-minute step-up) and five
-   wrong answers end the session.
+4. **A session that expired mid-task**: admin sessions last 12 hours; the
+   console's next read answers 401 and sends you to sign in. A sensitive
+   action asks for the password again (15-minute step-up) and five wrong
+   answers end the session.
 
 ---
 
@@ -447,18 +463,20 @@ The admin console needs a password, and — once enrolled or with
 
 | Symptom | Where to look |
 |---|---|
-| AI answers failing | `/admin` → AI. `GET /admin/api/ai/health` shows each provider's breaker (this process's and the last recorded), the last hour's error rate, the last credential failure and the budgets; `ai_health_events` is the history. A 401 or an empty credit balance trips the breaker at once; an open breaker still open after 15 minutes pages. A tripped breaker clears itself; **Reset breaker** (`POST /admin/api/ai/reset-breaker {provider?}`, admins only) closes it now — in this process only. A budget stop (80% warns, 100% stops; trial $5/day and $50/month; Places has its own ceiling) needs the ceiling raised (`AI_*_BUDGET_USD`) |
-| No email arriving | `/admin` → Emails and `GET /admin/api/messaging/health` (problems, Resend/Twilio webhook health, email and SMS stats, outboxes, storm caps, a suppressed operator address). Check Resend's status. A suppressed address: `GET /admin/api/suppressions?q=` and **Reinstate** (`POST /admin/api/suppressions/reinstate {email, reason}`, audited). Operator addresses are never suppressed. Cavnar AI's own marketing is held until `CAVNAR_POSTAL_ADDRESS` is set |
-| Texts not arriving | `GET /admin/api/sms?restaurant_id=` — every attempt with its status (the number's last four only); `blocked` means consent or a STOP; account-level Twilio errors are captured once an hour |
+| AI answers failing | `/admin` → Operations → AI. `GET /admin/api/ai/health` shows each provider's breaker (this process's and the last recorded), the last hour's error rate, the last credential failure and the budgets; `ai_health_events` is the history. A 401 or an empty credit balance trips the breaker at once; an open breaker still open after 15 minutes pages. A tripped breaker clears itself; each vendor's **Reset** on that tab (`POST /admin/api/ai/reset-breaker {provider?}`, admins only) closes it now — in this process only. A budget stop (80% warns, 100% stops; trial $5/day and $50/month; Places has its own ceiling) needs the ceiling raised (`AI_*_BUDGET_USD`) |
+| No email arriving | `/admin` → Operations → Email & SMS and `GET /admin/api/messaging/health` (problems, Resend/Twilio webhook health, email and SMS stats, outboxes, storm caps, a suppressed operator address). Check Resend's status. A suppressed address: the tab's suppression search (`GET /admin/api/suppressions?q=`) and **Reinstate** (`POST /admin/api/suppressions/reinstate {email, reason}`, audited) — also on the client page's *Suppressed addresses*. Operator addresses are never suppressed. Cavnar AI's own marketing is held until `CAVNAR_POSTAL_ADDRESS` is set |
+| Texts not arriving | Operations → Email & SMS, `GET /admin/api/sms?restaurant_id=` — every attempt with its status (the number's last four only); `blocked` means consent or a STOP; account-level Twilio errors are captured once an hour |
 | Push not arriving | `POST /api/account/send-test-push` — it reports Apple's own reason string. See the APNs notes in project memory |
-| A client's alerts stopped mid-day | An alert storm cap (10 alerts in an hour caps the restaurant until its local midnight; health alerts still go). Lift it on the client page (`POST /admin/api/client/<rid>/storm-cap/lift`) |
-| Some restaurants not fetched | `/admin` → Overview shows fetch coverage. A bounded pass resumes from its cursor next slot; "Fetch now" on the client runs one restaurant on the admin pool |
-| A job failed | `/admin` → Jobs, then re-run it there |
-| A billing email never went | `/admin` → Billing health (`GET /admin/api/billing/health`) lists failed and waiting `owed_sends`. To retry one after fixing the cause: `UPDATE owed_sends SET status='pending', next_attempt_at=datetime('now'), attempts=0 WHERE id=<id>;` — the billing job drains it (only on Railway) |
-| Stripe and the console disagree | Billing health → reconcile: `billing_reconcile` holds what the nightly `reconcile_stripe` found; it never changes billing status itself — fix the account by hand (change plan, attach customer, lift hold), then re-run `reconcile_stripe` |
+| A client's alerts stopped mid-day | An alert storm cap (10 alerts in an hour caps the restaurant until its local midnight; health alerts still go). Lift it on the client page or on Operations → Push & alerts (`POST /admin/api/client/<rid>/storm-cap/lift`) |
+| Some restaurants not fetched | `/admin` → Overview's *Needs you* list (`fleet:fetch_coverage`, and a client's `fetch_behind`). A bounded pass resumes from its cursor next slot; **Fetch reviews now** on the client runs one restaurant on the admin pool |
+| A job failed | `/admin` → Operations → Jobs, then **Run now** there |
+| A billing email never went | `/admin` → Customers → Billing → *Billing health* (`GET /admin/api/billing/health`) lists failed and waiting `owed_sends`; a client's own are on its Billing tab. To retry one after fixing the cause: `UPDATE owed_sends SET status='pending', next_attempt_at=datetime('now'), attempts=0 WHERE id=<id>;` — the `owed_sends` job drains it on its next tick (only on Railway; Run now from Operations → Jobs sends it at once) |
+| Stripe and the console disagree | Billing health → *Nightly reconcile*: `billing_reconcile` holds what the `stripe_reconcile` job (3:30am CT, `billing_jobs.reconcile_stripe`) found; it never changes billing status itself — fix the account by hand (change plan, attach customer, lift hold), then run `stripe_reconcile` again from Operations → Jobs |
 | A client is paused and cannot resume | A HOLD (`pause_reason` dispute, refund or admin). Only an admin lifts it: the client's Billing tab → **Lift hold** (`POST /admin/api/billing/<rid>/lift-hold {note, status?}`), which lifts every location held for the same reason |
-| A console issue keeps coming back | Resolve is per OCCURRENCE: a newer occurrence of the same issue reopens it ("Reopened — … resolved it on M/D/YY"); a condition-level issue stays resolved while the condition lasts and lapses after 30 days; `scheduler`, `platform:error_rate` and deletion requests cannot be resolved (409) — fix the cause. Resolutions written before 9/29/26 carry no occurrence and cover only occurrences that began before them |
-| A provider key stopped working | Engineering → Providers (`provider_health`, probed hourly once scheduled): Resend, Twilio, Anthropic, Stripe, Places, APNs. A provider that turns failing pages once |
+| A console issue keeps coming back | Resolve is per OCCURRENCE: a newer occurrence of the same issue reopens it ("Reopened — … resolved it on M/D/YY"); a condition-level issue stays resolved while the condition lasts and lapses after 30 days; `scheduler`, `platform:error_rate`, `backup` and deletion requests cannot be resolved (409) — they clear themselves, or close another way (a deletion request by withdrawing it or finishing the offboarding). Resolutions written before 9/29/26 carry no occurrence and cover only occurrences that began before them |
+| A provider key stopped working | Engineering → Overview → Providers (`provider_health`, probed hourly by the `provider_probes` job): Resend, Twilio, Anthropic, Stripe, Places, APNs. A provider that turns failing pages once |
+| Telling clients something is wrong | Engineering → Status page: **Post an incident** naming the affected services (it holds them down on the public `/status`; the scheduler's checks rewrite an un-held service within minutes), post updates, **Resolve**. `/status` is served by this process — in a full outage use the external monitor's hosted page |
+| A client is closing their account | Customers → the client → Access & activity → *Offboarding* (`GET /admin/api/client/<rid>/offboarding`). Mark each step done, or skipped with a note. Marking an acting step done carries it out, after the step-up: **integrations** clears every stored credential and turns outbound webhooks off; **Stripe** cancels the live subscription (`billing_jobs.cancel_subscription`) — 409 for a location billed under another's subscription (change the plan on the paying location, then skip) or on a server that is not production, 502 when Stripe refuses; **DocuSign** voids the open envelope — 409 on a server that is not production or when the envelope is already signed (skip it with that note), 502 when DocuSign refuses. **Withdraw** the request (409 if there is none, or it changed while you looked) or **Delete** once nothing is outstanding (409 with the steps left, or while an admin or support login calls it home). The checklist and the audit trail outlive the delete |
 
 ---
 
