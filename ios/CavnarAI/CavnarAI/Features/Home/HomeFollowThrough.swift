@@ -577,6 +577,10 @@ final class HomeFollowThroughViewModel {
             /// The money fallback as the RANGE it is (K4): never collapsed
             /// to one figure. Only drawn when `dollarsMonthly` is absent.
             let money: Money?
+            /// Advice the hero pulls against, for the owner to settle
+            /// (memory round 9/29/26, lever_conflicts). Absent on an older
+            /// server.
+            var conflict: RecConflict? = nil
             /// F6: the dollars corrected by measured results
             /// (RecDollarCalibration). Absent on an older server.
             var dollarsAdjusted: Double? = nil
@@ -585,10 +589,6 @@ final class HomeFollowThroughViewModel {
             /// What the figure covers (dollars_basis, B4 H7): the whole
             /// schedule's gap, one driver alone …
             var dollarsBasis: String? = nil
-            /// Advice the hero pulls against, for the owner to settle
-            /// (memory round 9/29/26, lever_conflicts). Absent on an older
-            /// server.
-            var conflict: RecConflict? = nil
             /// The monthly figure the hero states — calibrated when sent.
             var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
             var dollarsNote: String? {
@@ -633,6 +633,7 @@ final class HomeFollowThroughViewModel {
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
+                conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
                 dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
                 dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
                 calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
@@ -651,7 +652,6 @@ final class HomeFollowThroughViewModel {
                 confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
                 claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
                 money = try? c.decodeIfPresent(Money.self, forKey: .money)
-                conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
             }
             /// The key its answer row posts — rec_key, else the pick's own key.
             var answerKey: String? { recKey ?? key }
