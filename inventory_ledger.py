@@ -1173,9 +1173,15 @@ def update_ingredient(restaurant_id: int, ingredient_id: int, **fields) -> bool:
                 return False
             updates[k] = v
     sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
+    args = list(updates.values())
+    if "par_level" in updates:
+        # SET expressions read the row as it was, so this compares the old par.
+        sets += (", par_changed_at=CASE WHEN COALESCE(par_level, -1) <> COALESCE(?, -1) "
+                 "THEN datetime('now') ELSE par_changed_at END")
+        args.append(updates["par_level"])
     with db_conn() as conn:
         cur = conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",
-                           [*updates.values(), ingredient_id, restaurant_id])
+                           [*args, ingredient_id, restaurant_id])
         conn.commit()
         return cur.rowcount > 0
 

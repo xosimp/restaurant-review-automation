@@ -112,35 +112,136 @@ def compare(original, final) -> dict:
             "signals": signals}
 
 
-def style_note(summaries) -> str:
+# The signals that say something about the owner's voice whatever the star
+# rating: a note built from another band's edits carries only these
+# (memory audit 9/29/26, reply_voice) — "they cut it down" learned on 5-star
+# thank-yous is no guide to a 1-star apology, and neither is the length.
+BAND_FREE_SIGNALS = ("removed_exclamations", "added_exclamations")
+
+
+def style_note(summaries, only=None, with_length=True, scope="") -> str:
     """The drafter's OWNER'S EDITS block, from the most recent edit
     summaries (newest first): the signals at least MIN_SIGNAL_SHARE of the
     edited replies share (and at least MIN_EDITS of them), and the typical
     length the owner leaves. "" below MIN_EDITS edited replies — a pattern
     needs more than one afternoon's edits. Deterministic: the same rows give
-    the same words, so a stored prompt fingerprint holds."""
+    the same words, so a stored prompt fingerprint holds.
+
+    `only`: the signals this note may name (BAND_FREE_SIGNALS for a note
+    borrowed from other bands); `with_length` False drops the length
+    sentence and "rewrite" line; `scope` names what the edits were measured
+    on ("replies to 1-2★ reviews")."""
     edited = [s for s in (summaries or []) if s and s.get("category") in ("light", "heavy", "rewrite")][:NOTE_WINDOW]
     if len(edited) < MIN_EDITS:
         return ""
+    allowed = tuple(only) if only is not None else tuple(SIGNAL_TEXT)
     counts = {}
     for s in edited:
         for sig in set(s.get("signals") or []):
-            if sig in SIGNAL_TEXT:
+            if sig in SIGNAL_TEXT and sig in allowed:
                 counts[sig] = counts.get(sig, 0) + 1
     need = max(MIN_EDITS, int(len(edited) * MIN_SIGNAL_SHARE + 0.999))
     common = [sig for sig in SIGNAL_TEXT if counts.get(sig, 0) >= need][:MAX_NOTE_SIGNALS]
     heavy = sum(1 for s in edited if s.get("category") in ("heavy", "rewrite"))
     bits = [SIGNAL_TEXT[s] for s in common]
-    if heavy >= need:
+    if with_length and heavy >= need:
         bits.append("they rewrite most of it in their own words")
-    lengths = sorted(int(s.get("words_after") or 0) for s in edited if s.get("words_after"))
-    typical = lengths[len(lengths) // 2] if lengths else None
+    typical = None
+    if with_length:
+        lengths = sorted(int(s.get("words_after") or 0) for s in edited if s.get("words_after"))
+        typical = lengths[len(lengths) // 2] if lengths else None
     if not bits and typical is None:
         return ""
     line = (f"\nOWNER'S EDITS — measured from the last {len(edited)} drafts the owner changed before "
-            f"approving, not guessed:")
+            f"approving{(' (' + scope + ')') if scope else ''}, not guessed:")
     if bits:
         line += " " + "; ".join(bits) + "."
     if typical:
         line += f" The replies they approve run about {typical} words."
     return line + " Write this draft the way they finish theirs.\n"
+
+
+# ── drafts the owner turned down (memory audit 9/29/26, rejected_drafts) ────
+#
+# A draft the owner regenerated is a "no" to that draft. Its words are not
+# kept (reply_draft_rejections holds a hash and these signals, 90 days), so
+# what the drafter hears is only what the rejected drafts had in common,
+# from the same closed vocabulary style of note: never free text.
+
+# The word range the drafter asks for, by star band (drafter.draft_response's
+# length notes), with a little give: a draft past the top is "long".
+DRAFT_WORD_RANGE = {(1, 2): (50, 90), (3,): (35, 65), (4, 5): (20, 45)}
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿\U0001F1E6-\U0001F1FF]")
+DRAFT_SIGNAL_TEXT = {
+    "long": "run longer than they want",
+    "short": "run shorter than they want",
+    "exclamations": "use exclamation marks",
+    "apology": "apologise",
+    "invitation": "invite the guest back",
+    "emoji": "use emoji",
+}
+REJECTION_MIN = 3            # rejected drafts in the band before a line is said
+REJECTION_SHARE = 0.6        # ...and at least this share of them show the signal
+REJECTION_MARGIN = 0.3       # ...this much more often than the replies they approve
+
+
+def _band_of(rating):
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return None
+    return next((b for b in DRAFT_WORD_RANGE if r in b), None)
+
+
+def draft_signals(text, rating=None) -> list:
+    """What one draft is like, in DRAFT_SIGNAL_TEXT's closed vocabulary —
+    never its words. Length is judged against the range the drafter asks
+    for at this star rating (no rating, no length signal)."""
+    t = str(text or "")
+    out = []
+    band = _band_of(rating)
+    if band:
+        lo, hi = DRAFT_WORD_RANGE[band]
+        n = len(_words(t))
+        if n > hi:
+            out.append("long")
+        elif n and n < lo:
+            out.append("short")
+    if "!" in t:
+        out.append("exclamations")
+    if _APOLOGY.search(t):
+        out.append("apology")
+    if _INVITE.search(t):
+        out.append("invitation")
+    if _EMOJI.search(t):
+        out.append("emoji")
+    return out
+
+
+def rejection_note(rejected, approved=(), scope="") -> str:
+    """One line for the OWNER'S EDITS block: what the drafts this owner
+    regenerated tended to do that the replies they approve do not. Each of
+    `rejected` / `approved` is a list of draft_signals lists (one per
+    draft). "" below REJECTION_MIN rejected drafts or with nothing in
+    common. A signal is named when REJECTION_SHARE of the rejected drafts
+    show it and — once there are REJECTION_MIN approved replies to compare
+    with — REJECTION_MARGIN more of them than of the approved. Deterministic."""
+    rejected = [set(s or ()) for s in (rejected or [])]
+    approved = [set(s or ()) for s in (approved or [])]
+    if len(rejected) < REJECTION_MIN:
+        return ""
+    named = []
+    for sig in DRAFT_SIGNAL_TEXT:
+        share = sum(1 for s in rejected if sig in s) / len(rejected)
+        if share < REJECTION_SHARE:
+            continue
+        if len(approved) >= REJECTION_MIN:
+            base = sum(1 for s in approved if sig in s) / len(approved)
+            if share - base < REJECTION_MARGIN:
+                continue
+        named.append(DRAFT_SIGNAL_TEXT[sig])
+    if not named:
+        return ""
+    return (f"\nThe owner regenerated {len(rejected)} drafts{(' (' + scope + ')') if scope else ''} in the last "
+            f"90 days rather than send them; those drafts tended to " + "; ".join(named[:MAX_NOTE_SIGNALS])
+            + ". Avoid that here.\n")

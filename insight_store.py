@@ -233,12 +233,23 @@ def put(restaurant_id, kind, fp, payload, db_path=DB_PATH, raw=None, call_id=Non
                          "fingerprint=excluded.fingerprint, payload=excluded.payload, created_at=excluded.created_at",
                          (restaurant_id, kind, fp, json.dumps(payload, default=str)))
         conn.commit()
-        return True
     except Exception as e:
         print(f"[insight_store] write failed: {e}")
         return False
     finally:
         conn.close()
+    # This row is the CURRENT read and the next one overwrites it; the read
+    # itself is kept as history (ai_reads, memory audit 9/29/26) — what was
+    # said, its validation verdict and the lines it carried, so a later
+    # prompt and the owner can see what Cavnar AI said before.
+    try:
+        import ai_reads
+        ai_reads.record_store_read(restaurant_id, kind, fp, payload.get("out") if raw is not None and
+                                   isinstance(payload, dict) and "_rv" in payload else payload,
+                                   raw=raw, call_id=call_id, db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[insight_store] read history not kept: {e}")
+    return True
 
 
 def invalidate(restaurant_id, kinds=None, db_path=DB_PATH):

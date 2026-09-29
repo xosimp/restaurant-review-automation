@@ -27,7 +27,14 @@ MAX_BODY = 6000
 
 
 def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=None,
-               draft_id=None, user_id=None, db_path: str = DB_PATH) -> dict:
+               draft_id=None, user_id=None, db_path: str = DB_PATH, original_body=None,
+               content_log_id=None, draft_ref=None) -> dict:
+    """Save (or re-save) a draft. The model's first text is kept as
+    `original_body` (memory audit 9/29/26, mkt_edits): given by the caller,
+    else the model draft the composer's `draft_ref` / `content_log_id`
+    names (marketing_voice), else the body at first save — an edit used to
+    overwrite `body` and nothing kept what the model wrote. A later edit
+    never replaces it."""
     body = (body or "").strip()
     if not body:
         return {"ok": False, "error": "There's nothing to save."}
@@ -49,7 +56,8 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
             # edit: saving it again would make "come in Tuesday" approvable
             # on Thursday.
             n = conn.execute(
-                "UPDATE marketing_drafts SET body=?, content_type=?, topic=?, media_id=?, "
+                "UPDATE marketing_drafts SET original_body=COALESCE(original_body, body), body=?, content_type=?, "
+                "topic=?, media_id=?, "
                 "status='draft', approved_by=NULL, approved_at=NULL, updated_at=datetime('now') "
                 "WHERE id=? AND restaurant_id=? AND COALESCE(status,'draft') != 'expired'",
                 (body, content_type, topic, media_id or None, draft_id, restaurant_id),
@@ -67,10 +75,19 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
                 return {"ok": False, "code": "draft_gone", "error": "That draft no longer exists."}
             return {"ok": True, "id": draft_id, "status": "draft"}
 
+        if original_body is None and (draft_ref or content_log_id):
+            try:
+                import marketing_voice
+                m = marketing_voice._match_draft(conn, restaurant_id, "social", body, draft_id=draft_ref,
+                                                 content_log_id=content_log_id)
+                original_body = m["body"] if m else None
+            except Exception:
+                original_body = None
         cur = conn.execute(
-            "INSERT INTO marketing_drafts (restaurant_id, content_type, topic, body, media_id, created_by) "
-            "VALUES (?,?,?,?,?,?)",
-            (restaurant_id, content_type, topic, body, media_id or None, user_id),
+            "INSERT INTO marketing_drafts (restaurant_id, content_type, topic, body, media_id, created_by, "
+            "original_body) VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, content_type, topic, body, media_id or None, user_id,
+             (original_body or body).strip()[:MAX_BODY]),
         )
         conn.commit()
         return {"ok": True, "id": cur.lastrowid, "status": "draft"}
@@ -114,7 +131,7 @@ def may_publish(user) -> bool:
 
 
 def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
-                  db_path: str = DB_PATH) -> dict:
+                  db_path: str = DB_PATH, user=None) -> dict:
     """Release a draft. Invited teammates can write but not publish.
 
     This used to require role == "owner", which meant NOBODY could approve
@@ -126,6 +143,10 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
     role added later was silently PERMITTED to publish. Both directions now
     resolve through permissions.ROLE_PERMISSIONS, where a new role starts
     with nothing and has to be granted MARKETING_APPROVE explicitly.
+
+    An approved draft is a piece that goes out: its text is measured against
+    the model's original (marketing_voice.record_final; memory audit
+    9/29/26, mkt_edits), with who approved it (`user`, the route's login).
     """
     from permissions import MARKETING_APPROVE, has_permission
     if not has_permission({"role": role}, MARKETING_APPROVE):
@@ -168,6 +189,20 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
         if row and row["status"] == "expired":
             return {"ok": False, "error": "That draft expired — its night has passed, so it can't be approved."}
         return {"ok": False, "error": "That draft is already approved or no longer exists."}
+    try:
+        conn = get_conn(db_path)
+        try:
+            d = conn.execute("SELECT body, original_body FROM marketing_drafts WHERE id=? AND restaurant_id=?",
+                             (draft_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if d:
+            import marketing_voice
+            marketing_voice.record_final(restaurant_id, "social", d["body"], "draft_approved", ref_id=draft_id,
+                                         user=user or {"id": user_id, "role": role},
+                                         original_body=d["original_body"] or d["body"], db_path=db_path)
+    except Exception as e:
+        log.warning("marketing draft %s edit not recorded: %s", draft_id, e)
     return {"ok": True, "id": draft_id, "status": "approved"}
 
 

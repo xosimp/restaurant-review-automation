@@ -299,8 +299,11 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             pass
         try:
             import menu_intelligence
+            # A guarded dish (guests naming it in complaints, link_memory's
+            # reprice guard) is not offered as a one-tap reprice.
             sg = [x for x in (menu_intelligence.reprice_suggestions(restaurant_id, db_path=db_path)
-                              .get("suggestions") or []) if (x.get("monthly_margin_lost") or 0) >= 25]
+                              .get("suggestions") or []) if (x.get("monthly_margin_lost") or 0) >= 25
+                  and not x.get("guard")]
             # One item per dish, each with its own key: a single "reprice"
             # key meant snoozing one dish snoozed every dish. The action is
             # the one-tap apply at the suggested price.

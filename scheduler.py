@@ -700,16 +700,26 @@ def run_daily_fetch(restaurant_ids=None):
                 except Exception:
                     pass
 
-            # Draft — include approved examples for style learning. Same
-            # unconditional-sweep reasoning as the analysis loop above.
-            from models import get_approved_examples
-            approved_examples = get_approved_examples(rid, limit=4)
+            # A review that just arrived may answer a review request: matched
+            # by the guest's name, one-to-one or not at all (review_signals;
+            # memory audit 9/29/26, uncaptured).
+            if new_reviews:
+                try:
+                    import review_signals
+                    review_signals.match_review_requests(rid)
+                except Exception as _me:
+                    log.error(f"Review request matching error [{restaurant.name}]: {_me}")
+
+            # Draft. Same unconditional-sweep reasoning as the analysis loop
+            # above. Each draft picks its own style examples from the owner's
+            # approvals for reviews of its star band (drafter.draft_response;
+            # memory audit 9/29/26, reply_voice) — four fetched here once
+            # used to be every draft's examples, 1-star or 5.
             for r in get_pending_drafts(rid, limit=50):
                 try:
                     draft_response(r.id, r.rating, r.text, r.sentiment,
                                   restaurant.name, restaurant.voice_notes or "",
                                   restaurant_id=rid,
-                                  approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "",
                                   language=getattr(restaurant, "response_language", None) or None,
@@ -3136,6 +3146,35 @@ def run_forecast_scoring():
     return c
 
 
+LEARNING_MEMORY_CURSOR_KEY = "learning_memory_cursor"
+
+
+def run_learning_memory():
+    """Daily, after the outcome evaluations — the nightly learning pass for
+    every restaurant allowed to teach a learner (learning_memory.nightly:
+    score AI claims at their horizon, summarise closed quarters of reads,
+    and the steps the memory audit added after them). Bounded and resumable
+    like every sweep here; sends nothing."""
+    import learning_memory
+    ids = learning_memory.eligible_ids()
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        res = learning_memory.nightly(rid)
+        with lock:
+            c["attempted"] += 1
+            c["ok" if res.get("ok") else "failed"] += 1
+
+    _done, ran_out = resumable_sweep(LEARNING_MEMORY_CURSOR_KEY, ids, _one, SWEEP_MAX_SECONDS,
+                                     workers=SWEEP_WORKERS, job="learning_memory")
+    if ran_out:
+        _ops.capture(RuntimeError(f"The learning pass stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="learning_memory", context="time_bound")
+    c["hit_bound"] = bool(ran_out)
+    return c
+
+
 def run_food_cost_diagnoses():
     """Daily — the root-cause read over each restaurant's ranked cost drivers.
 
@@ -4421,6 +4460,12 @@ def scheduler_loop():
             if _due(now, 6) and _ops.claim_period("outcome_rechecks", str(today)):
                 from strategy_jobs import run_outcome_rechecks
                 _ops.run_job("outcome_rechecks", run_outcome_rechecks)
+
+            # 6am+, after the evaluations and re-checks — the nightly
+            # learning pass (learning_memory): score AI claims whose horizon
+            # passed, summarise closed quarters of reads. Sends nothing.
+            if _due(now, 6) and _ops.claim_period("learning_memory", str(today)):
+                _ops.run_job("learning_memory", run_learning_memory)
 
             # 6am+, after the outcome evaluations — each restaurant's four
             # value figures into value_figures_daily, which the admin

@@ -135,12 +135,20 @@ def enter_path_allowed(user, method, path) -> bool:
 # opening this — and the manager being granted it may be the one it names.
 LOSS_VIEW = "loss.view"
 
+# A login the owner marks as writing review replies in the restaurant's own
+# voice (memory audit 9/29/26, reply_voice): its approved replies and its
+# edits teach the drafter as the owner's do. It opens no route and no data —
+# models.reply_voice_sql reads the grant — and it never earns auto-approve
+# trust, which rests on the account holder's own approvals.
+REVIEWS_VOICE = "reviews.voice"
+
 # What an owner may grant an individual login on top of its role, per
 # location (permission_grants). A fixed list on purpose: administering logins,
 # billing and switching locations are never grantable.
 GRANTABLE = {
     FOOD_COST_VIEW: "Food cost & margins",
     LOSS_VIEW: "Comps & voids",
+    REVIEWS_VOICE: "Writes replies in our voice",
 }
 # Roles a grant can be given to. Owners already hold everything; employees
 # are PIN identities with no console at all.

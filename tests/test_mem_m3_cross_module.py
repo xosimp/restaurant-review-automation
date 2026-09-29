@@ -32,6 +32,12 @@ def _db(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(demand_signals, "get_conn", fake)
     monkeypatch.setattr(demand, "get_conn", fake, raising=False)
+    # marketing_tags binds get_conn at import (it reads the menu to tag a
+    # post): without this the tag read the default test database, and the
+    # post test passed only while a demo seed there happened to sell a
+    # Margherita Pizza under restaurant 1.
+    import marketing_tags
+    monkeypatch.setattr(marketing_tags, "get_conn", fake)
     yield
 
 

@@ -364,10 +364,16 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
             if p.get("menu_notes") else "")
     goal_clause = f"What the owner wants this email to do, in their words: {goal}.\n" if goal else ""
     topic_clause = f"Topic/specifics to include: {topic}.\n" if topic else ""
+    # The owner's voice on emails (marketing_voice; memory audit 9/29/26,
+    # mkt_edits) and what Cavnar AI remembers (memory_context 'marketing').
+    import marketing_voice
+    from marketing import marketing_memory_block
+    voice = marketing_voice.voice_block(restaurant.id, "email")
+    memory = marketing_memory_block(restaurant.id)
     prompt = (
         f"Write a short email from {p['name']}, a {p['vibe']} in {p['neighborhood']}, to guests who joined its list.\n"
         f"Brand voice: {p['voice']}. Known for: {p['known_for']}.{never}{menu}\n"
-        f"{goal_clause}{topic_clause}\n"
+        f"{goal_clause}{topic_clause}{voice}{memory}\n"
         "Return ONLY a JSON object, no markdown, with exactly these keys:\n"
         '  "subject": the subject line, under 8 words, no emoji\n'
         '  "preheader": one line under 90 characters that adds to the subject (the inbox shows it after the subject)\n'

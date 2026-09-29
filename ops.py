@@ -2147,6 +2147,14 @@ _RETENTION_DAYS = {
     "shift_facts":        int(os.getenv("RETAIN_SHIFT_FACTS_DAYS", "1095")),
     "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
     "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
+    # Cavnar AI's own reads and their claims (ai_reads, memory audit
+    # 9/29/26): the raw text 13 months. Each closed quarter is summarised
+    # into ai_read_summaries (never pruned) by the nightly learning job
+    # long before its rows reach this — "what we said, what was done, what
+    # happened" outlives the words. The claims' Historical Accuracy reads a
+    # year (ai_reads.claims_record), inside this.
+    "ai_reads":           int(os.getenv("RETAIN_AI_READS_DAYS", "400")),
+    "ai_claims":          int(os.getenv("RETAIN_AI_CLAIMS_DAYS", "400")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
     # What left the owner's memory without the owner asking (a lane's budget,
@@ -2160,6 +2168,14 @@ _RETENTION_DAYS = {
     # delegate's per-login silence, a month after it ended.
     "rec_rank_builds":    int(os.getenv("RETAIN_REC_RANK_BUILDS_DAYS", "400")),
     "rec_silences":       int(os.getenv("RETAIN_REC_SILENCES_DAYS", "30")),
+    # Memory audit 9/29/26, workstream M6: a reply draft the owner turned
+    # down, as a hash and signals (never its words) — the drafter's edit
+    # note reads the last 90 days (models.REJECTIONS_KEEP_DAYS).
+    "reply_draft_rejections": int(os.getenv("RETAIN_REPLY_REJECTIONS_DAYS", "90")),
+    # Marketing copy a model drafted (marketing_voice.DRAFTS_KEEP_DAYS): what
+    # went out keeps its original on marketing_edits; the rest is only
+    # needed to see which drafts were regenerated rather than used.
+    "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2180,8 +2196,10 @@ _RETENTION_COLUMN = {
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
+    "ai_reads": "created_at", "ai_claims": "created_at",
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
+    "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2248,6 +2266,16 @@ _RETENTION_FLOOR_DAYS = {
     # 360 days, a person's record its guest mentions a year; tenure reads
     # person_quarters for the rest.
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
+    # M6: the drafter's edit note reads 90 days of turned-down reply drafts
+    # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
+    # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
+    "reply_draft_rejections": 90, "marketing_model_drafts": 90,
+
+
+    # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
+    # the model-confidence check read a year; Ask reads up to 180 days of
+    # reads. Every closed quarter is summarised first (the rollup below).
+    "ai_reads": 365, "ai_claims": 365,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2262,6 +2290,10 @@ _RETENTION_ROLLUP = {
     "shift_facts": "shift_facts:roll_all_quarters",
     "attendance_events": "shift_facts:roll_all_quarters",
     "person_signals": "shift_facts:roll_all_quarters",
+    # "What we said, what was done, what happened" per closed quarter
+    # (ai_read_summaries, kept forever) before any raw read or claim goes.
+    "ai_reads": "ai_reads:rollup_quarters",
+    "ai_claims": "ai_reads:rollup_quarters",
 }
 # (reader, window, what a lifetime reader reads instead). A window is days,
 # or "module.CONSTANT" (the reader's own constant, read by the test), or
@@ -2321,6 +2353,15 @@ _RETENTION_READERS = {
     "person_signals": (("people.cover_record", 180, None),
                        ("people.get_person", "people.PERSON_MENTION_DAYS", None),
                        ("people.memory_lines", "people.MEMORY_MENTION_DAYS", None)),
+    "reply_draft_rejections": (("models.get_reply_rejection_signals", "models.REJECTIONS_KEEP_DAYS", None),),
+    "marketing_model_drafts": (("marketing_voice.regenerated", "marketing_voice.DRAFTS_KEEP_DAYS", None),
+                               ("marketing_voice._match_draft", 1, None)),
+
+
+    "ai_reads": (("ask_cavnar_tools._read_recent_reads", 180, None),
+                 ("ai_reads.recent_reads", 30, None)),
+    "ai_claims": (("ai_reads.claims_record", 365, None), ("ai_reads.confidence_calibration", 365, None),
+                  ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so

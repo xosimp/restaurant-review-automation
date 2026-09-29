@@ -319,7 +319,10 @@ NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "supersede
 # restore_kind's stamp is what decisions.quiet_kinds counts from — and stay
 # out of every acceptance figure (admin_ops), so none is read as a
 # recommendation that was taken.
-BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:", "conflict:")
+BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:", "conflict:",
+                        # "keep suggesting this kind?" — a question about
+                        # Cavnar AI's advice, not advice (memory audit 9/29/26)
+                        "kind_hold:")
 # How close (seconds) an answer the ledger already holds must be to an older
 # ledger's row for sync_existing to treat the row as that same answer.
 SAME_ANSWER_SECONDS = 300
@@ -683,6 +686,7 @@ KIND_TOPIC = {
     "intraday_pulse": "hours", "pulse_cut": "hours",
     "reprice": "pricing", "price_spike": "purchasing", "invoice": "purchasing", "food_cost_driver": "food_cost",
     "cut_waste": "waste", "food_waste": "waste", "stock_low": "ordering", "critical_low": "ordering",
+    "raise_par": "ordering",          # ordering.par_suggestions (memory audit 9/29/26)
     "stock": "ordering", "diag_food": "food_cost", "food_diagnosis": "food_cost", "insight_food": "food_cost",
     "top_issue": "guest_experience", "diag_review": "guest_experience", "insight_review": "guest_experience",
     "rating": "guest_experience", "neg_spike": "guest_experience", "negative_trend": "guest_experience",
@@ -707,11 +711,11 @@ KIND_TOPIC = {
     "dsr_action:respond_reviews": "replies", "dsr_action:promote": "marketing",
     "link:reviews_x_labor": "staffing", "link:reviews_x_food_cost": "food_cost",
     "link:reviews_x_menu": "guest_experience", "link:marketing_x_reviews": "marketing",
-    "link:intel_x_reviews": "competition",
+    "link:intel_x_reviews": "competition", "link:dsr_x_reviews": "staffing", "link:marketing_x_labor": "staffing",
 }
 # Kinds whose subject names a dish, and kinds whose subject names an item.
 DISH_KINDS = ("reprice", "dish_promote", "dish_praise")
-ITEM_KINDS = ("cut_waste", "stock_low", "critical_low", "price_spike", "diag_food")
+ITEM_KINDS = ("cut_waste", "stock_low", "critical_low", "price_spike", "diag_food", "raise_par")
 REVIEW_CATEGORY_KINDS = ("top_issue", "diag_review")
 _TOPIC_LABELS = {"food_cost": "food cost", "guest_experience": "guest experience", "guest_outreach": "guest outreach"}
 _DAYPART_LABELS = {"late_night": "late night", "happy_hour": "happy hour"}
@@ -1833,6 +1837,15 @@ def implemented(restaurant_id, keys, surface, user_id=None, role=None, source_re
             if record(restaurant_id, k, "implemented", surface=surface, user_id=user_id, role=role,
                       meta=meta, source_ref=source_ref, db_path=db_path):
                 n += 1
+                # The change was made: measure it (memory audit 9/29/26,
+                # "positive_volume") — the tracker its number carries,
+                # under the slice gate. After the write has committed, never
+                # inside it (implemented_on's callers are caught up nightly).
+                try:
+                    import outcomes
+                    outcomes.autostart_implemented(restaurant_id, k, user_id=user_id, db_path=db_path)
+                except Exception as e:
+                    print(f"[rec_ledger] implemented tracker not started for {k}: {e}")
         except Exception as e:
             print(f"[rec_ledger] implemented not recorded for {k}: {e}")
     return n
@@ -2641,28 +2654,42 @@ def _sync_trackers(conn, limit=SYNC_TRACKERS_PER_PASS) -> dict:
     tracker a moment before the answer that opens a never-shown episode).
     An observed tracker ("observed:schedule_published:2026-09") measures
     something the owner did unprompted — no recommendation was shown, so
-    there is no episode to measure."""
+    there is no episode to measure.
+
+    A tracker whose own key is not its recommendation's carries that key as
+    measures_key (memory audit 9/29/26, link_trackers): a guest text's
+    campaign:<Day>:<date> measures slow_day:<Day>, Ask's ask:<title> the
+    recommendation it followed — matched by measures_key, never by a key no
+    recommendation has. The month's reprice tracker measures every dish
+    repriced that month: each episode linked to a tracker gets its verdict
+    (rec_learning still counts one result per tracker)."""
     out = {}
     try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
+        ep_key = ("COALESCE(NULLIF(o.measures_key, ''), o.source_key)" if "measures_key" in cols
+                  else "o.source_key")
         rows = conn.execute(
-            "SELECT o.id, o.restaurant_id, o.source_key, o.verdict, o.status, o.created_at "
+            f"SELECT o.id, o.restaurant_id, o.source_key, {ep_key} AS ep_key, o.verdict, o.status, o.created_at "
             "FROM recommendation_outcomes o WHERE o.source_key NOT LIKE 'observed:%' "
-            "AND EXISTS (SELECT 1 FROM rec_instances i WHERE i.restaurant_id=o.restaurant_id AND i.key=o.source_key "
-            "            AND i.created_at <= datetime(o.created_at, '+60 seconds')) "
+            f"AND (EXISTS (SELECT 1 FROM rec_instances i WHERE i.restaurant_id=o.restaurant_id AND i.key={ep_key} "
+            "              AND i.created_at <= datetime(o.created_at, '+60 seconds')) "
+            "  OR EXISTS (SELECT 1 FROM rec_instances i3 WHERE i3.tracker_id=o.id)) "
             "AND (NOT EXISTS (SELECT 1 FROM rec_instances i2 WHERE i2.tracker_id=o.id) "
-            "  OR (o.status='evaluated' AND NOT EXISTS (SELECT 1 FROM rec_events e WHERE e.restaurant_id=o.restaurant_id "
-            "      AND e.key=o.source_key AND e.dedupe='outcome:outcome:' || o.id)) "
-            "  OR (o.status='abandoned' AND NOT EXISTS (SELECT 1 FROM rec_events e WHERE e.restaurant_id=o.restaurant_id "
-            "      AND e.key=o.source_key AND e.dedupe='abandoned:outcome:' || o.id))) "
+            "  OR (o.status='evaluated' AND EXISTS (SELECT 1 FROM rec_instances i4 WHERE i4.tracker_id=o.id "
+            "      AND NOT EXISTS (SELECT 1 FROM rec_events e WHERE e.restaurant_id=o.restaurant_id "
+            "      AND e.key=i4.key AND e.dedupe='outcome:outcome:' || o.id))) "
+            "  OR (o.status='abandoned' AND EXISTS (SELECT 1 FROM rec_instances i5 WHERE i5.tracker_id=o.id "
+            "      AND NOT EXISTS (SELECT 1 FROM rec_events e WHERE e.restaurant_id=o.restaurant_id "
+            "      AND e.key=i5.key AND e.dedupe='abandoned:outcome:' || o.id)))) "
             "ORDER BY o.id LIMIT ?", (int(limit),)).fetchall()
     except Exception as e:           # no outcomes table on this database
         print(f"[rec_ledger] tracker sync skipped: {e}")
         return out
     for o in rows:
-        rid, key = o["restaurant_id"], (o["source_key"] or "")[:160]
-        ep = conn.execute("SELECT * FROM rec_instances WHERE tracker_id=? AND restaurant_id=? LIMIT 1",
-                          (o["id"], rid)).fetchone()
-        if ep is None:
+        rid, key = o["restaurant_id"], (o["ep_key"] or "")[:160]
+        eps = conn.execute("SELECT * FROM rec_instances WHERE tracker_id=? AND restaurant_id=?",
+                           (o["id"], rid)).fetchall()
+        if not eps:
             at = conn.execute("SELECT datetime(?, '+60 seconds')", (o["created_at"],)).fetchone()[0]
             ep = _episode_at(conn, rid, key, at)
             if ep is None:
@@ -2670,22 +2697,25 @@ def _sync_trackers(conn, limit=SYNC_TRACKERS_PER_PASS) -> dict:
             if conn.execute("UPDATE rec_instances SET tracker_id=? WHERE rec_id=? AND tracker_id IS NULL",
                             (o["id"], ep["rec_id"])).rowcount:
                 out["linked"] = out.get("linked", 0) + 1
+            eps = [ep]
         at = _stamp(o["created_at"])
-        if o["status"] == "evaluated":
-            ref = f"outcome:outcome:{o['id']}"
-            if not conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
-                                (rid, key, ref)).fetchone():
-                verdict = o["verdict"] if o["verdict"] in ("improved", "worsened", "no_clear_change") else "unknown"
-                if _add_event(conn, ep["rec_id"], rid, key, "outcome", dedupe=ref, at=at,
-                              meta={"verdict": verdict, "tracker_id": o["id"]}):
-                    out["outcomes"] = out.get("outcomes", 0) + 1
-        elif o["status"] == "abandoned":
-            ref = f"abandoned:outcome:{o['id']}"
-            if not conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
-                                (rid, key, ref)).fetchone():
-                if _add_event(conn, ep["rec_id"], rid, key, "abandoned", dedupe=ref, at=_now(),
-                              meta={"tracker_id": o["id"]}):
-                    out["abandoned"] = out.get("abandoned", 0) + 1
+        for ep in eps:
+            ekey = (ep["key"] or "")[:160]
+            if o["status"] == "evaluated":
+                ref = f"outcome:outcome:{o['id']}"
+                if not conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
+                                    (rid, ekey, ref)).fetchone():
+                    verdict = o["verdict"] if o["verdict"] in ("improved", "worsened", "no_clear_change") else "unknown"
+                    if _add_event(conn, ep["rec_id"], rid, ekey, "outcome", dedupe=ref, at=at,
+                                  meta={"verdict": verdict, "tracker_id": o["id"]}):
+                        out["outcomes"] = out.get("outcomes", 0) + 1
+            elif o["status"] == "abandoned":
+                ref = f"abandoned:outcome:{o['id']}"
+                if not conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
+                                    (rid, ekey, ref)).fetchone():
+                    if _add_event(conn, ep["rec_id"], rid, ekey, "abandoned", dedupe=ref, at=_now(),
+                                  meta={"tracker_id": o["id"]}):
+                        out["abandoned"] = out.get("abandoned", 0) + 1
     conn.commit()
     return out
 

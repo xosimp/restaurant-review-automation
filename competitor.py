@@ -943,6 +943,22 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         except Exception as _we:
             print(f"[Competitor] weather context unavailable: {_we}")
 
+        # What Cavnar AI remembers about this restaurant (memory audit
+        # 9/29/26: memory_context, surface 'competitor_read' — the owner's
+        # constraints, the last read and its verdict, the answers they gave),
+        # fenced and dated M/D/YY by the reader; "" when there is nothing.
+        memory_ctx = ""
+        if restaurant_id:
+            try:
+                import memory_context as _mc
+                _mt = _mc.memory_context(restaurant_id, "competitor_read", subjects=("intel",)).text
+                if _mt:
+                    memory_ctx = ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context, not evidence: a "
+                                  "recommendation the owner already answered is not made again, and nothing here "
+                                  "is a competitor fact:\n" + _mt)
+            except Exception as _me:
+                print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
+
         from competitor_intel_format import NOTHING_TO_ACT_ON
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
@@ -950,7 +966,7 @@ Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
 {UNTRUSTED_NOTE}
 
 About {restaurant_name}:
-{profile_context}
+{profile_context}{memory_ctx}
 
 CRITICAL RULES:
 - Only recommend actions that fit {restaurant_name}'s actual concept and cuisine
@@ -1675,6 +1691,17 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         conn.close()
         import models as _models_inv
         _models_inv._invalidate_request_cache(restaurant_id)
+        # The read kept as history (ai_reads, memory audit 9/29/26): the blob is
+        # overwritten every Monday, so what last week's read said was gone; the
+        # next competitor read sees it through memory_context's last_claim section.
+        try:
+            import ai_reads
+            ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel",
+                                 meta={"kind": "competitor", "verdict": ai_reads.verdict_of(insight),
+                                       "competitors": [c.get("name") for c in competitors][:8],
+                                       "date": _now_ct.strftime("%Y-%m-%d")})
+        except Exception as _are:
+            print(f"[Competitor] read not kept as history: {_are}")
         # One JSON blob overwritten every Monday was the entire record, so
         # nothing could show that a competitor's rating fell, that a new one
         # opened, or that a complaint theme appeared. A snapshot per run is

@@ -182,8 +182,13 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
             iid = _find(ref, name)
             if iid:
                 sets = ", ".join(f"{k}=?" for k in vals) + (", " if vals else "") + "external_ref=COALESCE(?, external_ref)"
+                args = [*vals.values(), ref]
+                if "par_level" in vals:
+                    sets += (", par_changed_at=CASE WHEN COALESCE(par_level, -1) <> COALESCE(?, -1) "
+                             "THEN datetime('now') ELSE par_changed_at END")
+                    args.append(vals["par_level"])
                 conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",
-                             (*vals.values(), ref, iid, restaurant_id))
+                             (*args, iid, restaurant_id))
                 if ref:
                     by_ref[ref] = iid
             else:

@@ -532,6 +532,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    # Where a cut measurably went worse here, for the optimizer (memory
+    # audit 9/29/26, "what_worked").
+    result["learned_worse"] = learned_worse_levers(restaurant_id)
     # Which labor target the budget was built against — the owner's goal
     # ("your goal of 26% by 12/31/26") or the setting (memory audit 9/29/26,
     # owner_goals): both the revenue and the target name what applied.
@@ -2218,7 +2221,21 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["pending_time_off"] = {n: sorted(d) for n, d in c.pending_off.items()}
     except Exception as _cx:
         print(f"[schedule] live constraints unavailable: {_cx}")
+    out["learned_worse"] = learned_worse_levers(restaurant_id)
     return out
+
+
+def learned_worse_levers(restaurant_id) -> dict:
+    """{weekday: {worsened, measured, label}}: the days where cutting
+    staffing was taken and measured worse here (rec_learning.
+    worsened_levers) — the optimizer holds back a trim of the same day
+    (memory audit 9/29/26, "what_worked"). {} on any failure."""
+    try:
+        import rec_learning
+        return rec_learning.worsened_levers(restaurant_id) or {}
+    except Exception as e:
+        print(f"[schedule] learned levers unavailable for {restaurant_id}: {e}")
+        return {}
 
 
 def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = None) -> dict:
@@ -2584,6 +2601,21 @@ def mark_next_week_built(restaurant_id, history_id) -> int:
 SHOWN_RECOMMENDATIONS = 5
 
 
+def schedule_item_metric(item):
+    """The number a schedule recommendation is measured on (memory audit
+    9/29/26, "positive_volume"): a trim of a weekday reads that weekday's
+    labor %. Coverage, leadership, pairing, fatigue and ratings advice adds
+    or moves people for service's sake and has no honest number: None."""
+    if str((item or {}).get("kind") or "") != "hours":
+        return None
+    try:
+        import outcomes
+        return outcomes.expected_metric_for("schedule_hours:" + str(item.get("key") or ""), item.get("text"),
+                                            module="schedule")
+    except Exception:
+        return None
+
+
 def present_quality(restaurant_id, quality, user_id=None, authority=None):
     """The quality verdict's recommendations, recorded as shown on
     "schedule_review" by the response that SERVES them to a person — the
@@ -2604,7 +2636,8 @@ def present_quality(restaurant_id, quality, user_id=None, authority=None):
         ids = rec_delivery.present_now(
             restaurant_id, "schedule_review",
             [{"key": it["key"], "module": "schedule", "title": str(it.get("text") or "")[:200],
-              "kind": "schedule_" + str(it.get("kind") or "other"), "position": i} for i, it in enumerate(items)],
+              "kind": "schedule_" + str(it.get("kind") or "other"), "position": i,
+              "expected_metric": schedule_item_metric(it)} for i, it in enumerate(items)],
             user_id=user_id)
         for it in items:
             it["rec_key"] = it["key"]

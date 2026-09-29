@@ -815,6 +815,7 @@ def _read_business_snapshot(restaurant_id, _viewer=None):
         "labor": brief.get("labor"),
         "marketing": brief.get("marketing"),
         "visibility": brief.get("visibility"),
+        "dsr": brief.get("dsr"),
         "modules_consulted": brief.get("modules_consulted"),
         "modules_off": brief.get("modules_off"),
         "degraded": brief.get("degraded"),
@@ -1173,7 +1174,7 @@ def _generate_marketing_content(restaurant_id, content_type="instagram_post", to
     return {"ok": True, "content_type": content_type, "topic": topic, "content": text}
 
 
-def _edit_review_reply(restaurant_id, review_id=None, draft=None):
+def _edit_review_reply(restaurant_id, review_id=None, draft=None, _viewer=None):
     """Replace a drafted reply's text.
 
     Direct: it edits an unpublished draft and posts nothing. Previously the
@@ -1191,7 +1192,10 @@ def _edit_review_reply(restaurant_id, review_id=None, draft=None):
     # The model wrote this text: it is a fresh draft, not the owner's edit
     # (by_model — re-audit C11), so reply-edit learning never mistakes it
     # for the owner's own words.
-    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True)
+    # The login asking: the draft this rewrite replaces was turned down by
+    # them (models.record_reply_rejection; memory audit 9/29/26).
+    user = getattr(_viewer, "_ask_dsr_user", None)
+    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True, user=user)
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
 
 
@@ -1416,6 +1420,46 @@ def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None,
     return {"ok": True, "goal": g, "summary": goals.summarise(g)}
 
 
+# How far back Ask looks for the recommendation a tracked change follows,
+# when the model names none (memory audit 9/29/26, link_trackers).
+TRACK_REC_LOOKBACK_DAYS = 14
+
+
+def track_rec_key(restaurant_id, metric, source_key=None, db_path=None):
+    """The recommendation a change Ask is asked to track follows, or None
+    (memory audit 9/29/26, link_trackers). Ask's tracker is keyed
+    ask:<title>, a key no recommendation carries, so its result reached no
+    episode. Now: the key the model passed, when this restaurant has an
+    episode of it; else the ONE recommendation shown in the last
+    TRACK_REC_LOOKBACK_DAYS, still open or taken and not yet measured,
+    whose own metric (outcomes.metric_for_rec) is this one — two
+    candidates is none (never a guess). Never raises."""
+    import outcomes
+    import rec_ledger
+    kw = {"db_path": db_path} if db_path else {}
+    key = str(source_key or "").strip()[:160]
+    try:
+        conn = rec_ledger.get_conn(db_path) if db_path else rec_ledger.get_conn()
+        try:
+            if key and not key.startswith("ask:") and rec_ledger._latest(conn, restaurant_id, key) is not None:
+                return key
+            rows = conn.execute(
+                "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND tracker_id IS NULL "
+                "AND status IN ('open','accepted','completed','implemented') "
+                "AND last_event_at >= datetime('now', ?)",
+                (restaurant_id, f"-{int(TRACK_REC_LOOKBACK_DAYS)} days")).fetchall()
+        finally:
+            conn.close()
+        want = outcomes.metrics.normalize(metric) if outcomes.metrics.known(metric) else None
+        if not want:
+            return None
+        hits = [r["key"] for r in rows if outcomes.metric_for_rec(restaurant_id, r["key"], **kw)[0] == want]
+        return hits[0] if len(hits) == 1 else None
+    except Exception as e:
+        print(f"[ask_cavnar_tools] tracked change's recommendation not resolved for {restaurant_id}: {e}")
+        return None
+
+
 def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _viewer=None):
     import outcomes
     if not metric_visible(_viewer, metric):
@@ -1436,8 +1480,10 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
                          "their before/after readings don't overlap. Tell the owner it is "
                          "already being tracked.")}
     try:
+        # The tracker measures the recommendation the change follows, when
+        # there is one (track_rec_key) — linked to its episode at start.
         res = outcomes.start(restaurant_id, "ask", f"ask:{title.lower()[:80]}", title, metric,
-                             gate="metric")
+                             gate="metric", rec_key=track_rec_key(restaurant_id, metric, source_key))
     except ValueError as e:
         return {"error": str(e)}
     if not res["ok"]:
@@ -1695,20 +1741,31 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
         import ai_reads
         for r in ai_reads.recent_reads(restaurant_id, days=window, limit=20) or []:
             surface = str(r.get("surface") or "")
-            mod = _MODULE_OF_SURFACE.get(surface.split(":", 1)[0], None)
-            if mod and mod in denied:
+            base = surface.split(":", 1)[0]
+            # Every kept read is scoped by its surface (ai_reads.SURFACE_MODULE):
+            # a module's read needs that module's view, an owner-level one
+            # (the monthly review, digest, brief, Monday plan, nightly report)
+            # is the account holder's, and a surface the map does not know is
+            # never served (fails closed).
+            if not _read_surface_allowed(base, _viewer, denied):
                 continue
-            if want and want not in (surface, mod or ""):
+            mod = ai_reads.SURFACE_MODULE.get(base)
+            mod = None if mod == ai_reads.OWNER_ONLY else mod
+            if want and want not in (surface, base, mod or ""):
                 continue
-            seen.add(surface.split(":", 1)[0])
-            reads.append({"what": surface, "date": mdy(str(r.get("created_at") or "")[:10]),
+            seen.add(base)
+            reads.append({"what": ai_reads.SURFACE_LABELS.get(base, surface),
+                          "date": mdy(str(r.get("created_at") or "")[:10]),
                           "text": str(r.get("summary") or "")[:1500], "subject": r.get("subject")})
     except Exception as e:
         log.debug("read_recent_reads: ai_reads unavailable: %s", e)
     try:
         import insight_store
+        import ai_reads as _air_k
         for kind, perm_module, label in _READ_KINDS:
-            if perm_module in denied or kind in seen or (want and want not in (kind, perm_module)):
+            # The current stored read is already listed when its kept history is.
+            if (perm_module in denied or _air_k.STORE_SURFACE.get(kind, kind) in seen
+                    or (want and want not in (kind, perm_module))):
                 continue
             payload, at = insight_store.latest(restaurant_id, kind)
             text = _read_text(payload)
@@ -1756,6 +1813,28 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
                      "Cavnar AI's own earlier words — quote one as what it said then, with its date; check a "
                      "figure again with the module's own read tool before calling it current."
                      if reads else "No stored read from Cavnar AI for that — say so.")}
+
+
+def _read_surface_allowed(surface, viewer, denied) -> bool:
+    """Whether the login behind `viewer` may read a kept read of `surface`
+    (ai_reads.SURFACE_MODULE): a module's read needs that module's view; an
+    OWNER_ONLY read is the account holder's (permissions.is_principal) — an
+    unrestricted caller (no login stamped) reads as the owner; a surface
+    the map does not name is refused."""
+    import ai_reads
+    m = ai_reads.SURFACE_MODULE.get(surface)
+    if not m:
+        return False
+    if m == ai_reads.OWNER_ONLY:
+        user = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+        if user is None:
+            return True
+        try:
+            from permissions import is_principal
+            return bool(is_principal(user))
+        except Exception:
+            return False
+    return m not in denied
 
 
 # The module whose view permission a stored read's surface needs.
@@ -2471,6 +2550,7 @@ TOOLS = [
         "kind": "action",
         "fn": _edit_review_reply,
         "module": "module_reviews",
+        "wants_viewer": True,
         "spec": {
             "name": "edit_review_reply",
             "description": (
@@ -2640,7 +2720,9 @@ TOOLS = [
                              "additionalProperties": False, "properties": {
                 "title": {"type": "string", "description": "The change, in the owner's words."},
                 "metric": {"type": "string"},
-                "source_key": {"type": "string"}}},
+                "source_key": {"type": "string", "description": (
+                    "The key of the recommendation this change follows, when it follows one Cavnar AI made "
+                    "(e.g. slow_day:Tuesday, trim_day:Monday). Leave it out otherwise.")}}},
         },
     },
 

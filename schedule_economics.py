@@ -254,7 +254,30 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
         return {"value": None, "source": "fewer than three complete weeks on file", "weeks": len(complete)}
     vals = sorted(s for _, s in complete)
     med = vals[len(vals) // 2] if len(vals) % 2 else (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
-    return {"value": round(med, 0), "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete)}
+    out = {"value": round(med, 0), "raw_value": round(med, 0), "calibration": None,
+           "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete)}
+    # The published weeks' own record (forecast_log kind revenue_week, frozen
+    # at publish and scored when the week closes — memory audit 9/29/26,
+    # "forecasts"): when those projections have leaned one way the budget's
+    # revenue is corrected by the same factor, and the source says so; when
+    # the record reads often wide it is said, since the budget still needs a
+    # figure. The frozen projection stays raw (demand.freeze_week_projection),
+    # so the correction never feeds on itself.
+    try:
+        import forecast_log
+        rec = forecast_log.shown(restaurant_id, "revenue_week", med, db_path=db_path)
+        if rec.get("corrected") and rec.get("shown") is not None:
+            out.update(value=round(float(rec["shown"]), 0),
+                       calibration={"factor": rec["factor"], "bias_pct": rec.get("bias_pct"),
+                                    "reading": rec.get("reading")})
+            out["source"] += (f", corrected {'down' if rec['factor'] < 1 else 'up'} "
+                              f"{abs(round((1 - rec['factor']) * 100))}% because the published weeks' "
+                              f"projections here {rec.get('reading')}")
+        elif rec.get("withheld"):
+            out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
+    except Exception as e:
+        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
+    return out
 
 
 # ── sales per labor hour by daypart ───────────────────────────────────────

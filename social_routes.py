@@ -206,7 +206,7 @@ def post_to_instagram(current_user):
         return jsonify(ok=False, error=bad), 400
     payload, status = _do_post_to_instagram(
         rid, data.get("caption", ""), image_url, data.get("topic", ""),
-        content_log_id=_content_log_id(data),
+        content_log_id=_content_log_id(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)
@@ -349,7 +349,7 @@ def _maybe_live(platform):
             "live. Check your Page before posting it again.")
 
 
-def _log_publish(restaurant_id, content_type, platform, post_id, caption, topic, content_log_id):
+def _log_publish(restaurant_id, content_type, platform, post_id, caption, topic, content_log_id, user=None):
     """Every publish is logged, with its posted_at (MB-8): a direct post
     used to be logged only when the client sent a topic — the web's topic
     existed only after Generate, so a reopened draft or the owner's own
@@ -359,12 +359,12 @@ def _log_publish(restaurant_id, content_type, platform, post_id, caption, topic,
     try:
         from marketing import log_content as _lc
         _lc(restaurant_id, content_type, (topic or "").strip() or caption[:80], post_id=post_id,
-            post_platform=platform, body=caption, content_log_id=content_log_id)
+            post_platform=platform, body=caption, content_log_id=content_log_id, user=user)
     except Exception as e:
         print(f"[insights] failed to log {platform} post_id: {_safe_err(e)}")
 
 
-def _do_post_to_instagram(restaurant_id, caption, image_url, topic, content_log_id=None):
+def _do_post_to_instagram(restaurant_id, caption, image_url, topic, content_log_id=None, user=None):
     """Shared by the web route above and mobile_api.py's own post-to-instagram.
 
     A refusal carries `maybe_live` only when the PUBLISH step itself got an
@@ -443,7 +443,7 @@ def _do_post_to_instagram(restaurant_id, caption, image_url, topic, content_log_
             "instagram", published, "Instagram didn't publish the post. Nothing went out — try again.")}, 200
 
     # Save post_id for engagement tracking — always, topic or not (MB-8).
-    _log_publish(restaurant_id, "instagram_post", "instagram", post_id, caption, topic, content_log_id)
+    _log_publish(restaurant_id, "instagram_post", "instagram", post_id, caption, topic, content_log_id, user=user)
     return {"ok": True, "post_id": post_id}, 200
 
 @social_bp.route("/api/instagram-status")
@@ -856,7 +856,7 @@ def post_to_facebook(current_user):
     image_url, bad = photo_url_from(rid, data)
     if bad:
         return jsonify(ok=False, error=bad), 400
-    kw = {"content_log_id": _content_log_id(data)}
+    kw = {"content_log_id": _content_log_id(data), "user": current_user}
     if image_url:
         kw["image_url"] = image_url
     payload, status = _do_post_to_facebook(rid, data.get("caption", ""), data.get("topic", ""), **kw)
@@ -867,7 +867,7 @@ def post_to_facebook(current_user):
     return jsonify(**payload), status
 
 
-def _do_post_to_facebook(restaurant_id, caption, topic, image_url=None, content_log_id=None):
+def _do_post_to_facebook(restaurant_id, caption, topic, image_url=None, content_log_id=None, user=None):
     """Shared by the web route above and mobile_api.py's own post-to-facebook.
     `maybe_live` marks an answer that may hide an accepted post (MOD-MKT-4).
 
@@ -915,7 +915,7 @@ def _do_post_to_facebook(restaurant_id, caption, topic, image_url=None, content_
         return {"ok": False, "error": _owner_error(
             "facebook", answer, "Facebook didn't accept the post. Nothing went out — try again.")}, 200
     # Always logged, topic or not (MB-8).
-    _log_publish(restaurant_id, "facebook_post", "facebook", post_id, caption, topic, content_log_id)
+    _log_publish(restaurant_id, "facebook_post", "facebook", post_id, caption, topic, content_log_id, user=user)
     return {"ok": True, "post_id": post_id}, 200
 
 

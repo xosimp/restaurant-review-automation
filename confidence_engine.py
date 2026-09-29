@@ -461,11 +461,20 @@ def accuracy(record) -> dict:
     r = record or {}
     measured, improved = int(r.get("measured") or 0), int(r.get("improved") or 0)
     improved = max(0, min(improved, measured))
+    # Below its own floor a kind may stand on the results of every kind
+    # pulling the same lever here (rec_learning kind_record `pooled`, memory
+    # audit 9/29/26): the same Beta read, the same shrinkage, said as pooled.
+    pool = r.get("pooled") if isinstance(r.get("pooled"), dict) else None
+    pooled = bool(measured < MIN_MEASURED and pool and int(pool.get("measured") or 0) >= MIN_MEASURED)
+    own_m, own_i = measured, improved
+    if pooled:
+        measured = int(pool["measured"])
+        improved = max(0, min(int(pool.get("improved") or 0), measured))
     dn = do_nothing(r)
     centre = dn["rate"]
     c_centre, pm, pi = _cohort_centre(r, dn["rate"])
-    if measured < MIN_MEASURED or r.get("source") not in ("own", "cohort") or \
-            (r.get("source") == "cohort" and measured < MIN_MEASURED):
+    if not pooled and (measured < MIN_MEASURED or r.get("source") not in ("own", "cohort") or
+                       (r.get("source") == "cohort" and measured < MIN_MEASURED)):
         basis = f"Not enough history yet — {measured} measured, needs {MIN_MEASURED}"
         if c_centre is not None:
             basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar AI'}: {pi} of {pm} improved — not counted until your own are in)"
@@ -509,12 +518,15 @@ def accuracy(record) -> dict:
     else:
         vs = f"vs about {int(round(100 * dn['rate']))}% by chance"
     basis = f"improved {improved} of {measured} times {vs}"
+    if pooled:
+        basis = (f"improved {improved} of {measured} times across your {pool.get('label') or 'related'} advice "
+                 f"here {vs} (this kind alone: {own_i} of {own_m})")
     if prior_source == "cohort":
         # The one time peers move the figure — only ever DOWN — the owner is
         # told why (BM3-12, Top-50 #32).
         basis += (f" — {r.get('prior_label') or 'other restaurants on Cavnar AI'} saw this rarely help "
                   f"({pi} of {pm}), which lowers it")
-    return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "own",
+    return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "pooled" if pooled else "own",
             "low": int(round(lo * 100)), "high": int(round(hi * 100)),
             "p_beats": round(p, 4), "beats_label": f"{pct}% likely to beat doing nothing",
             "lift": {"improved": improved, "n": measured, "rate": round(improved / float(measured), 3),

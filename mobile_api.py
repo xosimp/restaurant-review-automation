@@ -803,10 +803,15 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     if key == "labor":
         from notify import labor_target_for as _labor_target_for
         from thresholds import LABOR_OVER_TARGET_PTS
+        import restaurant_thresholds as _rthr_pulse
         target = _labor_target_for(restaurant)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
         on_track = pct <= target
-        tone = "good" if on_track else ("bad" if pct - target >= LABOR_OVER_TARGET_PTS else "warn")
+        # The margin fitted to this restaurant's own swing, never below the
+        # stated one (restaurant_thresholds, memory audit 9/29/26).
+        _over = _rthr_pulse.margin(getattr(restaurant, "id", None), "labor_over_period",
+                                   stated=LABOR_OVER_TARGET_PTS)
+        tone = "good" if on_track else ("bad" if pct - target >= _over else "warn")
         return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
                 "tone": tone}
     if key == "inventory":
@@ -1639,7 +1644,7 @@ def mobile_approve_review(review_id, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
                                         confirm_flagged=_body.get("confirm_flagged") is True,
-                                        expected_draft=_body.get("expected_draft"))
+                                        expected_draft=_body.get("expected_draft"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -1651,7 +1656,7 @@ def mobile_approve_all_reviews(current_user):
     Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                            review_ids=data.get("review_ids"))
+                                            review_ids=data.get("review_ids"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -1679,7 +1684,7 @@ def mobile_retract_review(review_id, current_user):
 @mobile_bp.route("/reviews/<int:review_id>/regenerate-draft", methods=["POST"])
 @mobile_login_required
 def mobile_regenerate_draft(review_id, current_user):
-    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"])
+    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 
@@ -3146,7 +3151,7 @@ def mobile_labor_insight(current_user):
         stale = _capi.labor_stale_read(rid)
         if stale:
             _an = _capi.labor_analysis_safe(rid)
-            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
+            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an, stale=True)
             return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
                            rec_items=_recs, validation=_rv_of(stale["text"]),
                            **stale["state"], **_insight_json(stale["text"], _recs))
@@ -3658,7 +3663,7 @@ def mobile_generate_content(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_generate_content(
         current_user["restaurant_id"], data.get("type"), data.get("topic"),
-        from_calendar=bool(data.get("from_calendar")),
+        from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"),
     )
     return jsonify(**payload), status
 
@@ -3718,6 +3723,15 @@ def mobile_mark_guest_visit(contact_id, current_user):
     return jsonify(ok=True)
 
 
+def _gm_returns(rid) -> dict:
+    """guest_marketing.segment_returns, never failing a draft."""
+    try:
+        import guest_marketing as _gm_r
+        return _gm_r.segment_returns(rid)
+    except Exception:
+        return {}
+
+
 @mobile_bp.route("/guest-campaign/draft", methods=["POST"])
 @mobile_login_required
 def mobile_guest_campaign_draft(current_user):
@@ -3737,7 +3751,16 @@ def mobile_guest_campaign_draft(current_user):
         plan = plan_campaign(prompt) if prompt else None
         ctype = data.get("type") or (plan["type"] if plan else "general")
         message = draft_campaign_message(restaurant, campaign_type=ctype, topic=data.get("topic") or "", goal=prompt)
-        out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype)
+        # The model's text is kept, so the text that goes out is measured
+        # against it (marketing_voice; memory audit 9/29/26, mkt_edits): the
+        # send route takes `draft_ref` back.
+        import marketing_voice as _mv
+        out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype,
+                   draft_ref=_mv.record_draft(rid, "text", str(message), "campaign_draft",
+                                              user_id=current_user.get("id")),
+                   # What past texts did here per audience (mkt_results): the
+                   # Studio shows it beside the audience it suggests.
+                   returns_by_segment=_gm_returns(rid))
         if plan:
             out.update(segment=plan["segment"], goal=plan["goal"], target_day=plan["target_day"])
         return jsonify(**out)
@@ -3789,7 +3812,7 @@ def mobile_guest_winback_send(current_user, draft_id):
     import guest_marketing as _gm
     data = request.get_json(silent=True) or {}
     out = _gm.send_winback(rid, draft_id, message=data.get("message"), user_id=current_user.get("id"),
-                           hold=bool(data.get("hold")))
+                           hold=bool(data.get("hold")), user=current_user)
     return jsonify(**out), (202 if out.get("queued") else (200 if out.get("ok") else 400))
 
 
@@ -3858,6 +3881,12 @@ def mobile_guest_campaign_send(current_user):
                                     target_day=data.get("target_day") if isinstance(data.get("target_day"), str) else None,
                                     user_id=current_user.get("id"), hold=bool(data.get("hold")),
                                     rec_key=data.get("rec_key") if isinstance(data.get("rec_key"), str) else None)
+        if result.get("ok"):
+            # The text that went out, measured against the model's draft
+            # (marketing_voice; memory audit 9/29/26, mkt_edits).
+            import marketing_voice as _mv
+            _mv.record_final(rid, "text", message, "campaign", ref_id=result.get("campaign_id"),
+                             user=current_user, draft_id=_capi._draft_ref_of(data))
         status = 202 if result.get("queued") else (200 if result.get("ok") or result.get("blocked") == "quiet_hours" else 400)
         return jsonify(**result), status
     except Exception as e:
@@ -4047,7 +4076,8 @@ def mobile_drafts(current_user):
     data = request.get_json() or {}
     result = _md.save_draft(rid, data.get("body"), content_type=data.get("content_type"),
                             topic=data.get("topic"), media_id=data.get("media_id"),
-                            draft_id=data.get("id"), user_id=current_user.get("id"))
+                            draft_id=data.get("id"), user_id=current_user.get("id"),
+                            content_log_id=_capi._content_log_id_of(data), draft_ref=_capi._draft_ref_of(data))
     return jsonify(**result), (200 if result.get("ok") else 400)
 
 
@@ -4057,7 +4087,7 @@ def mobile_approve_draft(draft_id, current_user):
     import marketing_drafts as _md
     result = _md.approve_draft(draft_id, current_user["restaurant_id"],
                                user_id=current_user.get("id"),
-                               role=current_user.get("role"))
+                               role=current_user.get("role"), user=current_user)
     return jsonify(**result), (200 if result.get("ok") else 403)
 
 
@@ -4245,6 +4275,12 @@ def mobile_guest_newsletter(current_user):
                                  mailing_address=data.get("mailing_address"),
                                  design=data.get("design") if isinstance(data.get("design"), dict) else None,
                                  segment=data.get("segment"))
+    if result.get("ok"):
+        # The letter that went out, measured against the model's draft
+        # (marketing_voice; memory audit 9/29/26, mkt_edits).
+        import marketing_voice as _mv
+        _mv.record_final(rid, "email", data.get("body") or "", "newsletter", ref_id=result.get("newsletter_id"),
+                         user=current_user, draft_id=_capi._draft_ref_of(data))
     if result.get("ok") and data.get("rec_key"):
         # Began on an Opportunity Feed card: that card was acted on (OPP-10).
         import marketing_opportunities
@@ -4309,6 +4345,11 @@ def mobile_guest_newsletter_draft(current_user):
     import guest_email as _ge
     try:
         draft = _ge.draft_newsletter(get_restaurant(rid), goal=prompt, topic=topic)
+        # The model's letter is kept, so what goes out is measured against it
+        # (marketing_voice; mkt_edits): the send takes `draft_ref` back.
+        import marketing_voice as _mv
+        draft["draft_ref"] = _mv.record_draft(rid, "email", draft.get("body") or "", "newsletter_draft",
+                                              user_id=current_user.get("id"))
     except ValueError as e:
         if str(e).startswith("newsletter copy rejected: "):
             return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
@@ -4398,7 +4439,8 @@ def mobile_post_to_instagram(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_instagram(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
+        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", ""),
+        content_log_id=_capi._content_log_id_of(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)
@@ -4416,7 +4458,8 @@ def mobile_post_to_facebook(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_facebook(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
+        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", ""),
+        content_log_id=_capi._content_log_id_of(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)

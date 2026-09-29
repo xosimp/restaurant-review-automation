@@ -2184,8 +2184,12 @@ def memory_lines(req) -> list:
 
 
 def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False):
+    """One people-memory line. `module` gates it by the viewer's view
+    permission and `audience` "team" says any login with that module may
+    read it (memory_context.visible) — facts about the staff, never a
+    principal's private note."""
     return {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
-            "trusted": trusted, "module": module}
+            "trusted": trusted, "module": module, "audience": "team"}
 
 
 def _mem_attendance(rid, today, db):

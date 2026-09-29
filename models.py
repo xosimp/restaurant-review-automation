@@ -1004,6 +1004,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # cached figures (UTC). waste_last_week is only as current as this;
         # "waste this week" is read from dated events (DH1-1).
         ("ingredients", "rollup_at", "TEXT"),
+        # When par_level last CHANGED, by any path (a hand edit, a suggestion
+        # accepted, a sync): 86s before it were measured against another par
+        # (ordering.par_suggestions).
+        ("ingredients", "par_changed_at", "TEXT"),
         # When is_demo was turned off (admin). The seeded history stays in
         # place — never hard-deleted — and the restaurant is kept out of
         # cross-restaurant learning until every feature window has rolled
@@ -1126,6 +1130,33 @@ def ensure_columns(db_path: str = DB_PATH):
         # When a drafted reply was skipped: a skip is the owner declining the
         # draft, so it counts against auto-approve trust (audit #15).
         ("reviews", "skipped_at", "TEXT"),
+        # Who approved a reply (memory audit 9/29/26, reply_voice), set by
+        # claim_approval in the statement that approves it: the login
+        # (view-as: the admin behind it), its answer_authority (principal |
+        # delegate | admin, 'rule' for the auto-approve rule) and how
+        # (normal | view_as | rule). NULL on replies approved before the
+        # capture existed. The style examples, the OWNER'S EDITS note and
+        # auto-approve trust read only the owner's voice from them.
+        ("reviews", "approved_by", "INTEGER"),
+        ("reviews", "approved_role", "TEXT"),
+        ("reviews", "approved_via", "TEXT"),
+        # The model's first text on a saved marketing draft, kept when the
+        # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
+        # overwrite `body` and the original was gone.
+        ("marketing_drafts", "original_body", "TEXT"),
+        # The review a review request produced, matched by the guest's name
+        # (review_signals.match_review_requests; memory audit 9/29/26,
+        # uncaptured): requests were counted and never matched to a review.
+        ("review_requests", "review_id", "INTEGER"),
+        ("review_requests", "matched_at", "TEXT"),
+        # Whose choice a reprice or a supplier order was (permissions.
+        # answer_authority; memory audit 9/29/26, "view_as"): an admin's work
+        # through view-as is support at work, never the owner's habit, so
+        # the reprice ratio (menu_intelligence.reprice_acceptance) and the
+        # order corrections (ordering.order_corrections) leave it out.
+        # NULL on rows from before = a person at the restaurant.
+        ("reprice_decisions", "authority", "TEXT"),
+        ("purchase_orders", "authority", "TEXT"),
         # Recipe provenance (audit #35): 'owner' (typed or imported by a
         # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
         # 'draft_edited' (a draft line the owner changed before accepting).
@@ -1158,6 +1189,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # outcomes later and never feeds anything on its own (H1, K6).
         ("review_diagnoses", "model_confidence", "TEXT"),
         ("food_cost_diagnoses", "model_confidence", "TEXT"),
+        # A food diagnosis whose lead driver is no longer ranked (or no
+        # driver clears the floor) is retired, not deleted: stamped and kept
+        # as history, and no surface serves it as the current cause
+        # (memory audit 9/29/26, "stale_diagnoses").
+        ("food_cost_diagnoses", "retired_at", "TEXT"),
+        ("food_cost_diagnoses", "retired_reason", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
@@ -2187,6 +2224,109 @@ def init_db(db_path: str = DB_PATH):
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_drafts_restaurant ON marketing_drafts(restaurant_id, updated_at)",
+
+        # ── Memory audit 9/29/26, workstream M6 ────────────────────────────
+        # A reply draft the owner turned down by asking for another (a
+        # regenerate, or Ask rewriting it) — kept as its hash and its
+        # closed-vocabulary signals (reply_edits.draft_signals), NEVER its
+        # text, for 90 days (ops._RETENTION_DAYS), so the drafter's edit
+        # note can say what the drafts this owner regenerated had in common
+        # (rejected_drafts). Only the count used to survive.
+        """CREATE TABLE IF NOT EXISTS reply_draft_rejections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER,
+            rating         INTEGER,
+            draft_hash     TEXT    NOT NULL,
+            words          INTEGER,
+            signals        TEXT,
+            how            TEXT    NOT NULL DEFAULT 'regenerate',
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_rid ON reply_draft_rejections(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_created ON reply_draft_rejections(created_at)",
+        # Every piece of marketing copy a model drafted for a person — the
+        # post composer, the Campaign Studio's text and email (marketing_
+        # voice.record_draft) — kept 90 days (ops._RETENTION_DAYS): long
+        # enough to match what went out to what was drafted, and to see
+        # which drafts were regenerated rather than used (mkt_edits).
+        """CREATE TABLE IF NOT EXISTS marketing_model_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT,
+            body            TEXT    NOT NULL,
+            content_log_id  INTEGER,
+            user_id         INTEGER,
+            used_at         TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_rid ON marketing_model_drafts(restaurant_id, channel, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_created ON marketing_model_drafts(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_log ON marketing_model_drafts(content_log_id)",
+        # One row per marketing piece that went out — a post published or
+        # approved, a guest text or an email sent — with the model's
+        # original beside the final text, the edit measured and who sent it
+        # (marketing_voice.record_final). The owner's voice record: kept.
+        """CREATE TABLE IF NOT EXISTS marketing_edits (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT    NOT NULL,
+            ref_id          INTEGER,
+            draft_id        INTEGER,
+            original_body   TEXT,
+            final_body      TEXT    NOT NULL,
+            edit_distance   REAL,
+            edit_category   TEXT,
+            edit_signals    TEXT,
+            words_before    INTEGER,
+            words_after     INTEGER,
+            user_id         INTEGER,
+            authority       TEXT,
+            via             TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, source, ref_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_edits_rid ON marketing_edits(restaurant_id, channel, id)",
+        # The owner's own invoice matches, per supplier (food_corrections):
+        # "CHKN BRST BNLS" on Sysco's invoice is Chicken Breast because the
+        # owner picked it — written at invoices.apply, read first by
+        # invoices.propose. One row per supplier + line description; kept
+        # (a correction the owner made, bounded by what their suppliers print).
+        """CREATE TABLE IF NOT EXISTS invoice_aliases (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL,
+            supplier_key     TEXT    NOT NULL DEFAULT '',
+            description_key  TEXT    NOT NULL,
+            ingredient_id    INTEGER NOT NULL,
+            times_used       INTEGER NOT NULL DEFAULT 1,
+            created_by       INTEGER,
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_used_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, supplier_key, description_key)
+        )""",
+        # An owner's (or a manager's) correction to how a review was tagged —
+        # category, sentiment, severity or dish (review_signals.retag;
+        # uncaptured). The review row takes the correction; this keeps what
+        # it was, what it became and who changed it, and the analyser reads
+        # the recent ones as this restaurant's examples. Kept: a correction
+        # the owner made, one row per changed field.
+        """CREATE TABLE IF NOT EXISTS review_retags (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER NOT NULL,
+            field          TEXT    NOT NULL,
+            before_json    TEXT,
+            after_json     TEXT,
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_rid ON review_retags(restaurant_id, id)",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_review ON review_retags(review_id)",
 
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
@@ -3429,6 +3569,10 @@ def init_db(db_path: str = DB_PATH):
         # Set when a closed period's actual still could not be measured
         # forecast_log.UNSCORABLE_AFTER_DAYS later: never retried (B6 #11).
         "ALTER TABLE forecast_log ADD COLUMN unscorable_at TEXT",
+        # The measured event a scored period's miss is explained by (memory
+        # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
+        # correction does not learn an event week as the forecast's lean.
+        "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
     try:
         for m in migrations:
@@ -3474,6 +3618,16 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The monthly what-worked snapshots (rec_learning, memory audit 9/29/26).
+    from rec_learning import init_rec_learning
+    init_rec_learning(db_path)
+    # The trigger margins fitted to each restaurant's own noise
+    # (restaurant_thresholds, memory audit 9/29/26).
+    from restaurant_thresholds import init_restaurant_thresholds
+    init_restaurant_thresholds(db_path)
+    # The monthly learning scorecard (learning_scorecard, memory audit 9/29/26).
+    from learning_scorecard import init_learning_scorecard
+    init_learning_scorecard(db_path)
     # When each automation earned trust and when it lapsed (memory audit
     # 9/29/26, trust_ledger).
     from automation_trust import init_automation_trust
@@ -3505,6 +3659,13 @@ def init_db(db_path: str = DB_PATH):
     # (menu_intelligence) — audit #22 / #26 / #41.
     from insight_store import init_insight_store
     init_insight_store(db_path)
+    # Cavnar AI's history of its own reads, their checkable claims and the
+    # quarterly summaries that outlive them (ai_reads, memory audit 9/29/26).
+    from ai_reads import init_ai_reads
+    init_ai_reads(db_path)
+    # The cross-module links, kept (memory audit 9/29/26, "links").
+    from link_memory import init_link_memory
+    init_link_memory(db_path)
     # Who a setting belongs to: a login's own, the location's, or the whole
     # organisation's (preferences — memory audit 9/29/26, owner_layers).
     from preferences import init_preferences
@@ -5312,9 +5473,39 @@ def reply_queue_counts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "older": int((row and row["older"]) or 0)}
 
 
+def reply_approver(user=None, auto=False) -> dict:
+    """Who is approving a reply, for claim_approval to record beside the
+    approval (memory audit 9/29/26, reply_voice): {"user_id", "role", "via"}.
+
+    `role` is permissions.answer_authority — 'principal' (an account
+    holder), 'delegate' (a manager or teammate login) or 'admin' (an admin
+    or support login, or anyone acting through view-as) — and 'rule' for the
+    auto-approve rule. `via` is 'normal', 'view_as' or 'rule'. A view-as
+    session is minted for the owner's own user row, so the approver recorded
+    is the admin behind it (acting_admin_id), never the owner. A person in a
+    request whose login the caller did not pass is recorded as unknown
+    (role None) unless the request is a view-as one (flask.g.view_as)."""
+    if auto:
+        return {"user_id": None, "role": "rule", "via": "rule"}
+    if not user:
+        try:
+            from flask import g, has_request_context
+            va = getattr(g, "view_as", None) if has_request_context() else None
+        except Exception:
+            va = None
+        if va:
+            return {"user_id": va.get("acting_admin_id"), "role": "admin", "via": "view_as"}
+        return {"user_id": None, "role": None, "via": None}
+    from permissions import answer_authority
+    view_as = bool(user.get("acting_admin_id") or user.get("acting_admin_role")
+                   or (user.get("device_type") or "") == "admin-view-as")
+    uid = user.get("acting_admin_id") if (view_as and user.get("acting_admin_id")) else user.get("id")
+    return {"user_id": uid, "role": answer_authority(user), "via": "view_as" if view_as else "normal"}
+
+
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
                    publishable_only: bool = False, allow_flagged: bool = True,
-                   expected_draft: str = None) -> bool:
+                   expected_draft: str = None, approver: dict = None) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -5339,26 +5530,35 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
     made (the phone's offline queue) never posts a different reply than the
     one on the owner's screen — an edit that failed to save, a regenerate
     from another device. Compared as sent and stripped: a save stores the
-    text stripped, a model draft as written."""
+    text stripped, a model draft as written.
+
+    `approver` (reply_approver) is recorded in the same statement: who
+    approved, their authority and how (memory audit 9/29/26, reply_voice) —
+    the style examples, the edit note and auto-approve trust learn only the
+    owner's voice from it."""
+    ap = approver or {}
+    who = (ap.get("user_id"), ap.get("role"), ap.get("via"))
     conn = get_conn(db_path)
     try:
         if publishable_only:
             cur = conn.execute(
-                "UPDATE reviews SET response_status='approved', approved_at=datetime('now') "
+                "UPDATE reviews SET response_status='approved', approved_at=datetime('now'), "
+                "approved_by=?, approved_role=?, approved_via=? "
                 f"WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
-                (review_id, restaurant_id, bulk_publish_window()))
+                who + (review_id, restaurant_id, bulk_publish_window()))
             conn.commit()
             return cur.rowcount == 1
         cur = conn.execute("""
             UPDATE reviews
-            SET response_status='approved', approved_at=datetime('now')
+            SET response_status='approved', approved_at=datetime('now'),
+                approved_by=?, approved_role=?, approved_via=?
             WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
               AND deleted_at IS NULL
               AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
         """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0")
             + ("" if expected_draft is None else " AND draft_response IN (?, ?)"),
-            (review_id, restaurant_id) + (() if expected_draft is None
-                                          else (expected_draft, expected_draft.strip())))
+            who + (review_id, restaurant_id) + (() if expected_draft is None
+                                                else (expected_draft, expected_draft.strip())))
         conn.commit()
         return cur.rowcount == 1
     finally:
@@ -5385,7 +5585,8 @@ def revert_to_drafted(review_id: int, restaurant_id: int, db_path: str = DB_PATH
     conn = get_conn(db_path)
     conn.execute("""
         UPDATE reviews
-        SET response_status='drafted', approved_at=NULL, posted_at=NULL
+        SET response_status='drafted', approved_at=NULL, posted_at=NULL,
+            approved_by=NULL, approved_role=NULL, approved_via=NULL
         WHERE id=? AND restaurant_id=?
     """, (review_id, restaurant_id))
     conn.commit()
@@ -7944,9 +8145,73 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     return True
 
 
+# ── the owner's reply voice (memory audit 9/29/26, reply_voice) ────────────
+#
+# A reply teaches the drafter only when someone who writes in the owner's
+# voice approved it: the account holder (answer_authority 'principal'), or a
+# login the owner marked "Writes replies in our voice" (the grant
+# permissions.REVIEWS_VOICE, read at the time of use, so revoking it takes
+# their approvals back out). Never an admin or a view-as session, never the
+# auto-approve rule, never a bulk publish. A reply approved before the
+# approver was recorded (approved_role NULL) is unknown and still counts, as
+# it always did, behind every reply whose approver is known — it ages out of
+# the 30-day trust window within a month.
+#
+# Examples and the edit note are banded by the star rating of the review
+# being answered (REPLY_BANDS): a 1-star food-safety reply was drafted with
+# four 5-star thank-yous as "the owner's voice" and a "replies run about 28
+# words" note beside the 60-80-word rule. A band short of examples borrows
+# only from the 3-star band beside it, never across it.
+REPLY_BANDS = ((1, 2), (3,), (4, 5))
+_BAND_NEIGHBOURS = {(1, 2): ((3,),), (3,): ((1, 2), (4, 5)), (4, 5): ((3,),)}
+REPLY_VOICE_GRANT = "reviews.voice"      # permissions.REVIEWS_VOICE
+EXAMPLES_PREFER_DAYS = 365               # the last 12 months come first
+EXAMPLES_POOL = 200                      # newest approvals read per call
+EDITED_CATEGORIES = ("light", "heavy", "rewrite")
+
+
+def reply_band(rating):
+    """The REPLY_BANDS band a star rating falls in, or None."""
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return None
+    return next((b for b in REPLY_BANDS if r in b), None)
+
+
+def band_label(band) -> str:
+    """"1-2★" / "3★" / "4-5★" — how a note names the band it was measured on."""
+    if not band:
+        return ""
+    return f"{band[0]}-{band[-1]}★" if len(band) > 1 else f"{band[0]}★"
+
+
+def _has_table(conn, name) -> bool:
+    try:
+        return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+    except Exception:
+        return False
+
+
+def reply_voice_sql(conn, trust=False) -> str:
+    """The reviews predicate for "approved in the owner's voice".
+
+    trust=True is auto-approve trust's narrower rule: the account holder's
+    own approvals (and replies approved before the approver was recorded) —
+    a login marked as writing in the owner's voice shapes the drafts, but
+    publishing unread under the owner's name rests on the owner's record
+    alone."""
+    who = "approved_role IS NULL OR approved_role='principal'"
+    if not trust and _has_table(conn, "permission_grants"):
+        who += (" OR (approved_role='delegate' AND approved_by IN (SELECT g.user_id FROM permission_grants g "
+                f"WHERE g.restaurant_id=reviews.restaurant_id AND g.permission='{REPLY_VOICE_GRANT}'))")
+    return f"(COALESCE(approved_via, '') != 'view_as' AND ({who}))"
+
+
 def get_approved_examples(restaurant_id: int, limit: int = 5,
-                           db_path: str = DB_PATH) -> list:
-    """Return recent approved review responses as style examples for the AI.
+                           db_path: str = DB_PATH, rating: int = None) -> list:
+    """Approved replies as style examples for the drafter: [{"rating",
+    "review", "response", "edited"}].
 
     Never a review the owner's retention setting removed (deleted_at): a
     two-year-old guest review reached the model as a style example after
@@ -7956,24 +8221,50 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     the owner's style: learning from it would feed the drafter its own
     output (audit #15), so only replies a person approved are examples. A
     bulk publish (response_action='bulk_approved') posted drafts nobody read
-    one by one — the model's text again, not the owner's choice (M-3)."""
+    one by one — the model's text again, not the owner's choice (M-3).
+
+    Memory audit 9/29/26 (reply_voice): only approvals in the owner's voice
+    (reply_voice_sql), never a removed review; once the owner has edited any
+    reply, only edited replies are examples — an unedited approval is the
+    model's own text; `rating` picks the band of the review being answered
+    (in band first, then the 3-star band beside it, never across it); the
+    last 12 months first, then a known approver before an unknown one, then
+    newest. rating=None reads every band."""
     conn = get_conn(db_path)
-    # A reply the owner EDITED before approving comes first: it is their
-    # own words, where one approved as written is the model's (audit #40).
-    # Most recent within each group; deterministic for a fixed table.
-    rows = conn.execute("""
-        SELECT rating, text, draft_response FROM reviews
-        WHERE restaurant_id=?
-          AND deleted_at IS NULL
-          AND response_status IN ('approved','posted')
-          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
-          AND draft_response IS NOT NULL
-          AND draft_response != ''
-        ORDER BY CASE WHEN edit_category IN ('light', 'heavy', 'rewrite') THEN 0 ELSE 1 END, id DESC
-        LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
-    conn.close()
-    return [{"rating": r["rating"], "review": r["text"][:120], "response": r["draft_response"]} for r in rows]
+    try:
+        rows = conn.execute(f"""
+            SELECT id, rating, text, draft_response, edit_category, approved_role,
+                   CASE WHEN COALESCE(approved_at, posted_at, fetched_at) >= datetime('now', ?) THEN 1 ELSE 0 END
+                       AS recent
+            FROM reviews
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND response_status IN ('approved','posted')
+              AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
+              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+              AND {reply_voice_sql(conn)}
+            ORDER BY id DESC LIMIT ?
+        """, (f"-{int(EXAMPLES_PREFER_DAYS)} days", restaurant_id, EXAMPLES_POOL)).fetchall()
+    finally:
+        conn.close()
+    pool = [dict(r) for r in rows]
+    edited = [r for r in pool if r["edit_category"] in EDITED_CATEGORIES]
+    if edited:
+        pool = edited
+
+    def rank(r):
+        return (0 if r["recent"] else 1, 0 if r["approved_role"] else 1, -int(r["id"]))
+    band = reply_band(rating)
+    if band is None:
+        chosen = sorted(pool, key=rank)[:limit]
+    else:
+        chosen = []
+        for tier in (band,) + _BAND_NEIGHBOURS.get(band, ()):
+            chosen += sorted((r for r in pool if reply_band(r["rating"]) == tier), key=rank)
+            if len(chosen) >= limit:
+                break
+        chosen = chosen[:limit]
+    return [{"rating": r["rating"], "review": (r["text"] or "")[:120], "response": r["draft_response"],
+             "edited": r["edit_category"] in EDITED_CATEGORIES} for r in chosen]
 
 
 def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH):
@@ -8011,18 +8302,26 @@ def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH
         return None
 
 
-def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH) -> list:
+def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH,
+                             rating: int = None) -> list:
     """The most recent approved replies' edit summaries, newest first —
     what drafter.draft_response turns into its OWNER'S EDITS note. Only a
-    person's approvals (not the auto-approve rule's or a bulk publish's)."""
+    person's approvals (not the auto-approve rule's or a bulk publish's), in
+    the owner's voice (reply_voice_sql), on reviews still up; `rating`
+    reads only the band of the review being answered (memory audit
+    9/29/26, reply_voice) — a 1-star reply's length never comes from the
+    owner's 5-star edits."""
     import json as _json
     conn = get_conn(db_path)
     try:
+        band = reply_band(rating)
+        band_sql = f" AND rating IN ({','.join(str(int(x)) for x in band)})" if band else ""
         rows = conn.execute(
-            "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
+            "SELECT rating, edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
             "AND response_status IN ('approved','posted') "
             "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            f"AND {reply_voice_sql(conn)}{band_sql} "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
         return []
@@ -8037,7 +8336,88 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
         words = len((r["draft_response"] or "").split())
         before = len((r["original_draft"] or r["draft_response"] or "").split())
         out.append({"distance": r["edit_distance"], "category": r["edit_category"], "signals": signals,
-                    "words_after": words, "words_before": before})
+                    "words_after": words, "words_before": before, "rating": r["rating"]})
+    return out
+
+
+REJECTIONS_KEEP_DAYS = 90       # ops._RETENTION_DAYS["reply_draft_rejections"]
+
+
+def record_reply_rejection(restaurant_id: int, review_id: int, text: str, rating=None, how: str = "regenerate",
+                           user=None, db_path: str = DB_PATH):
+    """A model draft the owner turned down by asking for another (memory
+    audit 9/29/26, rejected_drafts): its sha256 and its closed-vocabulary
+    signals (reply_edits.draft_signals) — never its words — with who turned
+    it down. Returns the row id or None; never raises."""
+    import hashlib
+    import json as _json
+    import reply_edits
+    text = str(text or "").strip()
+    if not restaurant_id or not text:
+        return None
+    try:
+        from permissions import answer_authority
+        authority = answer_authority(user) if user else None
+        uid = (user or {}).get("acting_admin_id") or (user or {}).get("id")
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "INSERT INTO reply_draft_rejections (restaurant_id, review_id, rating, draft_hash, words, signals, "
+                "how, user_id, authority) VALUES (?,?,?,?,?,?,?,?,?)",
+                (restaurant_id, review_id, rating, hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                 len(text.split()), _json.dumps(reply_edits.draft_signals(text, rating)), how, uid, authority))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejection not recorded for review {review_id}: {e}")
+        return None
+
+
+def get_reply_rejection_signals(restaurant_id: int, rating=None, days: int = REJECTIONS_KEEP_DAYS,
+                                db_path: str = DB_PATH) -> dict:
+    """{"rejected": [signals...], "approved": [signals...]} for the band of
+    `rating` over the last `days`: what the drafts this owner regenerated
+    were like, and what the replies they approved in their own voice were
+    like, for reply_edits.rejection_note. Whose "no" counts is the voice
+    rule the examples follow: the account holder, a login marked as
+    writing in their voice, or an unrecorded one — never an admin, a
+    view-as session or another delegate. Never raises."""
+    import json as _json
+    import reply_edits
+    out = {"rejected": [], "approved": []}
+    band = reply_band(rating)
+    if not restaurant_id or band is None:
+        return out
+    marks = ",".join(str(int(x)) for x in band)
+    try:
+        conn = get_conn(db_path)
+        try:
+            who = "authority IS NULL OR authority='principal'"
+            if _has_table(conn, "permission_grants"):
+                who += (" OR (authority='delegate' AND user_id IN (SELECT g.user_id FROM permission_grants g "
+                        f"WHERE g.restaurant_id=reply_draft_rejections.restaurant_id "
+                        f"AND g.permission='{REPLY_VOICE_GRANT}'))")
+            for r in conn.execute(
+                    f"SELECT signals FROM reply_draft_rejections WHERE restaurant_id=? AND rating IN ({marks}) "
+                    f"AND ({who}) AND created_at >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                try:
+                    out["rejected"].append(_json.loads(r["signals"] or "[]"))
+                except Exception:
+                    continue
+            for r in conn.execute(
+                    f"SELECT rating, draft_response FROM reviews WHERE restaurant_id=? AND rating IN ({marks}) "
+                    "AND deleted_at IS NULL AND response_status IN ('approved','posted') "
+                    "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+                    f"AND {reply_voice_sql(conn)} AND COALESCE(approved_at, fetched_at) >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                out["approved"].append(reply_edits.draft_signals(r["draft_response"], r["rating"]))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejections unreadable for {restaurant_id}: {e}")
     return out
 
 
@@ -11041,7 +11421,9 @@ def onboarding_started_at(restaurant_id: int, db_path: str = DB_PATH):
         conn.close()
 
 def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """Return count of review requests sent this month."""
+    """Return count of review requests sent this month — and how many of the
+    requests whose window has passed produced a review (`conversion`,
+    review_signals.request_conversion; memory audit 9/29/26, uncaptured)."""
     conn = get_conn(db_path)
     row = conn.execute("""
         SELECT
@@ -11050,9 +11432,15 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
         FROM review_requests WHERE restaurant_id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
+    try:
+        import review_signals
+        conversion = review_signals.request_conversion(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        conversion = None
     return {
         "total_sent":      row["total_sent"]      or 0,
         "sent_this_month": row["sent_this_month"] or 0,
+        "conversion":      conversion,
     }
 
 
@@ -11796,7 +12184,14 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
     were shown, like an edit; and a bulk publish (response_action=
     'bulk_approved') read no single draft, so it is not evidence either way.
     Ten 3-star replies each regenerated three times used to read as
-    edit_rate 0.0 and trusted."""
+    edit_rate 0.0 and trusted.
+
+    And only the owner's own approvals (memory audit 9/29/26, reply_voice):
+    a manager who approved thirty 5-star drafts unedited earned the band
+    trust, and replies then went out unread under the owner's name. A
+    delegate's, an admin's or a view-as approval is no evidence here
+    (reply_voice_sql(trust=True)); one approved before the approver was
+    recorded counts as it always did, until it leaves the window."""
     conn = get_conn(db_path)
     since = f"-{int(days)} days"
     try:
@@ -11806,6 +12201,7 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
             "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
             "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            f"AND {reply_voice_sql(conn, trust=True)} "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()
         try:

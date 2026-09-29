@@ -233,13 +233,71 @@ def missing_recipes(restaurant_id, db_path=DB_PATH):
     return [m for m in items if not _recipe_of(m) and m.get("id") not in pending]
 
 
-def _prompt(item_name, ingredients, context):
+# The owner's confirmed recipes offered as examples (memory audit 9/29/26,
+# food_corrections): up to RECIPE_EXAMPLES recipes of dishes of the same kind
+# (dish_type) that are live on the menu — typed or imported by the owner, or a
+# draft they accepted — so the owner who puts 6 oz of mozzarella on every
+# pizza gets a pizza draft that starts there. Their edits used to lower the
+# next draft's confidence and nothing more.
+RECIPE_EXAMPLES = 3
+RECIPE_EXAMPLE_LINES = 12
+
+
+def confirmed_examples(restaurant_id, kind, exclude_item_id=None, items=None) -> list:
+    """[{"dish", "lines": [(ingredient, qty, unit)]}] — the restaurant's own
+    live recipes of dishes of this kind, the owner's own entries first
+    (source 'owner' or NULL, then an edited draft, then one accepted as
+    drafted). [] for "other" (no kind to compare) or on any failure."""
+    if not kind or kind == "other":
+        return []
+    try:
+        import inventory_ledger
+        menu = items if items is not None else (inventory_ledger.list_menu_items_with_recipes(restaurant_id) or [])
+        conn = get_conn()
+        try:
+            src = {}
+            for r in conn.execute(
+                    "SELECT ri.menu_item_id, COALESCE(ri.source, 'owner') AS source FROM recipe_ingredients ri "
+                    "JOIN menu_items m ON m.id=ri.menu_item_id WHERE m.restaurant_id=?", (restaurant_id,)).fetchall():
+                src.setdefault(r["menu_item_id"], set()).add(r["source"])
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[recipes] confirmed examples unavailable for {restaurant_id}: {e}")
+        return []
+    rank = {"owner": 0, "draft_edited": 1, "draft_accepted": 2}
+    picked = [m for m in menu if m.get("id") != exclude_item_id and _recipe_of(m)
+              and dish_type(m.get("name")) == kind]
+    picked.sort(key=lambda m: (min((rank.get(x, 3) for x in src.get(m.get("id")) or ()), default=3),
+                               str(m.get("name") or "").lower()))
+    out = []
+    for m in picked[:RECIPE_EXAMPLES]:
+        lines = [(str(r.get("ingredient_name") or ""), float(r.get("qty_per_unit") or 0), str(r.get("unit") or ""))
+                 for r in _recipe_of(m)[:RECIPE_EXAMPLE_LINES] if r.get("ingredient_name")]
+        if lines:
+            out.append({"dish": str(m.get("name") or ""), "lines": lines})
+    return out
+
+
+def _examples_block(examples) -> str:
+    if not examples:
+        return ""
+    from ai_guard import wrap_untrusted
+    body = "\n".join(f"{e['dish']}: " + "; ".join(f"{n} {q:g} {u}".strip() for n, q, u in e["lines"])
+                     for e in examples)
+    return ("The owner's confirmed recipes for similar dishes here, per plate — their portions, fenced; use them "
+            "as the guide to how much this kitchen puts on a plate, never as ingredients to add that this dish "
+            "would not have:\n" + wrap_untrusted(body) + "\n\n")
+
+
+def _prompt(item_name, ingredients, context, examples=None):
     names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients)
     return (
         f"You are costing a restaurant menu. Draft the recipe for ONE plate of: {item_name}\n\n"
         f"Use ONLY ingredients from this list, spelled exactly as given, with the quantity per plate "
         f"in the ingredient's own unit. Leave out anything you would have to invent. "
         f"Mark each line's confidence honestly.\n\nIngredients on hand:\n{names}\n\n"
+        + _examples_block(examples)
         + (f"Restaurant context: {context}\n" if context else "")
         + "Return the JSON only."
     )
@@ -265,7 +323,14 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
     client = client or get_client()
     context = (getattr(r, "menu_notes", None) or "")[:600]
     drafted = skipped = 0
+    try:
+        menu_now = inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []
+    except Exception:
+        menu_now = []
     for item in todo:
+        # The owner's confirmed recipes of this kind of dish (food_corrections).
+        examples = confirmed_examples(restaurant_id, dish_type(item.get("name")), exclude_item_id=item.get("id"),
+                                      items=menu_now)
         try:
             import data_health
             msg = create_with_retry(
@@ -274,7 +339,8 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
                 readiness=data_health.NOT_APPLICABLE,
                 model=MODEL, max_tokens=1200,
                 output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-                messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context)}])
+                messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context,
+                                                              examples=examples)}])
             text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
             try:
                 out = json.loads(text)

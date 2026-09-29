@@ -52,7 +52,8 @@ def test_production_versions_are_the_ones_pinned():
     assert lock["flask"] == "3.1.3"
     # the pins that were already exact are unchanged
     assert lock["werkzeug"] == "3.1.8" and lock["sentry-sdk"] == "2.8.0"
-    assert lock["cryptography"] == "48.0.0" and lock["pillow"] == "12.2.0"
+    # 9/29/26: the three pip-audit findings, bumped on purpose (every other pin held)
+    assert lock["cryptography"] == "50.0.1" and lock["pillow"] == "12.3.0" and lock["pypdf"] == "6.19.0"
     assert lock["requests"] == "2.33.1" and lock["python-dotenv"] == "1.2.2" and lock["schedule"] == "1.2.2"
 
 

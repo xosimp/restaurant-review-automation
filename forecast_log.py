@@ -115,6 +115,14 @@ WITHHOLD_READING = "often wide"
 # at least this much on average.
 CALIBRATION_MIN_SCORED = 3
 CALIBRATION_MIN_BIAS_PCT = 10.0
+# A scored period holding a night whose label this restaurant's own event
+# record says moves sales (event_memory.night_facts: the effect APPLIES — it
+# was measured often enough — and is at least this large) is explained by
+# it: the forecast is a median of ordinary weeks, and a correction learned
+# from an event week would carry the event into the next ordinary one
+# (memory audit 9/29/26, "forecasts"). Sales-driven kinds only.
+EVENT_EXPLAINS_PCT = 10.0
+EVENT_SENSITIVE_KINDS = ("revenue_week", "labor_week", "waste_week")
 
 
 def _f(v, default=None):
@@ -457,7 +465,8 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
             continue
         err, signed = errors(r["predicted"], actual)
         nv = naive_forecasts(restaurant_id, r["kind"], r, db_path=db_path)
-        updates.append((round(actual, 2), err, signed, nv["last"], nv["mean"], nv["n"], r["id"]))
+        updates.append((round(actual, 2), err, signed, nv["last"], nv["mean"], nv["n"],
+                        explained_by(restaurant_id, r["kind"], r["horizon_end"], db_path=db_path), r["id"]))
     for r in backfill:
         if r["kind"] not in KINDS:
             continue
@@ -468,7 +477,7 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
         try:
             for u in updates:
                 conn.execute("UPDATE forecast_log SET actual=?, error_pct=?, signed_error_pct=?, naive_last=?, "
-                             "naive_mean=?, naive_n=?, scored_at=datetime('now') WHERE id=?", u)
+                             "naive_mean=?, naive_n=?, explained_by=?, scored_at=datetime('now') WHERE id=?", u)
                 scored += 1
             for g in give_up:
                 conn.execute("UPDATE forecast_log SET unscorable_at=? WHERE id=? AND actual IS NULL", g)
@@ -479,6 +488,32 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
         finally:
             conn.close()
     return {"scored": scored, "unmeasurable": unmeasurable, "gave_up": gave_up}
+
+
+def explained_by(restaurant_id, kind, horizon_end, db_path=None):
+    """The measured event that explains a scored period, in words ("Cubs
+    home game on 9/15/26, +22% here"), or None: a night in the period whose
+    label's effect here applies (event_memory.night_facts — `applies`, or
+    EFFECT_MIN_N nights) and moves sales by EVENT_EXPLAINS_PCT or more.
+    Sales-driven kinds only. Never raises."""
+    if kind not in EVENT_SENSITIVE_KINDS or not restaurant_id:
+        return None
+    try:
+        import event_memory
+        from time_utils import mdy
+        start, end = period_bounds(kind, horizon_end)
+        floor = int(getattr(event_memory, "EFFECT_MIN_N", 3) or 3)
+        d = start
+        while d <= end:
+            for f in event_memory.night_facts(restaurant_id, d, db_path=db_path) or []:
+                lift = _f(f.get("measured_lift_pct"))
+                applies = f.get("applies") if "applies" in f else int(f.get("n") or 0) >= floor
+                if applies and lift is not None and abs(lift) >= EVENT_EXPLAINS_PCT:
+                    return f"{f.get('display') or f.get('label')} on {mdy(d)}, {lift:+.0f}% here"
+            d += timedelta(days=1)
+    except Exception:
+        return None
+    return None
 
 
 def restaurants_due(today=None, db_path: str = DB_PATH) -> list:
@@ -505,7 +540,7 @@ def _scored_periods(restaurant_id, kind, db_path, limit=ACCURACY_WINDOW):
     conn = get_conn(db_path)
     try:
         rows = None
-        for cols in (", naive_last, naive_mean", ""):
+        for cols in (", naive_last, naive_mean, explained_by", ", naive_last, naive_mean", ""):
             try:
                 rows = [dict(r) for r in conn.execute(
                     "SELECT horizon_end, predicted, actual, error_pct, signed_error_pct, created_at" + cols +
@@ -628,17 +663,28 @@ def calibration(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
         rows = _scored_periods(restaurant_id, kind, db_path)
     except Exception:
         rows = []
+    # A period a measured event explains is left out of the lean (explained_by)
+    # — while such periods are the exception. Where most periods hold one,
+    # the event is part of an ordinary week here and stays in.
+    explained = [r for r in rows if r.get("explained_by")]
+    left_out = 0
+    if explained and len(explained) * 2 < len(rows):
+        left_out = len(explained)
+        rows = [r for r in rows if not r.get("explained_by")]
     errs = [_f(r["signed_error_pct"]) for r in rows if _f(r["signed_error_pct"]) is not None]
     if len(errs) < CALIBRATION_MIN_SCORED:
-        return {"available": False, "scored": len(errs)}
+        return {"available": False, "scored": len(errs), "left_out_events": left_out}
     bias = sum(errs) / len(errs)
     if abs(bias) < CALIBRATION_MIN_BIAS_PCT:
         return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": 1.0,
-                "reading": "no consistent lean"}
+                "reading": "no consistent lean", "left_out_events": left_out}
     factor = round(1.0 / (1.0 + bias / 100.0), 4)
     return {"available": True, "scored": len(errs), "bias_pct": round(bias, 1), "factor": factor,
+            "left_out_events": left_out,
             "reading": (f"ran {abs(bias):.0f}% {'high' if bias > 0 else 'low'} across the last "
-                        f"{len(errs)} scored {_period_word(kind, len(errs))}")}
+                        f"{len(errs)} scored {_period_word(kind, len(errs))}"
+                        + (f" ({left_out} {_period_word(kind, left_out)} with a measured event left out)"
+                           if left_out else ""))}
 
 
 def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH):
@@ -648,6 +694,47 @@ def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH)
     if not cal.get("available") or cal.get("factor", 1.0) == 1.0 or predicted is None:
         return predicted, cal
     return round(float(predicted) * cal["factor"], 2), cal
+
+
+# ── showing a forecast: the waste pattern, for every kind ───────────────────
+#
+# Memory audit 9/29/26 ("forecasts"): six kinds were scored and only the
+# waste forecast corrected itself. Every producer now goes through here:
+# the forecast is withheld while this restaurant's own record of the kind
+# reads "often wide" (or no better than the naive forecasts); otherwise the
+# figure SHOWN is corrected by the record's consistent lean and says so;
+# and the RAW figure is what the caller records and scores, so a
+# correction never feeds on itself.
+
+def shown(restaurant_id, kind, predicted, db_path: str = DB_PATH) -> dict:
+    """{"raw", "shown", "withheld", "reason", "corrected", "factor",
+    "bias_pct", "reading", "note", "accuracy"} for one forecast of `kind`:
+    `shown` None when withheld; `shown` = raw × the calibration factor when
+    the record leans one way (CALIBRATION_MIN_SCORED+ periods by
+    CALIBRATION_MIN_BIAS_PCT+), with `note` saying so in the owner's words.
+    Record `raw`, show `shown`. Never raises."""
+    raw = _f(predicted)
+    out = {"raw": raw, "shown": raw, "withheld": False, "reason": None, "corrected": False, "factor": 1.0,
+           "bias_pct": None, "reading": None, "note": None, "accuracy": None}
+    if raw is None or not restaurant_id:
+        return out
+    try:
+        acc = accuracy(restaurant_id, kind, db_path=db_path)
+    except Exception:
+        acc = {}
+    out["accuracy"] = acc
+    if acc.get("withheld"):
+        out.update(shown=None, withheld=True, reason=acc.get("reason"))
+        return out
+    try:
+        corrected, cal = calibrated(restaurant_id, kind, raw, db_path=db_path)
+    except Exception:
+        corrected, cal = raw, {}
+    if cal.get("available") and cal.get("factor", 1.0) != 1.0 and corrected is not None:
+        out.update(shown=corrected, corrected=True, factor=cal["factor"], bias_pct=cal.get("bias_pct"),
+                   reading=cal.get("reading"),
+                   note=f"already corrected because earlier forecasts here {cal.get('reading')}")
+    return out
 
 
 # ── the waste forecast itself ───────────────────────────────────────────────

@@ -663,10 +663,21 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
         covers_by_date = _covers_for_shifts(restaurant_id, shifts)
     except Exception:
         covers_by_date = {}
+    # The day-level margin fitted to this restaurant's own daily swing
+    # (restaurant_thresholds, memory audit 9/29/26); the stated one when
+    # nothing is fitted yet.
+    try:
+        import restaurant_thresholds as _rthr
+        _day_margin = _rthr.margin(restaurant_id, "labor_over_day") if is_live else None
+        _day_fit = _rthr.detail(restaurant_id, "labor_over_day") if is_live else None
+    except Exception:
+        _day_margin, _day_fit = None, None
     result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target,
                             role_rates=role_rates,
                             week_start_day=get_week_start_day(restaurant_id),
-                            covers_by_date=covers_by_date)
+                            covers_by_date=covers_by_date, over_margin=_day_margin)
+    result['over_margin'] = _day_margin
+    result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
     result['salaried_hours_left_out'] = round(salaried_hours, 1)
     result['blended_rate'] = blended
@@ -1074,21 +1085,27 @@ def analyse_shifts(shifts: list[dict],
                    labor_target: float = 30.0,
                    role_rates: dict = None,
                    week_start_day: int = 0,
-                   covers_by_date: dict = None) -> dict:
+                   covers_by_date: dict = None,
+                   over_margin: float = None) -> dict:
     """Compute labor metrics from raw shift data.
 
     covers_by_date ({iso date: covers}, covers.py) is the one figure that
     separates a lean day from a short-staffed one; when it is absent the
-    analysis says so and the prompt keeps its refusal."""
+    analysis says so and the prompt keeps its refusal. `over_margin` is the
+    day-level margin fitted to this restaurant's own daily swing
+    (restaurant_thresholds "labor_over_day"); None reads the stated one."""
     if role_rates is None:
         role_rates = {"_default": hourly_rate}
     covers_by_date = covers_by_date or {}
     from thresholds import LABOR_OVER_TARGET_PTS, STRONG_DAY_SALES_MULTIPLE
     LABOR_TARGET = labor_target
     # A day is "overstaffed" only past the same margin every other surface
-    # uses (thresholds.LABOR_OVER_TARGET_PTS). With no margin, 30.1% against
-    # a 30% target was "where the money is going".
-    OVERSTAFF_THRESHOLD = labor_target + LABOR_OVER_TARGET_PTS
+    # uses (thresholds.LABOR_OVER_TARGET_PTS) — or the wider one this
+    # restaurant's own daily swing needs (memory audit 9/29/26): a day five
+    # points over at a place that swings five points daily is noise. With
+    # no margin, 30.1% against a 30% target was "where the money is going".
+    OVER_MARGIN = max(LABOR_OVER_TARGET_PTS, float(over_margin)) if over_margin is not None else LABOR_OVER_TARGET_PTS
+    OVERSTAFF_THRESHOLD = labor_target + OVER_MARGIN
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": None, "shifts": [], "labor_cost": 0})
     # The overtime premium each day carries (below): kept apart from by_day,
     # which is archived as-is, so a day's straight-time cost can be told
@@ -1268,7 +1285,7 @@ def analyse_shifts(shifts: list[dict],
                                  "overtime_premium": round(premium_by_date.get(date, 0.0), 2),
                                  "straight_over_target_dollars": round(max(0.0, labor_cost - premium_by_date.get(date, 0.0)
                                                                            - d["sales"] * LABOR_TARGET / 100.0), 2)})
-        elif labor_pct < (LABOR_TARGET - LABOR_OVER_TARGET_PTS) and _strong_floor and d["sales"] >= _strong_floor:
+        elif labor_pct < (LABOR_TARGET - OVER_MARGIN) and _strong_floor and d["sales"] >= _strong_floor:
             try:
                 fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
@@ -1828,6 +1845,7 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     if hit is not None:
         return hit[0]
     note = get_claude_insights(analysis, restaurant_id=restaurant_id, **kwargs)
+    _keep_note(restaurant_id, note, key[1])
     if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
         _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
     for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
@@ -1840,6 +1858,21 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     written = getattr(note, "written_at", None) or datetime.now(_tz_note.utc).replace(tzinfo=None)
     _NOTE_CACHE[key] = (note, written)
     return note
+
+
+def _keep_note(restaurant_id, note, fingerprint):
+    """The note as history (ai_reads, memory audit 9/29/26): it lived only
+    in this process's cache, gone on a restart, with nothing left to check
+    its causes against later. Only a model-written read that went through
+    validation — the fixed no-data copies and the refused-read fallback are
+    not reads. Never raises."""
+    try:
+        if not restaurant_id or getattr(note, "verdict", None) is None or LABOR_READ_UNCHECKED in str(note):
+            return
+        import ai_reads
+        ai_reads.record_store_read(restaurant_id, "labor", fingerprint, note)
+    except Exception as e:
+        print(f"[labor note] not kept as history rid={restaurant_id}: {e}")
 
 
 def _note_local_day(restaurant_id) -> str:
@@ -2222,7 +2255,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     ctx = labor_read_context(analysis, prompt, restaurant_id=restaurant_id, industry=_bench, diag=_diag,
                              now=_local_now, staff_notes=staff_notes,
                              registry_state=_ready_lab.get("data_state"), memory_untrusted=memory_untrusted)
-    fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
+    fc_line = _labor_forecast_line(analysis, trend_diff, restaurant_id=restaurant_id) if has_trend else None
 
     def _finish(raw):
         return _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id)
@@ -2268,7 +2301,12 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # The computed forecast is recorded (and later scored) whatever the
     # read's verdict: it is Python's figure, not the model's. Once, when the
     # read is written — a stored read served again records nothing new.
-    if fc_line and restaurant_id:
+    # The RAW figure is recorded whether or not the line is shown (memory
+    # audit 9/29/26, "forecasts" — the waste pattern): a withheld forecast
+    # keeps being scored so its record can recover, and a shown one is
+    # corrected on top of the raw, never recorded corrected. (fc_line, read
+    # against that record, was computed above: a stored read carries it.)
+    if has_trend and trend_diff is not None and restaurant_id:
         try:
             import insight_store as _ist_fc
             _ist_fc.record_weekly_forecast(
@@ -2609,22 +2647,38 @@ def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, ro
     return kept
 
 
-def _labor_forecast_line(analysis: dict, trend_diff) -> str:
+def _labor_forecast_line(analysis: dict, trend_diff, restaurant_id=None) -> str:
     """The note's FORECAST line, computed rather than written (H8): this
     period's labor % carried forward, with the measured move between the
     last two complete, comparable payroll weeks stated beside it
     (models.labor_period_change) — never a trajectory projected into a
-    figure nobody measured. Logged as forecast_log kind labor_week."""
+    figure nobody measured. Logged as forecast_log kind labor_week.
+
+    It reads its own record (forecast_log.shown, memory audit 9/29/26):
+    no line while this restaurant's labor forecasts read "often wide" or no
+    better than the naive ones, and a figure corrected — and saying so —
+    when they have leaned one way."""
     try:
         cur = float(analysis.get("overall_labor_pct"))
     except (TypeError, ValueError):
         return None
     if trend_diff is None:
         return None
+    expect, note = cur, None
+    if restaurant_id:
+        try:
+            import forecast_log as _flog_lab
+            rec = _flog_lab.shown(restaurant_id, "labor_week", cur)
+            if rec.get("withheld"):
+                return None
+            if rec.get("corrected") and rec.get("shown") is not None:
+                expect, note = round(float(rec["shown"]), 1), rec.get("note")
+        except Exception as e:
+            print(f"[labor forecast record] {e}")
     move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the week before"
             if abs(trend_diff) >= 1 else "about level with the week before")
     return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
-            f"next week near {cur:g}% (a projection, not a measurement).")
+            f"next week near {expect:g}%" + (f", {note}" if note else "") + " (a projection, not a measurement).")
 
 
 # Superseded by the registry (one freshness rule, DH1-10 / DH5-3): whether
