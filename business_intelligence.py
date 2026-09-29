@@ -1225,6 +1225,13 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
                 flush()
                 ordered.append(c)
                 continue
+            # A kind the restaurant's own record says to stop proposing is
+            # never the one thing (memory audit 9/29/26, "thresholds").
+            try:
+                if hasattr(learned, "held") and learned.held(str(c.get("key") or "").split(":", 1)[0]):
+                    continue
+            except Exception as e:
+                log.warning("one thing: hold check failed for %s: %s", c.get("key"), e)
             try:
                 w, why = learned(c["key"])
             except Exception as e:

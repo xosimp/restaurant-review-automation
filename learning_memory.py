@@ -12,6 +12,8 @@ and resumable), each step isolated so one failing never stops the others:
   implemented_trackers  start the tracker of every change made this week
                that has none yet (outcomes.autostart_due) — one recorded
                inside a caller's own transaction could not start it there
+  thresholds   refit the trigger margins to the restaurant's own noise
+               (restaurant_thresholds.refresh)
 
 Only restaurants that may teach a learner are passed in
 (models.learning_eligible): a demo, a test account or an internal one never
@@ -47,11 +49,17 @@ def _implemented_trackers(restaurant_id, today, db_path):
     return {"started": outcomes.autostart_due(restaurant_id, today=today, **kw)}
 
 
+def _thresholds(restaurant_id, today, db_path):
+    import restaurant_thresholds
+    return {"written": restaurant_thresholds.refresh(restaurant_id, today=today, db_path=db_path)}
+
+
 STEPS = [
     ("claims", _claims),
     ("summaries", _summaries),
     ("what_worked", _what_worked),
     ("implemented_trackers", _implemented_trackers),
+    ("thresholds", _thresholds),
 ]
 
 

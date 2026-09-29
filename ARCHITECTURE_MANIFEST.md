@@ -136,6 +136,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `owner_memory` | 2 | what the owner tells Cavnar AI, typed (facts, constraints, goals, conversation summaries) and served to every model call through memory_context; `target_for` gives a module the owner's goal as its target (memory audit 9/29/26) |
 | `ai_reads` | 2 | Cavnar AI's history of its own reasoning: every read, diagnosis, digest, brief and narrative kept, its claims scored at their horizon, the last claim served back (memory audit 9/29/26) |
 | `learning_memory` | 2 | the nightly learning pass for one restaurant (`nightly`), run by `scheduler.run_learning_memory` over every restaurant `models.learning_eligible` allows: score AI claims at their horizon, summarise closed quarters of reads, and the learning steps after them, each isolated (memory audit 9/29/26) |
+| `restaurant_thresholds` | 2 | the trigger margins fitted to each restaurant's own noise: the larger of the stated margin and k·σ of its own history, stored with their provenance (value, stated, σ, k, n, as-of, version), refitted nightly, read by `margin()` (memory audit 9/29/26) |
 | `event_memory` | 2 | what each night teaches: measured effects of events, holidays, weather and campaigns on this restaurant's sales, and its public history (memory audit 9/29/26) |
 | `change_log` | 2 | a lasting, attributed history of settings, targets, prices, menu, roster and hours changes (memory audit 9/29/26) |
 | `delayed` | 2 | actions with an undo window |

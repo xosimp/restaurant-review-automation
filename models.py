@@ -3273,6 +3273,10 @@ def init_db(db_path: str = DB_PATH):
     # The monthly what-worked snapshots (rec_learning, memory audit 9/29/26).
     from rec_learning import init_rec_learning
     init_rec_learning(db_path)
+    # The trigger margins fitted to each restaurant's own noise
+    # (restaurant_thresholds, memory audit 9/29/26).
+    from restaurant_thresholds import init_restaurant_thresholds
+    init_restaurant_thresholds(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes

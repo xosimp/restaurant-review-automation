@@ -534,6 +534,32 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
     each card's rank by a bounded weight (0.6–1.25×; ROI audit #24, #47,
     #29). It reorders only — nothing is dropped — and a card with
     `critical` severity is never weighed down."""
+    # A kind this restaurant's own record says to STOP proposing (it did no
+    # better than doing nothing, or kept making things worse, over 5+
+    # measured results — rec_learning.Effectiveness.held, memory audit
+    # 9/29/26 "thresholds") is taken out, never a critical item; the caller
+    # asks the owner instead (rec_learning.hold_ask) from learned.held_seen.
+    held = []
+    if learned is not None and hasattr(learned, "held"):
+        for r in recs:
+            if r.get("severity") == "critical":
+                continue
+            try:
+                h = learned.held(str(r.get("key") or "").split(":", 1)[0])
+            except Exception as e:
+                print(f"[home] hold check failed for {r.get('key')}: {e}")
+                h = None
+            if h:
+                r["held"] = h
+                held.append(h)
+        if held:
+            seen = dict(getattr(learned, "held_seen", None) or {})
+            seen.update({h["kind"]: h for h in held})
+            try:
+                learned.held_seen = seen
+            except Exception:
+                pass
+            recs = [r for r in recs if not r.get("held")]
     for r in recs:
         r["rank_score"] = rank_score(r)
         if learned is not None and r.get("severity") != "critical":
@@ -552,6 +578,27 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
     for r in soft:
         r["quiet"] = True
     return loud[:3] + soft + loud[3:]
+
+
+def _kind_hold_asks(rid, learned, present=True, user_id=None) -> list:
+    """rec_learning.hold_ask for every kind order_recommendations held back
+    this build, presented on "home" (so the answer routes accept them) —
+    or [] with none. Never raises."""
+    seen = getattr(learned, "held_seen", None) if learned is not None else None
+    if not seen:
+        return []
+    try:
+        import rec_learning
+        import rec_ledger
+        asks = [rec_learning.hold_ask(h) for h in seen.values()]
+        if present:
+            got = rec_ledger.present_many(rid, [{"key": a["key"], "module": "home", "title": a["title"],
+                                                 "model_written": False} for a in asks], "home", user_id=user_id)
+            asks = [dict(a, rec_key=a["key"], answerable=True) for a in asks if got.get(a["key"]) is not None]
+        return asks
+    except Exception as e:
+        print(f"[home] kind holds unavailable for {rid}: {e}")
+        return []
 
 
 def at_stake_monthly(drivers) -> float:
@@ -1538,6 +1585,10 @@ def _build(current_user, present=True):
                              "setup": {"label": "Add your shifts", "module": "labor"}})
         else:
             from thresholds import LABOR_OVER_TARGET_PTS
+            # The margin fitted to this restaurant's own spread of labor % (never
+            # below the stated one — restaurant_thresholds, memory audit 9/29/26).
+            import restaurant_thresholds as _rthr_lab
+            _over_margin = _rthr_lab.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS)
             pct = float(labor.get("overall_labor_pct") or 0)
             over = pct - labor_target
             days = int((labor.get("date_range") or {}).get("days") or 0)
@@ -1577,7 +1628,7 @@ def _build(current_user, present=True):
             _lab_short = period_days < _MIN_DAYS
             _lab_stale = _lab_fr.get("pct") is not None and _lab_fr["pct"] < _ce_lab.STALE_BELOW
             _lab_readable = not _lab_short and not _lab_stale
-            if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
+            if over >= _over_margin and period_days >= _MIN_DAYS:
                 # Never from a cold start: one day of shifts is not "labor
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
                 add_attn("labor_over", ("watch" if not _labor_tgt_for["alerts_allowed"]
@@ -1661,7 +1712,7 @@ def _build(current_user, present=True):
                              "state": _lab_state,
                              "below_floor": _lab_short, "stale": _lab_stale,
                              "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": (over >= LABOR_OVER_TARGET_PTS and not _lab_short) or bool(ot_now), "sample": False,
+                             "attention": (over >= _over_margin and not _lab_short) or bool(ot_now), "sample": False,
                              # The last day the shifts cover, not when a file
                              # was written (CA3 F2).
                              "last_data": (labor.get("date_range") or {}).get("end") or client_data.get("updated_at"),
@@ -1673,7 +1724,7 @@ def _build(current_user, present=True):
                 brief_lines.append({"text": f"Labor {pct:.1f}% as of {_lab_fr.get('as_of') or 'the last upload'} — "
                                             "the data under it is out of date.", "tone": "neutral", "module": "labor"})
             else:
-                brief_lines.append({"text": f"Labor {pct:.1f}% against " + (f"a {labor_target:.0f}% target" if _thr_tgt.target_source(r, "labor") == "set" else _labor_tgt) + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
+                brief_lines.append({"text": f"Labor {pct:.1f}% against " + (f"a {labor_target:.0f}% target" if _thr_tgt.target_source(r, "labor") == "set" else _labor_tgt) + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= _over_margin else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})
@@ -2206,6 +2257,10 @@ def _build(current_user, present=True):
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
     recs = order_recommendations(recs, quiet, learned=learned)
+    # The kinds held back above, as one question each (memory audit 9/29/26,
+    # "thresholds"): presented so Done ("keep suggesting it") or Not for us
+    # ("stop") can answer them.
+    kind_holds = _kind_hold_asks(rid, learned, present=present, user_id=current_user.get("id"))
     # The dollars a card is shown with, corrected by this restaurant's own
     # measured results of the kind once there are enough of them (F6):
     # `dollars_adjusted` / `calibration_n` / `calibration_note` beside the
@@ -2392,6 +2447,10 @@ def _build(current_user, present=True):
         # Kinds gone quieter because the last four went unanswered, with the
         # way back (POST /api/home/dismiss {restore_kind}).
         "quieter": quieter,
+        # Kinds Cavnar AI stopped suggesting because this restaurant's own
+        # measured results say they did no better than doing nothing (or
+        # made things worse), each asked as "keep suggesting it?".
+        "kind_holds": kind_holds,
         # Who a card can be handed to — consented alert contacts, and only
         # for a login that may open issues (#43).
         "assignees": (assignees(rid) if _may_assign(current_user) else []),
@@ -2482,12 +2541,14 @@ def _location_record(conn, r, now):
     if sig["top_issue"]:
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
     from thresholds import LABOR_OVER_TARGET_PTS
+    import restaurant_thresholds as _rthr_loc
     from labor import MIN_DAYS_TO_EXTRAPOLATE as _MIN_DAYS_G
     # The location Home's own floors (re-audit B4 M5): labor over target
     # needs MIN_DAYS_TO_EXTRAPOLATE days of shifts, and a rating move needs
     # REVIEW_MOVE_MIN_N reviews on BOTH sides and RATING_MOVE_STARS — the
     # group view flagged what the location's Home suppressed.
-    if labor and labor["over"] >= LABOR_OVER_TARGET_PTS and labor.get("period_days", 0) >= _MIN_DAYS_G:
+    if labor and labor["over"] >= _rthr_loc.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS) \
+            and labor.get("period_days", 0) >= _MIN_DAYS_G:
         # Against Cavnar's starting target (nobody set it) the issue says
         # so and is a watch, never "critical" — the location's own issue
         # list opens nothing on it (re-audit #10, R4-26).

@@ -734,7 +734,8 @@ class Effectiveness:
             for bucket, name in ((self.kinds, kind),
                                  *((self.tags, t) for t in e["tag_list"] if t.startswith(
                                      ("topic:", "focus:", "category:", "dish:", "item:", "daypart:")))):
-                s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0})
+                s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0,
+                                             "worsened": 0})
                 s["settled"] += 1
                 if _taken(e):
                     s["taken"] += 1
@@ -748,6 +749,7 @@ class Effectiveness:
             kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
             s["measured"] = len(kept)
             s["improved"] = sum(1 for e in kept if e["verdict"] == "improved")
+            s["worsened"] = sum(1 for e in kept if e["verdict"] == "worsened")
             if bid != id(self.kinds):
                 continue
             for e in kept:
@@ -761,6 +763,36 @@ class Effectiveness:
                     if tr.get("dollars_monthly") is not None or e["verdict"] == "no_clear_change":
                         self.calibration.setdefault(name, []).append(realised / float(e["dollar_value"]))
                         self.calibration_realised.setdefault(name, []).append(realised)
+
+    # ── stop proposing and ask (memory audit 9/29/26, "thresholds") ─────────
+    kept_kinds = frozenset()
+
+    def held(self, kind):
+        """{"kind", "measured", "improved", "worsened", "upper", "harm_low",
+        "do_nothing", "why"} when this restaurant's own record says to STOP
+        proposing the kind and ask the owner instead — at least
+        MIN_MEASURED_FOR_RATE measured results, and either the upper end of
+        its 90% interval of success sits below the do-nothing rate, or the
+        lower end of its interval of HARM sits above it (it keeps making
+        things worse). None otherwise, or when the owner said to keep it
+        (kept_kinds, KIND_HOLD_KEEP_DAYS)."""
+        ks = self.kinds.get(kind)
+        if not ks or ks.get("measured", 0) < MIN_MEASURED_FOR_RATE or kind in self.kept_kinds:
+            return None
+        n = ks["measured"]
+        _lo, up = wilson(ks["improved"], n)
+        harm_lo, _hi = wilson(ks.get("worsened", 0), n)
+        dn = self.base_rate(kind)
+        if up is not None and up < dn:
+            why = f"improved {ks['improved']} of {n} measured here — no better than doing nothing"
+        elif harm_lo is not None and harm_lo > dn:
+            why = f"measured worse {ks.get('worsened', 0)} of {n} times here"
+        else:
+            return None
+        return {"kind": kind, "measured": n, "improved": ks["improved"], "worsened": ks.get("worsened", 0),
+                "upper": round(up, 3) if up is not None else None,
+                "harm_low": round(harm_lo, 3) if harm_lo is not None else None,
+                "do_nothing": round(dn, 3), "why": why}
 
     def _age_days(self, at):
         t = rec_ledger._stamp(at)
@@ -957,6 +989,49 @@ class Effectiveness:
         return self.weight(key, kind=kind, tags=tags)
 
 
+# The owner's answer to "keep suggesting this kind?" (kind_hold:<kind>): a
+# yes (Done / Track) keeps the kind proposed for this long; a "not for us"
+# leaves it stopped.
+KIND_HOLD_PREFIX = "kind_hold"
+KIND_HOLD_KEEP_DAYS = 180
+
+
+def kept_hold_kinds(restaurant_id, db_path=DB_PATH, now=None) -> set:
+    """The kinds the owner said to KEEP proposing despite their record, in
+    the last KIND_HOLD_KEEP_DAYS. Never raises."""
+    now = now or datetime.utcnow()
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT key FROM rec_instances WHERE restaurant_id=? AND key LIKE ? "
+                "AND status IN ('accepted','completed','implemented') AND last_event_at >= ?",
+                (restaurant_id, f"{KIND_HOLD_PREFIX}:%",
+                 _stamp(now - timedelta(days=KIND_HOLD_KEEP_DAYS)))).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_learning] kept kinds unreadable for {restaurant_id}: {e}")
+        return set()
+    return {str(r["key"]).split(":", 1)[1] for r in rows if ":" in str(r["key"])}
+
+
+def hold_ask(hold) -> dict:
+    """The ask Home shows in place of a held kind's cards: key
+    kind_hold:<kind>, the question and what it rests on. Done / Track on it
+    keeps the kind proposed (KIND_HOLD_KEEP_DAYS); Not for us leaves it
+    stopped."""
+    kind = hold["kind"]
+    label = _kind_label(kind)
+    return {"key": f"{KIND_HOLD_PREFIX}:{kind}", "kind": kind,
+            "title": f"Keep suggesting {label}?",
+            "why": f"{hold['why'][:1].upper()}{hold['why'][1:]} (before and after, not proof). Cavnar AI has "
+                   f"stopped suggesting it until you say otherwise.",
+            "measured": hold["measured"], "improved": hold["improved"], "worsened": hold["worsened"],
+            "do_nothing_pct": int(round(100 * hold["do_nothing"])),
+            "answers": {"completed": "Keep suggesting it", "not_for_us": "Stop suggesting it"}}
+
+
 def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_monthly") -> dict:
     """Put the calibrated dollars beside a shown recommendation's own figure
     (CA2 #8, F6) — the one place Home cards, the one-thing hero and the DSR
@@ -1020,7 +1095,9 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> 
     except Exception as e:
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
-    return Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now)
+    model = Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now)
+    model.kept_kinds = frozenset(kept_hold_kinds(restaurant_id, db_path=db_path, now=now))
+    return model
 
 
 def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None, episodes=None) -> dict:

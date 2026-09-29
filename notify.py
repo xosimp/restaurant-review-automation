@@ -3620,8 +3620,12 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 target = labor_target_for(dict(r))
                 # One definition of "over target" (thresholds.py) shared with
                 # the labor issue and Home. Any overage at all used to fire
-                # this, so 30.2% against 30% was a text (#34).
-                if actual - target >= LABOR_OVER_TARGET_PTS:
+                # this, so 30.2% against 30% was a text (#34). The margin is
+                # fitted to this restaurant's own swing, never below the
+                # stated one (restaurant_thresholds, memory audit 9/29/26):
+                # a volatile restaurant is not texted about noise.
+                import restaurant_thresholds as _rthr_al
+                if actual - target >= _rthr_al.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS):
                     from time_utils import mdy_range
                     over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])

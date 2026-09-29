@@ -166,7 +166,10 @@ NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "supersede
 # restore_kind's stamp is what decisions.quiet_kinds counts from — and stay
 # out of every acceptance figure (admin_ops), so none is read as a
 # recommendation that was taken.
-BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:")
+BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:",
+                        # "keep suggesting this kind?" — a question about
+                        # Cavnar AI's advice, not advice (memory audit 9/29/26)
+                        "kind_hold:")
 # How close (seconds) an answer the ledger already holds must be to an older
 # ledger's row for sync_existing to treat the row as that same answer.
 SAME_ANSWER_SECONDS = 300

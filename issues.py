@@ -914,7 +914,11 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
             pct = labor.get("overall_labor_pct")
             # Not on Cavnar's unconfirmed starting target (Benchmarking audit #13).
             import thresholds as _thr_t
-            if labor.get("is_live") and pct is not None and float(pct) - target >= LABOR_OVER_TARGET_PTS \
+            # The margin fitted to this restaurant's own swing, never below
+            # the stated one (restaurant_thresholds, memory audit 9/29/26).
+            import restaurant_thresholds as _rthr_iss
+            _over = _rthr_iss.margin(restaurant_id, "labor_over_period", stated=LABOR_OVER_TARGET_PTS)
+            if labor.get("is_live") and pct is not None and float(pct) - target >= _over \
                     and _thr_t.target_alerts_allowed(r, "labor"):
                 _open("labor", f"Labor {float(pct):.1f}% against a {target:.0f}% target",
                       "The latest labor data ran over. Trim the overstaffed days in next week's "

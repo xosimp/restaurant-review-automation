@@ -663,10 +663,21 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
         covers_by_date = _covers_for_shifts(restaurant_id, shifts)
     except Exception:
         covers_by_date = {}
+    # The day-level margin fitted to this restaurant's own daily swing
+    # (restaurant_thresholds, memory audit 9/29/26); the stated one when
+    # nothing is fitted yet.
+    try:
+        import restaurant_thresholds as _rthr
+        _day_margin = _rthr.margin(restaurant_id, "labor_over_day") if is_live else None
+        _day_fit = _rthr.detail(restaurant_id, "labor_over_day") if is_live else None
+    except Exception:
+        _day_margin, _day_fit = None, None
     result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target,
                             role_rates=role_rates,
                             week_start_day=get_week_start_day(restaurant_id),
-                            covers_by_date=covers_by_date)
+                            covers_by_date=covers_by_date, over_margin=_day_margin)
+    result['over_margin'] = _day_margin
+    result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
     result['salaried_hours_left_out'] = round(salaried_hours, 1)
     result['blended_rate'] = blended
@@ -1074,21 +1085,27 @@ def analyse_shifts(shifts: list[dict],
                    labor_target: float = 30.0,
                    role_rates: dict = None,
                    week_start_day: int = 0,
-                   covers_by_date: dict = None) -> dict:
+                   covers_by_date: dict = None,
+                   over_margin: float = None) -> dict:
     """Compute labor metrics from raw shift data.
 
     covers_by_date ({iso date: covers}, covers.py) is the one figure that
     separates a lean day from a short-staffed one; when it is absent the
-    analysis says so and the prompt keeps its refusal."""
+    analysis says so and the prompt keeps its refusal. `over_margin` is the
+    day-level margin fitted to this restaurant's own daily swing
+    (restaurant_thresholds "labor_over_day"); None reads the stated one."""
     if role_rates is None:
         role_rates = {"_default": hourly_rate}
     covers_by_date = covers_by_date or {}
     from thresholds import LABOR_OVER_TARGET_PTS, STRONG_DAY_SALES_MULTIPLE
     LABOR_TARGET = labor_target
     # A day is "overstaffed" only past the same margin every other surface
-    # uses (thresholds.LABOR_OVER_TARGET_PTS). With no margin, 30.1% against
-    # a 30% target was "where the money is going".
-    OVERSTAFF_THRESHOLD = labor_target + LABOR_OVER_TARGET_PTS
+    # uses (thresholds.LABOR_OVER_TARGET_PTS) — or the wider one this
+    # restaurant's own daily swing needs (memory audit 9/29/26): a day five
+    # points over at a place that swings five points daily is noise. With
+    # no margin, 30.1% against a 30% target was "where the money is going".
+    OVER_MARGIN = max(LABOR_OVER_TARGET_PTS, float(over_margin)) if over_margin is not None else LABOR_OVER_TARGET_PTS
+    OVERSTAFF_THRESHOLD = labor_target + OVER_MARGIN
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": None, "shifts": [], "labor_cost": 0})
     # The overtime premium each day carries (below): kept apart from by_day,
     # which is archived as-is, so a day's straight-time cost can be told
@@ -1268,7 +1285,7 @@ def analyse_shifts(shifts: list[dict],
                                  "overtime_premium": round(premium_by_date.get(date, 0.0), 2),
                                  "straight_over_target_dollars": round(max(0.0, labor_cost - premium_by_date.get(date, 0.0)
                                                                            - d["sales"] * LABOR_TARGET / 100.0), 2)})
-        elif labor_pct < (LABOR_TARGET - LABOR_OVER_TARGET_PTS) and _strong_floor and d["sales"] >= _strong_floor:
+        elif labor_pct < (LABOR_TARGET - OVER_MARGIN) and _strong_floor and d["sales"] >= _strong_floor:
             try:
                 fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
