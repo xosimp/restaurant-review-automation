@@ -699,11 +699,14 @@ def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH) -> list:
              "backfilled": bool(r["backfilled"])} for r in reversed(rows)]
 
 
-def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict:
+def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3, pooled: bool = True) -> dict:
     """{restaurant_id: {week, features, completeness}} — each restaurant's
     most recent row of the current version, only if it is recent enough to
     describe it now, through cross_restaurant_view (waste gated, Google user
-    data withdrawn)."""
+    data withdrawn). `pooled=False` keeps each restaurant's own review
+    figures (the waste gate still applies) — for a reader that asks what a
+    restaurant measured on its OWN side of a comparison (the peer ledger),
+    never for a figure pooled across restaurants."""
     from . import provenance
     floor = iso_week(date.today() - timedelta(weeks=max_age_weeks))
     conn = get_conn(db_path)
@@ -723,7 +726,7 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict
     seeded = seeded_restaurant_ids(db_path=db_path)
     return {r["restaurant_id"]: {"week": r["week"],
                                  "features": cross_restaurant_view(json.loads(r["features_json"]),
-                                                                   google=r["restaurant_id"] in google),
+                                                                   google=pooled and r["restaurant_id"] in google),
                                  "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
 
 

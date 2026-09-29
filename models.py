@@ -2500,6 +2500,10 @@ def init_db(db_path: str = DB_PATH):
         # owner's Google connection — Google user data, never read by a
         # pooled reader (intelligence.provenance). `trust_version`: the
         # meaning of the % confidence_at was read from.
+        # provenance.google_connected_ids asks which restaurants hold a
+        # Business Profile review; a partial index keeps that one read small.
+        "CREATE INDEX IF NOT EXISTS idx_reviews_gbp_name ON reviews(restaurant_id) "
+        "WHERE COALESCE(review_name,'') != ''",
         "ALTER TABLE intel_rec_events ADD COLUMN partition_key TEXT",
         "ALTER TABLE intel_rec_events ADD COLUMN rec_id TEXT",
         "ALTER TABLE intel_rec_events ADD COLUMN review_derived INTEGER",

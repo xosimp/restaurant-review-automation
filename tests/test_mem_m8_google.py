@@ -155,6 +155,13 @@ def test_the_pooled_view_withdraws_a_connected_restaurants_review_figures_and_ke
     assert features.latest(conn_rid, db_path=db)["features"]["avg_rating_30d"] == 4.4
     # a caller that has not looked is treated as connected
     assert features.cross_restaurant_view(dict(REVIEWED))["avg_rating_30d"] is None
+    # the peer ledger asks what a restaurant measured on its OWN side of a
+    # comparison: the un-pooled read keeps it (the waste gate still applies)
+    own = features.latest_by_restaurant(db_path=db, pooled=False)
+    assert own[conn_rid]["features"]["avg_rating_30d"] == 4.4
+    import inspect
+    src = inspect.getsource(jobs.run_learning)
+    assert "latest_by_restaurant(db_path=db_path, pooled=False)" in src and "latest=own_latest" in src
 
 
 def test_a_review_pattern_is_never_found_on_connected_restaurants(db):

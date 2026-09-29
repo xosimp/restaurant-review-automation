@@ -176,14 +176,17 @@ def learning_labels(db_path=DB_PATH, ids=None, conn=None) -> dict:
     own = conn is None
     conn = conn or get_conn(db_path)
     try:
-        rows = [dict(r) for r in conn.execute("SELECT * FROM restaurants").fetchall()]
+        if ids is not None:
+            want = sorted({int(i) for i in ids})
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM restaurants WHERE id IN ({','.join('?' for _ in want)})", want).fetchall()] \
+                if want else []
+        else:
+            rows = [dict(r) for r in conn.execute("SELECT * FROM restaurants").fetchall()]
         google = provenance.google_connected_ids(conn=conn)
     finally:
         if own:
             conn.close()
-    if ids is not None:
-        want = {int(i) for i in ids}
-        rows = [r for r in rows if int(r["id"]) in want]
     out = {}
     for d in rows:
         r = SimpleNamespace(**d)
@@ -915,8 +918,12 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     else:
         out["benchmarks"] = {"written": 0, "held": "this week's feature pass has not reached every restaurant yet — "
                                                    "the bands are written once it has"}
+    # The ledger asks what each restaurant measured on its OWN side of a
+    # comparison (it is shown its own rating beside a band whether or not
+    # its reviews come through Google), so it reads the un-pooled rows.
+    own_latest = _features.latest_by_restaurant(db_path=db_path, pooled=False)
     _stage(out, "peer_ledger", lambda: record_assignments(rs, members, partitions, groups, db_path=db_path,
-                                                          today=today, latest=latest))
+                                                          today=today, latest=own_latest))
     from . import trends
     _stage(out, "cohort_series", lambda: trends.persist(cohorts=partitions, members=members, db_path=db_path,
                                                         today=today))
