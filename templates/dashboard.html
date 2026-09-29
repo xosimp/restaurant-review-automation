@@ -32869,7 +32869,8 @@ function memRetagBody(was, now) {
     } else h += '<div class="sr-note">Only the roles on their shifts. A promotion, or training on another station, goes here.</div>';
     if (!ro) h += '<div class="mem-inline"><input class="ac-input" id="mem-role-name" maxlength="60" placeholder="Role, e.g. Bartender" aria-label="Role"><input class="ac-input" id="mem-role-since" type="date" aria-label="From"><label class="sr-note" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="mem-role-primary"> Their main role now</label><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-role-add="1">Add role</button></div>';
     h += '</div>';
-    h += '<div class="sr-k">Covers</div><div>' + memNum(memCoversLine(p.covers || {taken: 0, declined: 0, days: 180})) + '</div>';
+    /* Unread (null) is left out rather than said as "no covers". */
+    if (p.covers) h += '<div class="sr-k">Covers</div><div>' + memNum(memCoversLine(p.covers)) + '</div>';
     h += '<div class="sr-k">Attendance</div><div>' + memNum(memAttendanceLine(p.attendance)) + '</div>';
     var gm = p.guest_mentions || [];
     if (gm.length) {
