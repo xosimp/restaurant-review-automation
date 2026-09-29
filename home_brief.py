@@ -730,6 +730,9 @@ def attention_answerable(a) -> bool:
 # HomeActionDeck/HomeRecommendations): at most this many of each.
 HOME_ATTENTION_SHOWN = 4
 HOME_RECS_SHOWN = 3
+# The Evidence Strength a reprice card is held to while guests call the dish
+# poor value (memory audit 9/29/26, "conflicts").
+REPRICE_VALUE_CAP = 49
 # How many ranked-but-not-shown cards each build logs (rank_log).
 RANK_LOG_UNSHOWN = 7
 
@@ -1891,10 +1894,16 @@ def _build(current_user, present=True):
                         "Food cost · margin", "inventory", "This week", "See the price",
                         metric="food_cost_pct", dollars=x["monthly_margin_lost"],
                         dollars_basis=x.get("monthly_basis"),
-                        ev={"n": max((int(dv.get("weeks") or 1) for dv in (x.get("drivers") or [{}])), default=1),
-                            "kind": "price_weeks",
-                            "flags": () if x.get("units_sold_30d") else ("no_sales_mix",),
-                            "basis": f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"},
+                        ev=dict({"n": max((int(dv.get("weeks") or 1) for dv in (x.get("drivers") or [{}])),
+                                          default=1),
+                                 "kind": "price_weeks",
+                                 "flags": () if x.get("units_sold_30d") else ("no_sales_mix",),
+                                 "basis": f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"},
+                                # Guests calling the dish poor value lower
+                                # the confidence of raising its price
+                                # (memory audit, conflicts).
+                                **({"cap": REPRICE_VALUE_CAP, "cap_reason": x["value_note"].lower()}
+                                   if x.get("value_complaints") else {})),
                         if_ignored="every plate keeps selling at the thinner margin", effort="low",
                         action={"kind": "reprice", "dish": x["dish"], "price": x["suggested_price"],
                                 "label": f"Reprice to ${x['suggested_price']:.2f}"})
@@ -2299,6 +2308,18 @@ def _build(current_user, present=True):
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
     recs = order_recommendations(recs, quiet, learned=learned)
+    # Advice that pulls against other advice (memory audit 9/29/26,
+    # "conflicts"): "Trim Tuesday" beside "Fill Tuesday" on any surface, a
+    # reprice on a dish guests call poor value, a promotion of a dish whose
+    # ingredient is critically low. The weaker card carries `conflict` for
+    # the owner to settle; one the owner already settled against is held.
+    try:
+        import lever_conflicts
+        _fx = lever_conflicts.facts(rid, critical_low=(inv.get("critical_low") if inv_live else []))
+        _held = []
+        recs = lever_conflicts.apply(rid, recs, _fx, held_out=_held)
+    except Exception as e:
+        print(f"[home] lever conflicts unavailable for {rid}: {e}")
     # The dollars a card is shown with, corrected by this restaurant's own
     # measured results of the kind once there are enough of them (F6):
     # `dollars_adjusted` / `calibration_n` / `calibration_note` beside the

@@ -1232,6 +1232,19 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
             run.append(c)
         flush()
         candidates = ordered
+    # Advice pulling against other advice (memory audit 9/29/26,
+    # "conflicts"): a candidate the owner settled against is held; the
+    # weaker of two that conflict carries `conflict` to the hero.
+    try:
+        import lever_conflicts
+        rest = lever_conflicts.apply(restaurant_id, [c for c in candidates if c.get("urgency") != "critical"],
+                                     lever_conflicts.facts(restaurant_id, db_path=db_path), db_path=db_path)
+        keep = {c.get("key") for c in rest}
+        by_key = {c.get("key"): c for c in rest}
+        candidates = [c if c.get("urgency") == "critical" else by_key[c.get("key")]
+                      for c in candidates if c.get("urgency") == "critical" or c.get("key") in keep]
+    except Exception as e:
+        log.warning("one thing: lever conflicts unavailable: %s", e)
     # "Not for us" to the same advice on any surface (H16) — the nightly
     # report's Tuesday cut declined is this hero's Tuesday cut declined.
     # Read once, only if something non-critical could lead.

@@ -343,6 +343,23 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)
+    # What guests say about the dish's VALUE (memory audit 9/29/26,
+    # "conflicts"): reprice read ingredient prices only, so it asked to
+    # raise the price of a dish the scorecard said guests call poor value.
+    # The count and a sample ride on the suggestion; every surface that
+    # rates it caps its confidence and says why (value_note).
+    if out:
+        try:
+            import lever_conflicts
+            value = lever_conflicts.facts(restaurant_id, db_path=db_path, critical_low=[])["value"]
+        except Exception as e:
+            print(f"[menu_intelligence] value complaints unavailable for {restaurant_id}: {e}")
+            value = {}
+        for d in out:
+            v = value.get(lever_conflicts._norm(d["dish"])) if value else None
+            d["value_complaints"] = int(v["n"]) if v else 0
+            d["value_note"] = (f"Guests called it poor value in {v['n']} review{'s' if v['n'] != 1 else ''} "
+                               f"in the last {SENTIMENT_WINDOW_DAYS} days" if v else None)
     # Dollars a month first; per-plate-only rows (no sales mix) after them —
     # the two are different units and must not be sorted against each other.
     out.sort(key=lambda d: (d["monthly_margin_lost"] is None,

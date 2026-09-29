@@ -602,6 +602,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # is not said again here (rec_ledger.silenced_keys).
     lines = _drop_answered(restaurant_id, lines, db_path)
     lines = _one_line_per_news(lines)
+    # Advice pulling against other advice (memory audit 9/29/26,
+    # "conflicts"): a line the owner settled against is left out; the weaker
+    # of two that conflict carries `conflict`.
+    try:
+        import lever_conflicts
+        _cards = [dict(l, key=l.get("rec"), title=l.get("text")) for l in lines if l.get("rec")]
+        _kept = {c["key"] for c in lever_conflicts.apply(restaurant_id, _cards,
+                                                         lever_conflicts.facts(restaurant_id, db_path=db_path),
+                                                         db_path=db_path)}
+        _conf = {c["key"]: c.get("conflict") for c in _cards if c.get("conflict")}
+        lines = [dict(l, conflict=_conf.get(l.get("rec"))) if l.get("rec") in _conf else l
+                 for l in lines if not l.get("rec") or l.get("rec") in _kept]
+    except Exception as e:
+        print(f"[morning_brief] lever conflicts unavailable for {restaurant_id}: {e}")
     _attach_confidence(restaurant_id, lines, db_path)
 
     # ── what another module would let me say ──

@@ -155,7 +155,7 @@ def _counted_tracker_ids(rows) -> set:
             last_end = max(last_end, end)
     return kept
 # rec_ledger keys that are bookkeeping, not advice (rec_ledger.BOOKKEEPING_PREFIXES).
-_BOOKKEEPING = ("restore_kind:", "calibration:", "standby:")
+_BOOKKEEPING = ("restore_kind:", "calibration:", "standby:", "conflict:")
 _AUTO_DONE = ("done", "executed")
 _AUTO_OFF = ("cancelled", "canceled")
 
