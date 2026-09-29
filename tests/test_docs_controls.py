@@ -110,7 +110,36 @@ _STEP_UP_TODAY = {
     "/admin/api/users/<int:user_id>/sessions/<session_id>/revoke",
     "/admin/api/users/<int:user_id>/revoke-sessions",
     "/admin/api/support-logins",
+    # Integration wave (INT-2): B2's, H's and B1's sensitive routes, and freeze.
+    "/admin/send-reset-link/<int:user_id>",
+    "/admin/reset-password/<int:user_id>",
+    "/admin/reset-password-by-restaurant/<int:restaurant_id>",
+    "/admin/resend-welcome/<int:restaurant_id>",
+    "/admin/freeze/<int:restaurant_id>",
+    "/admin/api/client/<int:restaurant_id>/demo",
+    "/admin/api/client/<int:restaurant_id>/delete-demo",
+    "/admin/api/client/<int:restaurant_id>/delete",
+    "/admin/api/brand/add-location",
+    "/admin/api/billing/<int:restaurant_id>/change-plan",
+    "/admin/api/billing/<int:restaurant_id>/mark-signed",
+    "/admin/api/billing/<int:restaurant_id>/attach-stripe-customer",
+    "/admin/api/billing/<int:restaurant_id>/lift-hold",
+    "/admin/toast/save/<int:restaurant_id>",
+    "/admin/toast/disconnect/<int:restaurant_id>",
+    "/admin/square/save/<int:restaurant_id>",
+    "/admin/square/disconnect/<int:restaurant_id>",
+    "/admin/clover/save/<int:restaurant_id>",
+    "/admin/clover/disconnect/<int:restaurant_id>",
+    "/admin/rpower/save/<int:restaurant_id>",
+    "/admin/rpower/bootstrap/<int:restaurant_id>",
+    "/admin/rpower/disconnect/<int:restaurant_id>",
 }
+
+# Routes that need the step-up for only PART of what they do, through
+# auth.reauth_refusal rather than the decorator (INT-2): the legacy settings
+# save (a billing, module or owner-email change), the offboarding steps that
+# act (integrations, Stripe, DocuSign), the review-account seed's rotation.
+_STEP_UP_IN_PART = ("save_client_settings", "admin_api_offboarding_step", "seed_review_account_route")
 
 
 def test_the_step_up_routes_are_the_ones_the_doc_lists():
@@ -134,7 +163,10 @@ def test_the_step_up_routes_are_the_ones_the_doc_lists():
                 if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route":
                     found.add(d.args[0].value)
     assert found == _STEP_UP_TODAY
-    _says(SECURITY, "applied today", "not yet")
+    import admin_routes
+    for name in _STEP_UP_IN_PART:
+        assert "reauth_refusal(" in inspect.getsource(getattr(admin_routes, name)), name
+    _says(SECURITY, "applied today")
 
 
 def test_the_admin_second_factor_states():
@@ -498,15 +530,14 @@ def test_a_laptop_or_a_pending_restore_sends_nothing(monkeypatch):
     _says(SECURITY, "refused 409 where `scheduler.scheduling_allowed()` is false")
 
 
-def test_the_two_documented_ungated_sends_are_still_ungated():
-    """SECURITY.md names two admin sends that are not gated on a local
-    backend. When one is gated, take it out of the doc and out of this test."""
+def test_the_two_sends_the_doc_named_as_ungated_are_gated_now():
+    """SECURITY.md named two admin sends not gated on a local backend; the
+    integration wave (INT-2) gated both with _send_blocked, the same 409 as
+    every other admin send. (The doc's "two exceptions today" sentence is
+    the docs pass's to take out.)"""
     import admin_routes
     for fn in (admin_routes.test_alert_sms_route, admin_routes.resend_contract):
-        src = inspect.getsource(fn)
-        assert "_send_blocked" not in src and "_live_actions_refused" not in src \
-            and "scheduling_allowed" not in src, fn.__name__
-    _says(SECURITY, "two exceptions today", "/admin/alert-contacts/test/<rid>", "/admin/resend-contract/<rid>")
+        assert "_send_blocked()" in inspect.getsource(fn), fn.__name__
 
 
 # ── support masking, the AI trace, the breaker ───────────────────────────────
@@ -525,12 +556,15 @@ def test_support_reads_are_masked():
     _says(SECURITY, "x-redacted: support")
 
 
-def test_the_documented_task_result_exposure_is_still_there():
-    """SECURITY.md warns that /admin/api/tasks/<job_id> returns stored job
-    results unscrubbed. When that is fixed, update the doc and this test."""
+def test_the_task_poll_is_admin_only_and_serves_only_task_results():
+    """/admin/api/tasks/<job_id> returned any stored async job, unscrubbed,
+    to support logins too; it is admin-only now, serves only ops' admin
+    tasks (the fetch-now and POS sync), and only the keys a poll reads
+    (INT-2). /admin/api/admin-jobs/<id> is the one path for a once-only value."""
     import admin_routes
     src = inspect.getsource(admin_routes.admin_api_task)
-    assert "read_async_job" in src and "_scrub" not in src
+    assert 'current_user.get("is_admin")' in src and "_ADMIN_TASK_KINDS" in src and "_ADMIN_TASK_RESULT_KEYS" in src
+    assert "password_once" not in admin_routes._ADMIN_TASK_RESULT_KEYS
     _says(SECURITY, "get /admin/api/tasks/<job_id>")
 
 
