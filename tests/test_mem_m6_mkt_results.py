@@ -157,7 +157,9 @@ def test_the_marketing_provider_serves_ask_and_stays_quiet_where_blocks_are_buil
     assert marketing.memory_lines(_req(rid, "reply_drafter")) == []
     assert marketing.memory_lines(_req(rid, viewer={"role": "employee"})) == []
     block = memory_context.memory_context(rid, "ask")
-    assert "MARKETING:" in block.text and "before and after, not proof" in block.text
+    # (The section's heading is the assembler's own — M2 titles it.)
+    assert block.sections.get("marketing") and "9 came back per 100" in block.text
+    assert all(l.get("module") in ("marketing", "reviews") for l in lines)
 
 
 def test_the_post_prompt_carries_memory_context(db_path, monkeypatch):

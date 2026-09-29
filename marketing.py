@@ -1372,7 +1372,8 @@ def memory_lines(req):
         import marketing_signals
         for line in marketing_signals.measured_lines(rid, **kw)[:4]:
             out.append({"text": f"Posts here — {line} (before and after, not proof).", "source": "system",
-                        "subject": "marketing", "weight": 3.0, "trusted": 'dish "' not in line})
+                        "subject": "marketing", "module": "marketing", "weight": 3.0,
+                        "trusted": 'dish "' not in line})
     except Exception as e:
         print(f"[marketing] memory: post results unavailable for {rid}: {e}")
     try:
@@ -1382,13 +1383,15 @@ def memory_lines(req):
             out.append({"text": (f"Guest texts to \"{r['label']}\": {r['back_per_100']:g} came back per 100 texted "
                                  f"over {r['campaigns']} campaigns (matched against check-ins; before and after, "
                                  "not proof)."),
-                        "source": "system", "subject": "marketing", "weight": 2.0, "trusted": True})
+                        "source": "system", "subject": "marketing", "module": "marketing", "weight": 2.0,
+                        "trusted": True})
     except Exception as e:
         print(f"[marketing] memory: text returns unavailable for {rid}: {e}")
     try:
         import marketing_voice
         for line in marketing_voice.summary_lines(rid, **kw):
-            out.append({"text": line, "source": "system", "subject": "marketing", "weight": 1.0, "trusted": True})
+            out.append({"text": line, "source": "system", "subject": "marketing", "module": "marketing",
+                        "weight": 1.0, "trusted": True})
     except Exception as e:
         print(f"[marketing] memory: voice unavailable for {rid}: {e}")
     try:
@@ -1397,7 +1400,8 @@ def memory_lines(req):
         if conv.get("pct") is not None:
             out.append({"text": (f"Review requests: {conv['reviewed']} of {conv['asked']} guests asked left a review "
                                  f"within {conv['window_days']} days ({conv['pct']:g}%; matched by the guest's name)."),
-                        "source": "system", "subject": "reviews", "weight": 1.5, "trusted": True})
+                        "source": "system", "subject": "reviews", "module": "reviews", "weight": 1.5,
+                        "trusted": True})
     except Exception as e:
         print(f"[marketing] memory: review requests unavailable for {rid}: {e}")
     return out
