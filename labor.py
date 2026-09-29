@@ -2025,6 +2025,38 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         top_pick_context = ("\n- THE SINGLE BIGGEST OPPORTUNITY: none — nothing in this period runs over target. "
                             "Say labor is on target; do not invent an opportunity.")
 
+    # Before any trim the read might suggest, what the rest of the product
+    # knows about that night (memory audit 9/29/26, reviews_to_labor and
+    # mkt_to_staffing): a live campaign to fill it rules the trim out, and a
+    # service complaint cluster on it must be said beside one. The labor
+    # read had no review input at all.
+    guard_context = ""
+    if restaurant_id:
+        try:
+            import staffing_signals as _stsig
+            _days = []
+            for od in (analysis.get("overstaffed_days") or []):
+                _dn = str(od.get("day") or "").strip().capitalize()
+                if _dn and _dn not in _days:
+                    _days.append(_dn)
+            _dow = analysis.get("dow_summary") or {}
+            if _dow:
+                _worst = max(_dow.items(), key=lambda kv: kv[1] or 0)[0]
+                if _worst not in _days:
+                    _days.append(_worst)
+            _g_lines = []
+            for _dn in _days[:4]:
+                _g = _stsig.trim_guard(restaurant_id, _dn)
+                if _g.get("suppress"):
+                    _g_lines.append(f"  * Do NOT suggest trimming {_dn}: {_g['why']}")
+                elif _g.get("caution"):
+                    _g_lines.append(f"  * If you suggest trimming {_dn}, say in the same line: "
+                                    f"{_g['cluster']['text']}.")
+            if _g_lines:
+                guard_context = "\n- Before any trim:\n" + "\n".join(_g_lines)
+        except Exception as _ge:
+            print(f"[labor trim guard] {_ge}")
+
     # The Labor read's lines are recommendations on the ledger now
     # (insight_labor:<hash>, answered on web and iOS like Food's): what the
     # owner answered is not suggested again in other words (M-8).
@@ -2057,7 +2089,7 @@ Data:
 - Days that ran BELOW target on a strong sales day: {json.dumps(analysis['understaffed_days'][:2])}{_covers_guidance(analysis)}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}{data_caveats}
-- Opportunity (gap above target, not money saved): {savings_line}{constraints_context}{top_pick_context}
+- Opportunity (gap above target, not money saved): {savings_line}{constraints_context}{top_pick_context}{guard_context}
 
 EVIDENCE RULES:
 - A figure belongs to the day, date, role or person it came from. Never attach one day's figure to another day, or a role's figure to a person.
@@ -3154,8 +3186,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                             "counts in both figures. Never read a day's total as one pool to split across "
                             "dayparts. The SHIFT REQUIREMENTS table turns these and the owner's floors into one "
                             "number per role per shift.\n"
-                            "Use these as the baseline. The only reasons to go over are a flagged event or a "
-                            "genuine year-over-year volume spike on that specific day. The PAR HOURS CEILING "
+                            "Use these as the baseline. The only reasons to go over are a flagged event (a "
+                            "campaign or post the owner sent to fill that night is one — it is listed with the "
+                            "dated facts), a genuine year-over-year volume spike on that specific day, or a SOFT "
+                            "STAFFING REQUIREMENT listed below. The PAR HOURS CEILING "
                             "below is NOT a reason to go over — it only ever removes hours, never adds them. "
                             "If you do scale up for an event or a spike, do it proportionally across roles "
                             "(not by piling extra hours onto one role) and name the event or the spike in your "

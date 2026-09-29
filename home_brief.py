@@ -536,6 +536,11 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
     `critical` severity is never weighed down."""
     for r in recs:
         r["rank_score"] = rank_score(r)
+        # A card another module's evidence argues against (a trim beside a
+        # service complaint cluster on its night — staffing_signals.
+        # trim_guard) keeps its place in the list but ranks lower.
+        if r.get("rank_penalty") and r.get("severity") != "critical":
+            r["rank_score"] = round(r["rank_score"] * (1.0 - min(0.9, float(r["rank_penalty"]))), 2)
         if learned is not None and r.get("severity") != "critical":
             try:
                 w, why = learned(r["key"])
@@ -1628,6 +1633,22 @@ def _build(current_user, present=True):
             # day-of-week recommendation
             if len(dow) >= 4:
                 trim = trim_day_read(dow, labor.get("by_day") or {}, labor_target, period_days)
+                # What the rest of the product knows about that night comes
+                # first (memory audit 9/29/26, reviews_to_labor and
+                # mkt_to_staffing): a live campaign to fill it suppresses the
+                # trim and says why; a service complaint cluster on it keeps
+                # the trim but says so and ranks it lower.
+                _guard = {}
+                if trim:
+                    try:
+                        import staffing_signals as _stsig
+                        _guard = _stsig.trim_guard(rid, trim["day"], daypart="night")
+                    except Exception as _ge:
+                        print(f"[home] trim guard unavailable for {rid}: {_ge}")
+                        _guard = {}
+                    if _guard.get("suppress"):
+                        add_change(_guard["why"], "neutral", "labor")
+                        trim = None
                 if trim:
                     worst_day, worst_pct, mean = trim["day"], trim["pct"], trim["others_mean"]
                     n_days = trim["n_days"]
@@ -1645,6 +1666,9 @@ def _build(current_user, present=True):
                                 "basis": f"{_plural(n_days, worst_day)} with sales in your shift data"},
                             if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over {_labor_tgt_for['label']}",
                             effort="medium")
+                    if _guard.get("caution") and recs and recs[-1]["key"] == f"trim_day:{worst_day}":
+                        recs[-1]["caution"] = _guard["caution"]
+                        recs[-1]["rank_penalty"] = _guard["rank_penalty"]
             if delta is not None and delta >= 1.5:
                 add_change(f"Labor % rose {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "bad", "labor")
             elif delta is not None and delta <= -1.5:

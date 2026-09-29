@@ -1651,6 +1651,17 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         return None
     if _pulse_suppressed(restaurant, local.date(), db_path):
         return None
+    # Tonight's other evidence first (memory audit 9/29/26): a campaign aimed
+    # at filling tonight means no cut; a service complaint cluster on this
+    # weekday's dinner is said beside the cut.
+    try:
+        import staffing_signals as _stsig
+        _guard = _stsig.trim_guard(restaurant.id, local.strftime("%A"), daypart="night", on_date=local.date(),
+                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        _guard = {}
+    if _guard.get("suppress"):
+        return None
     import schedule_rules as _sr
     from models import get_role_rates
     rows = intraday.published_rows(restaurant.id, local.date(), db_path=db_path)
@@ -1716,6 +1727,8 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
             f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
             f"{_clock(PULSE_CUT_HOUR)} {saving}.")
     import staff_settings as _ss
+    if _guard.get("caution"):
+        text = f"{text} {_guard['caution']}"
     return {"text": text, "employee": who["employee"], "role": role, "cut_at": _clock(PULSE_CUT_HOUR),
             "hours": hours, "dollars": dollars, "on": len(people), "floor": floor, "pay_caveat": pay_caveat,
             "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}

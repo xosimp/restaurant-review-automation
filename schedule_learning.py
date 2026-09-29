@@ -891,8 +891,17 @@ def _calibration_samples(restaurant_id, db_path):
     restaurant cannot be watched at all)."""
     conn = get_conn(db_path)
     try:
-        outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating, labor_pct FROM schedule_outcomes "
-                            "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        # The review rating a shift is judged on is only the reviews that
+        # named its meal and were posted within two days of it
+        # (review_rating_attributed — memory audit 9/29/26,
+        # reviews_to_labor): a dinner complaint posted on Sunday used to be
+        # scored against Sunday lunch, and the calibration learned from noise.
+        try:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating_attributed AS review_rating, "
+                                "labor_pct FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, labor_pct "
+                                "FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         ids = sorted({o["history_id"] for o in outs})
         hist = {}
         for i in range(0, len(ids), 200):

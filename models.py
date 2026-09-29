@@ -6308,6 +6308,17 @@ def init_demand_signals(db_path: str = DB_PATH):
         UNIQUE(restaurant_id, date, kind, label)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_demand_signals_date ON demand_signals(restaurant_id, date)")
+    # What a marketing signal came from and what it promotes (memory audit
+    # 9/29/26, mkt_to_staffing): "campaign:45" / "post:12", and the dish a
+    # post is about, so the prep list can name it.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(demand_signals)").fetchall()}
+    for col, typ in (("ref", "TEXT"), ("menu_item_id", "INTEGER")):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE demand_signals ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
