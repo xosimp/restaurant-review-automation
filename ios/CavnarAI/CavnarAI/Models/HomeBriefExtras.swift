@@ -233,3 +233,91 @@ struct HomeWin: Codable, Hashable {
     let detail: String?
     let module: String?
 }
+
+/// The 30-day notice a material Privacy Policy / Terms change owes an
+/// account holder (policy_notice.notice_for, home_brief `policy_notice`):
+/// the server decides who sees it and until when; a dismissal is per login
+/// and holds on every device (POST /account/policy-notice/dismiss). Nil
+/// when no notice is owed — or on an older server.
+struct HomePolicyNotice: Codable, Hashable {
+    let key: String
+    let text: String
+    var updatedLabel: String? = nil
+    var linkLabel: String? = nil
+    var url: String? = nil
+    var dismissPath: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case key, text, url, dismiss
+        case updatedLabel = "updated_label"
+        case linkLabel = "link_label"
+    }
+    private enum DismissKeys: String, CodingKey { case mobile }
+
+    init(key: String, text: String, updatedLabel: String? = nil, linkLabel: String? = nil, url: String? = nil,
+         dismissPath: String? = nil) {
+        self.key = key; self.text = text; self.updatedLabel = updatedLabel; self.linkLabel = linkLabel
+        self.url = url; self.dismissPath = dismissPath
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func text(_ k: CodingKeys) -> String? {
+            let v = ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (v?.isEmpty ?? true) ? nil : v
+        }
+        guard let k = text(.key), let t = text(.text) else {
+            throw DecodingError.dataCorruptedError(forKey: .text, in: c, debugDescription: "no key or text")
+        }
+        key = k
+        self.text = t
+        updatedLabel = text(.updatedLabel)
+        linkLabel = text(.linkLabel)
+        url = text(.url)
+        let d = try? c.nestedContainer(keyedBy: DismissKeys.self, forKey: .dismiss)
+        let m = ((try? d?.decodeIfPresent(String.self, forKey: .mobile)) ?? nil)
+        dismissPath = (m?.hasPrefix("/mobile/api/") ?? false) ? m : nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(key, forKey: .key)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(updatedLabel, forKey: .updatedLabel)
+        try c.encodeIfPresent(linkLabel, forKey: .linkLabel)
+        try c.encodeIfPresent(url, forKey: .url)
+        if let dismissPath {
+            var d = c.nestedContainer(keyedBy: DismissKeys.self, forKey: .dismiss)
+            try d.encode(dismissPath, forKey: .mobile)
+        }
+    }
+
+    /// Where the link goes — the server's URL when it is the policy page on
+    /// cavnar.ai, else the policy page itself.
+    var destination: URL {
+        if let url, let u = URL(string: url), u.scheme == "https", u.host?.hasSuffix("cavnar.ai") == true { return u }
+        return URL(string: "https://cavnar.ai/privacy")!
+    }
+
+    /// "Read what changed →".
+    var linkText: String { (linkLabel ?? "Read what changed") + " \u{2192}" }
+
+    var mobileDismissPath: String { dismissPath ?? "/mobile/api/account/policy-notice/dismiss" }
+}
+
+/// One value read leniently: anything that does not decode is nil, never an
+/// error that fails the payload around it.
+struct HomeLenientValue<Value: Codable & Hashable>: Codable, Hashable {
+    let value: Value?
+
+    init(_ value: Value?) { self.value = value }
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        if let value { try c.encode(value) } else { try c.encodeNil() }
+    }
+}

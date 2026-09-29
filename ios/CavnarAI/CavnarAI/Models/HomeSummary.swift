@@ -114,6 +114,12 @@ struct HomeSummary: Codable {
     /// measured results say they did no better than doing nothing — each
     /// asked as "Keep suggesting …?" (M4, home_brief.kind_holds).
     var kindHolds: HomeLenientList<HomeKindHold>? = nil
+    /// The 30-day notice of an updated Privacy Policy and Terms, for an
+    /// account holder who has not dismissed it (policy_notice).
+    /// Read through a box that never throws: a malformed notice is no
+    /// notice, never a Home (and its offline cache) that fails to decode.
+    var policyNoticeBox: HomeLenientValue<HomePolicyNotice>? = nil
+    var policyNotice: HomePolicyNotice? { policyNoticeBox?.value }
 
     var freshnessUnavailable: Bool { freshnessUnavailableFlag?.value == true }
 
@@ -165,6 +171,7 @@ struct HomeSummary: Codable {
         case quickActions = "quick_actions"
         case changes, charts, dismissed, wins
         case kindHolds = "kind_holds"
+        case policyNoticeBox = "policy_notice"
     }
 
     /// "9/22/26" — `data_as_of` in the owner's format whether the server

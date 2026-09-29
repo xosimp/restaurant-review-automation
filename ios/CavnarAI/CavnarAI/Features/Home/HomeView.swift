@@ -159,6 +159,18 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
+                            // The updated Privacy Policy and Terms, owed an
+                            // account holder for 30 days (policy_notice) —
+                            // dismissed once, for this login everywhere.
+                            if let notice = summary.policyNotice {
+                                HomePolicyNoticeCard(notice: notice,
+                                                     onDismissed: { Task { await viewModel.load() } })
+                                    .id(notice.key)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 16)
+                                    .belowFold(heroAppeared, delay: 0.12)
+                            }
+
                             // The order is fixed by role, the same as the web
                             // Home (§11b as amended 9/25/26, density #3):
                             // header strip, THE ONE THING at position 2 with
