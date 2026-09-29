@@ -323,6 +323,8 @@ struct GuestMention: Codable, Hashable, Identifiable {
         key = c.mrText(.key)
         date = c.mrText(.date)
         dateIso = c.mrText(.dateIso)
+        // person_signals.polarity is an INTEGER (1 praise, -1 complaint);
+        // mrText keeps it as "1" / "-1", and a word as the word.
         polarity = c.mrText(.polarity)
         reviewId = c.mrText(.reviewId)
         snippet = c.mrText(.snippet)
@@ -332,8 +334,19 @@ struct GuestMention: Codable, Hashable, Identifiable {
     /// The day in M/D/YY — the server's label, else its ISO date formatted.
     var dateLabel: String? { date ?? dateIso.map(CavnarDate.mdy) }
 
-    var isPraise: Bool { polarity?.lowercased() == "positive" || polarity?.lowercased() == "praise" }
-    var isComplaint: Bool { polarity?.lowercased() == "negative" || polarity?.lowercased() == "complaint" }
+    /// The sign of `polarity`: the server's integer, or a word from an
+    /// older payload.
+    var polaritySign: Int {
+        guard let p = polarity?.lowercased() else { return 0 }
+        if let n = Double(p) { return n > 0 ? 1 : (n < 0 ? -1 : 0) }
+        switch p {
+        case "positive", "praise": return 1
+        case "negative", "complaint": return -1
+        default: return 0
+        }
+    }
+    var isPraise: Bool { polaritySign > 0 }
+    var isComplaint: Bool { polaritySign < 0 }
 }
 
 struct MentionsPayload: Decodable {

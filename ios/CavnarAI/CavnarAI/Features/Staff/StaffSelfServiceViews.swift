@@ -106,8 +106,10 @@ struct StaffPreshiftCard: View {
     @Environment(StaffSessionStore.self) private var staff
     @State private var items: [StaffPreshiftItem] = []
 
+    // "promotion": a campaign or post running today (memory round,
+    // 9/29/26: preshift reads marketing). Any other kind shows as sent.
     private static let tags = ["volume": "Volume", "watch": "Watch", "stock": "86 risk",
-                               "event": "Today", "weather": "Weather"]
+                               "event": "Today", "weather": "Weather", "promotion": "Promotion"]
 
     var body: some View {
         Group {
