@@ -29,6 +29,8 @@ are not in this table — they are measured weekly — but `cohort_facts` turns
 one into the same fact shape, so response_validation sees one kind of
 benchmark object whichever source it came from.
 """
+import re
+
 
 # The restaurant types a registry entry can name. Keys of
 # intelligence.categories.TAXONOMY; "*" means every restaurant, typed or not.
@@ -319,7 +321,16 @@ def definition_note(e, what, definition) -> str | None:
     if e.get("definition"):
         return (f"The published figure is the {e.get('median_basis') or 'published figure'}; this restaurant's "
                 f"{what} is measured differently, so it is context, not a like-for-like comparison.")
-    return (f"The {cite(e) or 'figure'} does not say what it counts, so it is context for this restaurant's "
+    # The cite of a rule of thumb carries its own " — not a published study"
+    # aside; dropped into "The … does not say" it read as a run-on sentence
+    # ("The operator rule of thumb — not a published study does not say what
+    # it counts", Labor → How you compare, 9/29/26).
+    if e.get("source_kind") == "rule_of_thumb":
+        short = re.sub(r"^(an?|the)\s+", "", (e.get("short") or "operator rule of thumb").rstrip("."), flags=re.I)
+        subject = f"The {short} (not a published study)"
+    else:
+        subject = f"The {cite(e) or 'figure'}"
+    return (f"{subject} doesn't say what it counts, so it's context for this restaurant's "
             f"{what}, not a like-for-like comparison.")
 
 

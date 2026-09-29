@@ -200,6 +200,36 @@ def init_event_memory(db_path=DB_PATH):
     finally:
         conn.close()
     backfill_public_history(db_path)
+    retract_churn_events(db_path)
+
+
+# The day openings and closures started needing evidence (NEW_PLACE_MAX_REVIEWS,
+# `closed`). Every "gone" before it was only a place dropping out of that
+# week's search, and an "arrived" with many reviews was a rival the search
+# ranked in — neither happened.
+EVIDENCE_RULE_FROM = "2026-09-30"
+
+
+def retract_churn_events(db_path=DB_PATH) -> int:
+    """Remove the market events the old membership rule invented, all
+    observed before EVIDENCE_RULE_FROM: every "gone", and every "arrived"
+    with more than NEW_PLACE_MAX_REVIEWS reviews (or none reported). Idempotent, at boot. Returns rows
+    removed; never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            n = conn.execute("DELETE FROM market_events WHERE observed_on<? AND (kind='gone' OR "
+                             "(kind='arrived' AND (review_count IS NULL OR review_count>?)))",
+                             (EVIDENCE_RULE_FROM, NEW_PLACE_MAX_REVIEWS)).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if n:
+            log.info("event_memory: %s market events from search churn retracted", n)
+        return n or 0
+    except Exception as e:
+        log.warning("event_memory: churn retraction skipped: %s", e)
+        return 0
 
 
 def backfill_public_history(db_path=DB_PATH):
@@ -1101,6 +1131,12 @@ MARKET_MOVE_STARS = 0.2
 # measured from — not an event, never listed.
 TRACKED = "tracked"
 MARKET_KINDS = ("arrived", "gone", "rating_up", "rating_down")
+# "New nearby" means the place opened, not that this week's search returned it:
+# a place never tracked before AND with this few Google reviews. An
+# established rival with hundreds of reviews that the search ranks in this
+# week did not open (owner, 9/29/26 — the tracked set is the top matches of a
+# Google nearby search and moves week to week).
+NEW_PLACE_MAX_REVIEWS = 60
 
 
 def _iso_week(d):
@@ -1156,12 +1192,15 @@ def own_rating_trajectory(restaurant_id, db_path=None) -> dict:
             "change": round(rows[-1]["rating"] - rows[0]["rating"], 2), "series": rows}
 
 
-def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None) -> list:
+def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None, closed=()) -> list:
     """After a competitor check, keep what the market did: the monthly rating
     series (competitor_rating_monthly, the latest reading each month) and a
-    market event (market_events) when a competitor ARRIVED in the set (after
-    the first check — the set a restaurant starts with is not arrivals), is
-    GONE from it, or its rating moved MARKET_MOVE_STARS or more since the
+    market event (market_events) when a competitor OPENED (never tracked
+    before, after the first check, and with at most NEW_PLACE_MAX_REVIEWS
+    reviews — a place the search merely ranked in this week is not an
+    opening), CLOSED (`closed`: Google's own business_status for places that
+    dropped out of the search — dropping out alone is not closing), or its
+    rating moved MARKET_MOVE_STARS or more since the
     reading its last event was marked on (else its first reading), so a slow
     slide is caught once it adds up. competitor_snapshots are pruned at 365
     days and read over 60 at most, so "Bella's opened across the street in
@@ -1202,7 +1241,8 @@ def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None) ->
                 rating = c.get("rating")
                 rating = float(rating) if isinstance(rating, (int, float)) and rating > 0 else None
                 count = int(c["review_count"]) if isinstance(c.get("review_count"), (int, float)) else None
-                if not first_run and (pid not in latest or pid in gone):
+                opened = (pid not in latest and count is not None and count <= NEW_PLACE_MAX_REVIEWS)
+                if not first_run and (opened or pid in gone):
                     _event(pid, c.get("name"), "arrived", None, rating, count)
                 elif pid not in anchors:
                     # The reading a later move is measured from, kept as a
@@ -1226,10 +1266,11 @@ def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None) ->
                              "competitor_rating_monthly.rating), review_count=COALESCE(excluded.review_count, "
                              "competitor_rating_monthly.review_count), captured_at=excluded.captured_at",
                              (restaurant_id, pid, month, c.get("name"), rating, count, day))
-            if not first_run:
-                for pid, r in latest.items():
-                    if pid not in now_set and pid not in gone:
-                        _event(pid, r.get("name"), "gone", r.get("rating"), None, r.get("review_count"))
+            for c in closed or ():
+                pid = c.get("place_id")
+                if pid and pid in latest and pid not in now_set and pid not in gone:
+                    r = latest[pid]
+                    _event(pid, c.get("name") or r.get("name"), "gone", r.get("rating"), None, r.get("review_count"))
             conn.commit()
         finally:
             conn.close()

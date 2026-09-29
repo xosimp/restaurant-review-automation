@@ -4209,11 +4209,13 @@ def test_the_movement_route_reports_who_joined_and_left(client, db_path):
     _comp_snap(db_path, rid, "a", "Stayer", 4.4, 500, 7)
     _comp_snap(db_path, rid, "b", "Leaver", 4.2, 300, 7)
     _comp_snap(db_path, rid, "a", "Stayer", 4.4, 520, 0)
-    _comp_snap(db_path, rid, "c", "Newcomer", 4.8, 400, 0)
+    _comp_snap(db_path, rid, "c", "Newcomer", 4.8, 40, 0)
     body = client.get("/mobile/api/intel/movement",
                       headers=_auth_headers(token)).get_json()
     assert [x["name"] for x in body["arrived"]] == ["Newcomer"]
-    assert [x["name"] for x in body["gone"]] == ["Leaver"]
+    # Leaving the week's search is not closing (owner, 9/29/26): only a
+    # closure Google reported is "gone".
+    assert body["gone"] == []
 
 
 # ── Operational Score routes ──────────────────────────────────────────────

@@ -425,10 +425,10 @@ def test_the_web_card_draws_the_servers_words():
     assert out.returncode == 0, out.stderr[-1500:]
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert "How you compare" in got["card"] and "hb-row important" in got["card"] and 'data-ask="' in got["card"]
-    # 9/25/26: the drawer keeps the full reason; the second "Why:" sentence
-    # that restated it is gone.
-    assert "Not enough restaurants like yours yet." in got["card"] and "Why: no band" not in got["card"]
-    assert "68" in got["strength"] and "comparison strength" in got["strength"] and "data-explain=" in got["strength"]
+    # 9/29/26 (owner): no Why? drawer at all — the card is the one short
+    # line and the rows.
+    assert '<details class="bm-why"' not in got["card"] and "Why: no band" not in got["card"]
+    assert "comparison strength" not in got["strength"]     # it lived in the removed drawer
     assert got["panel"].count("cf-p-row") == 2 and "Peer count" in got["panel"] and "—" in got["panel"]
     assert "How your locations compare" in got["locs"] and "its normal" in got["locs"]
     assert "hb-row critical" not in got["card"] + got["locs"]      # a standing is never red

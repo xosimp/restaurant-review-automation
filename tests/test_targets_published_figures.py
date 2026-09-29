@@ -73,7 +73,7 @@ def test_unknown_definition_is_not_comparable():
     assert thumb["definition"] is None
     assert br.definitions_differ(thumb, "wages_from_shifts")
     assert br.lookup("food_cost_pct", "sports_bar", definition="cogs_pct_sales") is None
-    assert "does not say what it counts" in br.definition_note(thumb, "Labor %", "wages_from_shifts")
+    assert "doesn't say what it counts" in br.definition_note(thumb, "Labor %", "wages_from_shifts")
 
 
 def test_a_figure_past_its_age_limit_is_no_entry():

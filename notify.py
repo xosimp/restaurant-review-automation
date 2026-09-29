@@ -4068,7 +4068,7 @@ def competitor_changes(restaurant_id: int, db_path: str = DB_PATH) -> list:
                     count = snap["review_count"] if snap else None
                     out.append({"name": a.get("name") or "A new place", "place_id": a["place_id"], "kind": "new",
                                 "rating_now": rating, "size": 1.0,
-                                "line": f"New nearby: {a.get('name') or 'a new place'}"
+                                "line": f"Newly opened nearby: {a.get('name') or 'a new place'}"
                                         + (f", {float(rating):.1f}★" if rating else ""),
                                 "evidence": (f"{int(count)} Google reviews" if count is not None
                                              else "review count not reported yet")})

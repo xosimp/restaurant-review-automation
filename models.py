@@ -11682,14 +11682,34 @@ def competitor_roster_changes(restaurant_id: int, db_path: str = DB_PATH) -> dic
         return {r["place_id"]: r["name"] for r in conn.execute(
             "SELECT place_id, name FROM competitor_snapshots "
             "WHERE restaurant_id=? AND DATE(captured_at)=?", (restaurant_id, day))}
-    now, prev = _set(now_d), _set(prev_d)
+    now = _set(now_d)
+    # Not "in this run's set and not the last one's": the set is the top
+    # matches of a Google nearby search and moves week to week, so that read
+    # told an owner established rivals had arrived or gone (9/29/26). A new
+    # place is one never tracked before with few reviews (it opened); a gone
+    # one is a closure Google reported (event_memory.record_market_snapshot).
+    from event_memory import NEW_PLACE_MAX_REVIEWS
+    seen_before = {r["place_id"] for r in conn.execute(
+        "SELECT DISTINCT place_id FROM competitor_snapshots WHERE restaurant_id=? AND DATE(captured_at)<?",
+        (restaurant_id, now_d))}
+    counts = {r["place_id"]: r["review_count"] for r in conn.execute(
+        "SELECT place_id, review_count FROM competitor_snapshots WHERE restaurant_id=? AND DATE(captured_at)=?",
+        (restaurant_id, now_d))}
+    try:
+        closed = [{"place_id": r["place_id"], "name": r["name"]} for r in conn.execute(
+            "SELECT place_id, name FROM market_events WHERE restaurant_id=? AND kind='gone' "
+            "AND observed_on>? ORDER BY observed_on", (restaurant_id, prev_d))]
+    except sqlite3.OperationalError:
+        closed = []
     conn.close()
     return {
         "ok": True,
         "compared_from": prev_d,
         "compared_to": now_d,
-        "arrived": [{"place_id": k, "name": v} for k, v in now.items() if k not in prev],
-        "gone": [{"place_id": k, "name": v} for k, v in prev.items() if k not in now],
+        "arrived": [{"place_id": k, "name": v} for k, v in now.items()
+                    if k not in seen_before and counts.get(k) is not None
+                    and counts[k] <= NEW_PLACE_MAX_REVIEWS],
+        "gone": closed,
     }
 
 

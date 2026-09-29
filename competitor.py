@@ -1537,6 +1537,50 @@ def _previous_competitor(restaurant, place_id):
     return None
 
 
+
+# A tracked competitor missing from this week's search is usually not closed:
+# the set is the top matches of a Google "nearby" search whose ranking and
+# relaxing filters move week to week (owner, 9/29/26: "they're obviously still
+# there"). Only Google's own business_status says a place closed — asked once
+# per dropout, a few a week at most.
+CLOSURE_CHECKS_MAX = 10
+CLOSED_STATUSES = ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY")
+
+
+def _closures_among_dropped(restaurant_id, competitors, closed_custom=()):
+    """[{place_id, name, status}] for places tracked on the last run, missing
+    from this one, that Google says are closed — plus owner-added ones found
+    closed this run. A lookup that fails says nothing. Never raises."""
+    out = [dict(c) for c in closed_custom or () if c.get("status") in CLOSED_STATUSES]
+    seen = {c["place_id"] for c in out}
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            last = conn.execute("SELECT MAX(DATE(captured_at)) FROM competitor_snapshots WHERE restaurant_id=?",
+                                (restaurant_id,)).fetchone()[0]
+            prev = {r[0]: r[1] for r in conn.execute(
+                "SELECT place_id, name FROM competitor_snapshots WHERE restaurant_id=? AND DATE(captured_at)=?",
+                (restaurant_id, last))} if last else {}
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[Competitor] closure check skipped: {e}")
+        return out
+    now = {c.get("place_id") for c in competitors or []}
+    dropped = [(pid, name) for pid, name in prev.items() if pid not in now and pid not in seen]
+    for pid, name in dropped[:CLOSURE_CHECKS_MAX]:
+        try:
+            r = _places_request("details", {"place_id": pid, "fields": "name,business_status",
+                                            "key": PLACES_API_KEY}, action="competitor_closure_check", timeout=8)
+            d = (r.json() or {}).get("result") or {}
+            status = d.get("business_status")
+            if status in CLOSED_STATUSES:
+                out.append({"place_id": pid, "name": d.get("name") or name, "status": status})
+        except Exception as e:
+            print(f"[Competitor] closure check for {pid} failed: {e}")
+    return out
+
 def _intel_run(fn):
     """Every Places request and the model call inside one analysis run are
     attributed to its restaurant and to one correlation id for the run
@@ -1706,6 +1750,9 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # nothing could show that a competitor's rating fell, that a new one
         # opened, or that a complaint theme appeared. A snapshot per run is
         # what makes any of that answerable later.
+        # Before this run's snapshot: which of last run's places that dropped
+        # out Google says closed (not every dropout is a closure).
+        _closed = _closures_among_dropped(restaurant_id, competitors, _closed_custom)
         try:
             from models import record_competitor_snapshot
             record_competitor_snapshot(restaurant_id, competitors)
@@ -1717,7 +1764,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # rating series. Never raises.
         try:
             import event_memory
-            event_memory.record_market_snapshot(restaurant_id, competitors)
+            event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed)
         except Exception as _me:
             print(f"[Competitor] market history not kept: {_me}")
         print(f"[Competitor] Analysis complete for {restaurant.name}")

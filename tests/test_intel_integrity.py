@@ -921,16 +921,19 @@ def test_a_single_snapshot_is_still_not_a_movement(db_path):
 # ── Who joined the market, and who left ────────────────────────────────────
 
 def test_a_competitor_arriving_and_leaving_is_detected(db_path):
-    """The snapshot set changed silently every week. A restaurant opening
-    nearby is the most actionable market-change signal this module holds."""
+    """A new place nearby is the most actionable market-change signal this
+    module holds — but the tracked set is the top matches of a Google nearby
+    search and moves week to week (owner, 9/29/26). New = never tracked and
+    few reviews (it opened); a dropout is not a closure."""
     _snap(db_path, 1, "a", "Stayer", 4.4, 500, 7)
     _snap(db_path, 1, "b", "Leaver", 4.2, 300, 7)
     _snap(db_path, 1, "a", "Stayer", 4.4, 520, 0)
     _snap(db_path, 1, "c", "Newcomer", 4.8, 30, 0)
+    _snap(db_path, 1, "d", "Established", 4.5, 900, 0)     # ranked in this week: not an opening
     ch = models.competitor_roster_changes(1, db_path=db_path)
     assert ch["ok"] is True
     assert [x["name"] for x in ch["arrived"]] == ["Newcomer"]
-    assert [x["name"] for x in ch["gone"]] == ["Leaver"]
+    assert ch["gone"] == []                                  # dropped out of the search, not closed
 
 
 def test_one_run_cannot_show_roster_change(db_path):

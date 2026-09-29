@@ -191,7 +191,7 @@ from itertools import combinations
 import ai_guard as _g
 from confidence_engine import HIGH_AT, MEDIUM_AT
 
-VERSION = "rv1"
+VERSION = "rv2"   # rv2 (9/29/26): a paired list binds its figures in order (F2)
 
 # ── closed vocabularies ─────────────────────────────────────────────────────
 
@@ -312,6 +312,26 @@ def _norm_direction(d):
     if s in ("down", "-", "fell", "lower", "decrease", "decreased"):
         return -1
     return None
+
+
+def _paired_entity(t, c, claims, mentions):
+    """The name a figure binds to in a paired list, or None. Within one
+    sentence, N names mentioned together, then N figures with no name among
+    them: the k-th figure is the k-th name's. Anything less regular (counts
+    that differ, a name between the figures) is left to the nearest-name
+    rule."""
+    lo = max(t.rfind(". ", 0, c["start"]), t.rfind("\n", 0, c["start"]))
+    lo = 0 if lo < 0 else lo + 1
+    ends = [x for x in (t.find(". ", c["end"]), t.find("\n", c["end"])) if x >= 0]
+    hi = min(ends) if ends else len(t)
+    figs = sorted((cc for cc in claims if lo <= cc["start"] < hi), key=lambda cc: cc["start"])
+    names = [(p, n) for p, n in mentions if lo <= p < hi]
+    if len(names) < 2 or len(figs) != len(names):
+        return None
+    if any(p > figs[0]["start"] for p, _n in names):
+        return None               # a name among the figures: not a paired list
+    idx = next((i for i, cc in enumerate(figs) if cc["start"] == c["start"]), None)
+    return names[idx][1] if idx is not None else None
 
 
 @dataclass
@@ -2702,6 +2722,12 @@ class _Run:
             if how == "direct" and mentions:
                 before = [n for p, n in mentions if p < c["start"]]
                 here = before[-1] if before else mentions[0][1]
+                # A paired list — "9/3 and 9/4 ran below target on strong
+                # sales ($15,399 and $13,815)" — binds in order, not to the
+                # nearest name: the first figure is 9/3's. The nearest-name
+                # rule flagged a correct figure as attached to the wrong day
+                # on a live labor read (9/29/26).
+                here = _paired_entity(t, c, [cc for _k, cc in claims], mentions) or here
                 allowed = [f for f in facts if f.entity is None or f.entity.lower() == here]
                 if not allowed:
                     self.emit("F2", "withhold", "drop", c["raw"], f"attached to {here}",

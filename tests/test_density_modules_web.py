@@ -221,15 +221,15 @@ def test_every_module_has_a_today_line():
         assert 'id="%s"' % gone not in s, gone
 
 
-def test_how_you_compare_rows_are_slim_with_one_why_drawer():
+def test_how_you_compare_rows_are_slim_with_no_why_drawer():
     s = _src()
     js = s[s.index('<script id="cav-bench">'):]
     js = js[:js.index("</script>")]
     row = js[js.index("function rowHtml(r,home){"):js.index("function profileAction(a){")]
     assert "rowDetail(" not in row, "a row reads label, value and standing only"
     card = js[js.index("function cardHtml(d){"):js.index("function load(module){")]
-    assert '<details class="bm-why"><summary>Why?</summary>' in card   # one short label (9/25/26)
-    assert "r.strength_pct!==cardPct" in js
+    # No Why? drawer on the card (owner, 9/29/26: "just remove it entirely").
+    assert '<details class="bm-why"' not in card and '<summary>Why?' not in card
 
 
 def test_labor_says_its_percent_once_and_the_money_sits_under_waiting_on_you():

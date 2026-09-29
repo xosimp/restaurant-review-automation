@@ -793,8 +793,8 @@ struct IntelView: View {
                 .padding(.top, 10)
             if let from = m.comparedFrom {
                 HomeMixedText.make(m.hasChanges
-                                   ? "Since your check on \(CavnarDate.mdy(from)): places that started or stopped showing up in Google’s list of restaurants near you, and ratings that really moved"
-                                   : "Nothing new showing up near you, nothing gone, and no rating moved past normal ups and downs since \(CavnarDate.mdy(from))",
+                                   ? "Since your check on \(CavnarDate.mdy(from)): new places that opened near you, places Google marks closed, and ratings that really moved"
+                                   : "No new places, no closures, and no rating moved past normal ups and downs since \(CavnarDate.mdy(from))",
                                    size: 13.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -803,8 +803,8 @@ struct IntelView: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ForEach(m.arrived) { p in movementRow(p.name, tag: "Now showing nearby", detail: nil) }
-            ForEach(m.gone) { p in movementRow(p.name, tag: "No longer showing nearby", detail: nil) }
+            ForEach(m.arrived) { p in movementRow(p.name, tag: "Newly opened", detail: nil) }
+            ForEach(m.gone) { p in movementRow(p.name, tag: "Closed", detail: nil) }
             ForEach(Array(m.significant.prefix(3))) { mv in
                 movementRow(mv.name, tag: nil,
                             detail: String(format: "%.1f → %.1f★", mv.ratingThen, mv.ratingNow)

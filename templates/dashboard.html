@@ -833,13 +833,6 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .hb-bench .hb-fresh{margin-top:0}
 /* The slim row (density round 9/25/26, #34): label, value, standing; who,
    strength and dates sit behind one Why? under the rows. */
-.bm-card .bm-why{margin-top:10px;font-size:13.5px;color:var(--ink3)}
-.bm-card .bm-why>summary{cursor:pointer;list-style:none;font-weight:600;color:var(--ink3);display:inline-flex;align-items:center;gap:6px}
-.bm-card .bm-why>summary::-webkit-details-marker{display:none}
-.bm-card .bm-why>summary:after{content:'\203A';transition:transform .15s ease;font-size:17px;line-height:1;color:var(--ember);font-weight:700;display:inline-block}
-.bm-card .bm-why[open]>summary:after{transform:rotate(90deg)}
-.bm-card .bm-why>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
-.bm-card .bm-why .bm-dt{margin-top:6px;line-height:1.5}
 /* A chip on a constant (a target, a balance, a count of places tracked) is
    not a status: no tone, no breathing dot (#31). */
 .hb-chip.neutral .dot{display:none}
@@ -3773,8 +3766,7 @@ svg:hover .hb-xh{opacity:1}
     return b.join(' · ');
   }
   // One slim row (density round, #34): the label, the value and the
-  // standing in words. What it is read against, its strength and its dates
-  // go in the card's Why? drawer (cardHtml); a caveat note stays on the row.
+  // standing in words; a caveat note stays on the row.
   function rowHtml(r,home){
     var h='<div class="hb-row '+(ROW[r.tone]||'watch')+'" data-bm-metric="'+esc(r.metric)+'"'+(r.context?' data-bm-context="1"':'')+(r.stale?' data-bm-stale="1"':'')+'><span class="d"></span><span class="t"><b>'+esc(r.label)+'</b> '+num(r.value_text)+(r.standing?' — '+esc(r.standing):'')
       +(r.note?'<span class="vm">'+esc(r.note)+'</span>':'')+'</span>';
@@ -3801,23 +3793,15 @@ svg:hover .hb-xh{opacity:1}
       :(hasRows?'Compared with your own history for now.':'Not enough to compare yet.');
     return '<div class="bm-min">'+esc(t)+(prof&&a.can_edit!==false?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-bm-profile="1">'+esc(a.label||'Confirm your profile')+' →</button>':'')+'</div>';
   }
-  // The verdict first: the rows, then one Why? drawer holding who the
-  // restaurant is compared to, the comparison strength (its own Why? panel
-  // still opens from there) and each row's basis and dates (#34).
+  // The verdict: the one short line, then the rows.
   function cardHtml(d){
-    var rs=d.rows||[],cardPct=(d.strength&&isNum(d.strength.pct))?d.strength.pct:null;
+    var rs=d.rows||[];
     var ml=minLine(d,rs.length>0);
     var h='<div class="hb-kicker">How you compare</div>'+ml;
     if(rs.length){h+='<div class="bm-rows">';for(var i=0;i<rs.length;i++)h+=rowHtml(rs[i],false);h+='</div>';}
     else if(!ml)h+='<div class="hb-empty">Nothing to compare yet.</div>';
-    var dt='';
-    for(var j=0;j<rs.length;j++){var rd=rowDetail(rs[j],cardPct);if(rd)dt+='<div class="bm-dt"><b>'+esc(rs[j].label)+':</b> '+num(rd)+'</div>';}
-    var bm=d.below_minimum,full='';
-    if(bm&&bm.text){full='<div class="bm-dt">'+num(bm.text)+'</div>';
-      if(bm.action&&bm.action.suggestion)full+='<div class="bm-dt">'+esc(bm.action.suggestion)+'</div>';
-      if(bm.action&&bm.action.kind==='profile'&&bm.action.can_edit===false)full+='<div class="bm-dt">The account owner can confirm it in Account.</div>';}
-    var why=full+whoLine(d)+strengthLine(d.strength)+dt;
-    if(why)h+='<details class="bm-why"><summary>Why?</summary>'+why+'</details>';
+    // No Why? drawer (owner, 9/29/26: "makes no sense, remove it
+    // entirely"): the card is the one short line and the verdict rows.
     return h;
   }
   function load(module){
@@ -5740,20 +5724,12 @@ svg:hover .hb-xh{opacity:1}
       for(j=0;j<(m.sources||[]).length;j++){var s=byKey[m.sources[j]];if(!s)continue;
         if(!worst||(rank[s.tone]!=null?rank[s.tone]:9)<(rank[worst.tone]!=null?rank[worst.tone]:9))worst=s;}
       if(!worst){el.hidden=true;continue;}
-      var st=DH_CHIP[worst.tone]||'unknown',ci=m.confidence_impact;
-      // Compact (Labor, 9/25/26): the page's own line already dates the
-      // data, so the badge is just its state and the drawer - one line,
-      // never a second, differently-worded date.
-      if(el.getAttribute('data-dh-compact')){var hp=worst.health_pct!=null?worst.health_pct:worst.pct;
-        el.innerHTML='<button type="button" class="cbtn hb-fresh-it dh-pill '+st+'" data-dh-open="1" title="'+esc(worst.line||worst.basis||'')+'" aria-label="Data health"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</button>';
-        el.hidden=false;continue;}
-      // The line is ONE inline run (.bs): loose inside the flex pill, each
-      // date, number and phrase became its own flex item and stacked
-      // ("Reviews / fetched  9/28/26  · Google reviews (sampled ...", 9/28/26).
-      /* The pill itself opens Data health: no orange "Data health" link at
-         the top of every module (owner, 9/28/26 - Account has it too). */
-      el.innerHTML='<div class="hb-fresh"><button type="button" class="cbtn hb-fresh-it dh-pill '+st+'" data-dh-open="1" title="'+esc(worst.basis||'')+'" aria-label="Data health"><i></i><b>Data</b> <span class="bs">'+num(worst.line||'')+'</span></button>'
-        +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')+'</div>';
+      var st=DH_CHIP[worst.tone]||'unknown';
+      // Every module's badge is the compact one (owner, 9/29/26: "only ever
+      // the %"): "Data" and the health %, state in the dot; the dated line
+      // is the tooltip, and the pill opens the Data health drawer.
+      var hp=worst.health_pct!=null?worst.health_pct:worst.pct;
+      el.innerHTML='<button type="button" class="cbtn hb-fresh-it dh-pill '+st+'" data-dh-open="1" title="'+esc(worst.line||worst.basis||'')+'" aria-label="Data health"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</button>';
       el.hidden=false;
     }
   }
@@ -12765,9 +12741,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       if(!d||!d.ok){box.hidden=true;return;}
       var rows='',i,a,m;
       for(i=0;i<(d.arrived||[]).length;i++){a=d.arrived[i];
-        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">Now showing nearby</span></div></div></div>';}
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">Newly opened</span></div></div></div>';}
       for(i=0;i<(d.gone||[]).length;i++){a=d.gone[i];
-        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">No longer showing nearby</span></div></div></div>';}
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">Closed</span></div></div></div>';}
       var sig=(d.significant||[]).slice(0,3);
       for(i=0;i<sig.length;i++){m=sig[i];
         rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(m.name)+'</b></div><div class="m">Rating '+(m.rating_change>0?'up':'down')+' over '+recEsc(d.days)+' days</div></div>'
@@ -12775,7 +12751,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
       var when=d.compared_from?mdy(d.compared_from):'';
       var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
-        :(rows?'Since your check on <span class="hb-num">'+when+'</span>: places that started or stopped showing up in Google\u2019s list of restaurants near you, and ratings that really moved':'Nothing new showing up near you, nothing gone, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
+        :(rows?'Since your check on <span class="hb-num">'+when+'</span>: new places that opened near you, places Google marks closed, and ratings that really moved':'No new places, no closures, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
       // One flex item: the line's 8px gap put space around the date as if
       // it were a chip (owner, 9/26/26).
       box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px"><span>'+sub+'</span></div>'

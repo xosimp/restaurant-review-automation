@@ -294,10 +294,11 @@ def test_the_web_card_draws_context_stale_and_the_profile_action():
     assert out.returncode == 0, out.stderr[-1500:]
     got = json.loads(out.stdout.strip().splitlines()[-1])
     card = got["card"]
-    assert 'data-bm-context="1"' in card and "published: full-service Italian" in card
-    text = re.sub(r"<[^>]+>", "", card)
-    assert "Measured differently, so context." in card and "your figure 9/20/26" in text
+    # 9/29/26 (owner): no Why? drawer, so a row's basis and dates are not
+    # drawn; the row's own caveat note stays.
+    assert 'data-bm-context="1"' in card and "published: full-service Italian" not in card
+    assert "Measured differently, so context." in card and '<details class="bm-why"' not in card
     assert 'data-bm-stale="1"' in card and "Last measured 7/12/26." in card
     assert " — null" not in card and "31%</span> —" not in card and 'data-ask="' not in card
-    assert 'data-bm-profile="1"' in card and "Confirm your profile" in card and "pizza place" in card
-    assert 'data-bm-profile' not in got["noedit"] and "The account owner can confirm it" in got["noedit"]
+    assert 'data-bm-profile="1"' in card and "Confirm your profile" in card
+    assert 'data-bm-profile' not in got["noedit"]

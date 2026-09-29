@@ -21,7 +21,10 @@ def test_the_today_line_is_gone_from_reviews():
 
 
 def test_a_data_line_is_one_inline_run_inside_its_pill():
-    assert "<b>Data</b> <span class=\"bs\">'+num(worst.line||'')+'</span></button>" in SRC
+    # 9/29/26 (owner): "only ever the %" — every module's pill is "Data" and
+    # the health %, the dated line only its tooltip.
+    assert "<b>Data</b>'+(hp!=null?' <span class=\"hb-num\">'+Math.round(hp)+'%</span>':'')+'</button>" in SRC
+    assert "<span class=\"bs\">'+num(worst.line||'')" not in SRC
     assert re.search(r"\.hb-fresh-it \.bs\{display:inline\}", SRC)
 
 

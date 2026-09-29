@@ -78,17 +78,25 @@ def test_market_events_mark_arrivals_departures_and_moves_that_add_up():
     first = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.5), _comp("b", "Tony's", 4.0)],
                                       at=date(2026, 3, 2))
     assert first == []                                             # the set a restaurant starts with
+    # An opening is a place never tracked with few reviews; an established
+    # place the week's search ranks in is not one (owner, 9/29/26).
     got = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.4), _comp("b", "Tony's", 4.1),
-                                          _comp("c", "Sal's", 4.8)], at=date(2026, 3, 9))
+                                          _comp("c", "Sal's", 4.8, count=20), _comp("e", "Old Faithful", 4.6, 800)],
+                                    at=date(2026, 3, 9))
     assert [(e["name"], e["kind"]) for e in got] == [("Sal's", "arrived")]
     # 0.1 a week never crosses 0.2 against the last reading, but it adds up
     # against the first one.
     got = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.3), _comp("b", "Tony's", 4.1),
-                                          _comp("c", "Sal's", 4.8)], at=date(2026, 3, 16))
+                                          _comp("c", "Sal's", 4.8, count=20)], at=date(2026, 3, 16))
     assert [(e["name"], e["kind"], e["from_rating"], e["to_rating"]) for e in got] == \
         [("Bella's", "rating_down", 4.5, 4.3)]
-    got = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.3), _comp("c", "Sal's", 4.8)],
-                                    at=date(2026, 4, 6))
+    # Dropping out of the search is not closing: only Google's status is.
+    got = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.3), _comp("c", "Sal's", 4.8, count=20)],
+                                    at=date(2026, 3, 30))
+    assert [e["kind"] for e in got] == []
+    got = em.record_market_snapshot(rid, [_comp("a", "Bella's", 4.3), _comp("c", "Sal's", 4.8, count=20)],
+                                    at=date(2026, 4, 6),
+                                    closed=[{"place_id": "b", "name": "Tony's", "status": "CLOSED_PERMANENTLY"}])
     assert [(e["name"], e["kind"]) for e in got] == [("Tony's", "gone")]
     hist = em.market_history(rid)
     assert [e["kind"] for e in hist] == ["gone", "rating_down", "arrived"]
@@ -97,7 +105,7 @@ def test_market_events_mark_arrivals_departures_and_moves_that_add_up():
                           "ORDER BY place_id, month", (rid,)).fetchall()
     conn.close()
     assert [tuple(m) for m in months] == [("a", "2026-03", 4.3), ("a", "2026-04", 4.3), ("b", "2026-03", 4.1),
-                                          ("c", "2026-03", 4.8), ("c", "2026-04", 4.8)]
+                                          ("c", "2026-03", 4.8), ("c", "2026-04", 4.8), ("e", "2026-03", 4.6)]
 
 
 def test_what_is_on_file_is_replayed_into_the_history_at_boot():
@@ -108,7 +116,8 @@ def test_what_is_on_file_is_replayed_into_the_history_at_boot():
                       ("2026-01-12", [("a", "Bella's", 4.5), ("b", "Tony's", 4.0), ("c", "Sal's", 4.8)])):
         for pid, name, rating in rows:
             conn.execute("INSERT INTO competitor_snapshots (restaurant_id, place_id, name, rating, review_count, "
-                         "captured_at) VALUES (?,?,?,?,?,?)", (rid, pid, name, rating, 90, day + " 09:00:00"))
+                         "captured_at) VALUES (?,?,?,?,?,?)",
+                         (rid, pid, name, rating, 20 if pid == "c" else 900, day + " 09:00:00"))
     conn.execute("UPDATE restaurants SET gbp_rating=4.4, gbp_review_count=250, "
                  "gbp_rating_updated_at='2026-09-20T10:00:00+00:00' WHERE id=?", (rid,))
     conn.commit()
@@ -128,7 +137,21 @@ def test_a_competitor_check_keeps_the_market_history():
     import inspect
     import competitor
     src = inspect.getsource(competitor.run_competitor_analysis)
-    assert "event_memory.record_market_snapshot(restaurant_id, competitors)" in src
+    assert "event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed)" in src
+    assert "_closures_among_dropped(restaurant_id, competitors, _closed_custom)" in src
+
+
+def test_churn_events_the_old_rule_wrote_are_retracted():
+    rid = _rid()
+    conn = models.get_conn()
+    for pid, kind, count, on in (("x", "gone", 300, "2026-09-29"), ("y", "arrived", 900, "2026-09-29"),
+                                 ("z", "arrived", 25, "2026-09-29"), ("w", "gone", 300, "2026-10-06")):
+        conn.execute("INSERT INTO market_events (restaurant_id, place_id, name, kind, review_count, observed_on) "
+                     "VALUES (?,?,?,?,?,?)", (rid, pid, pid, kind, count, on))
+    conn.commit()
+    conn.close()
+    assert em.retract_churn_events() == 2
+    assert sorted(e["place_id"] for e in em.market_history(rid)) == ["w", "z"]
 
 
 def test_the_movement_payload_carries_the_market_history_and_the_rating_trajectory():
@@ -140,3 +163,30 @@ def test_the_movement_payload_carries_the_market_history_and_the_rating_trajecto
     assert "own_rating_history=event_memory.own_rating_trajectory(rid)" in src
     # The web route is the same body.
     assert '_m("mobile_intel_movement")' in inspect.getsource(client_api.intel_movement)
+
+
+def test_only_a_dropout_google_calls_closed_is_a_closure(monkeypatch):
+    import competitor
+    rid = _rid()
+    conn = models.get_conn()
+    for pid, name in (("a", "Stays"), ("b", "Closed Co"), ("c", "Still Open")):
+        conn.execute("INSERT INTO competitor_snapshots (restaurant_id, place_id, name, rating, review_count, "
+                     "captured_at) VALUES (?,?,?,?,?,?)", (rid, pid, name, 4.2, 300, "2026-09-22 09:00:00"))
+    conn.commit()
+    conn.close()
+    asked = []
+
+    class _R:
+        def __init__(self, status):
+            self.status = status
+
+        def json(self):
+            return {"status": "OK", "result": {"name": "x", "business_status": self.status}}
+
+    def fake(endpoint, params, **kw):
+        asked.append(params["place_id"])
+        return _R("CLOSED_PERMANENTLY" if params["place_id"] == "b" else "OPERATIONAL")
+    monkeypatch.setattr(competitor, "_places_request", fake)
+    got = competitor._closures_among_dropped(rid, [{"place_id": "a"}])
+    assert sorted(asked) == ["b", "c"]                        # only the dropouts are asked about
+    assert [g["place_id"] for g in got] == ["b"]
