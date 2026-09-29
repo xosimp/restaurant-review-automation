@@ -56,6 +56,31 @@ def _ensure_table(conn):
     conn.execute(_TABLE_SQL)
 
 
+# What a failure captured before job_failures.kind existed was, read from its
+# job name and text (#58): AI output checks and console request errors were
+# ops.capture calls like any failed job until fix rounds D and G. Used once,
+# when the boot migration adds the column, and by the console on a database
+# that has not had it yet — never for a row that carries its kind.
+_AI_QUALITY_JOBS = frozenset(("safety_disagreement", "ai_quality"))
+_AI_QUALITY_MARKERS = ("stated figures not present in its input", "rated normal urgency", "unsupported figure",
+                       "validation refused", "refused by validation", "cause claim", "citation dropped",
+                       "stated a cause no stored diagnosis supports", "attached figures to the wrong fact",
+                       "bullet dropped", "dsr narrative truncated", "dsr narrative failed validation",
+                       "dsr narrative lead refused", "dsr narrative dropped")
+_REQUEST_JOBS = frozenset(("admin_console", "request"))
+
+
+def infer_failure_kind(job, error):
+    """job | request | ai_quality for a failure with no kind of its own."""
+    job = str(job or "").lower()
+    err = str(error or "").lower()
+    if job in _AI_QUALITY_JOBS or any(m in err for m in _AI_QUALITY_MARKERS):
+        return "ai_quality"
+    if job in _REQUEST_JOBS:
+        return "request"
+    return "job"
+
+
 def restaurant_id_from(context):
     """The restaurant a context string names ("restaurant_id=N" or "rid=N"),
     or None — so the capture sites that already say which restaurant they
@@ -495,6 +520,8 @@ def init_ops(db_path=None):
             for col, typ in columns:
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                    if (table, col) == ("job_failures", "kind"):
+                        _classify_legacy_failures(conn)
         for sql in (
             # The retention deletes in prune_ledgers (DATA-40), and the
             # dead-run lookup in _reclaim_dead_run.
@@ -524,6 +551,18 @@ def init_ops(db_path=None):
         conn.commit()
     finally:
         conn.close()
+
+
+def _classify_legacy_failures(conn):
+    """Give the rows captured before job_failures.kind existed their kind,
+    once, as the column is added: the column's default made every one a
+    failed job, so the AI output checks and console request errors of the
+    last weeks would have read as "Job X failed" until they aged out."""
+    rows = conn.execute("SELECT id, job, error FROM job_failures").fetchall()
+    for fid, job, error in rows:
+        kind = infer_failure_kind(job, error)
+        if kind != "job":
+            conn.execute("UPDATE job_failures SET kind=? WHERE id=?", (kind, fid))
 
 
 def _memo_claim(key, reason):

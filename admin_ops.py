@@ -2267,24 +2267,16 @@ def _brand_rows(recs):
 
 
 def _job_failure_kind(f, has_kind):
-    """job | request | ai_quality | audit. From job_failures.kind once it
-    exists (workstream D); before that, AI-quality findings and console
-    request errors are told apart by their job name and text (#58)."""
+    """job | request | ai_quality | audit. From job_failures.kind (fix round
+    D) — rows captured before that column existed were given theirs once,
+    when the boot migration added it. Only a database without the column is
+    judged by job name and text, the same inference (ops.infer_failure_kind,
+    #58). AI-quality findings themselves are ai_quality_events rows now
+    (fix round G), never job_failures."""
     if has_kind:
         return (f.get("kind") or "job").lower()
-    job = (f.get("job") or "").lower()
-    err = (f.get("error") or "").lower()
-    if job in _AI_QUALITY_JOBS or any(m in err for m in _AI_QUALITY_MARKERS):
-        return "ai_quality"
-    if job in _REQUEST_JOBS:
-        return "request"
-    return "job"
-
-
-_AI_QUALITY_JOBS = {"safety_disagreement", "ai_quality"}
-_AI_QUALITY_MARKERS = ("stated figures not present in its input", "rated normal urgency", "unsupported figure",
-                       "validation refused", "cause claim", "citation dropped")
-_REQUEST_JOBS = {"admin_console", "request"}
+    import ops as _ops_kind
+    return _ops_kind.infer_failure_kind(f.get("job"), f.get("error"))
 
 
 def _platform_issues(recs, d):
@@ -2565,7 +2557,9 @@ def overview():
                                          "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS failed FROM push_deliveries "
                                          "WHERE created_at >= ?", (w["today"],)) or {}
             alerts_today = _one_dict(conn, "SELECT COUNT(*) AS n FROM alert_log WHERE fired_at >= ?", (w["today"],)) or {}
-            ai_quality = _one_dict(conn, "SELECT COUNT(*) AS n FROM ai_quality_events WHERE created_at >= ?",
+            # Findings, not rows: one row can carry several (ai_utils
+            # .record_quality_event's n), as G's own rates count them.
+            ai_quality = _one_dict(conn, "SELECT COALESCE(SUM(n), 0) AS n FROM ai_quality_events WHERE created_at >= ?",
                                    (w["day"],), optional=True)
             series = _series(recs, d, conn)
         finally:
@@ -2739,7 +2733,18 @@ def _client_job_rows(conn, rid, d):
                 if rx.search(j.get("context") or "")][:80]
     has_kind = "kind" in jf_cols
     jobs = [j for j in rows if _job_failure_kind(j, has_kind) == "job"][:40]
-    quality = [j for j in rows if _job_failure_kind(j, has_kind) == "ai_quality"][:40]
+    quality = [dict(j, source="job_failures") for j in rows if _job_failure_kind(j, has_kind) == "ai_quality"]
+    # Guard and validation findings, dropped lines and served fallbacks are
+    # ai_quality_events rows since fix round G (#58) — never job_failures.
+    # Shaped like a failure row (job = the surface, error = the detail) so
+    # every reader of this list keeps working.
+    for e in _rows_dict(conn, "SELECT surface, kind, action, detail, n, call_id, created_at FROM ai_quality_events "
+                              "WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,), optional=True):
+        quality.append({"job": e["surface"], "error": e["detail"], "created_at": e["created_at"], "kind": "ai_quality",
+                        "finding": e["kind"], "action": e["action"], "n": e["n"], "call_id": e["call_id"],
+                        "source": "ai_quality_events"})
+    quality.sort(key=lambda q: str(q.get("created_at") or ""), reverse=True)
+    quality = quality[:40]
     jr_cols = _columns(conn, "job_runs")
     if "restaurant_id" in jr_cols:
         runs = _rows_dict(conn, "SELECT job, started_at, finished_at, duration_ms, ok, error FROM job_runs "
