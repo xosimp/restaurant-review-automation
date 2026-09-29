@@ -1190,114 +1190,41 @@ def ai_usage(restaurant_id, current_user):
 @admin_bp.route("/admin/fetch-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def fetch_reviews_now(restaurant_id, current_user):
-    """Manually trigger a review fetch for a specific restaurant."""
+    """Manually trigger a review fetch for one restaurant — through the
+    scheduled fetch itself (scheduler.run_daily_fetch narrowed to it), on
+    the bounded admin pool (#65, #120, #153).
+
+    This route had its own copy of the fetch: it alerted the owner on the
+    raw, UNANALYSED batch (keyword-only health alerts, which can bypass
+    quiet hours — "no roach problem here" read as a health scare), analysed
+    afterwards on an unbounded thread per click, and never wrote
+    last_fetched_at or the Data Health ledger, so the "fetch behind" issue
+    that sent the operator here could not clear. Now it analyses before it
+    alerts, records the sync, and respects the in-service rule, exactly as
+    the 8am pass does. Returns a job id to poll (GET /admin/api/tasks/<id>).
+
+    Refused on a server that may not schedule (it texts and emails owners,
+    #9), and while the scheduled fetch is running (it will reach this
+    restaurant; two passes would draft the same reviews twice)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-
-    from fetcher import fetch_google, save_reviews
-    reviews = []
-    errors = []
-
-    if restaurant.gmb_refresh_token or restaurant.reviews_live:
-        # Use GMB API if connected (stores review_name for auto-posting)
-        if restaurant.gmb_refresh_token:
-            try:
-                from gmb import get_valid_token, fetch_reviews_via_gmb, find_gmb_location
-                from models import update_restaurant
-                token = get_valid_token(restaurant_id)
-                if token:
-                    loc_id = restaurant.gmb_location_id
-                    acct_id = restaurant.gmb_account_id
-                    if not loc_id:
-                        _m = find_gmb_location(token, restaurant.google_place_id or "")
-                        acct_id = _m.get("account") if _m.get("ok") else None
-                        if acct_id:
-                            loc_id = _m.get("location")
-                            if loc_id:
-                                update_restaurant(restaurant_id, {
-                                    "gmb_account_id": acct_id,
-                                    "gmb_location_id": loc_id,
-                                })
-                        else:
-                            errors.append("Google: API access pending — awaiting Google approval")
-                    if loc_id:
-                        gmb_reviews = fetch_reviews_via_gmb(token, loc_id, restaurant_id)
-                        reviews += gmb_reviews
-                        # Also capture official GBP overall rating, and
-                        # backfill the hero-banner logo if not set yet
-                        try:
-                            from gmb import fetch_location_rating
-                            fetch_location_rating(restaurant_id, token, loc_id)
-                        except Exception:
-                            pass
-                        try:
-                            from gmb import fetch_gmb_logo_url
-                            fetch_gmb_logo_url(restaurant_id, token, acct_id, loc_id)
-                        except Exception:
-                            pass
-                    else:
-                        errors.append("Google: location not found — API access may still be pending")
-                else:
-                    errors.append("Google: token refresh failed — try reconnecting Google Business")
-            except Exception as e:
-                errors.append(f"Google GMB: {e}")
-        elif restaurant.google_place_id and restaurant.reviews_live:
-            # Fallback to Places API
-            try:
-                reviews += fetch_google(restaurant.google_place_id, restaurant_id)
-            except Exception as e:
-                errors.append(f"Google: {e}")
-
-    if not reviews and not errors:
-        return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected")
-
-    _downgraded = []
-    new_count, new_reviews = save_reviews(reviews, downgrades=_downgraded) if reviews else (0, [])
-
-    # Fire alerts for newly saved reviews, and for reviews a guest edited
-    # down to a lower rating on this fetch.
-    if new_reviews or _downgraded:
-        try:
-            from notify import fire_review_alerts
-            fire_review_alerts(restaurant_id, restaurant.name, new_reviews,
-                               edited_reviews=_downgraded)
-        except Exception as _ae:
-            print(f"[alert] fire error: {_ae}")
-
-    # Run analysis + drafting in background so route returns immediately
-    import threading
-    def _analyse_and_draft():
-        try:
-            from models import get_pending_analysis, get_pending_drafts, get_approved_examples
-            from analyser import analyse_review
-            from drafter import draft_response
-            for r in get_pending_analysis(restaurant_id, limit=50):
-                try: analyse_review(r.id, r.rating, r.text, restaurant_id=restaurant_id)
-                except Exception: pass
-            approved_examples = get_approved_examples(restaurant_id, limit=4)
-            for r in get_pending_drafts(restaurant_id):
-                try:
-                    draft_response(
-                        r.id, r.rating, r.text, r.sentiment,
-                        restaurant.name,
-                        voice_notes=restaurant.voice_notes or "",
-                        restaurant_id=restaurant_id,
-                        approved_examples=approved_examples,
-                        sign_off=restaurant.sign_off_name or restaurant.name,
-                        never_say=restaurant.never_say or "",
-                        # Both were missing here: urgency meant the serious-issue
-                        # escalation never applied, and language meant a redraft
-                        # silently reverted a non-English restaurant's replies.
-                        urgency=r.urgency or "normal",
-                        language=getattr(restaurant, "response_language", None) or None,
-                    )
-                except Exception: pass
-        except Exception as e:
-            print(f"[fetch] background error: {e}")
-    threading.Thread(target=_analyse_and_draft, daemon=True).start()
-
-    return jsonify(ok=True, new_reviews=new_count, errors=errors)
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    import ops as _ops_fetch
+    import scheduler as _sched_fetch
+    if not _sched_fetch.scheduling_allowed():
+        import admin_ops as _ao
+        return jsonify(ok=False, error=_ao.LOCAL_SENDS_REFUSED), 409
+    if not (restaurant.gmb_refresh_token or (restaurant.google_place_id and restaurant.reviews_live)):
+        return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected"), 400
+    if _ops_fetch.is_running("review_fetch") or _ops_fetch.running_elsewhere("review_fetch"):
+        return jsonify(ok=False, error="The scheduled review fetch is running now and will reach this restaurant — "
+                                       "try again when it finishes."), 409
+    job_id, joined = _ops_fetch.run_admin_task(
+        "review_fetch_one", restaurant_id, "review_fetch_one", _sched_fetch.run_daily_fetch,
+        restaurant_ids=[restaurant_id],
+        context=f"restaurant_id={restaurant_id} manual by {current_user.get('username') or 'admin'}")
+    return jsonify(ok=True, job_id=job_id, joined=joined,
+                   message="Fetching — reviews are analysed before anyone is alerted.")
 
 @admin_bp.route("/admin/redraft-all/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -2393,9 +2320,13 @@ def admin_api_jobs(current_user):
 @admin_bp.route("/admin/api/jobs/<job>/run", methods=["POST"])
 @admin_required
 def admin_api_job_run(job, current_user):
+    """Run now: queued for the scheduler process (admin_ops.run_job_now);
+    409 with a sentence the console shows when refused — a job that sends
+    on a server that may not schedule (#9), or one already running."""
     import admin_ops
     out = admin_ops.run_job_now(job, current_user.get("username") or "admin")
-    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Unknown job" else 409))
+    status = out.pop("status", None)
+    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Unknown job" else (status or 409)))
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/alert-cap", methods=["POST"])
@@ -2514,3 +2445,67 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round D ──
+# Jobs, scheduler, backup and operator alerting (fix round D). Read-only;
+# every route is admin-only.
+
+@admin_bp.route("/admin/api/tasks/<job_id>")
+@admin_required
+def admin_api_task(job_id, current_user):
+    """Poll an admin task started on the bounded admin pool (#153): a manual
+    review fetch or POS sync. {"status": "pending" | "done" | "error",
+    "result": {...}} or 404."""
+    import ops
+    job = ops.read_async_job(job_id)
+    if not job:
+        return jsonify(ok=False, error="Task not found"), 404
+    return jsonify(ok=True, status=job["status"], result=job["result"])
+
+
+@admin_bp.route("/admin/api/jobs/<job>/runs")
+@admin_required
+def admin_api_job_runs(job, current_user):
+    """One job's run history (#40), newest first: ?limit= up to 200 runs,
+    each with its state (ok | partial | failed | running), duration, error,
+    counts (result_json), the run-now request it came from, and whether it
+    was manual."""
+    import jobs_registry
+    if job not in jobs_registry.JOBS and job not in ("review_fetch_one", "pos_sync_one"):
+        return jsonify(ok=False, error="Unknown job"), 404
+    limit = max(1, min(200, request.args.get("limit", 50, type=int)))
+    conn = get_conn()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context, result_json, request_id, "
+            "restaurant_id FROM job_runs WHERE job=? ORDER BY started_at DESC, id DESC LIMIT ?", (job, limit))]
+    finally:
+        conn.close()
+    states = {1: "ok", 2: "partial", 0: "failed"}
+    for r in rows:
+        r["state"] = "running" if r["finished_at"] is None else states.get(r["ok"], "failed")
+        r["manual"] = "manual by " in str(r.get("context") or "")
+    return jsonify(ok=True, job=job, spec={k: v for k, v in jobs_registry.spec(job).items()
+                                           if k not in ("target", "run_kwargs")}, runs=rows)
+
+
+@admin_bp.route("/admin/api/backup")
+@admin_required
+def admin_api_backup(current_user):
+    """The backup's state for Engineering (#1, #2, #28): the newest local and
+    off-site copies, their age, size and errors, what is configured, the
+    last backup runs, and the storage trend (days to full)."""
+    import ops
+    conn = get_conn()
+    try:
+        runs = [dict(r) for r in conn.execute(
+            "SELECT id, started_at, finished_at, local_ok, integrity_ok, size_bytes, offsite_ok, offsite_target, "
+            "offsite_error, sha256, db_bytes, wal_bytes, backups_bytes, free_bytes FROM backup_runs "
+            "ORDER BY id DESC LIMIT 30")]
+    except Exception:
+        runs = []
+    finally:
+        conn.close()
+    return jsonify(ok=True, status=ops.backup_status(), configured=ops.offsite_configured(), runs=runs,
+                   storage=ops.storage_trend(days=60))

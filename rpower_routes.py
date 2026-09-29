@@ -80,22 +80,16 @@ def bootstrap_rpower(restaurant_id, current_user):
 @rpower_bp.route("/admin/rpower/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def sync_rpower(restaurant_id, current_user):
-    """Kick a sync in the background so the admin screen doesn't hang on it."""
+    """Kick a sync in the background so the admin screen doesn't hang on it —
+    through pos.sync_restaurant on the bounded admin pool
+    (scheduler.start_manual_pos_sync, #65), so it is recorded in the Data
+    Health ledger like the nightly sync. Returns a job id to poll."""
     import rpower
     if not rpower.is_connected(restaurant_id):
         return jsonify(ok=False, error="RPOWER isn't fully connected for this restaurant."), 400
-
-    import threading
-
-    def _run():
-        try:
-            rpower.sync_to_db(restaurant_id)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="rpower_sync", context=f"restaurant_id={restaurant_id}")
-
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify(ok=True, message="Sync started.")
+    import scheduler
+    job_id, _joined = scheduler.start_manual_pos_sync(restaurant_id, current_user.get("username") or "admin")
+    return jsonify(ok=True, job_id=job_id, message="Sync started.")
 
 
 @rpower_bp.route("/admin/rpower/status/<int:restaurant_id>")
@@ -132,16 +126,9 @@ def rpower_sync_client(current_user):
     rid = current_user["restaurant_id"]
     if not rpower.is_connected(rid):
         return jsonify(ok=False, error="RPower isn't connected yet."), 400
-    import threading
-
-    def _run():
-        try:
-            rpower.sync_to_db(rid)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="rpower_sync", context=f"restaurant_id={rid}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    # The same path as the console's button and the nightly sync (#65).
+    import scheduler
+    scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
     return jsonify(ok=True, message="RPower sync started.")
 
 

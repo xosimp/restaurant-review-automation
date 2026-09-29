@@ -1221,93 +1221,106 @@ def billing():
 
 # The scheduler's jobs, by the name ops.run_job records them under, so the
 # console can show the same rows the scheduler writes and run one on demand.
+# Built from the ONE registry (jobs_registry.JOBS): this listed 27 of the
+# loop's 55 jobs, and the Jobs page could not show or re-run the rest (#40,
+# #56). Every entry keeps the shape the console reads: cadence, what,
+# target, sends, plus the job's SLA and bound.
+import jobs_registry as _jobs_registry
 RUNNABLE_JOBS = {
-    "review_fetch":            {"cadence": "8am / 12pm / 4pm / 8pm CT", "what": "Fetch new reviews and draft replies", "target": ("scheduler", "run_daily_fetch")},
-    "quality_calibration":     {"cadence": "Sunday 5am CT", "what": "Suggest Shift Quality weights (calibrate_weights, what Apply writes)", "target": ("strategy_jobs", "run_quality_calibration")},
-    "schedule_outcomes":       {"cadence": "Monday 4am CT", "what": "Record what each published week actually did, by daypart", "target": ("strategy_jobs", "run_schedule_outcomes")},
-    # Safe to run on demand: a re-check is written once and accrual reads
-    # forward from each tracker's accrued_through, so a second pass adds
-    # nothing. Sends nothing.
-    "outcome_rechecks":        {"cadence": "6am CT daily", "what": "Re-check measured results at 90 days and accrue measured savings day by day", "target": ("strategy_jobs", "run_outcome_rechecks")},
-    "reservation_sync":        {"cadence": "Daily 5am CT, the day before each draft", "what": "Reservation feeds into events & reservations (no provider live yet)", "target": ("reservation_feeds", "run_reservation_sync")},
-    "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
-    "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},
-    "inventory_depletion":     {"cadence": "5am nightly", "what": "Deplete inventory from POS sales", "target": ("scheduler", "run_daily_depletion_sync")},
-    "pos_retry":               {"cadence": "hourly, until 11am local", "what": "Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure)", "target": ("scheduler", "run_pos_retry")},
-    "data_health_daily":       {"cadence": "6am daily", "what": "Write each restaurant's Data Health snapshot (data_health_daily)", "target": ("scheduler", "run_data_health_daily")},
-    "marketing_metrics_sync":  {"cadence": "4am nightly", "what": "Refresh Instagram / Facebook post metrics", "target": ("scheduler", "run_marketing_metrics_sync")},
-    "refresh_tokens":          {"cadence": "7am daily", "what": "Renew expiring OAuth tokens", "target": ("scheduler", "refresh_expiring_tokens")},
-    "onboarding_emails":       {"cadence": "10am daily", "what": "Send day-2 / day-7 / day-30 onboarding emails", "target": ("scheduler", "run_onboarding_sequence"), "sends": True},
-    "stale_inventory":         {"cadence": "Mon 10am", "what": "Nudge clients whose counts are stale", "target": ("scheduler", "check_stale_inventory"), "sends": True},
-    "inactive_clients":        {"cadence": "Mon 11am", "what": "Flag clients who haven't signed in", "target": ("scheduler", "check_inactive_clients"), "sends": True},
-    "toast_optin_invites":     {"cadence": "daily, for yesterday", "what": "Text opt-in invites to yesterday's Toast guests", "target": ("guest_marketing", "run_toast_optin_invites"), "sends": True},
-    "review_request_followups":{"cadence": "hourly", "what": "Text post-visit review requests", "target": ("guest_marketing", "run_review_request_followups"), "sends": True},
-    # Safe to run on demand despite "sends": every milestone fires at most
-    # once ever (UNIQUE on restaurant_id + key), so a second run notifies
-    # nobody.
-    "milestones":              {"cadence": "9am local", "what": "Fire savings / anniversary / goal milestones", "target": ("strategy_jobs", "run_milestones"), "sends": True},
-    "ops_failure_digest":      {"cadence": "8am daily", "what": "Email Will the failure digest", "target": ("ops", "send_failure_digest"), "sends": True},
-    "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
-    "weekly_plan":             {"cadence": "Mon 7am local", "what": "The agent files the week's three actions as issues", "target": ("strategy_jobs", "run_weekly_plan")},
-    "recipe_drafts":           {"cadence": "Tue 5am local", "what": "Draft recipes for POS dishes that have none", "target": ("strategy_jobs", "run_recipe_drafts")},
-    "trusted_orders":          {"cadence": "8am local, the owner's order day (Mon by default)", "what": "Queue supplier orders that have earned it, with an hour to undo", "target": ("strategy_jobs", "run_trusted_orders"), "sends": True},
-    "auto_publish_schedule":   {"cadence": "9am local, the day after the draft (Fri by default)", "what": "Queue the unedited draft to publish at 11am", "target": ("scheduler", "run_auto_publish_schedules"), "sends": True},
-    "restore_drill":           {"cadence": "2nd of Jan / Apr / Jul / Oct, after the 2am backup", "what": "Restore the newest snapshot to scratch and prove it opens, migrates and kept its tokens", "target": ("scheduler", "run_restore_drill")},
-    # Safe to run on demand: every night claims (restaurant, date, version)
-    # and a finished version is never re-run, so a second pass does nothing.
-    "dsr_sweep":               {"cadence": "every 10 minutes", "what": "Nightly DSR: past each close, poll the POS close, collect, write, finalise (provisional only when sales are missing at the deadline; v2 when they land)", "target": ("dsr.pipeline", "run_sweep")},
-    # Safe to run on demand despite "sends": a held push is taken
-    # (held -> sending) before it goes, so a second pass finds nothing.
-    "dsr_delivery":            {"cadence": "every 10 minutes", "what": "Send the DSR pushes held through each restaurant's quiet hours, once they end", "target": ("dsr.deliver", "release_held"), "sends": True},
+    name: {"cadence": s["cadence"], "what": s["description"], "label": s.get("label") or name,
+           "target": s["target"], "sends": bool(s.get("sends")), "sla_minutes": s.get("sla_minutes"),
+           "max_minutes": _jobs_registry.max_minutes(name)}
+    for name, s in _jobs_registry.JOBS.items() if s.get("runnable") and s.get("target")
 }
 
 
-# A run with no finish is taken as still running for this long — longer than
-# any job's own bound (the review fetch and weekly sweeps stop at three
-# hours) — so "run now" can never start a second pass beside a live one.
-# The 30-minute window it replaced let a second review fetch start beside a
-# live one, drafting the same reviews twice (DH2-15). An unfinished row older
-# than this is a run a deploy killed.
-RUN_NOW_BLOCK_MINUTES = 4 * 60
+# The longest any job may run (a weekly Intel sweep: three hours plus its
+# margin). Kept for readers of the old name; "already running" is now each
+# job's own bound, and a run a deploy killed is closed at boot rather than
+# blocking Run now for four hours (#150).
+RUN_NOW_BLOCK_MINUTES = max(_jobs_registry.max_minutes(n) for n in _jobs_registry.JOBS)
+
+LOCAL_SENDS_REFUSED = ("This server is not the production scheduler, so jobs that email, text or push "
+                       "people are refused here: it has production's Resend and Twilio keys and a stale "
+                       "copy of what has already been sent. Run it from the production console.")
+
+
+def _audit_run_now(name, actor, outcome):
+    """Every Run now lands in admin_events (JOBS-5), not only in job_runs'
+    context, which is pruned at 45 days."""
+    try:
+        import admin_events
+        rec = getattr(admin_events, "record_admin_action", None)
+        if rec is not None:
+            rec(actor, "job.run_now", target=name, result=outcome.get("result", "ok"),
+                summary=outcome.get("summary"))
+        else:
+            admin_events.record("admin", "job.run_now", summary=f"{outcome.get('summary')} (by {actor})")
+    except Exception:
+        pass
 
 
 def run_job_now(name, actor):
-    """Run one scheduled job right now, on a background thread, recorded in
-    job_runs exactly like a scheduled run — context says who asked."""
-    import importlib, threading
+    """Run one scheduled job on demand, recorded in job_runs exactly like a
+    scheduled run — context says who asked.
+
+    * A job that emails, texts or pushes people is refused unless this
+      process may schedule (scheduler.scheduling_allowed, #9): a laptop has
+      production's Resend and Twilio keys and a stale copy of the claims, so
+      Run now on a local backend sent real owners a second digest.
+    * It is HANDED to the scheduler process (ops.request_job_run, #153):
+      the loop takes the request at its next tick and runs it under the
+      lease with the pulse, never beside a live run of the same job (#64).
+      It used to run on a thread of whichever web process served the
+      click, with no claim, racing the scheduled run. Where no scheduler
+      runs here (a laptop), a non-sending job still runs on a thread here.
+    * Refused while a live run of it exists (its pulse fresh, in any
+      process) — each job's own bound, not a flat four hours.
+
+    The dict carries `status` (409 when refused), so the route can answer
+    with a sentence the console shows."""
+    import threading
     spec = RUNNABLE_JOBS.get(name)
     if not spec:
         return {"ok": False, "error": "Unknown job"}
     import ops as _ops_now
+    import scheduler as _sched_now
     if _ops_now.is_running(name):
-        return {"ok": False, "error": f"{name} is already running in this process"}
-    conn = get_conn()
-    running = _one_dict(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL "
-                              "AND started_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
-                        (name, f"-{RUN_NOW_BLOCK_MINUTES} minutes"))
-    conn.close()
+        return {"ok": False, "status": 409, "error": f"{name} is already running in this process"}
+    running = _ops_now.running_elsewhere(name)
     if running:
-        return {"ok": False, "error": f"{name} is already running (started {running['started_at']})"}
+        return {"ok": False, "status": 409, "error": f"{name} is already running (started {running['started_at']})"}
+    allowed = _sched_now.scheduling_allowed()
+    if spec.get("sends") and not allowed:
+        out = {"ok": False, "status": 409, "error": LOCAL_SENDS_REFUSED}
+        _audit_run_now(name, actor, {"result": "refused", "summary": f"Run now {name}: refused on a local backend"})
+        return out
+    ctx = f"manual by {actor}"
+    if allowed:
+        req_id, why = _ops_now.request_job_run(name, actor)
+        if req_id is None:
+            return {"ok": False, "status": 409, "error": why}
+        _audit_run_now(name, actor, {"summary": f"Run now {name} queued for the scheduler (request {req_id})"})
+        return {"ok": True, "job": name, "context": ctx, "queued": True, "request_id": req_id,
+                "message": "Queued — the scheduler starts it on its next tick (within five minutes)."}
+    # No scheduler in this process's deployment (a laptop): a job that sends
+    # nothing runs here, on a thread, through the same run_job.
+    import importlib
     mod, fn_name = spec["target"]
     try:
         fn = getattr(importlib.import_module(mod), fn_name)
     except Exception as e:
         return {"ok": False, "error": f"Could not load {mod}.{fn_name}: {e}"}
-    import ops
-    if name == "toast_optin_invites":
-        from datetime import date as _d
-        target = lambda: fn(business_date=_d.today() - timedelta(days=1))
-    else:
-        target = fn
-    ctx = f"manual by {actor}"
+    kwargs = _jobs_registry.run_kwargs(name)
 
     def _go():
         try:
-            ops.run_job(name, target, context=ctx)
+            _ops_now.run_job(name, fn, context=ctx, **kwargs)
         except Exception:
             pass  # run_job already recorded the failure
     threading.Thread(target=_go, name=f"admin-run-{name}", daemon=True).start()
-    return {"ok": True, "job": name, "context": ctx}
+    _audit_run_now(name, actor, {"summary": f"Run now {name} started on this server"})
+    return {"ok": True, "job": name, "context": ctx, "queued": False}
 
 
 def set_alert_cap(rid, max_per_day, actor):
@@ -1332,37 +1345,155 @@ def set_alert_cap(rid, max_per_day, actor):
     return {"ok": True, "restaurant_id": rid, "max_per_day": n}
 
 
-def jobs():
-    conn = get_conn()
-    now = datetime.now(); day = _stamp(now - timedelta(days=1)); week = _stamp(now - timedelta(days=7))
-    failures = _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
-    grouped = _rows_dict(conn, "SELECT job, COUNT(*) AS n, MAX(created_at) AS last_at, MIN(created_at) AS first_at, MAX(error) AS sample FROM job_failures WHERE created_at >= ? GROUP BY job ORDER BY n DESC", (week,))
-    runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
-    last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs FROM job_runs WHERE ok=1 AND started_at >= ? GROUP BY job", (week,))
-    stuck = _rows_dict(conn, "SELECT id, job, started_at, context FROM job_runs WHERE finished_at IS NULL AND started_at < ? ORDER BY started_at", (_stamp(now - timedelta(minutes=30)),))
-    posts = _rows_dict(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id WHERE p.status IN ('pending','failed') ORDER BY p.scheduled_for LIMIT 40")
-    conn.close()
-    from status_manager import scheduler_heartbeat_age_minutes
+# Runs kept per job on the Jobs page (a window function, per job): the page
+# read the last 120 runs of EVERY job together, about two and a half hours
+# at ~45 runs an hour, so a daily job showed empty squares (#40).
+JOB_HISTORY_RUNS = 14
+_RUN_STATES = {1: "ok", 2: "partial", 0: "failed"}
+
+
+def _job_rows(conn, overdue):
+    """One row per registry job: its history (last JOB_HISTORY_RUNS runs),
+    its last success (ok 1 or partial 2 — "never ran" used to mean "never
+    ran clean"), a running or stuck run against the job's OWN bound (four
+    thresholds — 30, 90, 120, 240 minutes — used to disagree, #150), and a
+    state of ok | partial | failed | running | stuck | overdue | never:
+    partial is its own state, not green (#40)."""
+    import ops as _ops_j
+    hist = {}
     try:
-        hb = scheduler_heartbeat_age_minutes()
+        for r in _rows_dict(conn,
+                            "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context, result_json, "
+                            "request_id, pulse_at FROM ("
+                            "  SELECT *, ROW_NUMBER() OVER (PARTITION BY job ORDER BY started_at DESC, id DESC) AS rn "
+                            "  FROM job_runs WHERE started_at >= datetime('now', '-45 days')"
+                            ") WHERE rn <= ? ORDER BY job, started_at DESC", (JOB_HISTORY_RUNS,)):
+            r["state"] = ("running" if r["finished_at"] is None else _RUN_STATES.get(r["ok"], "failed"))
+            hist.setdefault(r["job"], []).append(r)
+    except Exception as e:
+        log.warning("job history unreadable: %s", e)
+    stats = {r["job"]: r for r in _rows_dict(
+        conn, "SELECT job, MAX(CASE WHEN ok IN (1,2) THEN finished_at END) AS last_ok, "
+              "ROUND(AVG(CASE WHEN ok IN (1,2) THEN duration_ms END)) AS avg_ms, COUNT(*) AS runs, "
+              "SUM(ok=0) AS failed, SUM(ok=2) AS partial FROM job_runs "
+              "WHERE started_at >= datetime('now', '-7 days') GROUP BY job")}
+    late = {j["job"]: j for j in overdue}
+    out = []
+    for name, spec in _jobs_registry.JOBS.items():
+        runs = hist.get(name, [])
+        bound = _jobs_registry.max_minutes(name)
+        open_run = next((r for r in runs if r["finished_at"] is None), None)
+        stuck = False
+        if open_run:
+            age = _age_hours(open_run["started_at"])
+            stuck = age is not None and age * 60 > bound
+        last_done = next((r for r in runs if r["finished_at"] is not None), None)
+        if open_run:
+            state = "stuck" if stuck else "running"
+        elif name in late:
+            state = "overdue"
+        elif last_done:
+            state = last_done["state"]
+        else:
+            state = "never"
+        st = stats.get(name) or {}
+        out.append({
+            "job": name, "label": spec.get("label") or name, "cadence": spec["cadence"],
+            "what": spec["description"], "sends": bool(spec.get("sends")), "runnable": bool(spec.get("runnable")),
+            "sla_minutes": spec.get("sla_minutes"), "stuck_after_minutes": bound, "lane": spec.get("lane"),
+            "retry": bool(spec.get("retry")), "state": state, "last_ok_at": st.get("last_ok"),
+            "avg_ms": st.get("avg_ms"), "runs_7d": st.get("runs") or 0, "failed_7d": st.get("failed") or 0,
+            "partial_7d": st.get("partial") or 0, "running_since": open_run["started_at"] if open_run else None,
+            "overdue": late.get(name), "history": runs,
+        })
+    return out
+
+
+def jobs():
+    import ops as _ops
+    conn = get_conn()
+    # Windows in SQL, against the UTC stamps job_runs and job_failures carry:
+    # Python's local now() was right only on a UTC host (JOBS-5).
+    failures = _rows_dict(conn, "SELECT id, job, error, context, created_at, restaurant_id, kind FROM job_failures "
+                                "ORDER BY id DESC LIMIT 100") if _has_cols(conn, "job_failures", ("restaurant_id", "kind")) \
+        else _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
+    grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
+                               "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
+                               "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
+    runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
+    last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
+                               "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
+    overdue = _ops.jobs_overdue()
+    job_rows = _job_rows(conn, overdue)
+    # "Stuck" is each job's own bound now, not a flat 30 minutes.
+    stuck = [{"id": None, "job": j["job"], "started_at": j["running_since"], "context": None,
+              "bound_minutes": j["stuck_after_minutes"]} for j in job_rows if j["state"] == "stuck"]
+    try:
+        posts = _rows_dict(conn, "SELECT p.id, r.name AS restaurant, p.platform, p.topic, p.scheduled_for, p.status, "
+                                 "p.attempts, p.error FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id "
+                                 "WHERE p.status IN ('scheduled','publishing','failed') ORDER BY p.scheduled_for LIMIT 40")
+    except Exception:
+        posts = []
+    try:
+        missed = _rows_dict(conn, "SELECT m.job, m.restaurant_id, r.name AS restaurant, m.local_date, m.detail, m.created_at "
+                                  "FROM missed_windows m LEFT JOIN restaurants r ON r.id=m.restaurant_id "
+                                  "WHERE m.created_at >= datetime('now', '-7 days') ORDER BY m.id DESC LIMIT 50")
+    except Exception:
+        missed = []
+    conn.close()
+    import status_manager
+    try:
+        hb = status_manager.scheduler_heartbeat_age_minutes()
     except Exception:
         hb = None
+    try:
+        heartbeat = status_manager.scheduler_state()
+    except Exception:
+        heartbeat = {"beat_age_minutes": hb}
+    heartbeat["stale_after_minutes"] = _jobs_registry.HEARTBEAT_STALE_MINUTES
     # In-flight async jobs. These used to be read out of two module-level
     # dicts, so the page only ever showed the jobs belonging to whichever
     # worker served the request; ops.async_jobs is one table every worker
     # writes to.
     inflight = []
     try:
-        import ops as _ops
         for j in _ops.inflight_async_jobs(limit=20):
             inflight.append({"kind": j["kind"], "id": j["job_id"], "status": j["status"],
                              "restaurant_id": j.get("restaurant_id"), "started": j.get("created_at")})
     except Exception:
         pass
-    schedule = [{"job": k, "cadence": v["cadence"], "runnable": True, "sends": v.get("sends", False), "what": v["what"]} for k, v in RUNNABLE_JOBS.items()]
-    schedule.append({"job": "scheduled_posts", "cadence": f"every {os.getenv('SCHEDULER_TICK_SECONDS', '300')}s", "runnable": False, "sends": True, "what": "Publishes due marketing posts"})
+    try:
+        import scheduler as _sched
+        local_refused = not _sched.scheduling_allowed()
+    except Exception:
+        local_refused = True
+    try:
+        from dsr import pipeline as _dsr_pipeline
+        dsr_missing = _dsr_pipeline.nights_missing()
+    except Exception:
+        dsr_missing = []
+    schedule = [{"job": j["job"], "cadence": j["cadence"], "runnable": j["runnable"], "sends": j["sends"],
+                 "what": j["what"]} for j in job_rows]
     return {"ok": True, "heartbeat_minutes": hb, "failures": failures, "grouped": grouped, "runs": runs, "last_ok": last_ok,
-            "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule}
+            "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule,
+            # Fix round D (#40, #121, #1, #27, #153, #131, #17): one row per
+            # registry job with its own history and state, the scheduler's
+            # full liveness, the lease, the backup, run-now requests, the
+            # last operator page, windows missed, DSR nights missing.
+            "jobs": job_rows, "heartbeat": heartbeat, "lease": _ops.scheduler_lease_holder(),
+            "backup": _ops.backup_status(), "storage": _ops.storage_trend(), "requests": _ops.job_requests(),
+            "operator_alert": _ops.last_operator_alert(), "missed_windows": missed, "dsr_missing": dsr_missing,
+            "jobs_overdue": overdue, "local_sends_refused": local_refused,
+            "local_sends_refused_reason": LOCAL_SENDS_REFUSED if local_refused else None,
+            "history_runs": JOB_HISTORY_RUNS}
+
+
+def _has_cols(conn, table, cols):
+    try:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        return all(c in have for c in cols)
+    except Exception:
+        return False
 
 
 def issues():
