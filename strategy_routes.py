@@ -3076,7 +3076,9 @@ def _do_ask_feedback(u):
     if note is not None and not isinstance(note, str):
         return {"ok": False, "error": "note must be text"}, 400
     from models import record_ask_feedback, ask_feedback_summary
-    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"))
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"), authority=authority)
     if row is None:
         return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
     try:
@@ -3088,11 +3090,12 @@ def _do_ask_feedback(u):
     # see (and forget) in Account, and the depth Ask picks for them (memory
     # audit 9/29/26, ask_feedback). Their own ratings only.
     preference = None
-    try:
-        import owner_memory
-        preference = owner_memory.derive_rating_preferences(_rid(u), u)
-    except Exception as e:
-        print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
+    if authority != "admin":             # an admin's rating (view-as too) never trains the owner's
+        try:
+            import owner_memory
+            preference = owner_memory.derive_rating_preferences(_rid(u), u)
+        except Exception as e:
+            print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
     return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
             "preference": preference}, 200
 

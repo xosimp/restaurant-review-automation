@@ -114,3 +114,15 @@ def test_the_answers_accuracy_is_read_from_how_answers_on_its_topic_were_rated()
     other = ask_cavnar._answer_confidence("Food cost is 31%.", ["snapshot"], ["read_food_cost"], ["food cost"], [],
                                           rid, topic="food", viewer_id=1)
     assert other["dimensions"]["accuracy"].get("source") != "ratings"
+
+
+def test_an_admins_rating_through_view_as_never_trains_the_owners_preference():
+    rid = _rid()
+    for _ in range(3):
+        models.record_ask_feedback(rid, _answer(rid), False, "too long", user_id=1, authority="admin")
+    assert models.ask_feedback_summary(rid, user_id=1)["rated"] == 0
+    assert owner_memory.derive_rating_preferences(rid, OWNER) is None
+    # ...the rating itself is kept for the record
+    conn = models.get_conn()
+    assert conn.execute("SELECT COUNT(*) FROM ask_feedback WHERE authority='admin'").fetchone()[0] == 3
+    conn.close()

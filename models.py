@@ -2736,6 +2736,10 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE ask_feedback ADD COLUMN verdict TEXT",
         "ALTER TABLE ask_feedback ADD COLUMN topic TEXT",
         "ALTER TABLE ask_feedback ADD COLUMN confidence_pct INTEGER",
+        # Whose rating it is (permissions.answer_authority): an admin's — a
+        # view-as session is the owner's login — is kept for the record and
+        # never read as the owner's preference or record.
+        "ALTER TABLE ask_feedback ADD COLUMN authority TEXT",
         # Each assistant turn keeps the tool calls it made (names and
         # arguments) and its meta, so a follow-up can re-read the same data
         # and a rating knows what it rated (memory audit 9/29/26,
@@ -12178,7 +12182,8 @@ def latest_ask_answer_id(restaurant_id, conversation_id, user_id=None, db_path: 
     return int(row[0]) if row and row[0] else None
 
 
-def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH):
+def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH,
+                        authority=None):
     """Rate one Ask answer: `helpful` true/false, an optional note. The
     message must be an ASSISTANT turn of THIS restaurant, given to this
     login (or to nobody in particular) — a rating of another restaurant's,
@@ -12203,18 +12208,19 @@ def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=N
             meta = {}
         conn.execute(
             "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note, depth, "
-            "tools, modules, verdict, topic, confidence_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "tools, modules, verdict, topic, confidence_pct, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
             "helpful=excluded.helpful, note=excluded.note, depth=excluded.depth, tools=excluded.tools, "
             "modules=excluded.modules, verdict=excluded.verdict, topic=excluded.topic, "
-            "confidence_pct=excluded.confidence_pct, updated_at=datetime('now')",
+            "confidence_pct=excluded.confidence_pct, authority=excluded.authority, updated_at=datetime('now')",
             (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note,
              (str(meta.get("depth"))[:20] if meta.get("depth") else None),
              _json.dumps(list(meta.get("tools_used") or [])[:12]) if meta.get("tools_used") else None,
              _json.dumps(list(meta.get("modules_consulted") or [])[:12]) if meta.get("modules_consulted") else None,
              (str(meta.get("verdict"))[:20] if meta.get("verdict") else None),
              (str(meta.get("topic"))[:40] if meta.get("topic") else None),
-             (int(meta["confidence_pct"]) if isinstance(meta.get("confidence_pct"), (int, float)) else None)))
+             (int(meta["confidence_pct"]) if isinstance(meta.get("confidence_pct"), (int, float)) else None),
+             (str(authority)[:20] if authority else None)))
         conn.commit()
         row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at, depth, topic "
                            "FROM ask_feedback WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
@@ -12236,7 +12242,8 @@ def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH, 
     snapshot and the depth choice, never a model."""
     conn = get_conn(db_path)
     since = f"-{int(days)} days"
-    who = " AND user_id=?" if user_id is not None else ""
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
     args = (restaurant_id, since) + ((user_id,) if user_id is not None else ())
     try:
         row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
@@ -12273,7 +12280,8 @@ def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str
     tools, modules, verdict, confidence_pct, updated_at, user_id}] — what the
     derived preferences and the answer's own accuracy are read from."""
     import json as _json
-    who = " AND user_id=?" if user_id is not None else ""
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
     args = (restaurant_id, f"-{int(days)} days") + ((user_id,) if user_id is not None else ())
     try:
         conn = get_conn(db_path)
