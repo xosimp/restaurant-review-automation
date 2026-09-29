@@ -10,6 +10,7 @@ import Observation
 /// apart.
 struct AccountAutomationView: View {
     @State private var viewModel = AccountAutomationViewModel()
+    @State private var showingMemory = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -44,6 +45,7 @@ struct AccountAutomationView: View {
             }
             .accountSheetChrome("Automation")
             .task { await viewModel.load() }
+            .sheet(isPresented: $showingMemory) { AccountMemoryView() }
         }
     }
 
@@ -163,40 +165,12 @@ struct AccountAutomationView: View {
 }
 
 extension AccountAutomationView {
-    /// What Ask remembers about the restaurant (GET /account/memory), each
-    /// fact with a red ✕ to forget it (POST /account/memory/forget) — the
-    /// web's "What Cavnar AI remembers" card. Adding a fact stays on the web
-    /// and in Ask ("remember that…").
+    /// What Cavnar AI remembers moved to its own sheet, Account → Memory
+    /// (memory round 9/29/26, M2): who said each fact, who may read it,
+    /// until when, the lanes and the archive. This row opens it.
     fileprivate var memory: some View {
         AccountSection(kicker: "What Cavnar AI remembers") {
-            if let facts = viewModel.memory {
-                if facts.isEmpty {
-                    Text("Nothing remembered yet. Tell Ask Cavnar AI \u{201C}remember that\u{2026}\u{201D} and it appears here.")
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.vertical, 9)
-                }
-                ForEach(Array(facts.enumerated()), id: \.element.id) { i, fact in
-                    AccountActionRow(
-                        label: fact.fact,
-                        detail: fact.detailLine,
-                        symbol: "xmark",
-                        tone: .cavnarRed,
-                        busy: viewModel.forgetting == fact.fact,
-                        showsDivider: i < facts.count - 1
-                    ) { Task { await viewModel.forget(fact) } }
-                    .accessibilityHint("Forget this")
-                }
-                Text("These shape every answer. Anyone on this account can add one in Ask; you can forget any of them here.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
-            } else {
-                Text("The memory hasn't loaded.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 9)
-            }
+            AccountNavRow(label: "Memory", showsDivider: false) { showingMemory = true }
         }
     }
 }
@@ -260,25 +234,6 @@ final class AccountAutomationViewModel {
     private struct WeekdayBody: Encodable { let weekday: Int }
     private struct MinutesBody: Encodable { let minutes: Int }
 
-    /// One remembered fact, as GET /account/memory lists it.
-    struct MemoryFact: Decodable, Identifiable, Equatable {
-        let fact: String
-        let kind: String?
-        let source: String?
-        let createdAt: String?
-        var id: String { fact }
-        enum CodingKeys: String, CodingKey { case fact, kind, source; case createdAt = "created_at" }
-
-        /// "context · from Ask · 9/21/26"
-        var detailLine: String {
-            var parts = [kind ?? "context"]
-            if let source, !source.isEmpty { parts.append("from \(source)") }
-            if let createdAt, !createdAt.isEmpty { parts.append(CavnarDate.mdyLocal(createdAt)) }
-            return parts.joined(separator: " \u{00B7} ")
-        }
-    }
-    private struct MemoryResponse: Decodable { let ok: Bool; let facts: [MemoryFact] }
-    private struct FactBody: Encodable { let fact: String }
 
     var autoDraft: AutoDraft?
     var autoPublish: AutoPublish?
@@ -286,10 +241,6 @@ final class AccountAutomationViewModel {
     var weeklyPlan: Bool?
     var sendDelay: SendDelay?
     var trust: Trust?
-    /// Nil until it loads (or when it could not).
-    var memory: [MemoryFact]?
-    /// The fact being forgotten right now.
-    var forgetting: String?
     var isLoading = false
     var loaded = false
     var saving: String?
@@ -323,9 +274,6 @@ final class AccountAutomationViewModel {
         }
         sendDelay = try? await client.send("/mobile/api/account/send-delay", hapticOnError: false)
         trust = try? await client.send("/mobile/api/account/trust", hapticOnError: false)
-        if let m: MemoryResponse = try? await client.send("/mobile/api/account/memory", hapticOnError: false) {
-            memory = m.facts
-        }
         if autoPublish == nil && sendDelay == nil {
             errorMessage = "Couldn't load these settings."
         }
@@ -373,22 +321,6 @@ final class AccountAutomationViewModel {
     func setSendDelay(_ minutes: Int) async {
         await save("send_delay") {
             self.sendDelay = try await self.client.send("/mobile/api/account/send-delay", method: .post, body: MinutesBody(minutes: minutes))
-        }
-    }
-
-    /// Forget one fact. The row leaves once the server confirms it.
-    func forget(_ fact: MemoryFact) async {
-        forgetting = fact.fact; errorMessage = nil
-        defer { forgetting = nil }
-        do {
-            let _: APIClient.EmptyResponse = try await client.send(
-                "/mobile/api/account/memory/forget", method: .post, body: FactBody(fact: fact.fact))
-            memory?.removeAll { $0 == fact }
-            Haptic.success()
-        } catch let error as APIClient.APIError {
-            errorMessage = error.message
-        } catch {
-            errorMessage = "Couldn't forget that."
         }
     }
 

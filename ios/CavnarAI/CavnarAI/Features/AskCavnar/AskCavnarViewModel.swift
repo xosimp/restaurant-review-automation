@@ -510,12 +510,30 @@ final class AskCavnarViewModel {
         let ok: Bool
         let error: String?
         let jobId: String?
+        /// POST /goals from a teammate: the goal waits for the owner
+        /// (memory round 9/29/26, M2 — goal.proposed).
+        var proposed: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
-            case ok, error
+            case ok, error, proposed
             case jobId = "job_id"
         }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+            jobId = (try? c.decodeIfPresent(String.self, forKey: .jobId)) ?? nil
+            proposed = (try? c.decodeIfPresent(Bool.self, forKey: .proposed)) ?? nil
+        }
     }
+
+    /// What a confirmed card did beyond "Done", when the route says so —
+    /// "Sent to the owner to confirm" for a teammate's goal. Nil otherwise.
+    private(set) var lastConfirmNote: String?
+
+    /// The line a goal a teammate set earns: it waits for an account holder.
+    static let proposedGoalNote = "Sent to the owner to confirm"
 
     private struct JobStatus: Decodable {
         let ok: Bool
@@ -712,6 +730,7 @@ final class AskCavnarViewModel {
     /// reason the owner then never saw (CLIENT-19).
     func confirm(_ proposal: AskProposal) async -> Bool {
         lastConfirmMayHaveRun = false
+        lastConfirmNote = nil
         do {
             let response: JobOrOK
             if proposal.route.method == "GET" {
@@ -733,6 +752,7 @@ final class AskCavnarViewModel {
                 errorBanner = "The schedule didn't finish building. Open Labor to see where it stopped."
                 return false
             }
+            if response.proposed == true { lastConfirmNote = Self.proposedGoalNote }
             await record(proposal, outcome: "confirmed")
             return true
         } catch is CancellationError {

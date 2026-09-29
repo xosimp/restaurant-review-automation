@@ -117,6 +117,7 @@ struct AccountView: View {
         case .export: showingExportData = true
         case .help: showingHelp = true
         case .recommendations: showingRecommendations = true
+        case .memory: showingMemory = true
         case nil: break
         }
     }
@@ -206,6 +207,7 @@ struct AccountView: View {
 
     @State private var showingProfile = false
     @State private var showingAutomation = false
+    @State private var showingMemory = false
     @State private var showingRecommendations = false
     @State private var showingSecurity = false
     @State private var showingAlerts = false
@@ -244,6 +246,14 @@ struct AccountView: View {
                     showingAutomation = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                // What Cavnar AI remembers, who said it, who may read it,
+                // and what left without anyone asking (memory round, M2).
+                settingsRow {
+                    row("Memory", systemImage: "brain.head.profile")
+                } action: {
+                    showingMemory = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 // What Cavnar AI recommended, what the owner did about it,
                 // and what it did — the web's "What you've decided", with
                 // rates, results and check-ins (rec-ROI #13, #20).
@@ -258,6 +268,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingAutomation) {
                 AccountAutomationView()
+            }
+            .sheet(isPresented: $showingMemory) {
+                AccountMemoryView()
             }
             .sheet(isPresented: $showingRecommendations) {
                 RecommendationHistoryView()
@@ -649,6 +662,8 @@ struct AccountView: View {
 /// Nil for a section the app shows on Account's page itself (appearance).
 enum AccountLinkSection: Equatable {
     case profile, team, billing, alerts, automation, connections, security, export, help, recommendations
+    /// Account → Memory (memory round 9/29/26).
+    case memory
 
     init?(_ raw: String) {
         switch raw.lowercased() {
@@ -662,6 +677,7 @@ enum AccountLinkSection: Equatable {
         case "data", "export": self = .export
         case "support", "help": self = .help
         case "recs", "recommendations": self = .recommendations
+        case "memory", "remembers": self = .memory
         default: return nil
         }
     }

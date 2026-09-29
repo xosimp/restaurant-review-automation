@@ -967,6 +967,8 @@ struct ProposalCard: View {
     /// "Not now" asks why first — the six one-tap reasons every Not for us
     /// uses, or "Just not now" — before it dismisses.
     @State private var askingWhy = false
+    /// What the confirmed route said beyond "Done" (a proposed goal).
+    @State private var doneNote: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1030,7 +1032,9 @@ struct ProposalCard: View {
 
             switch phase {
             case .done:
-                Label("Done", systemImage: "checkmark.circle.fill")
+                // A teammate's goal waits for the owner (M2): said, not
+                // passed off as done.
+                Label(doneNote ?? "Done", systemImage: "checkmark.circle.fill")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarGreen)
             case .working:
@@ -1044,6 +1048,7 @@ struct ProposalCard: View {
                             phase = .working
                             let ok = await viewModel?.confirm(proposal) ?? false
                             failure = ok ? nil : viewModel?.errorBanner
+                            doneNote = ok ? viewModel?.lastConfirmNote : nil
                             phase = ok ? .done : (viewModel?.lastConfirmMayHaveRun == true ? .uncertain : .failed)
                             if ok { onDone?() }
                         }
