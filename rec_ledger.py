@@ -51,6 +51,7 @@ calibrated against what was measured.
 Writes are small and bounded: a `shown` is one row per episode, surface and
 day however many times a page renders. Pure SQL; no model, no network.
 """
+import sqlite3
 import json
 import uuid
 from datetime import datetime, timedelta
@@ -1048,8 +1049,12 @@ def lift_silence(conn, rec_id, rule, now=None) -> bool:
             try:
                 conn.execute("UPDATE home_dismissals SET expires_at=? WHERE restaurant_id=? AND key=? "
                              "AND expires_at > ?", (now, row["restaurant_id"], row["key"], now))
-            except Exception:
-                pass                     # no home_dismissals on this database
+            except sqlite3.OperationalError as e:
+                # Only a database with no home_dismissals is tolerated: any other
+                # failure would lift the ledger's silence while Home kept hiding
+                # the card, so it raises into the caller's transaction.
+                if "no such table" not in str(e):
+                    raise
     return bool(n)
 
 
