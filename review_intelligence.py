@@ -1732,6 +1732,38 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
           result.get("model_confidence")))
     conn.commit()
     conn.close()
+    record_diagnosis_read(restaurant_id, cluster, result, db_path=db_path)
+
+
+def diagnosis_read_text(result) -> str:
+    """A stored diagnosis in words, for its history row (ai_reads)."""
+    parts = [("Cause", result.get("cause")), ("Alternative", result.get("alternative_cause")),
+             ("What would confirm it", result.get("what_would_confirm")),
+             ("Recommended", result.get("recommended_action")), ("Expected", result.get("expected_outcome"))]
+    return "\n".join(f"{k}: {' '.join(str(v).split())}" for k, v in parts if v)
+
+
+def record_diagnosis_read(restaurant_id, cluster, result, db_path=DB_PATH):
+    """The diagnosis just written, kept as history (ai_reads) — the row in
+    review_diagnoses is the CURRENT cause and tomorrow's overwrites it — with
+    its one checkable claim: the cause, the action and what it expected,
+    settled by the category's complaint share at its horizon (memory audit
+    9/29/26: ai_reads, claims). Never raises."""
+    try:
+        import ai_reads
+        import rec_ledger
+        cat = cluster["category"]
+        ai_reads.record_read(
+            restaurant_id, "review_diagnosis", diagnosis_read_text(result), subject=f"category:{cat}",
+            meta={"kind": "review_diagnoses", "cited_ids": list(result.get("evidence_review_ids") or []),
+                  "rec_keys": [rec_ledger.rec_key("diag_review", cat)],
+                  "model_band": result.get("model_confidence"), "capped_band": result.get("confidence"),
+                  "mention_count": cluster.get("mentions"), "window_days": cluster.get("window_days"),
+                  "unsupported_figures": result.get("unsupported_figures") or None,
+                  "claims": [ai_reads.review_diagnosis_claim(cat, result)]},
+            db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[review_intelligence] diagnosis history not kept for {restaurant_id}: {e}")
 
 
 def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,

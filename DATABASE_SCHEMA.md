@@ -359,10 +359,11 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `morning_brief_deliveries` | 90 | `created_at` |
 | `alert_storm_caps` | 365 | `started_at` |
 | `login_history` | 90 | `created_at` |
+| `ai_reads`, `ai_claims` | 400 (summarised quarterly into `ai_read_summaries`, kept forever) | `created_at`, `created_at` |
 
 Also in `prune_ledgers`: `inventory_history` (thinned to one snapshot a week past 56 days, dropped past 395), intermediate `schedule_versions` of weeks older than 180 days (never a published version, never a week's newest) and superseded, never-published, never-shared drafts older than 365 days.
 
-Outside the registry, each with its own prune: `login_attempts` 2 days (daily job); `view_as_sessions` 2 days (when a view-as opens); `admin_audit_refused` (its own cap); `request_rollups` 14, `http_5xx_log` 30, `boot_events` 180, `provider_health` 30 days (`platform_monitor.prune_platform_telemetry`, hourly on the supervisor thread); `ai_calls` 120 days (text 30), `ai_quality_events` 180, `ai_health_events` 365, `ai_rate_hits` 180, expired `ai_rate_events` (`ai_utils.prune_ai_ops`, called by `rollup_usage` — at boot and nightly from `prune_ledgers`). `login_history` is pruned twice on purpose: at boot (`auth.prune_login_history`) and by the registry. **Never pruned:** `ops_markers`, `business_metrics_daily`, `ai_usage_daily`, `ai_validation_daily`, `rec_instances`.
+Outside the registry, each with its own prune: `login_attempts` 2 days (daily job); `view_as_sessions` 2 days (when a view-as opens); `admin_audit_refused` (its own cap); `request_rollups` 14, `http_5xx_log` 30, `boot_events` 180, `provider_health` 30 days (`platform_monitor.prune_platform_telemetry`, hourly on the supervisor thread); `ai_calls` 120 days (text 30), `ai_quality_events` 180, `ai_health_events` 365, `ai_rate_hits` 180, expired `ai_rate_events` (`ai_utils.prune_ai_ops`, called by `rollup_usage` — at boot and nightly from `prune_ledgers`). `login_history` is pruned twice on purpose: at boot (`auth.prune_login_history`) and by the registry. **Never pruned:** `ops_markers`, `business_metrics_daily`, `ai_usage_daily`, `ai_validation_daily`, `rec_instances`, `ai_read_summaries`.
 
 ## What `delete_restaurant` keeps
 

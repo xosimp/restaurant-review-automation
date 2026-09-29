@@ -1812,6 +1812,34 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
         conn.commit()
     finally:
         conn.close()
+    record_diagnosis_read(restaurant_id, drv, result, at_stake, db_path=db_path)
+
+
+def record_diagnosis_read(restaurant_id, drv, result, at_stake=None, db_path=DB_PATH):
+    """The CFO read just written, kept as history (ai_reads) — the row in
+    food_cost_diagnoses is the CURRENT read and the next one overwrites it —
+    with its one checkable claim on the lead driver (memory audit 9/29/26:
+    ai_reads, claims). Never raises."""
+    try:
+        import ai_reads
+        from review_intelligence import diagnosis_read_text
+        drivers = (drv or {}).get("drivers") or []
+        claim = ai_reads.food_diagnosis_claim(drivers, result)
+        lead, _d = ai_reads.food_diagnosis_lead(drivers)
+        text = diagnosis_read_text(result)
+        if result.get("headline"):
+            text = f"{' '.join(str(result['headline']).split())}\n{text}"
+        ai_reads.record_read(
+            restaurant_id, "food_diagnosis", text, subject=(f"driver:{lead.lower()[:80]}" if lead else None),
+            meta={"kind": "food_cost_diagnoses", "rec_keys": [claim["rec_key"]] if claim else None,
+                  "model_band": result.get("model_confidence"), "capped_band": result.get("confidence"),
+                  "drivers": [d.get("label") for d in drivers[:6] if isinstance(d, dict)],
+                  "dollars_at_stake": round(_f(at_stake), 2) if at_stake is not None else None,
+                  "unsupported_figures": result.get("unsupported_figures") or None,
+                  "claims": [claim] if claim else None},
+            db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis history not kept for {restaurant_id}: {e}")
 
 
 def _mdy_safe(stamp):

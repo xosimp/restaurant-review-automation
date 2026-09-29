@@ -2132,6 +2132,14 @@ _RETENTION_DAYS = {
     # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
     # the table — after this module's own boot init, so it is not made here.
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # Cavnar AI's own reads and their claims (ai_reads, memory audit
+    # 9/29/26): the raw text 13 months. Each closed quarter is summarised
+    # into ai_read_summaries (never pruned) by the nightly learning job
+    # long before its rows reach this — "what we said, what was done, what
+    # happened" outlives the words. The claims' Historical Accuracy reads a
+    # year (ai_reads.claims_record), inside this.
+    "ai_reads":           int(os.getenv("RETAIN_AI_READS_DAYS", "400")),
+    "ai_claims":          int(os.getenv("RETAIN_AI_CLAIMS_DAYS", "400")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
 }
@@ -2153,6 +2161,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "ai_reads": "created_at", "ai_claims": "created_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
