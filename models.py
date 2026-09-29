@@ -3225,6 +3225,10 @@ def init_db(db_path: str = DB_PATH):
         # Set when a closed period's actual still could not be measured
         # forecast_log.UNSCORABLE_AFTER_DAYS later: never retried (B6 #11).
         "ALTER TABLE forecast_log ADD COLUMN unscorable_at TEXT",
+        # The measured event a scored period's miss is explained by (memory
+        # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
+        # correction does not learn an event week as the forecast's lean.
+        "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
     try:
         for m in migrations:

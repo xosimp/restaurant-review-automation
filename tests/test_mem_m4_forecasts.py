@@ -16,8 +16,20 @@ from models import Restaurant, create_restaurant
 
 @pytest.fixture(autouse=True)
 def _db(db_path, monkeypatch):
+    """models.get_conn, and every module that bound it at import
+    (schedule_economics among them — CLAUDE.md, bound imports): imported
+    earlier by another test file, its copy would read that file's database."""
+    import sys
+    import schedule_economics  # noqa: F401 — bound get_conn, redirected below
     real = models.get_conn
-    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    redirect = lambda *a, **k: real(db_path)
+    for mod in list(sys.modules.values()):
+        try:
+            if getattr(mod, "get_conn", None) is real:
+                monkeypatch.setattr(mod, "get_conn", redirect)
+        except Exception:
+            pass
+    monkeypatch.setattr(models, "get_conn", redirect)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     yield
 
@@ -152,3 +164,62 @@ def test_the_prime_cost_projection_carries_its_corrected_month_end(monkeypatch):
     assert out["prime_cost_pct"] == 60.0, "the month to date stays as measured"
     assert corr and corr["prime_cost_pct"] == pytest.approx(54.5, abs=0.1) and "ran 10% high" in corr["note"]
     assert fci.profitability_projection(rid, withhold=False)["projection_correction"] is None
+
+
+# ── an event week is not the forecast's lean (event_memory, M5's contract) ──
+
+def test_a_week_a_measured_event_explains_is_left_out_of_the_correction():
+    rid = _rid()
+    _scored(rid, "revenue_week", 10000.0, 8000.0, n=4)        # ran 25% high four weeks
+    conn = models.get_conn()
+    try:
+        # A fifth, older week that ran LOW — the Cubs home game in it.
+        end = date.today() - timedelta(days=date.today().weekday() + 1) - timedelta(weeks=5)
+        err, signed = forecast_log.errors(10000.0, 13000.0)
+        conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, "
+                     "signed_error_pct, scored_at, created_at, explained_by) VALUES (?,?,?,?,?,?,?,datetime('now'),?,?)",
+                     (rid, "revenue_week", end.isoformat(), 10000.0, 13000.0, err, signed,
+                      f"{(end - timedelta(days=10)).isoformat()} 09:00:00", "Cubs home game on 9/1/26, +22% here"))
+        conn.commit()
+    finally:
+        conn.close()
+    cal = forecast_log.calibration(rid, "revenue_week")
+    assert cal["scored"] == 4 and cal["left_out_events"] == 1 and cal["bias_pct"] == 25.0
+    assert cal["reading"].endswith("(1 week with a measured event left out)")
+    assert forecast_log.accuracy(rid, "revenue_week")["scored"] == 5, "how it held up counts every week"
+
+
+def test_where_most_weeks_hold_the_event_it_is_an_ordinary_week():
+    rid = _rid()
+    _scored(rid, "revenue_week", 10000.0, 8000.0, n=4)
+    conn = models.get_conn()
+    conn.execute("UPDATE forecast_log SET explained_by='Trivia night' WHERE restaurant_id=?", (rid,))
+    conn.commit()
+    conn.close()
+    assert forecast_log.calibration(rid, "revenue_week")["left_out_events"] == 0
+
+
+def test_scoring_stamps_the_event_that_explains_a_week(monkeypatch):
+    import event_memory
+    rid = _rid()
+    end = date.today() - timedelta(days=date.today().weekday() + 1) - timedelta(weeks=1)
+    conn = models.get_conn()
+    conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, created_at) "
+                 "VALUES (?,?,?,?,?)", (rid, "revenue_week", end.isoformat(), 10000.0,
+                                        f"{(end - timedelta(days=10)).isoformat()} 09:00:00"))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(forecast_log, "actual_for", lambda *a, **k: 12500.0)
+    monkeypatch.setattr(forecast_log, "naive_forecasts", lambda *a, **k: {"last": None, "mean": None, "n": 0})
+    game = end - timedelta(days=2)
+    monkeypatch.setattr(event_memory, "night_facts", lambda rid_, d, db_path=None: [
+        {"kind": "event", "label": "cubs", "display": "Cubs home game", "measured_lift_pct": 22.0, "n": 4,
+         "applies": True}] if d == game else [
+        {"kind": "event", "label": "trivia", "display": "Trivia", "measured_lift_pct": 30.0, "n": 1,
+         "applies": False}])
+    assert forecast_log.score_due(rid)["scored"] == 1
+    conn = models.get_conn()
+    got = conn.execute("SELECT explained_by FROM forecast_log WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.close()
+    from time_utils import mdy
+    assert got == f"Cubs home game on {mdy(game)}, +22% here", "an effect measured once does not apply"
