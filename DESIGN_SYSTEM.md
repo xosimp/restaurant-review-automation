@@ -1175,7 +1175,6 @@ One order on web (`#panel-dsr`), iPhone (`DailyReportView`) and email (`emails.d
 
 Above the grid, one `.hb-card.dr-wsum`: four tiles from the grid's own totals row — "Week to date · net" (with "N of 7 nights measured"), **vs budget** (owner only; "—" with the grid's reason when a measured night has no budget), **vs last year**, **Labor %** (only when the view reads labor) — then `.dr-wbars`, one bar per night (a period: per week) of net, green when it made its budget, red when under, a dashed ink mark at the budget (owner only; a manager's bars are plain ember and the legend says "Net sales"), a hairline for a night not measured; then `.dr-story`, the one sentence `dsr.rollup.story` writes from the view's redacted grid ("Thursday carried the week ($8,420 net, 48% of it); Friday missed budget by $610." — a view without the budget reads the miss against last year). Nothing on it is summed in the browser. Once any night in the week has a last-year figure, the import card folds to a "Import more last-year nights" text link (`.dr-imp-link`) that opens it.
 
-
 ## 12c. The admin console (internal, `templates/admin.html`)
 
 Rebuilt 9/28/26 as five places, each answering what needs attention, what
