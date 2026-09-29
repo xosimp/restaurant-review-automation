@@ -206,10 +206,16 @@ def get_valid_token(restaurant_id: int) -> str | None:
         print(f"[GMB] Token refresh failed for restaurant {restaurant_id}: {e}")
         if isinstance(e, GoogleTokenRevoked):
             _transient_refresh_failures.pop(restaurant_id, None)
+            # gmb_revoked_at: clearing the token alone left the location
+            # reading as "Google reviews (sampled)" with nothing wrong — the
+            # admin console reads this stamp (with no token since) as a
+            # revoked connection and raises it (fix round C, #44).
+            from time_utils import utc_stamp
             try:
                 update_restaurant(restaurant_id, {"gmb_refresh_token": None,
                                                   "gmb_access_token": None,
-                                                  "gmb_token_expires": None})
+                                                  "gmb_token_expires": None,
+                                                  "gmb_revoked_at": utc_stamp()})
             except Exception as _clear:
                 print(f"[GMB] could not clear revoked token for {restaurant_id}: {_clear}")
             return None
