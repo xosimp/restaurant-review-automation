@@ -152,8 +152,11 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
   where a count exists.
 - **Reviews:** received, rating, themes, urgent, drafts ready.
 - **Marketing:** posts published, campaign results, what's scheduled.
-- **Intel:** weather (actual), events/sports, competitor moves, traffic
-  impact only where measured.
+- **Intel:** weather (actual) — built 9/29/26: `intel.weather_*` stay the
+  forecast, and `detail.weather.observed` is the nearest National Weather
+  Service station's reading for the night (`weather_daily`, through
+  `event_memory.observed_weather`), shown as "Weather (actual)" beside it;
+  events/sports, competitor moves, traffic impact only where measured.
 - **Operational summary + executive summary + owner actions** — the AI
   narrative, ranked by the existing urgency × dollars rule, presented to
   rec_ledger so answers and outcomes are tracked.
@@ -185,8 +188,11 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
 - **Email:** owners get the Owner DSR (summary, KPIs, wins, risks,
   priorities, "View full report"); managers get the Manager DSR. Light-mode,
   `emails.BRAND`, M/D/YY.
-- **Morning brief** reads the final DSR; **weekly and period rollups** read
-  `dsr_metrics`.
+- **Morning brief** reads the final DSR (built 9/29/26:
+  `dsr.memory.morning_carry` — the report's forecast, Tomorrow items and
+  predictions become the brief's "today" line, and its unanswered priorities
+  become `dsr_action` lines under the same keys); **weekly
+  and period rollups** read `dsr_metrics`.
 - **Ask:** tools `read_dsr(date)` and `find_days(metric, op, value, range)`.
 
 ## 9. Security & scale

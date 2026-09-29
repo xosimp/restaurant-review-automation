@@ -1207,6 +1207,15 @@ shapes that show it on the web. All of it lives in `<script id="cav-mem-wb">`
 `dashboard.html`. Every sentence is the payload's own words or figures, every
 date M/D/YY, every number in the number face (`memNum`).
 
+This section covers the module screens (UI wave B). The memory on a piece of
+advice — what was said before, a caution, a conflict, a kind hold, the brief
+line extras, the policy notice — is drawn by the §12 rows of those names
+(`recPrevHtml`, `recCautionHtml`, `recConflictHtml`, `hbKindHolds`,
+`hbBriefExtra`, `renderPolicyNotice`), and Account's memory, targets, "Just for
+me", change history and distrusted data by the §12 rows dated 9/29/26 above
+them. iOS draws the same fields: the advice in "What a card remembers — iOS"
+(next), the module screens in the iOS row "What Cavnar AI remembers".
+
 | Need | Use |
 |---|---|
 | Memory line | `.mem-ln` — one 13px `--ink3` line under the thing it dates or sources: "noted 9/2/26 · ends 10/1/26", "Found 3 weeks running, since 9/7/26", "learned 8/3/26 · last kept 9/21/26 · used in 5 drafts", "Matched as you did last time", "Adjusted to how you order (your last 5 orders) · the formula said 12". `.mem-ln.warn` (amber) for a line that argues against the action beside it (the reprice guard, a value complaint). Never a card of its own |
@@ -1225,6 +1234,33 @@ Links that land here: `labor/notes`, `labor/people` (a `labor` head handler that
 returns false for every other section) and `inventory/pars` (a plain
 `data-nav`). The decline on this wave's surfaces reads "Not for us": the
 schedule review's ✕, the reprice table, the win-back card.
+
+### What a card remembers — iOS (memory round, 9/29/26)
+
+The memory round put what Cavnar AI remembers about each piece of advice
+into the payloads; iOS draws it with one set of views
+(`DesignSystem/RecMemoryViews.swift`), the same on Home's cards, Needs
+attention, the one-thing hero, the brief's lines and the nightly report's
+priorities. The web draws the same fields on its own cards (`dashboard.html`):
+§12's "What was said before", "Caution line", "Conflict chooser", "Kind
+hold", "Brief line extras" and "Policy notice" rows; the module screens' memory
+(people, notes, patterns, pars, retags, rating history) is the web's "What
+Cavnar AI remembers" section and, on iOS, the "What Cavnar AI remembers (iOS)"
+row.
+
+| Piece | iOS | Reads | Look |
+|---|---|---|---|
+| History lines | `RecMemoryNote` | `previous_answer.text`, `delegate_answer.text`, `retest` | The server's sentence ("You passed on this on 3/12/26 ($120/mo then)", "Dana passed on this: already doing it (9/28/26)"), caption size in ink3, one small glyph per kind of memory (clock-arrow, person, arrow). The re-test line is the one the client writes. On the row, never behind Details — it changes how the owner answers |
+| Caution | `RecCautionLine` | `caution` (M3's trim guard) | Amber triangle and amber caption text. The card stands, ranked lower; never red |
+| Conflict | `RecConflictPanel` | `conflict {id, with, why, choose[]}` → POST `/recs/conflict {conflict, prefer}` | An inset on the card: amber 7% wash, amber 30% hairline, control radius. An orange kicker "Pulls against: <the other card>", the why in ink2, then one ember text button per way to settle it ("Keep “Trim Tuesday staffing”", "Hold it"). A 3pt ember pulse while it saves; the server's sentence replaces the buttons. A decision, so never in a collapsed section |
+| Kind hold | `HomeKindHolds` | `kind_holds[]` | "Keep suggesting trim day?" under the recommendations, in an `.ai` card: the why, then two bars on one scale — "Improved here" (amber gradient, soft glow) against "By doing nothing" (ink3) — figures in the number face, grown in once without bounce; answered with `RecAnswerRow` in the server's words ("Keep suggesting it" / "Stop suggesting it"), no reason picker |
+| The report's calls | `HomeReportCalls` | brief `today` line: `predictions`, `confidence_pct` | Under the brief's "today" line: an orange kicker "The report's calls", the confidence meter and "range held 72%", then each call on an ember dot |
+| Policy notice | `HomePolicyNoticeCard` | `policy_notice` | A card under the header: an ember-tinted glyph tile, the notice's sentence, "Read what changed →" in ember2, and the ✕ action chip; it leaves only once the dismissal is saved |
+| Memory sheet | `AccountMemoryView` | `/account/memory` | The identity-card kit: hero, the lanes as meters ("Rules · 3 of 30", amber when full), the facts by kind with who / audience / modules / dates in ink3, the archive with Restore, the add form. Dates are one-tap choices ("A week", "A month") shown back as M/D/YY — never a system date field |
+
+"Not for us" is the decline everywhere on iOS (it read "Pass"), and every
+answer shows the server's `message` — what the answer does — in place of
+the buttons.
 
 ## 12c. The admin console (internal, `templates/admin.html`)
 
@@ -1366,28 +1402,6 @@ never with text: the rebuild cut the visible text across its screens by 69%
   over the newer page.
 - Dates read M/D/YY here too (`mdy`). No `?.` or `??` (older iPad Safari at an
   on-site audit, `tests/test_edge_client_web_admin.py`).
-
-### What a card remembers — iOS (memory round, 9/29/26)
-
-The memory round put what Cavnar AI remembers about each piece of advice
-into the payloads; iOS draws it with one set of views
-(`DesignSystem/RecMemoryViews.swift`), the same on Home's cards, Needs
-attention, the one-thing hero, the brief's lines and the nightly report's
-priorities. The web draws the same fields on its own cards (`dashboard.html`).
-
-| Piece | iOS | Reads | Look |
-|---|---|---|---|
-| History lines | `RecMemoryNote` | `previous_answer.text`, `delegate_answer.text`, `retest` | The server's sentence ("You passed on this on 3/12/26 ($120/mo then)", "Dana passed on this: already doing it (9/28/26)"), caption size in ink3, one small glyph per kind of memory (clock-arrow, person, arrow). The re-test line is the one the client writes. On the row, never behind Details — it changes how the owner answers |
-| Caution | `RecCautionLine` | `caution` (M3's trim guard) | Amber triangle and amber caption text. The card stands, ranked lower; never red |
-| Conflict | `RecConflictPanel` | `conflict {id, with, why, choose[]}` → POST `/recs/conflict {conflict, prefer}` | An inset on the card: amber 7% wash, amber 30% hairline, control radius. An orange kicker "Pulls against: <the other card>", the why in ink2, then one ember text button per way to settle it ("Keep “Trim Tuesday staffing”", "Hold it"). A 3pt ember pulse while it saves; the server's sentence replaces the buttons. A decision, so never in a collapsed section |
-| Kind hold | `HomeKindHolds` | `kind_holds[]` | "Keep suggesting trim day?" under the recommendations, in an `.ai` card: the why, then two bars on one scale — "Improved here" (amber gradient, soft glow) against "By doing nothing" (ink3) — figures in the number face, grown in once without bounce; answered with `RecAnswerRow` in the server's words ("Keep suggesting it" / "Stop suggesting it"), no reason picker |
-| The report's calls | `HomeReportCalls` | brief `today` line: `predictions`, `confidence_pct` | Under the brief's "today" line: an orange kicker "The report's calls", the confidence meter and "range held 72%", then each call on an ember dot |
-| Policy notice | `HomePolicyNoticeCard` | `policy_notice` | A card under the header: an ember-tinted glyph tile, the notice's sentence, "Read what changed →" in ember2, and the ✕ action chip; it leaves only once the dismissal is saved |
-| Memory sheet | `AccountMemoryView` | `/account/memory` | The identity-card kit: hero, the lanes as meters ("Rules · 3 of 30", amber when full), the facts by kind with who / audience / modules / dates in ink3, the archive with Restore, the add form. Dates are one-tap choices ("A week", "A month") shown back as M/D/YY — never a system date field |
-
-"Not for us" is the decline everywhere on iOS (it read "Pass"), and every
-answer shows the server's `message` — what the answer does — in place of
-the buttons.
 
 ## 13. Checklist before shipping a screen
 
