@@ -2923,6 +2923,9 @@ def client_detail(rid):
         finally:
             conn.close()
         r = get_restaurant(rid)
+        # Inside the bucket: a failed suppressions/SMS/issue-text read must
+        # reach query_errors, not render as an empty, healthy list.
+        messaging = _client_messaging(rid)
     bad_email = ("failed", "bounced", "complained")
     errors = ([{"kind": "integration", "label": i["label"], "error": i["error"], "at": i.get("error_since") or i.get("last_success")} for i in rec["integrations"] if i["error"]]
               + [{"kind": "email", "label": f"{e['email_type']} · {e['status']}", "error": e["error"], "at": _iso_z(e["sent_at"], "UTC")} for e in emails if e["status"] in bad_email]
@@ -2950,7 +2953,7 @@ def client_detail(rid):
             # The automatic alert-storm cap in force, or None (E's #92) —
             # the client page read the fleet's messaging health for it.
             "storm_cap": rec.get("storm_cap"),
-            **_client_messaging(rid),
+            **messaging,
             "timeline_url": f"/admin/api/client/{rid}/timeline"}
 
 

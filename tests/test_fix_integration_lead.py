@@ -87,3 +87,46 @@ def test_a_stale_count_is_never_its_own_repeat_offender(db_path, monkeypatch):
     _stub_food(monkeypatch, "Waste ran $160 this week.\n1. Trim the Salmon par — $96 a week, low effort", seen)
     inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)
     assert any("REPEAT waste offenders" in p for p in seen.get("prompts", []))
+
+
+from tests.test_fix_ui_ui3 import world  # noqa: E402,F401  (the UI-3 console world, reused)
+
+
+def test_a_failed_messaging_read_on_the_client_page_is_a_query_error(world, monkeypatch):
+    """The client page's suppressions / texts / issue-text reads ran after its
+    error bucket closed, so a failed read rendered as an empty, healthy list
+    and never reached query_errors."""
+    import admin_ops
+    import models
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(models, "suppressions_for_restaurant", boom)
+    admin_ops.invalidate_fleet_cache()
+    out = admin_ops.client_detail(world["rid"])
+    assert out["ok"] and out["suppressions"] == []
+    assert any(e["query"] == "suppressions_for_restaurant" for e in out["query_errors"])
+
+
+def test_every_link_to_a_legacy_client_page_is_hidden_from_a_support_login():
+    """/admin/client-settings/<id> and /admin/client-data/<id> refuse support
+    logins (403 "Use the admin console"), so every link to them is .w —
+    hidden under body.role-support — wherever the console draws one."""
+    import os
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "templates", "admin.html")).read()
+    not_links = ("path.startsWith('/admin/client-settings/')", "d.save_url || ('/admin/client-settings/'")
+    seen = 0
+    for m in re.finditer(r"/admin/client-(?:settings|data)/", src):
+        seen += 1
+        before = src[max(0, m.start() - 200):m.start()]
+        if before.endswith('href="'):
+            tag = src[src.rfind("<", 0, m.start()):m.start()]
+            assert re.search(r'class="[^"]*\bw\b', tag), f"line {src.count(chr(10), 0, m.start()) + 1}: {tag}"
+        elif re.search(r"aw\('[^']*', '$", before):
+            pass
+        else:
+            line = src[src.rfind("\n", 0, m.start()) + 1:src.find("\n", m.start())]
+            assert any(s in line for s in not_links), f"unclassified legacy-page reference: {line.strip()[:160]}"
+    assert seen >= 12
