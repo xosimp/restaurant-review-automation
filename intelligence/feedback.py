@@ -300,7 +300,7 @@ def _counted_tracker_ids(rows) -> set:
             last_end = max(last_end, end)
     return kept
 # rec_ledger keys that are bookkeeping, not advice (rec_ledger.BOOKKEEPING_PREFIXES).
-_BOOKKEEPING = ("restore_kind:", "calibration:", "standby:")
+_BOOKKEEPING = ("restore_kind:", "calibration:", "standby:", "conflict:")
 _AUTO_DONE = ("done", "executed")
 _AUTO_OFF = ("cancelled", "canceled")
 
@@ -317,8 +317,19 @@ def _ask_key(proposal_id, action, summary) -> str:
 
 def _ledger_action(key, event, meta):
     """The engine's action for one rec_ledger answer, or None when the
-    event is not an answer the engine counts."""
+    event is not an answer the engine counts. The owner's reason decides
+    what a dismissal was (rec_ledger.REASON_EFFECT, memory audit 9/29/26):
+    "already doing it" is done, "bad timing" a snooze — neither a no."""
     if event == "dismissed":
+        try:
+            import rec_ledger
+            effect = rec_ledger.reason_effect(meta.get("reason_code"), meta.get("reason"))
+        except Exception:
+            effect = None
+        if effect == "taken":
+            return "done"
+        if effect == "defer":
+            return "snoozed"
         return "not_for_us" if meta.get("kind") == "not_for_us" else "hidden"
     if event == "completed":
         return "done"
@@ -725,20 +736,31 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             _cursor_set(conn, (low - 1) if low is not None else max(int(r["id"]) for r in auto), key=AUTO_CURSOR)
 
         start = _cursor_get(conn)
-        try:
-            ledger = conn.execute(
-                "SELECT e.id, e.rec_id, e.restaurant_id, e.key, e.event, e.meta, e.at, "
-                "EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=e.rec_id AND s.event='shown') AS shown "
-                "FROM rec_events e WHERE e.id > ? AND e.event IN "
-                "('accepted','completed','dismissed','snoozed','implemented','expired') ORDER BY e.id LIMIT ?",
-                (start, LEDGER_EVENTS_PER_PASS)).fetchall()
-        except Exception:            # a database from before the ledger
-            ledger = []
+        ledger = []
+        # `authority` is whose answer it was (rec_ledger's column, memory
+        # audit 9/29/26, who_answered / view_as); a database from before the
+        # column is read without it.
+        for cols in ("e.id, e.rec_id, e.restaurant_id, e.key, e.event, e.meta, e.at, e.authority, ",
+                     "e.id, e.rec_id, e.restaurant_id, e.key, e.event, e.meta, e.at, "):
+            try:
+                ledger = conn.execute(
+                    "SELECT " + cols +
+                    "EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=e.rec_id AND s.event='shown') AS shown "
+                    "FROM rec_events e WHERE e.id > ? AND e.event IN "
+                    "('accepted','completed','dismissed','snoozed','implemented','expired') ORDER BY e.id LIMIT ?",
+                    (start, LEDGER_EVENTS_PER_PASS)).fetchall()
+                break
+            except Exception:            # a database from before the column, or the ledger
+                ledger = []
         last = start
         for r in ledger:
             last = max(last, int(r["id"]))
             key = str(r["key"] or "")
             if not key or key.startswith(_BOOKKEEPING) or key.startswith("ask:") or not r["shown"]:
+                continue
+            # An admin's answer through view-as is support at work, never
+            # the restaurant's preference (memory audit 9/29/26, view_as).
+            if (r["authority"] if "authority" in r.keys() else None) == "admin":
                 continue
             try:
                 meta = _json.loads(r["meta"] or "{}") or {}

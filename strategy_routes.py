@@ -50,6 +50,13 @@ def _principal(u):
     return bool(u.get("is_admin")) or has_permission(u, TEAM_INVITE)
 
 
+def _answer_authority(u):
+    """permissions.answer_authority: whose answer this is (principal |
+    delegate | admin) — every stored answer records it (memory audit)."""
+    from permissions import answer_authority
+    return answer_authority(u)
+
+
 def _sees_food(u):
     from permissions import has_permission, FOOD_COST_VIEW
     return bool(u.get("is_admin")) or has_permission(u, FOOD_COST_VIEW)
@@ -1283,6 +1290,20 @@ def _do_trust(u):
            "schedule": {"enabled": bool(getattr(r, "auto_publish_schedule", 0)),
                         "unedited_in_a_row": schedule_publish_trust(_rid(u)), "needed": SCHEDULE_PUBLISH_TRUST_MIN},
            "suppliers": [], "invoices": []}
+    # When trust lapsed and why, so the owner is asked again rather than an
+    # automation going quiet on its own (memory audit 9/29/26, trust_ledger);
+    # and when the auto-publish was last undone (undo).
+    try:
+        import automation_trust
+        import delayed
+        out["lapsed"] = automation_trust.lapsed_items(_rid(u))
+        _undone = delayed.last_undo(_rid(u), "schedule_publish")
+        if _undone:
+            from time_utils import mdy
+            out["schedule"]["undone_on"] = mdy(_undone[:10])
+    except Exception as e:
+        print(f"[trust] trust ledger unavailable for {_rid(u)}: {e}")
+        out["lapsed"] = []
     if _sees_food(u):
         try:
             from models import get_conn
@@ -1847,7 +1868,7 @@ def _do_schedule_apply_fixes(u):
     after = _sr.violations(fixed_rows, c)
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
@@ -1913,7 +1934,7 @@ def _do_schedule_optimize(u):
                         hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     summary = _opt.summary(res, signals)
     # A proposal with changes is a recommendation: kept on Save, set aside
     # on Discard (the page reports which to /recs/event).
@@ -2049,10 +2070,15 @@ def _do_rec_event(u):
 
     What each answer does, and the sentence the client shows for it (M-8,
     H-10) — both clients show `message` rather than their own promise:
-      completed  — "Done": silenced for SILENCE_DAYS["done"] (it said "won't
-                   suggest it again" and came back after 14 days);
-      dismissed  — "Not for us": silenced; the module's insight prompt is
-                   told not to suggest the same thing in other words;
+      completed  — "Done": silenced for what the answer holds
+                   (rec_ledger.answer_silence: until a situational trigger
+                   clears and comes back, a stock-out cycle, a year);
+      dismissed  — "Not for us": silenced (a year, re-offered with "you
+                   passed on this on M/D/YY"; "bad timing" a few weeks; "don't
+                   trust the data" until it is re-verified); the module's
+                   insight prompt is told not to suggest the same thing in
+                   other words. A delegate's (manager's) answer holds for that
+                   login only, and the owner is shown who passed on it;
       accepted   — "Track": a real outcomes tracker on the module's metric
                    when one can be measured, quiet for its window; otherwise
                    no tracker, and the message says it is only hidden.
@@ -2114,7 +2140,11 @@ def _do_rec_event(u):
     message = None
     tracking = None
     started = None
-    if event in ("completed", "accepted") and still_open:
+    # Whose answer this is (memory audit 9/29/26): support's through
+    # view-as starts no tracker — it is not the owner acting.
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    if event in ("completed", "accepted") and still_open and authority != "admin":
         # Accept/Done on a recommendation that carries a metric starts its
         # tracker (rec-ROI #18, #39), under the family gate. `body_metric`
         # lets a client name the metric a line was shown with.
@@ -2125,20 +2155,24 @@ def _do_rec_event(u):
     refused = (started or {}).get("tracker_refused")
     if tracker:
         meta["tracker_id"] = tracker.get("id")
-    # Recurring advice (a slow weekday, an idle list, a category dip, a
-    # posting gap) comes back with its next occurrence: the answer says how
-    # long it holds instead of "won't suggest it again" (re-audit OPP-9).
-    held = _rl.recurring_silence(key.strip(), event, meta.get("kind"))
+    # What the answer holds is the ledger's to decide, by kind and by the
+    # owner's reason (rec_ledger.answer_silence, memory audit 9/29/26): the
+    # message says exactly that — "won't come back" promised ten years to a
+    # "bad timing" and to a Saturday trim that would be needed again.
+    held = _rl.silence_message(key.strip(), event, kind=meta.get("kind"), reason_code=code or None,
+                               reason=meta.get("reason"))
+    if authority != "principal" and event in ("dismissed", "snoozed"):
+        # A delegate's (or support's) decline holds for this login alone;
+        # the owner still decides (who_answered, view_as).
+        held = "Noted \u2014 hidden for you; the owner still sees it"
     if event == "completed":
-        silence = _rl.SILENCE_DAYS["done"]
-        message = (f"Done \u2014 hidden for {held} days" if held
-                   else "Done \u2014 Cavnar AI won\u2019t suggest it again")
+        message = held or "Done"
         if tracker:
             message += f". Now {tracker['label_text']}"
         elif refused and refused.get("code") == "in_flight":
             message += f". {refused['reason']}"
-    elif event == "dismissed" and meta.get("kind") == "not_for_us":
-        message = f"Noted \u2014 hidden for {held} days" if held else "Noted \u2014 it won\u2019t come back"
+    elif event == "dismissed" and (meta.get("kind") == "not_for_us" or authority != "principal" or code):
+        message = held or "Noted"
     elif event == "accepted":
         if tracker:
             window = int(tracker.get("window_days") or info["default_window_days"])
@@ -2156,7 +2190,8 @@ def _do_rec_event(u):
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
                        "here Cavnar AI can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
-                    meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True)
+                    meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True,
+                    authority=authority, via=_rl.request_via(u))
     out = {"ok": True, "recorded": ok}
     if not still_open:
         out["already_answered"] = True
@@ -2168,6 +2203,52 @@ def _do_rec_event(u):
         out["tracker"] = tracker
     elif refused:
         out["tracker_refused"] = refused
+    return out, 200
+
+
+def _do_data_verify(u):
+    """POST /data-health/verify {"source"} — the owner has checked a data
+    source they said they don't trust ("don't trust the data" on a card,
+    memory audit 9/29/26 "reasons"): the cap on every card resting on it
+    lifts, and the answers held until it was verified are released.
+    Principal only: re-verifying the data is the owner's call."""
+    if not _principal(u):
+        return _forbidden("Only the owner can re-verify the data.")
+    import rec_ledger as _rl
+    src = _body().get("source")
+    if not isinstance(src, str) or not src.strip():
+        return {"ok": False, "error": "Which source?"}, 400
+    out = _rl.verify_source(_rid(u), src.strip().lower(), user_id=u.get("id"))
+    if not out.get("closed"):
+        return {"ok": False, "error": "Nothing is waiting to be re-verified there."}, 404
+    try:
+        import data_health
+        data_health.invalidate(_rid(u))
+    except Exception:
+        pass
+    return {"ok": True, "released": out.get("released", 0),
+            "message": "Thanks \u2014 recommendations resting on it are back at full confidence"}, 200
+
+
+def _do_rec_conflict(u):
+    """POST /recs/conflict {"conflict", "prefer"} — the owner chose between
+    two recommendations that pull against each other ("Trim Tuesday" and
+    "Fill Tuesday"): the choice is stored as a decision, so the same
+    conflict resolves the same way next time (lever_conflicts, memory audit
+    9/29/26 "conflicts"). `prefer` is the advice signature kept."""
+    import lever_conflicts
+    b = _body()
+    cid, prefer = b.get("conflict"), b.get("prefer")
+    if not isinstance(cid, str) or not isinstance(prefer, str) or not cid.strip() or not prefer.strip():
+        return {"ok": False, "error": "conflict and prefer are required"}, 400
+    out = lever_conflicts.record_choice(_rid(u), cid.strip(), prefer.strip(), user=u)
+    if not out.get("ok"):
+        return {"ok": False, "error": out.get("error") or "No such conflict."}, 404
+    try:
+        import home_brief
+        home_brief.invalidate(_rid(u))
+    except Exception:
+        pass
     return out, 200
 
 
@@ -2427,7 +2508,7 @@ def _do_recommendation_event(u):
         import rec_learning as _rlearn
         if _rlearn.answerable_episode(u, _rid(u), rkey) is None:
             return {"ok": False, "error": "No such recommendation."}, 404
-    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u))
+    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u), authority=_answer_authority(u))
     # The same answer in the one trail every surface reads: "Not for us"
     # keeps this recommendation off the draft from now on, on any device.
     started = None
@@ -2450,7 +2531,8 @@ def _do_recommendation_event(u):
         window = int(o.get("window_days") or 0) or None
         _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
                    meta=({"tracker_id": o["id"]} if o.get("id") else None),
-                   silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window or 0), require_existing=True)
+                   silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window or 0), require_existing=True,
+                   authority=_answer_authority(u), via=_rl.request_via(u))
     elif action == "dismissed":
         meta = {"kind": "not_for_us"}
         if code:
@@ -2458,8 +2540,9 @@ def _do_recommendation_event(u):
         if reason:
             meta["reason"] = reason
         _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
-                   meta=meta, require_existing=True)
-    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}
+                   meta=meta, require_existing=True, authority=_answer_authority(u), via=_rl.request_via(u))
+    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u))),
+           "suppression": _si.suppression_state(_rid(u), write=False)}
     if started:
         out.update({k: started[k] for k in ("tracker", "tracker_refused") if k in started})
     return out, 200
@@ -2662,7 +2745,11 @@ def _do_schedule_intel(u):
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
             "auto_publish_offer": (_safe(lambda: _auto_publish_offer(rid), {"eligible": False}) if _may_publish(u)
                                    else {"eligible": False, "reason": "Only someone who can send the schedule can turn this on."}),
-            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
+            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set())),
+            # Why each is off and when it is re-tested (memory audit 9/29/26,
+            # quiet_kinds): {kind: {state suppressed|retest, reason, since,
+            # review_on (M/D/YY), retests}}.
+            "recommendation_suppression": _safe(lambda: _si.suppression_state(rid, write=False), {})}, 200
 
 
 def _do_reservation_sync(u):
@@ -2913,10 +3000,40 @@ def _do_delayed_cancel(u, action_id):
         conn.close()
     if row and not _may_undo(u, row["kind"]):
         return _forbidden("Your login can't stop this — ask whoever can send it.")
-    ok = delayed.cancel(_rid(u), int(action_id), actor=u)
+    b = _body()
+    code = b.get("reason_code")
+    if code not in (None, "") and code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.cancel(_rid(u), int(action_id), actor=u, reason_code=code or None,
+                        reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
     if ok:
         log_account_event(_rid(u), "delayed_action_cancelled", current_user=u, detail=f"#{action_id}")
-    return ({"ok": True} if ok else {"ok": False, "error": "That already went out, or was already undone."}), (200 if ok else 409)
+    if not ok:
+        return {"ok": False, "error": "That already went out, or was already undone."}, 409
+    out = {"ok": True}
+    if row and row["kind"] in delayed.TRUSTED_KINDS:
+        # It counts against the trust that queued it (memory audit, undo):
+        # the client says so and asks why, once.
+        out["message"] = ("Undone \u2014 Cavnar AI will wait for a few clean runs before doing this "
+                          "on its own again")
+        if not code:
+            out["ask_why"] = {"route": f"/actions/{int(action_id)}/why",
+                              "options": [{"code": c, "label": delayed.UNDO_REASON_LABELS[c]}
+                                          for c in delayed.UNDO_REASONS]}
+    return out, 200
+
+
+def _do_delayed_why(u, action_id):
+    """POST /actions/<id>/why {reason_code, reason?} — the owner's answer to
+    "why did you undo it?" (memory audit 9/29/26, "undo")."""
+    import delayed
+    b = _body()
+    code = b.get("reason_code")
+    if code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.record_undo_reason(_rid(u), int(action_id), reason_code=code,
+                                    reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
+    return ({"ok": True} if ok else {"ok": False, "error": "No undone action like that."}), (200 if ok else 404)
 
 
 # ── principal-only ────────────────────────────────────────────────────────────
@@ -4533,6 +4650,7 @@ _ROUTES = [
     ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
+    ("/actions/<int:action_id>/why", ["POST"], _do_delayed_why, "delayed_why"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
     ("/account/pause", ["POST"], _do_pause, "pause"),
     ("/account/resume", ["POST"], _do_resume, "resume"),
@@ -4560,6 +4678,8 @@ _ROUTES = [
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
+    ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),
+    ("/recs/conflict", ["POST"], _do_rec_conflict, "rec_conflict"),
 ]
 
 

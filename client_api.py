@@ -218,9 +218,16 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             (rid, restaurant_id)
         ).fetchone()
         _ac.close()
+        from permissions import acting_via as _via_approve
         if _row:
             if auto:
                 _action = "auto_approved"
+            elif _via_approve():
+                # Support approving through view-as: not the owner's yes,
+                # not the owner's style (memory audit 9/29/26, view_as) —
+                # left out of trust, style examples and edit learning like
+                # the rule's own approvals.
+                _action = "support_approved"
             elif (_row["regenerate_count"] or 0) > 0:
                 _action = "regenerated"
             elif (_row["draft_edited"] or 0) == 1:
@@ -239,7 +246,7 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             # What the owner did to the draft, measured (audit #40) — only a
             # person's approval: the rule's and a bulk publish's are the
             # model's own text.
-            if _action not in ("auto_approved", "bulk_approved"):
+            if _action not in ("auto_approved", "bulk_approved", "support_approved"):
                 from models import record_reply_edit
                 record_reply_edit(rid, restaurant_id)
     except Exception as _ae:
@@ -596,11 +603,15 @@ def _do_skip(rid, restaurant_id):
     conn = get_conn()
     try:
         # skipped_at dates the owner turning a draft down; auto_approve_trust
-        # counts a skipped draft against its band (audit #15).
-        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now') "
+        # counts a skipped draft against its band (audit #15). Support
+        # skipping through view-as is not the owner's "no" (memory audit
+        # 9/29/26, view_as): response_action 'support_skipped', left out.
+        from permissions import acting_via as _via_skip
+        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), "
+                           "response_action=CASE WHEN ? THEN 'support_skipped' ELSE response_action END "
                            "WHERE id=? AND restaurant_id=? "
                            "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
-                           (rid, restaurant_id))
+                           (1 if _via_skip() else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
             return {"ok": True}, 200
@@ -10771,7 +10782,12 @@ def home_dismiss_api(current_user):
         _ep = _rl_undo.episode_for(rid, key[:160])
         if _ep is not None and not _rl_undo.viewer_sees(current_user, _ep):
             return jsonify(ok=False, error="No such recommendation."), 404
-        return jsonify(**home_brief.undismiss(rid, key))
+        # A delegate's (or support's) "Use again" takes back that login's own
+        # answer only, never the owner's (memory audit, who_answered).
+        import rec_ledger as _rl_sub
+        from permissions import answer_authority as _aa_undo
+        return jsonify(**home_brief.undismiss(rid, key, subject_id=_rl_sub.silence_subject(current_user),
+                                              own=_aa_undo(current_user) == "principal"))
     # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
     # refused, never stored as if it were one of the six.
     import rec_ledger as _rl_codes
@@ -10791,10 +10807,16 @@ def home_dismiss_api(current_user):
     elif _rlearn.answerable_episode(current_user, rid, key) is None:
         return jsonify(ok=False, error="No such recommendation."), 404
     kind = (data.get("kind") or "recommendation")[:40]
+    # Whose answer this is (permissions.answer_authority): a delegate's holds
+    # for that login alone, an admin's through view-as trains nothing
+    # (memory audit 9/29/26, who_answered / view_as).
+    from permissions import answer_authority as _aa
+    _authority = _aa(current_user)
     out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
                              days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
                              surface="home", role=current_user.get("role"), reason_code=reason_code or None,
-                             require_existing=True)
+                             require_existing=True, authority=_authority,
+                             via=_rl_codes.request_via(current_user))
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
@@ -10803,7 +10825,7 @@ def home_dismiss_api(current_user):
     # card's own (sent by the client, else the one it was presented with),
     # and the start is automatic, so the family gate applies (rec-ROI #18):
     # while anything in its family is measured the reply says so instead.
-    if out.get("ok") and kind == "done":
+    if out.get("ok") and kind == "done" and _authority != "admin":
         try:
             import outcomes
             # The login's own permissions decide which metric it may start
@@ -11269,8 +11291,19 @@ def intel_open_recs(rid, restaurant=None) -> dict:
     parsed = parse_competitor_intel(insight) if insight else {
         "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False}
     texts = [it["text"] for it in parsed.get("recommendation_items") or []]
-    keys = [insight_store.line_key("insight_intel", t) for t in texts]
+    # Keyed by what the advice is ABOUT (signature_key), so next week's
+    # reworded line is the same recommendation after a Pass (memory audit
+    # 9/29/26, "signatures"); an answered signature on any surface counts.
+    keys = [insight_store.signature_key("insight_intel", t) for t in texts]
     done = insight_store.answered(rid, keys) if keys else set()
+    try:
+        _ans_sigs = insight_store.answered_signatures(rid)
+    except Exception:
+        _ans_sigs = {}
+    for t, k in zip(texts, keys):
+        _sig = insight_store.advice_signature(k, t)
+        if _sig and _sig in _ans_sigs:
+            done.add(k)
     return {"recs": [t for t, k in zip(texts, keys) if k not in done],
             "competitors": len(blob.get("competitors") or []),
             "withheld": int(parsed.get("withheld_recommendations") or 0),
@@ -11309,9 +11342,18 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
                                                 "rating": rv.get("rating"), "time": rv.get("time"),
                                                 "date": rv.get("date"),
                                                 "text": (rv.get("text") or "")[:300]}
-    items = [{"key": insight_store.line_key("insight_intel", it["text"]), "text": it["text"],
-              "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True}
-             for it in parsed.get("recommendation_items") or []]
+    # Keyed by what the advice is about (signature_key; its words' hash when
+    # it names no single subject), so a reworded line after a Pass is the
+    # same recommendation (memory audit 9/29/26, "signatures"). Two lines
+    # about the same advice are one.
+    items, _seen_keys = [], set()
+    for it in parsed.get("recommendation_items") or []:
+        _k = insight_store.signature_key("insight_intel", it["text"])
+        if _k in _seen_keys:
+            continue
+        _seen_keys.add(_k)
+        items.append({"key": _k, "text": it["text"],
+                      "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True})
     # Each line's measured confidence (T1): a model-written line over the
     # competitors the read compared (N_FULL "competitors"), freshness from
     # the competitor data's own date. Snapshotted by the ledger (K3).

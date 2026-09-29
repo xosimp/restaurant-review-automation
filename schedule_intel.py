@@ -887,13 +887,34 @@ def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db
 
 # ── recommendation ledger ──────────────────────────────────────────────────
 
-def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH) -> None:
+def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH,
+                          authority=None) -> None:
     """action: shown | accepted | dismissed | restored (the owner asked for a
-    suppressed kind back)."""
+    suppressed kind back). `authority` is whose showing or answer it was
+    (permissions.answer_authority; None = the owner's, as every row before
+    it) — only the owner's count toward suppressing a kind for the owner.
+    A restore also lifts the kind's durable suppression."""
     if action not in ("shown", "accepted", "dismissed", "restored") or not kind:
         return
+    if authority is None:
+        try:
+            from permissions import acting_via
+            if acting_via():
+                authority = "admin"
+        except Exception:
+            pass
     conn = get_conn(db_path)
     try:
+        if action == "restored":
+            now = conn.execute("SELECT datetime('now')").fetchone()[0]
+            try:
+                conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                             (restaurant_id, str(kind)[:60]))
+                conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, since, "
+                             "restored_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                             (restaurant_id, "schedule_restore", str(kind)[:60], "restored", now, now, now))
+            except Exception as e:
+                print(f"[schedule_intel] restore not held durably: {e}")
         # A showing is one per recommendation per day: a manager saving the
         # same week ten times in one sitting was ten "shown, never taken"
         # and switched the advice off for good (SCHED-26), and every rescore
@@ -903,8 +924,10 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
                 "AND action='shown' AND created_at >= date('now')",
                 (restaurant_id, str(kind)[:60], str(key or "")[:200])).fetchone():
             return
-        conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) VALUES (?,?,?,?,?)",
-                     (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None))
+        conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor, authority) "
+                     "VALUES (?,?,?,?,?,?)",
+                     (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None,
+                      authority if authority in ("principal", "delegate", "admin") else None))
         conn.commit()
     finally:
         conn.close()
@@ -1015,38 +1038,147 @@ def schedule_rec_key(kind, text) -> str:
     return _rl.rec_key("schedule_" + (kind or "other"), (text or "")[:120])
 
 
+# A suppressed schedule kind is re-tested this long after it was suppressed
+# (and after each re-test that went unaccepted), for RETEST_WINDOW_DAYS
+# (memory audit 9/29/26, "quiet_kinds"): it used to come back by accident a
+# year later, when the pruned log forgot why.
+SUPPRESS_REVIEW_DAYS = 60
+RETEST_WINDOW_DAYS = 14
+
+
+def suppression_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
+    """{kind: {state: suppressed | retest, reason, since, review_on (M/D/YY),
+    retests}} — the schedule recommendation kinds this owner has plainly
+    declined, held as durable state (rec_kind_states, family "schedule")
+    instead of recounted from schedule_recommendation_events, which is
+    pruned at 365 days. A kind is suppressed when, since the owner last
+    asked for it back, it was shown SUPPRESS_AFTER_SHOWN times and never
+    accepted, or dismissed "not for us" twice and never accepted — counting
+    the OWNER's showings and answers only (a manager's or support's never
+    suppress a kind for the owner; memory audit, who_answered). From its
+    review date it is re-tested for RETEST_WINDOW_DAYS: accepted, it is
+    back; declined again or left unaccepted, it is suppressed to the next
+    review date. Kinds about whether a shift is safe to run
+    (shift_quality.PROTECTED_REC_KINDS) are never suppressed."""
+    from datetime import datetime as _dt, timedelta as _td
+    from shift_quality import PROTECTED_REC_KINDS
+    now = now or _dt.utcnow()
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    out = {}
+    try:
+        try:
+            states = {r["kind"]: dict(r) for r in conn.execute(
+                "SELECT * FROM rec_kind_states WHERE restaurant_id=? AND family='schedule'", (restaurant_id,)).fetchall()}
+            restores = {r["kind"]: r["restored_at"] for r in conn.execute(
+                "SELECT kind, restored_at FROM rec_kind_states WHERE restaurant_id=? AND family='schedule_restore'",
+                (restaurant_id,)).fetchall()}
+        except Exception:
+            states, restores = {}, {}
+        try:
+            rows = conn.execute("SELECT kind, key, action, authority, created_at FROM schedule_recommendation_events "
+                                "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception as e:
+            print(f"[schedule_intel] suppressed_kinds failed: {e}")
+            rows = []
+        # Counted since the owner last asked for the kind back — the log's
+        # own restore row, or the durable one (the log is pruned at 365 days).
+        since = dict(restores)
+        for r in rows:
+            if r["action"] == "restored":
+                since[r["kind"]] = max(since.get(r["kind"], ""), r["created_at"] or "")
+        counted = {}
+        for r in rows:
+            kind = r["kind"]
+            if kind in PROTECTED_REC_KINDS or (r["created_at"] or "") <= since.get(kind, ""):
+                continue
+            c = counted.setdefault(kind, {"shown": set(), "acc": 0, "dis": 0})
+            who = r["authority"] or "principal"
+            if r["action"] == "shown" and who == "principal":
+                c["shown"].add(f"{r['key']}|{str(r['created_at'])[:10]}")
+            elif r["action"] == "accepted" and who != "admin":
+                c["acc"] += 1
+            elif r["action"] == "dismissed" and who == "principal":
+                c["dis"] += 1
+        for kind, r in counted.items():
+            r["shown"] = len(r["shown"])
+            if kind in states or r["acc"]:
+                continue
+            if r["shown"] >= SUPPRESS_AFTER_SHOWN or r["dis"] >= 2:
+                reason = (f"declined {int(r['dis'])} times" if (r["dis"] or 0) >= 2
+                          else f"shown {int(r['shown'])} times, never accepted")
+                review = (now + _td(days=SUPPRESS_REVIEW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                states[kind] = {"kind": kind, "state": "suppressed", "reason": reason, "since": now_s,
+                                "review_on": review, "retests": 0}
+                if write:
+                    conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, reason, "
+                                 "since, review_on, retests, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                 (restaurant_id, "schedule", kind, "suppressed", reason, now_s, review, 0, now_s))
+        from time_utils import mdy
+        for kind, st in list(states.items()):
+            if kind in PROTECTED_REC_KINDS:
+                continue
+            # An acceptance of the kind since it was suppressed — an edit
+            # that carried one out, a button on a week still showing it —
+            # brings it back: the strongest sign it is wanted.
+            took = conn.execute(
+                "SELECT 1 FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND action='accepted' "
+                "AND COALESCE(authority,'principal')!='admin' AND created_at >= ? LIMIT 1",
+                (restaurant_id, kind, st.get("since") or "")).fetchone()
+            if took:
+                if write:
+                    conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                                 (restaurant_id, kind))
+                continue
+            state = "suppressed"
+            review = st.get("review_on")
+            if review and review <= now_s:
+                since_review = conn.execute(
+                    "SELECT SUM(action='accepted' AND COALESCE(authority,'principal')!='admin') AS acc, "
+                    "SUM(action='dismissed' AND COALESCE(authority,'principal')='principal') AS dis "
+                    "FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND created_at >= ?",
+                    (restaurant_id, kind, review)).fetchone()
+                window_over = (datetime.strptime(review[:19], "%Y-%m-%d %H:%M:%S")
+                               + timedelta(days=RETEST_WINDOW_DAYS)) <= now
+                if since_review and (since_review["acc"] or 0):
+                    if write:
+                        conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' "
+                                     "AND kind=?", (restaurant_id, kind))
+                    continue                                   # the re-test was taken: back for good
+                if (since_review and (since_review["dis"] or 0)) or window_over:
+                    review = (now + _td(days=SUPPRESS_REVIEW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                    st = dict(st, review_on=review, retests=int(st.get("retests") or 0) + 1)
+                    if write:
+                        conn.execute("UPDATE rec_kind_states SET review_on=?, retests=?, updated_at=? "
+                                     "WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                                     (review, st["retests"], now_s, restaurant_id, kind))
+                else:
+                    state = "retest"
+            out[kind] = {"state": state, "reason": st.get("reason"), "since": mdy(str(st.get("since") or "")[:10])
+                         if st.get("since") else None, "review_on": mdy(str(review)[:10]) if review else None,
+                         "retests": int(st.get("retests") or 0)}
+        if write:
+            conn.commit()
+    finally:
+        conn.close()
+    return out
+
+
 def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
-    """Recommendation kinds this owner has plainly declined: shown at least
-    SUPPRESS_AFTER_SHOWN times and never accepted, or dismissed "not for us"
-    at least twice and never accepted — counted since the owner last asked
-    for the kind back. Kinds about whether a shift is safe to run
-    (shift_quality.PROTECTED_REC_KINDS) are never suppressed.
+    """Recommendation kinds this owner has plainly declined and that are not
+    being re-tested (suppression_state): neither shown nor stored until the
+    review date, a restore, or an accepted re-test brings them back.
 
     "Not for us" used to change nothing (only shown and accepted counted),
     and a suppressed kind could never come back: its recommendations were
     neither shown nor stored, so neither a button nor an edit could accept
     one."""
-    from shift_quality import PROTECTED_REC_KINDS
-    conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT e.kind, COUNT(DISTINCT CASE WHEN e.action='shown' THEN e.key || '|' || date(e.created_at) END) AS shown, "
-            "SUM(e.action='accepted') AS acc, SUM(e.action='dismissed') AS dis FROM schedule_recommendation_events e "
-            "WHERE e.restaurant_id=? AND e.created_at > COALESCE((SELECT MAX(r.created_at) FROM schedule_recommendation_events r "
-            "  WHERE r.restaurant_id=e.restaurant_id AND r.kind=e.kind AND r.action='restored'), '') "
-            "GROUP BY e.kind", (restaurant_id,)).fetchall()
+        return {k for k, st in suppression_state(restaurant_id, db_path=db_path).items()
+                if st["state"] == "suppressed"}
     except Exception as e:
         print(f"[schedule_intel] suppressed_kinds failed: {e}")
         return set()
-    finally:
-        conn.close()
-    out = set()
-    for r in rows:
-        if r["kind"] in PROTECTED_REC_KINDS or (r["acc"] or 0):
-            continue
-        if (r["shown"] or 0) >= SUPPRESS_AFTER_SHOWN or (r["dis"] or 0) >= 2:
-            out.add(r["kind"])
-    return out
 
 
 # ── learned-pattern dismissals ────────────────────────────────────────────
@@ -1130,6 +1262,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events ON schedule_recommendation_events(restaurant_id, kind)")
+    # Whose showing or answer each row is (memory audit 9/29/26,
+    # who_answered): only the owner's suppress a kind for the owner.
+    _cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_recommendation_events)").fetchall()}
+    if "authority" not in _cols:
+        conn.execute("ALTER TABLE schedule_recommendation_events ADD COLUMN authority TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events_created "
                  "ON schedule_recommendation_events(created_at)")          # ops.prune_ledgers (DATA-40)
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_pattern_dismissals (

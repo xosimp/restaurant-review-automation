@@ -2533,7 +2533,7 @@ def mark_next_week_built(restaurant_id, history_id) -> int:
 SHOWN_RECOMMENDATIONS = 5
 
 
-def present_quality(restaurant_id, quality, user_id=None):
+def present_quality(restaurant_id, quality, user_id=None, authority=None):
     """The quality verdict's recommendations, recorded as shown on
     "schedule_review" by the response that SERVES them to a person — the
     generation's status poll, a rescore, apply-fixes, the optimizer, a
@@ -2560,8 +2560,11 @@ def present_quality(restaurant_id, quality, user_id=None):
             it["answered"] = bool(it["key"] in ids and ids[it["key"]] is None)
             it["answerable"] = rec_delivery.answerable(it["key"]) and not it["answered"]
             try:
+                # Who it was shown to (memory audit 9/29/26, who_answered):
+                # a manager's or support's showings never suppress a kind
+                # for the owner.
                 _si.record_recommendation(restaurant_id, it.get("kind") or "other",
-                                          str(it.get("text") or "")[:200], "shown")
+                                          str(it.get("text") or "")[:200], "shown", authority=authority)
             except Exception as e:
                 print(f"[schedule] showing not counted for {it.get('kind')}: {e}")
     except Exception as e:

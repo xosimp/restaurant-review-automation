@@ -3677,6 +3677,18 @@ def admin_api_confidence_calibration(current_user):
     return jsonify(**admin_ops.confidence_calibration(days=days, restaurant_id=rid))
 
 
+@admin_bp.route("/admin/api/recommendations/learning")
+@admin_required
+def admin_api_rank_learning(current_user):
+    """What the effectiveness model did to the rankings (memory audit
+    9/29/26, rank_log): acceptance and measured outcome by model version and
+    weight bucket, and the candidates builds left unshown. Internal only.
+    ?days=90&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(90)
+    return jsonify(**admin_ops.rank_learning(days=days, restaurant_id=rid))
+
+
 @admin_bp.route("/admin/api/recommendations/missed")
 @admin_required
 def admin_api_missed_detections(current_user):

@@ -14,6 +14,8 @@ the agent a short, dated history — so Ask reasons from *this restaurant's
 decisions*, not only its numbers. Nothing here is generated; every field
 is read from a row a person or a job wrote.
 """
+import re
+
 import models as _models_mod
 from models import DB_PATH
 
@@ -161,8 +163,10 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
             import json as _json
             import rec_ledger as _rl
             seen = set()
+            me = (viewer or {}).get("id") if isinstance(viewer, dict) else None
             for row in conn.execute(
-                    "SELECT e.key, e.event, e.meta, e.at, i.title FROM rec_events e "
+                    "SELECT e.key, e.event, e.meta, e.at, e.user_id, e.authority, i.title, i.model_written, "
+                    "i.signature FROM rec_events e "
                     "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? "
                     "AND e.event IN ('accepted','completed','dismissed','implemented') "
                     "ORDER BY e.at DESC, e.id DESC LIMIT 400",
@@ -170,17 +174,33 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 key = row["key"] or ""
                 if key in seen or key.startswith("ask:") or not _rl.counts_in_acceptance(key):
                     continue
+                # Whose decision (memory audit 9/29/26): support's answer
+                # through view-as is never the restaurant's; a manager's
+                # decline held for that manager alone, so it is theirs to
+                # read back, not the owner's "do not re-propose".
+                if row["authority"] == "admin":
+                    continue
+                if row["authority"] == "delegate" and row["event"] == "dismissed" \
+                        and (me is None or row["user_id"] != me):
+                    continue
                 try:
                     meta = _json.loads(row["meta"] or "{}") or {}
                 except (TypeError, ValueError):
                     meta = {}
                 seen.add(key)
+                effect = _rl.reason_effect(meta.get("reason_code"), meta.get("reason")) \
+                    if row["event"] == "dismissed" else None
                 if row["event"] == "dismissed":
-                    answer = "not for us" if meta.get("kind") == "not_for_us" else "hidden"
+                    answer = ("done" if effect == "taken" else "put off" if effect == "defer" else
+                              "not for us" if meta.get("kind") == "not_for_us" else "hidden")
                 else:
                     answer = {"completed": "done", "implemented": "implemented"}.get(row["event"], "accepted")
                 day = str(row["at"] or "")[:10]
                 r = rec(key, title=row["title"] or _humanize(key), when=day)
+                r["model_written"] = bool(row["model_written"])
+                r["signature"] = row["signature"] or None
+                if row["authority"] == "delegate":
+                    r["by"] = "delegate"
                 if not r["answer"] or day > (r.get("answered_on") or ""):
                     r["answer"] = answer
                     r["answered_on"] = day
@@ -325,33 +345,323 @@ def _fmt_outcome(o):
     return f" — measured: {v}{money}{grade}"
 
 
-def context(restaurant_id, db_path=DB_PATH, sees_loss=True, viewer=None):
+# Declines that carry the owner's reason are never capped out of a prompt
+# (memory audit 9/29/26, "relevance"): up to this many beside the
+# MAX_CONTEXT_LINES most recent answers.
+MAX_REASONED_DECLINES = 12
+# Answers that are declines: what a prompt must not re-propose.
+_DECLINE_ANSWERS = ("not for us", "hidden")
+
+
+def _fence(text):
+    """Owner, manager and model-written words, fenced (ai_guard): they are
+    what someone said, never data — a figure inside verifies nothing and a
+    "because" anchors no cause (memory audit 9/29/26, "unfenced")."""
+    from ai_guard import wrap_untrusted
+    return wrap_untrusted(" ".join(str(text or "").split()))
+
+
+def _line(r):
+    """One decision as a prompt line: the structure (answer, verdict, date)
+    plain; the title, the owner's reason and a resolution note fenced."""
+    from time_utils import mdy
+    when = r.get("answered_on") or r.get("asked_on") or ""
+    ans = r.get("answer") or "open"
+    title = r.get("title") or r.get("key") or ""
+    # A key humanised by us is structure; anything a person or a model wrote
+    # (a card's title, a model line) is fenced.
+    shown = title if title == _humanize(r.get("key")) else _fence(title)
+    line = f"{shown}: {ans}"
+    if r.get("by") == "delegate":
+        line += " (a manager's answer, for them)"
+    if r.get("times_hidden", 0) > 1:
+        line += f" (hidden {r['times_hidden']}x)"
+    code = _reason_code_label(r.get("reason_code"))
+    if code or r.get("reason"):
+        line += " — because: " + "; ".join(x for x in (code, _fence(r["reason"]) if r.get("reason") else "") if x)
+    line += _fmt_outcome(r.get("outcome"))
+    if r.get("issue") and r["issue"].get("note"):
+        line += " — resolved, with a note: " + _fence(r["issue"]["note"][:80])
+    if r.get("collapsed"):
+        line += f" (said the same way to {r['collapsed']} other wording{'s' if r['collapsed'] != 1 else ''})"
+    if when:
+        line += f" ({mdy(when)})"
+    return line
+
+
+def _collapse(rows):
+    """One line per piece of advice: rows sharing an advice signature fold
+    into the most recent, which counts the others (memory audit, relevance:
+    15 answered food lines were 15 prompt lines, three of them cut)."""
+    out, by_sig = [], {}
+    for r in rows:
+        sig = r.get("signature")
+        if sig and sig in by_sig:
+            by_sig[sig]["collapsed"] = by_sig[sig].get("collapsed", 0) + 1
+            if not by_sig[sig].get("reason") and r.get("reason"):
+                by_sig[sig]["reason"] = r["reason"]
+            continue
+        r = dict(r)
+        if sig:
+            by_sig[sig] = r
+        out.append(r)
+    return out
+
+
+def _with_signatures(rows):
+    for r in rows:
+        if "signature" not in r or r.get("signature") is None:
+            try:
+                import insight_store
+                r["signature"] = insight_store.advice_signature(r.get("key"), r.get("title"))
+            except Exception:
+                r["signature"] = None
+    return rows
+
+
+def pick_relevant(rows, subjects=(), modules=(), limit=MAX_CONTEXT_LINES):
+    """The decisions a prompt should carry, most relevant first (memory
+    audit 9/29/26, "relevance"): a decline with a reason about a subject or
+    module in play, then any decline about one, then any other answer about
+    one, then every decline with a reason (never capped out), then the most
+    recent — collapsed by advice signature. Returns rows with `weight`."""
+    subjects = {str(s).lower() for s in subjects or () if s}
+    modules = {str(m).lower() for m in modules or () if m}
+
+    def about(r):
+        sig = str(r.get("signature") or "").lower()
+        if sig and (sig in subjects or any(sig.startswith(s + ":") or s.startswith(sig) for s in subjects)):
+            return True
+        fam = sig.split(":", 1)[0] if sig else ""
+        key_kind = str(r.get("key") or "").split(":", 1)[0].lower()
+        return bool(modules and (fam in modules or key_kind in modules or _module_of(r) in modules))
+    rows = _collapse(_with_signatures(list(rows or [])))
+    scored = []
+    for i, r in enumerate(rows):
+        declined = r.get("answer") in _DECLINE_ANSWERS
+        reasoned = bool(r.get("reason") or r.get("reason_code"))
+        rel = about(r)
+        w = (100 if (rel and declined and reasoned) else 80 if (rel and declined) else 60 if rel
+             else 40 if (declined and reasoned) else 0) + max(0.0, 30.0 - i * 0.5)
+        scored.append(dict(r, weight=round(w, 2)))
+    scored.sort(key=lambda r: -r["weight"])
+    must = [r for r in scored if r["weight"] >= 40 and r.get("answer") in _DECLINE_ANSWERS
+            and (r.get("reason") or r.get("reason_code"))]
+    rest = [r for r in scored if r not in must]
+    keep = must[:MAX_REASONED_DECLINES] + rest[:max(0, limit)]
+    keep.sort(key=lambda r: -r["weight"])
+    return keep
+
+
+_KIND_MODULES = {"trim_day": "labor", "labor_over": "labor", "overtime": "labor", "overtime_move": "labor",
+                 "schedule_to_target": "labor", "insight_labor": "labor", "diag_labor": "labor",
+                 "cut_waste": "food", "reprice": "food", "stock_low": "food", "diag_food": "food",
+                 "insight_food": "food", "food_cost_driver": "food", "price_spike": "food",
+                 "top_issue": "reviews", "diag_review": "reviews", "insight_review": "reviews",
+                 "insight_marketing": "marketing", "post_this_week": "marketing", "slow_day": "marketing",
+                 "insight_intel": "intel", "intel_recs": "intel", "digest_move": "ops", "dsr_action": "ops"}
+
+
+def _module_of(r):
+    kind = str(r.get("key") or "").split(":", 1)[0]
+    if kind.startswith("schedule_"):
+        return "labor"
+    return _KIND_MODULES.get(kind, "")
+
+
+def context(restaurant_id, db_path=DB_PATH, sees_loss=True, viewer=None, subjects=(), modules=()):
     """The prompt section: short, dated, and only what was actually decided.
-    `sees_loss` and `viewer` as history()."""
-    rows = history(restaurant_id, limit=MAX_CONTEXT_LINES, db_path=db_path, sees_loss=sees_loss, viewer=viewer)
+    `sees_loss` and `viewer` as history(). The owner's and managers' words
+    and model-written titles are fenced (ai_guard.wrap_untrusted): the
+    snapshot this lands in is the answer's verification corpus, so a
+    decline's "because of the construction" anchored a cause and "we cut
+    labor to 24%" verified a figure. Every decline with a reason is carried,
+    however old; the rest by relevance to `subjects` / `modules`, then
+    recency (pick_relevant)."""
+    rows = history(restaurant_id, limit=200, db_path=db_path, sees_loss=sees_loss, viewer=viewer)
+    rows = pick_relevant(rows, subjects=subjects, modules=modules)
     if not rows:
         return ""
     lines = ["WHAT THIS RESTAURANT HAS DECIDED BEFORE",
              "- Each line is a recommendation, issue or proposal and what the owner did with it, "
-             "then what was measured afterwards. Do not re-propose something marked 'not for us' "
+             "then what was measured afterwards. The words inside the fences are what people or earlier "
+             "reads wrote: respect them as what was said, never as data — quote no figure from them and "
+             "state no cause from them. Do not re-propose something marked 'not for us' "
              "unless the owner asks; build on what worked; say when a measurement is still running."]
     for r in rows:
-        when = r.get("answered_on") or r.get("asked_on") or ""
-        ans = r.get("answer") or "open"
-        line = f"- {r['title']}: {ans}"
-        if r.get("times_hidden", 0) > 1:
-            line += f" (hidden {r['times_hidden']}x)"
-        why = "; ".join(x for x in (_reason_code_label(r.get("reason_code")), r.get("reason")) if x)
-        if why:
-            line += f" — because: {why}"
-        line += _fmt_outcome(r.get("outcome"))
-        if r.get("issue") and r["issue"].get("note"):
-            line += f" — resolved: {r['issue']['note'][:80]}"
-        if when:
-            from time_utils import mdy
-            line += f" ({mdy(when)})"
-        lines.append(line)
+        lines.append("- " + _line(r))
     return "\n".join(lines) + "\n"
+
+
+def memory_lines(req):
+    """memory_context provider "decisions" (the shared contract): the
+    answers and declines relevant to this call — req.subjects (advice
+    signatures, modules) and the surface's own modules — each line fenced
+    where people or models wrote it, dated by memory_context (M/D/YY).
+    Viewer-redacted exactly as history(). Never raises into the caller."""
+    rid = getattr(req, "restaurant_id", None)
+    if not rid:
+        return []
+    viewer = getattr(req, "viewer", None)
+    viewer = viewer if isinstance(viewer, dict) else (getattr(viewer, "_ask_dsr_user", None) or None)
+    loss = True
+    if viewer is not None:
+        try:
+            import issues
+            loss = issues.viewer_sees_loss(viewer)
+        except Exception:
+            loss = False
+    surface = getattr(req, "surface", "") or ""
+    subj = tuple(getattr(req, "subjects", ()) or ())
+    mods = set(SURFACE_MODULES.get(surface, ()))
+    mods |= {s for s in subj if ":" not in str(s)}
+    rows = history(rid, limit=200, db_path=getattr(req, "db_path", None) or DB_PATH, sees_loss=loss,
+                   viewer=viewer)
+    out = []
+    for r in pick_relevant(rows, subjects=[s for s in subj if ":" in str(s)], modules=mods,
+                           limit=MAX_CONTEXT_LINES):
+        text = _line(dict(r, answered_on=None, asked_on=None))
+        out.append({"text": text, "date": r.get("answered_on") or r.get("asked_on"),
+                    "source": "manager" if r.get("by") == "delegate" else "owner",
+                    "subject": r.get("signature") or _module_of(r) or None,
+                    "weight": r.get("weight", 0), "trusted": True})
+    return out
+
+
+# A kind is named as declined only on this much evidence (memory audit
+# 9/29/26, "one_hide"): one "hide for now" on a reprice card a year ago put
+# the whole reprice kind on Ask's do-not-propose list for good.
+DECLINE_MIN_ANSWERS = 3
+DECLINE_WINDOW_DAYS = 180
+DECLINE_HALF_LIFE_DAYS = 90
+# ...and three "not for us" answers all near the edge of the window weigh
+# less than this, recency-weighted: they are not a standing no.
+DECLINE_MIN_WEIGHT = 1.5
+
+
+def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
+    """The advice this owner has plainly said "not for us" to, named by
+    subject, never by whole kind (memory audit 9/29/26, "one_hide"): only
+    "not for us" answers count — a plain hide, a timing answer, "already
+    doing it" and "don't trust the data" are not a no — at least
+    DECLINE_MIN_ANSWERS of a kind within DECLINE_WINDOW_DAYS whose
+    recency-weighted sum (half-life DECLINE_HALF_LIFE_DAYS) reaches
+    DECLINE_MIN_WEIGHT. Principal answers only (a delegate's decline is
+    theirs; support's through view-as is nobody's). Returns [{kind, label,
+    subjects, n, weight, since (M/D/YY)}], strongest first. Never raises."""
+    import json as _json
+    from datetime import datetime as _dt
+    now = now or _dt.utcnow()
+    since = (now - _dt_mod.timedelta(days=DECLINE_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = _conn(db_path)
+    except Exception:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT e.key, e.meta, e.at, e.authority, i.kind, i.title, i.signature FROM rec_events e "
+            "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? AND e.event='dismissed' "
+            "AND e.at >= ?", (restaurant_id, since)).fetchall()
+    except Exception as e:
+        print(f"[decisions] declined subjects unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    import rec_ledger as _rl
+    by_kind = {}
+    for r in rows:
+        if r["authority"] in ("delegate", "admin"):
+            continue
+        try:
+            meta = _json.loads(r["meta"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        if meta.get("kind") != "not_for_us" or \
+                _rl.reason_effect(meta.get("reason_code"), meta.get("reason")) not in (None, "decline"):
+            continue
+        kind = r["kind"] or _rl.kind_of(r["key"])
+        if not _rl.counts_in_acceptance(r["key"]) or kind == "ask":
+            continue
+        try:
+            age = max(0.0, (now - _dt.strptime(str(r["at"])[:19], "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0)
+        except ValueError:
+            age = 0.0
+        b = by_kind.setdefault(kind, {"n": 0, "weight": 0.0, "subjects": [], "first": r["at"]})
+        b["n"] += 1
+        b["weight"] += 0.5 ** (age / DECLINE_HALF_LIFE_DAYS)
+        b["first"] = min(b["first"], r["at"])
+        subject = r["key"].split(":", 1)[1] if ":" in r["key"] else ""
+        if r["signature"]:
+            label = r["signature"].split(":", 1)[1].split(":", 1)[-1]
+        elif subject and not re.fullmatch(r"[0-9a-f]{10}", subject):
+            label = subject
+        else:
+            label = (r["title"] or "")[:60]
+        label = label.replace("_", " ").strip()
+        if label and label.lower() not in [x.lower() for x in b["subjects"]]:
+            b["subjects"].append(label[:60])
+    out = []
+    from time_utils import mdy
+    for kind, b in by_kind.items():
+        if b["n"] < DECLINE_MIN_ANSWERS or b["weight"] < DECLINE_MIN_WEIGHT:
+            continue
+        out.append({"kind": kind, "label": kind_label(kind), "subjects": b["subjects"][:6], "n": b["n"],
+                    "weight": round(b["weight"], 2), "since": mdy(str(b["first"])[:10])})
+    out.sort(key=lambda x: (-x["weight"], x["kind"]))
+    return out
+
+
+def annotate_declined(restaurant_id, text, db_path=DB_PATH):
+    """(text, repeats): an answer's imperative lines (ask_cavnar.
+    extract_suggestions — the lines it already finds for the chips) checked
+    against the advice the owner said "not for us" to on any surface
+    (insight_store.declines_by_signature). A repeat is kept — the model may
+    have a reason — but caveated in place, "(you passed on this on
+    8/12/26)", so a declined Friday-closer cut is never offered as if new
+    (memory audit 9/29/26, "relevance": only Ask's chips were filtered, the
+    prose was never checked). `repeats` [{text, signature, declined_on}]
+    for the answer's meta. Never raises: on failure the text is unchanged."""
+    try:
+        import insight_store
+        from ask_cavnar import extract_suggestions, _LIST_ITEM
+        from time_utils import mdy
+        items = extract_suggestions(text, limit=None)
+        if not items:
+            return text, []
+        declines = insight_store.declines_by_signature(restaurant_id, db_path=db_path)
+        if not declines:
+            return text, []
+        hits = {}
+        subjects = insight_store.known_subjects(restaurant_id, db_path=db_path)
+        for it in items:
+            sig = insight_store.advice_signature("ask_tip:x", it["text"], subjects=subjects)
+            if sig and sig in declines:
+                hits[it["text"]] = (sig, mdy(str(declines[sig]["on"])[:10]))
+        if not hits:
+            return text, []
+        out_lines, repeats = [], []
+        for line in str(text).split("\n"):
+            m = _LIST_ITEM.match(line)
+            if m:
+                body = " ".join(m.group(1).replace("**", "").split())
+                hit = hits.get(body)
+                if hit and "you passed on this" not in line:
+                    line = line.rstrip() + f" (you passed on this on {hit[1]})"
+                    repeats.append({"text": body[:200], "signature": hit[0], "declined_on": hit[1]})
+            out_lines.append(line)
+        return "\n".join(out_lines), repeats
+    except Exception as e:
+        print(f"[decisions] declined check skipped for {restaurant_id}: {e}")
+        return text, []
+
+
+# What each memory_context surface is about, for relevance.
+SURFACE_MODULES = {
+    "labor_read": ("labor",), "schedule": ("labor",), "food_read": ("food",), "food_diagnosis": ("food",),
+    "review_diagnosis": ("reviews",), "competitor_read": ("intel", "marketing"),
+    "marketing": ("marketing",), "reply_drafter": ("reviews",),
+    "dsr_narrative": ("labor", "food", "reviews", "ops"), "brief": (), "digest": (), "weekly_plan": (), "ask": (),
+}
 
 
 # ── what the owner's silence says ──────────────────────────────────────────
@@ -391,9 +701,21 @@ def _restored_kind(key):
 
 
 def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
+    """Recommendation kinds this owner has gone quiet on and that are not
+    due a re-test (quiet_state): every surface that ranks drops them below
+    the top three. Never raises."""
+    try:
+        return {k for k, st in quiet_state(restaurant_id, db_path=db_path).items() if not st.get("retest")}
+    except Exception as e:
+        print(f"[decisions] quiet kinds unavailable for {restaurant_id}: {e}")
+        return quiet_kinds_vote(restaurant_id, db_path=db_path)
+
+
+def quiet_kinds_vote(restaurant_id, db_path=DB_PATH) -> set:
     """Recommendation kinds whose last QUIET_AFTER_EXPIRED episodes at this
     restaurant all expired unanswered, counting only episodes since the
-    owner last restored the kind. Never raises."""
+    owner last restored the kind (the ledger's restore marker, or the
+    durable state's restored_at). Never raises."""
     out = set()
     try:
         conn = _conn(db_path)
@@ -412,6 +734,18 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
         k = _restored_kind(r["key"])
         if k:
             restored[k] = max(restored.get(k, ""), r["created_at"] or "")
+    # The restore held durably too: the ledger rows above are read over a
+    # 2,000-episode window, which a busy restaurant fills in weeks.
+    try:
+        c2 = _conn(db_path)
+        try:
+            for st in _kind_state_rows(c2, restaurant_id, "restore").values():
+                if st.get("restored_at"):
+                    restored[st["kind"]] = max(restored.get(st["kind"], ""), st["restored_at"])
+        finally:
+            c2.close()
+    except Exception:
+        pass
     by_kind = {}
     for r in rows:
         kind = r["kind"] or ""
@@ -436,6 +770,104 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
     return out
 
 
+# A kind gone quiet is re-tested once this long after it went quiet, and
+# again after each re-test that also went unanswered (memory audit 9/29/26,
+# "quiet_kinds": a kind ignored during one busy month stayed quiet for good).
+RETEST_AFTER_DAYS = 60
+_FAMILY = "home"
+
+
+def _kind_state_rows(conn, restaurant_id, family):
+    try:
+        return {r["kind"]: dict(r) for r in conn.execute(
+            "SELECT * FROM rec_kind_states WHERE restaurant_id=? AND family=?", (restaurant_id, family)).fetchall()}
+    except Exception:
+        return {}
+
+
+def quiet_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
+    """{kind: {since, review_on, retest, retests, last_dollars}} for every
+    kind this owner has gone quiet on (quiet_kinds' vote), held as durable
+    state with a review date (rec_kind_states, family "home"): from
+    RETEST_AFTER_DAYS after it went quiet the kind is shown again, once,
+    labelled a re-test (`retest` True) — answered, it is loud again;
+    ignored too, it is quiet again until the next review date. A kind the
+    vote no longer calls quiet leaves the state. `write=False` (a build that
+    records nothing) judges without writing. Never raises."""
+    from datetime import datetime as _dt, timedelta as _td
+    now = now or _dt.utcnow()
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    voted = quiet_kinds_vote(restaurant_id, db_path=db_path)
+    out = {}
+    try:
+        conn = _conn(db_path)
+    except Exception:
+        return {k: {"since": None, "review_on": None, "retest": False, "retests": 0, "last_dollars": None}
+                for k in voted}
+    try:
+        states = _kind_state_rows(conn, restaurant_id, _FAMILY)
+        for kind in voted:
+            st = states.get(kind)
+            last = conn.execute("SELECT dollar_value FROM rec_instances WHERE restaurant_id=? AND kind=? "
+                                "AND dollar_value IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+                                (restaurant_id, kind)).fetchone()
+            last_dollars = float(last["dollar_value"]) if last else None
+            if st is None:
+                review = (now + _td(days=RETEST_AFTER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                st = {"since": now_s, "review_on": review, "retests": 0, "last_dollars": last_dollars}
+                if write:
+                    conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, reason, "
+                                 "since, review_on, retests, last_dollars, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                 (restaurant_id, _FAMILY, kind, "quiet",
+                                  f"the last {QUIET_AFTER_EXPIRED} went unanswered", now_s, review, 0, last_dollars,
+                                  now_s))
+            retest = False
+            if st.get("review_on") and st["review_on"] <= now_s:
+                # Due its re-test: loud until a showing since the review date
+                # settles. Ignored again, it is quiet to the next review.
+                settled = conn.execute(
+                    "SELECT status FROM rec_instances WHERE restaurant_id=? AND kind=? AND created_at >= ? "
+                    "AND status NOT IN ('open','superseded') ORDER BY created_at DESC LIMIT 1",
+                    (restaurant_id, kind, st["review_on"])).fetchone()
+                if settled is not None and settled["status"] == "expired":
+                    review = (now + _td(days=RETEST_AFTER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                    st = dict(st, review_on=review, retests=int(st.get("retests") or 0) + 1)
+                    if write:
+                        conn.execute("UPDATE rec_kind_states SET review_on=?, retests=?, updated_at=? "
+                                     "WHERE restaurant_id=? AND family=? AND kind=?",
+                                     (review, st["retests"], now_s, restaurant_id, _FAMILY, kind))
+                else:
+                    retest = True
+            out[kind] = {"since": st.get("since"), "review_on": st.get("review_on"), "retest": retest,
+                         "retests": int(st.get("retests") or 0),
+                         "last_dollars": st.get("last_dollars") if st.get("last_dollars") is not None else last_dollars}
+        for kind, st in states.items():
+            if kind in voted:
+                continue
+            # The vote reads the newest 2,000 episodes; a kind that fell out
+            # of that window has not been answered — it stays quiet until an
+            # answer to one of its episodes since it went quiet says so.
+            answered = conn.execute(
+                "SELECT 1 FROM rec_instances WHERE restaurant_id=? AND kind=? AND created_at >= ? "
+                "AND status IN ('accepted','completed','dismissed','implemented') LIMIT 1",
+                (restaurant_id, kind, st.get("since") or "")).fetchone()
+            if answered:
+                if write:
+                    conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family=? AND kind=?",
+                                 (restaurant_id, _FAMILY, kind))
+                continue
+            retest = bool(st.get("review_on") and st["review_on"] <= now_s)
+            out[kind] = {"since": st.get("since"), "review_on": st.get("review_on"), "retest": retest,
+                         "retests": int(st.get("retests") or 0), "last_dollars": st.get("last_dollars")}
+        if write:
+            conn.commit()
+    except Exception as e:
+        print(f"[decisions] quiet state unavailable for {restaurant_id}: {e}")
+    finally:
+        conn.close()
+    return out
+
+
 def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_PATH) -> bool:
     """The owner asked to see a quiet kind again. Recorded in the ledger as
     an accepted `restore_kind:<kind>@<stamp>` episode — a new key each time,
@@ -449,6 +881,22 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
     key = f"{_RESTORE_PREFIX}{kind}@{_dt.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     ok = rec_ledger.record(restaurant_id, key, "accepted", surface=surface, user_id=user_id,
                            meta={"module": "home"}, db_path=db_path)
+    # Held durably (memory audit, quiet_kinds): the quiet state goes and the
+    # restore is remembered beyond the vote's 2,000-episode window.
+    try:
+        conn = _conn(db_path)
+        try:
+            now_s = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family=? AND kind=?",
+                         (restaurant_id, _FAMILY, kind))
+            conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, since, "
+                         "restored_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (restaurant_id, "restore", kind, "restored", now_s, now_s, now_s))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[decisions] restore not held durably: {e}")
     try:
         conn = _conn(db_path)
         try:

@@ -3463,6 +3463,10 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # When each automation earned trust and when it lapsed (memory audit
+    # 9/29/26, trust_ledger).
+    from automation_trust import init_automation_trust
+    init_automation_trust(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
@@ -6955,6 +6959,15 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
     """Append one change. Never raises — an audit row failing to write must
     not stop an owner setting a target."""
     import json as _j
+    # Support changing a rating or target through view-as is attributed to
+    # support, never read as the owner's (memory audit 9/29/26, view_as).
+    try:
+        from permissions import acting_via
+        _via = acting_via()
+    except Exception:
+        _via = None
+    if _via:
+        changed_by = f"support:{_via.get('admin') or _via.get('admin_id')} (as {changed_by or 'the owner'})"
     try:
         conn = get_conn(db_path)
         conn.execute(
@@ -7559,7 +7572,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
         WHERE restaurant_id=?
           AND deleted_at IS NULL
           AND response_status IN ('approved','posted')
-          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
+          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
           AND draft_response IS NOT NULL
           AND draft_response != ''
         ORDER BY CASE WHEN edit_category IN ('light', 'heavy', 'rewrite') THEN 0 ELSE 1 END, id DESC
@@ -7615,7 +7628,7 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
             "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
             "AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
         return []
@@ -11181,13 +11194,14 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
             "SUM(CASE WHEN COALESCE(draft_edited, 0) = 1 OR COALESCE(regenerate_count, 0) > 0 "
             "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()
         try:
             skipped = conn.execute(
                 "SELECT rating, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                 "AND response_status='skipped' AND draft_response IS NOT NULL AND TRIM(draft_response) != '' "
+                "AND COALESCE(response_action, '') != 'support_skipped' "
                 "AND skipped_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
                 (restaurant_id, since)).fetchall()
         except Exception:
@@ -11196,17 +11210,53 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
         conn.close()
     by = {int(r["rating"]): (int(r["n"] or 0), int(r["edited"] or 0)) for r in rows}
     sk = {int(r["rating"]): int(r["n"] or 0) for r in skipped}
+    # The trust ledger (memory audit 9/29/26, "trust_ledger"): a band held
+    # earned is KEPT on weak evidence too — its own auto-posts the owner left
+    # standing, unedited, a week on (automation_trust.WEAK_CREDIT_WEIGHT of
+    # a person's approval) — and a retracted auto-post counts against it.
+    # Earning still needs a person's approvals alone (audit #15). A band that
+    # lapses says so (`lapsed`), never silently.
+    try:
+        import automation_trust as _at
+        held = _at.states(restaurant_id, "reply_band", db_path=db_path)
+        auto = _at.clean_autoposts(restaurant_id, days=days, db_path=db_path)
+    except Exception as e:
+        print(f"[auto_approve_trust] trust ledger unavailable for {restaurant_id}: {e}")
+        _at, held, auto = None, {}, {}
     out = {}
     for star in AUTO_APPROVE_EARNABLE:
         n, e = by.get(star, (0, 0))
         s_n = sk.get(star, 0)
-        answered = n + s_n
-        rejected = e + s_n
+        clean, retracted = auto.get(star, (0, 0))
+        earned = (held.get(str(star)) or {}).get("state") == "earned"
+        weak = (_at.WEAK_CREDIT_WEIGHT * clean) if (earned and _at is not None) else 0.0
+        answered = n + s_n + retracted
+        rejected = e + s_n + retracted
         rate = (rejected / answered) if answered else None
-        out[star] = {"approved": n, "edited": e, "skipped": s_n, "edit_rate": rate,
-                     "trusted": bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None
-                                     and rate <= AUTO_APPROVE_TRUST_EDIT_RATE),
-                     "needed": max(0, AUTO_APPROVE_TRUST_MIN - n)}
+        earns = bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None and rate <= AUTO_APPROVE_TRUST_EDIT_RATE)
+        keeps = bool(earned and (n + weak) >= AUTO_APPROVE_TRUST_MIN
+                     and (rate is None or rate <= AUTO_APPROVE_TRUST_EDIT_RATE))
+        trusted = earns or keeps
+        entry = {"approved": n, "edited": e, "skipped": s_n, "edit_rate": rate, "trusted": trusted,
+                 "needed": max(0, AUTO_APPROVE_TRUST_MIN - n), "autoposted_clean": clean,
+                 "retracted": retracted, "weak_credit": round(weak, 1)}
+        st = held.get(str(star)) or {}
+        if _at is not None and (earned or trusted):
+            why = None
+            if not trusted:
+                why = (f"{retracted} auto-posted {'reply' if retracted == 1 else 'replies'} retracted"
+                       if retracted else ("too many edited or skipped" if rate is not None
+                                          and rate > AUTO_APPROVE_TRUST_EDIT_RATE
+                                          else f"fewer than {AUTO_APPROVE_TRUST_MIN} approvals in {days} days"))
+            st = _at.transition(restaurant_id, "reply_band", star, trusted,
+                                basis={"approved": n, "edited": e, "skipped": s_n, "weak": round(weak, 1)},
+                                reason=why, db_path=db_path) or st
+        if trusted and st.get("earned_at"):
+            entry["earned_at"] = st["earned_at"]
+        if not trusted and st.get("state") == "lapsed":
+            # Re-asked, never dropped silently (trust_ledger).
+            entry["lapsed"] = {"at": st.get("lapsed_at"), "reason": st.get("lapse_reason")}
+        out[star] = entry
     return out
 
 
@@ -11268,16 +11318,28 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
         import schedule_intel as _si
     except Exception:
         return 0
+    # An owner's undo of the auto-publish counts against it (memory audit
+    # 9/29/26, "undo"): only weeks published after the latest undo count, so
+    # SCHEDULE_PUBLISH_TRUST_MIN clean runs are needed again after one. The
+    # owner who undid it two weeks running used to see it queue a third.
+    try:
+        import delayed as _dl
+        undone_at = _dl.last_undo(restaurant_id, "schedule_publish", db_path=db_path)
+    except Exception:
+        undone_at = None
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT h.id, h.edited_at, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
+            "SELECT h.id, h.edited_at, h.week_start, h.week_end, h.published_at FROM schedule_history h "
+            "WHERE h.restaurant_id=? "
             "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
         n = 0
         for r in rows:
             if r["edited_at"]:
                 break
+            if undone_at and str(r["published_at"] or "").replace("T", " ")[:19] <= undone_at:
+                break                      # published before the owner's last undo
             if r["week_start"] and r["week_end"]:
                 try:
                     trouble = conn.execute(
@@ -13067,12 +13129,23 @@ def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
 
 
 def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> list:
+    """The newest Ask action rows. `surface` (ask | command) and `user_id`
+    ride along so a reader can apply the action queue's rule (a command
+    preview is never "still open") and the viewer's (memory audit 9/29/26,
+    "proposed")."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at, surface, user_id "
+                "FROM ask_cavnar_actions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
+        except Exception:
+            # A database from before surface existed.
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
     finally:
         conn.close()
     return [dict(r) for r in rows]

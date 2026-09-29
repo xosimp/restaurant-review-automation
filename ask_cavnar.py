@@ -768,7 +768,12 @@ def _intelligence_context(restaurant_id, viewer=None):
     return _intelligence_bundle(restaurant_id, viewer=viewer)[0]
 
 
-def _commitments_context(restaurant_id):
+# A proposal nobody answered is "still open" for this long — the action
+# queue's own window (action_queue, re-audit F1-7): older, it was let go.
+PROPOSAL_OPEN_DAYS = 7
+
+
+def _commitments_context(restaurant_id, viewer=None):
     """What the assistant has already proposed, and what the owner did with it.
 
     The action log was written at propose time and again at confirm/dismiss,
@@ -779,19 +784,37 @@ def _commitments_context(restaurant_id):
     from nothing.
 
     Outcomes only, newest first, and short: this is the assistant's memory of
-    its own advice, not an audit screen.
-    """
+    its own advice, not an audit screen. Memory audit 9/29/26 ("proposed"):
+    the action queue's rule — a ⌘K palette or Home preview (surface
+    'command') the owner simply closed was never proposed by Ask, so it is
+    not "still open", and nothing unanswered past PROPOSAL_OPEN_DAYS is —
+    and the viewer's: a login that is not a principal reads only its own
+    proposals (decisions._redact). Dates are M/D/YY; the owner's reason for
+    a decline is fenced (their words, never data)."""
     from models import get_ask_actions
+    from ai_guard import wrap_untrusted
+    from datetime import datetime as _dt, timedelta as _td
     try:
         rows = get_ask_actions(restaurant_id, limit=40)
     except Exception:
         return ""
+    who = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+    own_only = None
+    if isinstance(who, dict):
+        try:
+            from permissions import is_principal
+            own_only = None if (who.get("is_admin") or is_principal(who)) else who.get("id")
+        except Exception:
+            own_only = who.get("id")
+    open_since = (_dt.utcnow() - _td(days=PROPOSAL_OPEN_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     # A proposal that was never confirmed or dismissed is still open, and that
     # is the interesting state — but the same action appears twice (proposed,
     # then the outcome), so the outcome wins per action+summary pair.
     seen, settled, open_items = set(), [], []
     settled_ids = set()
     for r in rows:
+        if own_only is not None and r.get("user_id") not in (None, own_only):
+            continue
         # Newest first. An answer naming its proposal (#23) settles exactly
         # that proposal; an answer from an older client (no proposal_id)
         # settles by action + summary, as every answer did before.
@@ -800,6 +823,12 @@ def _commitments_context(restaurant_id):
             if r.get("id") in settled_ids or pair in seen:
                 continue
             seen.add(pair)
+            # A preview opened from the palette or a Home button, closed
+            # unanswered, is not something Ask proposed (surface 'command').
+            if (r.get("surface") or "") == "command":
+                continue
+            if str(r.get("created_at") or "") < open_since:
+                continue
         elif r.get("proposal_id"):
             if r["proposal_id"] in settled_ids:
                 continue
@@ -812,20 +841,23 @@ def _commitments_context(restaurant_id):
         # the model echoes it ("proposed 2026-09-28", memory audit iso_dates).
         when = _mdy_local(restaurant_id, r.get("created_at"))
         label = r.get("summary") or (r.get("action") or "").replace("_", " ")
+        on = f", {when}" if when else ""
+        via = " (from the command palette)" if (r.get("surface") or "") == "command" else ""
         if r.get("outcome") == "confirmed":
-            settled.append(f"{label} — the owner confirmed it, {when}")
+            settled.append(f"{label} — the owner confirmed it{via}{on}")
         elif r.get("outcome") == "dismissed":
-            why = f" (their reason: {r['reason']})" if r.get("reason") else ""
-            settled.append(f"{label} — the owner declined it, {when}{why}")
+            why = f" (their reason: {wrap_untrusted(r['reason'])})" if r.get("reason") else ""
+            settled.append(f"{label} — the owner declined it{via}{on}{why}")
         else:
-            open_items.append(f"{label} — proposed {when}, never confirmed or dismissed")
+            open_items.append(f"{label} — proposed {when}, never confirmed or dismissed" if when
+                              else f"{label} — proposed, never confirmed or dismissed")
     if not settled and not open_items:
         return ""
     lines = ["WHAT YOU HAVE ALREADY PROPOSED",
              "- Across every conversation, not just this one. Never tell the owner nothing "
              "has been sent without checking this list first."]
-    for s in settled[:6]:
-        lines.append(f"- {s}")
+    for s_ in settled[:6]:
+        lines.append(f"- {s_}")
     for o in open_items[:4]:
         lines.append(f"- {o}")
     return "\n".join(lines) + "\n"
@@ -980,7 +1012,7 @@ def build_context(restaurant):
             # login denied those modules, BM1-17).
             section = always(restaurant.id, viewer=restaurant) if always in (
                 _alerts_context, _decisions_context, _intelligence_context, _memory_context,
-                _feedback_context) else always(restaurant.id)
+                _feedback_context, _commitments_context) else always(restaurant.id)
             if section:
                 parts.append(section)
         except Exception:
@@ -1620,6 +1652,16 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     shown, verdict = rv.apply(answer, ctx)
     if not str(shown or "").strip():
         shown = ASK_REFUSED_ANSWER
+    # A suggestion the owner already said "not for us" to, on any surface,
+    # is caveated in the prose too — not only dropped from the chips
+    # (memory audit 9/29/26, "relevance"; decisions.annotate_declined).
+    try:
+        import decisions as _dec_check
+        shown, _repeats = _dec_check.annotate_declined(restaurant_id, shown)
+        if _repeats:
+            meta["declined_repeats"] = _repeats
+    except Exception as e:
+        print(f"[ask_cavnar] declined check unavailable rid={restaurant_id}: {e}")
     n = sum(1 for f in verdict.findings if f["rule"] == "C2")
     if n:
         meta["confidence_rewritten"] = n

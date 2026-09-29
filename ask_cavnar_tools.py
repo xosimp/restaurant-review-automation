@@ -1252,7 +1252,11 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
         feats = {k: v for k, v in feats.items() if intelligence.visible(k, denied)}
     slopes = {k: v for k, v in (mem["slopes"] or {}).items() if intelligence.visible(k, denied)}
     return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
+            # `declined`: advice said "not for us" 3+ times in 180 days, by
+            # subject (memory audit 9/29/26, "one_hide") — `ignored` keeps
+            # the kinds for older readers.
             "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
+                       "declined": mem["record"].get("declined_detail") or [],
                        "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
                                    for k, v in mem["record"]["by_kind"].items()}},

@@ -59,6 +59,7 @@ class Context:
         self._records = {}
         self._sources = {}
         self._distrust = None
+        self._distrust_sources = None
         self._row = None
         self._confs = {}
         self._changes = None
@@ -119,9 +120,24 @@ class Context:
         return data_freshness.states(self.row(), keys, db_path=self.db_path, now=self.now,
                                      context=self.freshness_context, cache=self._sources)
 
+    def distrusted_sources(self):
+        """{source: {since, reports, kinds, ...}} — the data sources the owner
+        said they don't trust and has not re-verified (rec_ledger.
+        rec_distrust, memory audit 9/29/26 "reasons"): held until verified,
+        not for DISTRUST_DAYS."""
+        if self._distrust_sources is None:
+            try:
+                import rec_ledger
+                self._distrust_sources = rec_ledger.distrusted_sources(self.rid, db_path=self.db_path)
+            except Exception as e:
+                print(f"[rec_trust] distrusted sources unreadable for {self.rid}: {e}")
+                self._distrust_sources = {}
+        return self._distrust_sources
+
     def distrusted(self):
         """{kind: latest ISO date} of the owner's "don't trust the data"
-        answers in the last DISTRUST_DAYS."""
+        answers in the last DISTRUST_DAYS — and, however old, every kind
+        answered that way on a source still not re-verified."""
         if self._distrust is None:
             self._distrust = {}
             try:
@@ -146,6 +162,9 @@ class Context:
                     self._distrust[k] = max(self._distrust.get(k, ""), str(r["at"])[:10])
             except Exception as e:
                 print(f"[rec_trust] distrust answers unreadable for {self.rid}: {e}")
+            for src in (self.distrusted_sources() or {}).values():
+                for k in src.get("kinds") or ():
+                    self._distrust[k] = max(self._distrust.get(k, ""), str(src.get("last") or src.get("since"))[:10])
         return self._distrust
 
 
@@ -448,6 +467,22 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
         if seen and not ev_in.get("sample"):
             ev_in["cap"] = min(ev_in.get("cap", 100), DISTRUST_CAP)
             ev_in["cap_reason"] = f"you said you don't trust the data behind this ({ce._mdy(seen)})"
+        # ...and every card resting on a SOURCE the owner said they don't
+        # trust, whatever its kind, until that source is re-verified (memory
+        # audit 9/29/26, "reasons": a distrusted shift feed left labor_over
+        # and insight_labor cards at full evidence).
+        if not ev_in.get("sample"):
+            bad = {k: v for k, v in (ctx.distrusted_sources() or {}).items() if k in tuple(sources or ())}
+            if bad:
+                src, info = sorted(bad.items())[0]
+                try:
+                    import data_freshness as _df_lbl
+                    label = _df_lbl.SOURCES.get(src, {}).get("label", src)
+                except Exception:
+                    label = src
+                ev_in["cap"] = min(ev_in.get("cap", 100), DISTRUST_CAP)
+                ev_in["cap_reason"] = (f"you said you don't trust the {label.lower()} data "
+                                       f"({ce._mdy(str(info.get('since'))[:10])}) — until it's re-verified")
         # A stored read's own age (diagnosis_evidence): a pseudo-source in
         # the freshness minimum, never evidence (DH3-1).
         has_read_age = "read_age_days" in ev_in

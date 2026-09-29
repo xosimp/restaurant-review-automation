@@ -2142,6 +2142,12 @@ _RETENTION_DAYS = {
     # 9/29/26 owner_lanes): shown in Account and restorable for a year and a
     # month. The live facts themselves are bounded by their lanes, not dates.
     "ask_memory_archive": int(os.getenv("RETAIN_ASK_MEMORY_ARCHIVE_DAYS", "400")),
+    # The memory audit's recommendation ledgers (9/29/26, M1): one compact
+    # row per restaurant, surface and day of what a ranking did (a year and
+    # a month, so a model version can be compared with last year's); a
+    # delegate's per-login silence, a month after it ended.
+    "rec_rank_builds":    int(os.getenv("RETAIN_REC_RANK_BUILDS_DAYS", "400")),
+    "rec_silences":       int(os.getenv("RETAIN_REC_SILENCES_DAYS", "30")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2162,6 +2168,14 @@ _RETENTION_COLUMN = {
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "ask_memory_archive": "archived_at",
+    "rec_rank_builds": "built_at", "rec_silences": "until",
+}
+# Rows a table's retention never deletes, whatever their age: the owner's
+# ANSWERS to recommendations are kept for good (memory audit 9/29/26,
+# "silences": "keep every answer forever; only the silence changes") —
+# rec_events' showings, opens and lifecycle rows go at their age.
+_RETENTION_ONLY = {
+    "rec_events": "event IN ('shown', 'opened', 'evidence_viewed', 'superseded', 'expired')",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
@@ -2212,6 +2226,10 @@ _RETENTION_FLOOR_DAYS = {
     "morning_brief_deliveries": 30, "alert_storm_caps": 60, "login_history": 60,
     # Account -> Memory offers a year to restore a forgotten fact (M2's archive).
     "ask_memory_archive": 365,
+    # The admin's rank-learning read compares up to a year (M1, rank_log); a
+    # delegate's per-login silence is read only while it holds (M1,
+    # who_answered).
+    "rec_rank_builds": 365, "rec_silences": 1,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2245,7 +2263,10 @@ _RETENTION_READERS = {
     "ai_visibility_runs": (("models.get_ai_visibility_history", 70, None),),
     "schedule_recommendation_events": (
         ("schedule_intel.measure_accepted_recommendations", "schedule_intel.REC_ACCEPTED_LOOKBACK_DAYS", None),
-        ("rec_ledger.sync_existing", 120, None)),
+        ("rec_ledger.sync_existing", 120, None),
+        # A suppression is durable state now (rec_kind_states, memory audit
+        # quiet_kinds): the log is read only for the re-test window.
+        ("schedule_intel.suppression_state", "schedule_intel.SUPPRESS_REVIEW_DAYS", None)),
     "job_period_claims": (("ops.claim_period", 31, None),),
     "notification_opens": (("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),),
     "admin_events": (("admin_ops._load_with", 400, None),),
@@ -2262,6 +2283,8 @@ _RETENTION_READERS = {
                           ("waste_trend.load_waste_history", None, "inventory_summary_weeks")),
     "schedule_versions": (("schedule_learning.edited_weeks", 56, None),),
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
+    "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
+    "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
@@ -2277,8 +2300,6 @@ _RETENTION_KNOWN_GAPS = {
     ("job_runs", "platform_monitor._last_run"): "the quarterly restore drill's last run is pruned at 45 days",
     ("alert_log", "scheduler.send_while_away_nudges"): "reads everything since the owner's last sign-in, uncapped",
     ("email_log", "client_api._do_upload_data"): "the 'first upload ever' check re-fires after 365 days",
-    ("schedule_recommendation_events", "schedule_intel.suppressed_kinds"):
-        "a suppression is recounted from rows kept 365 days (the recommendation-memory workstream's to move)",
     ("login_history", "admin_ops._load_with"): "owner sign-ins and team last-seen read all rows kept 90 days; "
                                                "engagement_monthly holds the months before",
 }
@@ -2735,8 +2756,11 @@ def prune_ledgers(db_path=None):
             days, col = st["days"], st["column"]
             counts["attempted"] += 1
             try:
-                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)", (f"-{days} days",), deadline,
-                                    max_rows=RETENTION_PASS_MAX_ROWS)
+                # A table may keep some rows for good whatever their age
+                # (_RETENTION_ONLY: rec_events keeps every answer).
+                only = _RETENTION_ONLY.get(table)
+                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""),
+                                    (f"-{days} days",), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
                 if n:
                     deleted[table] = n
                 if n >= RETENTION_PASS_MAX_ROWS:
