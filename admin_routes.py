@@ -2498,8 +2498,12 @@ def admin_api_issue_resolve(current_user):
     if not key:
         return jsonify(ok=False, error="Missing key"), 400
     if data.get("undo"):
-        return jsonify(**admin_ops.unresolve_issue(key))
-    return jsonify(**admin_ops.resolve_issue(key, (data.get("note") or "")[:300], current_user.get("username")))
+        return jsonify(**admin_ops.unresolve_issue(key, current_user.get("username")))
+    # The occurrence the console saw (issue.occurrence_at) scopes the
+    # resolution to it; a newer occurrence reopens the issue (fix round C, #24).
+    out = admin_ops.resolve_issue(key, (data.get("note") or "")[:300], current_user.get("username"),
+                                  occurrence_at=data.get("occurrence_at"))
+    return jsonify(**out), (200 if out.get("ok") else (409 if out.get("resolvable") is False else 400))
 
 
 @admin_bp.route("/admin/api/activity")
@@ -2514,3 +2518,174 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round C ──────────────────────────────────────────────────────────────
+# The console data layer's newer reads (admin_ops), the fleet memo's
+# invalidation, the busy refusal, and what a read-only support login is shown.
+
+import admin_ops as _admin_ops_c
+
+
+@admin_bp.errorhandler(_admin_ops_c.AdminBusy)
+def _admin_busy(e):
+    """A heavy console read refused because one is already running (#32):
+    503 with Retry-After, never a fifth request queued on four threads.
+    X-Admin-Busy marks the refusal so request metrics can tell it from a
+    server error."""
+    resp = jsonify(ok=False, busy=True, error=str(e), retry_after=e.retry_after)
+    resp.status_code = 503
+    resp.headers["Retry-After"] = str(e.retry_after)
+    resp.headers["X-Admin-Busy"] = "1"
+    return resp
+
+
+@admin_bp.after_app_request
+def _admin_fleet_invalidate(resp):
+    """Every write under /admin — on any blueprint — and every billing
+    webhook drops the console's fleet memo, so the next read is fresh."""
+    try:
+        if request.method not in ("GET", "HEAD", "OPTIONS") and (
+                (request.path or "").startswith(("/admin", "/stripe-webhook", "/docusign/webhook"))):
+            _admin_ops_c.invalidate_fleet_cache()
+    except Exception:
+        pass
+    return resp
+
+
+@admin_bp.after_request
+def _admin_support_redaction(resp):
+    """What the read-only support role may see (#87): owner and login email
+    addresses and phones, sign-in IPs and user agents, and Stripe ids are
+    masked in every /admin/api/ read answered to a support login."""
+    try:
+        if (request.method == "GET" and (request.path or "").startswith("/admin/api/") and resp.status_code == 200
+                and resp.mimetype == "application/json" and not resp.headers.get("Content-Encoding")
+                and not resp.direct_passthrough and _admin_ops_c.viewer_role() == "support"):
+            data = resp.get_json(silent=True)
+            if data is not None:
+                resp.set_data(json.dumps(_admin_ops_c.redact_for_support(data), default=str))
+                resp.headers["X-Redacted"] = "support"
+    except Exception:
+        pass
+    return resp
+
+
+def _page_args():
+    return {"page": request.args.get("page", 1, type=int), "per_page": request.args.get("per_page", 50, type=int)}
+
+
+@admin_bp.route("/admin/api/badges")
+@admin_required
+def admin_api_badges(current_user):
+    """The rail's counts from the fleet memo (#36): never a build of its own
+    while a recent one exists; generated_at says how old."""
+    return jsonify(**_admin_ops_c.badges())
+
+
+@admin_bp.route("/admin/api/issues/list")
+@admin_required
+def admin_api_issues_list(current_user):
+    """Every open issue, filtered, sorted and paged on the server, with
+    counts from the full set (#79). ?segment=attention|customer|platform|
+    internal|all &severity= &q= &restaurant_id= &category= &sort=severity|age|
+    restaurant &page= &per_page="""
+    a = request.args
+    return jsonify(**_admin_ops_c.issues_page(segment=a.get("segment", "attention"), severity=a.get("severity"),
+                                              q=a.get("q"), restaurant_id=a.get("restaurant_id", type=int),
+                                              category=a.get("category"), sort=a.get("sort", "severity"),
+                                              **_page_args()))
+
+
+@admin_bp.route("/admin/api/issues/resolutions")
+@admin_required
+def admin_api_issue_resolutions(current_user):
+    """Every resolution in force and the newest resolve/reopen/clear history (#24)."""
+    return jsonify(**_admin_ops_c.resolved_issues())
+
+
+@admin_bp.route("/admin/api/clients/list")
+@admin_required
+def admin_api_clients_list(current_user):
+    """The fleet list as slim rows, filtered, sorted and paged on the server
+    (#79). ?q= &health= &segment=customer|internal|all &status= &sort=name|
+    health|mrr|last_active|created &page= &per_page="""
+    a = request.args
+    return jsonify(**_admin_ops_c.clients_page(q=a.get("q"), health=a.get("health"),
+                                               segment=a.get("segment", "customer"), status=a.get("status"),
+                                               sort=a.get("sort", "name"), **_page_args()))
+
+
+@admin_bp.route("/admin/api/onboarding")
+@admin_required
+def admin_api_onboarding(current_user):
+    """In-service real accounts still onboarding (#152)."""
+    return jsonify(**_admin_ops_c.onboarding_list())
+
+
+@admin_bp.route("/admin/api/adoption")
+@admin_required
+def admin_api_adoption(current_user):
+    """Module adoption as owner use in the window, paying and trial apart (#71). ?days=28"""
+    return jsonify(**_admin_ops_c.adoption(days=request.args.get("days", 28, type=int)))
+
+
+@admin_bp.route("/admin/api/queues")
+@admin_required
+def admin_api_queues(current_user):
+    """Durable queues: counts by status, the oldest waiting, 24 h failures (#75)."""
+    return jsonify(**_admin_ops_c.queues())
+
+
+@admin_bp.route("/admin/api/data-sources")
+@admin_required
+def admin_api_data_sources(current_user):
+    """Every data source's sync state per restaurant, failing first (#46). ?segment=customer|internal|all"""
+    return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer")))
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/timeline")
+@admin_required
+def admin_api_client_timeline(restaurant_id, current_user):
+    """One client's history on one line (#54). ?types=email,sms,push,alert,
+    login,billing,admin,job,ai,webhook,note,activity &limit=100 &before=<iso>"""
+    types = [t.strip() for t in (request.args.get("types") or "").split(",") if t.strip()] or None
+    out = _admin_ops_c.client_timeline(restaurant_id, types=types, limit=request.args.get("limit", 100, type=int),
+                                       before=request.args.get("before"))
+    return jsonify(**out), (200 if out.get("ok") else 404)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/billing/live")
+@admin_required
+def admin_api_client_billing_live(restaurant_id, current_user):
+    """This one client's subscriptions straight from Stripe (#37) — the fleet
+    Billing tab reads the mirror instead."""
+    out = _admin_ops_c.billing_live(restaurant_id)
+    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Not found" else 502))
+
+
+@admin_bp.route("/admin/api/vendor-costs")
+@admin_required
+def admin_api_vendor_costs(current_user):
+    """Entered vendor costs and metered usage by month (#90). ?months=6"""
+    return jsonify(**_admin_ops_c.vendor_costs(months=request.args.get("months", 6, type=int)))
+
+
+@admin_bp.route("/admin/api/vendor-costs", methods=["POST"])
+@admin_required
+def admin_api_vendor_costs_set(current_user):
+    """Enter one vendor's cost for one month: {vendor, month: YYYY-MM,
+    amount_usd, note?}. Audited in admin_events."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Cavnar AI admins only."), 403
+    data = request.get_json(silent=True) or {}
+    out = _admin_ops_c.set_vendor_cost(data.get("vendor"), data.get("month"), data.get("amount_usd"),
+                                       data.get("note"), current_user.get("username") or "admin")
+    return jsonify(**out), (200 if out.get("ok") else 400)
+
+
+@admin_bp.route("/admin/api/business-metrics")
+@admin_required
+def admin_api_business_metrics(current_user):
+    """The daily business snapshots (#18), oldest first. ?days=90"""
+    return jsonify(**_admin_ops_c.business_metrics(days=request.args.get("days", 90, type=int)))
