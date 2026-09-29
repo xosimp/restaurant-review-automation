@@ -2688,6 +2688,11 @@ def admin_api_reauth(current_user):
 
 # ── an internal login's own two-factor (SECURITY-1) ─────────────────────────
 
+# two_fa_challenges.purpose for an internal login's enrolment code, per
+# channel ("admin-setup-email" / "admin-setup-sms").
+_ADMIN_SETUP_PURPOSE = "admin-setup-%s"
+
+
 def _masked_contacts(user):
     from auth import _mask_email, _mask_phone
     email = (user.get("email") or "").strip()
@@ -2734,13 +2739,16 @@ def admin_two_factor_send(current_user):
     conn = get_conn()
     try:
         recent = conn.execute(
-            "SELECT 1 FROM two_fa_challenges WHERE user_id=? AND purpose='setup' "
+            "SELECT 1 FROM two_fa_challenges WHERE user_id=? AND purpose LIKE 'admin-setup-%' "
             "AND created_at > datetime('now','-60 seconds') LIMIT 1", (current_user["id"],)).fetchone()
     finally:
         conn.close()
     if recent:
         return jsonify(ok=False, error="A code was just sent. Use that one, or wait a minute to send another."), 429
-    _pending, code = _auth_tf.issue_two_fa_challenge(current_user["restaurant_id"], current_user["id"], "setup")
+    # The challenge is bound to the channel it went by, so the confirm below
+    # can only switch on a channel this login proved it receives.
+    purpose = _ADMIN_SETUP_PURPOSE % dest["kind"]
+    _pending, code = _auth_tf.issue_two_fa_challenge(current_user["restaurant_id"], current_user["id"], purpose)
     try:
         sent = _auth_tf.send_two_fa_code(dest, _auth_tf._code_label(current_user, None), code)
     except Exception as e:
@@ -2749,7 +2757,7 @@ def admin_two_factor_send(current_user):
     if not sent:
         conn = get_conn()
         try:
-            conn.execute("DELETE FROM two_fa_challenges WHERE user_id=? AND purpose='setup'", (current_user["id"],))
+            conn.execute("DELETE FROM two_fa_challenges WHERE user_id=? AND purpose=?", (current_user["id"], purpose))
             conn.commit()
         finally:
             conn.close()
@@ -2768,13 +2776,13 @@ def admin_two_factor_verify(current_user):
     if _auth_tf.user_two_factor_enrolled(current_user):
         return jsonify(ok=False, error="Two-factor is already on for your login."), 409
     data = request.get_json(silent=True) or {}
+    method = "sms" if data.get("method") == "sms" else "email"
     result = _auth_tf.check_two_fa_code(current_user["restaurant_id"], current_user["id"],
-                                        (data.get("code") or "").strip(), purpose="setup")
+                                        (data.get("code") or "").strip(), purpose=_ADMIN_SETUP_PURPOSE % method)
     if result in ("wrong", "missing"):
         return jsonify(ok=False, error="That code isn't right. Try again."), 400
     if result == "expired":
         return jsonify(ok=False, error="That code expired. Send a new one."), 400
-    method = "sms" if data.get("method") == "sms" and (current_user.get("phone") or "").strip() else "email"
     conn = get_conn()
     try:
         conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method=? WHERE id=?", (method, current_user["id"]))
@@ -2819,6 +2827,36 @@ def admin_two_factor_backup_codes(current_user):
     _audit_admin_action(current_user, "admin_backup_codes_regenerated", target={"user_id": current_user["id"]},
                         summary=f"{current_user.get('username')} made new two-factor backup codes")
     return jsonify(ok=True, backup_codes=codes)
+
+
+@admin_bp.route("/admin/api/me/username", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_change_own_username(current_user):
+    """Move this admin login off a guessable sign-in name (SECURITY-12): the
+    seed's default is "will", and the sign-in lock is keyed on the name
+    typed. Safe now that the boot seed only runs when no admin exists at
+    all, whatever ADMIN_USERNAME says. Step-up; audited."""
+    import re as _re_un
+    data = request.get_json(silent=True) or {}
+    new = (data.get("username") or "").strip().lower()
+    if not _re_un.fullmatch(r"[a-z0-9._-]{3,30}", new):
+        return jsonify(ok=False, error="Username: 3–30 letters, numbers, dots, dashes or underscores."), 400
+    old = (current_user.get("username") or "").lower()
+    if new == old:
+        return jsonify(ok=True, username=new)
+    conn = get_conn()
+    try:
+        if conn.execute("SELECT 1 FROM users WHERE LOWER(username)=? AND id<>?", (new, current_user["id"])).fetchone():
+            return jsonify(ok=False, error="That username is taken."), 409
+        conn.execute("UPDATE users SET username=? WHERE id=?", (new, current_user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    _audit_admin_action(current_user, "admin_username_changed", target={"user_id": current_user["id"]},
+                        before={"username": old}, after={"username": new},
+                        summary=f"{old} changed their sign-in name to {new}")
+    return jsonify(ok=True, username=new)
 
 
 def _clear_user_two_factor(user_id):

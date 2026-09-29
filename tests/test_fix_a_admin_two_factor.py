@@ -278,6 +278,41 @@ def test_required_and_not_enrolled_goes_to_an_enrolment_page_that_works(app, db_
     assert _login(c2).status_code == 200 and c2.get_cookie("session_token") is None
 
 
+def test_enrolment_only_switches_on_the_channel_the_code_went_by(app, db_path, codes):
+    """A code emailed for enrolment cannot enrol text codes: the challenge is
+    bound to the channel it was sent on."""
+    _home, uid = _admin(db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE users SET phone='+15125550100' WHERE id=?", (uid,))
+    conn.commit()
+    conn.close()
+    c = _client(app)
+    _login(c)
+    assert c.post("/admin/two-factor/send", json={"method": "email"}, headers={"X-CSRF": CSRF}).status_code == 200
+    emailed = codes["codes"][-1]
+    r = c.post("/admin/two-factor/verify", json={"code": emailed, "method": "sms"}, headers={"X-CSRF": CSRF})
+    assert r.status_code == 400
+    ok = c.post("/admin/two-factor/verify", json={"code": emailed, "method": "email"}, headers={"X-CSRF": CSRF})
+    assert ok.status_code == 200
+    conn = models.get_conn(db_path)
+    assert conn.execute("SELECT two_fa_method FROM users WHERE id=?", (uid,)).fetchone()[0] == "email"
+    conn.close()
+
+
+def test_an_admin_can_move_off_the_default_username_with_a_recent_password(app, db_path, codes):
+    _home, uid = _admin(db_path)
+    c = _client(app)
+    _login(c)                                              # the password was just typed: step-up satisfied
+    r = c.post("/admin/api/me/username", json={"username": "ops-7f3"}, headers={"X-CSRF": CSRF})
+    assert r.status_code == 200 and r.get_json()["username"] == "ops-7f3"
+    c2 = _client(app)
+    assert _login(c2, "will").status_code == 200           # the old name no longer signs in (form re-rendered)
+    assert _login(c2, "ops-7f3").status_code == 302
+    # The seed does not re-arm under the old ADMIN_USERNAME.
+    assert auth.ensure_admin_login(db_path=db_path, env={"ADMIN_USERNAME": "will",
+                                                         "ADMIN_PASSWORD": ADMIN_PW})["action"] == "exists"
+
+
 def test_required_and_not_enrolled_is_held_on_client_routes_and_the_phone_too(app, db_path, codes, monkeypatch):
     """An admin session reaches client routes that name a restaurant_id;
     the gate there is the same one."""
