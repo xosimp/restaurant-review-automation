@@ -413,6 +413,10 @@ def test_the_scrub_empties_the_tables_the_doc_names():
                                                 "async_jobs"}
     schema = _read("DATABASE_SCHEMA.md")
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
+    # The backup email says what THIS run's scrub did, not a fixed sentence.
+    import scheduler
+    assert "offsite_backup.describe_scrub(scrubbed)" in inspect.getsource(scheduler._scrub_lines_html)
+    _says(SECURITY, "`user_backup_codes`", "`async_jobs`", "(`offsite_backup.describe_scrub`), not a fixed sentence")
 
 
 def test_the_documented_retention_table_is_the_registry():

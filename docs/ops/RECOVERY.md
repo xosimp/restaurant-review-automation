@@ -178,11 +178,13 @@ or `/admin` → Engineering → Overview → Backups, `GET /admin/api/backup`):
 - **The emailed copy** (to Will, when it fits in 25 MB) — the same
   encrypted file as an attachment.
 
-Both off-site copies are **scrubbed** (sessions, 2FA backup codes, trusted
-devices, device tokens, staff-portal links, the link-signing secrets in
-`app_secrets`, and every OAuth / POS / reservation / back-office credential,
-webhook secret and Stripe customer id — `DATABASE_SCHEMA.md` → *What leaves
-the server in a backup*) and **Fernet-encrypted** with
+Both off-site copies are **scrubbed** (sessions, 2FA backup codes — an
+internal login's own too — trusted devices, device tokens, staff-portal
+links, view-as sessions, admin job results (`async_jobs`), the link-signing
+secrets in `app_secrets`, and every OAuth / POS / reservation / back-office
+credential, webhook secret and Stripe customer id — `DATABASE_SCHEMA.md` →
+*What leaves the server in a backup*; the backup email lists what that
+night's scrub did) and **Fernet-encrypted** with
 `BACKUP_ENCRYPTION_KEY`, one token per 3 MB chunk, one per line.
 
 **Key escrow.** `BACKUP_ENCRYPTION_KEY` must be kept somewhere other than
