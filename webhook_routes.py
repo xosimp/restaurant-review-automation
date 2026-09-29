@@ -83,10 +83,6 @@ def _claim_docusign_event(envelope_id: str, status: str) -> bool:
         return True
 
 
-class _AlreadyOnboarded(Exception):
-    """The owner has signed in before; no welcome email or new password."""
-
-
 def _release_claim(table, column, key):
     """Undo a claim whose processing failed, so the provider's retry is
     processed rather than skipped as a duplicate. Only "database is locked"
@@ -307,7 +303,7 @@ def _apply_state(rids, status, pause_reason=_KEEP, paused_until=_KEEP, override_
         if not r:
             continue
         cur = (r.billing_status or "").lower()
-        lock = _m.pause_lock(r)
+        lock = _m.billing_hold(r)
         if (lock and not override_locks) or cur in skip_from:
             held.append(rid)
             continue
@@ -481,7 +477,7 @@ def pay_link_route(token, period):
         return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
     name = _esc_pay(r.name)
     status = (r.billing_status or "").lower()
-    if _m.pause_lock(r):
+    if _m.billing_hold(r):
         return page % ("Your account is on hold",
                        f"{name}'s account is paused while a billing question is sorted out. "
                        "Reply to Will at will@cavnar.ai and he'll help."), 200
@@ -861,11 +857,12 @@ def _on_checkout_completed(event, sess):
         return jsonify(ok=True, duplicate_subscription=True)
     if rid:
         r = get_restaurant(rid)
-        lock = _m.pause_lock(r)
+        lock = _m.billing_hold(r)
         updates = {}
         notes = []
         if lock:
-            notes.append(f"Access NOT turned on: the account is held for a {lock} until an admin lifts it.")
+            notes.append(f"Access NOT turned on: the account is held for a {lock} until an admin lifts it "
+                         "(console → Billing → Lift hold).")
         else:
             updates.update({"billing_status": "active", "pause_reason": None, "paused_until": None})
         stored = (getattr(r, "stripe_customer_id", "") or "").strip()

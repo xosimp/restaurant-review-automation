@@ -284,6 +284,19 @@ def test_lifting_a_dispute_hold_releases_the_group_back_to_what_stripe_says(db_p
     assert admin.post(f"/admin/api/billing/{a}/lift-hold", json={"note": "again"}).status_code == 409
 
 
+def test_lifting_a_hold_on_a_client_who_paid_again_restores_service(db_path, admin):
+    rid = _rid(db_path, billing_status="churned", pause_reason="dispute", stripe_customer_id="cus_2")
+    billing_jobs.upsert_subscription(rid, subscription_id="sub_2", facts={"status": "trialing"})
+    resp = admin.post(f"/admin/api/billing/{rid}/lift-hold", json={"note": "Reviewed; welcome back"})
+    assert resp.status_code == 200
+    r = get_restaurant(rid, db_path)
+    assert (r.billing_status, r.pause_reason) == ("active", None)
+    lone = _rid(db_path, name="Gone", billing_status="churned", pause_reason="refund")
+    admin.post(f"/admin/api/billing/{lone}/lift-hold", json={"note": "Refund was goodwill"})
+    r = get_restaurant(lone, db_path)
+    assert (r.billing_status, r.pause_reason) == ("churned", None)
+
+
 # ── the reads the console needs ─────────────────────────────────────────────
 
 def test_the_billing_detail_and_health_reads(db_path, admin):

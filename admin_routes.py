@@ -1198,7 +1198,7 @@ def resend_payment(restaurant_id, current_user):
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
-    lock = _mdl.pause_lock(restaurant)
+    lock = _mdl.billing_hold(restaurant)
     if lock:
         return jsonify(ok=False, error=f"This account is on hold ({lock}). Lift the hold before sending "
                                        "billing links."), 409
@@ -2704,7 +2704,7 @@ def _billing_detail(restaurant_id):
     return {
         "restaurant_id": restaurant_id, "name": r.name,
         "billing_status": r.billing_status, "pause_reason": r.pause_reason,
-        "pause_lock": _mdl.pause_lock(r), "paused_until": r.paused_until,
+        "pause_lock": _mdl.pause_lock(r), "hold": _mdl.billing_hold(r), "paused_until": r.paused_until,
         "converted_at": r.converted_at, "contract_status": r.contract_status,
         "contract_signed_at": r.contract_signed_at, "stripe_customer_id": r.stripe_customer_id,
         "modules": [k for k in _PLAN_MODULES if getattr(r, f"module_{k}", 0)],
@@ -3010,8 +3010,7 @@ def admin_api_billing_lift_hold(restaurant_id, current_user):
     r = get_restaurant(restaurant_id)
     if not r:
         return jsonify(ok=False, error="Restaurant not found"), 404
-    reason = _mdl.pause_lock(r) or ((r.pause_reason or "").lower() if (r.pause_reason or "").lower()
-                                     in _mdl.LOCKED_PAUSE_REASONS else None)
+    reason = _mdl.billing_hold(r)
     if not reason:
         return jsonify(ok=False, error="There is no hold on this account."), 409
     wanted = (data.get("status") or "").strip().lower() or None
@@ -3020,14 +3019,15 @@ def admin_api_billing_lift_hold(restaurant_id, current_user):
     lifted = []
     for rid in billing_jobs.billing_group_ids(restaurant_id):
         other = get_restaurant(rid)
-        if other is None:
-            continue
-        if (_mdl.pause_lock(other) or (other.pause_reason or "").lower()) != reason:
+        if other is None or _mdl.billing_hold(other) != reason:
             continue
         cur = (other.billing_status or "").lower()
         with _mdl.billing_context(source="admin", actor=current_user.get("username"),
                                   reason=f"{reason} hold lifted: {note}"):
-            if cur in ("churned", "canceled", "cancelled"):
+            if cur in ("churned", "canceled", "cancelled") and not billing_jobs.billed_by(rid):
+                # Churned with nothing paying for it: the hold goes, the
+                # churn stays. A client who has paid again (a live
+                # subscription covers it) is restored below.
                 update_restaurant(rid, {"pause_reason": None})
             else:
                 update_restaurant(rid, {"billing_status": wanted or _restored_status(rid),

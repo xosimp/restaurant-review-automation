@@ -426,6 +426,24 @@ def test_stripe_saying_active_does_not_lift_a_dispute_hold(db_path, hook):
     assert (r.billing_status, r.pause_reason) == ("paused", "dispute")
 
 
+def test_a_hold_survives_churn_and_meets_the_returning_payment(db_path, hook, _world):
+    """A client who disputed a charge and then cancelled keeps the hold: a
+    new checkout or a paid invoice does not turn the account back on."""
+    rid = _rid(db_path, billing_status="active", stripe_customer_id="cus_1")
+    billing_jobs.upsert_subscription(rid, subscription_id="sub_1", facts={"status": "active"})
+    hook(_evt("e_d", "charge.dispute.created", {"id": "dp", "customer": "cus_1", "amount": 1}, created=1000))
+    hook(_evt("e_x", "customer.subscription.deleted", _sub("sub_1", rid=rid, status="canceled"), created=1001))
+    r = get_restaurant(rid, db_path)
+    assert (r.billing_status, r.pause_reason) == ("churned", "dispute")
+    assert models.pause_lock(r) is None and models.billing_hold(r) == "dispute"
+    hook(_evt("e_co", "checkout.session.completed", {"id": "cs2", "customer": "cus_2", "subscription": "sub_2",
+                                                     "metadata": {"restaurant_id": str(rid)}}, created=2000))
+    hook(_evt("e_p", "invoice.paid", {"id": "in_2", "customer": "cus_2", "subscription": "sub_2",
+                                      "amount_paid": 34900, "billing_reason": "subscription_create"}, created=2001))
+    assert get_restaurant(rid, db_path).billing_status == "churned"
+    assert [a for a in _world if "Lift hold" in a[1]]
+
+
 def test_a_self_serve_pause_is_still_the_owners_to_end(db_path, hook):
     rid = _rid(db_path, billing_status="active", stripe_customer_id="cus_1")
     billing_jobs.upsert_subscription(rid, subscription_id="sub_1", facts={"status": "active"})

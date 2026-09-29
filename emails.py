@@ -3801,7 +3801,7 @@ def send_dunning_email(to_email: str, restaurant_name: str, amount, attempt: int
             + _billing_p(_billing_link("Or update the card on file", card_url), space=18)
             + _billing_p("Both open Stripe's secure page. Questions? Just reply — I read every one.",
                          muted=True, space=0))
-    return deliver(email_type="billing_dunning", restaurant_id=restaurant_id, payload={
+    return deliver(email_type="send_dunning_email", restaurant_id=restaurant_id, payload={
         "from": sender("will"), "to": [to_email],
         "subject": f"{title} — {restaurant_name}",
         "preheader": "Your dashboard keeps running. Fixing it takes a minute.",
@@ -3823,7 +3823,7 @@ def send_card_update_email(to_email: str, restaurant_name: str, card_url: str, p
             + _billing_p(f"Here's a secure link to update the card Cavnar AI bills for <strong>{name}</strong>.")
             + action
             + _billing_p("The link opens Stripe's secure billing page. Questions? Just reply.", muted=True, space=0))
-    return deliver(email_type="billing_card_update", restaurant_id=restaurant_id, payload={
+    return deliver(email_type="send_card_update_email", restaurant_id=restaurant_id, payload={
         "from": sender("will"), "to": [to_email],
         "subject": f"Update your card for Cavnar AI — {restaurant_name}",
         "preheader": "A secure link to the card on file.",
@@ -3851,7 +3851,7 @@ def send_payment_receipt_email(to_email: str, restaurant_name: str, amount, paid
             + table
             + (_billing_p(_billing_link("View the receipt", receipt_url), space=16) if receipt_url else "")
             + _billing_p("Questions about a charge? Reply to this email.", muted=True, space=0))
-    return deliver(email_type="payment_receipt", restaurant_id=restaurant_id, payload={
+    return deliver(email_type="send_payment_receipt_email", restaurant_id=restaurant_id, payload={
         "from": sender("client"), "to": [to_email],
         "subject": f"Payment received — {restaurant_name}",
         "preheader": "Your receipt from Cavnar AI.",
@@ -3874,7 +3874,7 @@ def send_pay_reminder_email(to_email: str, restaurant_name: str, module_count: i
             + _billing_p(_billing_link(f"Or pay annually · {_money(plan['annual'])}/yr (two months free)",
                                        annual_url), space=18)
             + _billing_p("Stuck on anything? Reply and I'll sort it out with you.", muted=True, space=0))
-    return deliver(email_type="billing_pay_reminder", restaurant_id=restaurant_id, payload={
+    return deliver(email_type="send_pay_reminder_email", restaurant_id=restaurant_id, payload={
         "from": sender("will"), "to": [to_email],
         "subject": f"Your Cavnar AI setup link — {restaurant_name}",
         "preheader": "Your agreement is signed — one step left.",
@@ -3923,7 +3923,7 @@ def send_signed_welcome_email(to_email: str, restaurant_name: str, username: str
             + (_billing_p(f"Your dashboard includes {esc(modules_text)}, set up for {esc(restaurant_name)}.")
                if modules_text else "")
             + _billing_p("Any questions, just reply to this email. I check it daily.", space=0))
-    return deliver(email_type="welcome_set_password", restaurant_id=restaurant_id, payload={
+    return deliver(email_type="send_signed_welcome_email", restaurant_id=restaurant_id, payload={
         "from": sender("will"), "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is ready — {restaurant_name}",
         "preheader": "Set your password and you're in.",

@@ -7441,6 +7441,20 @@ def pause_lock(restaurant):
     return None if get("paused_until") else "admin"
 
 
+def billing_hold(restaurant):
+    """pause_lock, and also a hold recorded on an account that has since
+    churned — a client who disputed a charge and then cancelled keeps the
+    hold, so a new checkout or a paid invoice meets it instead of quietly
+    turning the account back on. Only an admin lifts either."""
+    lock = pause_lock(restaurant)
+    if lock or restaurant is None:
+        return lock
+    get = (restaurant.get if isinstance(restaurant, dict)
+           else (lambda k, d=None: getattr(restaurant, k, d)))
+    reason = (get("pause_reason") or "").strip().lower()
+    return reason if reason in LOCKED_PAUSE_REASONS else None
+
+
 # The restaurant fields whose every change is kept in billing_status_history
 # (#11), written inside update_restaurant in the same transaction.
 BILLING_HISTORY_FIELDS = ("billing_status", "pause_reason", "paused_until", "contract_status",

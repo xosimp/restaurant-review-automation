@@ -48,7 +48,7 @@ def test_dunning_changes_with_the_attempt(sent, attempt, title, phrase):
     (s,) = sent
     html = s["payload"]["html"]
     assert title.lower() in s["payload"]["subject"].lower() and phrase in html
-    assert s["restaurant_id"] == 7 and s["email_type"] == "billing_dunning"
+    assert s["restaurant_id"] == 7 and s["email_type"] == "send_dunning_email"
     assert "Joe&#x27;s &lt;Pizza&gt;" in html and "<Pizza>" not in html          # owner text escaped
     assert "https://dash/pay/1.s/invoice" in html and "https://dash/pay/1.s/card" in html
     assert "$349.00" in html and "10/3/26" in html and "Hi Joe" in html
@@ -68,7 +68,7 @@ def test_the_welcome_has_a_set_password_link_and_no_password(sent):
     html = sent[0]["payload"]["html"]
     assert "Set your password" in html and "https://dash/reset-password/tok" in html
     assert "Temporary password" not in html and "72 hours" in html and "Forgot password" in html
-    assert sent[0]["restaurant_id"] == 3 and sent[0]["email_type"] == "welcome_set_password"
+    assert sent[0]["restaurant_id"] == 3 and sent[0]["email_type"] == "send_signed_welcome_email"
     assert not _brand_only(html) and _no_bare_cavnar(html)
 
 
@@ -90,6 +90,6 @@ def test_the_receipt_and_the_card_update_email(sent):
                                   restaurant_id=5)
     rec, card = sent
     assert "$750.00" in rec["payload"]["html"] and "9/28/26" in rec["payload"]["html"]
-    assert rec["email_type"] == "payment_receipt" and rec["restaurant_id"] == 5
+    assert rec["email_type"] == "send_payment_receipt_email" and rec["restaurant_id"] == 5
     assert "https://c" in card["payload"]["html"] and "$349.00" in card["payload"]["html"]
     assert not _brand_only(rec["payload"]["html"] + card["payload"]["html"])
