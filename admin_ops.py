@@ -963,7 +963,10 @@ def client_detail(rid):
     ai_by_action = _rows_dict(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY action, model ORDER BY cost DESC", (rid, month))
     ai_recent = _rows_dict(conn, "SELECT action, model, input_tokens, output_tokens, cost_usd, created_at, COALESCE(status,'ok') AS status, error FROM ai_usage WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
     ai_failed = _rows_dict(conn, "SELECT action, model, error, created_at FROM ai_usage WHERE restaurant_id=? AND COALESCE(status,'ok')='error' ORDER BY id DESC LIMIT 20", (rid,))
-    events = _rows_dict(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
+    # Not the per-request 'audit' rows: they carry the restaurant id now and
+    # would bury this client's own events (#53) — /admin/api/client/<id>/audit
+    # is their view.
+    events = _rows_dict(conn, "SELECT id, source, event_type, amount, summary, created_at FROM admin_events WHERE restaurant_id=? AND source <> 'audit' ORDER BY id DESC LIMIT 40", (rid,))
     ai_daily = _rows_dict(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY day ORDER BY day", (rid, month))
     emails = _rows_dict(conn, "SELECT email_type, to_email, subject, sent_at, status, error FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 60", (rid,))
     pushes = _rows_dict(conn, "SELECT alert_type, status, ok, attempts, error, created_at FROM push_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 40", (rid,))
@@ -1212,7 +1215,10 @@ def billing():
     rows.sort(key=lambda x: ({"past_due": 0, "churned": 1, "canceled": 1, "trial": 2, "active": 3, "internal": 4, "paused": 1}.get(x["status"], 2), x["restaurant"].lower()))
     try:
         import admin_events
-        events = admin_events.recent(limit=120)
+        # Payment and contract history only: every admin write is an
+        # admin_events row too, and unfiltered they pushed the Stripe and
+        # DocuSign events off this list (#53).
+        events = admin_events.recent(limit=120, sources=("stripe", "docusign"))
     except Exception:
         events = []
     return {"ok": True, "rows": rows, "events": events, "stripe_live": bool(key), "stripe_error": live.get("_error"),
@@ -1420,7 +1426,7 @@ def activity(limit=60, d=None):
         ev.append({"at": p["created_at"], "restaurant_id": p["restaurant_id"], "restaurant": p["name"], "kind": "push", "label": f"Push failed · {p['alert_type']}", "tone": "bad", "detail": p["error"]})
     for j in _rows_dict(conn, "SELECT job, error, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC LIMIT 40", (since,)):
         ev.append({"at": j["created_at"], "restaurant_id": None, "restaurant": "Platform", "kind": "job", "label": f"Job failed · {j['job']}", "tone": "bad", "detail": (j["error"] or "")[:140]})
-    for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? ORDER BY e.id DESC LIMIT 40", (since,)):
+    for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? AND e.source <> 'audit' ORDER BY e.id DESC LIMIT 40", (since,)):
         bad = any(x in e["event_type"] for x in ("failed", "deleted", "canceled", "past_due"))
         ev.append({"at": e["created_at"], "restaurant_id": e["restaurant_id"], "restaurant": e["name"] or "Unmatched customer", "kind": e["source"],
                    "label": f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}", "tone": "bad" if bad else ("good" if e["event_type"] in ("invoice.paid", "contract.signed") else "neutral")})

@@ -3051,6 +3051,13 @@ def init_db(db_path: str = DB_PATH):
     # boot, not on each claim (DATA-6).
     import ops as _ops
     _ops.init_ops(db_path)
+    # The admin audit trail's columns and indexes, refused attempts, support
+    # notes and bug reports (admin_events), and the offboarding checklist
+    # (offboarding) — fix round B2.
+    import admin_events as _admin_events
+    _admin_events.init_admin_events(db_path)
+    import offboarding as _offboarding
+    _offboarding.init_offboarding(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3125,6 +3132,17 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     conn.commit()
     rid = cur.lastrowid
     conn.close()
+    # A restaurant created INTO a location group joins that group's
+    # organization, exactly as a group typed in later does (update_restaurant
+    # → _sync_restaurant_organization). create_restaurant never set
+    # organization_id, so a location made with its group — New client, Add
+    # location, a checkout's second location — was grouped by two strings
+    # agreeing until the next boot's backfill (LIFECYCLE-10, #42).
+    if (r.location_group or "").strip():
+        try:
+            _sync_restaurant_organization(rid, db_path=db_path)
+        except Exception as e:
+            print(f"[create_restaurant] organization not set for {rid}: {e}")
     return rid
 
 
@@ -3578,17 +3596,23 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return now
 
 
+# Tables delete_restaurant leaves alone although they carry a restaurant_id:
+# the admin audit trail (admin_events — Stripe, DocuSign and admin actions),
+# the offboarding checklist that led to the delete, and the billing status
+# history. Deleting a demo used to erase its own audit rows (#126).
+_KEEP_ON_RESTAURANT_DELETE = frozenset({"admin_events", "offboarding_steps", "billing_status_history"})
+
+
 def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Remove a restaurant and every row that belongs to it, in one
     transaction. Returns {table: rows_deleted}.
 
     There was no deletion routine: deletion_requested_at was a flag nothing
     acted on, and DELETE FROM restaurants failed on the ~70 child tables
-    that reference it (DATA-61). This is the routine. It is deliberately
-    NOT called by anything yet — when to run it after a request (the 30-day
-    notice request_account_deletion describes), who confirms it, and what
-    happens to Stripe and to the nightly snapshots that still hold the rows
-    are decisions for the operator, not for a background job to make.
+    that reference it (DATA-61). This is the routine. It is never run by a
+    background job: only by an admin, through the demo delete
+    (admin_routes.admin_api_delete_demo) or the offboarding checklist
+    (offboarding.delete_restaurant_now), both behind the typed name.
 
     What goes: every row in every table with a restaurant_id column, the
     restaurants row, and then any row left pointing (by foreign key) at a
@@ -3597,6 +3621,10 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     who still has an active membership elsewhere is re-homed there rather
     than deleted. Foreign-key violations that existed before the call are
     not touched.
+
+    What stays: the tables in _KEEP_ON_RESTAURANT_DELETE — the audit trail
+    and the offboarding record. The account is gone; the record of what was
+    done to it (and that it was deleted, by whom) must not go with it (#126).
     """
     rid = int(restaurant_id)
     conn = get_conn(db_path)
@@ -3615,6 +3643,8 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 if other is not None:
                     conn.execute("UPDATE users SET restaurant_id=? WHERE id=?", (other, uid))
         for t in tables:
+            if t in _KEEP_ON_RESTAURANT_DELETE:
+                continue
             cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}
             if "restaurant_id" in cols:
                 n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
@@ -3625,7 +3655,8 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             deleted["restaurants"] = n
         for _ in range(20):
             orphans = [v for v in conn.execute("PRAGMA foreign_key_check")
-                       if tuple(v) not in had_orphans and v[1] is not None]
+                       if tuple(v) not in had_orphans and v[1] is not None
+                       and v[0] not in _KEEP_ON_RESTAURANT_DELETE]
             if not orphans:
                 break
             for table, rowid, _parent, _fk in orphans:

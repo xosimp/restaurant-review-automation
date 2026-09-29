@@ -25,6 +25,12 @@ client_bp = Blueprint('client', __name__)
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(client_bp)
+# The review and data imports an admin runs FOR a restaurant land on these
+# client routes; when the actor is a console login they are admin writes and
+# go in the audit trail like /admin's (#126). An owner's own import is not.
+import admin_events as _admin_events
+_admin_events.register_audit(client_bp, endpoints={"client.import_tripadvisor", "client.client_upload_data"},
+                             admin_only=True)
 
 # Exception text handed to a client, with credentials stripped — a
 # requests error carries the failing URL, and a Places URL carries key=.
@@ -4864,12 +4870,7 @@ def _do_request_account_deletion(rid, current_user=None):
     already_requested = bool(get_deletion_requested_at(rid))
     requested_at = request_account_deletion(rid)
     if not already_requested:
-        try:
-            from emails import send_account_deletion_request_email
-            send_account_deletion_request_email(restaurant.name, restaurant.owner_name,
-                                                (current_user or {}).get("email"), requested_at)
-        except Exception as e:
-            print(f"Account deletion notice email failed: {e}")
+        _notify_deletion_request(rid, restaurant, current_user, requested_at)
         try:
             log_account_event(rid, "deletion_requested", current_user)
         except Exception:
@@ -4877,6 +4878,51 @@ def _do_request_account_deletion(rid, current_user=None):
     return {"ok": True, "requested_at": requested_at,
             # The date to show, on the restaurant's clock (M/D/YY).
             "requested_on": _stamp_local_mdy(restaurant, requested_at)}, 200
+
+
+def _notify_deletion_request(rid, restaurant, current_user, requested_at):
+    """Record a new close-account request in the console's event trail and
+    email the operator, checking that the email went (#34).
+
+    The request itself is the stored deletion_requested_at — the console
+    raises it as an issue with its 30-day due date whether or not this
+    email arrives. The email used to be the ONLY trace, and its failure was
+    a print(); a failed or skipped notice now reaches the failure digest
+    through ops.capture. Nothing is emailed from a local backend
+    (scheduler.scheduling_allowed): its copy of the database is not where
+    real requests live."""
+    try:
+        import admin_events
+        admin_events.record("account", "deletion.requested", restaurant_id=rid,
+                            email=(current_user or {}).get("email"),
+                            summary=f"{(current_user or {}).get('username') or 'The owner'} asked to close "
+                                    f"{restaurant.name} (due in 30 days)")
+    except Exception:
+        pass
+    try:
+        import scheduler as _sched_del
+        may_send = _sched_del.scheduling_allowed()
+    except Exception:
+        may_send = False
+    if not may_send:
+        print(f"[deletion-request] notice for restaurant {rid} not emailed: not a sending server")
+        return
+    error = None
+    try:
+        from emails import send_account_deletion_request_email
+        result = send_account_deletion_request_email(restaurant.name, restaurant.owner_name,
+                                                     (current_user or {}).get("email"), requested_at)
+        if not getattr(result, "ok", result):
+            error = getattr(result, "error", None) or "the email was not sent"
+    except Exception as e:
+        error = str(e)
+    if error:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"account deletion notice not delivered: {error}"),
+                        job="account_deletion_notice", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
 
 
 @client_bp.route("/api/account/request-deletion", methods=["POST"])

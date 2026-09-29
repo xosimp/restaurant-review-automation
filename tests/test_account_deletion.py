@@ -89,6 +89,9 @@ def test_route_requires_authentication(client):
 
 
 def test_first_request_notifies_will_logs_the_event_and_returns_a_timestamp(client, db_path, monkeypatch):
+    # The notice is emailed only from a sending server (as on Railway); a
+    # local backend records the request and emails nothing (fix round B2, #9).
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     sent = {}
@@ -107,6 +110,7 @@ def test_first_request_notifies_will_logs_the_event_and_returns_a_timestamp(clie
 
 
 def test_second_request_does_not_send_a_second_email_or_move_the_timestamp(client, db_path, monkeypatch):
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     calls = []
@@ -120,6 +124,7 @@ def test_second_request_does_not_send_a_second_email_or_move_the_timestamp(clien
 def test_a_reader_failure_still_records_the_request(client, db_path, monkeypatch):
     """The notice email is best-effort — if Resend is down, the owner's
     request still has to be recorded and confirmed, not silently lost."""
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     def _boom(*a):
