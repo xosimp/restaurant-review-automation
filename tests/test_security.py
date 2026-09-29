@@ -219,15 +219,22 @@ def test_support_reads_and_views_as_but_cannot_write(monkeypatch):
 
 
 def test_an_admin_without_two_factor_is_held_at_the_door(monkeypatch, db_path):
+    """The gate reads the LOGIN's own second factor and whether THIS session
+    passed it (fix round A, SECURITY-1). It used to read the flag on the
+    restaurant the admin is homed on — set here, it no longer opens the
+    door. The sign-in paths themselves are covered through /login in
+    tests/test_fix_a_admin_two_factor.py."""
     monkeypatch.setenv("ADMIN_REQUIRE_2FA", "1")
     rid = _rid(db_path)
-    c = _admin_app(monkeypatch, {"id": 1, "is_admin": 1, "role": "client", "restaurant_id": rid, "username": "will"})
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)       # the home row's flag: irrelevant now
+    admin = {"id": 1, "is_admin": 1, "role": "client", "restaurant_id": rid, "username": "will"}
+    c = _admin_app(monkeypatch, admin)
     r = c.get("/admin/thing")
-    assert r.status_code == 403 and "Two-factor first" in r.get_data(as_text=True)
-    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    assert r.status_code == 302 and "/admin/two-factor" in r.headers["Location"]   # a page he can reach
+    c = _admin_app(monkeypatch, dict(admin, two_fa_enabled=1, two_factor_at="2026-09-29 10:00:00"))
     assert c.get("/admin/thing").status_code == 200
     monkeypatch.delenv("ADMIN_REQUIRE_2FA", raising=False)               # opt-in: unset means off
-    update_restaurant(rid, {"two_fa_enabled": 0}, db_path=db_path)
+    c = _admin_app(monkeypatch, admin)
     assert c.get("/admin/thing").status_code == 200
 
 

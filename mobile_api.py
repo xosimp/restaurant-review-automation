@@ -80,6 +80,11 @@ def _bearer_token():
 
 def _send_login_notification(user, ip, user_agent):
     try:
+        # Never for an internal login: the admin's home row is not his
+        # restaurant (auth_routes._send_restaurant_login_alert, the web twin).
+        from auth import is_internal_login as _iil_ln
+        if _iil_ln(user):
+            return
         rid = user.get("restaurant_id")
         rest = get_restaurant(rid) if rid else None
         if rest and getattr(rest, "login_notify", 0) and rest.owner_email:
@@ -191,24 +196,33 @@ def mobile_apple_signin():
             "Your password needs to be reset before you can sign in again. "
             "Use 'Forgot password' to set a new one."
         )), 403
+    # Admins are no longer exempt (SECURITY-1): an internal login answers
+    # from its own second factor, everyone else from their restaurant's.
+    from auth import is_internal_login as _iil_apple, login_needs_second_factor as _lnsf_apple
+    needs = True
+    device_ok = False
     try:
-        rest_apple = get_restaurant(user.get("restaurant_id")) if not user.get("is_admin") else None
-        device_ok = False
-        if rest_apple and rest_apple.two_fa_enabled and device_id:
+        rest_apple = (get_restaurant(user.get("restaurant_id"))
+                      if user.get("restaurant_id") and not _iil_apple(user) else None)
+        needs = _lnsf_apple(user, rest_apple)
+        if needs and device_id:
             from auth import remembered_device_ok as _tdo_apple
             device_ok = _tdo_apple(user, request.headers.get("X-Device-Token", ""))
-        needs_2fa = bool(rest_apple and rest_apple.two_fa_enabled and not device_ok)
+        needs_2fa = bool(needs and not device_ok)
     except Exception:
         needs_2fa = True   # fail closed rather than skipping a second factor
     if needs_2fa:
         return jsonify(ok=False, error=(
-            "Two-factor authentication is on for this restaurant. "
+            "Two-factor authentication is on for this login. "
             "Sign in with your username and password to get your code."
         )), 403
 
     ip = _get_client_ip()
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
+    # No password typed here, so no re-auth stamp; a remembered device is
+    # this sign-in's second factor when one applies.
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id,
+                           restaurant_id=user["restaurant_id"], second_factor=bool(needs and device_ok))
     update_last_login(user["id"])
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, token=token, user=_public_user(user))
@@ -242,29 +256,46 @@ def mobile_login():
                        password_reset_required=True), 403
 
     rid = user.get("restaurant_id")
-    rest = get_restaurant(rid) if rid and not user.get("is_admin") else None
+    # Admins are no longer exempt (SECURITY-1). An internal login answers
+    # from its own users row (no lookup: an admin without 2FA still signs
+    # in); for everyone else a failure to read the switch fails CLOSED.
+    from auth import is_internal_login as _iil_ml, login_needs_second_factor as _lnsf_ml
+    try:
+        rest = get_restaurant(rid) if rid else None
+    except Exception:
+        rest = None
+    if _iil_ml(user):
+        two_fa_on = _lnsf_ml(user, rest)
+    else:
+        try:
+            two_fa_on = _lnsf_ml(user, rest) if rest is not None else True
+        except Exception:
+            two_fa_on = True
     # iOS persists the "remember this device" value in Keychain (rather than
     # the web's device_token_<rid> cookie) and resends it here.
     device_token = (data.get("device_token") or "").strip()
-    two_fa_on = bool(rest and rest.two_fa_enabled and not user.get("is_admin"))
-    from auth import remembered_device_ok
-    device_ok = bool(device_token) and remembered_device_ok(user, device_token)
+    device_ok = False
+    if two_fa_on:
+        try:
+            from auth import remembered_device_ok
+            device_ok = bool(device_token) and remembered_device_ok(user, device_token)
+        except Exception:
+            device_ok = False
 
     if two_fa_on and not device_ok:
         # This sign-in's own challenge — a second login at the restaurant no
         # longer overwrites it (SEC-20). See auth.issue_two_fa_challenge.
         # To this login's own email or phone, never the owner's (SEC-20).
-        from auth import (issue_two_fa_challenge, two_fa_destination, send_two_fa_code,
-                          NO_TWO_FA_DESTINATION)
+        from auth import (issue_two_fa_challenge, two_fa_destination, deliver_two_fa_code,
+                          undelivered_code_message, NO_TWO_FA_DESTINATION)
         dest = two_fa_destination(user, rest)
         if not dest:
             return jsonify(ok=False, error=NO_TWO_FA_DESTINATION), 403
         pending, code = issue_two_fa_challenge(rid, user["id"], "login")
-        try:
-            send_two_fa_code(dest, rest, code)
-        except Exception as e:
-            print(f"[2fa] mobile login code send failed for user {user['id']}: {e}")
-        masked = dest["masked"]
+        # What actually happened (COMMS-13): a text that could not go falls
+        # back to the login's email; a code that went nowhere says so.
+        sent = deliver_two_fa_code(user, rest, dest, code)
+        masked = sent["masked"] or dest["masked"]
         # "rid:uid:secret" — the user_id that actually passed the password step
         # is carried through, so verify-2fa issues a session for THAT login
         # rather than an unordered "LIMIT 1" over the restaurant's users. See
@@ -272,12 +303,17 @@ def mobile_login():
         from auth import make_pending_token
         pending_encoded = make_pending_token(rid, user["id"], pending)
         # channel says where the code went ("sms" | "email") so the app can
-        # say "We texted" or "We emailed" as the web page does.
+        # say "We texted" or "We emailed" as the web page does; code_sent
+        # False (channel None) when nothing went, with the sentence to show.
         return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked,
-                       channel=dest["kind"])
+                       channel=sent["kind"] if sent["sent"] else None, code_sent=bool(sent["sent"]),
+                       fell_back=bool(sent["fell_back"]),
+                       delivery_error=None if sent["sent"] else undelivered_code_message(sent))
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id,
+                           restaurant_id=user["restaurant_id"], second_factor=bool(two_fa_on and device_ok),
+                           password_verified_at=True)
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, requires_2fa=False, token=token, user=_public_user(user))
 
@@ -489,6 +525,12 @@ def mobile_register():
         return jsonify(ok=False, error="Username must be 3–30 characters — letters, numbers, dots, dashes, or underscores."), 400
     if len(password) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters."), 400
+    # The shared policy (length and the breach check) before anything is
+    # created — create_user enforces it too (SECURITY-9).
+    from auth import password_policy_error
+    _pw_err = password_policy_error(password)
+    if _pw_err:
+        return jsonify(ok=False, error=_pw_err), 400
 
     conn = get_conn()
     existing = conn.execute(
@@ -589,15 +631,20 @@ def mobile_verify_2fa():
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
-        # scenario recovery codes exist for).
-        from models import verify_and_consume_backup_code
-        if not verify_and_consume_backup_code(rid, code_entered):
+        # scenario recovery codes exist for). The login's own codes for an
+        # internal login, the restaurant's for everyone else.
+        from auth import get_user_by_id as _gubi_bc, verify_backup_code_for
+        _pending_user = _gubi_bc(pending_user_id)
+        if not (_pending_user and verify_backup_code_for(_pending_user, rid, code_entered)):
             _record_failed_attempt("2fa:" + ip)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
     elif otp_result != "ok":
         return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
+    # When the password step happened, for the session's re-auth stamp.
+    from auth import two_fa_challenge_started_at
+    pw_at = two_fa_challenge_started_at(rid, pending_user_id, pending_secret)
     end_two_fa_challenge(rid, pending_user_id, pending_secret)
     # The login that passed the password step, not an arbitrary active user of
     # this restaurant. Re-checked against rid so a tampered token can't name
@@ -611,7 +658,10 @@ def mobile_verify_2fa():
                        error="This login needs a new password before it can sign in."), 403
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
+    # The session records that it passed the second factor (SECURITY-1).
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id,
+                           restaurant_id=user["restaurant_id"], second_factor=True,
+                           password_verified_at=pw_at or True)
     _send_login_notification(user, ip, ua)
 
     device_token = None
@@ -5145,6 +5195,10 @@ def mobile_ai_visibility(current_user):
 # the same web OAuth URL in a system browser rather than reimplement OAuth.
 
 def _session_label(session):
+    if session.get("device_type") == "admin-view-as":
+        # Cavnar AI support looking at the account, not one of the owner's
+        # own devices (the web list says the same — SECURITY-3).
+        return "Cavnar AI support (view-as)"
     if session.get("device_type") == "ios":
         return "iPhone (Cavnar AI app)"
     ua = session.get("user_agent") or ""
@@ -5720,7 +5774,7 @@ def mobile_disconnect_google(current_user):
 @mobile_bp.route("/account/2fa/send-test", methods=["POST"])
 @mobile_login_required
 def mobile_send_2fa_test(current_user):
-    denied = _require_account_holder(current_user)
+    denied = _require_two_fa_holder(current_user)
     if denied:
         return denied
     import random as _random
@@ -5783,7 +5837,7 @@ def mobile_send_2fa_test(current_user):
 @mobile_bp.route("/account/2fa/verify", methods=["POST"])
 @mobile_login_required
 def mobile_verify_2fa_setup(current_user):
-    denied = _require_account_holder(current_user)
+    denied = _require_two_fa_holder(current_user)
     if denied:
         return denied
     rid = current_user["restaurant_id"]
@@ -5813,10 +5867,23 @@ def _require_account_holder(current_user):
     return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
 
 
+def _require_two_fa_holder(current_user):
+    """The restaurant's two-factor switch: the account holder's, and never an
+    internal login's — an admin's own second factor lives on his users row
+    (/admin/two-factor), and this switch would flip whatever restaurant he
+    is homed on (SECURITY-1). The web twin is
+    auth_routes._restaurant_two_fa_refusal."""
+    from auth import is_internal_login
+    if is_internal_login(current_user):
+        return jsonify(ok=False, error="Your own two-factor is set up at /admin/two-factor on the web. "
+                                       "This switch is the restaurant's."), 403
+    return _require_account_holder(current_user)
+
+
 @mobile_bp.route("/account/2fa/disable", methods=["POST"])
 @mobile_login_required
 def mobile_disable_2fa(current_user):
-    denied = _require_account_holder(current_user)
+    denied = _require_two_fa_holder(current_user)
     if denied:
         return denied
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 0})
@@ -5836,7 +5903,7 @@ def mobile_backup_codes_status(current_user):
 def mobile_regenerate_backup_codes(current_user):
     """Invalidates every previously-issued code and mints a fresh set —
     shown once here, same as at initial 2FA setup."""
-    denied = _require_account_holder(current_user)
+    denied = _require_two_fa_holder(current_user)
     if denied:
         return denied
     from models import generate_backup_codes

@@ -267,10 +267,18 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
 def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
     """The SMS side of 2FA delivery — a client can choose email or text
     when they enable two-factor (see mobile_api.py's
-    account/2fa/send-test and .../verify). Plain send_sms under the hood;
-    exists mainly so the 6 call sites that send a 2FA code don't each
-    hand-roll their own message copy."""
-    return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact will@cavnar.ai.")
+    account/2fa/send-test and .../verify). Exists so the call sites that
+    send a 2FA code don't each hand-roll their own message copy.
+
+    On the verification-code ("otp") messaging service, never the owner
+    alert one (COMMS-13): a Messaging Service is one A2P campaign, and a
+    STOP replied to an alert text could block the sign-in codes riding the
+    same service. With TWILIO_OTP_MESSAGING_SERVICE_SID unset, send_sms
+    sends from the plain number rather than borrowing the alert campaign.
+    A send that fails (or a number that has STOPped) falls back to email in
+    auth.deliver_two_fa_code."""
+    return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact will@cavnar.ai.",
+                    use_case="otp")
 
 
 def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str = DB_PATH) -> list:
