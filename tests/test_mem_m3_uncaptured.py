@@ -83,6 +83,30 @@ def test_whoever_took_a_cover_when_asked_is_suggested_first():
     assert fits[0]["covers_taken"] == 1
 
 
+def test_the_managers_word_on_a_cover_stands_over_the_punches():
+    rid = _rid()
+    _history(rid, [("Ana B.", "Server"), ("Zed Q.", "Server")])
+    conn = models.get_conn()
+    iid = conn.execute("INSERT INTO ops_issues (restaurant_id, kind, source_key, title, status, meta_json) VALUES "
+                       "(?,?,?,?,?,?)", (rid, "coverage", "coverage:2026-09-20:tom b.", "x", "resolved",
+                                         '{"missing": "Tom B.", "asked": [{"name": "Zed Q."}]}')).lastrowid
+    conn.commit()
+    conn.close()
+    # No punch from Zed that day: the job infers he said no.
+    assert people.record_cover_signals(rid, today=date(2026, 9, 29), days=30) == 1
+    assert people.cover_record(rid, days=3650)[staff_settings.name_key("Zed Q.")] == {"accepted": 0, "declined": 1}
+    # The manager says he came in (the POS put his punch on another job code).
+    people.answer_cover(rid, "Zed Q.", iid, True, "2026-09-20", user={"id": 5, "role": "manager"})
+    assert people.cover_record(rid, days=3650)[staff_settings.name_key("Zed Q.")] == {"accepted": 1, "declined": 0}
+    people.record_cover_signals(rid, today=date(2026, 9, 29), days=30)      # the job runs again
+    assert people.cover_record(rid, days=3650)[staff_settings.name_key("Zed Q.")] == {"accepted": 1, "declined": 0}
+    conn = models.get_conn()
+    row = conn.execute("SELECT created_by, authority FROM person_signals WHERE restaurant_id=? AND "
+                       "kind='cover_accepted'", (rid,)).fetchone()
+    conn.close()
+    assert (row["created_by"], row["authority"]) == (5, "delegate")
+
+
 # ── guests naming staff ─────────────────────────────────────────────────────
 
 def _review(rid, text, sentiment="positive"):
@@ -106,8 +130,11 @@ def test_a_guest_naming_staff_is_proposed_and_counts_only_once_confirmed():
     assert got == {("Maria Garcia", 1), ("Will Stone", 1)} and n == 2
     maria = next(m for m in people.mentions(rid) if m["name"] == "Maria Garcia")
     assert people.get_person(rid, "maria-garcia")["guest_mentions"] == []   # not until confirmed
-    assert people.answer_mention(rid, maria["id"], True) is True
+    assert people.answer_mention(rid, maria["id"], True, user={"id": 3, "role": "client"}) is True
     assert people.get_person(rid, "maria-garcia")["guest_mentions"][0]["polarity"] == 1
+    conn = models.get_conn()
+    assert conn.execute("SELECT authority FROM person_signals WHERE id=?", (maria["id"],)).fetchone()[0] == "principal"
+    conn.close()
 
 
 def test_two_people_with_one_first_name_are_never_guessed():

@@ -171,6 +171,27 @@ def test_different_people_is_never_asked_again():
     assert people.open_questions(rid) == []
 
 
+def test_each_answer_records_whose_word_it_is():
+    """permissions.answer_authority on every stored answer (SHARED_MEM): the
+    owner's is the principal's, a support login acting through view-as is
+    the admin's."""
+    rid = _rid()
+    _sync(rid, [("Sam Lee", "1", "", True), ("Sam L.", "2", "", True)])
+    q = next(q for q in people.open_questions(rid))
+    people.answer_question(rid, q["id"], False, user={"id": 3, "role": "client"})
+    _sync(rid, [("Kim T.", "4444", "", True)], days=(9,))
+    models.set_capability(rid, "Kim Tran", "overall", score=5)
+    people.stamp_person_ids(rid)
+    q2 = next(q for q in people.open_questions(rid) if {q["a"]["name"], q["b"]["name"]} == {"Kim T.", "Kim Tran"})
+    people.answer_question(rid, q2["id"], True, user={"id": 3, "role": "client", "acting_admin_id": 1})
+    conn = models.get_conn()
+    got = {r["id"]: (r["status"], r["answered_by"], r["answered_authority"])
+           for r in conn.execute("SELECT * FROM person_questions WHERE restaurant_id=?", (rid,)).fetchall()}
+    conn.close()
+    assert got[q["id"]] == ("different", 3, "principal")
+    assert got[q2["id"]] == ("merged", 3, "admin")
+
+
 def test_similar_is_a_reason_or_nothing():
     assert people.similar("Kim T.", "Kim Tran") == "same first name and last initial"
     assert people.similar("Jake Smith", "Jacob Smith")

@@ -45,6 +45,18 @@ def change_source(user) -> str:
     return {"admin": "admin", "principal": "owner"}.get(auth_, "manager")
 
 
+def answer_authority(user) -> str:
+    """permissions.answer_authority for a stored answer: "admin" (incl.
+    view-as), "principal" or "delegate"; "system" for none (a job)."""
+    if not user:
+        return "system"
+    try:
+        import permissions
+        return permissions.answer_authority(user)
+    except Exception:
+        return "delegate"
+
+
 def person_key(name) -> str:
     """"Dana K." → "dana-k". Lowercase letters and digits, one dash between
     runs; "" for a name with neither."""
@@ -690,6 +702,7 @@ def init_people(db_path=None):
             created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             answered_at    TEXT,
             answered_by    INTEGER,
+            answered_authority TEXT,
             UNIQUE(restaurant_id, person_a, person_b, kind)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_person_questions_open ON person_questions(restaurant_id, status)")
@@ -708,6 +721,15 @@ def init_people(db_path=None):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_person_merges_rest ON person_merges(restaurant_id, created_at)")
         _init_person_stores(conn)
+        # Whose answer each is (permissions.answer_authority) — added to a
+        # database an earlier build of these tables made.
+        for table, col in (("person_questions", "answered_authority"), ("person_signals", "authority")):
+            if col not in _cols(conn, table):
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                except Exception as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
         have = _tables(conn)
         for store in NAME_STORES:
             if store.get("no_person_id") or store["table"] not in have:
@@ -757,6 +779,7 @@ def _init_person_stores(conn):
         status          TEXT    NOT NULL DEFAULT 'confirmed',
         detail          TEXT,
         created_by      INTEGER,
+        authority       TEXT,
         created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(restaurant_id, kind, ref, employee_key)
     )""")
@@ -1508,8 +1531,8 @@ def answer_question(restaurant_id, question_id, same: bool, user=None, keep=None
         idx = _Index(conn, restaurant_id)
         a, b = idx.live(q["person_a"]), idx.live(q["person_b"])
         if not same:
-            conn.execute("UPDATE person_questions SET status='different', answered_at=datetime('now'), answered_by=? "
-                         "WHERE id=?", (uid, q["id"]))
+            conn.execute("UPDATE person_questions SET status='different', answered_at=datetime('now'), answered_by=?, "
+                         "answered_authority=? WHERE id=?", (uid, answer_authority(user), q["id"]))
             conn.commit()
             return {"ok": True, "status": "different"}
         pos_a = any(idx.ext_of.get((a, s)) for s in POS_SOURCES)
@@ -1524,6 +1547,12 @@ def answer_question(restaurant_id, question_id, same: bool, user=None, keep=None
         into = min(a, b)                           # else the older record
     src = change_source(user) if user else "owner"
     res = merge_people(restaurant_id, b if into == a else a, into, actor_user_id=uid, source=src, db_path=db_path)
+    conn = _conn(db_path)
+    try:
+        conn.execute("UPDATE person_questions SET answered_authority=? WHERE id=?", (answer_authority(user), q["id"]))
+        conn.commit()
+    finally:
+        conn.close()
     return {**res, "status": "merged"}
 
 
@@ -1799,10 +1828,11 @@ def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
 
 
 def record_signal(restaurant_id, name, kind, signal_date, ref="", polarity=None, status="confirmed", detail=None,
-                  created_by=None, db_path=None) -> bool:
+                  created_by=None, authority=None, db_path=None) -> bool:
     """One thing that happened to a person (SIGNAL_KINDS). Idempotent per
     (kind, ref, person); a confirmed or rejected signal is never downgraded
-    back to proposed."""
+    back to proposed. `authority` is whose word it is (answer_authority;
+    "system" for what a job inferred)."""
     if kind not in SIGNAL_KINDS:
         raise ValueError(f"unknown person signal {kind!r}")
     conn = _conn(db_path)
@@ -1810,14 +1840,45 @@ def record_signal(restaurant_id, name, kind, signal_date, ref="", polarity=None,
         pid, display = _person_for(conn, restaurant_id, name)
         cur = conn.execute(
             "INSERT INTO person_signals (restaurant_id, person_id, employee_name, employee_key, kind, polarity, "
-            "signal_date, ref, status, detail, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "signal_date, ref, status, detail, created_by, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(restaurant_id, kind, ref, employee_key) DO UPDATE SET "
             "status=CASE WHEN person_signals.status='proposed' THEN excluded.status ELSE person_signals.status END, "
             "polarity=COALESCE(excluded.polarity, person_signals.polarity)",
             (restaurant_id, pid, display, _nk(display), kind, polarity, str(signal_date)[:10], str(ref or ""),
-             status, (detail or "")[:300] or None, created_by))
+             status, (detail or "")[:300] or None, created_by, authority or ("system" if created_by is None else None)))
         conn.commit()
         return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def answer_cover(restaurant_id, name, issue_id, accepted: bool, signal_date, user=None, db_path=None) -> bool:
+    """The manager's word on a cover ask — they took it, or they didn't. It
+    stands over what the nightly job inferred from the punches (the other
+    answer for the same ask is set aside, never counted), and the job never
+    overrides it. Records who answered and whose word it is."""
+    kind, other = ("cover_accepted", "cover_declined") if accepted else ("cover_declined", "cover_accepted")
+    ref = f"issue:{int(issue_id)}"
+    uid = (user or {}).get("id") if isinstance(user, dict) else None
+    conn = _conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        pid, display = _person_for(conn, restaurant_id, name)
+        key = _nk(display)
+        conn.execute("UPDATE person_signals SET status='rejected' WHERE restaurant_id=? AND kind=? AND ref=? "
+                     "AND employee_key=?", (restaurant_id, other, ref, key))
+        conn.execute(
+            "INSERT INTO person_signals (restaurant_id, person_id, employee_name, employee_key, kind, signal_date, ref, "
+            "status, detail, created_by, authority) VALUES (?,?,?,?,?,?,?,'confirmed',?,?,?) "
+            "ON CONFLICT(restaurant_id, kind, ref, employee_key) DO UPDATE SET status='confirmed', "
+            "detail=excluded.detail, created_by=excluded.created_by, authority=excluded.authority",
+            (restaurant_id, pid, display, key, kind, str(signal_date)[:10], ref, "the manager's word", uid,
+             answer_authority(user)))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -1879,10 +1940,23 @@ def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int
             worked = {_nk(r["employee"]) for r in shift_facts.rows(restaurant_id, since=day, until=day, db_path=db_path)}
         except Exception:
             worked = set()
+        try:
+            conn = _conn(db_path)
+            try:
+                answered = {r["employee_key"] for r in conn.execute(
+                    "SELECT employee_key FROM person_signals WHERE restaurant_id=? AND ref=? AND "
+                    "kind IN ('cover_accepted','cover_declined') AND COALESCE(authority, 'system') <> 'system'",
+                    (restaurant_id, f"issue:{iss['id']}")).fetchall()}
+            finally:
+                conn.close()
+        except Exception:
+            answered = set()
         for a in asked:
             who = a.get("name")
             if not who:
                 continue
+            if _nk(canonical_names(restaurant_id, [who], db_path=db_path).get(who) or who) in answered:
+                continue                           # somebody's word stands over the punches
             if _nk(canonical_names(restaurant_id, [who], db_path=db_path).get(who) or who) in worked:
                 kind = "cover_accepted"
             elif day < today.isoformat():
@@ -1992,10 +2066,11 @@ def answer_mention(restaurant_id, signal_id, confirm: bool, user=None, db_path=N
     """The owner confirms a guest's mention is about this person, or not."""
     conn = _conn(db_path)
     try:
-        cur = conn.execute("UPDATE person_signals SET status=?, created_by=COALESCE(created_by, ?) WHERE id=? AND "
-                           "restaurant_id=? AND kind='review_mention' AND status='proposed'",
+        cur = conn.execute("UPDATE person_signals SET status=?, created_by=COALESCE(created_by, ?), authority=? "
+                           "WHERE id=? AND restaurant_id=? AND kind='review_mention' AND status='proposed'",
                            ("confirmed" if confirm else "rejected",
-                            (user or {}).get("id") if isinstance(user, dict) else None, int(signal_id), restaurant_id))
+                            (user or {}).get("id") if isinstance(user, dict) else None, answer_authority(user),
+                            int(signal_id), restaurant_id))
         conn.commit()
         return (cur.rowcount or 0) > 0
     finally:

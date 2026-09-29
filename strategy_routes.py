@@ -2783,8 +2783,7 @@ def _do_issue_cover_answer(u, issue_id):
         return {"ok": False, "error": "That coverage issue wasn't found."}, 404
     day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
         else _local_today(u).isoformat()
-    _people.record_signal(_rid(u), b["name"], "cover_accepted" if b["accepted"] else "cover_declined", day,
-                          ref=f"issue:{issue_id}", detail="the manager's word", created_by=u.get("id"))
+    _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
     return {"ok": True}, 200
 
 
