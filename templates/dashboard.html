@@ -32259,6 +32259,7 @@ window.cavPalette = cavPalette;
 .mem-inline{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
 .mem-inline .ac-input{max-width:190px}
 .mem-inline .ac-input.w{max-width:260px}
+.mem-inline .ac-select{max-width:260px}
 .mem-quote{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}
 .mem-quote q{quotes:'\201C' '\201D'}
 .mem-confirm{margin-top:10px;padding:12px 14px;border-radius:12px;background:var(--amber-bg);color:var(--ink);font-size:14px;line-height:1.5}
@@ -32333,7 +32334,7 @@ window.cavPalette = cavPalette;
 <script id="cav-mem-wb">
 /* ── Pure helpers: payload in, owner-facing words out. Global so every
    module's render reaches them and the tests run them under node. ── */
-var MEM_NUM_RE = /(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
+var MEM_NUM_RE = /(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?\d(?:[\d,]*\d)?(?:\.\d+)?%?★?|[+\-−]\d(?:[\d,.]*\d)?(?:\s?pts)?%?★?)/g;
 function memEsc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
 }
@@ -32384,13 +32385,20 @@ function memIdentitySide(s) {
   for (i = 0; i < (s.sources || []).length; i++) src.push(MEM_SOURCE[s.sources[i]] || String(s.sources[i]).replace(/_/g, ' '));
   if (src.length) bits.push('from ' + src.join(', '));
   if (s.rated) bits.push('rated');
-  return (s.name || '') + (bits.length ? ' (' + bits.join(' · ') + ')' : '');
+  return bits.length ? (s.name || 'One') + ': ' + bits.join(', ') : '';
 }
-/* A guest naming someone on staff (M3 mentions), waiting on a yes. */
+/* A guest naming someone on staff (M3 mentions), waiting on a yes.
+   polarity is a number (people.person_signals): above 0 praise, below 0 a
+   complaint; a word from an older payload reads the same. */
+function memPolarity(p) {
+  if (p === 'positive') return 1;
+  if (p === 'negative') return -1;
+  var n = +p; return isFinite(n) ? (n > 0 ? 1 : (n < 0 ? -1 : 0)) : 0;
+}
 function memMentionLine(m) {
   if (!m) return '';
-  var who = m.name || 'someone on staff', lead = m.polarity === 'negative' ? 'A guest complained about '
-    : (m.polarity === 'positive' ? 'A guest praised ' : 'A guest named ');
+  var who = m.name || 'someone on staff', pol = memPolarity(m.polarity);
+  var lead = pol < 0 ? 'A guest complained about ' : (pol > 0 ? 'A guest praised ' : 'A guest named ');
   return lead + who + (m.date ? ' on ' + m.date : '');
 }
 /* The person sheet (M3 person record). */
@@ -32636,7 +32644,7 @@ function memRetagBody(was, now) {
     for (i = 0; i < (_pq.questions || []).length; i++) {
       q = _pq.questions[i];
       h += '<div class="ac-row" data-wait-key="identity-' + (+q.id) + '"><div class="l"><b>' + memEsc(memIdentityQ(q)) + '</b>'
-        + '<span>' + memNum(memIdentitySide(q.a) + ' · ' + memIdentitySide(q.b)) + (q.reason ? ' · ' + memEsc(q.reason) : '') + (q.asked ? ' · asked ' + memNum(q.asked) : '') + '</span></div>'
+        + '<span>' + memNum([q.reason || '', memIdentitySide(q.a), memIdentitySide(q.b), q.asked ? 'asked ' + q.asked : ''].filter(function (x) { return x; }).join(' · ')) + '</span></div>'
         + '<div class="c">' + (_pq.canAnswer
           ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-identity="' + (+q.id) + '" data-same="0">Different people</button>'
             + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-identity="' + (+q.id) + '" data-same="1">Same person</button>'
@@ -32728,10 +32736,8 @@ function memRetagBody(was, now) {
     else {
       h += '<div class="mem-notes">';
       for (i = 0; i < ns.length; i++) {
-        var n = ns[i], stale = 0;
-        for (j = 0; j < (n.parts || []).length; j++) if (n.parts[j].stale && !n.parts[j].ended) stale++;
-        h += '<div class="mem-note" data-note="' + (+n.id) + '"><div class="hd"><b>' + memEsc(n.employee_name) + '</b>'
-          + (stale ? memPill('Still true?') : '') + '</div><div class="mem-parts">';
+        var n = ns[i];
+        h += '<div class="mem-note" data-note="' + (+n.id) + '"><div class="hd"><b>' + memEsc(n.employee_name) + '</b></div><div class="mem-parts">';
         for (j = 0; j < (n.parts || []).length; j++) {
           var p = n.parts[j];
           h += '<div class="mem-part' + (p.ended ? ' ended' : '') + (p.stale && !p.ended ? ' stale' : '') + '" data-part="' + (+p.index) + '">'
@@ -32756,7 +32762,19 @@ function memRetagBody(was, now) {
         + '<div class="ac-status" id="mem-note-status"></div>';
     } else h += '<div class="sr-note" style="margin-top:12px">Your login can read the notes but not change them.</div>';
     el.innerHTML = h;
-    if (!ro && window.loadPeople) try { loadPeople(); } catch (x) {}
+    if (!ro) ensurePeopleList();
+  }
+  /* The roster names the Who box picks from: Labor's own datalist, built
+     here when Labor has not built it yet. */
+  function ensurePeopleList() {
+    if ($id('lb2-people-names')) return;
+    getJ('/api/people', function (d) {
+      if (!d.ok || $id('lb2-people-names')) return;
+      var dl = document.createElement('datalist'), h = '', i;
+      dl.id = 'lb2-people-names';
+      for (i = 0; i < (d.people || []).length; i++) if (d.people[i].active) h += '<option value="' + memEsc(d.people[i].name) + '">';
+      dl.innerHTML = h; document.body.appendChild(dl);
+    });
   }
   function noteOf(el) {
     var card = el.closest ? el.closest('[data-note]') : null, part = el.closest ? el.closest('[data-part]') : null;
@@ -32856,7 +32874,7 @@ function memRetagBody(was, now) {
     var gm = p.guest_mentions || [];
     if (gm.length) {
       h += '<div class="sr-k">Guests who named them</div>';
-      for (i = 0; i < gm.length; i++) h += '<div class="mem-quote">' + memNum((gm[i].polarity === 'negative' ? 'Complaint' : (gm[i].polarity === 'positive' ? 'Praise' : 'Mention')) + (gm[i].date ? ' · ' + gm[i].date : '')) + (gm[i].snippet ? ' — <q>' + memEsc(gm[i].snippet) + '</q>' : '') + '</div>';
+      for (i = 0; i < gm.length; i++) h += '<div class="mem-quote">' + memNum((memPolarity(gm[i].polarity) < 0 ? 'Complaint' : (memPolarity(gm[i].polarity) > 0 ? 'Praise' : 'Mention')) + (gm[i].date ? ' · ' + gm[i].date : '')) + (gm[i].snippet ? ' — <q>' + memEsc(gm[i].snippet) + '</q>' : '') + '</div>';
     }
     if (p.can_manage_login) {
       h += '<div class="sr-k">Name and records</div><div class="mem-inline">'
@@ -33004,7 +33022,7 @@ function memRetagBody(was, now) {
     var reqs = data.soft_requirements || ((data.review || {}).soft_requirements) || [], cf = data.pattern_conflicts || [], h = '', i;
     for (i = 0; i < reqs.length; i++) {
       var r = reqs[i], ok = r.applied === true;
-      h += '<div class="sr-line"><i class="' + (ok ? 'cv-ok' : 'cv-warn') + '" aria-hidden="true"></i><span class="tx">' + memNum(r.text || '') + ln(memNum(memSoftReqMeta(r))) + (r.confirm ? ln(memNum(r.confirm)) : '') + '</span></div>';
+      h += '<div class="sr-line"><i class="' + (ok ? 'cv-ok' : 'cv-warn') + '" aria-hidden="true"></i><span class="tx">' + memNum(r.text || '') + ln(memNum(memSoftReqMeta(r))) + (r.confirm ? ln('To confirm: ' + memNum(r.confirm)) : '') + '</span></div>';
     }
     for (i = 0; i < cf.length; i++) h += '<div class="sr-line"><i class="cv-warn" aria-hidden="true"></i><span class="tx">' + memNum(cf[i].text || '') + ln('Left out of this draft until you settle it in Team & rules → What the draft has learned') + '</span></div>';
     var th = memThinnedNote(data);
@@ -33016,7 +33034,7 @@ function memRetagBody(was, now) {
   /* ── Labor: Events & reservations — what the nights have taught ── */
   window.memTeachHtml = function (list) {
     var h = '', i, n = 0;
-    for (i = 0; i < (list || []).length && n < 6; i++) { if (!list[i] || !list[i].text) continue; n++; h += '<div class="ln' + (list[i].applies ? '' : ' dim') + '">' + memNum(list[i].text) + '</div>'; }
+    for (i = 0; i < (list || []).length && n < 6; i++) { if (!list[i] || !list[i].text) continue; n++; h += '<div class="ln' + (list[i].applies ? '' : ' dim') + '"><span>' + memNum(list[i].text) + '</span></div>'; }
     return h ? '<div class="mem-teach"><div class="hb-kicker">What your nights have taught</div>' + h + '</div>' : '';
   };
 
