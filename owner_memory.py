@@ -63,6 +63,10 @@ SURFACE_METRICS = {
     "schedule": ("labor_pct", "overtime_hours", "weekday_sales", "sales"),
     "food_read": ("food_cost_pct", "weekly_waste"),
     "marketing": ("sales", "weekday_sales", "avg_rating"),
+    # The Reviews read lists goals (memory_context.SURFACE_SECTIONS) and the
+    # owner's rating or response-time goal is what it judges against; it
+    # read none (INT wiring audit, 9/29/26).
+    "review_read": ("avg_rating", "complaints", "response_hours"),
 }
 # The module whose view permission a goal's metric needs (memory_context
 # viewer scoping reads it off the line).

@@ -111,8 +111,13 @@ SURFACE_SECTIONS = {
     "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
     "brief": ("constraints", "goals", "decisions", "events"),
     "digest": ("constraints", "goals", "decisions", "what_worked"),
-    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing", "links"),
-    "reply_drafter": ("constraints", "decisions", "marketing"),
+    # Not "marketing" on the marketing generators or the reply drafter: they
+    # build richer blocks of their own (marketing_signals.generation_context,
+    # guest_marketing.returns_block, marketing_voice.voice_block; the
+    # drafter's voice learning), and marketing:memory_lines says nothing
+    # there rather than say it twice (INT_NOTES #30).
+    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "links"),
+    "reply_drafter": ("constraints", "decisions"),
     "competitor_read": ("constraints", "last_claim", "decisions"),
     "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
 }

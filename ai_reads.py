@@ -1186,7 +1186,18 @@ def claim_lines(req):
         latest = {}
         for r in rows:
             latest.setdefault((r["surface"], r["subject"]), r)
-        picked = sorted(latest.values(), key=lambda r: -r["id"])[:4]
+        # The newest four the viewer may read (memory_context.visible on the
+        # claim's surface scope): an owner-level claim is dropped BEFORE the
+        # cut, so a manager (or a shared output, memory_context.TEAM) is not
+        # left with nothing because the four newest were the owner's (INT).
+        viewer = getattr(req, "viewer", None)
+        pool = sorted(latest.values(), key=lambda r: -r["id"])
+        if viewer is not None:
+            import memory_context as _mc
+            user = _mc.viewer_user(viewer)
+            if user is not None:
+                pool = [r for r in pool if _mc.visible(dict(line_scope(r["surface"]), text="x"), user)]
+        picked = pool[:4]
         for i, r in enumerate(picked):
             weight = 10.0 - i
             said = f"LAST READ on {r['subject'].replace('_', ' ')} ({SURFACE_LABELS.get(r['surface'], r['surface'])})"
