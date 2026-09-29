@@ -121,3 +121,57 @@ def test_the_issues_payload_says_how_fresh_it_is(db_path):
     out = admin_ops.issues()
     for k in ("generated_at", "cached", "age_seconds", "windows", "errors", "query_errors", "unavailable"):
         assert k in out, k
+
+
+# ── H's billing ledgers raise issues the console can act on ────────────────
+
+def test_past_due_is_aged_from_the_invoice_and_acts_with_a_card_update_link(db_path):
+    rid = _mk(db_path, "Late Co", billing_status="past_due")
+    failed = datetime.now(timezone.utc) - timedelta(days=4)
+    _sql(db_path, "INSERT INTO stripe_invoices (invoice_id, restaurant_id, status, attempt_count, "
+                  "amount_remaining_cents, next_payment_attempt, last_failed_at) VALUES ('in_1', ?, 'open', 2, 64900, "
+                  "?, ?)", (rid, _utc(datetime.now(timezone.utc) + timedelta(days=3)), _utc(failed)))
+    i = next(x for x in _rec(rid)["issues"] if x["key"] == f"{rid}:billing")
+    assert i["action_route"] == f"/admin/api/billing/{rid}/card-update-link" and i["action_kind"] == "post"
+    assert i["since_at"] == failed.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert "$649.00 due" in i["detail"] and "2 attempts" in i["detail"]
+
+
+def test_a_hold_is_an_issue_whose_action_lifts_it(db_path):
+    rid = _mk(db_path, "Held Co", billing_status="paused")
+    _sql(db_path, "UPDATE restaurants SET pause_reason='admin' WHERE id=?", (rid,))
+    rec = _rec(rid)
+    assert rec["billing"]["hold"] == "admin"
+    i = next(x for x in rec["issues"] if x["key"] == f"{rid}:paused:admin")
+    assert i["action_route"] == f"/admin/api/billing/{rid}/lift-hold" and i["action_payload"] == {"note": ""}
+
+
+def test_owed_mail_that_failed_and_reconcile_findings_are_issues(db_path):
+    rid = _mk(db_path, "Ledger Co", billing_status="active")
+    _sql(db_path, "INSERT INTO owed_sends (restaurant_id, kind, dedupe_key, status, last_error) "
+                  "VALUES (?, 'receipt', 'receipt:in_9', 'failed', 'suppressed address')", (rid,))
+    _sql(db_path, "INSERT INTO billing_reconcile (restaurant_id, checked_at, local_status, stripe_status, mismatches, "
+                  "first_seen_at) VALUES (?, datetime('now'), 'active', 'canceled', ?, datetime('now','-1 day'))",
+         (rid, '[{"kind": "status", "detail": "local active, Stripe canceled"}]'))
+    issues = {i["key"]: i for i in _rec(rid)["issues"]}
+    assert "receipt: suppressed address" in issues[f"{rid}:owed_sends"]["detail"]
+    assert "local active, Stripe canceled" in issues[f"{rid}:reconcile"]["detail"]
+
+
+def test_a_declined_contract_says_so(db_path):
+    rid = _mk(db_path, "Declined Co", billing_status="trial")
+    _sql(db_path, "UPDATE restaurants SET contract_status='declined' WHERE id=?", (rid,))
+    _sql(db_path, "INSERT INTO docusign_envelopes (envelope_id, restaurant_id, status, status_at, status_reason) "
+                  "VALUES ('env1', ?, 'declined', datetime('now'), 'Wrong module count')", (rid,))
+    issues = {i["key"]: i for i in _rec(rid)["issues"]}
+    i = issues[f"{rid}:contract:declined"]
+    assert i["severity"] == "critical" and "Wrong module count" in i["detail"]
+    assert f"{rid}:contract" not in issues
+
+
+def test_the_stored_module_mismatch_is_the_issue(db_path):
+    rid = _mk(db_path, "Plan Co", billing_status="active", module_reviews=1)
+    _sql(db_path, "INSERT INTO stripe_subscriptions (restaurant_id, subscription_id, status, module_mismatch) "
+                  "VALUES (?, 'sub_1', 'active', ?)", (rid, '{"stripe": ["labor", "reviews"], "local": ["reviews"]}'))
+    i = next(x for x in _rec(rid)["issues"] if x["key"] == f"{rid}:modules_mismatch")
+    assert "Stripe: labor, reviews" in i["detail"] and "Here: reviews" in i["detail"]

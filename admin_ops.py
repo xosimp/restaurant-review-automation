@@ -912,6 +912,29 @@ def _load_with(conn):
     sms_cost = per_rid("SELECT restaurant_id, ROUND(SUM(COALESCE(cost_usd,0)),4) AS cost, COUNT(*) AS n "
                        "FROM sms_log WHERE created_at >= ? GROUP BY restaurant_id", (w["month"],),
                        label="sms_log", optional=True)
+    # Workstream H's billing ledgers, one grouped read each: owed billing mail
+    # that gave up (#12), the nightly reconcile's findings (#115), each open
+    # invoice's failure and retries (#6, #25), the current contract's fate
+    # (#144) and the pay-link chase (#26).
+    owed_failed = per_rid("""SELECT o.restaurant_id, COUNT(*) AS n, MIN(o.updated_at) AS first_at,
+                                    MAX(o.updated_at) AS last_at,
+                                    (SELECT o2.kind || ': ' || COALESCE(o2.last_error, 'not delivered') FROM owed_sends o2
+                                     WHERE o2.restaurant_id = o.restaurant_id AND o2.status = 'failed'
+                                     ORDER BY o2.id DESC LIMIT 1) AS sample
+                             FROM owed_sends o WHERE o.status = 'failed' AND o.restaurant_id IS NOT NULL
+                             GROUP BY o.restaurant_id""", label="owed_sends", optional=True)
+    reconcile = per_rid("SELECT restaurant_id, checked_at, local_status, stripe_status, mismatches, first_seen_at "
+                        "FROM billing_reconcile WHERE mismatches IS NOT NULL", label="billing_reconcile", optional=True)
+    open_invoices = per_rid("SELECT restaurant_id, MAX(last_failed_at) AS last_failed_at, MAX(attempt_count) AS attempts, "
+                            "SUM(COALESCE(amount_remaining_cents, amount_due_cents, 0)) AS remaining_cents, "
+                            "MAX(next_payment_attempt) AS next_attempt FROM stripe_invoices "
+                            "WHERE status = 'open' AND restaurant_id IS NOT NULL GROUP BY restaurant_id",
+                            label="stripe_invoices", optional=True)
+    envelope_fate = per_rid("SELECT restaurant_id, envelope_id, status, status_at, status_reason FROM docusign_envelopes "
+                            "WHERE status IN ('declined', 'voided') ORDER BY COALESCE(status_at, sent_at)",
+                            label="docusign_envelopes", optional=True)
+    pay_reminders = per_rid("SELECT restaurant_id, GROUP_CONCAT(dedupe_key || '=' || status) AS sent FROM owed_sends "
+                            "WHERE kind = 'pay_reminder' GROUP BY restaurant_id", label="owed_sends", optional=True)
     # The automatic alert-storm cap in force (fix round E, #92): one per
     # restaurant per local day, until its next local midnight (UTC stamp),
     # unless an admin lifted it. The newest wins.
@@ -933,6 +956,8 @@ def _load_with(conn):
              mirror=mirror, mirror_available=bool(mirror_cols), mirror_cols=mirror_cols,
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
              sms_cost=sms_cost, storm_caps=storm_caps, budget_watch=budget_rows, ai_anomalies=anomaly_rows,
+             owed_failed=owed_failed, reconcile=reconcile, open_invoices=open_invoices, envelope_fate=envelope_fate,
+             pay_reminders=pay_reminders,
              rest_names={r["id"]: r.get("name") for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
@@ -1077,6 +1102,16 @@ def _billing_groups(rests, mirror):
     return out
 
 
+def _json_or_none(v):
+    """A stored JSON value, parsed; None for empty or unreadable."""
+    if not v:
+        return None
+    try:
+        return json.loads(v) if isinstance(v, str) else v
+    except (TypeError, ValueError):
+        return None
+
+
 def _sub_monthly(sub):
     """(monthly before discount, monthly after discount) of a mirrored
     subscription — amount × quantity ÷ its interval — or (None, None)."""
@@ -1148,7 +1183,8 @@ def _billing_for(r, d, mod_count):
             "cancel_at_period_end": bool(sub.get("cancel_at_period_end")),
             "canceled_at": _stamp_any(sub.get("canceled_at")), "ended_at": _stamp_any(sub.get("ended_at")),
             "cancellation_reason": sub.get("cancellation_reason"),
-            "module_keys": sub.get("module_keys"), "updated_at": _stamp_any(sub.get("updated_at"))}
+            "module_keys": sub.get("module_keys"), "module_mismatch": _json_or_none(sub.get("module_mismatch")),
+            "updated_at": _stamp_any(sub.get("updated_at"))}
         out["list_monthly"] = _list_for(mod_count, interval) if st in _STRIPE_BILLED + _STRIPE_COMMITTED else 0
         if bs == "paused" and st in _STRIPE_BILLED:
             # Stripe keeps a subscription 'active' while collection is
@@ -1192,6 +1228,12 @@ def _billing_for(r, d, mod_count):
                     out["pause_reason_inferred"] = True
                     break
         out["pause_reason"] = reason
+    # A hold only an admin lifts (H, #114): a dispute, a full refund or an
+    # admin's own — also one kept on an account that has since churned.
+    try:
+        out["hold"] = _models_mod.billing_hold(r)
+    except Exception:
+        out["hold"] = None
     # Contract and trial ages (#26): when it was signed (H's column, else the
     # DocuSign completion in admin_events), days in trial since signup.
     signed_raw = r.get("contract_signed_at") or _newest(*[v for k, v in ev.items() if k.startswith("contract.signed")])
@@ -1962,26 +2004,52 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
     ev = (d.get("events") or {}).get(rid, {})
     hist = (d.get("status_changes") or {}).get(rid, {})
     if bs == "past_due":
-        # Aged from the payment failure itself, not the owner's last click.
-        failed_at = _newest(ev.get("invoice.payment_failed"), hist.get("past_due"))
-        add("billing", "Stripe payment failed", "critical", failed_at, "Resend payment link",
-            f"/admin/resend-payment/{rid}", None if failed_at else "When it failed isn't on record — open billing.",
-            zone="UTC", action_href=billing_tab)
+        # Aged from the payment failure itself — the open invoice's own
+        # (H's stripe_invoices), else the event or the status change — not
+        # the owner's last click. The fix is a new card: the action sends
+        # the Billing Portal link (H, #6).
+        inv = (d.get("open_invoices") or {}).get(rid) or {}
+        failed_at = inv.get("last_failed_at") or _newest(ev.get("invoice.payment_failed"), hist.get("past_due"))
+        bits = []
+        if inv.get("remaining_cents"):
+            bits.append(f"${int(inv['remaining_cents']) / 100.0:,.2f} due")
+        if inv.get("attempts"):
+            bits.append(f"{int(inv['attempts'])} attempt{'s' if int(inv['attempts']) != 1 else ''}")
+        if inv.get("next_attempt"):
+            bits.append(f"Stripe retries {_mdy(inv['next_attempt'])}")
+        detail = ("; ".join(bits) + ".") if bits else (None if failed_at else
+                                                       "When it failed isn't on record — open billing.")
+        add("billing", "Stripe payment failed", "critical", failed_at, "Send card-update link",
+            f"/admin/api/billing/{rid}/card-update-link", detail, zone="UTC", action_kind="post",
+            action_href=billing_tab)
     if bs in ENDED_STATES:
         at = _newest(ev.get("customer.subscription.deleted"), hist.get("churned"), hist.get("canceled"))
         add("canceled", "Subscription canceled", "warning", at, "Open billing", None, zone="UTC",
             action_kind="link", action_href=billing_tab)
-    if bs == "paused" and billing.get("pause_reason") in ("dispute", "refund"):
-        dispute = billing["pause_reason"] == "dispute"
-        at = _newest(ev.get("charge.dispute.created" if dispute else "charge.refunded"), hist.get("paused"))
-        add(f"paused:{billing['pause_reason']}",
-            "Chargeback — account paused" if dispute else "Full refund — account paused",
-            "critical" if dispute else "warning", at, "Open billing", None,
-            "Only an admin can lift this pause." + (" The reason is read from the Stripe events."
-                                                   if billing.get("pause_reason_inferred") else ""),
-            zone="UTC", action_kind="link", action_href=billing_tab)
-    if (r.get("contract_status") or "pending") != "signed" and not r.get("is_demo") \
-            and bs not in ("internal",) + ENDED_STATES:
+    # A hold only an admin lifts (H, #114): a chargeback, a full refund, or
+    # an admin's own. The action is H's lift-hold (a note is required).
+    hold = billing.get("pause_reason") if billing.get("pause_reason") in ("dispute", "refund") else None
+    hold = hold or (billing.get("hold") if bs == "paused" else None)
+    if bs == "paused" and hold in ("dispute", "refund", "admin"):
+        at = _newest(ev.get({"dispute": "charge.dispute.created", "refund": "charge.refunded"}.get(hold, "")),
+                     hist.get("paused"))
+        add(f"paused:{hold}",
+            {"dispute": "Chargeback — account on hold", "refund": "Full refund — account on hold",
+             "admin": "Account on hold (set by an admin)"}[hold],
+            "critical" if hold == "dispute" else "warning", at, "Lift hold", f"/admin/api/billing/{rid}/lift-hold",
+            "Only an admin can lift this hold." + (" The reason is read from the Stripe events."
+                                                  if billing.get("pause_reason_inferred") else ""),
+            zone="UTC", action_kind="post", action_payload={"note": ""}, action_href=billing_tab)
+    cs = (r.get("contract_status") or "pending").lower()
+    if cs in ("declined", "voided") and not r.get("is_demo") and bs not in ("internal",) + ENDED_STATES:
+        # The owner declined it, or it was voided (H, #144): nothing more
+        # will come of that envelope. Resend contract sends a new one.
+        env = (d.get("envelope_fate") or {}).get(rid) or {}
+        add(f"contract:{cs}", f"Contract {cs}", "critical" if cs == "declined" else "warning",
+            env.get("status_at") or r.get("created_at"), "Send a new contract", f"/admin/resend-contract/{rid}",
+            (f"DocuSign: {env['status_reason']}" if env.get("status_reason") else None), zone="UTC",
+            action_href=billing_tab)
+    elif cs != "signed" and not r.get("is_demo") and bs not in ("internal",) + ENDED_STATES:
         age = _age_days(r.get("created_at"))
         if age is not None and age > 3:
             add("contract", "Contract still unsigned", "warning", r.get("created_at"), "Resend contract",
@@ -2000,9 +2068,38 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             occ = _utc_stamp(base + timedelta(days=SIGNED_UNPAID_CRIT_DAYS if crit else SIGNED_UNPAID_WARN_DAYS))
             title = (f"Signed {int(days)} days ago, never paid" if signed
                      else f"Contract signed, never paid — joined {int(days)} days ago (signing date not on record)")
+            # Where the pay-link chase stands (H's run_contract_chase, #26).
+            chase = [x for x in (((d.get("pay_reminders") or {}).get(rid) or {}).get("sent") or "").split(",") if x]
+            sent_days = []
+            for item in chase:                      # "pay_reminder:<rid>:<day>=<status>"
+                key, _sep, status = item.partition("=")
+                day = key.rsplit(":", 1)[-1]
+                if status.startswith("sent") and day.isdigit():
+                    sent_days.append(int(day))
+            chase_note = None
+            if chase:
+                chase_note = (f"Pay link re-sent on day{'s' if len(sent_days) != 1 else ''} "
+                              f"{', '.join(str(x) for x in sorted(sent_days))} after signing." if sent_days
+                              else "The pay-link reminders have not gone out.")
             add("signed_unpaid", title, "critical" if crit else "warning", basis, "Resend payment link",
-                f"/admin/resend-payment/{rid}", zone="UTC", occurrence=occ, occurrence_zone="UTC",
+                f"/admin/resend-payment/{rid}", chase_note, zone="UTC", occurrence=occ, occurrence_zone="UTC",
                 action_href=billing_tab)
+    # Billing email the outbox gave up on (H, #12): a welcome, a receipt,
+    # a dunning notice or a pay reminder that did not go.
+    of = (d.get("owed_failed") or {}).get(rid)
+    if of and of.get("n"):
+        add("owed_sends", f"{of['n']} billing email{'s' if of['n'] != 1 else ''} not delivered", "warning",
+            of.get("first_at"), "Open billing", None, (of.get("sample") or "")[:200] or None, zone="UTC",
+            occurrence=of.get("last_at"), occurrence_zone="UTC", action_kind="link", action_href=billing_tab)
+    # What the nightly reconcile found (H, #115): recorded, never repaired.
+    rc = (d.get("reconcile") or {}).get(rid)
+    rc_findings = (_json_or_none(rc.get("mismatches")) or []) if rc else []
+    if rc_findings:
+        add("reconcile", f"Stripe and this account disagree ({len(rc_findings)} "
+                         f"finding{'s' if len(rc_findings) != 1 else ''})", "warning", rc.get("first_seen_at"),
+            "Open billing", None, "; ".join(str(m.get("detail") or m.get("kind")) for m in rc_findings[:3])[:300],
+            zone="UTC", occurrence=rc.get("first_seen_at"), occurrence_zone="UTC", action_kind="link",
+            action_href=billing_tab)
     for i in integrations:
         if i["state"] == "error":
             sev = "critical" if i["key"] in ("toast", "square", "clover", "rpower", "google_business") else "warning"
@@ -2148,7 +2245,16 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             f"offboarding by {deletion['due_label']} (App Store guideline 5.1.1(v)).",
             zone="UTC", resolvable=False, action_kind="link", action_href=f"{client}?tab=access")
     sub = billing.get("subscription") or {}
-    if sub.get("module_keys") is not None and bs in PAYING_STATES:
+    stored_mm = sub.get("module_mismatch") if isinstance(sub.get("module_mismatch"), dict) else None
+    if stored_mm and bs in PAYING_STATES:
+        # H records the disagreement when a Stripe plan change was not
+        # re-applied to the flags (stripe_subscriptions.module_mismatch).
+        add("modules_mismatch", "Stripe plan and module access disagree", "warning",
+            stored_mm.get("at") or sub.get("updated_at"), "Open billing", None,
+            f"Stripe: {', '.join(stored_mm.get('stripe') or []) or 'none'}. "
+            f"Here: {', '.join(stored_mm.get('local') or []) or 'none'}. Change plan, or set the modules to match.",
+            zone="UTC", action_kind="link", action_href=billing_tab)
+    elif sub.get("module_keys") is not None and bs in PAYING_STATES:
         stripe_set = {k.strip().lower() for k in str(sub["module_keys"]).split(",") if k.strip()} & set(_GRANTABLE_MODULES)
         local = {k for k in _GRANTABLE_MODULES if r.get(f"module_{k}")}
         if stripe_set and stripe_set != local:
@@ -2157,7 +2263,8 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
                 f"Stripe: {', '.join(sorted(stripe_set))}. Here: {', '.join(sorted(local)) or 'none'}. The next "
                 "subscription update resets the modules to Stripe's list.", zone="UTC", action_kind="link",
                 action_href=billing_tab)
-    if billing.get("status_mismatch"):
+    if billing.get("status_mismatch") and not rc_findings:
+        # The reconcile's own finding (above) says it, verified against Stripe.
         mm = billing["status_mismatch"]
         add("stripe_mismatch", f"Stripe says {mm['stripe']}; the account says {mm['local']}", "warning",
             sub.get("updated_at"), "Open billing", None, zone="UTC", action_kind="link", action_href=billing_tab)
@@ -2776,7 +2883,31 @@ def client_detail(rid):
             # The automatic alert-storm cap in force, or None (E's #92) —
             # the client page read the fleet's messaging health for it.
             "storm_cap": rec.get("storm_cap"),
+            **_client_messaging(rid),
             "timeline_url": f"/admin/api/client/{rid}/timeline"}
+
+
+def _client_messaging(rid):
+    """E's per-restaurant messaging reads for the client page: every
+    suppressed address its mail goes to, with the role it plays there and
+    whether it is an operator address (#45, #101); its texts (last four
+    digits only) and their outcomes over the week (#14)."""
+    out = {"suppressions": [], "sms": [], "sms_stats": None}
+    path = _current_db_path()
+    try:
+        import models as _m_msg
+        out["suppressions"] = _m_msg.suppressions_for_restaurant(rid, db_path=path)
+        for row in out["suppressions"]:
+            row["operator"] = _m_msg.is_operator_address(row.get("email"))
+    except Exception as e:
+        _note_failure("suppressions_for_restaurant", e)
+    try:
+        import notify as _n_msg
+        out["sms"] = _n_msg.sms_log_rows(restaurant_id=rid, limit=40, db_path=path)
+        out["sms_stats"] = _n_msg.sms_stats(hours=24 * 7, restaurant_id=rid, db_path=path)
+    except Exception as e:
+        _note_failure("sms_log", e)
+    return out
 
 
 def _client_job_rows(conn, rid, d):
@@ -3520,6 +3651,14 @@ def emails(limit=200):
     for day, f in zip(daily, fails):
         day["failed"] = f["n"]
     resend = next((p for p in hooks["providers"] if p["provider"] == "resend"), None)
+    # An operator address is never suppressed (E, #101): one on the list
+    # bounced, and is flagged rather than shown as a live suppression.
+    try:
+        import models as _m_sup
+        for row in suppressed:
+            row["operator"] = _m_sup.is_operator_address(row.get("email"))
+    except Exception as e:
+        _note_failure("operator_addresses", e)
     return {"ok": True, "rows": rows, "by_type": by_type, "daily": daily, "storms": storms,
             "suppressed": suppressed, "suppressed_total": sup_total, "suppressed_by": sup_by,
             "today": today, "engagement": engagement, "rates": rates,
@@ -3551,6 +3690,15 @@ def notifications(limit=200):
                                     (f"{off} hours", w["week"]))
             caps = _rows_dict(conn, "SELECT id AS restaurant_id, name AS restaurant, alert_max_per_day AS cap FROM restaurants WHERE COALESCE(alert_max_per_day,0) > 0 ORDER BY name")
             auto_caps, auto_supported = _auto_caps(conn)
+            # E's outboxes (#75): what is queued, in flight, failed.
+            try:
+                import push as _push_ob
+                import webhooks as _wh_ob
+                outboxes = {"push": _push_ob.outbox_counts(db_path=_current_db_path()),
+                            "webhooks": _wh_ob.outbox_counts(db_path=_current_db_path())}
+            except Exception as e:
+                outboxes = None
+                _note_failure("outboxes", e)
             scheduled = _rows_dict(conn, "SELECT p.id, p.restaurant_id, r.name AS restaurant, p.platform, p.content_type, p.topic, p.scheduled_for, p.status, p.error, p.attempts FROM marketing_scheduled_posts p LEFT JOIN restaurants r ON r.id=p.restaurant_id ORDER BY p.scheduled_for DESC LIMIT 60")
             post_totals = _one_dict(conn, "SELECT SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
                                           "SUM(CASE WHEN status IN ('scheduled','pending','publishing') THEN 1 ELSE 0 END) AS scheduled, "
@@ -3577,7 +3725,7 @@ def notifications(limit=200):
             "by_type": by_type, "storms": storms, "caps": caps,
             "storm_counts": {"today": len(storms), "storm_days_7d": len(storm_days),
                              "restaurants_7d": len({s["restaurant_id"] for s in storm_days})},
-            "auto_caps": auto_caps, "auto_caps_supported": auto_supported,
+            "auto_caps": auto_caps, "auto_caps_supported": auto_supported, "outboxes": outboxes,
             "scheduled_posts": scheduled,
             "posts_failed_total": post_totals.get("failed") or 0,
             "posts_scheduled_total": post_totals.get("scheduled") or 0,
@@ -4909,33 +5057,55 @@ def _email_rates(conn, w):
     return out
 
 
-# Inbound webhooks (#74). Each provider's last VERIFIED event and its
-# signature failures in 24 hours. A recorded ledger (workstreams E and H:
-# one row per provider, see _WEBHOOK_LEDGERS) is read first; without one the
-# last verified event is derived from what a verified delivery already
-# writes, and the failures from their captures in job_failures.
+# Inbound webhooks (#74). Each provider's last VERIFIED event and the
+# requests refused since. Two ledgers record them, one per workstream, and
+# the console reads both as one: E's inbound_webhook_health (Resend, Twilio
+# inbound texts, Twilio delivery reports) and H's webhook_verifications
+# (Stripe, DocuSign). A provider neither has a row for yet falls back to
+# what a verified delivery already writes, and to its signature captures in
+# job_failures over the last day.
 WEBHOOK_PROVIDERS = (
     {"provider": "stripe", "label": "Stripe", "secret_env": "STRIPE_WEBHOOK_SECRET", "job": "stripe_webhook"},
     {"provider": "resend", "label": "Resend", "secret_env": "RESEND_WEBHOOK_SECRET", "job": "resend_webhook"},
     {"provider": "twilio", "label": "Twilio", "secret_env": "TWILIO_AUTH_TOKEN", "job": "twilio_webhook"},
+    {"provider": "twilio_status", "label": "Twilio delivery reports", "secret_env": "TWILIO_AUTH_TOKEN",
+     "job": "twilio_status_webhook"},
     {"provider": "docusign", "label": "DocuSign", "secret_env": "DOCUSIGN_WEBHOOK_SECRET", "job": "docusign_webhook"},
 )
-_WEBHOOK_LEDGERS = ("webhook_health", "inbound_webhook_health", "webhook_receipts")
+# (table, {normalized field: that table's column}) — each ledger in its own
+# words (E's and H's), read into one shape.
+_WEBHOOK_LEDGERS = (
+    ("inbound_webhook_health", {"last_verified_at": "last_verified_at", "last_event": "last_event_type",
+                                "failed_since_verified": "failed_since_verified", "failures_total": "failed_count",
+                                "last_failure_at": "last_failed_at", "last_failure": "last_failure_reason"}),
+    ("webhook_verifications", {"last_verified_at": "last_verified_at", "last_event": "last_verified_event",
+                               "failed_since_verified": "failures_since_verified",
+                               "failures_total": "failures_total", "last_failure_at": "last_failure_at",
+                               "last_failure": "last_failure_error"}),
+)
 # Stale after this long with no verified event while sends went out — only
 # judged from a recorded ledger (a derived "last event" is too sparse).
 WEBHOOK_STALE_HOURS = int(os.getenv("ADMIN_WEBHOOK_STALE_HOURS", "24"))
 _SIGNATURE_WORDS = ("signature", "unauthori", "verif", "hmac", "svix", "bad secret", "403", "401")
 
 
+def _webhook_ledger(conn):
+    """({provider: normalized row}, [ledger names read])."""
+    ledger, names = {}, []
+    for table, cols in _WEBHOOK_LEDGERS:
+        have = _columns(conn, table)
+        if "provider" not in have:
+            continue
+        names.append(table)
+        for row in _rows_dict(conn, f"SELECT * FROM {table}", label=table, optional=True):
+            p = (row.get("provider") or "").lower()
+            if p and p not in ledger:
+                ledger[p] = dict({k: row.get(c) for k, c in cols.items() if c in have}, ledger=table)
+    return ledger, names
+
+
 def _webhook_health(conn):
-    ledger, ledger_name = {}, None
-    for name in _WEBHOOK_LEDGERS:
-        cols = _columns(conn, name)
-        if "provider" in cols:
-            ledger_name = name
-            for row in _rows_dict(conn, f"SELECT * FROM {name}", label=name, optional=True):
-                ledger[(row.get("provider") or "").lower()] = row
-            break
+    ledger, ledger_names = _webhook_ledger(conn)
     day = _utc_stamp(_utcnow() - timedelta(days=1))
     eng = _one_dict(conn, "SELECT MAX(opened_at) AS o, MAX(clicked_at) AS c FROM email_log", label="email_log") or {}
     derived = {
@@ -4959,28 +5129,38 @@ def _webhook_health(conn):
     out = []
     for spec in WEBHOOK_PROVIDERS:
         p = spec["provider"]
-        row = ledger.get(p) or {}
-        fails = _rows_dict(conn, "SELECT created_at, error FROM job_failures WHERE job=? AND created_at >= ? "
-                                 "ORDER BY id", (spec["job"], day), label="job_failures")
-        sig = [f for f in fails if any(wd in (f.get("error") or "").lower() for wd in _SIGNATURE_WORDS)]
-        failures = int(row.get("failures_24h") or 0) if row else len(sig)
-        if row and row.get("failures_24h") is None:
+        row = ledger.get(p)
+        if row:
+            # Refused since the last verified request: a rotated or missing
+            # secret refuses every delivery, and no verified one follows.
+            failures = int(row.get("failed_since_verified") or 0)
+            last_verified = row.get("last_verified_at")
+            first_failure = row.get("last_failure_at") if failures else None
+        else:
+            fails = _rows_dict(conn, "SELECT created_at, error FROM job_failures WHERE job=? AND created_at >= ? "
+                                     "ORDER BY id", (spec["job"], day), label="job_failures")
+            sig = [f for f in fails if any(wd in (f.get("error") or "").lower() for wd in _SIGNATURE_WORDS)]
             failures = len(sig)
-        last_verified = row.get("last_verified_at") if row else None
-        last_verified = last_verified or derived.get(p)
+            last_verified = derived.get(p)
+            first_failure = sig[0]["created_at"] if sig else None
         age = _age_hours(last_verified, "UTC")
-        first_failure = row.get("first_failure_at") or row.get("last_failure_at") if row else None
-        first_failure = first_failure or (sig[0]["created_at"] if sig else None)
         problem = failures > 0 and (age is None or age > 24)
         stale = (bool(row) and p == "resend" and sends.get("resend", 0) >= 5
                  and (age is None or age > WEBHOOK_STALE_HOURS))
         out.append({**spec, "last_verified_at": _iso_z(last_verified, "UTC"),
-                    "age_hours": round(age, 1) if age is not None else None, "failures_24h": failures,
+                    "age_hours": round(age, 1) if age is not None else None,
+                    # With a ledger: refused since the last verified request;
+                    # without one: signature captures in the last 24 hours.
+                    "failures_24h": failures, "failures_since_verified": failures if row else None,
+                    "failures_total": int(row.get("failures_total") or 0) if row else None,
+                    "last_failure": (row or {}).get("last_failure"), "last_event": (row or {}).get("last_event"),
                     "first_failure_at": _iso_z(first_failure, "UTC"), "problem": problem, "stale": stale,
                     "configured": bool(os.getenv(spec["secret_env"], "")),
-                    "source": ledger_name if row else "derived"})
-    return {"providers": out, "ledger": ledger_name,
-            "basis": ("the providers' own ledger" if ledger_name else
+                    "source": row["ledger"] if row else "derived"})
+    return {"providers": out, "ledger": ", ".join(ledger_names) or None,
+            "basis": ("the providers' own ledgers (inbound_webhook_health for Resend and Twilio, "
+                      "webhook_verifications for Stripe and DocuSign); a provider with no row yet is derived"
+                      if ledger_names else
                       "derived: Stripe and DocuSign from the events they record, Resend from opens, clicks and "
                       "bounce suppressions, Twilio from sms_log; failures from signature captures in job_failures")}
 
@@ -5589,14 +5769,21 @@ _QUEUES = (
     {"key": "dsr_held_pushes", "label": "DSR pushes held through quiet hours", "table": "dsr_deliveries",
      "where": "channel='push'", "pending": ("held", "sending"), "failed": ("failed", "expired"),
      "created": "created_at", "failed_at": "created_at"},
-    # Push and outbound-webhook rows written 'queued' before they are sent
-    # (workstream E): read from whichever state column they carry.
-    {"key": "push_outbox", "label": "Push notifications", "table": "push_deliveries",
-     "state_cols": ("state", "delivery_state", "queue_status"), "pending": ("queued", "sending"),
-     "failed": ("failed", "dead"), "created": "created_at", "failed_at": "created_at"},
-    {"key": "webhook_outbox", "label": "Outbound webhooks", "table": "webhook_deliveries",
-     "state_cols": ("state", "delivery_state", "queue_status"), "pending": ("queued", "sending"),
-     "failed": ("failed", "dead"), "created": "created_at", "failed_at": "created_at"},
+    # E's outboxes (#75): a push or an outbound webhook is written 'queued'
+    # before it is handed to its pool, 'delivering' while it is, and 'sent',
+    # 'failed' or 'expired' (a restart left it too old to deliver) after.
+    # push_deliveries / webhook_deliveries stay the ledgers of attempts.
+    {"key": "push_outbox", "label": "Push notifications", "table": "push_outbox",
+     "state_cols": ("state",), "pending": ("queued", "delivering"), "failed": ("failed", "expired"),
+     "created": "created_at", "failed_at": "COALESCE(done_at, updated_at, created_at)"},
+    {"key": "webhook_outbox", "label": "Outbound webhooks", "table": "webhook_outbox",
+     "state_cols": ("state",), "pending": ("queued", "delivering"), "failed": ("failed", "expired"),
+     "created": "created_at", "failed_at": "COALESCE(done_at, updated_at, created_at)"},
+    # H's owed billing mail (#12): pending until sent, 'sending' while a
+    # drain holds it, 'failed' once it gave up.
+    {"key": "owed_sends", "label": "Owed billing email", "table": "owed_sends",
+     "pending": ("pending", "sending"), "failed": ("failed",), "created": "created_at",
+     "failed_at": "updated_at"},
 )
 
 

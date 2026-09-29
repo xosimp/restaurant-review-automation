@@ -212,7 +212,14 @@ def test_queues_report_counts_oldest_and_failures(db_path):
     q = {x["key"]: x for x in admin_ops.queues()["queues"]}
     d = q["delayed_actions"]
     assert d["available"] and d["pending"] == 1 and d["failed_24h"] == 1 and 1.9 < d["oldest_pending_age_hours"] < 2.1
-    assert q["push_outbox"]["available"] is False        # no queued state column yet (workstream E)
+    # E's outboxes are merged: the queue is push_outbox itself (it was
+    # "unavailable" while only push_deliveries existed).
+    _sql(db_path, "INSERT INTO push_outbox (restaurant_id, device_token_id, alert_type, state, created_at) "
+                  "VALUES (?, 1, 'digest', 'queued', datetime('now','-30 minutes'))", (rid,))
+    _sql(db_path, "INSERT INTO push_outbox (restaurant_id, device_token_id, alert_type, state, done_at) "
+                  "VALUES (?, 1, 'digest', 'expired', datetime('now'))", (rid,))
+    p = {x["key"]: x for x in admin_ops.queues()["queues"]}["push_outbox"]
+    assert p["available"] and p["pending"] == 1 and p["failed_24h"] == 1
 
 
 # ── #62: actions that act ───────────────────────────────────────────────────
