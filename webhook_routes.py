@@ -765,7 +765,10 @@ def _stripe_dispatch(event):
         _ae.record_stripe(event, restaurant_id=rid)
     except Exception:
         pass
-    if _stale_billing_event(event, rid):
+    # A duplicate checkout's events are about a subscription the restaurant
+    # does not use: they never move its clock, or a real event created
+    # earlier but delivered later would be dropped as stale.
+    if rid and how != "duplicate" and _stale_billing_event(event, rid):
         # Older than what this restaurant's billing state already reflects:
         # recorded, not applied (MOD-BIL-1).
         print(f"Stripe {etype} {event.get('id')} is older than the last applied event — ignored")

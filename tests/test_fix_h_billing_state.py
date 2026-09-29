@@ -377,6 +377,11 @@ def test_the_duplicate_checkouts_refund_and_cancellation_touch_nothing(db_path, 
     r = get_restaurant(rid, db_path)
     assert r.billing_status == "active" and r.pause_reason is None and r.stripe_customer_id == "cus_1"
     assert _count(db_path, "SELECT COUNT(*) FROM owed_sends WHERE kind='receipt'") == 0
+    # The duplicate's events never moved the paying restaurant's clock: a real
+    # failure created before them but delivered after is still applied.
+    hook(_evt("e6", "invoice.payment_failed", {"id": "in_real", "customer": "cus_1", "subscription": "sub_1",
+                                               "amount_due": 34900, "attempt_count": 1}, created=1001))
+    assert get_restaurant(rid, db_path).billing_status == "past_due"
 
 
 # ── #114 holds only an admin lifts ──────────────────────────────────────────
