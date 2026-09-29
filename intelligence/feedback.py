@@ -744,6 +744,11 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
                 meta = _json.loads(r["meta"] or "{}") or {}
             except (TypeError, ValueError):
                 meta = {}
+            # An admin's answer (support triage, view-as) is nobody's
+            # preference and teaches no learner (permissions.answer_authority,
+            # memory round contract; recorded on the answer's meta).
+            if (meta.get("authority") or meta.get("answer_authority")) == "admin":
+                continue
             action = _ledger_action(key, r["event"], meta)
             if not action:
                 continue

@@ -142,6 +142,16 @@ def test_a_home_answer_and_its_ledger_copy_are_one_row(db):
     assert rows[0]["source_key"].startswith("trim_day:Tuesday#e")
 
 
+def test_an_admins_answer_teaches_no_learner(db):
+    rid = _rid(db, "Viewed As Co")
+    _episode(db, rid, "trim_day:Monday", "dismissed", days_ago=1, meta={"kind": "not_for_us", "authority": "admin"})
+    _episode(db, rid, "trim_day:Tuesday", "dismissed", days_ago=1, meta={"kind": "not_for_us",
+                                                                         "authority": "principal"})
+    feedback.sync(db_path=db)
+    keys = {feedback.base_key(r["source_key"]) for r in _q(db, "SELECT source_key FROM intel_rec_events")}
+    assert keys == {"trim_day:Tuesday"}
+
+
 def test_the_row_suffix_is_read_only_in_its_own_shape():
     assert feedback.base_key("reprice:Burger #one") == "reprice:Burger #one"
     assert feedback.base_key("trim_day:Monday#o12") == "trim_day:Monday"
