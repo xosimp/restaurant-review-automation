@@ -1143,6 +1143,25 @@ def prior_rungs(kind, cohort=None, profile=None, owner_facing=False, key=None) -
     return out
 
 
+def learned_note(learned, key, weight, why) -> dict:
+    """The `learned` block a ranked recommendation carries (home_brief.
+    order_recommendations, business_intelligence.pick_one_thing): the weight
+    and its reasons, plus — from an Effectiveness model — the prior ladder
+    rung its prior was read from and EFFECTIVENESS_VERSION, so the log of
+    what was shown can say what the ranking rested on (memory audit
+    PLATFORM-1/3). A plain callable (a test's) gives weight and why only.
+    Never raises."""
+    out = {"weight": weight, "why": list(why or [])[:3]}
+    fn = getattr(learned, "prior_rung", None)
+    if callable(fn):
+        try:
+            out["prior_rung"] = fn(rec_ledger.kind_of(str(key or "")))
+            out["version"] = EFFECTIVENESS_VERSION
+        except Exception as e:
+            print(f"[rec_learning] prior rung unavailable for {key}: {e}")
+    return out
+
+
 def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_monthly") -> dict:
     """Put the calibrated dollars beside a shown recommendation's own figure
     (CA2 #8, F6) — the one place Home cards, the one-thing hero and the DSR

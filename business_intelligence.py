@@ -1227,7 +1227,8 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
                 w, why = 1.0, []
             if w != 1.0:
                 c["score"] = round(float(c.get("score") or 0) * w, 2)
-                c["learned"] = {"weight": w, "why": why[:3]}
+                import rec_learning
+                c["learned"] = rec_learning.learned_note(learned, c["key"], w, why)
             run.append(c)
         flush()
         candidates = ordered

@@ -4627,6 +4627,17 @@ def scheduler_loop():
             if _due(now, 4) and _ops.claim_period("intelligence_learning", str(today)):
                 from intelligence import jobs as _intel_jobs
                 _ops.run_job("intelligence_learning", _intel_jobs.run_learning)
+            # 5am — past feature weeks from the raw tables (bounded,
+            # resumable; memory audit PLATFORM-5), after the night's own
+            # feature and learning passes.
+            if _due(now, 5) and _ops.claim_period("intelligence_features_backfill", str(today)):
+                from intelligence import jobs as _intel_jobs
+                _ops.run_job("intelligence_features_backfill", _intel_jobs.run_features_backfill)
+            # Monday 5am — the schedule A/B's clustered verdict, stored for
+            # the week (memory audit PLATFORM-13).
+            if _due(now, 5) and now.weekday() == 0 and _ops.claim_period("schedule_experiment_verdicts", str(today)):
+                import schedule_experiments as _sx
+                _ops.run_job("schedule_experiment_verdicts", _sx.record_verdicts)
 
             # Noon daily — which campaign recipients Toast saw on a later
             # check (guest_marketing.run_campaign_attribution). Reads each

@@ -544,7 +544,8 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
                 w, why = 1.0, []
             if w != 1.0:
                 r["rank_score"] = round(r["rank_score"] * w, 2)
-                r["learned"] = {"weight": w, "why": why[:3]}
+                import rec_learning
+                r["learned"] = rec_learning.learned_note(learned, r["key"], w, why)
     ranked = sorted(recs, key=lambda r: -r["rank_score"])
     quiet = set(quiet_kinds or ())
     loud = [r for r in ranked if r["key"].split(":", 1)[0] not in quiet]

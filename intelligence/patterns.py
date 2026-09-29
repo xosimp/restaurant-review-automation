@@ -24,6 +24,14 @@ dashboard shows what used to hold. Sentences carry counts and effects;
 they never carry a name, and `privacy.assert_anonymous` runs on every row
 before it is stored.
 
+What the platform believed, week by week (memory audit 9/29/26,
+PLATFORM-14): every pattern written, confirmed or retired also leaves one
+row in the append-only `intel_pattern_history` per ISO week and status it
+reached — its n, effect, d, p and q that week — so "this association has
+held for 20 weeks at 0.3★" can be read (history(), `weeks_held`) and a
+retired pattern's past is kept. The table refuses an UPDATE; a week's row is
+written once.
+
 Every hypothesis compares restaurants' latest rows side by side: the
 behaviour and the outcome are measured over the SAME weeks, so a sentence
 says "at the same time as", never "over the following" (BM1-16, BM4-5). A
@@ -450,6 +458,60 @@ def _group_label(cohort) -> str:
     return f"{categories.label(cohort).lower()} on Cavnar AI"
 
 
+def _history(conn, week, key, cohort, hypothesis, status, fig):
+    """One intel_pattern_history row — written once per (week, key,
+    status); a later write for the same week is ignored."""
+    ev = fig.get("evidence") or {}
+    if isinstance(ev, str):
+        try:
+            ev = json.loads(ev or "{}") or {}
+        except ValueError:
+            ev = {}
+    conn.execute("INSERT OR IGNORE INTO intel_pattern_history (week, key, cohort, hypothesis, status, n_with, n_without, "
+                 "effect, effect_unit, cohen_d, p_value, q_value, prospective) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (week, key, cohort, hypothesis, status, fig.get("n_with"), fig.get("n_without"), fig.get("effect"),
+                  fig.get("effect_unit"), fig.get("cohen_d"), fig.get("p_value"), fig.get("q_value"),
+                  1 if ev.get("prospective") else 0))
+
+
+def history(key=None, db_path=DB_PATH, limit=200) -> list:
+    """The weekly record of one pattern (or every pattern, newest first):
+    [{week, key, cohort, hypothesis, status, n_with, n_without, effect,
+    effect_unit, cohen_d, p_value, q_value, prospective}] — aggregates only,
+    asserted anonymous. An admin read."""
+    conn = get_conn(db_path)
+    try:
+        if key:
+            rows = conn.execute("SELECT * FROM intel_pattern_history WHERE key=? ORDER BY week, status",
+                                (key,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM intel_pattern_history ORDER BY week DESC, key LIMIT ?",
+                                (int(limit),)).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d.pop("id", None)
+        out.append(d)
+    return privacy.assert_anonymous(out)
+
+
+def weeks_held(db_path=DB_PATH) -> dict:
+    """{pattern key: distinct ISO weeks it was active}, from the history."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT key, COUNT(DISTINCT week) AS n FROM intel_pattern_history WHERE status='active' "
+                            "GROUP BY key").fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    return {r["key"]: int(r["n"]) for r in rows}
+
+
 def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
              wall_seconds=DISCOVER_WALL_SECONDS, members: dict = None, partitions: dict = None) -> dict:
     """Run every hypothesis over every peer group that clears the floor,
@@ -598,6 +660,7 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                 active_keys.add(key)
                 written += 1
                 continue
+            _history(conn, week, key, row["cohort"], row["hypothesis"], "active", row)
             conn.execute(
                 "INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, p_value, "
                 "q_value, confidence, sentence, evidence_json, status, last_confirmed, computed_at) "
@@ -617,12 +680,17 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
         # Only cohorts TESTED tonight: a cohort the wall clock never reached
         # keeps its patterns until the next pass reaches it (BM4-14).
         tested = set(tested_now)
-        for r in conn.execute("SELECT key, cohort, hypothesis FROM intel_patterns WHERE status='active'").fetchall():
+        for r in conn.execute("SELECT key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, "
+                              "p_value, q_value, evidence_json FROM intel_patterns WHERE status='active'").fetchall():
             h = _hypothesis(r["hypothesis"])
             fams = [family_of(h)] if h else list(_FAMILY_ORDER)
             below_floor = not any(privacy.cohort_ok(len(fam_groups[f].get(r["cohort"]) or [])) for f in fams)
             if below_floor or (r["cohort"] in tested and r["key"] not in active_keys):
                 conn.execute("UPDATE intel_patterns SET status='retired', computed_at=datetime('now') WHERE key=?", (r["key"],))
+                fig = dict(r)
+                fig["evidence"] = fig.pop("evidence_json", None)
+                _history(conn, week, r["key"], r["cohort"], r["hypothesis"],
+                         "below_floor" if below_floor else "retired", fig)
                 retired += 1
         # A completed sweep resets the cursor so the next night starts over.
         _cursor(conn, last_done if stopped_early else "")
@@ -719,16 +787,20 @@ def active(cohort=None, db_path=DB_PATH, include_platform=True, limit=20, projec
 
 
 def all_patterns(db_path=DB_PATH, limit=100) -> list:
+    """Every pattern, active first — the admin projection, each with
+    `weeks_held` (the ISO weeks it was active, from the history)."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM intel_patterns ORDER BY status='active' DESC, confidence DESC LIMIT ?", (int(limit),)).fetchall()
     finally:
         conn.close()
+    held = weeks_held(db_path=db_path)
     out = []
     for r in rows:
         d = dict(r)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
+        d["weeks_held"] = held.get(d.get("key"), 0)
         out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 
