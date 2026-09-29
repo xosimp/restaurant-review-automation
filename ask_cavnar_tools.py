@@ -511,10 +511,22 @@ def _read_competitors(restaurant_id, limit=5):
             ],
         })
     from ai_guard import freshness
-    fresh = freshness(getattr(r, "competitor_updated_at", None))
+    fresh = freshness(getattr(r, "competitor_updated_at", None), source="competitor")
+    # The OPEN recommendations only (memory audit 9/29/26, ask_reach): every
+    # stored line used to come back, so a line the owner answered "Not for
+    # us" on Intel was suggested again through this tool. The snapshot's
+    # own filter (client_api.intel_open_recs: answered and withheld lines
+    # out) is the one rule; a stale read carries none at all (competitor_age).
+    try:
+        from client_api import intel_open_recs
+        recs = intel_open_recs(restaurant_id, restaurant=r)["recs"]
+    except Exception:
+        recs = extract_recs(blob.get("insight", "") or "")
+    if fresh["stale"]:
+        recs = []
     return {
         "has_data": True,
-        "updated_at": getattr(r, "competitor_updated_at", None),
+        # M/D/YY (as_of); the stored stamp stays out of what the model reads.
         # The age travels with the claims, not just beside them in the UI.
         # Quoted into an answer without it, a six-week-old competitor summary
         # reads exactly like one written this morning.
@@ -522,12 +534,13 @@ def _read_competitors(restaurant_id, limit=5):
         "age_days": fresh["age_days"],
         "stale": fresh["stale"],
         "_freshness_note": (
-            f"This competitor set was gathered {fresh['age_days']} days ago"
-            f" ({fresh['as_of']}). Say so when you use it, and do not state it as today's position."
-            if fresh["stale"] else None
+            (f"This competitor set was gathered {fresh['age_days']} days ago ({fresh['as_of']})"
+             if fresh.get("age_days") is not None else "This competitor set has no date")
+            + ", so it is stale: its recommendations are left out. Say so when you use it, and do not state "
+              "it as today's position." if fresh["stale"] else None
         ),
         "competitors": out,
-        "recommendations": extract_recs(blob.get("insight", "") or ""),
+        "recommendations": recs,
     }
 
 

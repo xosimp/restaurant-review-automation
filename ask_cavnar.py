@@ -202,7 +202,11 @@ def _profile_context(restaurant):
     lines.append(f"- Connected integrations: {', '.join(connected) if connected else 'none yet'}")
 
     if restaurant.created_at:
-        lines.append(f"- Client since: {restaurant.created_at[:10]}")
+        # M/D/YY: the model echoes the dates it reads, so an ISO date here
+        # came back to the owner as "since 2026-09-01" (memory audit
+        # 9/29/26, iso_dates).
+        from time_utils import mdy
+        lines.append(f"- Client since: {mdy(str(restaurant.created_at)[:10])}")
 
     return "\n".join(lines) + "\n"
 
@@ -310,6 +314,21 @@ def _staleness(last_date, restaurant_id=None, key="labor"):
         return (f" — the last day of data is {days} days ago, so these are not this week's figures: "
                 "name their dates")
     return f" — NOTE: the last day of data is {days} days ago, so these are not current"
+
+
+def _mdy_local(restaurant_id, stamp) -> str:
+    """A stored UTC stamp ("2026-09-28 23:10:00") as M/D/YY on the
+    restaurant's own day — what every date the model reads looks like, since
+    it echoes them back to the owner (memory audit 9/29/26, iso_dates). ""
+    for no stamp."""
+    if not stamp:
+        return ""
+    try:
+        import ask_cavnar_tools as _t
+        return _t.local_mdy(restaurant_id, stamp)
+    except Exception:
+        from time_utils import mdy
+        return mdy(str(stamp)[:10])
 
 
 def _local_today(restaurant_id=None):
@@ -470,8 +489,24 @@ def _intel_context(restaurant_id):
             recs = extract_recs(insight)
         except Exception:
             return "COMPETITOR INTEL\n- No competitor analysis run yet.\n"
-    updated = restaurant.competitor_updated_at or "unknown date"
-    lines = [f"COMPETITOR INTEL (last updated {updated})"]
+    # The read's age, by the one freshness rule (ai_guard.freshness over the
+    # registry's competitor source — stale past 14 days, and an unknown age
+    # is never current). The section printed the raw ISO stamp and up to five
+    # recommendations however old they were, so a weekly Intel job that
+    # failed for six weeks had Ask presenting six-week-old advice as current
+    # (memory audit 9/29/26, competitor_age). A stale read keeps its date and
+    # loses its recommendations; the Reviews read applies the same rule.
+    from ai_guard import freshness
+    fresh = freshness(restaurant.competitor_updated_at, source="competitor")
+    if fresh.get("stale"):
+        when = f"from {fresh['as_of']}" if fresh.get("as_of") and fresh.get("age_days") is not None \
+            else "date unknown"
+        return (f"COMPETITOR INTEL ({when}, stale)\n"
+                "- The last competitor read is too old to present as current, so its recommendations are "
+                "left out. Say it is out of date if the owner asks, and that refreshing competitors in Intel "
+                "brings a new read.\n")
+    lines = [f"COMPETITOR INTEL (read {fresh['as_of']}, {fresh['age_days']} day"
+             f"{'s' if fresh['age_days'] != 1 else ''} ago)"]
     if recs:
         lines.append("- Top recommendations from the last analysis:")
         for r in recs[:5]:
@@ -565,7 +600,7 @@ def _memory_context(restaurant_id):
              "quote a figure from them as your data."]
     body = []
     for f in facts:
-        when = (f.get("created_at") or "")[:10]
+        when = _mdy_local(restaurant_id, f.get("created_at"))
         body.append(f"- {f['fact']}" + (f" (said {when})" if when else ""))
     lines.append(wrap_untrusted("\n".join(body)))
     return "\n".join(lines) + "\n"
@@ -760,7 +795,9 @@ def _commitments_context(restaurant_id):
             if pair in seen:
                 continue
             seen.add(pair)
-        when = (r.get("created_at") or "")[:10]
+        # M/D/YY on the restaurant's own day, never the stored ISO stamp —
+        # the model echoes it ("proposed 2026-09-28", memory audit iso_dates).
+        when = _mdy_local(restaurant_id, r.get("created_at"))
         label = r.get("summary") or (r.get("action") or "").replace("_", " ")
         if r.get("outcome") == "confirmed":
             settled.append(f"{label} — the owner confirmed it, {when}")
