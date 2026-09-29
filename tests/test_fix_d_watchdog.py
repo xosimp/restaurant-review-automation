@@ -317,6 +317,26 @@ def test_the_ping_is_optional_short_and_never_raises(monkeypatch):
     assert ops.ping_healthcheck() is False
 
 
+def test_a_job_new_to_this_database_is_not_overdue_until_its_sla_has_passed(db_path):
+    """A never-run job was measured from the oldest run of ANY job — on a
+    live database 45 days back — so the first /health after the deploy that
+    added the Monday operator digest read it as weeks overdue and paged
+    every hour until Monday (#31)."""
+    assert len(_q(db_path, "SELECT job FROM job_expected_since")) == len(ops.EXPECTED_JOBS)
+    _x(db_path, "INSERT INTO job_runs (job, started_at, finished_at, ok) VALUES "
+                "('review_fetch', datetime('now','-40 days'), datetime('now','-40 days'), 1)")
+    _x(db_path, "UPDATE job_expected_since SET since=datetime('now','-10 minutes')")
+    late = {j["job"] for j in ops.jobs_overdue()}
+    assert "operator_weekly_digest" not in late and "morning_brief" not in late
+    assert "review_fetch" in late, "a job that ran, 40 days ago, is still overdue"
+    _x(db_path, "UPDATE job_expected_since SET since=datetime('now','-2 hours') WHERE job='morning_brief'")
+    assert "morning_brief" in {j["job"] for j in ops.jobs_overdue()}, "expected 2h ago, an hour's SLA, never ran"
+    # A job that has run and only ever failed keeps the old base.
+    _x(db_path, "INSERT INTO job_runs (job, started_at, finished_at, ok) VALUES "
+                "('pos_sync', datetime('now','-39 days'), datetime('now','-39 days'), 0)")
+    assert "pos_sync" in {j["job"] for j in ops.jobs_overdue()}
+
+
 def test_the_digest_includes_overdue_jobs(db_path, monkeypatch):
     import emails
     _x(db_path, "INSERT INTO job_runs (job, started_at, finished_at, ok) VALUES "

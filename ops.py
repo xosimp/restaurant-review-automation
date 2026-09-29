@@ -461,6 +461,17 @@ _MISSED_WINDOWS_SQL = """CREATE TABLE IF NOT EXISTS missed_windows (
     UNIQUE(job, restaurant_id, local_date)
 )"""
 
+# ── when this database first expected each job (#31) ───────────────────────
+# jobs_overdue measured a job that has never succeeded from the OLDEST run
+# of any job — 45 days back on a live database — so a job a release adds (the
+# Monday operator digest, a new billing job) read as weeks overdue from the
+# first /health after the deploy and paged Will every hour until it first
+# ran. One row per registry job, written at boot, never updated.
+_EXPECTED_SINCE_SQL = """CREATE TABLE IF NOT EXISTS job_expected_since (
+    job    TEXT PRIMARY KEY,
+    since  TEXT NOT NULL DEFAULT (datetime('now'))
+)"""
+
 
 def init_ops(db_path=None):
     """Create this module's tables, and their indexes, at boot.
@@ -475,8 +486,10 @@ def init_ops(db_path=None):
     try:
         for sql in (_TABLE_SQL, _RUNS_SQL, _PERIOD_CLAIM_SQL, _ASYNC_JOB_SQL, _LEASE_SQL, _MARKERS_SQL,
                     _RUN_REQUESTS_SQL, _HEARTBEAT_SQL, _BACKUP_RUNS_SQL, _OPERATOR_ALERTS_SQL,
-                    _MISSED_WINDOWS_SQL):
+                    _MISSED_WINDOWS_SQL, _EXPECTED_SINCE_SQL):
             conn.execute(sql)
+        conn.executemany("INSERT OR IGNORE INTO job_expected_since (job) VALUES (?)",
+                         [(job,) for job in EXPECTED_JOBS])
         for table, columns in (("job_runs", _RUNS_COLUMNS), ("job_failures", _FAILURE_COLUMNS),
                                ("scheduler_lease", _LEASE_COLUMNS)):
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -1331,8 +1344,11 @@ def jobs_overdue(now=None, db_path=None) -> list:
     """[{job, max_hours, last_ok_at, hours_since}] for every EXPECTED_JOBS
     entry whose last successful run is older than its SLA. A job that has
     never succeeded counts only once job_runs is older than its SLA (a fresh
-    database is not "overdue"). `now` is a UTC "YYYY-MM-DD HH:MM:SS" (tests);
-    None is SQLite's now. Never raises: [] when unreadable.
+    database is not "overdue") — and a job with no run at all under its name
+    only once its SLA has passed since this database first expected it
+    (job_expected_since): a job a release adds is not weeks overdue on the
+    first /health after the deploy. `now` is a UTC "YYYY-MM-DD HH:MM:SS"
+    (tests); None is SQLite's now. Never raises: [] when unreadable.
 
     One indexed lookup per job (the newest successful run, found through
     idx_job_runs_job), not a GROUP BY over every run ever kept: this is read
@@ -1347,11 +1363,21 @@ def jobs_overdue(now=None, db_path=None) -> list:
         first = conn.execute("SELECT MIN(started_at) FROM job_runs").fetchone()[0]
         if not first:
             return []
+        try:
+            since = {r[0]: r[1] for r in conn.execute("SELECT job, since FROM job_expected_since")}
+        except sqlite3.OperationalError:
+            since = {}
         for job, hours in EXPECTED_JOBS.items():
             row = conn.execute("SELECT finished_at FROM job_runs WHERE job=? AND ok IN (1, 2) "
                                "AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1", (job,)).fetchone()
             last = row[0] if row else None
             base = last or first
+            if last is None and since.get(job) and str(since[job]) > str(first) and conn.execute(
+                    "SELECT 1 FROM job_runs WHERE job=? LIMIT 1", (job,)).fetchone() is None:
+                # Never run under this name: late from when it was first
+                # expected, not from the oldest run of some other job. A job
+                # with failed runs keeps the old base — it did run, and fails.
+                base = since[job]
             late = conn.execute("SELECT (julianday(COALESCE(?, 'now')) - julianday(?)) * 24.0",
                                 (now, base)).fetchone()[0]
             if late is not None and late > hours:
