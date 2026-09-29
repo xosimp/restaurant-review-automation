@@ -1082,6 +1082,24 @@ def docusign_webhook():
 # (silencing a guest) or a YES (granting marketing consent on someone's
 # behalf, the exact thing guest_marketing's consent model exists to prevent).
 
+def _twilio_signed_url():
+    """The URL Twilio signed. Behind Railway's proxy request.url arrives as
+    http://, so rebuild it as https to match."""
+    url = request.url
+    if request.headers.get("X-Forwarded-Proto") == "https" and url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+    return url
+
+
+def _twilio_refusal_reason():
+    import notify
+    if not notify.TWILIO_TOKEN:
+        return "TWILIO_AUTH_TOKEN is not set"
+    if not request.headers.get("X-Twilio-Signature"):
+        return "no X-Twilio-Signature header"
+    return "signature did not verify"
+
+
 @webhook_bp.route("/webhooks/twilio/sms", methods=["POST"])
 def twilio_inbound_sms():
     from flask import Response
@@ -1089,14 +1107,14 @@ def twilio_inbound_sms():
     from guest_marketing import handle_inbound_sms
 
     params = request.form.to_dict()
-    # Twilio signs the URL it was configured with. Behind Railway's proxy
-    # request.url arrives as http://, so rebuild it as https to match.
-    url = request.url
-    if request.headers.get("X-Forwarded-Proto") == "https" and url.startswith("http://"):
-        url = "https://" + url[len("http://"):]
+    url = _twilio_signed_url()
 
     if not validate_twilio_signature(url, params, request.headers.get("X-Twilio-Signature", "")):
+        # A rotated TWILIO_AUTH_TOKEN silently stopped every STOP being
+        # recorded (#74): counted, and the operator told once an hour.
+        _refused_inbound("twilio", _twilio_refusal_reason())
         return Response("", status=403, mimetype="text/xml")
+    _verified_inbound("twilio", "inbound_sms")
 
     from_phone = (params.get("From") or "").strip()
     body = params.get("Body") or ""
@@ -1121,6 +1139,43 @@ def twilio_inbound_sms():
         safe = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return Response(f"<Response><Message>{safe}</Message></Response>", mimetype="text/xml")
     return Response("<Response></Response>", mimetype="text/xml")
+
+
+# ── Twilio delivery status (#14) ────────────────────────────────────────────
+# Every text send_sms makes names this as its StatusCallback, so Twilio tells
+# us whether it was delivered, undelivered or failed — the difference between
+# "Twilio accepted it" and "the manager's phone got it". Signed like the
+# inbound route; a refused request is counted, not silent.
+
+@webhook_bp.route("/webhooks/twilio/status", methods=["POST"])
+def twilio_status_callback():
+    from flask import Response
+    import notify
+
+    params = request.form.to_dict()
+    if not notify.validate_twilio_signature(_twilio_signed_url(), params,
+                                            request.headers.get("X-Twilio-Signature", "")):
+        _refused_inbound("twilio_status", _twilio_refusal_reason())
+        return Response("", status=403, mimetype="text/xml")
+    status = (params.get("MessageStatus") or params.get("SmsStatus") or "").strip().lower()
+    _verified_inbound("twilio_status", status or None)
+    sid = (params.get("MessageSid") or params.get("SmsSid") or "").strip()
+    code = (params.get("ErrorCode") or "").strip() or None
+    try:
+        notify.update_sms_status(sid, status, error_code=code,
+                                 error=(params.get("ErrorMessage") or None))
+        # Twilio's own word that the number replied STOP (21610) — record the
+        # platform STOP so no sender tries it again.
+        if code == notify.SMS_STOP_ERROR_CODE and params.get("To"):
+            notify.record_platform_stop(params.get("To"))
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="twilio_status_callback", context=f"sid={sid[:12]}")
+        except Exception:
+            pass
+    # Always 200 on a verified callback: nothing here is worth a retry.
+    return Response("", status=204)
 
 
 # ── Resend delivery events (bounces / complaints) ───────────────────────────
@@ -1241,15 +1296,56 @@ def _is_unsubscribe_click(data) -> bool:
     return bool(re.match(_UNSUBSCRIBE_PATH, u.path or "")) and (not ours or u.netloc.lower() == ours)
 
 
+def _refused_inbound(provider, reason):
+    """A webhook request refused on its signature: counted per provider, and
+    the operator told at most once an hour (#74). A rotated or missing
+    secret used to turn every bounce, complaint, STOP and delivery report
+    into a silent 403 while the console said nothing."""
+    try:
+        from models import record_inbound_webhook
+        if record_inbound_webhook(provider, False, reason=reason):
+            import ops
+            ops.capture(RuntimeError(f"{provider} webhook refused: {reason}"),
+                        job=f"webhook_signature_{provider}",
+                        context="check the signing secret in Railway against the provider's dashboard")
+    except Exception:
+        pass
+
+
+def _verified_inbound(provider, event_type=None):
+    try:
+        from models import record_inbound_webhook
+        record_inbound_webhook(provider, True, event_type=event_type)
+    except Exception:
+        pass
+
+
+def _complaint_scope(sent):
+    """What a spam complaint stops (#45). About a restaurant's guest mail —
+    that guest list ('guest'). About any other send we can identify — owner
+    and team mail, which people rely on — only Cavnar AI's own marketing
+    ('marketing'): an owner who marked the day-7 tips as spam lost their
+    alerts, digests and briefs. About a send we cannot identify — every
+    email, as before ('all')."""
+    if not sent:
+        return "all"
+    if sent.get("email_type") in _guest_email_types():
+        return "guest"
+    return "marketing"
+
+
 @webhook_bp.route("/webhooks/resend", methods=["POST"])
 def resend_webhook():
     from models import suppress_email, mark_email_delivery_event
 
     if not _verify_svix(request.get_data(), request.headers):
+        _refused_inbound("resend", "RESEND_WEBHOOK_SECRET is not set" if not _webhook_secret()
+                         else "signature or timestamp did not verify")
         return jsonify(ok=False, error="bad signature"), 403
 
     event = request.get_json(silent=True) or {}
     etype = event.get("type") or ""
+    _verified_inbound("resend", etype)
     data = event.get("data") or {}
     message_id = data.get("email_id") or data.get("id") or ""
     to = data.get("to") or []
@@ -1283,15 +1379,19 @@ def resend_webhook():
         # review request) is about that list: it stops guest mail to the
         # address and unsubscribes them from that restaurant, and leaves the
         # same person's staff schedules and account mail alone (MOD-EML-7).
-        # A bounce is about the mailbox itself, so it stops everything.
+        # A complaint about owner mail stops only Cavnar AI's marketing
+        # (#45). A bounce is about the mailbox itself, so it stops
+        # everything. The operator's own address is never suppressed
+        # (models.suppress_email, #101).
         sent = _logged_send(message_id)
-        guest_mail = bool(sent and sent.get("email_type") in _guest_email_types())
         for addr in recipients:
-            if etype == "email.complained" and guest_mail:
-                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail, scope="guest")
-                _unsubscribe_guest_email(addr, sent.get("restaurant_id"))
+            if etype == "email.complained":
+                scope = _complaint_scope(sent)
+                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail, scope=scope)
+                if scope == "guest":
+                    _unsubscribe_guest_email(addr, sent.get("restaurant_id"))
             else:
-                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail)
+                suppress_email(addr, _SUPPRESS_EVENTS[etype], detail, scope="all")
 
     # Always 200 on a verified event — a non-2xx makes Resend retry, and
     # nothing here is worth replaying.

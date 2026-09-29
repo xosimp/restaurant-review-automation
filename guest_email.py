@@ -128,6 +128,7 @@ def _subscriber_rows(restaurant_id, db_path: str = DB_PATH) -> list:
     """Every consented row: not unsubscribed, not opted out by address at
     this restaurant, and not on the suppression list (a bounce, or a guest
     complaint anywhere: MOD-EML-7). One address can be on several rows."""
+    from models import suppressed_scope_sql
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -135,7 +136,7 @@ def _subscriber_rows(restaurant_id, db_path: str = DB_PATH) -> list:
             "WHERE restaurant_id=? AND email IS NOT NULL AND TRIM(email) != '' "
             "AND email_consent=1 AND COALESCE(email_unsubscribed,0)=0 "
             "AND LOWER(TRIM(email)) NOT IN (SELECT email FROM email_suppressions "
-            "    WHERE scope IS NULL OR scope = '' OR scope = 'guest') "
+            "    WHERE " + suppressed_scope_sql("guest") + ") "
             "AND LOWER(TRIM(email)) NOT IN (SELECT email FROM guest_email_optouts WHERE restaurant_id=?) "
             "ORDER BY id",
             (restaurant_id, restaurant_id),

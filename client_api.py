@@ -7628,7 +7628,19 @@ def send_test_digest_web(current_user):
 @client_bp.route("/u/<token>", methods=["GET", "POST"])
 @csrf_exempt
 def marketing_unsubscribe(token):
-    from models import verify_unsubscribe_token
+    from models import verify_unsubscribe_token, verify_marketing_optout_token
+    # Cavnar AI's marketing to someone who is not a client (a referral)
+    # carries an opt-out signed over the ADDRESS (#159): it lifts that
+    # address out of Cavnar AI's marketing, and nothing else. Same GET-asks /
+    # POST-acts rule as below.
+    address = verify_marketing_optout_token(token)
+    if address:
+        if request.method != "POST":
+            return render_template("unsubscribed.html", ok=True, confirm=True, audience="prospect",
+                                   restaurant_name="")
+        from models import suppress_email
+        suppress_email(address, "unsubscribed", "marketing opt-out link", scope="marketing")
+        return render_template("unsubscribed.html", ok=True, audience="prospect", restaurant_name="")
     rid = verify_unsubscribe_token(token)
     if not rid:
         return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404

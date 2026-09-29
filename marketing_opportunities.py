@@ -448,6 +448,7 @@ def lists(restaurant_id, now, db_path=DB_PATH):
     (guest_marketing.marketing_text_sql, which holds review-only guests out
     at the source since 9/28/26, OPP-6)."""
     from guest_marketing import marketing_text_sql
+    from models import suppressed_scope_sql
     conn = get_conn(db_path)
     try:
         def one(sql, args):
@@ -461,7 +462,7 @@ def lists(restaurant_id, now, db_path=DB_PATH):
         emails = one("SELECT COUNT(DISTINCT LOWER(TRIM(email))) FROM guest_contacts WHERE restaurant_id=? "
                      "AND email IS NOT NULL AND TRIM(email)!='' AND email_consent=1 "
                      "AND COALESCE(email_unsubscribed,0)=0 AND LOWER(TRIM(email)) NOT IN "
-                     "(SELECT email FROM email_suppressions WHERE scope IS NULL OR scope='' OR scope='guest')",
+                     "(SELECT email FROM email_suppressions WHERE " + suppressed_scope_sql("guest") + ")",
                      (restaurant_id,)) or 0
         last_text = one("SELECT MAX(created_at) FROM guest_campaigns WHERE restaurant_id=? AND sent_count>0",
                         (restaurant_id,))

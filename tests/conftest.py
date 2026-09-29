@@ -15,6 +15,10 @@ os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
+# Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
+# (emails.postal_address, #159). Set here as production must set it; the
+# tests of the unset case delete it.
+os.environ.setdefault("CAVNAR_POSTAL_ADDRESS", "100 Test St, Testville, IL 60000")
 
 # The default database (models.DB_PATH, used by every call that passes no
 # db_path — init_db's ensure_columns(), status_manager, lazily imported

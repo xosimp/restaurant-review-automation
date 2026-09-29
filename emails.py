@@ -235,11 +235,12 @@ def security_stamp(tz: str = None) -> str:
     return f"{mdy(now)} at {now.strftime('%I:%M %p').lstrip('0')} {now.strftime('%Z')}".strip()
 
 
-def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
+def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None,
+                  restaurant_id: int = None) -> "SendResult":
     """Send 2FA verification code email."""
     if not _resend_key():
         log.warning("send_2fa_code: RESEND_API_KEY not set — nothing sent")
-        return False
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -260,20 +261,20 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
 </div>
     """
     try:
-        _res = deliver(email_type="send_2fa_code", payload={"from": sender("client"), "to": [to_email],
+        return deliver(email_type="send_2fa_code", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email],
                   "subject": f"Your Cavnar AI verification code: {code}",
                   "preheader": "Expires in 10 minutes. If this wasn't you, someone may have your password.", "html": _html_document(html)})
-        return _res
     except Exception as e:
         log.warning("send_2fa_code: request to Resend failed: %s", e)
-        return False
+        return not_sent("build_error", str(e)[:300])
 
 def send_login_notification(to_email: str, restaurant_name: str,
                             ip: str = None, user_agent: str = None, report_url: str = None,
-                            tz: str = None):
+                            tz: str = None, restaurant_id: int = None) -> "SendResult":
     """Send sign-in notification email."""
     if not _resend_key():
-        return False
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     now_str = security_stamp(tz)
     # Parse UA into readable string
     ua = user_agent or ""
@@ -309,13 +310,13 @@ def send_login_notification(to_email: str, restaurant_name: str,
 </div>
     """
     try:
-        _res = deliver(email_type="send_login_notification", payload={"from": sender("client"), "to": [to_email],
+        return deliver(email_type="send_login_notification", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email],
                   "subject": f"New sign-in to your Cavnar AI dashboard",
                   "preheader": f"{ip or 'An unknown address'} — if this wasn't you, change your password now.", "html": _html_document(html)})
-        return _res
     except Exception as e:
         log.warning(f"send_login_notification error: {e}")
-        return False
+        return not_sent("build_error", str(e)[:300])
 
 
 # ── Delivery core ───────────────────────────────────────────────────────────
@@ -327,28 +328,80 @@ class SendResult:
     failed 2FA code, staff schedule or supplier order was indistinguishable
     from a delivered one — and email_log recorded 'sent' either way. This
     carries enough to log the truth and to let a caller react.
-    """
-    __slots__ = ("ok", "message_id", "error", "status_code", "attempts")
 
-    def __init__(self, ok, message_id=None, error=None, status_code=None, attempts=1):
+    Every sender in this module returns one, never None (fix round E): a
+    caller marks sent, counts, or claims only on `.ok`, and on a failure
+    reads which kind it was —
+
+      transient — attempted, and worth another go (a 429, a 5xx, a timeout):
+                  release the claim so the next pass retries.
+      refused   — will not change by retrying (the address is suppressed, a
+                  4xx, the flood guard, no recipient): record it, tell the
+                  operator, do not retry.
+      skipped   — the sender decided there was nothing to send (a quarterly
+                  with no data, a payment email for a plan with no modules).
+      deferred  — anything else that did not go out (no RESEND_API_KEY, no
+                  CAN-SPAM postal address, the email failed to build): a
+                  configuration or build problem; try again tomorrow.
+    """
+    __slots__ = ("ok", "message_id", "error", "status_code", "attempts", "reason")
+
+    def __init__(self, ok, message_id=None, error=None, status_code=None, attempts=1, reason=None):
         self.ok = ok
         self.message_id = message_id
         self.error = error
         self.status_code = status_code
         self.attempts = attempts
+        self.reason = reason
 
     def __bool__(self):
         """Back-compatible with `if send_x(...)` and with the old bool
         returns, so existing call sites keep working unchanged."""
         return bool(self.ok)
 
+    @property
+    def transient(self) -> bool:
+        if self.ok:
+            return False
+        if self.reason:
+            return self.reason == "transient"
+        return bool(self.attempts) and (self.status_code is None or self.status_code in _RETRY_STATUS)
+
+    @property
+    def refused(self) -> bool:
+        if self.ok:
+            return False
+        if self.reason:
+            return self.reason in _REFUSED_REASONS
+        err = str(self.error or "")
+        return (err.startswith("recipient suppressed") or err.startswith("flood guard")
+                or (bool(self.attempts) and self.status_code is not None
+                    and self.status_code not in _RETRY_STATUS))
+
+    @property
+    def skipped(self) -> bool:
+        return not self.ok and self.reason == "nothing_to_send"
+
+    @property
+    def deferred(self) -> bool:
+        return not (self.ok or self.transient or self.refused or self.skipped)
+
     def __repr__(self):
-        return f"<SendResult ok={self.ok} status={self.status_code} attempts={self.attempts} err={self.error!r}>"
+        return (f"<SendResult ok={self.ok} status={self.status_code} attempts={self.attempts} "
+                f"reason={self.reason!r} err={self.error!r}>")
+
+
+def not_sent(reason: str, error: str = None) -> SendResult:
+    """A SendResult for a send a sender decided not to attempt."""
+    return SendResult(False, error=error or reason, attempts=0, reason=reason)
 
 
 # 429 and 5xx are worth another go; 4xx (bad address, unverified domain) is
 # not — retrying those just burns time and makes the same mistake three times.
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+
+# SendResult.reason values a retry will not change.
+_REFUSED_REASONS = {"suppressed", "rejected", "flood_guard", "no_recipient"}
 
 # A suppressed address still gets security mail — locking someone out of
 # their own account because a newsletter bounced would be a worse failure
@@ -362,6 +415,37 @@ _SUPPRESSION_EXEMPT = {
     "send_recovery_email_code",
     "send_login_notification",
 }
+
+# Mail to the OPERATOR, never to a client: the off-site backup, the failure
+# digest, platform alerts, the restore drill, signup and deletion notices.
+# Never suppressed and, sent through deliver_or_raise, never silently not
+# attempted (#101): one bounce on Will's address used to stop the backup, the
+# digest and every alert while their jobs logged success. Mail to any
+# operator address (models.operator_addresses) is treated the same, whatever
+# its type, so a new ops sender cannot forget to join this list.
+OPERATOR_EMAIL_TYPES = {
+    "ops_backup", "ops_failure_digest", "ops_platform_alert", "ops_payment_alert",
+    "ops_stale_inventory", "ops_inactive_clients", "ops_first_upload",
+    "restore_drill", "send_signup_admin_alert", "send_account_deletion_request_email",
+    "send_bug_report_email", "referral_notice", "Admin Alert",
+}
+
+
+def is_operator_mail(email_type, recipients=()) -> bool:
+    """Operator mail: an ops type, or every recipient an operator address."""
+    if email_type in OPERATOR_EMAIL_TYPES or str(email_type or "").startswith("ops_"):
+        return True
+    got = [str(r).strip().lower() for r in (recipients or ()) if r]
+    if not got:
+        return False
+    try:
+        from models import operator_addresses
+        ops_addrs = operator_addresses()
+    except Exception:
+        ops_addrs = {config.will_email().strip().lower(), _from_email().strip().lower()}
+    return all(r in ops_addrs for r in got)
+
+
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE = 0.5   # 0.5s, 1s — deliberately short; these run inline in
                       # request handlers and scheduler ticks, not a queue.
@@ -406,7 +490,7 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
 
     Single choke point on purpose: retry, logging and status all used to be
     absent, and adding them at 17 separate call sites would have guaranteed
-    they drifted.
+    they drifted. Never raises; the SendResult says what happened.
     """
     import time as _time
     import requests as _requests
@@ -425,9 +509,12 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     subject = payload.get("subject", "")
 
     if not key or not to_email:
-        result = SendResult(False, error="RESEND_API_KEY or recipient missing", attempts=0)
+        result = SendResult(False, error="RESEND_API_KEY or recipient missing", attempts=0,
+                            reason="not_configured" if not key else "no_recipient")
         _record(restaurant_id, email_type, to_email, subject, result, log_send)
         return result
+
+    operator = is_operator_mail(email_type, recipients)
 
     # Flood guard for code-style transactional mail. A retry loop, a stuck
     # client, or a script hammering login could otherwise mail one address
@@ -436,30 +523,42 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # naturally bounded; only the types that are triggered per request
     # are capped here, per recipient, on a rolling window.
     if not _flood_guard_ok(email_type, to_email):
-        result = SendResult(False, error="flood guard: too many %s emails to %s in the last hour" % (email_type, to_email), attempts=0)
+        result = SendResult(False, error="flood guard: too many %s emails to %s in the last hour" % (email_type, to_email),
+                            attempts=0, reason="flood_guard")
         _record(restaurant_id, email_type, to_email, subject, result, log_send)
         log.warning(result.error)
         return result
 
-    # Marketing mail carries a working opt-out; CAN-SPAM requires one and
-    # until now none of these four had any. Applied centrally so a new
-    # marketing template can't be added without it.
-    if email_type in _MARKETING_TYPES and restaurant_id:
-        payload = _add_unsubscribe(payload, restaurant_id)
+    # Cavnar AI's own marketing carries a working opt-out AND the postal
+    # address CAN-SPAM requires (#159). Applied centrally so a new marketing
+    # template can't be added without them; with no address configured the
+    # send is not made — the guest newsletter's rule (guest_email) — and the
+    # operator is told.
+    if email_type in _MARKETING_TYPES:
+        address = postal_address()
+        if not address:
+            result = SendResult(False, error="CAN-SPAM: no postal address configured (set CAVNAR_POSTAL_ADDRESS)",
+                                attempts=0, reason="no_postal_address")
+            _record(restaurant_id, email_type, to_email, subject, result, log_send)
+            _warn_no_postal_address(email_type)
+            return result
+        payload = _add_unsubscribe(payload, restaurant_id, email_type, to_email, address)
 
     # Suppression is enforced here rather than at call sites so a bounced or
     # complained address is dropped no matter which of the 26 senders fires.
     # Security mail is exempt: someone whose marketing bounced must still be
-    # able to receive a 2FA code or a password reset.
-    # Every recipient, not just to[0] (MOD-EML-9): a suppressed address in a
-    # multi-recipient send is dropped from it, and a send left with nobody
-    # is not made.
-    if email_type not in _SUPPRESSION_EXEMPT:
+    # able to receive a 2FA code or a password reset. Operator mail is exempt
+    # too (#101). Every recipient, not just to[0] (MOD-EML-9): a suppressed
+    # address in a multi-recipient send is dropped from it, and a send left
+    # with nobody is not made.
+    if email_type not in _SUPPRESSION_EXEMPT and not operator:
         try:
-            from models import is_email_suppressed
-            kept = [r for r in recipients if not is_email_suppressed(r, email_type=email_type)]
+            from models import is_email_suppressed, is_operator_address
+            kept = [r for r in recipients
+                    if is_operator_address(r) or not is_email_suppressed(r, email_type=email_type)]
             if not kept:
-                result = SendResult(False, error="recipient suppressed (bounced/complained)", attempts=0)
+                result = SendResult(False, error="recipient suppressed (bounced/complained)", attempts=0,
+                                    reason="suppressed")
                 _record(restaurant_id, email_type, to_email, subject, result, log_send)
                 return result
             if len(kept) != len(recipients):
@@ -500,12 +599,14 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                 _record(restaurant_id, email_type, to_email, subject, result, log_send)
                 return result
 
+            retryable = resp.status_code in _RETRY_STATUS
             last = SendResult(False, error=(resp.text or "")[:300],
-                              status_code=resp.status_code, attempts=attempt)
-            if resp.status_code not in _RETRY_STATUS:
+                              status_code=resp.status_code, attempts=attempt,
+                              reason="transient" if retryable else "rejected")
+            if not retryable:
                 break
         except Exception as e:
-            last = SendResult(False, error=str(e)[:300], attempts=attempt)
+            last = SendResult(False, error=str(e)[:300], attempts=attempt, reason="transient")
 
         if attempt < _MAX_ATTEMPTS:
             pause = _BACKOFF_BASE * (2 ** (attempt - 1))
@@ -517,7 +618,7 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # `last or ...` would be wrong here: SendResult.__bool__ reports .ok, so a
     # failed result is falsy and would be silently replaced by the fallback,
     # throwing away the real status code, body and attempt count.
-    result = last if last is not None else SendResult(False, error="unknown send failure")
+    result = last if last is not None else SendResult(False, error="unknown send failure", reason="transient")
     log.warning("email %r to %s failed after %s attempt(s): %s",
                 subject, to_email, result.attempts, result.error)
     _record(restaurant_id, email_type, to_email, subject, result, log_send)
@@ -525,7 +626,8 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
 
 
 class EmailNotSent(RuntimeError):
-    """A send deliver() attempted and Resend did not accept."""
+    """A send deliver() attempted and Resend did not accept — or operator
+    mail that was not sent at all."""
 
 
 def deliver_or_raise(payload: dict = None, restaurant_id=None, email_type=None,
@@ -534,19 +636,31 @@ def deliver_or_raise(payload: dict = None, restaurant_id=None, email_type=None,
 
     For the send sites that called the Resend SDK directly and relied on its
     exception for their error path. Moving them here gives them suppression,
-    email_log, the flood guard and retry (MOD-EML-4). A send that was never
-    attempted (suppressed, flood-guarded, no key) returns its result without
-    raising: that is a decision, not a failure."""
+    email_log, the flood guard and retry (MOD-EML-4). A client send that was
+    never attempted (suppressed, flood-guarded, no key) returns its result
+    without raising: that is a decision, not a failure.
+
+    OPERATOR mail raises whenever it did not go out, attempted or not
+    (#101): backup_db logged "emailed" and the failure digest "sent" for a
+    send that was never made."""
     result = deliver(payload, restaurant_id=restaurant_id, email_type=email_type, log_send=log_send)
-    if not result.ok and result.attempts:
+    if result.ok:
+        return result
+    if result.attempts:
         raise EmailNotSent(result.error or "email send failed")
+    to = (payload or {}).get("to")
+    recipients = [t for t in (list(to) if isinstance(to, (list, tuple)) else [to]) if t]
+    if is_operator_mail(email_type, recipients):
+        raise EmailNotSent(f"operator email not sent: {result.error or result.reason or 'not attempted'}")
     return result
 
 
-# The templates that are product marketing rather than transactional.
-# Everything else — receipts, codes, schedules, supplier orders, alerts — is
-# mail the recipient asked for by using the product, and must not carry an
-# unsubscribe that would silently turn off operational email.
+# The templates that are Cavnar AI's own product marketing rather than
+# transactional (models.MARKETING_EMAIL_TYPES — one list, which a 'marketing'
+# suppression also reads). Everything else — receipts, codes, schedules,
+# supplier orders, alerts — is mail the recipient asked for by using the
+# product, and must not carry an unsubscribe that would silently turn off
+# operational email.
 #
 # send_monthly_summary_email was in here until the ROI audit (Sep 2026) and
 # should never have been. It carries _monthly_review_sections(): the month's
@@ -557,35 +671,80 @@ def deliver_or_raise(payload: dict = None, restaurant_id=None, email_type=None,
 # marketing meant an owner unsubscribing from promotional mail silently
 # lost their business review. It is a service report on an account they pay
 # for — see scheduler.run_monthly_summaries for the matching opt-out change.
-_MARKETING_TYPES = {
-    "send_onboarding_day2",
-    "send_onboarding_day7",
-    "send_onboarding_day30",
-}
+from models import MARKETING_EMAIL_TYPES as _MARKETING_TYPES   # noqa: E402
+
+# Marketing to someone who is not a customer (a referral). Its opt-out is
+# signed over the ADDRESS: the restaurant_id a referral carries is the
+# referrer's, and the restaurant token would have unsubscribed THEM.
+_PROSPECT_MARKETING_TYPES = {"referral"}
 
 
-def _add_unsubscribe(payload: dict, restaurant_id: int) -> dict:
-    """Append a visible footer link and the one-click headers.
+def postal_address() -> str:
+    """Cavnar AI's postal address for the CAN-SPAM footer, from
+    CAVNAR_POSTAL_ADDRESS. Never invented: empty when unset, and marketing
+    is then not sent (#159)."""
+    return " ".join(str(os.getenv("CAVNAR_POSTAL_ADDRESS", "") or "").split())
+
+
+_postal_warned = {}
+
+
+def _warn_no_postal_address(email_type):
+    """Tell the operator, at most once a day per process, that marketing is
+    being held for want of an address."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    if _postal_warned.get(email_type) == today:
+        return
+    _postal_warned[email_type] = today
+    log.error("CAN-SPAM: %s not sent — set CAVNAR_POSTAL_ADDRESS", email_type)
+    try:
+        import ops
+        ops.capture(RuntimeError(f"{email_type} held: CAVNAR_POSTAL_ADDRESS is not set, and Cavnar AI's "
+                                 f"marketing email must carry a postal address"),
+                    job="can_spam_postal_address", context=f"email_type={email_type}")
+    except Exception:
+        pass
+
+
+def _add_unsubscribe(payload: dict, restaurant_id, email_type=None, to_email=None, address=None) -> dict:
+    """Append the CAN-SPAM footer — a visible opt-out link and the postal
+    address — and the one-click headers.
 
     List-Unsubscribe-Post is what lets Gmail/Apple render their own native
     "Unsubscribe" affordance instead of routing people to the spam button —
     which is the outcome that actually damages a sending domain.
-    """
+
+    An owner's opt-out is signed over their restaurant (/u/<rid token>, the
+    restaurant's marketing_emails_opt_out); a prospect's over their address
+    (/u/<address token>, a 'marketing' suppression)."""
     try:
-        from models import unsubscribe_token
         base = config.base_url()
-        url = f"{base}/u/{unsubscribe_token(restaurant_id)}"
+        if email_type in _PROSPECT_MARKETING_TYPES or not restaurant_id:
+            from models import marketing_optout_token
+            url = f"{base}/u/{marketing_optout_token(to_email)}"
+            why = "You got this because a Cavnar AI client introduced us."
+            label = "Don't email me about Cavnar AI again"
+            tail = ""
+        else:
+            from models import unsubscribe_token
+            url = f"{base}/u/{unsubscribe_token(restaurant_id)}"
+            why = "You get this because you use Cavnar AI."
+            label = "Unsubscribe from product emails"
+            tail = "<br>Account and security emails are sent regardless."
     except Exception as e:
         log.warning("unsubscribe link build failed for restaurant %s: %s", restaurant_id, e)
         return payload
 
+    muted = BRAND["muted"]
     footer = (
         '<div style="text-align:center;margin:18px auto 0;max-width:560px;'
-        'font-family:-apple-system,BlinkMacSystemFont,\'Helvetica Neue\',Arial,sans-serif">'
-        '<p style="font-size:11px;color:#9a9088;line-height:1.6;margin:0">'
-        'You get this because you use Cavnar AI. '
-        f'<a href="{url}" style="color:#9a9088;text-decoration:underline">Unsubscribe from product emails</a>.'
-        '<br>Account and security emails are sent regardless.'
+        f'font-family:{_SANS}">'
+        f'<p style="font-size:11px;color:{muted};line-height:1.6;margin:0">'
+        f'{esc(why)} '
+        f'<a href="{esc(url)}" style="color:{muted};text-decoration:underline">{esc(label)}</a>.'
+        f'{tail}'
+        + (f'<br>Cavnar AI &middot; {esc(address)}' if address else '') +
         '</p></div>'
     )
     html = payload.get("html") or ""
@@ -629,15 +788,10 @@ def _flood_guard_ok(email_type, to_email):
     max_n, window = lim
     try:
         from models import get_conn
-        # email_log.sent_at is written in America/Chicago local time (see
-        # models.log_email), so the window start must be computed the same way.
-        from datetime import datetime, timedelta
-        try:
-            import zoneinfo
-            now_local = datetime.now(zoneinfo.ZoneInfo("America/Chicago")).replace(tzinfo=None)
-        except Exception:
-            now_local = datetime.now()
-        since = (now_local - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
+        # email_log.sent_at is UTC (models.log_email, #89), so the window
+        # start is too. It was Chicago wall time, and so was this.
+        from datetime import datetime, timedelta, timezone
+        since = (datetime.now(timezone.utc) - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         try:
             n = conn.execute(
@@ -1514,12 +1668,12 @@ def send_dsr_email(to_email: str, d: dict, restaurant_id: int = None) -> SendRes
         "preheader": preheader, "html": html})
 
 
-def send_password_reset_email(to_email: str, reset_url: str) -> bool:
+def send_password_reset_email(to_email: str, reset_url: str, restaurant_id: int = None) -> "SendResult":
     """The app's Forgot Password flow. Same 1-hour link the web page's own
     inline version sends — this is that email, factored out so the mobile
     endpoint doesn't carry a second copy of the HTML."""
     return _send_branded(to_email, "Reset your Cavnar AI password",
-                          email_type="send_password_reset_email",
+                          email_type="send_password_reset_email", restaurant_id=restaurant_id,
                           preheader="The link works once and expires in an hour.",
                           inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
@@ -1529,11 +1683,11 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
     """)
 
 
-def send_password_reset_code_email(to_email: str, code: str) -> bool:
+def send_password_reset_code_email(to_email: str, code: str, restaurant_id: int = None) -> "SendResult":
     """The app's in-app reset: a 6-digit code typed into the sheet, instead
     of the web flow's emailed link. Expires with the same 1-hour window."""
     return _send_branded(to_email, "Your Cavnar AI reset code",
-                          email_type="send_password_reset_code_email",
+                          email_type="send_password_reset_code_email", restaurant_id=restaurant_id,
                           preheader="Expires in 10 minutes.",
                           inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
@@ -1545,29 +1699,35 @@ def send_password_reset_code_email(to_email: str, code: str) -> bool:
     """)
 
 
-def send_signup_welcome_email(to_email: str, restaurant_name: str, owner_name: str = None) -> bool:
+def send_signup_welcome_email(to_email: str, restaurant_name: str, owner_name: str = None,
+                              restaurant_id: int = None) -> "SendResult":
     """Self-serve signup from the app. Deliberately NOT send_welcome_email —
     that one prints the temporary password Will assigns an onboarded client;
     a person who just typed their own password never needs it emailed
-    back to them in plaintext."""
+    back to them in plaintext.
+
+    Every field is escaped (#159): with public signup on, whatever a
+    stranger typed as a restaurant or owner name rode into Cavnar AI's own
+    signed welcome email as live HTML."""
     first = (owner_name or "").split()[0] if owner_name else ""
-    greet = f"Hi {first}," if first else "Hi,"
+    greet = f"Hi {esc(first)}," if first else "Hi,"
     return _send_branded(to_email, f"Welcome to Cavnar AI — {restaurant_name}",
-                          email_type="send_signup_welcome_email",
+                          email_type="send_signup_welcome_email", restaurant_id=restaurant_id,
                           preheader="What happens next, and when.",
                           inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">{greet} your account is ready.</p>
-        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 16px"><strong>{restaurant_name}</strong> is set up on Cavnar AI with a free trial of every module — Reviews, Labor, Food Cost, and Marketing. You're already signed in on the app; the same login works on the web at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a>.</p>
+        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 16px"><strong>{esc(restaurant_name)}</strong> is set up on Cavnar AI with a free trial of every module — Reviews, Labor, Food Cost, and Marketing. You're already signed in on the app; the same login works on the web at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a>.</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 24px">First thing worth doing: connect Google Business under Account &rarr; Connected apps, so reviews start flowing in.</p>
         <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Open your dashboard &rarr;</a>
         <p style="color:#7a736a;font-size:12px;margin:24px 0 0;line-height:1.6">Questions? Reply to this email or reach Will at <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
     """)
 
 
-def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, phone: str = None) -> bool:
+def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, phone: str = None) -> "SendResult":
     """Heads-up to Will the moment someone self-registers — every other new
     client so far has been created by hand, so a signup nobody set up
-    shouldn't be discovered days later in the admin list."""
+    shouldn't be discovered days later in the admin list. Every field is a
+    stranger's input and is escaped (#159)."""
     to = config.will_email()
     return _send_branded(to, f"New signup — {restaurant_name}",
                           from_label="Cavnar AI Ops",
@@ -1575,45 +1735,82 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
                           inner_html=f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">New self-serve signup</p>
         <table style="width:100%;font-size:14px;color:#3a3530;border-collapse:collapse">
-          <tr><td style="padding:6px 0;color:#7a736a;width:110px">Restaurant</td><td style="padding:6px 0"><strong>{restaurant_name}</strong></td></tr>
-          <tr><td style="padding:6px 0;color:#7a736a">Owner</td><td style="padding:6px 0"><strong>{owner_name or '—'}</strong></td></tr>
-          <tr><td style="padding:6px 0;color:#7a736a">Email</td><td style="padding:6px 0"><strong>{email}</strong></td></tr>
-          <tr><td style="padding:6px 0;color:#7a736a">Phone</td><td style="padding:6px 0"><strong>{phone or '—'}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a;width:110px">Restaurant</td><td style="padding:6px 0"><strong>{esc(restaurant_name)}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Owner</td><td style="padding:6px 0"><strong>{esc(owner_name or '—')}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Email</td><td style="padding:6px 0"><strong>{esc(email)}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Phone</td><td style="padding:6px 0"><strong>{esc(phone or '—')}</strong></td></tr>
         </table>
         <p style="color:#7a736a;font-size:12px;margin:20px 0 0;line-height:1.6">Created on the trial tier with all four modules on. Review it in the <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">admin panel</a>.</p>
     """)
 
 
-def _pay_sig(restaurant_id) -> str:
+# Pay links are signed with a KEPT, versioned secret (models.kept_secret,
+# #133), not SECRET_KEY: rotating that key silently 404'd every payment link
+# already in an inbox. A link is /pay/<rid>.v<version>.<sig>/<period>; the
+# old /pay/<rid>.<sig>/<period> (SECRET_KEY) form still verifies for as long
+# as SECRET_KEY is unchanged, so no link sent before this stops working.
+_PAY_SECRET = "pay_links"
+
+
+def _legacy_pay_sig(restaurant_id) -> str:
     import hashlib
     import hmac
     key = (os.getenv("SECRET_KEY") or "").encode()
     return hmac.new(key, f"pay:{int(restaurant_id)}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def _pay_sig(restaurant_id, version=None):
+    """(version, signature) for a pay link, signed with the kept secret."""
+    import hashlib
+    import hmac
+    from models import kept_secret, kept_secret_version
+    v = int(version) if version else kept_secret_version(_PAY_SECRET)
+    key = kept_secret(_PAY_SECRET, v)
+    if not key:
+        return v, None
+    return v, hmac.new(key, f"pay:{int(restaurant_id)}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def pay_link(restaurant_id, period="monthly") -> str:
-    """A payment link that never expires: /pay/<rid>.<sig>/<period>."""
+    """A payment link that never expires: /pay/<rid>.v<version>.<sig>/<period>."""
     import config
-    return f"{config.base_url().rstrip('/')}/pay/{int(restaurant_id)}.{_pay_sig(restaurant_id)}/{period}"
+    v, sig = _pay_sig(restaurant_id)
+    return f"{config.base_url().rstrip('/')}/pay/{int(restaurant_id)}.v{v}.{sig}/{period}"
 
 
 def read_pay_token(token):
+    """The restaurant id a pay token authorises, or None. Accepts the kept-
+    secret form (<rid>.v<n>.<sig>) and the SECRET_KEY form (<rid>.<sig>)."""
     import hmac
     try:
-        rid_s, sig = str(token).split(".", 1)
+        rid_s, rest = str(token).split(".", 1)
         rid = int(rid_s)
     except (ValueError, AttributeError):
         return None
-    return rid if hmac.compare_digest(sig, _pay_sig(rid)) else None
+    if rest.startswith("v") and "." in rest:
+        ver_s, sig = rest[1:].split(".", 1)
+        try:
+            version = int(ver_s)
+        except ValueError:
+            return None
+        _v, expected = _pay_sig(rid, version)
+        return rid if expected and hmac.compare_digest(sig, expected) else None
+    if not os.getenv("SECRET_KEY"):
+        return None
+    return rid if hmac.compare_digest(rest, _legacy_pay_sig(rid)) else None
 
 
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None,
                        restaurant_id: int = None,
-                       modules: list = None):
-    """Send payment email with a dynamically generated Stripe checkout link."""
+                       modules: list = None) -> "SendResult":
+    """Send payment email with a dynamically generated Stripe checkout link.
+
+    Returns the SendResult (#12, #109), logged against the restaurant
+    (#119) — it returned None whatever happened, and the callers wrote
+    their own email_log row marked 'sent'."""
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
 
     # Determine module count
     if module_count is None:
@@ -1625,7 +1822,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         module_count = tier_counts.get(tier, 0)
 
     if module_count == 0:
-        return  # Trial — no payment needed
+        return not_sent("nothing_to_send", "no modules to bill: no payment link needed")
 
     from pricing import plan_for, annual_saving, money as _pm
     plan = plan_for(module_count)
@@ -1684,8 +1881,8 @@ def send_payment_email(to_email, restaurant_name, tier=None,
                 _ops.capture(RuntimeError("payment email sent with no checkout link"),
                              job="stripe_checkout", context=f"{restaurant_name} · {to_email}")
             except Exception:
-                pass 
-        deliver(email_type="send_payment_email", payload={
+                pass
+        return deliver(email_type="send_payment_email", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
@@ -1700,7 +1897,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     </p>
   </div>
   <p style="font-size:15px;line-height:1.6;margin-bottom:8px">
-    Hi — excited to get started with <strong>{restaurant_name}</strong>.
+    Hi — excited to get started with <strong>{esc(restaurant_name)}</strong>.
     Here is your payment link for the <strong>{label}</strong> plan.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
@@ -1741,12 +1938,23 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         })
     except Exception as e:
         print(f"Payment email failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
-def send_welcome_email(to_email, restaurant_name, username, password,
+def send_welcome_email(to_email, restaurant_name, username, password=None,
                        module_reviews=0, module_labor=0,
                        module_inventory=0, module_marketing=0,
-                       google_place_id=None, owner_name=None):
-    """Send branded welcome email to new client with their login credentials.
+                       google_place_id=None, owner_name=None,
+                       restaurant_id=None, set_password_url=None) -> "SendResult":
+    """Send branded welcome email to new client with their login details.
+
+    `set_password_url` is the preferred form (#12): a one-use link on which
+    the owner chooses their own password (models.create_set_password_token),
+    so no plaintext password is ever emailed and nothing about the login
+    changes before the email is known to have gone. Use
+    send_welcome_with_set_password_link, which mints it. `password` — a
+    temporary password — is the legacy form, kept for callers not yet moved.
+
+    Returns the SendResult, logged against `restaurant_id` (#119).
 
     `google_place_id` turns this from a credentials handoff into the first
     thing Cavnar AI ever tells an owner about their own restaurant. The
@@ -1759,6 +1967,8 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     Best-effort and silent on failure — a Places outage costs the paragraph,
     never the credentials.
     """
+    if not (password or set_password_url):
+        return not_sent("build_error", "welcome email needs a set-password link or a password")
     first_look_html = ""
     if google_place_id:
         try:
@@ -1798,6 +2008,34 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     first = ((owner_name or "").strip().split() or [""])[0]
     greeting = f"Hi {esc(first)} —" if first else "Hi —"
     B = BRAND
+    if set_password_url:
+        login_block = (
+            f'<p style="font-size:14px;color:{B["body"]};margin:0 0 6px"><strong style="color:{B["strong"]}">'
+            f'Username:</strong> {esc(username)}</p>'
+            f'<p style="font-size:14px;color:{B["body"]};margin:0 0 16px">Choose your own password to sign in '
+            f'&mdash; the link works once and for {SET_PASSWORD_LINK_DAYS} days.</p>'
+            f'<a href="{esc(set_password_url)}" style="display:inline-block;background:{B["ember"]};'
+            f'color:{B["card"]};font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;'
+            f'border-radius:8px">Set your password</a>'
+            f'<p style="font-size:12px;color:{B["muted"]};margin:10px 0 0">Then sign in at '
+            f'<a href="https://dashboard.cavnar.ai" style="color:{B["ember"]}">dashboard.cavnar.ai</a>. '
+            f'If the link has expired, use &ldquo;Forgot password&rdquo; on the sign-in page.</p>')
+        after_login = f"Your dashboard includes {modules_text}, all set up specifically for {esc(restaurant_name)}."
+        preheader = "Choose your password with the link inside, then sign in."
+    else:
+        login_block = (
+            f'<p style="font-size:14px;color:{B["body"]};margin:0 0 6px"><strong style="color:{B["strong"]}">'
+            f'Username:</strong> {esc(username)}</p>'
+            f'<p style="font-size:14px;color:{B["body"]};margin:0 0 16px"><strong style="color:{B["strong"]}">'
+            f'Temporary password:</strong> <span style="font-family:{_NUM};color:{B["strong"]}">{esc(password)}</span></p>'
+            f'<a href="https://dashboard.cavnar.ai" style="display:inline-block;background:{B["ember"]};'
+            f'color:{B["card"]};font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;'
+            f'border-radius:8px">Sign in to your dashboard</a>'
+            f'<p style="font-size:12px;color:{B["muted"]};margin:10px 0 0">or go to '
+            f'<a href="https://dashboard.cavnar.ai" style="color:{B["ember"]}">dashboard.cavnar.ai</a></p>')
+        after_login = ("Once you log in, go to the <strong>Account</strong> tab to set your own password. "
+                       f"Your dashboard includes {modules_text}, all set up specifically for {esc(restaurant_name)}.")
+        preheader = "Your sign-in details are inside. Change the password when you first log in."
     html = f"""
 <div style="background:{B['paper']};width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:{_SANS};max-width:560px;margin:0 auto;color:{B['ink']};background:{B['paper']};border-radius:12px;padding:32px 24px;box-sizing:border-box">
@@ -1813,14 +2051,10 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   {first_look_html}
   <div style="background:{B['card']};border:1px solid {B['border']};border-radius:10px;padding:18px 20px;margin:0 0 20px">
     <p style="font-size:11px;color:{B['muted']};margin:0 0 12px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
-    <p style="font-size:14px;color:{B['body']};margin:0 0 6px"><strong style="color:{B['strong']}">Username:</strong> {esc(username)}</p>
-    <p style="font-size:14px;color:{B['body']};margin:0 0 16px"><strong style="color:{B['strong']}">Temporary password:</strong> <span style="font-family:{_NUM};color:{B['strong']}">{esc(password)}</span></p>
-    <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:{B['ember']};color:{B['card']};font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:8px">Sign in to your dashboard</a>
-    <p style="font-size:12px;color:{B['muted']};margin:10px 0 0">or go to <a href="https://dashboard.cavnar.ai" style="color:{B['ember']}">dashboard.cavnar.ai</a></p>
+    {login_block}
   </div>
   <p style="font-size:14px;color:{B['body']};line-height:1.7;margin:0 0 12px">
-    Once you log in, go to the <strong>Account</strong> tab to set your own password.
-    Your dashboard includes {modules_text}, all set up specifically for {esc(restaurant_name)}.
+    {after_login}
   </p>
   <p style="font-size:14px;color:{B['body']};line-height:1.7;margin:0 0 24px">
     Any questions, just reply to this email. I check it daily.
@@ -1839,13 +2073,65 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   </p>
 </div>
 </div>"""
-    deliver(email_type="send_welcome_email", payload={
+    return deliver(email_type=("send_welcome_set_password_email" if set_password_url else "send_welcome_email"),
+                   restaurant_id=restaurant_id, payload={
         "from": sender("will"),
         "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
-        "preheader": "Your sign-in details are inside. Change the password when you first log in.",
+        "preheader": preheader,
         "html": _html_document(html),
     })
+
+
+SET_PASSWORD_LINK_DAYS = 3        # models.SET_PASSWORD_LINK_HOURS / 24
+
+
+def send_welcome_with_set_password_link(user_id: int, restaurant_id: int = None, to_email: str = None,
+                                        db_path: str = None) -> "SendResult":
+    """The welcome email for one login, carrying a one-use link to choose a
+    password instead of a temporary one (#12).
+
+    For the post-signing flow and "Resend welcome": nothing about the login
+    changes — no password is set and no session ends — so a send that fails
+    (a suppressed address, a Resend outage) leaves the owner exactly where
+    they were, and the caller can retry or raise an issue from the
+    SendResult. The restaurant's name, modules and Place ID come from its
+    row; the address defaults to the login's own email."""
+    import models
+    dbp = db_path or models.DB_PATH
+    user = None
+    try:
+        conn = models.get_conn(dbp)
+        try:
+            user = conn.execute("SELECT id, username, email, restaurant_id, COALESCE(is_active,1) AS active "
+                                "FROM users WHERE id=?", (user_id,)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        return not_sent("build_error", f"login lookup failed: {e}"[:300])
+    if not user or not user["active"]:
+        return not_sent("no_recipient", "that login does not exist or is inactive")
+    rid = restaurant_id or user["restaurant_id"]
+    r = models.get_restaurant(rid, dbp) if rid else None
+    if not r:
+        return not_sent("build_error", "restaurant not found")
+    to = to_email or user["email"] or r.owner_email
+    if not to:
+        return not_sent("no_recipient", "no email address on that login")
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    token = models.create_set_password_token(user["id"], db_path=dbp)
+    if not token:
+        return not_sent("no_recipient", "that login is inactive")
+    url = f"{config.base_url()}/reset-password/{token}"
+    return send_welcome_email(
+        to_email=to, restaurant_name=r.name, username=user["username"],
+        module_reviews=int(getattr(r, "module_reviews", 0) or 0),
+        module_labor=int(getattr(r, "module_labor", 0) or 0),
+        module_inventory=int(getattr(r, "module_inventory", 0) or 0),
+        module_marketing=int(getattr(r, "module_marketing", 0) or 0),
+        google_place_id=getattr(r, "google_place_id", None), owner_name=getattr(r, "owner_name", None),
+        restaurant_id=r.id, set_password_url=url)
 
 
 def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_label,
@@ -1905,8 +2191,11 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
 
 
 def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_number,
-                              items, total_cost, reply_to=None):
+                              items, total_cost, reply_to=None, restaurant_id=None) -> "SendResult":
     """The suggested order, sent to the supplier who actually fills it.
+
+    Returns the SendResult, logged against `restaurant_id` (#103, #119):
+    the caller voids the PO and reports the order as failed unless `.ok`.
 
     Deliberately plain and scannable — a supplier reads this on a phone in
     a warehouse, so it's a quantity table and a PO number, not a branded
@@ -1963,10 +2252,11 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     }
     if reply_to:
         params["reply_to"] = reply_to
-    return deliver(params, email_type=_etype)
+    return deliver(params, restaurant_id=restaurant_id, email_type=_etype)
 
 
-def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None):
+def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None,
+                           restaurant_id=None) -> "SendResult":
     """Self-serve team-invite counterpart to send_welcome_email() above —
     same credentials-in-an-email shape (matches the risk profile already
     accepted for every restaurant's primary login), reworded for "added
@@ -2002,7 +2292,7 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
   </p>
 </div>
 </div>"""
-    deliver(email_type="send_team_invite_email", payload={
+    return deliver(email_type="send_team_invite_email", restaurant_id=restaurant_id, payload={
         "from": sender("will"),
         "to": [to_email],
         "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
@@ -2205,12 +2495,15 @@ def benchmark_sentence(metric: str, restaurant_id: int = None, what: str = "") -
 
 
 def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = None,
-                          modules: list = None, restaurant_id: int = None):
-    """Day 2 — Getting started: highlight their primary module, not always reviews."""
+                          modules: list = None, restaurant_id: int = None) -> "SendResult":
+    """Day 2 — Getting started: highlight their primary module, not always
+    reviews. Returns the SendResult (#16): the sequence marks it sent only
+    on `.ok`."""
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     try:
-        first = owner_name.split()[0] if owner_name else "there"
+        first = esc(owner_name.split()[0]) if owner_name else "there"
+        restaurant_name = esc(restaurant_name)
         modules = _module_display_names(modules) or ["Review Intelligence"]
         modules_text = " and ".join(modules) if len(modules) <= 2 else ", ".join(modules[:-1]) + f", and {modules[-1]}"
 
@@ -2282,7 +2575,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         lead_in = (f"\n    Here's the most important thing to know about {modules_text}:"
                    if callout else "")
 
-        deliver(email_type="send_onboarding_day2", restaurant_id=restaurant_id, payload={
+        result = deliver(email_type="send_onboarding_day2", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
@@ -2315,21 +2608,25 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
 </div>
 </div>""")
         })
-        print(f"Onboarding day 2 sent to {to_email}")
+        if result.ok:
+            print(f"Onboarding day 2 sent to {to_email}")
+        return result
     except Exception as e:
         print(f"send_onboarding_day2 failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = None,
                           has_labor: bool = False, has_inventory: bool = False,
                           approved_count: int = 0, pending_count: int = 0,
-                          restaurant_id: int = None):
+                          restaurant_id: int = None) -> "SendResult":
     """Day 7 — first-week check-in, with ONE next step chosen from what
-    this restaurant has actually done so far (see restaurant_usage)."""
+    this restaurant has actually done so far (see restaurant_usage).
+    Returns the SendResult (#16)."""
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     try:
-        first = owner_name.split()[0] if owner_name else "there"
+        first = esc(owner_name.split()[0]) if owner_name else "there"
 
         # ONE next step, chosen from what this restaurant has actually done.
         #
@@ -2417,7 +2714,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             ai_context, fallback_paragraph, restaurant_id=restaurant_id,
             facts=_personalise_facts(**{"reviews.approved": approved_count, "reviews.pending": pending_count}))
 
-        deliver(email_type="send_onboarding_day7", restaurant_id=restaurant_id, payload={
+        result = deliver(email_type="send_onboarding_day7", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
@@ -2449,19 +2746,80 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
 </div>
 </div>""")
         })
-        print(f"Onboarding day 7 sent to {to_email}")
+        if result.ok:
+            print(f"Onboarding day 7 sent to {to_email}")
+        return result
     except Exception as e:
         print(f"send_onboarding_day7 failed: {e}")
+        return not_sent("build_error", str(e)[:300])
+
+
+_NUDGES = {
+    "reviews": ("Connect Google so your reviews come in",
+                "Your Google reviews are not connected yet, so Cavnar AI can't draft replies to them or tell you "
+                "about a 1-star the day it lands.",
+                "Account &rarr; Connected apps &rarr; Google Business. It takes about a minute.",
+                "Connect Google"),
+    "voice": ("Tell Cavnar AI how you sound",
+              "Every reply Cavnar AI drafts is written in your restaurant's voice — and it doesn't have one "
+              "from you yet.",
+              "Account &rarr; Brand voice: a few words on how you talk to guests, and anything you never say.",
+              "Set your voice"),
+    "respond": ("{waiting} drafted {replies} waiting on you",
+                "Replies are drafted for {waiting} of your reviews and none has been approved yet. Nothing is "
+                "posted until you say so.",
+                "Open Reviews, read the first draft, and approve or edit it — one tap each.",
+                "Review the drafts"),
+    "app": ("Get your alerts on your phone",
+            "Urgent reviews, the morning brief and anything that needs you today arrive as notifications "
+            "once the Cavnar AI app is on your phone.",
+            "Install the app and sign in with the same login.",
+            "Get the app"),
+}
+
+
+def send_onboarding_nudge(step: dict, to_email: str, restaurant_name: str, owner_name: str = None,
+                          restaurant_id: int = None) -> "SendResult":
+    """One setup step still missing (#41): what it is, why it matters, where
+    it is. `step` is scheduler.onboarding_missing_steps' {"key", ...facts}.
+    Cavnar AI's own onboarding mail — marketing, so it carries the CAN-SPAM
+    footer and honours the opt-out (models.MARKETING_EMAIL_TYPES)."""
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    key = (step or {}).get("key")
+    if key not in _NUDGES:
+        return not_sent("build_error", f"no nudge for step {key!r}")
+    try:
+        title, why, where, cta = _NUDGES[key]
+        waiting = int(step.get("waiting") or 0)
+        facts = {"waiting": waiting, "replies": "reply is" if waiting == 1 else "replies are"}
+        title, why = title.format(**facts), why.format(**facts)
+        url = step.get("url") if key == "app" else "https://dashboard.cavnar.ai"
+        first = ((owner_name or "").strip().split() or [None])[0]
+        html = report_shell(
+            kicker=esc(restaurant_name), title=esc(title), subtitle="",
+            sections=[report_paragraph((f"Hi {esc(first)} — " if first else "") + why),
+                      report_paragraph(where)],
+            cta_label=f"{cta} &rarr;", cta_url=esc(url))
+        return deliver(email_type="send_onboarding_nudge", restaurant_id=restaurant_id, payload={
+            "from": sender("will"), "to": [to_email],
+            "subject": f"{title} — {restaurant_name}",
+            "preheader": why[:140], "html": html})
+    except Exception as e:
+        print(f"send_onboarding_nudge({key}) failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str = None,
-                             db_path: str = None):
-    """Send a welcome-back email when a client is reactivated."""
+                             db_path: str = None, restaurant_id: int = None) -> "SendResult":
+    """Send a welcome-back email when a client is reactivated. Returns the
+    SendResult, logged against `restaurant_id` (#119)."""
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     try:
-        first = owner_name.split()[0] if owner_name else "there"
-        deliver(email_type="send_reactivation_email", payload={
+        first = esc(owner_name.split()[0]) if owner_name else "there"
+        restaurant_name_h = esc(restaurant_name)
+        return deliver(email_type="send_reactivation_email", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
@@ -2475,7 +2833,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
-    Your <strong>{restaurant_name}</strong> account has been reactivated. Everything is running again —
+    Your <strong>{restaurant_name_h}</strong> account has been reactivated. Everything is running again —
     review monitoring, your AI modules, and your weekly digest are all back on.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
@@ -2493,6 +2851,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
         })
     except Exception as e:
         print(f"send_reactivation_email failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 def _one_thing_block(out, fix_first, src, when, rid=None, loud=False):
@@ -2941,9 +3300,12 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
     month. Log in to see your latest cost breakdown." — which was written
     once and sent to everyone, true or not. It now reads this restaurant's
     own rows and says one short, checkable thing per module, or nothing.
+
+    Returns the SendResult (#16): run_monthly_summaries counts, pushes
+    "the month is in" and keeps its claim only on `.ok`.
     """
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     try:
         from datetime import datetime, timedelta
         first = owner_name.split()[0] if owner_name else "there"
@@ -3164,8 +3526,10 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         # nobody anything).
         if getattr(result, "ok", False):
             shown.flush()
+        return result
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 def _html_esc(text) -> str:
@@ -3201,9 +3565,13 @@ def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants
     message, instead of three emails that each read as the whole business.
 
     `restaurants` are Restaurant rows. Logged once per location so every
-    location's email history shows the month it was reviewed in."""
-    if not _resend_key() or len(restaurants) < 2:
-        return
+    location's email history shows the month it was reviewed in — with the
+    send's real outcome (#16, #119): the other locations' rows said 'sent'
+    whatever happened. Returns the SendResult."""
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    if len(restaurants) < 2:
+        return not_sent("build_error", "a group summary needs two or more locations")
     try:
         from datetime import datetime, timedelta
         first = owner_name.split()[0] if owner_name else "there"
@@ -3239,20 +3607,25 @@ def send_monthly_group_summary_email(to_email: str, owner_name: str, restaurants
             try:
                 from models import log_email as _log_email
                 _log_email(r.id, "send_monthly_summary_email", to_email,
-                          f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary")
+                          f"{month_name} across your {len(restaurants)} locations — your Cavnar AI summary",
+                          status="sent" if result.ok else "failed", error=result.error,
+                          message_id=result.message_id)
             except Exception:
                 pass
+        return result
     except Exception as e:
         print(f"send_monthly_group_summary_email failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
-                           modules: list = None, restaurant_id: int = None):
-    """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""
+                           modules: list = None, restaurant_id: int = None) -> "SendResult":
+    """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask.
+    Returns the SendResult (#16)."""
     if not _resend_key():
-        return
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     try:
-        first = owner_name.split()[0] if owner_name else "there"
+        first = esc(owner_name.split()[0]) if owner_name else "there"
         modules = _module_display_names(modules)
 
         # Two genuinely different things, which this used to conflate into
@@ -3315,7 +3688,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             facts=_personalise_facts(**{"reviews.handled": total, "reviews.responded": responded,
                                         "reviews.rating": avg_rating or None}))
 
-        deliver(email_type="send_onboarding_day30", restaurant_id=restaurant_id, payload={
+        result = deliver(email_type="send_onboarding_day30", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
@@ -3351,9 +3724,12 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
 </div>
 </div>""")
         })
-        print(f"Onboarding day 30 sent to {to_email}")
+        if result.ok:
+            print(f"Onboarding day 30 sent to {to_email}")
+        return result
     except Exception as e:
         print(f"send_onboarding_day30 failed: {e}")
+        return not_sent("build_error", str(e)[:300])
 
 
 # ── Account-security confirmations ─────────────────────────────────────────
@@ -3364,13 +3740,13 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
 # either from inside an already-compromised account would do so silently.
 
 def send_password_changed_email(to_email: str, restaurant_name: str, owner_name: str = None,
-                                tz: str = None):
+                                tz: str = None, restaurant_id: int = None) -> "SendResult":
     """Confirms a password change back to the account — same security-
     notification family as send_login_notification, deliberately (this is
     exactly as sensitive an event)."""
     if not _resend_key():
         log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
-        return False
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     now_str = security_stamp(tz)
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -3387,26 +3763,26 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     </div>
     """
     try:
-        _res = deliver(email_type="send_password_changed_email", payload={"from": sender("client"), "to": [to_email],
+        return deliver(email_type="send_password_changed_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI password was changed",
                   "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
-        return _res
     except Exception as e:
         log.warning("send_password_changed_email: request to Resend failed: %s", e)
-        return False
+        return not_sent("build_error", str(e)[:300])
 
 
 def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str, owner_name: str = None,
-                             tz: str = None):
+                             tz: str = None, restaurant_id: int = None) -> "SendResult":
     """Sent to the OLD address when the account email changes — the
     security-critical direction (the new address already knows, since they
     just typed it in; the old address is where an actual account takeover
     would otherwise go unnoticed)."""
     if not _resend_key():
         log.warning("send_email_changed_email: RESEND_API_KEY not set — nothing sent")
-        return False
+        return not_sent("not_configured", "RESEND_API_KEY not set")
     now_str = security_stamp(tz)
-    masked_new = new_email[:2] + "***@" + new_email.split("@")[-1]
+    masked_new = esc(new_email[:2] + "***@" + new_email.split("@")[-1])
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
@@ -3422,24 +3798,26 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     </div>
     """
     try:
-        _res = deliver(email_type="send_email_changed_email", payload={"from": sender("client"), "to": [to_email],
+        return deliver(email_type="send_email_changed_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI sign-in email was changed",
                   "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
-        return _res
     except Exception as e:
         log.warning("send_email_changed_email: request to Resend failed: %s", e)
-        return False
+        return not_sent("build_error", str(e)[:300])
 
 
-def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount: float, owner_name: str = None):
+def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount: float, owner_name: str = None,
+                                     restaurant_id: int = None) -> "SendResult":
     """The client-facing half of a failed card charge — webhook_routes.py's
     stripe_webhook() already alerts Will on invoice.payment_failed, but the
     client themselves never found out except by Will personally reaching
     out. This is what actually gets a card fixed quickly."""
     if not _resend_key():
         log.warning("send_payment_failed_client_email: RESEND_API_KEY not set — nothing sent")
-        return False
-    greeting = f"Hi {owner_name}," if owner_name else "Hi,"
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    greeting = f"Hi {esc(owner_name)}," if owner_name else "Hi,"
+    restaurant_name_h = esc(restaurant_name)
     html = f"""
     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
@@ -3448,7 +3826,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
-        <p style="color:#3a3530;font-size:15px;margin:0 0 20px">Your payment of <strong>${amount:.2f}</strong> for <strong>{restaurant_name}</strong> didn't go through — your card was declined.</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 20px">Your payment of <strong>${amount:.2f}</strong> for <strong>{restaurant_name_h}</strong> didn't go through — your card was declined.</p>
         <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Update payment method &#8594;</a>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Open the Cavnar AI app and go to <strong>Account &rarr; Billing</strong> — the Manage billing button there opens the secure Stripe page where you can update your card. If it isn't resolved in a few days, reach out and I'll sort it out with you — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
       </div>
@@ -3457,20 +3835,20 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     </div>
     """
     try:
-        _res = deliver(email_type="send_payment_failed_client_email", payload={"from": sender("will"), "to": [to_email],
+        return deliver(email_type="send_payment_failed_client_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("will"), "to": [to_email],
                   "subject": f"Payment issue — {restaurant_name}",
                   "preheader": "Your card was declined — your dashboard keeps running while you update it.", "html": _html_document(html)})
-        return _res
     except Exception as e:
         log.warning("send_payment_failed_client_email: request to Resend failed: %s", e)
-        return False
+        return not_sent("build_error", str(e)[:300])
 
 
-def send_recovery_email_code(to_email: str, code: str) -> bool:
+def send_recovery_email_code(to_email: str, code: str, restaurant_id: int = None) -> "SendResult":
     """Verifies a recovery address before it counts — a typo here would
     otherwise be the address that can reset the password."""
     return _send_branded(to_email, "Confirm your Cavnar AI recovery email",
-                          email_type="send_recovery_email_code",
+                          email_type="send_recovery_email_code", restaurant_id=restaurant_id,
                           preheader="Expires in 10 minutes.",
                           inner_html=f"""
       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Confirm this recovery email</h2>
@@ -3480,22 +3858,24 @@ def send_recovery_email_code(to_email: str, code: str) -> bool:
     """)
 
 
-def send_account_deletion_request_email(restaurant_name: str, owner_name: str, owner_email: str, requested_at: str) -> bool:
+def send_account_deletion_request_email(restaurant_name: str, owner_name: str, owner_email: str,
+                                        requested_at: str, restaurant_id: int = None) -> "SendResult":
     """Fires the moment Account -> Close my account is tapped. Cavnar AI
     can't self-serve deactivate an account under contract, so this is the
     actual initiation Apple's account-deletion requirement asks for: it
     lands in Will's inbox so he can start the 30-day wind-down, the same
     manual process as before — the difference is the request now comes
     from a real in-app action instead of the owner having to know to email
-    him themselves."""
+    him themselves. Operator mail: never suppressed. The names are the
+    owner's own input and are escaped."""
     return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"),
         f"Account deletion requested — {restaurant_name}",
         from_label="Cavnar AI Ops",
-        email_type="send_account_deletion_request_email",
+        email_type="send_account_deletion_request_email", restaurant_id=restaurant_id,
         inner_html=f"""
-      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">{restaurant_name} requested account deletion</h2>
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">{esc(restaurant_name)} requested account deletion</h2>
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">
-        {owner_name or "The owner"} ({owner_email or "no email on file"}) tapped
+        {esc(owner_name or "The owner")} ({esc(owner_email or "no email on file")}) tapped
         "Close my account" in the app at {requested_at} UTC. Per the 30-day
         notice policy, the account stays active through the end of the
         current billing period plus 30 days from this request — reach out
@@ -3504,20 +3884,21 @@ def send_account_deletion_request_email(restaurant_name: str, owner_name: str, o
     """)
 
 
-def send_bug_report_email(restaurant_name: str, from_email: str, message: str, meta: dict) -> bool:
+def send_bug_report_email(restaurant_name: str, from_email: str, message: str, meta: dict,
+                          restaurant_id: int = None) -> "SendResult":
     """Account -> More -> Report a bug. Lands in Will's inbox with the build
     stamp and device details attached, so 'which build is this' never has
-    to be asked."""
-    rows = "".join(f"<tr><td style='padding:4px 12px 4px 0;color:#7a736a'>{k}</td><td style='padding:4px 0'><strong>{v}</strong></td></tr>"
+    to be asked. Operator mail; every field escaped."""
+    rows = "".join(f"<tr><td style='padding:4px 12px 4px 0;color:#7a736a'>{esc(k)}</td><td style='padding:4px 0'><strong>{esc(v)}</strong></td></tr>"
                    for k, v in (meta or {}).items() if v)
-    safe = (message or "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    safe = esc(message or "").replace("\n", "<br>")
     return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"),
         f"Bug report — {restaurant_name}",
         from_label="Cavnar AI Ops",
-        email_type="send_bug_report_email",
+        email_type="send_bug_report_email", restaurant_id=restaurant_id,
         inner_html=f"""
-      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Bug report from {restaurant_name}</h2>
-      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">From {from_email}</p>
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Bug report from {esc(restaurant_name)}</h2>
+      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">From {esc(from_email)}</p>
       <div style="font-size:14px;color:#0e0c0a;line-height:1.6;background:#f7f4ef;padding:14px;border-radius:8px;margin-bottom:16px">{safe}</div>
       <table style="font-size:13px;border-collapse:collapse">{rows}</table>
     """)
@@ -3577,11 +3958,14 @@ def _fmt_metric(v, unit):
 
 
 def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_name: str = None,
-                         restaurant_id: int = None):
+                         restaurant_id: int = None) -> "SendResult":
     """Day 60 — what's now measurable. Day 90 — the first record window.
-    Day 180 — six months, the ledger. Each says only what was measured."""
-    if not _resend_key() or day not in LIFECYCLE_DAYS or not restaurant_id:
-        return
+    Day 180 — six months, the ledger. Each says only what was measured.
+    Returns the SendResult (#16)."""
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    if day not in LIFECYCLE_DAYS or not restaurant_id:
+        return not_sent("build_error", f"no lifecycle email for day {day} without a restaurant")
     try:
         import html as _h
         first = owner_name.split()[0] if owner_name else "there"
@@ -3648,16 +4032,92 @@ def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_na
                                  sections=sections or [report_paragraph(
                                      "Nothing to report yet — this fills in as data arrives.")],
                                  cta_label="Open your dashboard →")
-        deliver(email_type=f"send_lifecycle_day{day}", restaurant_id=restaurant_id, payload={
+        result = deliver(email_type=f"send_lifecycle_day{day}", restaurant_id=restaurant_id, payload={
             "from": sender("will"),
             "to": [to_email],
             "subject": f"{heads[day]} — {restaurant_name}",
             "preheader": pre[day],
             "html": html_body,
         })
-        print(f"Lifecycle day {day} sent to {to_email}")
+        if result.ok:
+            print(f"Lifecycle day {day} sent to {to_email}")
+        return result
     except Exception as e:
         print(f"send_lifecycle_email({day}) failed: {e}")
+        return not_sent("build_error", str(e)[:300])
+
+
+def send_value_recap_email(restaurant_id: int, to_email: str = None) -> "SendResult":
+    """What Cavnar AI has done for this restaurant, measured — the email an
+    operator sends a client whose churn risk has stayed high (#83).
+
+    Built from the same measured sources as the lifecycle emails
+    (_lifecycle_figures): where the restaurant stands, what got better,
+    what the tracked changes were measured to do (value_delivered's
+    `delivered`, with its caveat), the ledger of work done, and the hours of
+    work done for them at stated rates — each on its own line and never
+    added to another (CLAUDE.md, value delivered). A section with nothing
+    measured is left out; an account with nothing at all is .skipped.
+
+    Operational, not marketing: no unsubscribe, logged against the
+    restaurant. Goes to the owner's address unless `to_email` is given."""
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    try:
+        import html as _h
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        if not r:
+            return not_sent("build_error", "restaurant not found")
+        to = to_email or r.owner_email
+        if not to:
+            return not_sent("no_recipient", "no owner email on file")
+        f = _lifecycle_figures(restaurant_id)
+        val = f["value"] or {}
+        delivered, avoided = (val.get("delivered") or {}), (val.get("avoided") or {})
+        sections = []
+        readable = [t for t in (f["trailing"] or {}).values() if t.get("value") is not None]
+        if readable:
+            sections.append(report_eyebrow("Where you stand today")
+                            + report_stats([(_fmt_metric(t["value"], t["unit"]), t["label"]) for t in readable]))
+        if f["news"]:
+            sections.append(report_eyebrow("What got better")
+                            + report_paragraph("<br><br>".join(_h.escape(n["summary"]) for n in f["news"])))
+        import value_delivered as _vd
+        measured = _vd.value_lines(delivered)
+        if measured:
+            sections.append(report_eyebrow("Measured results")
+                            + report_paragraph("<br>".join(_h.escape(m) for m in measured))
+                            + report_paragraph(f'<span style="font-size:12.5px;color:{BRAND["muted"]}">'
+                                               f'{_h.escape(delivered.get("caveat") or "")}</span>'))
+        lines = _vd.ledger_lines(f["ledger"] or {})
+        if lines:
+            sections.append(report_eyebrow("Done for you so far")
+                            + report_paragraph("<br>".join(_h.escape(l) for l in lines)))
+        if avoided.get("hours"):
+            sections.append(report_paragraph(
+                f'<span style="font-size:13px;color:{BRAND["muted"]}">About {avoided["hours"]:.0f} hours of '
+                f'your work, done for you, at stated rates — an estimate, not a measurement.</span>'))
+        if not sections:
+            return not_sent("nothing_to_send", "nothing measured for this restaurant yet")
+        first = greeting_name(r)
+        sections.insert(0, report_paragraph(
+            (f"Hi {_h.escape(first)} — " if first else "Hi — ")
+            + "here is what Cavnar AI has done for you so far, from your own data. "
+              "If any of it isn't landing, reply and tell me — I read every one."))
+        name = r.location_name or r.name
+        return deliver(email_type="send_value_recap_email", restaurant_id=restaurant_id, payload={
+            "from": sender("will"), "to": [to],
+            "subject": f"What Cavnar AI has done for {name}",
+            "preheader": "Measured results and the work done for you, from your own data.",
+            "html": report_shell(kicker="Your account", title="What Cavnar AI has done for you",
+                                 subtitle=_h.escape(name), sections=sections,
+                                 cta_label="Open your dashboard →"),
+        })
+    except Exception as e:
+        print(f"send_value_recap_email failed for {restaurant_id}: {e}")
+        return not_sent("build_error", str(e)[:300])
+        return not_sent("build_error", str(e)[:300])
 
 
 
@@ -3668,9 +4128,13 @@ def send_lifecycle_email(day: int, to_email: str, restaurant_name: str, owner_na
 # year-over-year clause lands here first because a quarter usually has one.
 
 def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name: str = None,
-                                 restaurant_id: int = None):
-    if not _resend_key() or not restaurant_id:
-        return
+                                 restaurant_id: int = None) -> "SendResult":
+    """The quarter that just ended. Returns the SendResult (#16): "nothing
+    to report" is .skipped, not a failure and not a send."""
+    if not _resend_key():
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    if not restaurant_id:
+        return not_sent("build_error", "a quarterly summary needs a restaurant")
     try:
         import html as _h
         import monthly_review
@@ -3680,7 +4144,7 @@ def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name
             sections = _monthly_review_sections(restaurant_id, months=3)
             if not sections:
                 print(f"[quarterly] nothing to report for {restaurant_id}")
-                return
+                return not_sent("nothing_to_send", "nothing measured this quarter")
             head = f"Your quarter — {review['month']}"
             result = deliver(email_type="send_quarterly_summary", restaurant_id=restaurant_id, payload={
                 "from": sender("client"),
@@ -3695,6 +4159,8 @@ def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name
         # surface in the ledger.
         if getattr(result, "ok", False):
             shown.flush()
-        print(f"Quarterly summary sent to {to_email}")
+            print(f"Quarterly summary sent to {to_email}")
+        return result
     except Exception as e:
         print(f"send_quarterly_summary_email failed: {e}")
+        return not_sent("build_error", str(e)[:300])
