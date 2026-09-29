@@ -128,7 +128,8 @@ def test_a_call_leaves_a_redacted_trace_linked_from_its_ledger_row(db_path):
     assert call["caller"].endswith("test_a_call_leaves_a_redacted_trace_linked_from_its_ledger_row")
     assert "Ann Smith" not in call["prompt"] and "ann@example.com" not in call["prompt"]
     assert "555-0101" not in call["prompt"] and "The soup was cold." in call["prompt"]
-    assert "[system]" in call["prompt"] and call["output"] == "Sorry, Ann."
+    assert "[system]" in call["prompt"] and call["output"] == "Sorry, [name].", \
+        "the guest's name the prompt carried is redacted in the reply too"
     (usage,) = _q(db_path, "SELECT call_id FROM ai_usage WHERE action='draft_response'")
     assert usage["call_id"] == m._cavnar_call_id
 
