@@ -960,7 +960,8 @@ def expected_for(r, start, end, db_path=DB_PATH):
 # ── starting a tracker ──────────────────────────────────────────────────────
 
 def record(restaurant_id, source, source_key, title, metric, user_id=None,
-           window_days=None, db_path=DB_PATH, today=None, module=None, gate="metric", trigger="auto"):
+           window_days=None, db_path=DB_PATH, today=None, module=None, gate="metric", trigger="auto",
+           rec_key=None):
     """Start tracking one recommendation the owner has committed to.
 
     Idempotent on (restaurant, source_key) while tracking — committing to the
@@ -985,6 +986,15 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     triggered tracker's baseline is never its trigger window (CA2 #1). The
     restaurant's own noise band for this comparison is stored with it
     (noise_band, false_alarm_rate, band_basis — CA2 #3).
+
+    `rec_key` (memory audit 9/29/26, link_trackers): the recommendation this
+    tracker measures when `source_key` is not that recommendation's own key
+    — a campaign's campaign:<Day>:<date> for slow_day:<Day>, Ask's
+    ask:<title>. It is stored on the row (measures_key), and everything that asks "which
+    recommendation" reads it instead of the source key: the module the
+    tracker is credited to, the window that fired it, and the episode it is
+    linked to the moment it starts. The source key stays the tracker's own
+    identity (one tracker per campaign, per month's reprices).
     """
     if not metrics.known(metric):
         raise ValueError(f"unknown metric {metric}")
@@ -1001,6 +1011,8 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     if gate == "metric" and source in AUTOMATIC_SOURCES:
         gate = "family"
     informational = _informational_key(source_key)
+    rec_key = str(rec_key or "").strip()[:160] or None
+    rec = rec_key or source_key
 
     def _gate(conn):
         existing = conn.execute(
@@ -1021,19 +1033,21 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     finally:
         conn.close()
     if existing:
+        if rec_key:
+            _link(restaurant_id, rec_key, existing["id"], db_path)
         return _row(existing)
 
     # The baseline ends before today: today is part of the "after", and a
     # baseline that includes the day the change started is contaminated by it.
     if trigger == "auto":
-        trigger = trigger_window_for(restaurant_id, source_key, window, today, db_path=db_path)
+        trigger = trigger_window_for(restaurant_id, rec, window, today, db_path=db_path)
     b = _baseline(restaurant_id, metric, today, window, db_path, trigger=trigger)
     nb = {"band": None, "sigma": None, "false_alarm_rate": None, "basis": None}
     if b["value"] is not None:
         nb = metrics.noise_band(restaurant_id, metric, window_days=window, end=b["end"], before=b["raw"],
                                 db_path=db_path)
     evaluate_on = today + timedelta(days=window)
-    mod = resolve_module(restaurant_id, source, source_key, metric, module=module, db_path=db_path)
+    mod = resolve_module(restaurant_id, source, rec, metric, module=module, db_path=db_path)
     trig = b.get("trigger")
 
     conn = get_conn(db_path)
@@ -1052,14 +1066,14 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
                 "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
                 "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
                 "started_on, evaluate_on, status, created_by, module, trigger_value, trigger_start, trigger_end, "
-                "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?)",
+                "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis, measures_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?,?)",
                 (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
                  b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
                  user_id, mod, b.get("trigger_value"),
                  _iso(trig[0]) if trig else None, _iso(trig[1]) if trig else None,
                  1 if b.get("overlaps_trigger") else 0, nb.get("band"), nb.get("sigma"),
-                 nb.get("false_alarm_rate"), nb.get("basis")))
+                 nb.get("false_alarm_rate"), nb.get("basis"), rec_key))
         except sqlite3.IntegrityError:
             # The same key started by another connection that got there
             # first (a database without the lock's guarantee): answered by it.
@@ -1076,24 +1090,33 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     finally:
         conn.close()
     # The recommendation and the tracker measuring it, linked for good at the
-    # moment it starts, whichever door it came through (rec-ROI #36). A
-    # source_key that is not a recommendation's key links nothing.
-    try:
-        import rec_ledger
-        rec_ledger.link_tracker(restaurant_id, source_key, row["id"], db_path=db_path)
-    except Exception as e:
-        print(f"[outcomes] tracker {row['id']} not linked to its recommendation: {e}")
+    # moment it starts, whichever door it came through (rec-ROI #36): the
+    # recommendation's own key (`rec_key`), else the source key — a key no
+    # recommendation carries links nothing.
+    _link(restaurant_id, rec, row["id"], db_path)
     return _row(row)
 
 
+def _link(restaurant_id, key, tracker_id, db_path=DB_PATH) -> bool:
+    """rec_ledger.link_tracker, never raising into a tracker start."""
+    try:
+        import rec_ledger
+        return rec_ledger.link_tracker(restaurant_id, key, tracker_id, db_path=db_path)
+    except Exception as e:
+        print(f"[outcomes] tracker {tracker_id} not linked to its recommendation {key}: {e}")
+        return False
+
+
 def start(restaurant_id, source, source_key, title, metric, user_id=None, window_days=None,
-          module=None, gate="metric", db_path=DB_PATH, today=None) -> dict:
+          module=None, gate="metric", db_path=DB_PATH, today=None, rec_key=None) -> dict:
     """record() for a caller that answers an owner: {"ok": True, "outcome",
     "tracker"} or {"ok": False, "tracker_refused"}. An unknown metric still
-    raises ValueError — that is a bad request, not a refusal."""
+    raises ValueError — that is a bad request, not a refusal. `rec_key`: the
+    recommendation measured, when the source key is not its own (record)."""
     try:
         row = record(restaurant_id, source, source_key, title, metric, user_id=user_id,
-                     window_days=window_days, db_path=db_path, today=today, module=module, gate=gate)
+                     window_days=window_days, db_path=db_path, today=today, module=module, gate=gate,
+                     rec_key=rec_key)
     except TrackerRefused as e:
         return {"ok": False, "tracker_refused": e.reply()}
     return {"ok": True, "outcome": row, "tracker": tracker_reply(row)}
@@ -2838,6 +2861,15 @@ _ADDED_COLUMNS = (
     ("noise_sigma", "REAL"),                          # spread of one window, metric units
     ("false_alarm_rate", "REAL"),                     # two-sided, with no real change
     ("band_basis", "TEXT"),                           # how the band was estimated, in words
+    # The recommendation a tracker measures when its own key is not that
+    # recommendation's (memory audit 9/29/26, link_trackers): a fill-a-night
+    # text's campaign:<Day>:<date> measures slow_day:<Day> (or the feed card
+    # it began on), Ask's ask:<title> the recommendation it followed. The
+    # tracker links to that episode when it starts, and the nightly sync and
+    # the platform sync read the verdict under it.
+    # (Not "rec_key": intelligence/predict aliases rec_instances.key AS
+    # rec_key beside o.*, and payloads use rec_key for a card's own key.)
+    ("measures_key", "TEXT"),
 )
 
 

@@ -9900,11 +9900,21 @@ def track_reprice(rid, user_id=None):
     """
     try:
         import outcomes
-        from datetime import date as _d
-        month = _d.today().strftime("%Y-%m")
-        return outcomes.start(rid, "reprice", f"reprice:{month}",
-                              f"Menu prices changed in {_d.today().strftime('%B')}",
-                              "food_cost_pct", user_id=user_id, module="inventory", gate="metric")
+        import menu_intelligence
+        # The restaurant's own month (re-audit A8's rule for campaign keys).
+        today = outcomes.local_today(rid)
+        month = today.strftime("%Y-%m")
+        started = outcomes.start(rid, "reprice", f"reprice:{month}",
+                                 f"Menu prices changed in {today.strftime('%B')}",
+                                 "food_cost_pct", user_id=user_id, module="inventory", gate="metric")
+        # Every dish repriced this month is measured by this one tracker
+        # (memory audit 9/29/26, link_trackers): each reprice:<Dish> episode
+        # implemented since the month began is linked to it, so "reprice"
+        # builds a track record here; rec_learning counts one result per
+        # tracker, however many dishes it covers.
+        if started.get("ok"):
+            menu_intelligence.link_month_reprices(rid, started["outcome"]["id"], today.replace(day=1))
+        return started
     except Exception as e:
         import ops
         ops.capture(e, job="reprice_outcome", context=f"restaurant_id={rid}")

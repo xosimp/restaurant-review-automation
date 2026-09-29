@@ -490,6 +490,27 @@ def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_
     return s
 
 
+def link_month_reprices(restaurant_id, tracker_id, since, db_path=DB_PATH) -> int:
+    """Link every reprice:<Dish> episode implemented on or after `since`
+    (the month's first day) and not yet measured to the month's reprice
+    tracker (memory audit 9/29/26, link_trackers). Returns how many were
+    linked; never raises."""
+    try:
+        import rec_ledger
+        conn = _conn(db_path)
+        try:
+            keys = [r["key"] for r in conn.execute(
+                "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND key LIKE 'reprice:%' "
+                "AND implemented_at IS NOT NULL AND implemented_at >= ? AND tracker_id IS NULL",
+                (restaurant_id, str(since)[:10])).fetchall()]
+        finally:
+            conn.close()
+        return sum(1 for k in keys if rec_ledger.link_tracker(restaurant_id, k, tracker_id, db_path=db_path))
+    except Exception as e:
+        print(f"[menu_intelligence] reprices not linked to tracker {tracker_id}: {e}")
+        return 0
+
+
 def reprice_decisions(restaurant_id, limit=50, db_path=DB_PATH) -> list:
     conn = _conn(db_path)
     try:

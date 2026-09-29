@@ -2272,15 +2272,25 @@ def track_campaign_outcome(restaurant_id, target_day, result, user_id=None, rec_
         ops.capture(e, job="campaign_implemented", context=f"restaurant_id={restaurant_id}")
     try:
         import outcomes
+        import rec_ledger
         # Credited to Marketing (the campaign is marketing's recommendation,
         # rec-ROI #5), and refused while that weekday is already measured
         # (#3) — a second campaign on the same Tuesdays would read the same
         # lift twice. A refusal is an answer, not a failure. The
         # restaurant's own date in the key, not the server's (re-audit A8).
-        return outcomes.start(restaurant_id, "slow_day_campaign",
-                              f"campaign:{day}:{outcomes.local_today(restaurant_id).isoformat()}",
-                              f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
-                              module="marketing", gate="metric")
+        # The tracker measures the recommendation the text answered (memory
+        # audit 9/29/26, link_trackers): the feed card it began on, else
+        # "text your list before a slow <day>" — it was keyed only by its
+        # campaign, so three "Fill Tuesday" texts never gave slow_day a
+        # track record. Both episodes the send implemented are linked.
+        slow_key = rec_ledger.rec_key("slow_day", day)
+        started = outcomes.start(restaurant_id, "slow_day_campaign",
+                                 f"campaign:{day}:{outcomes.local_today(restaurant_id).isoformat()}",
+                                 f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
+                                 module="marketing", gate="metric", rec_key=(rec_key or slow_key))
+        if started.get("ok") and rec_key and rec_key != slow_key:
+            rec_ledger.link_tracker(restaurant_id, slow_key, started["outcome"]["id"])
+        return started
     except Exception as e:
         import ops
         ops.capture(e, job="campaign_outcome", context=f"restaurant_id={restaurant_id}")

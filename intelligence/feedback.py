@@ -400,10 +400,21 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
         except Exception:
             effect_rows = {}
         try:
-            episode_tags = {r["tracker_id"]: r["tags"] for r in conn.execute(
-                "SELECT tracker_id, tags FROM rec_instances WHERE tracker_id IS NOT NULL").fetchall()}
+            episode_tags, episode_keys = {}, {}
+            for r in conn.execute("SELECT tracker_id, key, tags FROM rec_instances WHERE tracker_id IS NOT NULL "
+                                  "ORDER BY created_at, rowid").fetchall():
+                episode_tags.setdefault(r["tracker_id"], r["tags"])
+                episode_keys.setdefault(r["tracker_id"], r["key"])
         except Exception:
-            episode_tags = {}
+            episode_tags, episode_keys = {}, {}
+        # The recommendation each tracker measures when its own key is not
+        # it (outcomes.record measures_key; memory audit 9/29/26, link_trackers).
+        try:
+            rec_keys = {r["id"]: r["measures_key"] for r in conn.execute(
+                "SELECT id, measures_key FROM recommendation_outcomes "
+                "WHERE measures_key IS NOT NULL AND measures_key != ''")}
+        except Exception:
+            rec_keys = {}
         for r in outs:
             # The kind comes from the key, not the tracker's source: Home's
             # "Done" starts an `observed` tracker under the recommendation's
@@ -412,7 +423,12 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
             # genuine observed:<action>:<month> key its observed: kind.
             if str(r["source_key"] or "").startswith("observed:untaken:"):
                 continue     # advice NOT taken (outcomes.observe_untaken): a comparison, never an answer
-            kind = kind_of(r["source_key"])
+            # Filed under the kind of the recommendation it measures — the
+            # linked episode's, else its measures_key's — so the platform and the
+            # restaurant's own learner agree: a fill-a-night text's result is
+            # slow_day's, not a "campaign" kind no recommendation has
+            # (memory audit 9/29/26, link_trackers).
+            kind = kind_of(episode_keys.get(r.get("id")) or rec_keys.get(r.get("id")) or r["source_key"])
             written += put(r["restaurant_id"], kind, r["source_key"], "tracking", event_at=r["created_at"],
                            synced_from="recommendation_outcomes")
             if r["status"] == "evaluated":
@@ -440,7 +456,8 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
                     if eff is not None and not tags:
                         try:
                             import rec_ledger
-                            tags = json.dumps(sorted(rec_ledger.tags_for(r["source_key"], kind=kind)))
+                            tags = json.dumps(sorted(rec_ledger.tags_for(rec_keys.get(r["id"]) or r["source_key"],
+                                                                         kind=kind)))
                         except Exception:
                             tags = None
                     try:

@@ -49,10 +49,13 @@ def test_a_tracker_is_linked_to_its_recommendation_the_moment_it_starts(db_path)
     rec_ledger.present(rid, "trim_day:Monday", "labor", "home", title="Trim Monday", db_path=db_path)
     o = outcomes.record(rid, "home", "trim_day:Monday", "Trim Monday", "labor_pct", db_path=db_path)
     assert _tracker_id(db_path, rid, "trim_day:Monday") == o["id"]
-    # A source key that is no recommendation links nothing and raises nothing.
+    # A source key that is no recommendation's, with no rec_key naming one,
+    # links nothing and raises nothing. (A real campaign tracker passes the
+    # slow_day key it measures as rec_key and links — memory audit 9/29/26,
+    # link_trackers; tests/test_mem_m6_link_trackers.py.)
     other = outcomes.record(rid, "slow_day_campaign", "campaign:Tuesday:2026-09-01", "Guest text",
                             "weekday_sales:Tuesday", db_path=db_path)
-    assert other["id"]
+    assert other["id"] and other["measures_key"] is None
 
 
 def test_no_i_didnt_make_it_stops_the_result_counting_and_yes_brings_it_back(db_path):
