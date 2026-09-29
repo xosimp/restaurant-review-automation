@@ -456,6 +456,12 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     var dollarsAdjusted: Double? = nil
     var calibrationN: Int? = nil
     var calibrationNote: String? = nil
+    /// What another module knows against the action — a trim on a night
+    /// guests complained about service (staffing_signals.trim_guard, M3) —
+    /// and advice it pulls against, for the owner to settle (M1
+    /// lever_conflicts). Absent on an older report.
+    var caution: String? = nil
+    var conflict: RecConflict? = nil
     var id: String { key ?? text }
 
     struct UrgencyAdjusted: Decodable, Hashable {
@@ -465,7 +471,7 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case text, why, urgency, effort, kind, key, answered, answerable, confidence
+        case text, why, urgency, effort, kind, key, answered, answerable, confidence, caution, conflict
         case dollarsMonthly = "dollars_monthly"
         case recKey = "rec_key"
         case urgencyBasis = "urgency_basis"
@@ -542,6 +548,43 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     }
 }
 
+extension DSRAction {
+    /// `text` is the action; every other field is read leniently, so one
+    /// odd field (a new shape the server adds) never drops Tomorrow's
+    /// priorities — the list is decoded whole.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        func str(_ k: CodingKeys) -> String? {
+            let v = ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (v?.isEmpty ?? true) ? nil : v
+        }
+        func num(_ k: CodingKeys) -> Double? {
+            if let d = (try? c.decodeIfPresent(Double.self, forKey: k)) ?? nil, d.isFinite { return d }
+            return nil
+        }
+        why = str(.why)
+        urgency = str(.urgency)
+        effort = str(.effort)
+        kind = str(.kind)
+        dollarsMonthly = num(.dollarsMonthly)
+        key = str(.key)
+        recKey = str(.recKey)
+        answered = (try? c.decodeIfPresent(Bool.self, forKey: .answered)) ?? nil
+        answerable = (try? c.decodeIfPresent(Bool.self, forKey: .answerable)) ?? nil
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
+        urgencyBasis = str(.urgencyBasis)
+        urgencyAdjusted = (try? c.decodeIfPresent(UrgencyAdjusted.self, forKey: .urgencyAdjusted)) ?? nil
+        effortSource = str(.effortSource)
+        dollarsAdjusted = num(.dollarsAdjusted)
+        calibrationN = (try? c.decodeIfPresent(Int.self, forKey: .calibrationN)) ?? nil
+        calibrationNote = str(.calibrationNote)
+        caution = str(.caution)
+        conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
+    }
+}
+
 /// dsr.narrative's `verification`: lines checked, lines kept, and the lines
 /// dropped because a figure didn't trace (a list of {field, text, why} —
 /// only its length is shown). H13: estimates the lines cite are counted
@@ -556,6 +599,12 @@ struct DSRVerification: Decodable, Hashable {
     /// checks (dsr/narrative.settle_actions). The footer says each as what
     /// it is.
     var droppedAnswered: Int = 0
+    /// The server's own reason for each action left out for something the
+    /// rest of the product knows — a campaign filling the night a trim
+    /// named, the owner's earlier choice between two conflicting actions
+    /// (memory round 9/29/26: dsr/narrative.settle_actions, M3 and M1) —
+    /// said in its words, never counted as a failed check.
+    var leftOutWhys: [String] = []
     let estimated: Int?
     /// H13 (dsr/narrative.py): the kept lines resting on measured facts
     /// only — kept minus estimated, as the server counts it.
@@ -574,7 +623,9 @@ struct DSRVerification: Decodable, Hashable {
         kept = try? c.decodeIfPresent(Int.self, forKey: .kept)
         dropped = Self.count(c, .dropped)
         if let list = (try? c.decodeIfPresent([DroppedLine].self, forKey: .dropped)) ?? nil {
-            droppedAnswered = list.filter { $0.isAnswered }.count
+            droppedAnswered = list.filter { $0.isAnswered && !$0.isLeftOut }.count
+            var seen = Set<String>()
+            leftOutWhys = list.filter { $0.isLeftOut }.compactMap(\.why).filter { seen.insert($0).inserted }
         }
         estimated = Self.count(c, .estimated) ?? Self.count(c, .estimates)
         measured = try? c.decodeIfPresent(Int.self, forKey: .measured)
@@ -582,11 +633,25 @@ struct DSRVerification: Decodable, Hashable {
 
     private struct DroppedLine: Decodable {
         let why: String?
+        /// A settled action carries its key (settle_actions); a line that
+        /// failed the figure check never does.
+        let key: String?
         init(from decoder: Decoder) throws {
             let c = try? decoder.container(keyedBy: K.self)
-            why = (try? c?.decodeIfPresent(String.self, forKey: .why)) ?? nil
+            why = ((try? c?.decodeIfPresent(String.self, forKey: .why)) ?? nil)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            key = (try? c?.decodeIfPresent(String.self, forKey: .key)) ?? nil
         }
-        enum K: String, CodingKey { case why }
+        enum K: String, CodingKey { case why, key }
+        /// Left out for what another module knows, or the owner's choice
+        /// between conflicting advice — a keyed drop that is neither an
+        /// answer nor a repeat.
+        var isLeftOut: Bool {
+            guard let why, !why.isEmpty, key != nil else { return false }
+            if why.range(of: "chose the other advice", options: .caseInsensitive) != nil { return true }
+            return why.range(of: "not for us|already answered|same action",
+                             options: [.regularExpression, .caseInsensitive]) == nil
+        }
         var isAnswered: Bool {
             guard let why else { return false }
             return why.range(of: "owner|already answered|same action|not for us",
@@ -600,13 +665,16 @@ struct DSRVerification: Decodable, Hashable {
     private var droppedText: String {
         let total = dropped ?? 0
         let answered = min(droppedAnswered, total)
-        let failed = total - answered
+        let failed = max(0, total - answered - leftOutWhys.count)
         var s = ""
         if failed > 0 {
             s += " \u{00B7} \(failed) dropped because \(failed == 1 ? "it" : "they") didn\u{2019}t pass the check against the night\u{2019}s facts"
         }
         if answered > 0 {
             s += " \u{00B7} \(answered) left out because you already answered \(answered == 1 ? "it" : "them") or \(answered == 1 ? "it repeated" : "they repeated") a line above"
+        }
+        for why in leftOutWhys {
+            s += " \u{00B7} 1 left out: " + why
         }
         return s
     }

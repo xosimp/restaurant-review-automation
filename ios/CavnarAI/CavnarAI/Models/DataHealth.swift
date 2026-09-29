@@ -119,9 +119,14 @@ struct DataHealthSnapshot: Decodable {
     var sources: [DataHealthSource] = []
     var notConnected: [DataHealthNotConnected] = []
     var modules: [DataHealthModule] = []
+    /// Sources the owner said they don't trust ("don't trust the data" on
+    /// a card): every recommendation resting on one is held at low
+    /// confidence until it is re-verified here (memory round 9/29/26, M1
+    /// "reasons" — data_health.distrusted_items).
+    var distrusted: [DataHealthDistrust] = []
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, overall, sources, modules
+        case ok, error, overall, sources, modules, distrusted
         case generatedAt = "generated_at"
         case worstLine = "worst_line"
         case countCurrent = "count_current"
@@ -145,6 +150,7 @@ struct DataHealthSnapshot: Decodable {
         sources = c.list(DataHealthSource.self, .sources)
         notConnected = c.list(DataHealthNotConnected.self, .notConnected)
         modules = c.list(DataHealthModule.self, .modules)
+        distrusted = c.list(DataHealthDistrust.self, .distrusted)
     }
 
     /// Whether "Sync now" has anything to start.
@@ -164,6 +170,45 @@ struct DataHealthSnapshot: Decodable {
         let keys = Set(m.sources)
         return sources.filter { keys.contains($0.key) }
             .sorted { ($0.healthPct ?? $0.pct ?? 101) < ($1.healthPct ?? $1.pct ?? 101) }
+    }
+}
+
+/// One distrusted source: "You said you don't trust the sales data
+/// (9/20/26, 2 times). Recommendations resting on it are held at low
+/// confidence until you re-verify it." — and the route that re-verifies it.
+struct DataHealthDistrust: Decodable, Identifiable, Hashable {
+    var source: String = ""
+    var label: String? = nil
+    var since: String? = nil
+    var reports: Int? = nil
+    var text: String = ""
+    /// POST {source} here to re-verify (the mobile twin).
+    var verifyPath: String = "/mobile/api/data-health/verify"
+
+    var id: String { source }
+
+    enum CodingKeys: String, CodingKey { case source, label, since, reports, text, verify }
+    enum VerifyKeys: String, CodingKey { case mobile, source }
+
+    init(source: String, text: String, label: String? = nil) {
+        self.source = source; self.text = text; self.label = label
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let verify = try? c.nestedContainer(keyedBy: VerifyKeys.self, forKey: .verify)
+        let src = c.text(.source) ?? ((try? verify?.decodeIfPresent(String.self, forKey: .source)) ?? nil)
+        guard let src, !src.isEmpty, let text = c.text(.text) else {
+            throw DecodingError.dataCorruptedError(forKey: .source, in: c, debugDescription: "no source or text")
+        }
+        source = src
+        self.text = text
+        label = c.text(.label)
+        since = c.text(.since)
+        reports = c.int(.reports)
+        if let m = (try? verify?.decodeIfPresent(String.self, forKey: .mobile)) ?? nil, m.hasPrefix("/mobile/api/") {
+            verifyPath = m
+        }
     }
 }
 

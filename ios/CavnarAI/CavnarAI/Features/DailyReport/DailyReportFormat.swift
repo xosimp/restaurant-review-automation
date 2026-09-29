@@ -269,7 +269,38 @@ extension DSRBlock {
         } ?? []
     }
 
+    // Sales — the night's target and the forecast it was read against
+    // (memory round 9/29/26, M2/M5).
+
+    /// "Your goal of $9,000 a night by 12/31/26" — the budget line when the
+    /// night's target is the owner's nightly-sales goal (store.night_budget
+    /// source "goal"); nil for an entered budget, which reads as before.
+    var budgetGoalLabel: String? {
+        guard detail["budget"]?["source"]?.string == "goal" else { return nil }
+        return detail["budget"]?["label"]?.string
+    }
+
+    /// What tonight's forecast rested on — "median of the last 8 Tuesdays;
+    /// Rain −12% (measured 5 times here)" — the server's own sentence with
+    /// each measured effect named (event_memory, M5). Nil without one.
+    var forecastBasis: String? {
+        guard detail["baselines"]?["forecast"]?["net"]?.double != nil else { return nil }
+        return detail["baselines"]?["forecast"]?["basis"]?.string
+    }
+
+    /// Why there is no forecast comparison tonight ("fewer than 3 reports
+    /// for Tuesdays on this basis") — said, never a silently missing row.
+    var forecastMissingReason: String? {
+        guard detail["baselines"]?["forecast"]?["net"]?.double == nil else { return nil }
+        return detail["baselines"]?["forecast"]?["reason"]?.string
+    }
+
     // Intel
+
+    /// The weather that happened (the nearest National Weather Service
+    /// station, event_memory — M5), beside the forecast the block stored.
+    var weatherObservedSummary: String? { detail["weather"]?["observed"]?["summary"]?.string }
+    var weatherObservedBasis: String? { detail["weather"]?["observed"]?["basis"]?.string }
 
     var weatherSummary: String? { detail["weather"]?["summary"]?.string }
     var weatherNote: String? { detail["weather"]?["note"]?.string }

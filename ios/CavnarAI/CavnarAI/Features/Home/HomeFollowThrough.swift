@@ -71,6 +71,51 @@ struct GoalRow: Decodable, Identifiable {
     }
 }
 
+/// A goal a teammate (or the sales audit) proposed, waiting for an account
+/// holder (memory round 9/29/26, M2 owner_goals — GET /goals `proposed`).
+/// Once confirmed it is the target every module judges its metric against.
+struct ProposedGoal: Codable, Identifiable, Hashable {
+    let id: Int
+    let summary: String
+    var proposedBy: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, summary, label
+        case proposedBy = "proposed_by"
+    }
+
+    init(id: Int, summary: String, proposedBy: String? = nil) {
+        self.id = id; self.summary = summary; self.proposedBy = proposedBy
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        let text = ((try? c.decodeIfPresent(String.self, forKey: .summary)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil)
+        guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .summary, in: c, debugDescription: "no summary")
+        }
+        summary = t
+        let by = ((try? c.decodeIfPresent(String.self, forKey: .proposedBy)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        proposedBy = (by?.isEmpty ?? true) ? nil : by
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(summary, forKey: .summary)
+        try c.encodeIfPresent(proposedBy, forKey: .proposedBy)
+    }
+
+    /// "Proposed by Dana, manager" / "Proposed by your sales audit".
+    var byLine: String {
+        guard let by = proposedBy else { return "Proposed by a teammate" }
+        return "Proposed by " + (by == "Your sales audit" ? "your sales audit" : by)
+    }
+}
+
 /// "What your changes did" reads the full tracker row (RecOutcome) now —
 /// the result line, its attribution sentence and whether the owner has
 /// checked in on it — rather than the old summary-and-verdict pair.
@@ -175,6 +220,11 @@ struct CloseOutDraft: Encodable {
 final class HomeFollowThroughViewModel {
     var actions: [ActionItem] = []
     var goals: [GoalRow] = []
+    /// Goals waiting for an account holder, and whether this login is one.
+    var proposedGoals: [ProposedGoal] = []
+    var canConfirmGoals = false
+    /// The goal being confirmed or declined right now.
+    var answeringGoal: Int?
     /// The finished trackers with a sentence to show ("What your changes did").
     var results: [RecOutcome] = []
     /// Every tracker row /outcomes returned — the check-ins read these.
@@ -248,7 +298,23 @@ final class HomeFollowThroughViewModel {
     var checkInsDue: [RecOutcome] { Array(outcomes.filter(RecCheckIn.isDue).prefix(2)) }
 
     private struct ActionsResponse: Decodable { let ok: Bool; let items: [ActionItem] }
-    private struct GoalsResponse: Decodable { let ok: Bool; let goals: [GoalRow] }
+    private struct GoalsResponse: Decodable {
+        let ok: Bool
+        let goals: [GoalRow]
+        var proposed: HomeLenientList<ProposedGoal>? = nil
+        var canConfirm: Bool? = nil
+        enum CodingKeys: String, CodingKey {
+            case ok, goals, proposed
+            case canConfirm = "can_confirm"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            goals = (try? c.decode([GoalRow].self, forKey: .goals)) ?? []
+            proposed = (try? c.decodeIfPresent(HomeLenientList<ProposedGoal>.self, forKey: .proposed)) ?? nil
+            canConfirm = (try? c.decodeIfPresent(Bool.self, forKey: .canConfirm)) ?? nil
+        }
+    }
     private struct CloseOutResponse: Decodable {
         let ok: Bool
         let closeout: CloseOutEntry?
@@ -534,6 +600,10 @@ final class HomeFollowThroughViewModel {
             /// The money fallback as the RANGE it is (K4): never collapsed
             /// to one figure. Only drawn when `dollarsMonthly` is absent.
             let money: Money?
+            /// Advice the hero pulls against, for the owner to settle
+            /// (memory round 9/29/26, lever_conflicts). Absent on an older
+            /// server.
+            var conflict: RecConflict? = nil
             /// F6: the dollars corrected by measured results
             /// (RecDollarCalibration). Absent on an older server.
             var dollarsAdjusted: Double? = nil
@@ -578,7 +648,7 @@ final class HomeFollowThroughViewModel {
                 }
             }
             enum CodingKeys: String, CodingKey {
-                case key, what, why, modules, evidence, alternative, answerable, confidence, money
+                case key, what, why, modules, evidence, alternative, answerable, confidence, money, conflict
                 case dollarsMonthly = "dollars_monthly"
                 case confirmBy = "confirm_by"
                 case linkHeadline = "link_headline"
@@ -593,6 +663,7 @@ final class HomeFollowThroughViewModel {
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
+                conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
                 dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
                 dollarsAdjusted = try? c.decodeIfPresent(Double.self, forKey: .dollarsAdjusted)
                 calibrationN = try? c.decodeIfPresent(Int.self, forKey: .calibrationN)
@@ -724,7 +795,10 @@ final class HomeFollowThroughViewModel {
         async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
         async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
         actions = (await a)?.items ?? []
-        goals = (await g)?.goals ?? []
+        let goalsResponse = await g
+        goals = goalsResponse?.goals ?? []
+        proposedGoals = goalsResponse?.proposed?.items ?? []
+        canConfirmGoals = goalsResponse?.canConfirm ?? false
         let fetchedOutcomes = await o
         outcomes = fetchedOutcomes?.outcomes ?? []
         results = outcomes.filter { $0.summary?.isEmpty == false }
@@ -853,8 +927,12 @@ final class HomeFollowThroughViewModel {
             let ok: Bool; let outcome: Outcome?; let error: String?
             let tracker: RecTracker?
             let trackerRefused: RecTrackerRefused?
+            /// What the answer does, in the server's words (rec_ledger.
+            /// silence_message — "Noted — Cavnar AI will bring it back in
+            /// 4 weeks", "hidden for you; the owner still sees it").
+            var message: String? = nil
             enum CodingKeys: String, CodingKey {
-                case ok, outcome, error, tracker
+                case ok, outcome, error, tracker, message
                 case trackerRefused = "tracker_refused"
             }
         }
@@ -868,39 +946,61 @@ final class HomeFollowThroughViewModel {
                 retryTransient: false)
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
             await Haptic.success()
-            if kind == "done" {
-                // What Done started measuring, or why nothing did (another
-                // change already on the same number).
-                if let line = RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused) {
-                    return "Marked done \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
-                }
-                if let on = r.outcome?.evaluateOn {
-                    return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
-                }
-            }
-            switch kind {
-            case "done": return "Marked done"
-            case "recommendation": return "Hidden for two weeks"
-            default: return "Noted — it won\u{2019}t come back"
-            }
+            return Self.answerLine(kind: kind, message: r.message,
+                                   trackerLine: RecTrackerNote.line(tracker: r.tracker, refused: r.trackerRefused),
+                                   evaluateOn: r.outcome?.evaluateOn)
         } catch { errorMessage = "Couldn\u{2019}t save that."; return nil }
+    }
+
+    /// The line an answer leaves on Home: the server's own sentence for what
+    /// the answer does (memory round 9/29/26 — it holds 60 days, a year,
+    /// until the next count …), then, on a Done, what it started measuring.
+    /// The local words are only for an older server that sends no message.
+    static func answerLine(kind: String, message: String?, trackerLine: String?, evaluateOn: String?) -> String {
+        let said = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let said, !said.isEmpty {
+            guard kind == "done" else { return said }
+            if let line = trackerLine { return said + ". " + line }
+            if let on = evaluateOn { return said + ". Measuring from today, result on \(CavnarDate.mdy(on))" }
+            return said
+        }
+        if kind == "done" {
+            // What Done started measuring, or why nothing did (another
+            // change already on the same number).
+            if let line = trackerLine {
+                return "Marked done \u{2014} " + line.prefix(1).lowercased() + line.dropFirst()
+            }
+            if let on = evaluateOn {
+                return "Marked done — measuring from today, result on \(CavnarDate.mdy(on))"
+            }
+        }
+        switch kind {
+        case "done": return "Marked done"
+        case "recommendation": return "Hidden for two weeks"
+        case "snooze": return "Not today \u{2014} it\u{2019}s back tomorrow"
+        default: return "Noted — it won\u{2019}t come back"
+        }
     }
 
     /// Not today (kind "snooze") or hide (kind "recommendation") on a
     /// Needs-attention item — the same answer, through the same route, as a
     /// recommendation. Never offered for a critical item. A second hide
     /// asks why, and that answer arrives as not_for_us with its reason code.
+    /// Returns the line to show — the server's `message` for what the
+    /// answer does, else the local words — or nil when it did not save.
     @discardableResult
     func answerAttention(_ item: NeedsAttentionItem, kind: String, reason: String? = nil,
-                         reasonCode: String? = nil) async -> Bool {
-        let r: OKResponse? = try? await client.send(
+                         reasonCode: String? = nil) async -> String? {
+        struct Resp: Decodable { let ok: Bool; let message: String? }
+        let r: Resp? = try? await client.send(
             "/mobile/api/home/dismiss", method: .post,
             body: DismissBody(key: item.recKey ?? item.type, kind: kind,
                               title: (reason != nil || reasonCode != nil) ? item.title : nil, metric: nil,
                               reason: reason, reasonCode: reasonCode),
             retryTransient: false)
-        if r?.ok == true { await Haptic.success() }
-        return r?.ok == true
+        guard r?.ok == true else { return nil }
+        await Haptic.success()
+        return Self.answerLine(kind: kind, message: r?.message, trackerLine: nil, evaluateOn: nil)
     }
 
     private struct AssignBody: Encodable {
@@ -968,6 +1068,31 @@ final class HomeFollowThroughViewModel {
         let r: OKResponse? = try? await client.send("/mobile/api/home/dismiss", method: .post,
                                                     body: RestoreBody(restoreKind: kind), retryTransient: false)
         return r?.ok == true
+    }
+
+    /// Confirm (it becomes the active goal and the target) or decline a
+    /// proposed goal — POST /mobile/api/goals/<id>/confirm | decline.
+    /// Returns the line to show, or nil (errorMessage says why).
+    func answerGoal(_ goal: ProposedGoal, confirm: Bool) async -> String? {
+        guard answeringGoal == nil else { return nil }
+        answeringGoal = goal.id
+        defer { answeringGoal = nil }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/goals/\(goal.id)/\(confirm ? "confirm" : "decline")", method: .post,
+                body: [String: String](), retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
+            await Haptic.success()
+            proposedGoals.removeAll { $0.id == goal.id }
+            await load()
+            return confirm ? "Confirmed \u{2014} it\u{2019}s the target from now on" : "Declined"
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return nil
+        } catch {
+            errorMessage = "Couldn\u{2019}t save that."
+            return nil
+        }
     }
 
     private struct SeenBody: Encodable { let key: String }
@@ -1056,6 +1181,7 @@ struct HomeFollowThrough: View {
 
     private var hasAnything: Bool {
         !viewModel.actions.isEmpty || !viewModel.goals.isEmpty || !viewModel.results.isEmpty
+            || !viewModel.proposedGoals.isEmpty
     }
 
     private var drawsWork: Bool { part == .all || part == .work }
@@ -1093,6 +1219,11 @@ struct HomeFollowThrough: View {
     /// The work half — always open on Home.
     @ViewBuilder
     private var workSections: some View {
+        // Goals a teammate proposed wait for an account holder — a
+        // decision, so with the work, never inside Results (M2).
+        if !viewModel.proposedGoals.isEmpty {
+            HomeProposedGoals(viewModel: viewModel)
+        }
         if !viewModel.actions.isEmpty {
             HomeSectionHeader(kicker: "Follow-through", title: "Still open",
                               trailing: "\(viewModel.actions.count)")
@@ -1698,6 +1829,71 @@ struct CloseOutSheet: View {
                 draft = CloseOutDraft(c)
             }
             .cavnarPostedOverlay(postedLabel) { dismiss() }
+        }
+    }
+}
+
+/// "Goals waiting for you" — each proposed goal in its own words, who
+/// proposed it, and Confirm / Decline for an account holder. A teammate
+/// sees the same list read-only: "Waiting for the owner to confirm".
+struct HomeProposedGoals: View {
+    let viewModel: HomeFollowThroughViewModel
+    @State private var note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HomeSectionHeader(kicker: "Waiting for you", title: "Proposed goals",
+                              trailing: viewModel.proposedGoals.count > 1 ? "\(viewModel.proposedGoals.count)" : nil)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(viewModel.proposedGoals.enumerated()), id: \.element.id) { index, goal in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HomeMixedText.make(goal.summary, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HomeMixedText.make(goal.byLine + " \u{00B7} once confirmed, every module judges against it",
+                                           size: CavnarType.caption, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if viewModel.canConfirmGoals {
+                            HStack(spacing: 18) {
+                                ForEach([true, false], id: \.self) { confirm in
+                                    Button {
+                                        Haptic.light()
+                                        Task {
+                                            if let said = await viewModel.answerGoal(goal, confirm: confirm) {
+                                                withAnimation { note = said }
+                                            }
+                                        }
+                                    } label: {
+                                        Text(confirm ? "Confirm" : "Decline")
+                                            .font(.cavnarBody(CavnarType.secondary, weight: confirm ? 700 : 600))
+                                            .foregroundStyle(confirm ? Color.cavnarEmber2 : Color.cavnarInk3)
+                                            .frame(minHeight: 36)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(viewModel.answeringGoal != nil)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            if viewModel.answeringGoal == goal.id {
+                                CavnarSkeletonBar(height: 3)
+                            }
+                        } else {
+                            Text("Waiting for the owner to confirm")
+                                .font(.cavnarBody(CavnarType.caption, weight: 600))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    .padding(.vertical, 10)
+                    if index < viewModel.proposedGoals.count - 1 { AccountRowDivider() }
+                }
+            }
+            .cavnarCard()
+            if let note {
+                Text(note)
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .transition(.opacity)
+            }
         }
     }
 }

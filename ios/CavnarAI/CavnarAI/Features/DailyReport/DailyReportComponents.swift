@@ -49,6 +49,10 @@ struct DSRStatTile: View {
     let value: String
     var tone: Color = .cavnarInk
     var detail: String? = nil
+    /// A value that is words with figures in it ("Light rain · high 71°"):
+    /// drawn in the body face with its figures in the number face, over
+    /// two lines, instead of one line of the number face.
+    var valueIsText: Bool = false
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
@@ -59,11 +63,17 @@ struct DSRStatTile: View {
                 .foregroundStyle(Color.cavnarInk3(contrast))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            Text(value)
-                .font(.cavnarNumber(19, weight: 600))
-                .foregroundStyle(value == DSRFormat.dash ? Color.cavnarInk3 : tone)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            if valueIsText {
+                HomeMixedText.make(value, size: 15, weight: 600, color: tone, numberWeight: 600)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(value)
+                    .font(.cavnarNumber(19, weight: 600))
+                    .foregroundStyle(value == DSRFormat.dash ? Color.cavnarInk3 : tone)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             if let detail {
                 HomeMixedText.make(detail, size: 12, color: .cavnarInk3)
                     .lineLimit(2)

@@ -686,6 +686,18 @@ private struct EvidenceStrip: View {
             if !evidence.modules.isEmpty {
                 FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) })
             }
+            // Advice the owner already said not for us to, repeated in the
+            // answer — kept and marked in the prose; said here once (M1).
+            if let declined = evidence.declinedLine {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10, weight: .semibold))
+                        .accessibilityHidden(true)
+                    HomeMixedText.make(declined, size: 12.5, weight: 500, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.cavnarInk3)
+            }
             // How sure — the shared confidence line (K5): "72% confidence"
             // in the one colour map (low is amber, never red — CA4 F9),
             // with "Why?" when the server sent what it rests on.
@@ -886,8 +898,19 @@ private struct AskFeedbackRow: View {
         HStack(spacing: 8) {
             if let rating = message.rating {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
-                    .font(.cavnarBody(12.5, weight: 500))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
+                        .font(.cavnarBody(12.5, weight: 500))
+                    // What the ratings now say about answer length — a
+                    // preference kept for this login, forgettable in
+                    // Account → Memory (M2).
+                    if let pref = message.preferenceNote {
+                        Text(pref)
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(Color.cavnarGreen)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } else {
                 Text("Was this useful?")
                     .font(.cavnarBody(12.5, weight: 600))
@@ -944,6 +967,8 @@ struct ProposalCard: View {
     /// "Not now" asks why first — the six one-tap reasons every Not for us
     /// uses, or "Just not now" — before it dismisses.
     @State private var askingWhy = false
+    /// What the confirmed route said beyond "Done" (a proposed goal).
+    @State private var doneNote: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1007,7 +1032,9 @@ struct ProposalCard: View {
 
             switch phase {
             case .done:
-                Label("Done", systemImage: "checkmark.circle.fill")
+                // A teammate's goal waits for the owner (M2): said, not
+                // passed off as done.
+                Label(doneNote ?? "Done", systemImage: "checkmark.circle.fill")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarGreen)
             case .working:
@@ -1021,6 +1048,7 @@ struct ProposalCard: View {
                             phase = .working
                             let ok = await viewModel?.confirm(proposal) ?? false
                             failure = ok ? nil : viewModel?.errorBanner
+                            doneNote = ok ? viewModel?.lastConfirmNote : nil
                             phase = ok ? .done : (viewModel?.lastConfirmMayHaveRun == true ? .uncertain : .failed)
                             if ok { onDone?() }
                         }

@@ -36,6 +36,31 @@ struct AccountActivityLogView: View {
                         Text("Every change to your account, and who made it")
                     }
 
+                    // What changed on the restaurant — targets, settings,
+                    // never-say, hours, prices, menu, roster — who changed
+                    // it and when, kept for good (change_log, M7). Pay
+                    // changes reach an account holder only (the server's).
+                    if !viewModel.changes.isEmpty {
+                        AccountSection(kicker: "Settings and targets") {
+                            ForEach(Array(viewModel.changes.prefix(40).enumerated()), id: \.element.id) { index, change in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Image(systemName: change.symbol)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(width: 34, height: 34)
+                                        .background(Color.white.opacity(0.05))
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .accessibilityHidden(true)
+                                    HomeMixedText.make(change.line, size: 15, weight: 500, color: .cavnarInk)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.vertical, 10)
+                                if index < min(viewModel.changes.count, 40) - 1 { AccountRowDivider() }
+                            }
+                        }
+                    }
+
                     if viewModel.isLoadingActivity && viewModel.activity.isEmpty {
                         CavnarLoadingOrb().padding(.top, 40).frame(maxWidth: .infinity)
                     } else if viewModel.activity.isEmpty {
@@ -82,6 +107,57 @@ struct AccountActivityLogView: View {
             }
             .accountSheetChrome("Account Activity")
             .task { await viewModel.loadActivity() }
+        }
+    }
+}
+
+/// One lasting, attributed change (GET /account/activity `changes`,
+/// change_log.for_viewer): `line` is the owner-facing sentence, dates
+/// already M/D/YY.
+struct AccountChange: Codable, Hashable, Identifiable {
+    let line: String
+    var kind: String? = nil
+    var field: String? = nil
+    var changedAt: String? = nil
+
+    var id: String { (changedAt ?? "") + "|" + line }
+
+    enum CodingKeys: String, CodingKey {
+        case line, kind, field
+        case changedAt = "changed_at"
+    }
+
+    init(line: String, kind: String? = nil, field: String? = nil, changedAt: String? = nil) {
+        self.line = line; self.kind = kind; self.field = field; self.changedAt = changedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let l = try c.decode(String.self, forKey: .line).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !l.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .line, in: c, debugDescription: "empty line")
+        }
+        line = l
+        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil
+        field = (try? c.decodeIfPresent(String.self, forKey: .field)) ?? nil
+        changedAt = (try? c.decodeIfPresent(String.self, forKey: .changedAt)) ?? nil
+    }
+
+    /// A glyph for the kind of change; a kind the app doesn't know gets
+    /// the plain one.
+    var symbol: String {
+        switch kind {
+        case "price", "menu_add", "menu_remove", "menu_change": return "tag.fill"
+        case "roster_add", "roster_leave", "roster_change": return "person.2.fill"
+        case "pay": return "dollarsign.circle.fill"
+        case "hours": return "clock.fill"
+        case "supplier": return "shippingbox.fill"
+        case "target": return "target"
+        case "never_say", "voice": return "text.bubble.fill"
+        case "notifications": return "bell.fill"
+        case "automation": return "sparkles"
+        case "rules": return "list.bullet"
+        default: return "slider.horizontal.3"
         }
     }
 }

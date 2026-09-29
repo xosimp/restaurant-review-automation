@@ -154,6 +154,8 @@ struct ConfidenceLine: View {
 /// the Account sheet kit.
 struct ConfidenceWhySheet: View {
     let confidence: TrustConfidence
+    @Environment(SessionStore.self) private var sessionStore: SessionStore?
+    @State private var showingProfile = false
 
     private var display: ConfidenceDisplay { ConfidenceDisplay(confidence) }
 
@@ -171,12 +173,35 @@ struct ConfidenceWhySheet: View {
                     if let caution = d.caution {
                         CavnarCaveat(title: "Worth knowing", detail: caution)
                     }
+                    // Historical accuracy compares with restaurants like
+                    // this one only once the profile is confirmed (M8's
+                    // prior ladder) — the way there, one tap.
+                    if d.profileUnlock {
+                        Button {
+                            Haptic.light()
+                            showingProfile = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Confirm your restaurant profile")
+                                    .font(.cavnarBody(14, weight: 700))
+                                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                            }
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens Account, Restaurant profile")
+                    }
                     HomeMixedText.make(d.footer, size: 12.5, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(20)
             }
             .accountSheetChrome("Confidence")
+            .sheet(isPresented: $showingProfile) {
+                AccountRestaurantProfileSheet(canEdit: sessionStore?.currentUser?.isOwner ?? false)
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)

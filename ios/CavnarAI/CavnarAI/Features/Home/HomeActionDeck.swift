@@ -21,6 +21,8 @@ struct HomeActionDeck: View {
     /// "snooze" (not today) or "recommendation" (hide two weeks) on an item
     /// the server marked dismissable.
     var onDismiss: ((NeedsAttentionItem, String) -> Void)? = nil
+    /// Something changed server-side (a conflict settled) — reload Home.
+    var onChanged: () -> Void = {}
 
     /// Shown before "+N more": the lead plus three rows, as on the web.
     static let shownByDefault = 4
@@ -36,6 +38,13 @@ struct HomeActionDeck: View {
         cardHeight
             + (items.contains { $0.evidenceLine != nil } ? 36 : 0)
             + (items.contains { $0.confidence != nil } ? 26 : 0)
+            + CGFloat(items.map { memoryLines($0) }.max() ?? 0) * 18
+    }
+
+    /// How many history lines an item carries (the owner's earlier answer,
+    /// a delegate's decline — memory round 9/29/26).
+    static func memoryLines(_ item: NeedsAttentionItem) -> Int {
+        RecMemoryNote.rows(previous: item.previousAnswer, delegate: item.delegateAnswer, retest: false).count
     }
 
     /// The rows under the lead, and how many more wait behind "+N more".
@@ -58,7 +67,8 @@ struct HomeActionDeck: View {
                     busy: busy,
                     onPrimary: { onPrimary(lead) },
                     onSecondary: { onSecondary(lead) },
-                    onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(lead, kind) } }
+                    onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(lead, kind) } },
+                    onChanged: onChanged
                 )
             }
 
@@ -73,7 +83,8 @@ struct HomeActionDeck: View {
                             item: item,
                             busy: busy && item.isPublishAction,
                             onPrimary: { onPrimary(item) },
-                            onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(item, kind) } }
+                            onDismiss: onDismiss.map { f -> (String) -> Void in { kind in f(item, kind) } },
+                            onChanged: onChanged
                         )
                     }
                 }
@@ -115,6 +126,7 @@ private struct ActionDeckRow: View {
     let busy: Bool
     let onPrimary: () -> Void
     var onDismiss: ((String) -> Void)? = nil
+    var onChanged: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -123,6 +135,11 @@ private struct ActionDeckRow: View {
                     .lineLimit(1)
                 HomeMixedText.make(item.detail, size: 12.5, weight: 500, color: .cavnarInk3)
                     .lineLimit(1)
+                RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer, compact: true)
+                if let conflict = item.conflict {
+                    RecConflictPanel(conflict: conflict, onSettled: onChanged)
+                        .padding(.top, 4)
+                }
             }
             Spacer(minLength: 8)
             if let cta = item.cta {
@@ -167,6 +184,7 @@ private struct ActionDeckCard: View {
     let onPrimary: () -> Void
     let onSecondary: () -> Void
     var onDismiss: ((String) -> Void)? = nil
+    var onChanged: () -> Void = {}
 
     private static let obsidian = Color(red: 0.08, green: 0.08, blue: 0.09)
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 22, style: .continuous) }
@@ -191,6 +209,12 @@ private struct ActionDeckCard: View {
                     if let c = item.confidence {
                         ConfidenceLine(confidence: c, recKey: item.recKey, surface: "home",
                                        module: "home", compact: true)
+                    }
+                    // What was said before about it (memory round 9/29/26).
+                    RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer)
+                    if let conflict = item.conflict {
+                        RecConflictPanel(conflict: conflict, onSettled: onChanged)
+                            .padding(.top, 2)
                     }
                 }
                 Spacer(minLength: 0)

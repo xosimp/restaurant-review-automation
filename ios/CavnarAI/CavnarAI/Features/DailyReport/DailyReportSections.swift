@@ -345,8 +345,12 @@ struct DSRTomorrowCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     DSRKicker(text: "Cavnar AI's forecast")
                     Text(fc.text).font(.cavnarNumber(22, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    // The server's basis names each measured effect it
+                    // applied ("Rain −12% (measured 5 times here)", M5 —
+                    // tomorrow.forecast.effects); figures in the number face.
                     if let b = fc.basis {
-                        Text(b.prefix(1).uppercased() + b.dropFirst()).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                        HomeMixedText.make(String(b.prefix(1).uppercased() + b.dropFirst()), size: 12, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.top, 4)

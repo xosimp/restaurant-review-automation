@@ -73,13 +73,23 @@ final class AIActivityViewModel {
     /// The undo. Returns the server's sentence on failure.
     func cancel(_ q: AIActivity.Queued) async -> String? {
         do {
-            let r: OK = try await APIClient.shared.send("/mobile/api/actions/\(q.id)/cancel", method: .post,
-                                                        body: [String: String]())
-            if r.ok { await load(force: true); return nil }
+            let r = try await APIClient.shared.undoQueuedAction(q.id)
+            if r.ok {
+                // What the undo did, and — for an automatic send it counts
+                // against — the one-tap "why?" (memory round, M1 "undo").
+                undoneNote = r.message
+                askWhy = r.askWhy
+                await load(force: true)
+                return nil
+            }
             return r.error ?? "That already went out."
         } catch let e as APIClient.APIError { return e.message }
         catch { return "Couldn\u{2019}t reach Cavnar AI." }
     }
+
+    /// The server's sentence after an undo, and its question.
+    var undoneNote: String?
+    var askWhy: UndoAskWhy?
 
     func advance() {
         guard let w = activity?.working, w.count > 1 else { return }
@@ -190,6 +200,10 @@ struct AIActivityFeedSheet: View {
                                 if let undoError {
                                     Text(undoError).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
                                 }
+                                if let note = viewModel.undoneNote {
+                                    Text(note).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
                         if let w = a.working, !w.isEmpty {
@@ -228,6 +242,7 @@ struct AIActivityFeedSheet: View {
                 }
             }
             .task { await viewModel.load(force: true) }
+            .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
         }
     }
 
