@@ -265,14 +265,21 @@ def _stripe_client(monkeypatch, event):
     fake = types.ModuleType("stripe")
     fake.Webhook = type("W", (), {"construct_event": staticmethod(lambda *a, **k: event)})
     monkeypatch.setitem(sys.modules, "stripe", fake)
+    # The webhook refuses every request without a signing secret (#145).
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fixture")
     app = Flask(__name__)
     app.register_blueprint(webhook_routes.webhook_bp)
     return app.test_client()
 
 
 def test_a_checkout_whose_user_creation_fails_can_be_retried_by_stripe(db_path, monkeypatch):
+    import billing_jobs
     welcomed = []
-    monkeypatch.setattr(emails, "send_welcome_email", lambda **kw: welcomed.append(kw["to_email"]))
+    # Fix round H (#12): the welcome is owed by provisioning and sent by the
+    # outbox's drain, with a set-password link — never inline with a password.
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
+    monkeypatch.setattr(emails, "send_signed_welcome_email",
+                        lambda **kw: welcomed.append(kw["to_email"]) or emails.SendResult(True))
     real_create_user = auth.create_user
     calls = {"n": 0}
 
@@ -297,6 +304,7 @@ def test_a_checkout_whose_user_creation_fails_can_be_retried_by_stripe(db_path, 
     conn.close()
     assert len(users) == 1, "the customer paid and has no login"
     assert len(places) == 1 and places[0]["billing_status"] == "active"
+    billing_jobs.run_owed_sends()
     assert welcomed == ["paid@owner.test"]
 
 

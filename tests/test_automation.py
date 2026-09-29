@@ -303,9 +303,11 @@ def test_default_thresholds_come_from_the_baseline_and_the_owner_still_wins(db_p
 # ── #10 provisioning from checkout ───────────────────────────────────────────
 
 def test_a_checkout_with_no_match_provisions_the_restaurant_and_welcomes_the_owner(db_path, monkeypatch):
-    import provisioning, emails
+    import provisioning, emails, billing_jobs
     welcomed = {}
-    monkeypatch.setattr(emails, "send_welcome_email", lambda **kw: welcomed.update(kw))
+    monkeypatch.setattr(emails, "send_signed_welcome_email",
+                        lambda **kw: welcomed.update(kw) or emails.SendResult(True))
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
     import auth
     monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
     sess = {"customer": "cus_new", "customer_details": {"email": "New.Owner@x.com", "name": "New Owner"},
@@ -315,8 +317,13 @@ def test_a_checkout_with_no_match_provisions_the_restaurant_and_welcomes_the_own
     assert r.name == "The New Place" and r.owner_email == "new.owner@x.com"
     assert r.module_reviews == 1 and r.module_labor == 1 and r.module_inventory == 0
     assert r.billing_status == "active" and r.stripe_customer_id == "cus_new"
-    assert welcomed["username"] == "new.owner" and welcomed["password"]
-    assert not r.temp_password                                   # emailed once, never stored (security audit A3)
+    assert r.converted_at                                        # a paid checkout is the conversion (#51)
+    # Fix round H (#12): the welcome is owed, then sent by the outbox with a
+    # set-password link — no password is emailed, or stored.
+    billing_jobs.run_owed_sends()
+    assert welcomed["username"] == "new.owner" and "/reset-password/" in welcomed["set_password_url"]
+    assert "password" not in welcomed
+    assert not r.temp_password                                   # never stored (security audit A3)
     # The same email again is a reconciliation, not a provisioning.
     assert provisioning.provision_from_checkout(sess, db_path=db_path) is None
     # No email: refuse rather than guess.

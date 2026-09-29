@@ -125,6 +125,8 @@ def _stripe_client(monkeypatch, event_holder, alerts=None):
     fake.Webhook = type("W", (), {"construct_event": staticmethod(
         lambda *a, **k: event_holder["event"])})
     monkeypatch.setitem(sys.modules, "stripe", fake)
+    # The webhook refuses every request without a signing secret (#145).
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fixture")
     sent = alerts if alerts is not None else []
     monkeypatch.setattr(webhook_routes, "_resend_key", lambda: "test-key")
     import resend
