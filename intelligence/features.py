@@ -7,6 +7,21 @@ measure is None, never 0, and `completeness` says how many could be.
 
 Every query is `WHERE restaurant_id = ?` over an indexed column; the
 nightly pass is bounded and resumable (jobs.py).
+
+Versioned and backfilled (memory audit 9/29/26, PLATFORM-5): every row
+carries the FEATURES_VERSION it was computed under (a column, and
+`features_version` in the JSON), and every reader takes only rows of the
+current version — a week measured under an older definition is never
+compared with one measured under this one. compute(today=<a past day>)
+reads nothing after that day (every query has an upper bound), so
+jobs.run_features_backfill can compute the weeks a restaurant had before
+it joined, or before a definition changed, from the raw tables, bounded
+and resumable, each such row marked `backfilled`.
+
+Google user data (intelligence.provenance): the review features and the
+recommendation loop's review share come from the owner's Google connection
+for a connected restaurant, so the cross-restaurant view withdraws them
+(and takes the loop features' review-free variants) for it.
 """
 import json
 from datetime import date, datetime, timedelta
@@ -20,6 +35,36 @@ def get_conn(db_path=None):
     if db_path is None or db_path == DB_PATH:
         return _models_mod.get_conn()
     return _models_mod.get_conn(db_path)
+
+
+# The definition every row is computed under. Bump it with ANY change to
+# what a feature measures (its query, window, floor or formula): readers
+# then take only rows of the new version, and the backfill re-derives the
+# older weeks from the raw tables. 1: every row before versioning (a
+# column default). 2: upper date bounds on every query, the recommendation
+# loop's review-free variants (memory audit 9/29/26).
+FEATURES_VERSION = 2
+
+
+def init_feature_versions(db_path: str = DB_PATH):
+    """Boot only (models.init_db): the trigger that stamps a feature row
+    inserted without a version with FEATURES_VERSION — re-created each boot
+    from the constant, so it always names the current definition. A row
+    from before versioning keeps NULL (unknown definition): no reader takes
+    it and the backfill re-derives its week."""
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(intel_features)").fetchall()}
+        if "version" not in have:
+            return
+        conn.execute("DROP TRIGGER IF EXISTS trg_intel_features_version")
+        conn.execute(f"CREATE TRIGGER trg_intel_features_version AFTER INSERT ON intel_features "
+                     f"WHEN NEW.version IS NULL BEGIN UPDATE intel_features SET version={int(FEATURES_VERSION)} "
+                     f"WHERE id=NEW.id; END")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 FEATURE_KEYS = (
@@ -135,9 +180,12 @@ def weekly_open_hours(open_json, close_json):
 
 
 def structural(conn, restaurant_id: int, today: date) -> dict:
-    """The structural block for one restaurant. Pure read."""
+    """The structural block for one restaurant as of `today` (nothing after
+    it is read; the owner's hours, delivery share and Intel's competitor
+    distances are read as they are now). Pure read."""
     out = {k: None for k in STRUCTURAL_KEYS}
     d28 = (today - timedelta(days=28)).isoformat()
+    end = today.isoformat()
     try:
         row = conn.execute("SELECT open_times_json, close_times_json, delivery_pct, competitor_intel "
                            "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
@@ -162,8 +210,8 @@ def structural(conn, restaurant_id: int, today: date) -> dict:
             pass
     try:
         sales = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
-            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0",
-            (restaurant_id, d28)).fetchall()}
+            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND date <= ? AND sales > 0",
+            (restaurant_id, d28, end)).fetchall()}
     except Exception:
         sales = {}
     # Sales volume band and daypart mix: ONE definition with Restaurant DNA
@@ -172,7 +220,7 @@ def structural(conn, restaurant_id: int, today: date) -> dict:
     # peer coordinate and a DNA dimension can never disagree.
     try:
         from . import dna as _dna
-        days = _dna._sales_days(conn, restaurant_id, today - timedelta(days=60))
+        days = _dna._sales_days(conn, restaurant_id, today - timedelta(days=60), until=today)
         out["volume_band"] = _dna._volume_band(days, today).get("raw")
         out["daypart_mix"] = _dna._daypart_mix(conn, restaurant_id, days, today).get("raw")
     except Exception:
@@ -180,8 +228,8 @@ def structural(conn, restaurant_id: int, today: date) -> dict:
     if len(sales) >= MIN_MEASURED_DAYS:
         try:
             cov = {str(r["date"])[:10]: int(r["covers"]) for r in conn.execute(
-                "SELECT date, covers FROM covers_daily WHERE restaurant_id=? AND date >= ? AND covers > 0",
-                (restaurant_id, d28)).fetchall()}
+                "SELECT date, covers FROM covers_daily WHERE restaurant_id=? AND date >= ? AND date <= ? AND covers > 0",
+                (restaurant_id, d28, end)).fetchall()}
             both = [d for d in cov if d in sales]
             if len(both) >= MIN_MEASURED_DAYS:
                 out["ticket_band"] = _band(sum(sales[d] for d in both) / sum(cov[d] for d in both), TICKET_BAND_EDGES)
@@ -189,8 +237,9 @@ def structural(conn, restaurant_id: int, today: date) -> dict:
             pass
     try:
         cats = conn.execute("SELECT metric, SUM(value) AS v, COUNT(DISTINCT business_date) AS n FROM dsr_metrics "
-                            "WHERE restaurant_id=? AND business_date >= ? AND metric LIKE 'sales.cat:%' "
-                            "AND value IS NOT NULL GROUP BY metric", (restaurant_id, d28)).fetchall()
+                            "WHERE restaurant_id=? AND business_date >= ? AND business_date <= ? "
+                            "AND metric LIKE 'sales.cat:%' AND value IS NOT NULL GROUP BY metric",
+                            (restaurant_id, d28, end)).fetchall()
         by = {r["metric"][len("sales.cat:"):]: float(r["v"] or 0) for r in cats}
         days = max((int(r["n"] or 0) for r in cats), default=0)
         total = sum(v for v in by.values() if v > 0)
@@ -226,15 +275,21 @@ def waste_logging_regular(f: dict) -> bool:
         return False
 
 
-def cross_restaurant_view(f: dict) -> dict:
+def cross_restaurant_view(f: dict, google: bool = True) -> dict:
     """A feature row as cross-restaurant learning may read it: the waste %
-    withdrawn (None — unmeasured, never 0) unless waste is logged regularly.
+    withdrawn (None — unmeasured, never 0) unless waste is logged regularly,
+    and — for a restaurant whose reviews come through the owner's Google
+    connection (`google`, provenance.google_connected_ids) — every review
+    feature withdrawn and the recommendation loop's features replaced by
+    their review-free variants (provenance.pooled_features). `google`
+    defaults to True: a caller that has not looked is treated as connected.
     Every cross-restaurant reader (latest_by_restaurant, weekly_by_restaurant)
     goes through this."""
+    from . import provenance
     f = dict(f or {})
     if f.get("waste_sales_pct_28d") is not None and not waste_logging_regular(f):
         f["waste_sales_pct_28d"] = None
-    return f
+    return provenance.pooled_features(f, google)
 
 
 def waste_log_regularity(conn, restaurant_id, today: date):
@@ -275,18 +330,35 @@ def _d(x):
     return str(x or "")[:10]
 
 
+def _stamped_by(stamp, end) -> bool:
+    """A reply stamped on or before `end` (a day) — or with no stamp, taken
+    as made (the rows from before the stamps)."""
+    return not stamp or _d(stamp) <= end
+
+
 def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> dict:
-    """The feature dict for this restaurant as of `today`. Pure read."""
+    """The feature dict for this restaurant as of `today`. Pure read.
+
+    Nothing after `today` is read (PLATFORM-5): every query has an upper
+    bound — `end` for a date, `end_ts` for a timestamp — and a reply counts
+    as made only when it was stamped by then, so a past week computed now
+    (the backfill) reads what that week had. What the tables keep only as
+    current state (a campaign's taps, a post's reach, a guest list's
+    consent, the owner's hours and delivery share) is read as it is now."""
     today = today or date.today()
     d30, d60, d90, d28 = (today - timedelta(days=n) for n in (30, 90, 90, 28))
+    end = today.isoformat()
+    end_ts = end + " 23:59:59"
     f = {k: None for k in FEATURE_KEYS}
+    f["features_version"] = FEATURES_VERSION
     conn = get_conn(db_path)
     try:
         # ── reviews ────────────────────────────────────────────────────────
         rows = conn.execute(
             "SELECT rating, review_date, approved_at, posted_at, response_status FROM reviews "
-            "WHERE restaurant_id=? AND COALESCE(review_date, fetched_at) >= ?",
-            (restaurant_id, d90.isoformat())).fetchall()
+            "WHERE restaurant_id=? AND COALESCE(review_date, fetched_at) >= ? "
+            "AND substr(COALESCE(review_date, fetched_at), 1, 10) <= ?",
+            (restaurant_id, d90.isoformat(), end)).fetchall()
         last30 = [r for r in rows if _d(r["review_date"]) >= d30.isoformat()]
         prior = [r for r in rows if _d(r["review_date"]) < d30.isoformat()]
         # None, not 0, when the restaurant has no review source and nothing
@@ -299,7 +371,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         f["reviews_30d"] = len(last30) if (rows or has_source) else None
         if len(last30) >= MIN_REVIEWS_FOR_RATIO:
             f["avg_rating_30d"] = round(sum(r["rating"] for r in last30) / len(last30), 2)
-            replied = [r for r in last30 if r["response_status"] in ("approved", "posted")]
+            replied = [r for r in last30 if r["response_status"] in ("approved", "posted")
+                       and _stamped_by(r["posted_at"] or r["approved_at"], end)]
             f["reply_rate_30d"] = round(len(replied) / len(last30), 3)
             within = 0
             timed = 0
@@ -323,8 +396,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
 
         # ── labor ──────────────────────────────────────────────────────────
         lab = conn.execute(
-            "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? ORDER BY date",
-            (restaurant_id, d28.isoformat())).fetchall()
+            "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+            "AND date <= ? ORDER BY date", (restaurant_id, d28.isoformat(), end)).fetchall()
         # Days with a sales figure only (a missing figure is NULL — or, on
         # rows from before that fix, 0 — and has no labor %), and SALES-
         # WEIGHTED: the period's labor % is total labor over total sales,
@@ -358,17 +431,19 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                 for part, key in (("morning", "labor_hours_per_1k_day_28d"), ("night", "labor_hours_per_1k_night_28d")):
                     o = conn.execute("SELECT SUM(hours) AS h, SUM(sales) AS s, COUNT(DISTINCT date) AS n "
                                      "FROM schedule_outcomes WHERE restaurant_id=? AND daypart=? AND date >= ? "
-                                     "AND sales IS NOT NULL", (restaurant_id, part, d28.isoformat())).fetchone()
+                                     "AND date <= ? AND sales IS NOT NULL",
+                                     (restaurant_id, part, d28.isoformat(), end)).fetchone()
                     if o and (o["n"] or 0) >= MIN_MEASURED_DAYS and o["s"]:
                         f[key] = round(float(o["h"]) / float(o["s"]) * 1000, 2)
         except Exception:
             pass
         sched = conn.execute(
-            "SELECT generated_at, edited_at FROM schedule_history WHERE restaurant_id=? AND generated_at >= ?",
-            (restaurant_id, d28.isoformat())).fetchall() if _has_col(conn, "schedule_history", "edited_at") else []
+            "SELECT generated_at, edited_at FROM schedule_history WHERE restaurant_id=? AND generated_at >= ? "
+            "AND generated_at <= ?",
+            (restaurant_id, d28.isoformat(), end_ts)).fetchall() if _has_col(conn, "schedule_history", "edited_at") else []
         f["schedules_28d"] = len(sched)
         if sched:
-            f["schedule_edits_28d"] = sum(1 for r in sched if r["edited_at"])
+            f["schedule_edits_28d"] = sum(1 for r in sched if r["edited_at"] and str(r["edited_at"]) <= end_ts)
             f["schedule_adjust_rate"] = round(f["schedule_edits_28d"] / len(sched), 3)
 
         # ── food cost ──────────────────────────────────────────────────────
@@ -393,8 +468,10 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         # ── marketing ──────────────────────────────────────────────────────
         try:
             camps = conn.execute(
-                "SELECT sent_count, link_token, visits_matched FROM guest_campaigns WHERE restaurant_id=? AND created_at >= ?",
-                (restaurant_id, d28.isoformat())).fetchall() if _has_col(conn, "guest_campaigns", "visits_matched") else []
+                "SELECT sent_count, link_token, visits_matched FROM guest_campaigns WHERE restaurant_id=? "
+                "AND created_at >= ? AND created_at <= ?",
+                (restaurant_id, d28.isoformat(), end_ts)).fetchall() \
+                if _has_col(conn, "guest_campaigns", "visits_matched") else []
         except Exception:
             camps = []
         f["campaigns_28d"] = len(camps)
@@ -419,8 +496,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             + "COALESCE(c.reach,0)+COALESCE(c.impressions,0) AS seen, "
               "COALESCE(c.likes,0)+COALESCE(c.comments,0)+COALESCE(c.shares,0) AS engaged "
               "FROM marketing_content_log c WHERE c.restaurant_id=? AND c.post_id IS NOT NULL "
-              "AND COALESCE(c.posted_at, c.created_at) >= ? ORDER BY at",
-            (restaurant_id, d28.isoformat())).fetchall()
+              "AND COALESCE(c.posted_at, c.created_at) >= ? AND COALESCE(c.posted_at, c.created_at) <= ? ORDER BY at",
+            (restaurant_id, d28.isoformat(), end_ts)).fetchall()
         f["posts_28d"] = len(posts)
         if len(posts) >= 2:
             first, last = _d(posts[0]["at"]), _d(posts[-1]["at"])
@@ -448,14 +525,16 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
             except Exception:
                 pass
         try:      # guest_contacts is a lazily created table (guest_marketing.init_guest_marketing)
+            dated = _has_col(conn, "guest_contacts", "created_at")
             f["guest_list_size"] = conn.execute(
-                "SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND unsubscribed=0",
-                (restaurant_id,)).fetchone()[0]
+                "SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND unsubscribed=0"
+                + (" AND (created_at IS NULL OR created_at <= ?)" if dated else ""),
+                (restaurant_id, end_ts) if dated else (restaurant_id,)).fetchone()[0]
         except Exception:
             f["guest_list_size"] = None
 
         # ── the recommendation loop ────────────────────────────────────────
-        f.update(_rec_loop(conn, restaurant_id, d28, d90))
+        f.update(_rec_loop(conn, restaurant_id, d28, d90, end=today))
     finally:
         conn.close()
     # The structural block (#43): what the restaurant IS, never a dollar.
@@ -479,7 +558,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
     return f
 
 
-def _rec_loop(conn, restaurant_id, d28, d90) -> dict:
+def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     """The recommendation-loop features, by the ONE success definition
     (CA2 #4, CA1 red flag 13):
 
@@ -499,42 +578,58 @@ def _rec_loop(conn, restaurant_id, d28, d90) -> dict:
                                  result per number per overlapping window —
                                  and None below MIN_MEASURED_FOR_RATE: one
                                  result the owner disowned used to publish a
-                                 1.0 benchmark (CA2 probe B)."""
+                                 1.0 benchmark (CA2 probe B).
+
+    Each also has a review-free variant (`<name>_ex_reviews`, provenance.
+    REVIEW_FREE_VARIANT): the same count or rate without the review-derived
+    recommendations and results, which is what a pooled read takes for a
+    restaurant whose reviews come through the owner's Google connection.
+    Nothing after `end` is read."""
     import rec_learning
     import rec_ledger
+    from . import provenance
+    end = end or date.today()
+    end_ts = end.isoformat() + " 23:59:59"
     out = {"recs_answered_28d": None, "recs_done_28d": None, "recs_declined_28d": None,
            "outcomes_evaluated_90d": None, "outcomes_improved_rate_90d": None}
+    out.update({v: None for v in provenance.REVIEW_FREE_VARIANT.values()})
     try:
         rows = conn.execute(
             "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
-            "WHERE i.restaurant_id=? AND e.at >= ? AND e.event IN ('accepted','completed','implemented','dismissed') "
-            "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown')",
-            (restaurant_id, d28.isoformat())).fetchall()
-        answered, done, declined = set(), set(), set()
-        for r in rows:
-            if not rec_ledger.counts_in_acceptance(r["key"]):
-                continue
-            answered.add(r["rec_id"])
-            (declined if r["event"] == "dismissed" else done).add(r["rec_id"])
-        out["recs_answered_28d"] = len(answered)
-        out["recs_done_28d"] = len(done)
-        out["recs_declined_28d"] = len(declined - done)
+            "WHERE i.restaurant_id=? AND e.at >= ? AND e.at <= ? "
+            "AND e.event IN ('accepted','completed','implemented','dismissed') "
+            "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown' AND s.at <= ?)",
+            (restaurant_id, d28.isoformat(), end_ts, end_ts)).fetchall()
+        for suffix, keep in (("", lambda k: True), ("_ex_reviews", lambda k: not provenance.review_derived(k))):
+            answered, done, declined = set(), set(), set()
+            for r in rows:
+                if not rec_ledger.counts_in_acceptance(r["key"]) or not keep(r["key"]):
+                    continue
+                answered.add(r["rec_id"])
+                (declined if r["event"] == "dismissed" else done).add(r["rec_id"])
+            out["recs_answered_28d" + suffix] = len(answered)
+            out["recs_done_28d" + suffix] = len(done)
+            out["recs_declined_28d" + suffix] = len(declined - done)
     except Exception as e:
         print(f"[intelligence] ledger answers unreadable for {restaurant_id}: {e}")
     try:
         ev = [dict(r) for r in conn.execute(
-            "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND status='evaluated' AND evaluate_on >= ?",
-            (restaurant_id, d90.isoformat())).fetchall()]
+            "SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND status='evaluated' AND evaluate_on >= ? "
+            "AND evaluate_on <= ?", (restaurant_id, d90.isoformat(), end.isoformat())).fetchall()]
     except Exception as e:
         print(f"[intelligence] results unreadable for {restaurant_id}: {e}")
         return out
-    out["outcomes_evaluated_90d"] = len(ev)
-    eps = [{"rec_id": r["id"], "verdict": rec_learning.learned_verdict(r.get("verdict"), r), "tracker": r}
-           for r in ev]
-    clear = [e for e in rec_learning._one_per_window(eps) if e["verdict"] in rec_learning.CLEAR_VERDICTS]
-    if len(clear) >= rec_learning.MIN_MEASURED_FOR_RATE:
-        out["outcomes_improved_rate_90d"] = round(sum(1 for e in clear if e["verdict"] == "improved")
-                                                  / len(clear), 3)
+    for suffix, keep in (("", lambda r: True),
+                         ("_ex_reviews", lambda r: not provenance.review_derived(r.get("source_key"),
+                                                                                 metric=r.get("metric")))):
+        mine = [r for r in ev if keep(r)]
+        out["outcomes_evaluated_90d" + suffix] = len(mine)
+        eps = [{"rec_id": r["id"], "verdict": rec_learning.learned_verdict(r.get("verdict"), r), "tracker": r}
+               for r in mine]
+        clear = [e for e in rec_learning._one_per_window(eps) if e["verdict"] in rec_learning.CLEAR_VERDICTS]
+        if len(clear) >= rec_learning.MIN_MEASURED_FOR_RATE:
+            out["outcomes_improved_rate_90d" + suffix] = round(sum(1 for e in clear if e["verdict"] == "improved")
+                                                               / len(clear), 3)
     return out
 
 
@@ -545,15 +640,23 @@ def completeness(f: dict) -> float:
     return round(have / len(measurable), 3) if measurable else 0.0
 
 
-def store(restaurant_id: int, f: dict, week: str = None, today: date = None, db_path: str = DB_PATH) -> str:
+def store(restaurant_id: int, f: dict, week: str = None, today: date = None, db_path: str = DB_PATH,
+          backfilled: bool = False) -> str:
+    """Upsert the row for `week` at FEATURES_VERSION. `backfilled` marks a
+    past week computed from the raw tables (the backfill), not by that
+    week's own nightly pass."""
     week = week or iso_week(today or date.today())
+    f = dict(f or {})
+    f["features_version"] = FEATURES_VERSION
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT INTO intel_features (restaurant_id, week, features_json, completeness) VALUES (?,?,?,?) "
+            "INSERT INTO intel_features (restaurant_id, week, features_json, completeness, version, backfilled) "
+            "VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(restaurant_id, week) DO UPDATE SET features_json=excluded.features_json, "
-            "completeness=excluded.completeness, computed_at=datetime('now')",
-            (restaurant_id, week, json.dumps(f), completeness(f)))
+            "completeness=excluded.completeness, version=excluded.version, backfilled=excluded.backfilled, "
+            "computed_at=datetime('now')",
+            (restaurant_id, week, json.dumps(f), completeness(f), FEATURES_VERSION, 1 if backfilled else 0))
         conn.commit()
     finally:
         conn.close()
@@ -567,39 +670,50 @@ def compute_and_store(restaurant_id: int, today: date = None, db_path: str = DB_
 
 
 def latest(restaurant_id: int, db_path: str = DB_PATH) -> dict | None:
+    """This restaurant's newest row of the current FEATURES_VERSION."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT week, features_json, completeness, computed_at FROM intel_features "
-                           "WHERE restaurant_id=? ORDER BY week DESC LIMIT 1", (restaurant_id,)).fetchone()
+        row = conn.execute("SELECT week, features_json, completeness, computed_at, backfilled FROM intel_features "
+                           "WHERE restaurant_id=? AND version=? ORDER BY week DESC LIMIT 1",
+                           (restaurant_id, FEATURES_VERSION)).fetchone()
     finally:
         conn.close()
     if not row:
         return None
     return {"week": row["week"], "features": json.loads(row["features_json"]), "completeness": row["completeness"],
-            "computed_at": row["computed_at"]}
+            "computed_at": row["computed_at"], "backfilled": bool(row["backfilled"])}
 
 
 def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH) -> list:
+    """This restaurant's last `weeks` rows of the current FEATURES_VERSION,
+    oldest first — a row under an older definition never joins the series
+    (PLATFORM-5); the backfill re-derives it."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT week, features_json, completeness FROM intel_features WHERE restaurant_id=? "
-                            "ORDER BY week DESC LIMIT ?", (restaurant_id, int(weeks))).fetchall()
+        rows = conn.execute("SELECT week, features_json, completeness, backfilled FROM intel_features "
+                            "WHERE restaurant_id=? AND version=? ORDER BY week DESC LIMIT ?",
+                            (restaurant_id, FEATURES_VERSION, int(weeks))).fetchall()
     finally:
         conn.close()
-    return [{"week": r["week"], "features": json.loads(r["features_json"]), "completeness": r["completeness"]}
-            for r in reversed(rows)]
+    return [{"week": r["week"], "features": json.loads(r["features_json"]), "completeness": r["completeness"],
+             "backfilled": bool(r["backfilled"])} for r in reversed(rows)]
 
 
 def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict:
     """{restaurant_id: {week, features, completeness}} — each restaurant's
-    most recent row, only if it is recent enough to describe it now."""
+    most recent row of the current version, only if it is recent enough to
+    describe it now, through cross_restaurant_view (waste gated, Google user
+    data withdrawn)."""
+    from . import provenance
     floor = iso_week(date.today() - timedelta(weeks=max_age_weeks))
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT f.restaurant_id, f.week, f.features_json, f.completeness FROM intel_features f "
-            "JOIN (SELECT restaurant_id, MAX(week) AS week FROM intel_features GROUP BY restaurant_id) m "
-            "ON m.restaurant_id=f.restaurant_id AND m.week=f.week WHERE f.week >= ?", (floor,)).fetchall()
+            "JOIN (SELECT restaurant_id, MAX(week) AS week FROM intel_features WHERE version=? GROUP BY restaurant_id) m "
+            "ON m.restaurant_id=f.restaurant_id AND m.week=f.week WHERE f.week >= ? AND f.version=?",
+            (FEATURES_VERSION, floor, FEATURES_VERSION)).fetchall()
+        google = provenance.google_connected_ids(conn=conn)
     finally:
         conn.close()
     # Cross-restaurant readers (benchmarks, patterns, trends) only ever see
@@ -607,17 +721,22 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict
     # privacy floor and the cohort percentiles (CA3 F7).
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)
-    return {r["restaurant_id"]: {"week": r["week"], "features": cross_restaurant_view(json.loads(r["features_json"])),
+    return {r["restaurant_id"]: {"week": r["week"],
+                                 "features": cross_restaurant_view(json.loads(r["features_json"]),
+                                                                   google=r["restaurant_id"] in google),
                                  "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
 
 
 def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
-    """{week: {restaurant_id: features}} over the last `weeks` ISO weeks."""
+    """{week: {restaurant_id: features}} over the last `weeks` ISO weeks, the
+    current version only, through cross_restaurant_view."""
+    from . import provenance
     floor = iso_week(date.today() - timedelta(weeks=weeks))
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, week, features_json FROM intel_features WHERE week >= ? ORDER BY week",
-                            (floor,)).fetchall()
+        rows = conn.execute("SELECT restaurant_id, week, features_json FROM intel_features WHERE week >= ? "
+                            "AND version=? ORDER BY week", (floor, FEATURES_VERSION)).fetchall()
+        google = provenance.google_connected_ids(conn=conn)
     finally:
         conn.close()
     from .jobs import seeded_restaurant_ids
@@ -626,8 +745,90 @@ def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
     for r in rows:
         if r["restaurant_id"] in seeded:
             continue
-        out.setdefault(r["week"], {})[r["restaurant_id"]] = cross_restaurant_view(json.loads(r["features_json"]))
+        out.setdefault(r["week"], {})[r["restaurant_id"]] = cross_restaurant_view(
+            json.loads(r["features_json"]), google=r["restaurant_id"] in google)
     return out
+
+
+# ── the backfill (PLATFORM-5) ────────────────────────────────────────────────
+# A restaurant that arrives with months of shift, sales and review history
+# got no "vs your normal" for about 11 weeks and no seasonal comparison for
+# a year, though the raw days existed; and a definition change mixed weeks
+# measured two ways into one baseline. The backfill computes each past ISO
+# week that has no row of the current version, as of the week's last day,
+# from the raw tables — back to the restaurant's first raw day, at most
+# BACKFILL_MAX_WEEKS (the engine's "your normal" reads SERIES_WEEKS = 72)
+# — and marks the row backfilled. A week whose raw tables measure nothing
+# (completeness 0) is not stored.
+BACKFILL_MAX_WEEKS = 72
+
+
+def _week_end(week: str) -> date:
+    y, w = str(week).split("-W")
+    return date.fromisocalendar(int(y), int(w), 7)
+
+
+def first_raw_day(restaurant_id: int, db_path: str = DB_PATH) -> date | None:
+    """The earliest day the raw tables the features read hold for this
+    restaurant (daily labor and sales, reviews, the daily sales report's
+    metrics, schedules), or None."""
+    firsts = []
+    conn = get_conn(db_path)
+    try:
+        for sql in ("SELECT MIN(date) FROM labor_daily_history WHERE restaurant_id=?",
+                    "SELECT MIN(substr(COALESCE(review_date, fetched_at), 1, 10)) FROM reviews WHERE restaurant_id=?",
+                    "SELECT MIN(business_date) FROM dsr_metrics WHERE restaurant_id=?",
+                    "SELECT MIN(substr(generated_at, 1, 10)) FROM schedule_history WHERE restaurant_id=?"):
+            try:
+                v = conn.execute(sql, (restaurant_id,)).fetchone()[0]
+            except Exception:
+                v = None
+            if v:
+                try:
+                    firsts.append(date.fromisoformat(str(v)[:10]))
+                except ValueError:
+                    pass
+    finally:
+        conn.close()
+    return min(firsts) if firsts else None
+
+
+def weeks_to_backfill(restaurant_id: int, today: date = None, db_path: str = DB_PATH,
+                      max_weeks: int = BACKFILL_MAX_WEEKS, after_week: str = None) -> list:
+    """The past ISO weeks (oldest first, never this week, only after
+    `after_week` — the restaurant's backfill watermark) this restaurant has
+    raw data for and no row of the current FEATURES_VERSION."""
+    today = today or date.today()
+    first = first_raw_day(restaurant_id, db_path=db_path)
+    if first is None:
+        return []
+    this_week = iso_week(today)
+    start = max(first, today - timedelta(weeks=int(max_weeks)))
+    conn = get_conn(db_path)
+    try:
+        have = {r["week"] for r in conn.execute("SELECT week FROM intel_features WHERE restaurant_id=? AND version=?",
+                                                (restaurant_id, FEATURES_VERSION)).fetchall()}
+    finally:
+        conn.close()
+    out, d = [], start
+    while True:
+        wk = iso_week(d)
+        if wk >= this_week:
+            break
+        if wk not in have and (not after_week or wk > after_week):
+            out.append(wk)
+        d += timedelta(days=7)
+    return out
+
+
+def backfill_week(restaurant_id: int, week: str, db_path: str = DB_PATH) -> bool:
+    """Compute one past week as of its last day and store it backfilled;
+    False (nothing stored) when the raw tables measure nothing then."""
+    f = compute(restaurant_id, today=_week_end(week), db_path=db_path)
+    if completeness(f) <= 0:
+        return False
+    store(restaurant_id, f, week=week, db_path=db_path, backfilled=True)
+    return True
 
 
 def _has_col(conn, table, col):
