@@ -16,7 +16,7 @@ What would actually happen:
    `./reviews.db` — a new, **empty** database inside the worker's own
    container. (Since 9/29/26 the web process refuses to boot on Railway
    without its volume — `models.require_volume()`, `ALLOW_NO_VOLUME=1`
-   overrides — but `worker.py` does not call it yet; see below.)
+   overrides — and `worker.py` calls it too; see below.)
 2. The scheduler lease lives in that database (`ops.acquire_scheduler_lease`
    → `scheduler_lease` table), so each service would win its own lease and
    believe it was the only runner.
@@ -121,8 +121,8 @@ the lease keeper and runs `scheduler_loop()` (restarting the loop, never
 exiting, if it raises), and on SIGTERM calls `ops.shutdown_scheduler()`. It
 must ALSO do what the web boot does first — `models.require_volume()` (refuse
 to run on Railway without the volume) and `logging_setup.configure()` (the
-JSON log, instead of its own `basicConfig`) — at the top of `main()`; as of
-9/29/26 it does not yet (the integration wave adds both). The web process's
+JSON log, instead of its own `basicConfig`) — and since the integration wave
+(9/29/26) worker.py calls both at the top of main(), before `init_db()`. The web process's
 supervisor, boot records and `/health` do not exist in the worker: its
 liveness is the scheduler heartbeat and the external dead-man ping.
 

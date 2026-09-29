@@ -350,7 +350,8 @@ def test_the_scrub_empties_the_tables_the_doc_names():
     import offsite_backup
     assert set(offsite_backup.SCRUB_TABLES) == {"sessions", "two_fa_backup_codes", "trusted_devices",
                                                 "device_tokens", "login_reports", "staff_portal_tokens",
-                                                "app_secrets", "view_as_sessions"}
+                                                "app_secrets", "view_as_sessions", "user_backup_codes",
+                                                "async_jobs"}
     schema = _read("DATABASE_SCHEMA.md")
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
 
@@ -624,7 +625,8 @@ def test_the_worker_boot_the_split_doc_describes():
     src = _read("worker.py")
     assert "init_db()" in src and "ensure_columns()" in src and "_LEASE_KEEPER.start()" in src
     assert "ops.shutdown_scheduler()" in src and "close_orphaned_runs()" in src
-    # The doc says the volume guard and the JSON log are NOT yet in worker.py;
-    # when they arrive, change this line and the doc's sentence together.
-    assert "require_volume" not in src and "logging_setup" not in src
-    _says(SPLIT, "as of 9/29/26 it does not yet")
+    # The volume guard and the JSON log open main(), before the schema is
+    # touched (the integration wave, 9/29/26), as the doc says.
+    assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("init_db()")
+    assert "basicConfig" not in src
+    _says(SPLIT, "worker.py calls both at the top of main()")
