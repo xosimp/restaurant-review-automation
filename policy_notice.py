@@ -18,7 +18,7 @@ from datetime import date, timedelta
 
 # The day the updated Privacy Policy and Terms took effect — set on ship day
 # (e.g. date(2026, 10, 1)). None: no notice is owed.
-POLICY_UPDATED_ON = None
+POLICY_UPDATED_ON = date(2026, 9, 29)
 # How long the notice stays up (the policy's own rule for a material change).
 NOTICE_DAYS = 30
 POLICY_URL = "https://cavnar.ai/privacy"
