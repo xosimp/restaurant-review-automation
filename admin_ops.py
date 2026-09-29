@@ -3167,6 +3167,7 @@ def _budget_limits():
             "trial": {"day": _ai.AI_TRIAL_DAILY_BUDGET_USD, "month": _ai.AI_TRIAL_MONTHLY_BUDGET_USD},
             "unpaid": {"day": _ai.AI_UNPAID_DAILY_BUDGET_USD, "month": _ai.AI_UNPAID_MONTHLY_BUDGET_USD},
             "places": {"day": _ai.AI_PLACES_DAILY_BUDGET_USD, "month": _ai.AI_PLACES_MONTHLY_BUDGET_USD},
+            "trial_pool": {"day": _ai.AI_TRIAL_POOL_DAILY_USD, "month": _ai.AI_TRIAL_POOL_MONTHLY_USD},
             "global_month": _ai.global_monthly_budget(), "warn_pct": _ai.AI_BUDGET_WARN_PCT}
 
 

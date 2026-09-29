@@ -102,7 +102,7 @@ def _paying_client_count(db_path=None):
         conn = get_conn(db_path or DB_PATH)
         n = conn.execute(
             "SELECT COUNT(*) c FROM restaurants "
-            "WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN ('active','internal')"
+            f"WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN {_PAID_STATES_SQL}"
         ).fetchone()["c"]
         conn.close()
         return int(n or 0)
@@ -127,9 +127,9 @@ def global_monthly_budget(db_path=None):
         scaled = min(scaled, max(AI_GLOBAL_MAX_MONTHLY_BUDGET_USD, AI_GLOBAL_MONTHLY_BUDGET_USD))
     return scaled
 
-# Unpaid accounts — demos, prospects, anything not billing_status active or
-# internal — get their own, much smaller ceilings, AND their spend is excluded
-# from the global figure above.
+# Unpaid accounts — demos, prospects, anything not billing_status active,
+# past_due or internal — get their own, much smaller ceilings, AND their
+# spend is excluded from the global figure above.
 #
 # Audit #5 found the sharp edge: ai_budget_exceeded checks the global ceiling
 # first, for every caller, so spend on non-paying accounts could exhaust it
@@ -148,6 +148,16 @@ AI_UNPAID_MONTHLY_BUDGET_USD = float(os.getenv("AI_UNPAID_MONTHLY_BUDGET_USD", "
 AI_TRIAL_DAILY_BUDGET_USD = float(os.getenv("AI_TRIAL_DAILY_BUDGET_USD", "5"))
 AI_TRIAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_TRIAL_MONTHLY_BUDGET_USD", "50"))
 
+# Every trial together (owner decision, 9/29/26). The ceilings above bound
+# one trial; nothing bounded how many there are, so a provisioning bug, a
+# scripted signup the day ALLOW_PUBLIC_SIGNUP is set, or a loop across every
+# trial multiplied them. All trials share this second ceiling — apart from
+# the paying pool, which they never draw on, so trials can never take AI
+# from a paying client either. Sized at ten trials at their own ceilings, so
+# normal use never meets it; 80% pages Will. 0 disables it.
+AI_TRIAL_POOL_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_DAILY_USD", "50"))
+AI_TRIAL_POOL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MONTHLY_USD", "500"))
+
 # Google Places is a data API, not AI, and has its own per-restaurant ceiling
 # (owner decision 2). Its spend used to draw down the AI ceiling — a geocode
 # loop could pause a trial's Ask and reply drafts while the Places calls
@@ -163,9 +173,22 @@ AI_PLACES_MONTHLY_BUDGET_USD = float(os.getenv("AI_PLACES_MONTHLY_BUDGET_USD", "
 # and, for the global pool, a page — before the ceiling stops anything.
 AI_BUDGET_WARN_PCT = float(os.getenv("AI_BUDGET_WARN_PCT", "80"))
 
-# billing_status values that count as paying for budget purposes.
-_PAID_BILLING_STATES = {"active", "internal"}
-_TRIAL_BILLING_STATES = {"trial"}
+# billing_status values that count as paying for budget purposes:
+# models.PAYING_BILLING_STATES — active, and past due while Stripe retries
+# the card (owner decision, 9/29/26: a past-due client is still a contracted,
+# in-service customer, and pausing their AI mid-dunning is the wrong moment
+# to degrade the product) — plus internal. Kept literal because ai_utils
+# never imports models at module level; tests/test_fix_integration_lead.py
+# holds the two equal. One list for the tier, the pool's spend and the
+# pool's client count: past-due spend draws on the pool AND is counted in it.
+_PAID_BILLING_STATES = frozenset({"active", "past_due", "internal"})
+_PAID_STATES_SQL = "(" + ",".join("'%s'" % s for s in sorted(_PAID_BILLING_STATES)) + ")"
+_TRIAL_BILLING_STATES = frozenset({"trial"})
+_TRIAL_STATES_SQL = "(" + ",".join("'%s'" % s for s in sorted(_TRIAL_BILLING_STATES)) + ")"
+# The trial pool's scopes in a budget status, and the words a refusal uses.
+# _record_budget_stop and _note_budget_warnings page on these.
+_TRIAL_POOL_SCOPES = {"trial_pool_day": "daily budget shared by all trial accounts",
+                      "trial_pool_month": "monthly budget shared by all trial accounts"}
 
 # Budget tiers: which ceilings a restaurant's AI spend answers to.
 TIER_PAID, TIER_TRIAL, TIER_UNPAID = "paid", "trial", "unpaid"
@@ -251,14 +274,16 @@ _PLACES_ROW_SQL = "(vendor='google_places' OR COALESCE(model,'') LIKE 'google-pl
 _AI_ROW_SQL = "(COALESCE(vendor,'') <> 'google_places' AND COALESCE(model,'') NOT LIKE 'google-places%')"
 
 
-def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, scope="ai"):
+def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, scope="ai", trials_only=False):
     """Spend since `sql_window` for one budget scope.
 
     scope "ai" — Claude and Perplexity. A restaurant's own figure leaves out
     calls an admin triggered (#148: a seeded draft or a menu extraction the
     operator ran is the operator's spend, not the client's ceiling); the
     global pool counts them, so they are never unbounded.
-    scope "places" — Google Places only."""
+    scope "places" — Google Places only.
+    trials_only — every trial account's own spend together (not a demo's,
+    not an admin's run): the trial pool."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
     conn = get_conn(path)
@@ -277,7 +302,12 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, 
             # count here, or those accounts can starve the people paying —
             # except what an admin ran, which no client ceiling counts.
             where += (" AND (restaurant_id IS NULL OR COALESCE(\"trigger\",'') = 'admin' OR restaurant_id IN "
-                      "(SELECT id FROM restaurants WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN ('active','internal')))")
+                      "(SELECT id FROM restaurants WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN "
+                      + _PAID_STATES_SQL + "))")
+        elif trials_only:
+            where += (" AND COALESCE(\"trigger\",'') <> 'admin' AND restaurant_id IN "
+                      "(SELECT id FROM restaurants WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN "
+                      + _TRIAL_STATES_SQL + " AND COALESCE(is_demo, 0) = 0)")
         sql = f"SELECT COALESCE(SUM(cost_usd), 0) AS spend FROM ai_usage {where}"
         try:
             row = conn.execute(sql, params).fetchone()
@@ -311,12 +341,13 @@ def _prune_budget_cache(current_windows):
             _budget_cache.pop(key, None)
 
 
-def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False, scope="ai"):
+def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False, scope="ai", trials_only=False):
     now = time.time()
     hit = _budget_cache.get(cache_key)
     if hit and now - hit[0] < _BUDGET_CACHE_SECS:
         return hit[1]
-    spend = _spend_since(sql_window, restaurant_id, db_path, paid_only=paid_only, scope=scope)
+    spend = _spend_since(sql_window, restaurant_id, db_path, paid_only=paid_only, scope=scope,
+                         trials_only=trials_only)
     _budget_cache[cache_key] = (now, spend)
     return spend
 
@@ -349,13 +380,25 @@ def _finish_status(out):
     return out
 
 
+def _trial_pool_status(day, month, db_path):
+    """Every trial's spend together against the trial pool (trial_pool_day /
+    trial_pool_month)."""
+    return {"trial_pool_day": {"spend": _cached_spend(("trial_pool", day), day, None, db_path, trials_only=True),
+                               "budget": AI_TRIAL_POOL_DAILY_USD, "resets_at": _resets_at("day")},
+            "trial_pool_month": {"spend": _cached_spend(("trial_pool", month), month, None, db_path,
+                                                        trials_only=True),
+                                 "budget": AI_TRIAL_POOL_MONTHLY_USD, "resets_at": _resets_at("month")}}
+
+
 def ai_budget_status(restaurant_id=None, db_path=None):
     """Spend against each AI ceiling (Claude and Perplexity; Places has its
     own, places_budget_status). Also what the admin console reads.
 
     With a restaurant: `tier` is paid / trial / unpaid, `paid` stays for the
     callers that read it, and each window carries spend, budget, pct, warn
-    (≥ AI_BUDGET_WARN_PCT), over and resets_at."""
+    (≥ AI_BUDGET_WARN_PCT), over and resets_at. A trial also carries the
+    trial pool (trial_pool_day / trial_pool_month); so does the platform
+    view (no restaurant), for the console."""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     day = now.strftime("%Y-%m-%d 00:00:00")
@@ -381,6 +424,10 @@ def ai_budget_status(restaurant_id=None, db_path=None):
             # An account off the paid plan is never refused for the global
             # pool it does not draw on.
             out["global_month"] = dict(out["global_month"], budget=0.0)
+        if tier == TIER_TRIAL:
+            out.update(_trial_pool_status(day, month, db_path))
+    else:
+        out.update(_trial_pool_status(day, month, db_path))
     return _finish_status(out)
 
 
@@ -444,6 +491,8 @@ def ai_budget_exceeded(restaurant_id=None, db_path=None, trigger=None):
         scopes = [("global_month", "monthly budget across all clients")]
         if trigger != "admin":
             scopes += [("day", day_label), ("month", month_label)]
+            if restaurant_id is not None and status.get("tier") == TIER_TRIAL:
+                scopes += list(_TRIAL_POOL_SCOPES.items())
         for scope, label in scopes:
             entry = status.get(scope)
             if isinstance(entry, dict) and entry.get("over"):
@@ -482,6 +531,12 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
         return
     record_health_event(vendor, "budget_stop", scope=scope, restaurant_id=restaurant_id,
                         detail=f"{scope} reached")
+    if scope in _TRIAL_POOL_SCOPES.values():
+        _page(f"budget_stop:trial_pool:{vendor}", "Cavnar AI: AI is paused for every trial account (budget)",
+              [f"The {scope} was reached — every trial's AI calls are refused until it resets or the "
+               f"ceiling is raised (AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD).",
+               "Paying clients are not affected. If these are real trials, raise the ceiling; if not, "
+               "look at who created them. Open the admin console → Operations → AI to see what spent it."])
     if "across all clients" in str(scope):
         _page(f"budget_stop:{vendor}", "Cavnar AI: AI is paused for every client (budget)",
               [f"The {scope} was reached — every AI call is refused until it resets or the "
@@ -501,8 +556,9 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
     for scope, entry in (status or {}).items():
         if not isinstance(entry, dict) or not entry.get("warn") or entry.get("over"):
             continue
+        platform = scope == "global_month" or scope in _TRIAL_POOL_SCOPES
         key = "global" if scope == "global_month" else f"{scope}"
-        period = _budget_period(key, None if scope == "global_month" else restaurant_id)
+        period = _budget_period(key, None if platform else restaurant_id)
         memo = (vendor, period)
         if memo in _warned_memo:
             continue
@@ -517,7 +573,13 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
             continue
         detail = f"{scope} at {entry.get('pct')}% (${entry.get('spend', 0):.2f} of ${entry.get('budget', 0):.2f})"
         record_health_event(vendor, "budget_warn", scope=scope,
-                            restaurant_id=None if scope == "global_month" else restaurant_id, detail=detail)
+                            restaurant_id=None if platform else restaurant_id, detail=detail)
+        if scope in _TRIAL_POOL_SCOPES:
+            _page(f"budget_warn:trial_pool:{vendor}", "Cavnar AI: trial accounts' combined AI spend is past "
+                                                     f"{int(AI_BUDGET_WARN_PCT)}%",
+                  [f"All trial accounts together: {detail}.",
+                   "At 100% every trial's AI calls are refused until it resets; paying clients are not "
+                   "affected. Raise AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD if the trials are real."])
         if scope == "global_month":
             _page(f"budget_warn:{vendor}", "Cavnar AI: the platform AI budget is past "
                                           f"{int(AI_BUDGET_WARN_PCT)}%",
@@ -538,6 +600,11 @@ def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None):
         scopes = ("g",)
     else:
         scopes = ("g", restaurant_id)
+        # A trial's spend moves the trial pool too — looked up only while a
+        # pool total is cached, so a paying client's call never pays for it.
+        if (restaurant_id is not None and any(k[0] == "trial_pool" for k in list(_budget_cache))
+                and _budget_tier(restaurant_id) == TIER_TRIAL):
+            scopes += ("trial_pool",)
     for key in list(_budget_cache):
         if key[0] in scopes:
             hit = _budget_cache.get(key)
