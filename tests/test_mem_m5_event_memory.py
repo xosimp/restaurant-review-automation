@@ -244,7 +244,7 @@ def test_memory_lines_name_the_measured_effect_for_the_dates_in_play_fenced():
         em.record_night(rid, TUE - timedelta(weeks=k))
     ds.save(rid, [{"date": "2026-10-06", "kind": "event", "label": "Cubs game"}])
     block = mc.memory_context(rid, "schedule", now=datetime(2026, 10, 1, 9, 0))
-    assert "EVENTS:" in block.text and "10/6/26" in block.text and "2026-10-06" not in block.text
+    assert "events" in block.sections and "10/6/26" in block.text and "2026-10-06" not in block.text
     assert "median 25% above" in block.text and "measured 3 times" in block.text
     assert ai_guard.UNTRUSTED_OPEN in block.text
     lines = em.memory_lines(mc.MemoryRequest(restaurant_id=rid, surface="brief", now=datetime(2026, 10, 6, 7, 0)))

@@ -200,7 +200,8 @@ def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
     try:
         rows = conn.execute(
             "SELECT day_of_week, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL "
-            "AND sales > 0 AND date >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+            f"AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
+            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
     except Exception:
         return {}
     finally:
