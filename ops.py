@@ -927,11 +927,13 @@ _ASYNC_JOB_TTL_HOURS = 6
 
 
 def _async_conn():
+    """A connection for the async job store. No DDL here (memory audit
+    9/29/26, "outside"): it ran CREATE TABLE IF NOT EXISTS async_jobs and a
+    commit on every job read and write — a write-lock take on every poll —
+    while init_ops has created the table at boot all along (CLAUDE.md:
+    never schema DDL on a request or per-call path)."""
     from models import get_conn
-    conn = get_conn()
-    conn.execute(_ASYNC_JOB_SQL)
-    conn.commit()
-    return conn
+    return get_conn()
 
 
 # The longest a generation can plausibly run: a very large roster is written

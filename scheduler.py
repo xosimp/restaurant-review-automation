@@ -4424,6 +4424,15 @@ def scheduler_loop():
                 if not _ops.run_in_lane("intel", "value_figures", snapshot_value_figures):
                     _ops.release_period("value_figures", str(today))
 
+            # 6am+, after the outcome evaluations — each restaurant's own
+            # value point (value_snapshots, the Home sparkline), dated on its
+            # local day. It was written only when someone opened Home, so the
+            # series had holes on exactly the days nobody looked (memory audit
+            # 9/29/26). Bounded, resumable; sends nothing.
+            if _due(now, 6) and _ops.claim_period("value_snapshots", str(today)):
+                from value_delivered import run_value_snapshots
+                _ops.run_job("value_snapshots", run_value_snapshots)
+
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
             # never at a Chicago hour that is 4am in Los Angeles (A-10). The
