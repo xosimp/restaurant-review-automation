@@ -129,3 +129,14 @@ def test_a_competitor_check_keeps_the_market_history():
     import competitor
     src = inspect.getsource(competitor.run_competitor_analysis)
     assert "event_memory.record_market_snapshot(restaurant_id, competitors)" in src
+
+
+def test_the_movement_payload_carries_the_market_history_and_the_rating_trajectory():
+    import inspect
+    import client_api
+    import mobile_api
+    src = inspect.getsource(mobile_api.mobile_intel_movement)
+    assert "market_history=event_memory.market_history(rid)[:MARKET_HISTORY_MAX]" in src
+    assert "own_rating_history=event_memory.own_rating_trajectory(rid)" in src
+    # The web route is the same body.
+    assert '_m("mobile_intel_movement")' in inspect.getsource(client_api.intel_movement)

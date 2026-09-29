@@ -380,3 +380,27 @@ def test_an_import_reopens_the_history_backfill():
     em._backfill_cursor(rid, value="2025-09-01")
     store.import_history(rid, [{"date": "2025-10-31", "gross": 9000.0, "net": 8200.0}])
     assert em._backfill_cursor(rid) is None
+
+
+def test_the_report_shows_the_weather_that_happened_beside_the_forecast():
+    import dsr
+    from dsr import access, store
+    rid = _rid("Weather Report Co")
+    day = date(2026, 9, 22)
+    r = store.create_report(rid, day)
+    store.save_block(r["id"], "sales", dsr.block(dsr.READY, source="rpower", metrics={"net": 5000.0}))
+    store.save_block(r["id"], "intel", dsr.block(dsr.READY, source="cavnar", metrics={"weather_precip_pct": 70.0},
+                                                 detail={"weather": {"basis": "forecast", "summary": "Rain likely"}}))
+    store.set_stage(r["id"], "final")
+    owner = {"id": 1, "role": "client", "is_admin": 0}
+    out = access.render(store.get_report_by_id(r["id"]), owner)
+    assert "observed" not in out["facts"]["blocks"]["intel"]["detail"]["weather"]
+    conn = models.get_conn()
+    conn.execute("INSERT INTO weather_daily (restaurant_id, date, high_f, low_f, rain, conditions, station) "
+                 "VALUES (?,?,?,?,?,?,?)", (rid, day.isoformat(), 64.0, 51.0, 0, "Mostly Cloudy", "KMDW"))
+    conn.commit()
+    conn.close()
+    w = access.render(store.get_report_by_id(r["id"]), owner)["facts"]["blocks"]["intel"]["detail"]["weather"]
+    assert w["basis"] == "forecast" and w["summary"] == "Rain likely"          # the forecast stays a forecast
+    assert w["observed"]["rained_in_service"] == 0 and w["observed"]["summary"] == "Mostly Cloudy · high 64°"
+    assert "observed by the nearest National Weather Service station" in w["observed"]["basis"]

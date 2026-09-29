@@ -5017,6 +5017,9 @@ def mobile_remove_task_template(current_user):
     return jsonify(ok=True), 200
 
 
+MARKET_HISTORY_MAX = 30          # market events a movement payload carries, newest first
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):
@@ -5035,9 +5038,15 @@ def mobile_intel_movement(current_user):
     try:
         moves = competitor_movement(rid, days=days)
         changes = competitor_roster_changes(rid)
+        # The market's history and the restaurant's own rating over time,
+        # kept forever (event_memory, memory audit 9/29/26 public_history):
+        # the snapshots above are pruned at a year and read over `days`.
+        import event_memory
         return jsonify(
             ok=True,
             days=days,
+            market_history=event_memory.market_history(rid)[:MARKET_HISTORY_MAX],
+            own_rating_history=event_memory.own_rating_trajectory(rid),
             movement=moves,
             # Only the moves that clear the noise floor, for a client that
             # wants the short list rather than everything.
@@ -5049,7 +5058,8 @@ def mobile_intel_movement(current_user):
             # A rating move is only meaningful against the volume behind it.
             # confidence_z is how far past that noise floor each one sits.
             claim_kinds={"movement": "measured", "significant": "measured",
-                         "arrived": "measured", "gone": "measured"},
+                         "arrived": "measured", "gone": "measured", "market_history": "measured",
+                         "own_rating_history": "measured"},
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), movement=[], significant=[],
