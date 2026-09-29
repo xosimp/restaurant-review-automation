@@ -231,8 +231,12 @@ def test_the_insight_reads_diagnoses_rather_than_generating_them():
     """Producing one is a Sonnet call over the ranked drivers and belongs on
     the scheduler, not on the critical path of a page load."""
     src = inspect.getsource(inventory.get_claude_insights)
-    assert "get_diagnosis(restaurant_id, include_stale=True)" in src
-    assert "_fci.diagnose(" not in src and "_fci2.diagnose(" not in src
+    # The read lives in root_cause_block since the memory audit (9/29/26),
+    # which also bounds how far a stale one is leaned on.
+    helper = inspect.getsource(inventory.root_cause_block)
+    assert "root_cause_block(restaurant_id)" in src
+    assert "get_diagnosis(restaurant_id, include_stale=True)" in helper
+    assert all("diagnose(" not in s for s in (src, helper))
 
 
 # ── P1-5 · the benchmark denominator ────────────────────────────────────────

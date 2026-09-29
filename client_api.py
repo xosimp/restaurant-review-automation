@@ -1654,8 +1654,15 @@ def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_
     anchors = []
     if diags:
         d = diags[0]
-        anchors += _rvm.anchor(d.get("cause"), "likely")
-        anchors += _rvm.anchor(d.get("alternative_cause"), "association")
+        # As strongly as the stored diagnosis's age allows (rec_trust.
+        # diagnosis_anchor_strength, memory audit 9/29/26
+        # "stale_diagnoses"): "likely" inside its refresh, an association
+        # once stale, nothing past STALE_ANCHOR_MAX_DAYS.
+        import rec_trust as _rt_rvc
+        _strength = _rt_rvc.diagnosis_anchor_strength(d)
+        if _strength:
+            anchors += _rvm.anchor(d.get("cause"), _strength)
+            anchors += _rvm.anchor(d.get("alternative_cause"), "association")
         anchors += _rvm.anchor(str(d.get("category") or "").replace("_", " "), "association")
     for line in (op_lines or {}).values() if isinstance(op_lines, dict) else (op_lines or []):
         anchors += _rvm.anchor(line, "association")
@@ -1765,9 +1772,13 @@ def _review_insight_recs(rid, payload):
     payload["recs"] = []
     m = _re_dt.search(r"(?m)^.*Do today:\s*(.+)$", text)
     # A verdict that withholds controls (the Response Validation Layer) offers
-    # no Done / Not for us, whatever the flags say.
+    # no Done / Not for us, whatever the flags say — and neither does a
+    # STALE stored read served because today's could not be written
+    # (memory audit 9/29/26, "stale_diagnoses"): its "Do today" was
+    # presented and logged as a live recommendation at any age.
     promote = bool(payload.get("figures_verified", True) and payload.get("names_verified", True)
                    and payload.get("causes_verified", True) and not payload.get("error")
+                   and not payload.get("stale")
                    and (payload.get("validation") or {}).get("controls", True) is not False)
     if m and promote:
         line = m.group(1).strip()
@@ -1794,9 +1805,20 @@ def _review_insight_recs(rid, payload):
             # surface (Home, the nightly report): left out server-side.
             payload["insight"] = (text[:m.start()] + text[m.end():]).replace("\n\n\n", "\n\n").strip()
     if payload.get("diagnoses"):
-        # Both clients render `diagnosis` — the first — and only it.
+        # Both clients render `diagnosis` — the first — and only it. A
+        # diagnosis too old to lean on (rec_trust.diagnosis_anchor_strength
+        # None), or one served on a stale read, keeps its evidence and its
+        # "as of" but is not presented or answerable: an old action is not a
+        # live recommendation.
+        import rec_trust as _rt_rr
+        first = payload["diagnoses"][0] or {}
+        live = not payload.get("stale") and _rt_rr.diagnosis_anchor_strength(first) is not None
         payload["diagnoses"] = present_diagnoses(rid, payload["diagnoses"], "diag_review", "reviews", "reviews",
-                                                 shown=1)
+                                                 shown=1 if live else 0)
+        if not live:
+            for d in payload["diagnoses"]:
+                d["answerable"] = False
+                d["controls_withheld"] = "stale"
         payload["diagnosis"] = payload["diagnoses"][0] if payload["diagnoses"] else None
     return payload
 
@@ -2138,7 +2160,24 @@ def _do_review_insight(rid, viewer=None):
 
         ops_block = _ri._operational_block(_ops_ctx)
 
-        if _diags:
+        import rec_trust as _rt_ri
+        _diag_strength = _rt_ri.diagnosis_anchor_strength(_diags[0]) if _diags else None
+        if _diags and _diag_strength == "association":
+            # Past its refresh (memory audit 9/29/26, "stale_diagnoses"):
+            # what an earlier read said, never the likely cause — a stale
+            # cause was anchored as "likely" at any age.
+            _d = _diags[0]
+            diag_block = (
+                f"Theme: {_d['category'].replace('_',' ')} ({_d['mention_count']} negative reviews)\n"
+                f"An earlier read suggested: {_d['cause']}\n"
+                + (f"(read of {_d['as_of']}, older than its refresh window) " if _d.get("as_of") else "")
+                + "This is not current. Do NOT call it the cause or the likely cause; you may say only that "
+                  "the reviews are consistent with it, or leave it out.")
+        elif _diags and _diag_strength is None:
+            diag_block = ("(The last root-cause diagnosis is too old to lean on"
+                          + (f" — read of {_diags[0]['as_of']}" if _diags[0].get("as_of") else "")
+                          + ". Do NOT state a cause. Say what the reviews show and stop.)")
+        elif _diags:
             _d = _diags[0]
             diag_block = (
                 f"Theme: {_d['category'].replace('_',' ')} ({_d['mention_count']} negative reviews)\n"
@@ -2166,7 +2205,8 @@ def _do_review_insight(rid, viewer=None):
 
         has_trend = bool(_trend["direction"] in ("improving", "declining")
                          and _trend["confidence"] in ("high", "medium"))
-        has_diag = bool(_diags)
+        # Only a diagnosis inside its refresh carries a Why line.
+        has_diag = bool(_diags) and _diag_strength == "likely"
         # "Next week" is computed here, not asked of the model (H8): the
         # model wrote a projection nothing checked or scored. The fitted line
         # one week on with its slope shrunk by its standard error
@@ -3194,8 +3234,11 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     # Done / Track (M-16): the marketing path never wrote an "UNVERIFIED:"
     # marker, so checking for one promoted every line.
     extra = dict(extra or {})
+    # A stale read served because today's could not be written offers no
+    # controls either (memory audit 9/29/26, "stale_diagnoses"): its lines
+    # are not live recommendations.
     promote = (bool(extra.get("figures_verified", True)) and bool(extra.get("causes_verified", True))
-               and "UNVERIFIED:" not in (text or "")
+               and "UNVERIFIED:" not in (text or "") and not extra.get("stale")
                and (extra.get("validation") or {}).get("controls", True) is not False)
     import data_freshness as _df_mkt
     recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote,
@@ -3727,16 +3770,17 @@ def present_labor_diagnosis(rid, diag, user_id=None):
         return diag
 
 
-def labor_insight_items(rid, text, user_id=None, analysis=None):
+def labor_insight_items(rid, text, user_id=None, analysis=None, stale=False):
     """The Labor read's numbered recommendations, keyed and presented on the
     "labor" surface exactly like Food's and Marketing's (insight_rec_items,
     "insight_labor:<hash>") — the read's three lines never reached the
-    ledger (#25). An UNVERIFIED read offers no controls and logs nothing.
-    Each line carries its K1 `confidence` over the shifts the read was
-    written from (labor_read_evidence; T1)."""
+    ledger (#25). An UNVERIFIED read offers no controls and logs nothing,
+    and neither does a stale one served because today's failed (memory
+    audit 9/29/26). Each line carries its K1 `confidence` over the shifts
+    the read was written from (labor_read_evidence; T1)."""
     import data_freshness as _df_lab
     return insight_rec_items(rid, text or "", "insight_labor", "labor", "labor", user_id=user_id,
-                             promote="UNVERIFIED:" not in (text or ""),
+                             promote="UNVERIFIED:" not in (text or "") and not stale,
                              evidence=labor_read_evidence(rid, analysis), sources=_df_lab.sources_for(["labor"]))
 
 
@@ -3941,11 +3985,12 @@ def present_schedule_result(rid, result, user_id=None):
     return result
 
 
-def _labor_insight_out(rid, text, user_id=None, analysis=None):
+def _labor_insight_out(rid, text, user_id=None, analysis=None, stale=False):
     """The web route's insight fields: the HTML (answered lines left out,
     each remaining line with Done / Not for us / Track), `rec_items` and
-    the flat `recs` Food Cost's payload carries."""
-    recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis)
+    the flat `recs` Food Cost's payload carries. A `stale` read (the
+    fallback) carries no controls."""
+    recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis, stale=stale)
     import response_validation as _rv_lab
     return {"insight": format_insight_html(text, rec_items=recs, surface="labor", module="labor"),
             "rec_items": recs,
@@ -4093,7 +4138,7 @@ def labor_insight_api(current_user):
             # Past its window by definition (the TTL is bypassed here), so it
             # says how old it is — the Reviews fallback's rule (H15, CA1 L6):
             # a read from hours ago read exactly like one from this minute.
-            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid))
+            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid, stale=True))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its

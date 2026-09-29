@@ -1332,31 +1332,10 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         # one is a Sonnet call over the ranked drivers and belongs on the
         # scheduler, not on the critical path of a page load.
         try:
-            import food_cost_intelligence as _fci2
-            _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
-            if _dg and _dg.get("cause"):
-                cause_anchors.append(_dg.get("cause"))
-                alt_anchors.append(_dg.get("alternative_cause"))
-                # No confidence word in the prompt (R9, B5 #9): the stored
-                # band is the model's own, capped — the owner's figure is the
-                # computed one the screen shows beside the read, and a band
-                # handed to the prompt came back as "medium confidence" in
-                # prose beside a 0% chip.
-                diag_block = (
-                    "\n\nROOT-CAUSE READ (stored"
-                    # The read's date, not its age in hours: the prompt is
-                    # the stored read's fingerprint, and an hourly age made
-                    # every hour a new read (M-7).
-                    + (f", read of {_dg['as_of']}" if _dg.get("as_of") else "")
-                    + (", older than its refresh window" if _dg.get("stale") else "")
-                    + "):\n- Most likely: " + _dg["cause"]
-                    + (f"\n- Alternative: {_dg['alternative_cause']}" if _dg.get("alternative_cause") else "")
-                    + (f"\n- What would confirm it: {_dg['what_would_confirm']}" if _dg.get("what_would_confirm") else "")
-                    + (f"\n- Recommended: {_dg['recommended_action']}" if _dg.get("recommended_action") else "")
-                    + "\nUse this for the WHY sentence. Do not substitute a cause of your own.")
-            else:
-                diag_block = ("\n\nROOT-CAUSE READ: none has been produced yet. Do NOT state a "
-                              "cause. Say what the figures show and stop.")
+            _rc_block, _rc_cause, _rc_alt = root_cause_block(restaurant_id)
+            diag_block = _rc_block
+            cause_anchors += _rc_cause
+            alt_anchors += _rc_alt
         except Exception:
             pass
 
@@ -1663,6 +1642,50 @@ def food_stale_sources(restaurant_id, restaurant=None, db_path=None) -> dict:
     except Exception as e:
         print(f"[inventory] food source states unreadable for {restaurant_id}: {e}")
         return {}
+
+
+def root_cause_block(restaurant_id):
+    """(prompt block, cause anchors, alternative anchors) for the stored
+    food diagnosis, as far as its age lets the read lean on it
+    (rec_trust.diagnosis_anchor_strength, memory audit 9/29/26
+    "stale_diagnoses"): "likely" inside its refresh — the WHY sentence rests
+    on it; an association once stale — an earlier read's suggestion the
+    figures may be consistent with, never the cause; nothing past
+    STALE_ANCHOR_MAX_DAYS — a 60-day-old portion diagnosis was still this
+    read's WHY. A retired diagnosis is never served (get_diagnosis)."""
+    import food_cost_intelligence as _fci2
+    import rec_trust as _rt_fr
+    _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
+    strength = _rt_fr.diagnosis_anchor_strength(_dg)
+    if _dg and _dg.get("cause") and strength == "likely":
+        # No confidence word in the prompt (R9, B5 #9): the stored band is
+        # the model's own, capped — the owner's figure is the computed one
+        # the screen shows beside the read, and a band handed to the prompt
+        # came back as "medium confidence" in prose beside a 0% chip.
+        block = (
+            "\n\nROOT-CAUSE READ (stored"
+            # The read's date, not its age in hours: the prompt is the stored
+            # read's fingerprint, and an hourly age made every hour a new read
+            # (M-7).
+            + (f", read of {_dg['as_of']}" if _dg.get("as_of") else "")
+            + "):\n- Most likely: " + _dg["cause"]
+            + (f"\n- Alternative: {_dg['alternative_cause']}" if _dg.get("alternative_cause") else "")
+            + (f"\n- What would confirm it: {_dg['what_would_confirm']}" if _dg.get("what_would_confirm") else "")
+            + (f"\n- Recommended: {_dg['recommended_action']}" if _dg.get("recommended_action") else "")
+            + "\nUse this for the WHY sentence. Do not substitute a cause of your own.")
+        return block, [_dg.get("cause")], [_dg.get("alternative_cause")]
+    if _dg and _dg.get("cause") and strength == "association":
+        block = ("\n\nROOT-CAUSE READ (an earlier read"
+                 + (f" of {_dg['as_of']}" if _dg.get("as_of") else "")
+                 + ", older than its refresh window):\n- An earlier read suggested: " + _dg["cause"]
+                 + "\nThis is not current. Do NOT call it the cause or the likely cause; you may say "
+                   "only that the figures are consistent with it, or leave it out.")
+        return block, [], [_dg.get("cause"), _dg.get("alternative_cause")]
+    if _dg and _dg.get("cause"):
+        return ("\n\nROOT-CAUSE READ: the last one" + (f" ({_dg['as_of']})" if _dg.get("as_of") else "")
+                + " is too old to lean on. Do NOT state a cause. Say what the figures show and stop."), [], []
+    return ("\n\nROOT-CAUSE READ: none has been produced yet. Do NOT state a "
+            "cause. Say what the figures show and stop."), [], []
 
 
 def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), alt_anchors=(), untrusted=(),

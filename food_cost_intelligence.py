@@ -1717,9 +1717,21 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     ev = build_evidence(restaurant_id, db_path=db_path)
     drv = ev["drivers"]
     if not drv.get("drivers"):
+        # Nothing clears the floor any more: the stored cause is history,
+        # not the current read (memory audit 9/29/26, "stale_diagnoses") —
+        # it used to stay the food read's WHY and Home's "why" for months.
+        retire_diagnosis(restaurant_id, "no cost driver clears the floor any more", db_path=db_path)
         return {"ok": False, "reason": drv.get("reason") or "no drivers above the floor"}
 
     prior = get_diagnosis(restaurant_id, db_path=db_path, include_stale=True)
+    if prior and not lead_still_ranked(prior, drv["drivers"]):
+        # Its lead driver dropped out of the ranking: retired before a new
+        # read is attempted, so a refused or failed call never leaves it
+        # standing as the cause.
+        lead, _d = _lead_of(prior.get("drivers"))
+        retire_diagnosis(restaurant_id, f"{lead or 'its lead driver'} is no longer a ranked cost driver",
+                         db_path=db_path)
+        prior = None
     if not force and prior and not prior.get("stale"):
         prior_top = (prior.get("drivers") or [{}])[0].get("label")
         if prior_top == drv["drivers"][0]["label"]:
@@ -1828,7 +1840,8 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 dollars_at_stake=excluded.dollars_at_stake,
                 unsupported_figures=excluded.unsupported_figures,
                 model_confidence=excluded.model_confidence,
-                generated_at=excluded.generated_at
+                generated_at=excluded.generated_at,
+                retired_at=NULL, retired_reason=NULL
         """, (restaurant_id, DIAGNOSIS_WINDOW_DAYS, result["headline"], result["cause"],
               result["alternative_cause"], result["what_would_confirm"],
               json.dumps(drv["drivers"][:6]), json.dumps(result["operational_evidence"]),
@@ -1871,6 +1884,53 @@ def record_diagnosis_read(restaurant_id, drv, result, at_stake=None, db_path=DB_
         print(f"[food_cost_intelligence] diagnosis history not kept for {restaurant_id}: {e}")
 
 
+def _lead_of(drivers):
+    for d in drivers or []:
+        if isinstance(d, dict):
+            name = d.get("item") or d.get("label")
+            if name:
+                return str(name).strip(), d
+        elif isinstance(d, str) and d.strip():
+            return d.strip(), {}
+    return None, {}
+
+
+def lead_still_ranked(diag, drivers) -> bool:
+    """Whether a stored diagnosis's lead driver is still among today's
+    ranked drivers (cost_drivers) — by item, else by label."""
+    lead, d = _lead_of((diag or {}).get("drivers"))
+    if not lead:
+        return True
+    names = set()
+    for x in drivers or []:
+        if isinstance(x, dict):
+            for k in ("item", "label"):
+                if x.get(k):
+                    names.add(str(x[k]).strip().lower())
+    return lead.lower() in names or str((d or {}).get("label") or "").strip().lower() in names
+
+
+def retire_diagnosis(restaurant_id, reason, db_path=DB_PATH) -> bool:
+    """Stamp the stored food diagnosis retired (retired_at, retired_reason)
+    and keep the row as history (its read is in ai_reads). No surface
+    serves a retired diagnosis as current (get_diagnosis). Returns whether
+    a live one was retired. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        n = conn.execute("UPDATE food_cost_diagnoses SET retired_at=datetime('now'), retired_reason=? "
+                         "WHERE restaurant_id=? AND retired_at IS NULL", (str(reason)[:200], restaurant_id)).rowcount
+        conn.commit()
+        return bool(n)
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis not retired for {restaurant_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+
 def _mdy_safe(stamp):
     try:
         from time_utils import mdy
@@ -1880,15 +1940,21 @@ def _mdy_safe(stamp):
 
 
 def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
-                  include_stale: bool = False):
+                  include_stale: bool = False, include_retired: bool = False):
     """The stored CFO read, with its own age. `stale` is computed rather than
     enforced: a stale cause is still the best answer available, and hiding it
-    leaves the owner with the bare waste total the module used to give them."""
+    leaves the owner with the bare waste total the module used to give them.
+    A RETIRED read (its lead driver no longer ranked, or no driver above the
+    floor — retire_diagnosis) is history, not an answer: left out unless
+    `include_retired`."""
     conn = get_conn(db_path)
     row = _one_row(conn, "SELECT * FROM food_cost_diagnoses WHERE restaurant_id=? "
                      "ORDER BY generated_at DESC LIMIT 1", (restaurant_id,))
     conn.close()
     if not row:
+        return None
+    retired_at = row["retired_at"] if "retired_at" in row.keys() else None
+    if retired_at and not include_retired:
         return None
     age_h = None
     try:
@@ -1928,6 +1994,8 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "unsupported_figures": _j(row["unsupported_figures"] if "unsupported_figures" in row.keys() else None, []),
         "window_days": row["window_days"], "generated_at": row["generated_at"],
         "age_hours": round(age_h, 1) if age_h is not None else None, "stale": stale,
+        "retired_at": retired_at,
+        "retired_reason": row["retired_reason"] if "retired_reason" in row.keys() else None,
         # Owner-facing date of the read (M/D/YY) and, when it is past its
         # TTL, the sentence that says so — a stale cause read as current
         # wherever a surface dropped the `stale` flag.

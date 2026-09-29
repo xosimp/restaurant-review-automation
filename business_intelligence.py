@@ -943,7 +943,10 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
     else:
         try:
             import food_cost_intelligence as fci
-            dg = fci.get_diagnosis(restaurant_id, db_path=db_path, include_stale=True) \
+            # Only a CURRENT read (memory audit 9/29/26, "stale_diagnoses"):
+            # a stale or retired diagnosis's action and old dollars used to
+            # become the one thing at any age.
+            dg = fci.get_diagnosis(restaurant_id, db_path=db_path) \
                 if data.get("food_cost") is not None else None
         except Exception:
             dg = None
@@ -972,8 +975,10 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             import re as _re
             _m = _re.match(r"\s*(\d+)", str(rfx.get("evidence") or ""))
             _mentions = int(_m.group(1)) if _m else None
+        # A current diagnosis only: a stale one's action is not the one
+        # thing (memory audit 9/29/26); retired ones never reach here.
         dg = next((d for d in (reviews.get("diagnoses") or []) if d.get("category") == cat
-                   and d.get("recommended_action")), None)
+                   and d.get("recommended_action") and not d.get("stale")), None)
         if dg:
             # The diagnosis's action carries the Reviews card's key, so an
             # answer on either holds on both (M-9).

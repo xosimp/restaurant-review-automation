@@ -1436,8 +1436,13 @@ def _build(current_user, present=True):
                 dg = None
                 try:
                     import review_intelligence as _ri_hb
+                    import rec_trust as _rt_hbr
+                    # Not one too old to lean on (rec_trust.
+                    # diagnosis_anchor_strength, memory audit 9/29/26): the
+                    # card then says what the data supports and nothing more.
                     dg = next((d for d in _ri_hb.get_diagnoses(rid, include_stale=True)
-                               if d.get("category") == cat and d.get("recommended_action")), None)
+                               if d.get("category") == cat and d.get("recommended_action")
+                               and _rt_hbr.diagnosis_anchor_strength(d)), None)
                 except Exception:
                     dg = None
                 if dg:
@@ -1730,12 +1735,19 @@ def _build(current_user, present=True):
                     fc_pct, fc_target, fc_label = _fc["pct"], _fc.get("target"), _fc.get("label")
                 drivers = (_ev["drivers"].get("drivers") or [])
                 _dg = _fci_hb.get_diagnosis(rid, include_stale=True)
-                if _dg and _dg.get("cause"):
+                # The CFO "why" leans on the stored cause only as far as its
+                # age allows (rec_trust.diagnosis_anchor_strength, memory
+                # audit 9/29/26): past STALE_ANCHOR_MAX_DAYS it is no "why"
+                # at all; a retired read is never served (get_diagnosis).
+                import rec_trust as _rt_hb
+                _why_strength = _rt_hb.diagnosis_anchor_strength(_dg)
+                if _dg and _dg.get("cause") and _why_strength:
                     # The measured band (K6), not the one the model gave
                     # itself (E3); the object rides beside it.
                     _dgc = _dg.get("confidence_detail") if isinstance(_dg.get("confidence_detail"), dict) else {}
                     cfo_why = {"cause": _dg["cause"], "confidence": _dgc.get("band") or _dg.get("confidence"),
-                               "confidence_detail": _dgc or None, "stale": _dg.get("stale")}
+                               "confidence_detail": _dgc or None, "stale": _dg.get("stale"),
+                               "strength": _why_strength, "as_of": _dg.get("as_of")}
             except Exception:
                 pass
 

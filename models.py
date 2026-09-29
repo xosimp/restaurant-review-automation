@@ -1129,6 +1129,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # outcomes later and never feeds anything on its own (H1, K6).
         ("review_diagnoses", "model_confidence", "TEXT"),
         ("food_cost_diagnoses", "model_confidence", "TEXT"),
+        # A food diagnosis whose lead driver is no longer ranked (or no
+        # driver clears the floor) is retired, not deleted: stamped and kept
+        # as history, and no surface serves it as the current cause
+        # (memory audit 9/29/26, "stale_diagnoses").
+        ("food_cost_diagnoses", "retired_at", "TEXT"),
+        ("food_cost_diagnoses", "retired_reason", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),

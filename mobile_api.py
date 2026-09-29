@@ -3151,7 +3151,7 @@ def mobile_labor_insight(current_user):
         stale = _capi.labor_stale_read(rid)
         if stale:
             _an = _capi.labor_analysis_safe(rid)
-            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
+            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an, stale=True)
             return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
                            rec_items=_recs, validation=_rv_of(stale["text"]),
                            **stale["state"], **_insight_json(stale["text"], _recs))
