@@ -93,11 +93,25 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
     n = len(rows)
     edited = sum(1 for r in rows if int(r["edited"] or 0))
     rate = (edited / n) if n else None
+    # An owner's undo of an automatic send to this supplier counts against
+    # it (memory audit 9/29/26, "undo"): ORDER_TRUST_MIN clean orders must be
+    # sent after the latest undo before it sends on its own again.
+    try:
+        import delayed as _dl
+        undone_at = _dl.last_undo(restaurant_id, "order_send", supplier_email=email, db_path=db_path)
+    except Exception:
+        undone_at = None
+    clean_since_undo = None
+    if undone_at:
+        clean_since_undo = sum(1 for r in rows if not int(r["edited"] or 0)
+                               and str(r["sent_at"] or "").replace("T", " ")[:19] > undone_at)
+    trusted = bool((n - edited) >= ORDER_TRUST_MIN and rate is not None and rate <= ORDER_TRUST_EDIT_RATE and totals)
+    if clean_since_undo is not None and clean_since_undo < ORDER_TRUST_MIN:
+        trusted = False
     return {"orders": n, "edited": edited, "edit_rate": rate,
             "median_total": (round(statistics.median(totals), 2) if totals else None),
-            "last_sent_at": last,
-            "trusted": bool((n - edited) >= ORDER_TRUST_MIN and rate is not None
-                            and rate <= ORDER_TRUST_EDIT_RATE and totals)}
+            "last_sent_at": last, "undone_at": undone_at, "clean_since_undo": clean_since_undo,
+            "trusted": trusted}
 
 
 def count_freshness(restaurant_id, ingredient_ids=None, db_path=DB_PATH, today=None) -> dict:

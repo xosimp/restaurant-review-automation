@@ -751,7 +751,8 @@ def plan_history(restaurant_id, week, db_path=DB_PATH) -> list:
     prev = _prev_week(week)
     out = []
     try:
-        conn = get_conn(db_path)
+        import models as _m_ph
+        conn = _m_ph.get_conn() if db_path == DB_PATH else _m_ph.get_conn(db_path)
     except Exception:
         return out
     try:

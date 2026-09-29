@@ -1251,6 +1251,20 @@ def _do_trust(u):
            "schedule": {"enabled": bool(getattr(r, "auto_publish_schedule", 0)),
                         "unedited_in_a_row": schedule_publish_trust(_rid(u)), "needed": SCHEDULE_PUBLISH_TRUST_MIN},
            "suppliers": [], "invoices": []}
+    # When trust lapsed and why, so the owner is asked again rather than an
+    # automation going quiet on its own (memory audit 9/29/26, trust_ledger);
+    # and when the auto-publish was last undone (undo).
+    try:
+        import automation_trust
+        import delayed
+        out["lapsed"] = automation_trust.lapsed_items(_rid(u))
+        _undone = delayed.last_undo(_rid(u), "schedule_publish")
+        if _undone:
+            from time_utils import mdy
+            out["schedule"]["undone_on"] = mdy(_undone[:10])
+    except Exception as e:
+        print(f"[trust] trust ledger unavailable for {_rid(u)}: {e}")
+        out["lapsed"] = []
     if _sees_food(u):
         try:
             from models import get_conn
@@ -2804,10 +2818,40 @@ def _do_delayed_cancel(u, action_id):
         conn.close()
     if row and not _may_undo(u, row["kind"]):
         return _forbidden("Your login can't stop this — ask whoever can send it.")
-    ok = delayed.cancel(_rid(u), int(action_id), actor=u)
+    b = _body()
+    code = b.get("reason_code")
+    if code not in (None, "") and code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.cancel(_rid(u), int(action_id), actor=u, reason_code=code or None,
+                        reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
     if ok:
         log_account_event(_rid(u), "delayed_action_cancelled", current_user=u, detail=f"#{action_id}")
-    return ({"ok": True} if ok else {"ok": False, "error": "That already went out, or was already undone."}), (200 if ok else 409)
+    if not ok:
+        return {"ok": False, "error": "That already went out, or was already undone."}, 409
+    out = {"ok": True}
+    if row and row["kind"] in delayed.TRUSTED_KINDS:
+        # It counts against the trust that queued it (memory audit, undo):
+        # the client says so and asks why, once.
+        out["message"] = ("Undone \u2014 Cavnar AI will wait for a few clean runs before doing this "
+                          "on its own again")
+        if not code:
+            out["ask_why"] = {"route": f"/actions/{int(action_id)}/why",
+                              "options": [{"code": c, "label": delayed.UNDO_REASON_LABELS[c]}
+                                          for c in delayed.UNDO_REASONS]}
+    return out, 200
+
+
+def _do_delayed_why(u, action_id):
+    """POST /actions/<id>/why {reason_code, reason?} — the owner's answer to
+    "why did you undo it?" (memory audit 9/29/26, "undo")."""
+    import delayed
+    b = _body()
+    code = b.get("reason_code")
+    if code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.record_undo_reason(_rid(u), int(action_id), reason_code=code,
+                                    reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
+    return ({"ok": True} if ok else {"ok": False, "error": "No undone action like that."}), (200 if ok else 404)
 
 
 # ── principal-only ────────────────────────────────────────────────────────────
@@ -4405,6 +4449,7 @@ _ROUTES = [
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
+    ("/actions/<int:action_id>/why", ["POST"], _do_delayed_why, "delayed_why"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
     ("/account/pause", ["POST"], _do_pause, "pause"),
     ("/account/resume", ["POST"], _do_resume, "resume"),
