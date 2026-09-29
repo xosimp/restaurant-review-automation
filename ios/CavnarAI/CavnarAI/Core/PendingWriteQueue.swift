@@ -31,7 +31,7 @@ actor PendingWriteQueue {
         /// Dallas, come back online — and the queued write drains against
         /// Dallas. The writes queued today are a review's draft save and
         /// approve (addressed by review id, scoped server-side), a
-        /// recommendation's Done / Pass (addressed by its key) and a count
+        /// recommendation's Done / Not for us (addressed by its key) and a count
         /// sheet's recounts (addressed by ingredient id) — see QueuedWrite.
         /// A review-id replay fails closed on the wrong location, but a
         /// recount or a recommendation key need not. Stamping the restaurant
@@ -302,7 +302,7 @@ struct QueuedWrite: Equatable {
         return path
     }
 
-    /// Done or Pass on a recommendation (POST /mobile/api/recs/event). The
+    /// Done or Not for us on a recommendation (POST /mobile/api/recs/event). The
     /// ledger ignores the same answer twice (rec_ledger.record: the episode
     /// is already closed, `recorded: false`), and a Done's tracker start is
     /// refused while anything in its family is being measured. "Measure it"
@@ -313,7 +313,7 @@ struct QueuedWrite: Equatable {
         if body.event == RecAnswer.completed.event {
             label = "Mark a recommendation done"
         } else if body.event == RecAnswer.notForUs.event, body.kind == RecAnswer.notForUs.kind {
-            label = "Pass on a recommendation"
+            label = "Not for us on a recommendation"
         } else {
             return nil
         }
