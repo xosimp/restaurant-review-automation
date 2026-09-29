@@ -927,16 +927,22 @@ def claims_record(restaurant_id, kind, days=365, db_path=None) -> dict:
     over its own window counts in `measured`: one whose advice was tracked
     is counted by its tracker already (rec_learning.kind_record), and one
     whose advice was never taken is untested. Never raises."""
-    out = {"measured": 0, "improved": 0, "worsened": 0, "no_clear_change": 0, "untested": 0, "unmeasurable": 0}
+    out = {"measured": 0, "improved": 0, "worsened": 0, "no_clear_change": 0, "untested": 0, "unmeasurable": 0,
+           "results": []}
     try:
         conn = get_conn(db_path)
     except Exception:
         return out
     try:
+        # A claim whose advice has a tracker — linked at scoring, or since —
+        # is that tracker's result, already counted by kind_record.
         rows = conn.execute(
-            "SELECT verdict, verdict_source, direction, baseline_value, verdict_value, tracker_id FROM ai_claims "
-            "WHERE restaurant_id=? AND rec_key LIKE ? AND verdict IS NOT NULL "
-            "AND created_at >= datetime('now', ?)", (restaurant_id, f"{kind}:%", f"-{int(days)} days")).fetchall()
+            "SELECT c.verdict, c.verdict_source, c.direction, c.baseline_value, c.verdict_value, c.tracker_id, "
+            "c.verdict_at, (SELECT i.tracker_id FROM rec_instances i WHERE i.restaurant_id=c.restaurant_id "
+            "AND i.key=c.rec_key AND i.created_at <= c.horizon_date || ' 23:59:59' "
+            "ORDER BY i.created_at DESC LIMIT 1) AS ep_tracker FROM ai_claims c "
+            "WHERE c.restaurant_id=? AND c.rec_key LIKE ? AND c.verdict IS NOT NULL "
+            "AND c.created_at >= datetime('now', ?)", (restaurant_id, f"{kind}:%", f"-{int(days)} days")).fetchall()
     except Exception:
         return out
     finally:
@@ -946,15 +952,19 @@ def claims_record(restaurant_id, kind, days=365, db_path=None) -> dict:
             out["untested"] += 1
         elif r["verdict"] == UNMEASURABLE:
             out["unmeasurable"] += 1
-        elif r["verdict"] in (HELD, NOT_HELD) and r["verdict_source"] == "window" and not r["tracker_id"]:
+        elif (r["verdict"] in (HELD, NOT_HELD) and r["verdict_source"] == "window"
+              and not r["tracker_id"] and not r["ep_tracker"]):
             out["measured"] += 1
             if r["verdict"] == HELD:
                 out["improved"] += 1
+                v = "improved"
             else:
                 b, a = r["baseline_value"], r["verdict_value"]
                 wrong = (b is not None and a is not None
                          and ((a > b) if r["direction"] == "down" else (a < b)))
-                out["worsened" if wrong else "no_clear_change"] += 1
+                v = "worsened" if wrong else "no_clear_change"
+                out[v] += 1
+            out["results"].append({"verdict": v, "verdict_at": r["verdict_at"]})
     return out
 
 
@@ -1107,7 +1117,7 @@ def claim_lines(req):
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
                 said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
-            lines.append({"text": said, "date": str(r["created_at"])[:10], "source": "model",
+            lines.append({"text": said, "date": str(r.get("after_start") or r["created_at"])[:10], "source": "model",
                           "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False})
             since = []
             state = _live_state(conn, rid, r.get("rec_key"))

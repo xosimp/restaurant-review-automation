@@ -1,0 +1,69 @@
+"""learning_memory — the nightly pass that turns what Cavnar AI said and what
+followed into what it knows (memory audit 9/29/26, workstream M4).
+
+One restaurant at a time (scheduler.run_learning_memory sweeps them, bounded
+and resumable), each step isolated so one failing never stops the others:
+
+  claims       score every claim whose horizon has passed (ai_reads.score_due)
+  summaries    write the quarterly "what we said, what was done, what
+               happened" rows that outlive the raw reads (ai_reads)
+
+Only restaurants that may teach a learner are passed in
+(models.learning_eligible): a demo, a test account or an internal one never
+scores a claim or writes a summary another reader would learn from.
+"""
+import logging
+
+log = logging.getLogger(__name__)
+
+
+def _claims(restaurant_id, today, db_path):
+    import ai_reads
+    return ai_reads.score_due(restaurant_id, today=today, db_path=db_path)
+
+
+def _summaries(restaurant_id, today, db_path):
+    import ai_reads
+    return {"written": ai_reads.summarise_quarters(restaurant_id, today=today, db_path=db_path)}
+
+
+# name -> fn(restaurant_id, today, db_path) -> dict. Order matters: a step
+# that reads another's output runs after it.
+STEPS = [
+    ("claims", _claims),
+    ("summaries", _summaries),
+]
+
+
+def nightly(restaurant_id, today=None, db_path=None) -> dict:
+    """Every step for one restaurant: {"ok": bool, "steps": {name: result},
+    "failed": [names]}. A step that raises is recorded and the rest run."""
+    out = {"ok": True, "steps": {}, "failed": []}
+    for name, fn in STEPS:
+        try:
+            out["steps"][name] = fn(restaurant_id, today, db_path)
+        except Exception as e:
+            out["ok"] = False
+            out["failed"].append(name)
+            log.warning("learning_memory: %s failed for rid=%s: %s", name, restaurant_id, e)
+            try:
+                import ops
+                ops.capture(e, job="learning_memory", context=f"restaurant_id={restaurant_id} step={name}")
+            except Exception:
+                pass
+    return out
+
+
+def eligible_ids(db_path=None) -> list:
+    """The restaurants the nightly pass walks: in service and allowed to
+    teach a learner (models.learning_eligible)."""
+    import models
+    rows = models.get_all_restaurants(db_path=db_path) if db_path else models.get_all_restaurants()
+    out = []
+    for r in rows or []:
+        try:
+            if models.in_service(r) and models.learning_eligible(r):
+                out.append(r.id)
+        except Exception:
+            continue
+    return out

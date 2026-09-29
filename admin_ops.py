@@ -3569,7 +3569,22 @@ def ai_quality(days=30, restaurant_id=None):
             "safety": {"disagreements": disagreements, "reviews_analysed": int(analysed),
                        "rate_pct": round(100.0 * disagreements / analysed, 2) if analysed else None},
             "events": events, "event_trend": event_trend, "recent_events": recent_events,
-            "unusable_outputs": unusable}
+            "unusable_outputs": unusable,
+            # The model's own confidence against what was measured (memory
+            # audit 9/29/26, "claims"): diagnoses keep the model's band so it
+            # can be compared with the result, and now it is — how often a
+            # claim the model called high / medium / low held, for advice
+            # that was taken, over a year of scored claims.
+            "model_confidence": _model_confidence_check(restaurant_id)}
+
+
+def _model_confidence_check(restaurant_id=None):
+    try:
+        import ai_reads
+        return ai_reads.confidence_calibration(restaurant_id=restaurant_id)
+    except Exception as e:
+        log.warning("model confidence check unavailable: %s", e)
+        return None
 
 
 def _client_validation(restaurant_id, since):

@@ -1078,6 +1078,19 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     except Exception as e:
         print(f"[rec_learning] kind_record unavailable for {restaurant_id}/{kind}: {e}")
         return out
+    # A diagnosis's or a nightly report's own claim, scored at its horizon
+    # (ai_reads.score_due, memory audit 9/29/26 "claims"): advice that was
+    # TAKEN and then measured over its own window — never one whose advice
+    # was tracked (its tracker is the result above) or never taken
+    # (untested, not a failure). The verdicts feed Historical Accuracy as
+    # the code always promised; `claims` carries their own counts.
+    claims = _claim_results(restaurant_id, kind, db_path)
+    if claims:
+        out["claims"] = {k: claims[k] for k in ("measured", "improved", "worsened", "no_clear_change",
+                                                 "untested", "unmeasurable")}
+        out["measured"] += claims["measured"]
+        out["improved"] += claims["improved"]
+        measured = list(measured) + list(claims.get("results") or [])
     out["untaken"] = untaken_comparison(restaurant_id, kind, taken_measured=out["measured"],
                                         taken_improved=out["improved"], db_path=db_path)
     try:
@@ -1133,6 +1146,21 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
     return out
+
+
+def _claim_results(restaurant_id, kind, db_path=DB_PATH):
+    """ai_reads.claims_record for a kind that makes claims (ai_reads.
+    CLAIM_KINDS), or None. Never raises."""
+    try:
+        import ai_reads
+        if kind not in ai_reads.CLAIM_KINDS:
+            return None
+        rec = ai_reads.claims_record(restaurant_id, kind, days=EFFECT_WINDOW_DAYS,
+                                     db_path=None if db_path == DB_PATH else db_path)
+        return rec if (rec.get("measured") or rec.get("untested") or rec.get("unmeasurable")) else None
+    except Exception as e:
+        print(f"[rec_learning] claim record unavailable for {restaurant_id}/{kind}: {e}")
+        return None
 
 
 def recency_weighted_rate(measured, now=None, half_life_days=RECENT_HALF_LIFE_DAYS):
