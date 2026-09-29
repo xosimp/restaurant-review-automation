@@ -3339,7 +3339,7 @@ def test_send_order_emails_each_supplier_and_records_one_po_each(client, db_path
     sends = []
     import emails as _emails
     monkeypatch.setattr(_emails, "send_supplier_order_email",
-                        lambda **kw: sends.append(kw) or {"id": "email_1"})
+                        lambda **kw: sends.append(kw) or _emails.SendResult(True, message_id="email_1"))
 
     data = client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
                        headers=_auth_headers(token)).get_json()
@@ -3361,7 +3361,7 @@ def test_send_order_to_one_supplier_only(client, db_path, monkeypatch):
     _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="orders@sea.test")
     token = _login(client, db_path, rid)
     import emails as _emails
-    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
+    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: _emails.SendResult(True, message_id="e"))
     data = client.post("/mobile/api/food-cost/send-order",
                        json={"supplier_email": "orders@sea.test", "draft_hash": _draft_hash(client, token)},
                        headers=_auth_headers(token)).get_json()
@@ -3378,7 +3378,7 @@ def test_a_failing_supplier_send_does_not_block_the_others_or_record_a_po(client
     def _send(**kw):
         if kw["to_email"] == "bad@sea.test":
             raise RuntimeError("550 rejected")
-        return {"id": "e"}
+        return _emails.SendResult(True, message_id="e")
     monkeypatch.setattr(_emails, "send_supplier_order_email", _send)
 
     data = client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
@@ -3446,7 +3446,7 @@ def test_receiving_a_po_closes_it_and_is_scoped_to_the_restaurant(client, db_pat
     _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
     token = _login(client, db_path, rid)
     import emails as _emails
-    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
+    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: _emails.SendResult(True, message_id="e"))
     client.post("/mobile/api/food-cost/send-order", json={"draft_hash": _draft_hash(client, token)},
                 headers=_auth_headers(token))
     po = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"][0]

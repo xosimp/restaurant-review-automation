@@ -693,7 +693,7 @@ def test_an_automatic_order_is_held_on_a_stale_count_and_says_why(db_path):
 def test_a_sent_po_records_its_source_and_draft(db_path, monkeypatch):
     import emails
     rid = _rid(db_path)
-    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **k: None)
+    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **k: emails.SendResult(True))
     group = {"supplier_email": "s@x.com", "supplier_name": "Fresh", "total_cost": 40.0,
              "items": [{"ingredient_id": 1, "item": "Romaine", "qty": 2, "unit_cost": 20.0}]}
     r = models.get_restaurant(rid, db_path=db_path) if "db_path" in models.get_restaurant.__code__.co_varnames \

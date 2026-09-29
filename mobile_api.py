@@ -1763,7 +1763,8 @@ def mobile_use_template(tid, current_user):
 @mobile_bp.route("/send-review-request", methods=["POST"])
 @mobile_login_required
 def mobile_send_review_request(current_user):
-    payload, status = _capi._do_send_review_request(current_user["restaurant_id"], request.get_json() or {})
+    payload, status = _capi._do_send_review_request(current_user["restaurant_id"], request.get_json() or {},
+                                                    actor=current_user)
     return jsonify(**payload), status
 
 

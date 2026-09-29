@@ -100,18 +100,6 @@ def _reset_tenant_names_cache():
 
 
 @pytest.fixture(autouse=True)
-def _reset_supplier_order_cooldown():
-    """Same shape of problem as _reset_ai_rate_limiter above: the
-    supplier-order send cooldown is a process-global keyed by restaurant_id,
-    and every test's fresh database starts its ids at 1 — so the first test to
-    send an order would 429 the next one."""
-    import client_api
-    client_api._order_send_last.clear()
-    yield
-    client_api._order_send_last.clear()
-
-
-@pytest.fixture(autouse=True)
 def _reset_home_brief_cache():
     """home_brief caches its whole payload per restaurant_id for 60s, and
     every test's fresh database starts its ids at 1 — so the second Home

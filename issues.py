@@ -292,15 +292,10 @@ def _backoff_until(attempts, now=None):
 
 
 def _text(phone, msg, restaurant_id):
-    """Send one issue text through notify.send_sms — the path every sender
-    and test stand-in shares — and return the whole outcome (SmsResult):
-    last_sms_result() after a real send, or just its bool from a stand-in."""
+    """Send one issue text and return the whole outcome (SmsResult) — through
+    notify.send_sms, the path every sender and test stand-in shares."""
     import notify
-    notify.clear_last_sms_result()
-    with notify.sms_context(restaurant_id):
-        ok = notify.send_sms(phone, msg[:320], use_case="alert")
-    res = notify.last_sms_result()
-    return res if res is not None else notify.SmsResult(bool(ok))
+    return notify.send_sms_outcome(phone, msg[:320], use_case="alert", restaurant_id=restaurant_id)
 
 
 def _notify(issue_id, token=None, db_path=DB_PATH, now=None):

@@ -273,7 +273,7 @@ def _ingredient(db_path, rid, name="Romaine", supplier_name="Fresh Co", supplier
 def supplier_mail(monkeypatch):
     sent = []
     monkeypatch.setattr(emails, "send_supplier_order_email",
-                        lambda **kw: sent.append(kw["to_email"]) or {"id": "e"})
+                        lambda **kw: sent.append(kw["to_email"]) or emails.SendResult(True, message_id="e"))
     return sent
 
 
@@ -378,10 +378,22 @@ def test_the_same_order_is_not_sent_twice_across_a_restart(app, db_path, supplie
     draft_hash = c.get("/api/food-cost/order-draft").get_json()["draft_hash"]
     assert c.post("/api/food-cost/send-order", json={"draft_hash": draft_hash},
                   headers={"X-CSRF": CSRF}).get_json()["ok"] is True
-    client_api._order_send_last.clear()             # a deploy / restart
+    # The cooldown is gone (it lives in the database now, fix round E #96,
+    # so a restart no longer clears it — lifted here by hand): the durable
+    # PO claim is what must still refuse the duplicate.
+    _expire_order_cooldowns(db_path)
     c.post("/api/food-cost/send-order", json={"draft_hash": draft_hash}, headers={"X-CSRF": CSRF})
     assert supplier_mail == ["orders@fresh.test"], "the supplier received the same purchase order twice"
     assert len(models.get_purchase_orders(rid, db_path=db_path)) == 1
+
+
+def _expire_order_cooldowns(db_path):
+    """Age every supplier-order cooldown past its minute."""
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now', '-5 minutes') "
+                 "WHERE job_key LIKE 'cooldown:supplier_order:%'")
+    conn.commit()
+    conn.close()
 
 
 def test_the_same_order_is_not_sent_again_once_the_cooldown_passes(app, db_path, supplier_mail, monkeypatch):
@@ -390,9 +402,7 @@ def test_the_same_order_is_not_sent_again_once_the_cooldown_passes(app, db_path,
     c = _web(app, db_path, _owner(db_path, rid))
     draft_hash = c.get("/api/food-cost/order-draft").get_json()["draft_hash"]
     c.post("/api/food-cost/send-order", json={"draft_hash": draft_hash}, headers={"X-CSRF": CSRF})
-    import time as _time
-    later = _time.monotonic() + client_api._ORDER_SEND_COOLDOWN + 5
-    monkeypatch.setattr(_time, "monotonic", lambda: later)
+    _expire_order_cooldowns(db_path)
     c.post("/api/food-cost/send-order", json={"draft_hash": draft_hash}, headers={"X-CSRF": CSRF})
     assert supplier_mail == ["orders@fresh.test"]
 

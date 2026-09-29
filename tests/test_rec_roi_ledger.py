@@ -162,7 +162,7 @@ def test_a_supplier_order_implements_each_running_low_line_on_it(db, monkeypatch
     import emails
     rid = _rid(db)
     rl.present(rid, "stock_low:Salmon", "food", "home", db_path=db)
-    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **k: None)
+    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **k: emails.SendResult(True))
     r = models.get_restaurant(rid)
     sent, failed = client_api._send_supplier_orders(
         rid, r, [{"supplier_email": "s@x.test", "supplier_name": "Sea Co", "total_cost": 40.0,

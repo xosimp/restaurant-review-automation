@@ -45,7 +45,7 @@ def test_successful_delivery_logs_one_row(db_path, rid, monkeypatch):
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=200, ok=True)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
 
@@ -68,7 +68,7 @@ def test_deliver_return_value_reflects_success(db_path, rid, monkeypatch):
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=200, ok=True)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
     assert result == {"ok": True, "status": 200, "attempts": 1, "error": None}
@@ -81,7 +81,7 @@ def test_deliver_return_value_reflects_failure(db_path, rid, monkeypatch):
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=500, ok=False)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
     assert result["ok"] is False
@@ -96,7 +96,7 @@ def test_deliver_return_value_reflects_unreachable_endpoint(db_path, rid, monkey
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(raises=ConnectionError("could not connect"))
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
     assert result["ok"] is False
@@ -111,7 +111,7 @@ def test_failed_delivery_retries_three_times_with_backoff(db_path, rid, monkeypa
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=500, ok=False)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
 
@@ -129,7 +129,7 @@ def test_network_exception_is_recorded_as_error(db_path, rid, monkeypatch):
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(raises=ConnectionError("refused"))
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
 
@@ -144,7 +144,7 @@ def test_consecutive_failures_accumulate_across_calls(db_path, rid, monkeypatch)
     save_webhook(rid, "https://example.com/hook", ["review.received"], db_path=db_path)
 
     post, calls = _fake_post(status_code=500, ok=False)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     for _ in range(3):
         wh = get_webhook(rid, db_path=db_path)  # re-fetch — consecutive_failures changed each time
@@ -170,7 +170,7 @@ def test_auto_disables_after_threshold_reached(db_path, rid, monkeypatch):
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=500, ok=False)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     _deliver(wh, "review.received", {}, db_path=db_path)  # this failure crosses the threshold
 
@@ -199,7 +199,7 @@ def test_successful_delivery_resets_consecutive_failures(db_path, rid, monkeypat
     wh = get_webhook(rid, db_path=db_path)
 
     post, calls = _fake_post(status_code=200, ok=True)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     _deliver(wh, "review.received", {}, db_path=db_path)
 
@@ -252,7 +252,7 @@ def test_get_webhook_deliveries_orders_most_recent_first_and_respects_limit(db_p
     save_webhook(rid, "https://example.com/hook", ["review.received"], db_path=db_path)
 
     post, calls = _fake_post(status_code=200, ok=True)
-    monkeypatch.setattr("requests.post", post)
+    monkeypatch.setattr("net_safety.safe_post", post)
 
     for i in range(3):
         wh = get_webhook(rid, db_path=db_path)

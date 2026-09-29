@@ -18,6 +18,13 @@ import mobile_api
 import models
 from models import Restaurant, create_restaurant
 
+
+def _ok_send():
+    """A stand-in supplier email that Resend accepted (fix round E, #103: an
+    order is sent only on SendResult.ok; the stub returned None)."""
+    import emails
+    return emails.SendResult(True, message_id="stub")
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -363,7 +370,7 @@ def test_a_queued_edited_order_sends_the_edited_lines(db_path, monkeypatch):
     c.commit(); c.close()
     draft = inventory.build_supplier_orders(rid)
     sent = {}
-    monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: sent.update(kw))
+    monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: sent.update(kw) or _ok_send())
     out = delayed._run_order_send(rid, {"supplier_email": "f@x.test", "draft_hash": draft["groups"][0]["draft_hash"],
                                         "lines": [{"ingredient_id": ing, "qty": 9}]}, db_path)
     assert out["ok"] is True and sent["items"][0]["qty"] == 9
