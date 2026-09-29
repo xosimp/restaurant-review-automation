@@ -3277,6 +3277,9 @@ def init_db(db_path: str = DB_PATH):
     # (restaurant_thresholds, memory audit 9/29/26).
     from restaurant_thresholds import init_restaurant_thresholds
     init_restaurant_thresholds(db_path)
+    # The monthly learning scorecard (learning_scorecard, memory audit 9/29/26).
+    from learning_scorecard import init_learning_scorecard
+    init_learning_scorecard(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes

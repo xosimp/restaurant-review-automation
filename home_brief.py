@@ -2283,7 +2283,15 @@ def _build(current_user, present=True):
     # with the first); iOS a deck of the first four attention items and
     # three cards. The payload keeps every attention item (web's "+N more"
     # counts them) and exactly the cards both clients show.
-    recs = recs[:HOME_RECS_SHOWN]
+    # Fewer while the owner is fatigued — most of what they were shown went
+    # dismissed or ignored (learning_scorecard.volume_limit, memory audit
+    # 9/29/26 "scorecard"): the strongest cards only, until they recover.
+    try:
+        import learning_scorecard as _lsc
+        _home_n = _lsc.volume_limit(rid, "home_recs", HOME_RECS_SHOWN)
+    except Exception:
+        _home_n = HOME_RECS_SHOWN
+    recs = recs[:_home_n]
     import rec_delivery
     for r in recs:
         r["answerable"] = rec_delivery.answerable(r["key"])

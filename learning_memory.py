@@ -14,6 +14,8 @@ and resumable), each step isolated so one failing never stops the others:
                inside a caller's own transaction could not start it there
   thresholds   refit the trigger margins to the restaurant's own noise
                (restaurant_thresholds.refresh)
+  scorecard    this month's learning scorecard and its flags
+               (learning_scorecard.snapshot; kept forever)
 
 Only restaurants that may teach a learner are passed in
 (models.learning_eligible): a demo, a test account or an internal one never
@@ -54,12 +56,18 @@ def _thresholds(restaurant_id, today, db_path):
     return {"written": restaurant_thresholds.refresh(restaurant_id, today=today, db_path=db_path)}
 
 
+def _scorecard(restaurant_id, today, db_path):
+    import learning_scorecard
+    return learning_scorecard.snapshot(restaurant_id, today=today, db_path=db_path)
+
+
 STEPS = [
     ("claims", _claims),
     ("summaries", _summaries),
     ("what_worked", _what_worked),
     ("implemented_trackers", _implemented_trackers),
     ("thresholds", _thresholds),
+    ("scorecard", _scorecard),
 ]
 
 

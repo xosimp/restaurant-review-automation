@@ -955,6 +955,12 @@ def _load_with(conn):
                          "suppressed FROM alert_storm_caps WHERE lifted_at IS NULL "
                          "AND julianday(until_at) > julianday('now') ORDER BY id",
                          label="alert_storm_caps", optional=True)
+    # The learning scorecard's latest month (learning_scorecard, memory audit
+    # 9/29/26): a curve worsening or flat, and fatigue — admin rows that are
+    # now issues on the client, never only numbers on a page.
+    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, s.fatigued, s.computed_at "
+                       "FROM learning_scorecards s WHERE s.month = (SELECT MAX(s2.month) FROM learning_scorecards s2 "
+                       "WHERE s2.restaurant_id = s.restaurant_id)", label="learning_scorecards", optional=True)
 
     d = dict(now=w["now"], windows=w, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month,
              ai_today=ai_today, ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week,
@@ -970,7 +976,7 @@ def _load_with(conn):
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
              sms_cost=sms_cost, storm_caps=storm_caps, budget_watch=budget_rows, ai_anomalies=anomaly_rows,
              owed_failed=owed_failed, reconcile=reconcile, open_invoices=open_invoices, envelope_fate=envelope_fate,
-             pay_reminders=pay_reminders,
+             pay_reminders=pay_reminders, learning=learning,
              rest_names={r["id"]: r.get("name") for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
@@ -2321,6 +2327,28 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         add(f"source:{s['source']}", f"{labels.get(s['source'], s['source'])} sync failing ({n} in a row)",
             "critical" if auth else "warning", s.get("first_failed_at"), "Open data", None,
             (s.get("last_error") or "")[:160], zone="UTC", action_kind="link", action_href=data_tab)
+    # Whether Cavnar AI is getting better here (learning_scorecard, memory
+    # audit 9/29/26): a learning curve worsening or flat, and fatigue, which
+    # now also cuts what the owner is shown (volume_limit).
+    lrow = (d.get("learning") or {}).get(rid) or {}
+    if lrow:
+        try:
+            lflags = json.loads(lrow.get("flags_json") or "[]") or []
+        except (TypeError, ValueError):
+            lflags = []
+        for f in lflags:
+            if not isinstance(f, dict) or not f.get("curve"):
+                continue
+            add(f"learning:{f['curve']}", f"Learning curve {f.get('state')}: {f.get('label') or f['curve']}",
+                "warning", lrow.get("computed_at"), "Open AI quality", None,
+                f"{', '.join(str(m) for m in f.get('months') or [])}: latest {f.get('latest')}, the two months "
+                f"before {f.get('before')}.", zone="UTC", action_kind="link", action_href=f"{client}?tab=ai")
+        if lrow.get("fatigued"):
+            add("learning:fatigue", "Owner fatigue: most recommendations dismissed or ignored", "warning",
+                lrow.get("computed_at"), "Open AI quality", None,
+                "Three quarters or more of what this owner settled in the month went dismissed or ignored; "
+                "Home, the nightly report and the feed now show fewer until it recovers.", zone="UTC",
+                action_kind="link", action_href=f"{client}?tab=ai")
     return out
 
 
@@ -3642,7 +3670,20 @@ def ai_client(rid, days=30):
             "budget": {"ai": ai_budget, "places": places_budget, "tier": ai_budget.get("tier"), "warnings": warn},
             "by_action": by_action, "blocked": blocked, "daily": daily, "recent_calls": calls,
             "quality": ai_quality(days, restaurant_id=rid),
+            # The learning curve here, month by month (learning_scorecard,
+            # memory audit 9/29/26): whether Cavnar AI is getting better at
+            # this restaurant, with its flags and fatigue.
+            "learning": _learning_scorecards(rid),
             "stalled_reviews": stalled, "stalled_total": int(stalled.get("unanalysed") or 0) + int(stalled.get("undrafted") or 0)}
+
+
+def _learning_scorecards(rid):
+    try:
+        import learning_scorecard
+        return learning_scorecard.scorecards(rid, months=12)
+    except Exception as e:
+        log.warning("learning scorecards unavailable for %s: %s", rid, e)
+        return []
 
 
 def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):

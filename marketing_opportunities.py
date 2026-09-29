@@ -778,7 +778,14 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
                           evidence_sources=(["marketing"] + (["food"] if c.get("food") else [])
                                             + [s for s in c.get("sources") or [] if s != "marketing"]),
                           dollar_value=None, expected_metric=card_expected_metric(c)))
-    on_screen = items if show_all else items[:VISIBLE]
+    # Fewer on the first screen while the owner is fatigued
+    # (learning_scorecard.volume_limit, memory audit 9/29/26).
+    try:
+        import learning_scorecard as _lsc
+        _visible = _lsc.volume_limit(restaurant_id, "feed_cards", VISIBLE)
+    except Exception:
+        _visible = VISIBLE
+    on_screen = items if show_all else items[:_visible]
     shown = insight_store.present_recs(restaurant_id, "marketing", surface, on_screen, user_id=uid,
                                        db_path=db_path)
     ids = {s["key"]: s.get("rec_id") for s in shown}

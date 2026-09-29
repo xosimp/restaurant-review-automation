@@ -1555,6 +1555,13 @@ def settle_actions(actions, F, ctx, declined, dropped):
     # of those presents what that reader was actually shown — on "dsr" and
     # "dsr_email" — through ledger_items() below. The answered check above
     # (silenced keys) is what keeps an answered action out of the report.
+    # Fewer while the owner is fatigued (learning_scorecard.volume_limit,
+    # memory audit 9/29/26): the top of the ranking only.
+    try:
+        import learning_scorecard as _lsc
+        ranked = ranked[:_lsc.volume_limit(ctx.restaurant_id, "dsr_actions", MAX_ACTIONS)]
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "volume limit")
     return ranked
 
 
