@@ -1111,6 +1111,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
         ("marketing_drafts", "original_body", "TEXT"),
+        # The review a review request produced, matched by the guest's name
+        # (review_signals.match_review_requests; memory audit 9/29/26,
+        # uncaptured): requests were counted and never matched to a review.
+        ("review_requests", "review_id", "INTEGER"),
+        ("review_requests", "matched_at", "TEXT"),
         # Recipe provenance (audit #35): 'owner' (typed or imported by a
         # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
         # 'draft_edited' (a draft line the owner changed before accepting).
@@ -2216,6 +2221,25 @@ def init_db(db_path: str = DB_PATH):
             last_used_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, supplier_key, description_key)
         )""",
+        # An owner's (or a manager's) correction to how a review was tagged —
+        # category, sentiment, severity or dish (review_signals.retag;
+        # uncaptured). The review row takes the correction; this keeps what
+        # it was, what it became and who changed it, and the analyser reads
+        # the recent ones as this restaurant's examples. Kept: a correction
+        # the owner made, one row per changed field.
+        """CREATE TABLE IF NOT EXISTS review_retags (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER NOT NULL,
+            field          TEXT    NOT NULL,
+            before_json    TEXT,
+            after_json     TEXT,
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_rid ON review_retags(restaurant_id, id)",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_review ON review_retags(review_id)",
 
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
@@ -9906,7 +9930,9 @@ def onboarding_started_at(restaurant_id: int, db_path: str = DB_PATH):
         conn.close()
 
 def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """Return count of review requests sent this month."""
+    """Return count of review requests sent this month — and how many of the
+    requests whose window has passed produced a review (`conversion`,
+    review_signals.request_conversion; memory audit 9/29/26, uncaptured)."""
     conn = get_conn(db_path)
     row = conn.execute("""
         SELECT
@@ -9915,9 +9941,15 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
         FROM review_requests WHERE restaurant_id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
+    try:
+        import review_signals
+        conversion = review_signals.request_conversion(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        conversion = None
     return {
         "total_sent":      row["total_sent"]      or 0,
         "sent_this_month": row["sent_this_month"] or 0,
+        "conversion":      conversion,
     }
 
 

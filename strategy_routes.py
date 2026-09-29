@@ -567,6 +567,19 @@ def _do_reprice(u):
                                                                    user_id=u.get("id"))}, 200
 
 
+def _do_review_retag(u, review_id):
+    """Correct how a review was tagged: {categories?, sentiment?, severity?,
+    dishes?} in the analyser's own vocabulary (review_signals.retag; memory
+    audit 9/29/26, uncaptured). The review takes the correction, it is kept
+    with who made it, and the analyser learns this restaurant's tags from
+    the recent ones."""
+    import review_signals
+    out = review_signals.retag(_rid(u), review_id, _body(), user=u)
+    if not out.get("ok"):
+        return out, (404 if out.get("error") == "Review not found." else 400)
+    return out, 200
+
+
 def _do_par_suggestions(u):
     """Items the close-out 86'd on 2+ nights in 4 weeks, each with a higher
     par to accept (ordering.par_suggestions; memory audit 9/29/26,
@@ -4315,6 +4328,7 @@ _ROUTES = [
     ("/food-cost/dish-scorecard", ["GET"], _do_dish_scorecard, "dish_scorecard"),
     ("/food-cost/reprice", ["GET"], _do_reprice, "reprice"),
     ("/food-cost/par-suggestions", ["GET"], _do_par_suggestions, "par_suggestions"),
+    ("/reviews/<int:review_id>/retag", ["POST"], _do_review_retag, "review_retag"),
     ("/food-cost/par-suggestions/<int:ingredient_id>/accept", ["POST"], _do_par_accept, "par_accept"),
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),
     ("/food-cost/invoices", ["POST"], _idempotent(_do_invoice_scan, "invoice_scan"), "invoice_scan"),

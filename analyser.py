@@ -319,6 +319,16 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         dayparts=", ".join(DAYPARTS),
         modes=", ".join(SERVICE_MODES),
     )
+    # This restaurant's own corrections as examples, and its menu as the
+    # dish vocabulary (review_signals; memory audit 9/29/26, uncaptured).
+    menu = []
+    if restaurant_id:
+        try:
+            import review_signals
+            prompt += review_signals.analyser_block(restaurant_id)
+            menu = review_signals.menu_dishes(restaurant_id)
+        except Exception as e:
+            print(f"    [{review_id}] restaurant corrections unavailable: {e}")
     import data_health
     message = create_with_retry(
         get_client(),
@@ -347,6 +357,23 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     except ValueError:
         mark_outcome(message, "unparseable", reason="analysis failed its shape check")
         raise
+    # A dish the guest named is stored as the menu names it when exactly one
+    # menu dish matches (the guest's own words kept beside it), so "the
+    # carbonara" and "carbonara pasta" are one cluster; and the owner's
+    # re-tags of this review stand over a re-analysis (review_signals).
+    ents = result.get("entities") or {}
+    if menu and ents.get("dishes"):
+        import review_signals
+        mapped = review_signals.map_dishes(ents["dishes"], menu)
+        if mapped != ents["dishes"]:
+            ents = dict(ents, dishes=mapped, dishes_said=ents["dishes"])
+            result["entities"] = ents
+    if restaurant_id:
+        try:
+            import review_signals
+            review_signals.overlay(restaurant_id, review_id, result)
+        except Exception:
+            pass
     update_analysis(
         review_id,
         result["sentiment"],

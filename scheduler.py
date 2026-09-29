@@ -700,6 +700,16 @@ def run_daily_fetch(restaurant_ids=None):
                 except Exception:
                     pass
 
+            # A review that just arrived may answer a review request: matched
+            # by the guest's name, one-to-one or not at all (review_signals;
+            # memory audit 9/29/26, uncaptured).
+            if new_reviews:
+                try:
+                    import review_signals
+                    review_signals.match_review_requests(rid)
+                except Exception as _me:
+                    log.error(f"Review request matching error [{restaurant.name}]: {_me}")
+
             # Draft. Same unconditional-sweep reasoning as the analysis loop
             # above. Each draft picks its own style examples from the owner's
             # approvals for reviews of its star band (drafter.draft_response;
