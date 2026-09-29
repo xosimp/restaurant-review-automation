@@ -1182,7 +1182,7 @@ The memory round put what Cavnar AI remembers about each piece of advice
 into the payloads; iOS draws it with one set of views
 (`DesignSystem/RecMemoryViews.swift`), the same on Home's cards, Needs
 attention, the one-thing hero, the brief's lines and the nightly report's
-priorities. The web twins are UI-WA's.
+priorities. The web draws the same fields on its own cards (`dashboard.html`).
 
 | Piece | iOS | Reads | Look |
 |---|---|---|---|
