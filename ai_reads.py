@@ -1287,6 +1287,32 @@ def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
     return n
 
 
+def rollup_quarters(db_path=None) -> int:
+    """The retention rollup for ai_reads and ai_claims (ops' registry calls
+    `module:function(db_path)` before a table's rows are deleted): every
+    restaurant with raw reads from before this quarter gets its closed
+    quarters summarised (summarise_quarters, idempotent), so no raw read is
+    deleted before the row that outlives it exists — whether or not the
+    restaurant is one the nightly learning pass walks. Returns rows
+    written. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return 0
+    try:
+        start = _quarter_bounds(_quarter(date.today()))[0].isoformat()
+        rids = [r[0] for r in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM ai_reads WHERE created_at < ?", (start,)).fetchall()]
+    except Exception:
+        rids = []
+    finally:
+        conn.close()
+    n = 0
+    for rid in rids:
+        n += summarise_quarters(rid, db_path=db_path) or 0
+    return n
+
+
 def summaries(restaurant_id, surfaces=None, db_path=None) -> list:
     """The kept-forever quarterly rows, newest quarter first."""
     try:

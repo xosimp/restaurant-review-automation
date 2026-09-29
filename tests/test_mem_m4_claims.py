@@ -264,6 +264,18 @@ def test_a_closed_quarter_is_summarised_and_kept():
     assert "ai_read_summaries" not in ops._RETENTION_DAYS
 
 
+def test_the_retention_rollup_summarises_every_restaurant_before_its_rows_go():
+    """ai_reads.rollup_quarters(db_path) — the shape ops' retention rollups
+    take — summarises a restaurant the nightly pass never walks (a demo)."""
+    rid = _rid()
+    _exec("UPDATE restaurants SET is_demo=1 WHERE id=?", (rid,))
+    read = ai_reads.record_read(rid, "food_read", "1. Cut the salmon par.")
+    old = TODAY - timedelta(days=120)
+    _exec("UPDATE ai_reads SET created_at=? WHERE id=?", (f"{old.isoformat()} 08:00:00", read))
+    assert ai_reads.rollup_quarters() >= 1
+    assert ai_reads.summaries(rid)[0]["said"].startswith("1. Cut the salmon par.")
+
+
 # ── the nightly job ──────────────────────────────────────────────────────────
 
 def test_the_nightly_pass_scores_and_summarises_each_eligible_restaurant():
