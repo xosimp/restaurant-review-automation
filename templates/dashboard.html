@@ -3819,7 +3819,7 @@ svg:hover .hb-xh{opacity:1}
     return s==='location'?'location':'group';
   }
   var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
-  var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
+  var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',food_cost:'Food Cost',dsr:'Daily report',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
   var PULSE={reviews:'rating',labor:'labor',inventory:'food cost',marketing:'posts this month',intel:'intel recs'};
   var EMBER2='#e8956a',RED='#e3333f',GREEN='#2d6a4f';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -4653,6 +4653,9 @@ svg:hover .hb-xh{opacity:1}
     var leadH=num(lead),firstNum=leadH.indexOf('<span class="hb-num">');
     if(firstNum>=0){var cut=firstNum+21;leadH=leadH.slice(0,cut)+leadH.slice(cut).split('<span class="hb-num">').join('<span class="hb-num plain">');}
     h+='<div class="lead">'+leadH+'</div>';
+    // A cross-module link found weeks running, or back after it was done
+    // (M4 link memory): the why already says since when.
+    if(ff&&ff.what&&ff.recurring&&window.memPill)h+='<div class="hb-focus-rec">'+memPill('Recurring')+'</div>';
     if(why)h+='<div class="why">'+num(why)+'</div>';
     var basis='';
     if(ev.length){basis+='<div style="margin-bottom:10px"><strong>What it rests on:</strong><ul style="margin:6px 0 0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
@@ -4901,6 +4904,9 @@ svg:hover .hb-xh{opacity:1}
       if(x.alternative)body+='<div style="margin-bottom:8px"><strong>Could also be:</strong> '+num(x.alternative)+'</div>';
       if(x.not_a_cause)body+='<div style="opacity:.8">'+num(x.not_a_cause)+'</div>';
       out.push({extra:1,severity:'important',key:x.rec_key||('link:'+i),title:x.headline,rec_key:x.rec_key,
+        // How long it has stood (M4 link memory): "Found 3 weeks running,
+        // since 9/7/26", and a Recurring pill once it escalated.
+        sub:x.memory||null,
         mod:(x.modules||[]).map(function(mm){return MODLABEL[mm]||mm;}).join(' + '),explain:body,
         act:(x.act&&x.act.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cav-go="'+esc(x.act.nav)+'">'+esc(x.act.label||'Open')+'</button>':'',
         ans:(x.rec_key&&x.answerable&&typeof recControlsHtml==='function')?recControlsHtml(x.rec_key,'home','home'):''});}
@@ -4908,7 +4914,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function hbExtraRow(a,i){
     var xk=a.rec_key||a.title||'',done=_hbExtraDone[xk];
-    return '<div class="hb-row hb-att '+esc(a.severity)+(i>=3?' hb-attn-more':'')+'"'+(i>=3?' hidden':'')+' data-same="'+esc(hbSame(a.key))+'" data-extra-key="'+esc(xk)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+'</div>'
+    return '<div class="hb-row hb-att '+esc(a.severity)+(i>=3?' hb-attn-more':'')+'"'+(i>=3?' hidden':'')+' data-same="'+esc(hbSame(a.key))+'" data-extra-key="'+esc(xk)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+(a.sub&&window.memLinkLine?'<span class="mem-ln">'+memLinkLine(a.sub)+'</span>':'')+'</div>'
       +(a.mod?'<span class="m">'+esc(a.mod)+'</span>':'')+(a.act||'')
       +(a.explain?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-ev" data-explain="'+esc(a.explain)+'" data-explain-title="'+esc(a.title)+'" data-explain-kicker="A question, not a finding"'+(a.rec_key?' data-explain-key="'+esc(a.rec_key)+'"':'')+'>Evidence</button>':'')
       +(done?'<span class="rec-ans">'+done+'</span>':(a.ans||''))+'</div>';
@@ -8340,6 +8346,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       </label>
     </div>
     <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
+    {# How many guests asked went on to leave a review (M6 conversion), "—"
+       below its floor; matched by name, only when exactly one fits. #}
+    <div id="rr-conversion" class="mem-ln" hidden></div>
     <button onclick="sendReviewRequest(this)" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:14px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </div>
@@ -11188,6 +11197,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     {% else %}
     <div class="fc2-ok"><i></i>Your ordering looks well-calibrated this week — no adjustments needed.</div>
     {% endif %}
+    {# Pars to raise (memory round 9/29/26, M6 food_corrections): an item the
+       close-out 86'd on 2+ nights in 4 weeks, with the par that would have
+       held; nothing changes until Raise par. cav-mem-wb memLoadPars. #}
+    <div class="mem-pars" id="fc2-par-sug" data-nav="inventory/pars" hidden></div>
     <div id="so-confirm-modal" class="cmodal so-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="so-confirm-t" onclick="if(event.target===this&&window.cModal)cModal.close('so-confirm-modal')">
       <div class="so-card">
         <div class="hb-kicker">Send to supplier</div>
@@ -11443,7 +11456,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         html += '<div class="fc2-sup-order" data-sup="'+_mmEsc(g.supplier_email)+'"><div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+' · '+_mmEsc(g.supplier_email)+'</span></div><span class="hb-num" data-sup-total>'+_soMoney(g.total_cost)+'</span></div>';
         html += '<div class="fc2-table-scroll"><table class="fc2-mt fc2-so-t"><colgroup><col><col class="q"><col class="l"></colgroup><thead><tr><th>Item</th><th class="r">Quantity</th><th class="r">Line</th></tr></thead><tbody>';
         g.items.forEach(function(it){var key=it.ingredient_id?String(it.ingredient_id):('name:'+String(it.item||'').toLowerCase());
-          html+='<tr><td><b>'+_mmEsc(it.item)+'</b>'+(it.trimmed_for_waste?'<div class="why">trimmed for last week’s waste</div>':'')+'</td>'
+          html+='<tr><td><b>'+_mmEsc(it.item)+'</b>'+(it.trimmed_for_waste?'<div class="why">trimmed for last week’s waste</div>':'')
+            // Fitted to what this owner actually sends (M6 food_corrections).
+            +(it.owner_adjusted&&window.memOrderAdjLine?'<div class="why" title="'+_mmEsc(it.owner_adjusted.basis||'')+'">'+memNum(memOrderAdjLine(it))+'</div>':'')+'</td>'
             +'<td class="r"><input class="fc2-inv-in" type="number" min="0" max="'+SO_MAX_QTY+'" step="0.5" inputmode="decimal" aria-label="'+_mmEsc(it.item)+' quantity" data-so-qty="'+_mmEsc(key)+'" data-drafted="'+(+it.qty||0)+'" data-cost="'+(+it.unit_cost||0)+'" data-sup-of="'+_mmEsc(g.supplier_email)+'" value="'+(+it.qty||0)+'"> '+_mmEsc(it.unit||'')+'</td>'
             +'<td class="r hb-num" data-so-line="'+_mmEsc(key)+'">'+_soMoney(it.line_cost)+'</td></tr>';});
         html += '</tbody></table></div><div class="fc2-count-ft"><span class="ac-status" data-sup-status></span><button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-send="'+_mmEsc(g.supplier_email)+'">Send to '+_mmEsc(g.supplier_name||g.supplier_email)+' · '+_soMoney(g.total_cost)+'</button></div>';
@@ -11808,6 +11823,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="cp-card cp-pc cp-audc" id="cp-step-aud">
             <div class="lbl">Audience <span class="cp-tag ai" id="cp-aud-k">Picked by Cavnar AI</span></div>
             <div class="cp-segs" id="cp-segs" role="radiogroup" aria-label="Who it goes to"></div>
+            <div class="mem-returns" id="cp-aud-ret" hidden></div>
           </div>
           <div class="cp-card cp-pc cp-photoc" id="cp-step-photo">
             <div class="lbl">Photo</div>
@@ -12492,7 +12508,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       // One flex item: the line's 8px gap put space around the date as if
       // it were a chip (owner, 9/26/26).
       box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px"><span>'+sub+'</span></div>'
-        +(rows?'<div class="in2-comp">'+rows+'</div>':'');
+        +(rows?'<div class="in2-comp">'+rows+'</div>':'')
+        // Kept forever (M5 public_history): the restaurant's own rating
+        // over time and the market's arrivals, departures and moves.
+        +(window.memIntelHistoryHtml?memIntelHistoryHtml(d):'');
       box.hidden=false;
     }).catch(function(){box.hidden=true;});
   }
@@ -15993,10 +16012,15 @@ function renderReviewDiagnosis(d){
     +'<div class="rv-diag">'
     +'<div class="rv-diag-hd"><span class="t">Most likely cause</span>'+(cfl||'')+'</div>'
     +'<div class="rv-diag-bd">'
+    // A read too old to lean on (M4 stale_diagnoses: controls_withheld
+    // "stale", answerable false) keeps its words, says it is an older
+    // read, and offers no Done / Not for us.
+    +(dg.controls_withheld==='stale'?'<div class="rv-diag-old">'+(window.memPill?memPill('Older read','neutral'):'Older read')+(dg.stale_note?' <span class="mem-ln" style="display:inline">'+_rvEsc(dg.stale_note)+'</span>':'')+'</div>':'')
     +'<div class="rv-diag-cause">'+_rvEsc(dg.cause)+'</div>';
+  var rvAns=dg.rec_key&&dg.answerable!==false&&dg.controls_withheld!=='stale';
   if(dg.recommended_action&&!dg.answered){
-    h+='<div class="rv-diag-do"><b>Do this:</b> '+_rvEsc(dg.recommended_action)
-      +(dg.rec_key?'<div class="rv-diag-ans">'+recControlsHtml(dg.rec_key,'reviews','reviews')+'</div>':'')+'</div>';
+    h+='<div class="rv-diag-do"><b>'+(rvAns?'Do this:':'What it said to do:')+'</b> '+_rvEsc(dg.recommended_action)
+      +(rvAns?'<div class="rv-diag-ans">'+recControlsHtml(dg.rec_key,'reviews','reviews')+'</div>':'')+'</div>';
   }
   var more='<div class="rv-diag-row"><div class="k">Based on</div><div class="v">'+_rvEsc(String(dg.category||'').replace(/_/g,' '))+' · '
     +dg.mention_count+' negative reviews over '+dg.window_days+' days'+(dg.stale_note?' · '+_rvEsc(dg.stale_note):'')+'</div></div>';
@@ -17083,6 +17107,8 @@ function loadReviewRequestStats(){
     var els = ['rr-sent-mo-inline','rr-sent-mo','rr-sent-total-inline','rr-sent-total'];
     var vals = [d.sent_this_month||0, d.sent_this_month||0, d.total_sent||0, d.total_sent||0];
     for(var _i=0;_i<els.length;_i++){var _e=document.getElementById(els[_i]);if(_e)_e.textContent=vals[_i];}
+    var cv=document.getElementById('rr-conversion'),cl=window.memConversionLine?memConversionLine(d.conversion):'';
+    if(cv){cv.innerHTML=cl&&window.memNum?memNum(cl):'';cv.title=(d.conversion&&d.conversion.basis)||'';cv.hidden=!cl;}
   }).catch(function(){});
 }
 
@@ -17758,7 +17784,8 @@ function saveMktDraft(){
   var btn = document.getElementById('mkt-save-draft-btn');
   if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
   var payload = {body: body, topic: document.getElementById('mktopic').value.trim(),
-                 content_type: selCt, media_id: window._mktPhotoId};
+                 content_type: selCt, media_id: window._mktPhotoId,
+                 content_log_id: window._mktContentLogId || null, draft_ref: window._mktDraftRef || null};
   if(window._mktDraftId) payload.id = window._mktDraftId;
   fetch('/api/marketing/drafts', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload)})
@@ -17864,6 +17891,7 @@ function useMktDraft(id){
       // A reopened draft is not the generated row: its publish is its own
       // piece in the content log (MB-8), with the draft's topic.
       window._mktContentLogId = null;
+      window._mktDraftRef = null;   // the saved draft keeps its own original (marketing_drafts)
       window._lastPostedTopic = x.topic || '';
       // The type and the photo come back with the words, so a save or a
       // post from here is the draft that was saved, not a photo-less copy.
@@ -18209,7 +18237,7 @@ function clearMktOutput(){
   var el=document.getElementById('mkoutput');
   if(el){el.removeAttribute('data-mkt-posted');el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
   window._lastPostedTopic='';
-  window._mktContentLogId=null;
+  window._mktContentLogId=null;window._mktDraftRef=null;
   var charCountEl=document.getElementById('char-count');
   var charOver=document.getElementById('char-over');
   var smsCntEl=document.getElementById('sms-char-count');
@@ -22772,6 +22800,7 @@ function loadInvInsight(){
   fc2LoadRecipeCoverage();
   fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();
   fc2LoadCfo();
+  if(window.memLoadPars)memLoadPars();
   var fiveMin=5*60*1000;
   try{
     /* The whole payload is cached (DH4-1): the HTML alone dropped the
@@ -22856,7 +22885,7 @@ function fc2LoadCfo(){
       if(dg&&dg.cause&&window.cavConf)h+=cavConf.claimTag('',true);
       var mi=b.money_involved||{},at=mi.monthly_at_stake;
       if(at){h+='<span class="m"><span class="hb-num">'+fc2Money(at)+'</span>/month at stake across '+drv.length+' driver'+(drv.length===1?'':'s')+' · an opportunity, not money saved</span>';}
-      if(dg&&dg.stale){h+='<span class="m">· older read</span>';}
+      if(dg&&(dg.stale||dg.controls_withheld==='stale')){h+='<span class="m">· older read</span>';}
       h+='</div><div class="fc2-cfo-bd">';
       if(at&&mi.monthly_at_stake_basis){h+='<div class="fc2-cfo-basis">'+wtEsc(mi.monthly_at_stake_basis)+'</div>';}
       if(dg&&dg.headline){h+='<div class="fc2-hl">'+wtEsc(dg.headline)+'</div>';}
@@ -22879,7 +22908,10 @@ function fc2LoadCfo(){
       if(drv.length){h+='<div class="fc2-row"><div class="k">Top driver</div><div>'+drvHtml(drv[0])+'</div></div>';}
       // The action stays in view: a decision never sits inside a collapsed
       // section (DESIGN_SYSTEM §12).
-      if(dg&&dg.cause&&dg.recommended_action&&!dg.answered){h+='<div class="fc2-row"><div class="k">Do this first</div><div class="v">'+wtEsc(dg.recommended_action)+(dg.rec_key?'<br>'+recControlsHtml(dg.rec_key,'food','food'):'')+'</div></div>';}
+      // A read too old to lean on (M4 stale_diagnoses) keeps its words and
+      // offers no Done / Not for us.
+      var fdAns=dg&&dg.rec_key&&dg.answerable!==false&&dg.controls_withheld!=='stale';
+      if(dg&&dg.cause&&dg.recommended_action&&!dg.answered){h+='<div class="fc2-row"><div class="k">'+(fdAns?'Do this first':'What it said to do')+'</div><div class="v">'+wtEsc(dg.recommended_action)+(fdAns?'<br>'+recControlsHtml(dg.rec_key,'food','food'):'')+'</div></div>';}
       if(dg&&dg.cause){
         more+='<div class="fc2-row"><div class="k">Most likely cause</div><div class="v">'+wtEsc(dg.cause)+'</div></div>';
         if(dg.alternative_cause){more+='<div class="fc2-row alt"><div class="k">It could also be</div><div class="v">'+wtEsc(dg.alternative_cause)+'</div></div>';}
@@ -22917,8 +22949,12 @@ function fc2LoadCfo(){
       if(p&&p.available){
         more+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(pcHeld?'measured':(p.claim_kind||'forecast')):'')+'</span>'
           +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%).';
+        // Corrected by its own record when it has leaned one way (M4
+        // forecasts: projection_correction) — the corrected figure, and the
+        // note saying so, never the raw one silently.
+        var pcc=p.projection_correction;
         if(!pcHeld&&p.projected_prime_cost!=null){
-          more+=' At this run rate the month lands near '+fc2Money(p.projected_prime_cost)
+          more+=' At this run rate the month lands near '+fc2Money(pcc&&pcc.projected_prime_cost!=null?pcc.projected_prime_cost:p.projected_prime_cost)
             +' on '+fc2Money(p.projected_sales)+' of sales';
           if(p.dollars_vs_last_month!=null){
             more+=' — '+fc2Money(Math.abs(p.dollars_vs_last_month))+' '
@@ -22926,6 +22962,9 @@ function fc2LoadCfo(){
           }
           more+='. Projection, not a measurement. '+wtEsc(p.basis||'');
         }
+        // Where the labor half came from (M5 prime_cost: labor_basis_text).
+        var pn=window.memPrimeNote?memPrimeNote(pcHeld?{labor_basis_text:p.labor_basis_text}:p):'';
+        if(pn)more+=' '+memNum(pn);
         more+='</span></div>';
         // The frozen mid-month projection's own record (K8, CA1 F16):
         // prime_cost_accuracy {reading, mean_error_pct, n_months, withheld}.
@@ -23750,6 +23789,9 @@ function genContent(fromCalendar){
       window._lastPostedTopic=topic;
       // The generated row a publish of these words completes (MB-8).
       window._mktContentLogId=d.content_log_id||null;
+      // The model's own draft, kept (M6 mkt_edits): Save sends its ref so
+      // the owner's edits are measured against what Cavnar AI wrote.
+      window._mktDraftRef=d.draft_ref||null;
       // New words are a new draft, not an edit of the one last opened.
       window._mktDraftId=null;
       var _genContent = d.content||'';
@@ -26640,10 +26682,22 @@ function revokeOtherSessions(btn){
       for(var i=0;i<sg.length;i++){var x=sg[i];
         var why=[];for(var j=0;j<(x.drivers||[]).length;j++){var dr=x.drivers[j];why.push(_fcEsc(dr.ingredient)+(dr.change_pct!=null?' +'+Number(dr.change_pct).toFixed(0)+'%':''));}
         // One tap sets the suggested price (POST /food-cost/reprice/apply);
-        // "Not for us" answers the same rec_ledger key everywhere.
-        var act=x.suggested_price?('<button type="button" class="cbtn cbtn-primary cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.suggested_price+'">Set '+_fcMoney(x.suggested_price)+'</button>'):'';
-        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>';
-        h+='<tr><td><b>'+_fcEsc(x.dish)+'</b></td><td>'+why.join(', ')+'</td>'
+        // "Not for us" answers the same rec_ledger key everywhere. A dish
+        // guests are complaining about while it drives food cost carries
+        // the reprice guard (M4 links): fix the plate before the price, so
+        // its one tap steps down to secondary.
+        var guarded=!!(x.guard&&x.guard.text);
+        var act=x.suggested_price?('<button type="button" class="cbtn '+(guarded?'cbtn-secondary':'cbtn-primary')+' cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.suggested_price+'">Set '+_fcMoney(x.suggested_price)+'</button>'):'';
+        // What this owner usually does (M6 food_corrections): their usual
+        // share of the rise, offered beside the full one.
+        if(x.typical_price!=null&&x.owner_ratio&&+x.typical_price!==+x.suggested_price)act+=' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.typical_price+'">Set '+_fcMoney(x.typical_price)+'</button>';
+        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>';
+        var notes='';
+        if(guarded)notes+='<div class="mem-ln warn">'+(window.memNum?memNum(x.guard.text):_fcEsc(x.guard.text))+'</div>';
+        if(x.value_note)notes+='<div class="mem-ln warn">'+(window.memNum?memNum(x.value_note):_fcEsc(x.value_note))+'</div>';
+        var habit=window.memRepriceHabit?memRepriceHabit(x):'';
+        if(habit)notes+='<div class="mem-ln" title="'+_fcEsc((x.owner_ratio||{}).basis||'')+'">'+memNum(habit)+'</div>';
+        h+='<tr><td><b>'+_fcEsc(x.dish)+'</b>'+notes+'</td><td>'+why.join(', ')+'</td>'
           +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td><td class="r hb-num">'+_fcMoney(x.suggested_price)+'</td><td class="r hb-num">'+_fcMoney(x.monthly_margin_lost,0)+'</td><td class="r"><span class="rec-ans">'+act+'</span></td></tr>';}
       h+='</tbody></table></div>'+(d.assumption?'<div class="hb-empty" style="font-size:12px">'+_fcEsc(d.assumption)+'</div>':'');
       el.innerHTML=h;
@@ -26750,7 +26804,11 @@ function revokeOtherSessions(btn){
         // Whether the reading passed both checks (invoices.py "verified":
         // its arithmetic agreed and there was a cost to compare against) -
         // computed server-side and never shown before (CA1 F26, J5).
-        +'<td><b>'+_fcEsc(l.description)+'</b>'+(l.verified===true?' <span class="ck-tag" title="The line adds up and the move is plausible against the current cost">checked</span>':(l.verified===false?' <span class="ck-tag" title="Not every check could run on this line — look before applying">unchecked</span>':''))+'<div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'+(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
+        +'<td><b>'+_fcEsc(l.description)+'</b>'+(l.verified===true?' <span class="ck-tag" title="The line adds up and the move is plausible against the current cost">checked</span>':(l.verified===false?' <span class="ck-tag" title="Not every check could run on this line — look before applying">unchecked</span>':''))+'<div class="why">'+(l.quantity!=null?_fcEsc(l.quantity)+' ':'')+_fcEsc(l.unit||'')+(l.unit_price!=null?' @ '+_fcMoney(l.unit_price):'')+(l.line_total!=null?' = '+_fcMoney(l.line_total):'')+'</div>'
+        // Matched to the ingredient the owner picked for this line before
+        // (M6 invoice_aliases: matched_by "your_match").
+        +(l.matched_by==='your_match'?'<div class="mem-ln">Matched as you did last time</div>':'')
+        +(l.note?'<div class="fc2-inv-note">'+_fcEsc(l.note)+'</div>':'')+'</td>'
         +'<td><select class="fc2-inv-sel" data-inv-ing="'+i+'">'+opts.replace('value="'+l.ingredient_id+'"','value="'+l.ingredient_id+'" selected')+'</select></td>'
         +'<td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td>'
         +'<td class="r"><input class="fc2-inv-in" type="number" step="0.0001" min="0" data-inv-cost="'+i+'" value="'+(l.proposed_cost!=null?l.proposed_cost:'')+'"></td></tr>';}
@@ -26871,7 +26929,10 @@ function mktOppCard(o, i) {
   var conf = (o.confidence && window.cavConfLine) ? cavConfLine(o.confidence, {key: o.key, surface: 'marketing', module: 'marketing', cls: 'hb-conf', pill: 1}) : '';
   var when = mktOppWhen(o);
   return '<div class="hb-card hb-rec hb-rise mkt-opp" style="--i:' + i + '" data-opp-key="' + esc(o.key) + '">'
-    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>' + (when ? '<span class="when">' + esc(when) + '</span>' : '') + '</div>'
+    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>' + (when ? '<span class="when">' + esc(when) + '</span>' : '')
+    // Moved up or down by what this restaurant's own results measured
+    // (M6 mkt_results: learned_weight).
+    + (o.learned_weight != null && +o.learned_weight !== 1 ? ' <span class="ck-tag" title="' + esc((+o.learned_weight > 1 ? 'Ranked higher' : 'Ranked lower') + ' because of how this kind of move measured here') + '">Ranked by your results</span>' : '') + '</div>'
     + '<div class="t">' + num(o.title) + '</div>'
     + (o.why ? '<div class="why">' + num(o.why) + '</div>' : '')
     + (meta.length ? '<div class="meta">' + meta.join('') + '</div>' : '')
@@ -27295,6 +27356,7 @@ function cpResetDraft() {
   ['text', 'email', 'social'].forEach(function(k) { _cp.seq[k]++; });
   _cp.busy = {}; _cp.err = {};
   _cp.type = 'general'; _cp.goal = ''; _cp.targetDay = null; _cp.planned = false; _cp.winback = null; _cp.seg = 'all';
+  _cp.ref = {}; _cp.clid = null;   // a new draft names no earlier one
   ['guest-campaign-message', 'guest-campaign-link', 'guest-newsletter-subject', 'cp-em-pre', 'cp-em-headline',
    'guest-newsletter-body', 'cp-em-btn', 'cp-em-url', 'cp-so-caption'].forEach(function(id) { var el = _cpEl(id); if (el) el.value = ''; });
   var lo = _cpEl('cp-link-on'), li = _cpEl('guest-campaign-link'); if (lo) lo.checked = false; if (li) li.hidden = true;
@@ -27344,6 +27406,12 @@ function cpDraft(k, prompt, plan) {
     _cp.busy[k] = false;
     var good = d && (k === 'social' ? !!d.content : d.ok);
     if (!good) { _cp.err[k] = (d && d.error) || 'Couldn’t draft this one.'; cpPaint(); cpCreateIdle(); return; }
+    // What Cavnar AI drafted, by ref (M6 mkt_edits): each send names it,
+    // so what went out is measured against it; the text draft also says
+    // what past texts brought back per audience (mkt_results).
+    _cp.ref = _cp.ref || {}; _cp.ref[k] = d.draft_ref || null;
+    if (k === 'social') _cp.clid = d.content_log_id || null;
+    if (k === 'text' && d.returns_by_segment) _cp.rets = d.returns_by_segment;
     if (plan && !_cp.planned && d.segment) {
       _cp.planned = true; _cp.type = d.type || 'general'; _cp.goal = d.goal || ''; _cp.targetDay = d.target_day || null;
       _cp.seg = d.segment || window._guestDefaults[_cp.type] || 'all';
@@ -27513,6 +27581,8 @@ window.cpPaint = function() {
     }
     segs.innerHTML = h;
   }
+  var aret = _cpEl('cp-aud-ret'), arl = window.memReturnsLine ? memReturnsLine(_cp.seg, _cp.rets) : '';
+  if (aret) { aret.innerHTML = arl ? memNum(arl) : ''; aret.hidden = !arl; }
   // Text. What a guest reads is "{Name}: " + the words + the tracked link,
   // and all of it counts against the limit (CS-12, CS-14); the STOP line
   // counts toward the parts it is billed as. A message that already opens
@@ -27657,7 +27727,7 @@ function loadWinback() {
     box.innerHTML = '<div class="k">Cavnar AI suggests</div>'
       + '<div class="t">Bring back <span class="hb-num">' + (+w.segment_size || 0) + '</span> guest' + (w.segment_size === 1 ? '' : 's') + ' ' + recEsc((w.segment_label || '').toLowerCase()) + '</div>'
       + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-winback-use="' + w.id + '">Use this</button>'
-      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="' + w.id + '">Pass</button>';
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="' + w.id + '">Not for us</button>';
     box.hidden = false;
   }).catch(function() {});
 }
@@ -27739,11 +27809,11 @@ function cpSnapshot(ready) {
       // window they are queued for then rather than refused (CS-6).
       body: _cp.winback ? {message: message, hold: hold}
         : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '', link_url: _cpVal('guest-campaign-link'), hold: hold,
-           rec_key: rk}};
+           rec_key: rk, draft_ref: (_cp.ref || {}).text || null}};
   }
   if (ready.email) {
     var body = {subject: _cpVal('guest-newsletter-subject'), body: _cpVal('guest-newsletter-body'), design: cpDesign(), segment: _cp.seg,
-                rec_key: rk};
+                rec_key: rk, draft_ref: (_cp.ref || {}).email || null};
     var addr = _cpVal('cp-addr-in'); if (addr && !ov.mailing_address_set) body.mailing_address = addr;
     snap.email = {sig: cpSig('email'), body: body};
   }
@@ -27756,6 +27826,7 @@ function cpSnapshot(ready) {
       var b = p.key === 'instagram' ? {caption: cap, topic: _cp.prompt, image_url: _cp.photo ? _cp.photo.url : ''}
         : (p.key === 'facebook' ? {caption: cap, topic: _cp.prompt, media_id: mid} : {summary: cap, cta_type: '', cta_url: '', topic: _cp.prompt, media_id: mid});
       b.rec_key = rk;
+      if (_cp.clid) b.content_log_id = _cp.clid;
       return {label: p.label,
         url: p.key === 'instagram' ? '/api/post-to-instagram' : (p.key === 'facebook' ? '/api/post-to-facebook' : '/api/post-to-google'),
         body: b};
@@ -27981,7 +28052,10 @@ function cpPaintHistory() {
         + (c.pending ? bar(c.total || c.pending, 'Queued', +c.pending, 'var(--ink3)', '0') : '')
         + bar(es, 'Opens recorded', c.opened, 'var(--ember2)', 'not tracked')
         + bar(es, 'Clicks recorded', c.clicked, 'var(--green)', 'not tracked') + '</div>'
-        + (c.opened != null ? '<div class="nt">Opens include Apple Mail auto-opens.</div>' : '') + eacts + '</div>';
+        + (c.opened != null ? '<div class="nt">Opens include Apple Mail auto-opens.</div>' : '')
+        // Stamped 30 days after the send (M7 rollups): the figures as they
+        // stood then, not a live count.
+        + (c.results_as_of && window.memResultsAsOf ? '<div class="nt">' + memNum(memResultsAsOf(c.results_as_of)) + '</div>' : '') + eacts + '</div>';
     }
   }
   list.innerHTML = html;
@@ -32189,6 +32263,8 @@ window.cavPalette = cavPalette;
 .mem-quote q{quotes:'\201C' '\201D'}
 .mem-confirm{margin-top:10px;padding:12px 14px;border-radius:12px;background:var(--amber-bg);color:var(--ink);font-size:14px;line-height:1.5}
 .mem-confirm .cbtn-row{margin-top:10px}
+.rv-diag-old{margin-bottom:8px}
+.hb-focus-rec{margin:8px 0 2px}
 .mem-cover-q{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;margin-left:6px}
 /* Scheduling notes: one card per person, one line per constraint */
 .mem-notes{display:flex;flex-direction:column;gap:14px}
@@ -32943,6 +33019,36 @@ function memRetagBody(was, now) {
     for (i = 0; i < (list || []).length && n < 6; i++) { if (!list[i] || !list[i].text) continue; n++; h += '<div class="ln' + (list[i].applies ? '' : ' dim') + '">' + memNum(list[i].text) + '</div>'; }
     return h ? '<div class="mem-teach"><div class="hb-kicker">What your nights have taught</div>' + h + '</div>' : '';
   };
+
+  /* ── Intel: your rating over time, and the market's history ── */
+  window.memIntelHistoryHtml = function (d) {
+    if (!d) return '';
+    var h = '', i, own = d.own_rating_history, C = window.CavnarCharts;
+    if (own && own.available && (own.series || []).length >= 2) {
+      var vals = [], labels = [], ch = +own.change || 0;
+      for (i = 0; i < own.series.length; i++) { vals.push(+own.series[i].rating); labels.push('Week of ' + memMdy(memIsoWeekDate(own.series[i].week))); }
+      h += '<div class="mem-rating" aria-label="Your Google rating over time"><div class="hd"><div><div class="hb-kicker">Your rating over time</div>'
+        + '<div class="fig">' + memEsc(memG(own.latest.rating)) + '<small>★</small></div></div>'
+        + '<span class="chg ' + (ch > 0 ? 'up' : (ch < 0 ? 'down' : 'flat')) + '">' + (ch > 0 ? '+' : (ch < 0 ? '−' : '')) + memEsc(memG(Math.abs(ch))) + '★ since ' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span></div>'
+        + (C && C.glowLine ? C.glowLine(vals, 600, 92, '#e8956a', {pad: 8, labels: labels, unit: '★'}) : '')
+        + '<div class="ax hb-num"><span>' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span><span>' + memEsc(memMdy(memIsoWeekDate(own.latest.week))) + '</span></div>'
+        + '<div class="mem-ln">' + memNum(memOwnRatingLine(own)) + '</div></div>';
+    }
+    var mh = d.market_history || [];
+    if (mh.length) {
+      h += '<div class="hb-kicker" style="margin-top:22px">Over the months</div><div class="in2-comp mem-mkt">';
+      for (i = 0; i < mh.length; i++) h += '<div class="row"' + (i >= 6 ? ' hidden data-mem-more' : '') + '><div class="t"><div class="tt"><b>' + memEsc(mh[i].name || 'A place nearby') + '</b></div><div class="m">' + memNum(memMarketLine(mh[i])) + '</div></div></div>';
+      h += '</div>' + (mh.length > 6 ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-mkt-all="1">Show all ' + mh.length + '</button>' : '');
+    }
+    return h;
+  };
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-mem-mkt-all]') : null;
+    if (!t) return;
+    var rows = document.querySelectorAll('#in2-moves [data-mem-more]'), i;
+    for (i = 0; i < rows.length; i++) rows[i].hidden = false;
+    t.parentNode.removeChild(t);
+  });
 
   /* ── Food Cost: pars to raise after repeated 86s ── */
   window.memLoadPars = function () {
