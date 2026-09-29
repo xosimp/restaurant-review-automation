@@ -164,7 +164,7 @@ RECURRING_WINDOW_DAYS = 90
 RECURRING_MIN_MENTIONS = 3
 
 
-def get_recurring_themes(restaurant_id: int) -> str:
+def get_recurring_themes(restaurant_id: int, confirmed: bool = False) -> str:
     """Named complaint categories a guest has raised at least three times in
     the last 90 days, or "" when there is no such pattern.
 
@@ -178,7 +178,9 @@ def get_recurring_themes(restaurant_id: int) -> str:
 
     Now it names the actual categories the analyser assigned, over a real
     window, and says nothing about what is being done about them — because
-    this system does not know that.
+    this system does not know that. `confirmed`: the prompt also carries
+    the owner's confirmed changes (confirmed_fixes_block), and those are the
+    only exception (memory audit 9/29/26, drafter_fixes).
     """
     try:
         from collections import Counter
@@ -209,9 +211,127 @@ def get_recurring_themes(restaurant_id: int) -> str:
                 f"{pretty} in at least {RECURRING_MIN_MENTIONS} separate negative reviews. "
                 f"If THIS review raises one of those, you may acknowledge it is something the "
                 f"restaurant is aware of. Do NOT claim any specific fix, change, retraining or "
-                f"process has happened — you have no way to know that.\n")
+                f"process has happened — you have no way to know that"
+                + (" — except an OWNER-CONFIRMED CHANGE listed below.\n" if confirmed else ".\n"))
     except Exception:
         return ""
+
+
+# ── the owner's confirmed changes (memory audit 9/29/26, drafter_fixes) ────
+#
+# Recurring complaints reach the drafter with "Do NOT claim any specific
+# fix — you have no way to know that", while the recommendation ledger
+# records the changes the owner confirmed (rec_ledger: a review diagnosis or
+# top issue on a complaint category marked Done, or implemented). After the
+# owner marked "add a second host on Friday nights" done, the next reply to
+# a Friday-wait complaint still could not acknowledge it. Now those changes
+# are offered on the review's own complaint categories — only the account
+# holder's confirmations (never a manager's, an admin's or a view-as one),
+# from the last CONFIRMED_FIX_DAYS — and a draft that uses one is ALWAYS held
+# for the owner to read (FIX_REVIEW_REASON): never bulk- or auto-published,
+# and never cleared by the boot re-check of stale flags.
+CONFIRMED_FIX_DAYS = 180
+CONFIRMED_FIX_MAX = 3
+CONFIRMED_FIX_KINDS = ("diag_review", "top_issue")
+# Read after "This reply …" / "Read this reply before you post it: it …".
+FIX_REVIEW_REASON = "mentions a change you marked done in Cavnar AI"
+_FIX_STOPWORDS = {"with", "from", "that", "this", "your", "their", "have", "more", "into", "each", "every", "when",
+                  "night", "nights", "days", "week", "weeks", "about", "them", "they", "will", "make", "sure", "team"}
+
+
+def _principal_answer(role, meta) -> bool:
+    """An answer the account holder gave: a principal role (TEAM_INVITE), and
+    nothing on it saying an admin or a view-as session gave it (the
+    authority / via the answer records — memory audit M1)."""
+    m = meta if isinstance(meta, dict) else {}
+    if str(m.get("authority") or "").lower() in ("admin", "delegate") or str(m.get("via") or "") == "view_as":
+        return False
+    if str(m.get("authority") or "").lower() == "principal":
+        return True
+    try:
+        from permissions import TEAM_INVITE, has_permission
+        return bool(role) and has_permission({"role": role}, TEAM_INVITE)
+    except Exception:
+        return False
+
+
+def confirmed_fixes(restaurant_id, categories, db_path=None) -> list:
+    """The owner's confirmed changes on these complaint categories, newest
+    first: [{"text", "category", "date", "key"}]. Never raises."""
+    cats = [str(c).strip() for c in (categories or ()) if str(c or "").strip()]
+    if not restaurant_id or not cats:
+        return []
+    import json as _json
+    keys = [f"{k}:{c}" for c in cats for k in CONFIRMED_FIX_KINDS]
+    try:
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            marks = ",".join("?" for _ in keys)
+            rows = conn.execute(
+                f"SELECT i.key, i.title, e.event, e.role, e.meta, e.at FROM rec_instances i "
+                f"JOIN rec_events e ON e.rec_id = i.rec_id "
+                f"WHERE i.restaurant_id=? AND i.key IN ({marks}) AND e.event IN ('completed', 'implemented') "
+                f"AND e.at >= datetime('now', ?) ORDER BY e.at DESC, e.id DESC",
+                (restaurant_id, *keys, f"-{int(CONFIRMED_FIX_DAYS)} days")).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    out, seen = [], set()
+    for r in rows:
+        try:
+            meta = _json.loads(r["meta"] or "{}")
+        except Exception:
+            meta = {}
+        text = " ".join(str(r["title"] or "").split())
+        if not text or not _principal_answer(r["role"], meta):
+            continue
+        if text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        out.append({"text": text[:200], "category": str(r["key"]).split(":", 1)[1], "date": r["at"],
+                    "key": r["key"]})
+        if len(out) >= CONFIRMED_FIX_MAX:
+            break
+    return out
+
+
+def confirmed_fixes_block(fixes) -> str:
+    """The prompt block offering the owner's confirmed changes, or ""."""
+    if not fixes:
+        return ""
+    from time_utils import mdy
+    lines = "\n".join(f"- confirmed {mdy(f['date'])}, about {f['category'].replace('_', ' ')}: "
+                      f"{wrap_untrusted(f['text'])}" for f in fixes)
+    return ("\nOWNER-CONFIRMED CHANGES — the owner marked these done in Cavnar AI, on what this guest complained "
+            "about. You MAY acknowledge ONE in plain words, only if it directly answers this guest's complaint; "
+            "add no detail, date or promise it does not state. If none fits, do not mention them:\n" + lines + "\n")
+
+
+def _significant(text):
+    return {w for w in re.findall(r"[a-z']+", str(text or "").lower()) if len(w) >= 4 and w not in _FIX_STOPWORDS}
+
+
+def uses_confirmed_fix(draft, fixes) -> bool:
+    """Whether a draft draws on an owner-confirmed change: it states an
+    action (ai_guard.unsupported_commitments) or shares two or more of a
+    change's significant words (half of them, for a short one). Errs toward
+    True — the cost is a reply the owner reads before it goes out."""
+    if not fixes or not (draft or "").strip():
+        return False
+    try:
+        from ai_guard import unsupported_commitments
+        if unsupported_commitments(draft):
+            return True
+    except Exception:
+        return True
+    said = _significant(draft)
+    for f in fixes:
+        words = _significant(f.get("text"))
+        hit = len(words & said)
+        if words and (hit >= 2 or hit * 2 >= len(words)):
+            return True
+    return False
 
 
 # Tone presets are gone. They were "Account -> Profile -> How the AI writes
@@ -373,6 +493,10 @@ def recheck_draft_flags(db_path=None) -> int:
         conn.close()
     cleared, restaurants = 0, {}
     for r in rows:
+        if r["draft_review_reason"] == FIX_REVIEW_REASON:
+            # A draft that draws on a change the owner marked done is held
+            # for them whatever today's rules say (drafter_fixes).
+            continue
         rid = r["restaurant_id"]
         if rid not in restaurants:
             restaurants[rid] = models.get_restaurant(rid, db_path) if db_path else models.get_restaurant(rid)
@@ -496,8 +620,15 @@ def draft_response(review_id: int, rating: int, text: str,
     edit_note = get_owner_edit_note(restaurant_id, rating=rating) if restaurant_id else ""
     memory_note = _memory_block(restaurant_id, categories) if restaurant_id else ""
 
+    # The owner's confirmed changes on this review's complaint categories
+    # (memory audit 9/29/26, drafter_fixes) — a draft that uses one is held.
+    fixes = (confirmed_fixes(restaurant_id, categories)
+             if (restaurant_id and sentiment in ("negative", "neutral") and categories) else [])
+    fix_note = confirmed_fixes_block(fixes)
+
     # Recurring negative themes
-    theme_note = get_recurring_themes(restaurant_id) if (restaurant_id and sentiment == "negative") else ""
+    theme_note = (get_recurring_themes(restaurant_id, confirmed=bool(fixes))
+                  if (restaurant_id and sentiment == "negative") else "")
 
     # Never say
     opener_ban = "\nNever open with 'Thank you for your review', 'Thank you for your feedback', or any variation — start with something specific to what they actually said."
@@ -524,10 +655,10 @@ Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
-Length: {length_note}{never_note}{style_block}{template_block}{edit_note}{theme_note}{health_note}{memory_note}
+Length: {length_note}{never_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
-FACTS: State only what the restaurant has told you above (Voice). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"), never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
+FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
 
 Review ({rating}/5 stars, {sentiment}):
 {wrap_untrusted(text)}
@@ -589,6 +720,18 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
                                   reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
                                   restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
+    if fixes and uses_confirmed_fix(draft, fixes):
+        # Drawing on a change the owner marked done: always read before it
+        # goes out, never bulk- or auto-published (drafter_fixes). A refusal
+        # for anything but the stated change keeps its own reason; one that
+        # is only the change (a "commitment" the owner did confirm) says so.
+        refused = [f for f in (getattr(getattr(checked, "verdict", None), "findings", None) or [])
+                   if f.get("severity") == "refuse"]
+        if not reason:
+            draft = checked or draft          # the engine's text, as a clean draft stores it
+            reason = FIX_REVIEW_REASON
+        elif all(f.get("detail") == _COMMITMENT_DETAIL for f in refused):
+            reason = FIX_REVIEW_REASON
     if reason:
         # Kept as the model wrote it (the engine's text is "" on a refusal),
         # carrying the refusal verdict for the caller.
