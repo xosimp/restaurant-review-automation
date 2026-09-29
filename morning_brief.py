@@ -260,6 +260,56 @@ def _dsr_yesterday_line(night):
             "source": "dsr", "dsr_date": night["date"]}
 
 
+def _holiday_today(day):
+    """The dining holiday on `day` from the calendar, or None."""
+    try:
+        from marketing import get_upcoming_holidays
+        stamp = day.strftime("(%b %d)")
+        upcoming = get_upcoming_holidays(datetime.combine(day, datetime.min.time())) or ""
+        todays = [h.replace(stamp, "").strip() for h in upcoming.split(", ") if stamp in h]
+        return todays[0].split(" — ")[0] if todays else None
+    except Exception:
+        return None
+
+
+def _carry_today_line(carry, today, show_forecast=True):
+    """The "today" line from last night's report (dsr.memory.morning_carry):
+    the report's own forecast for today — with the measured effects it
+    applied and its confidence % — its Tomorrow items (time off, rain or
+    heat, events and reservations, critically low stock) and what it
+    predicted, as stored. None when the report said nothing about today."""
+    fc = carry.get("forecast") if show_forecast else None
+    conf = carry.get("confidence") if show_forecast else None
+    items = [i["text"] for i in carry.get("items") or []][:4]
+    if not fc and not items:
+        return None
+    text = "Today, from last night's report"
+    if fc and fc.get("typical") is not None:
+        text += f": about {_money(fc['typical'])}"
+        if fc.get("low") is not None and fc.get("high") is not None:
+            text += f" ({_money(fc['low'])}–{_money(fc['high'])})"
+        effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        if effects:
+            text += ", with " + ", ".join(
+                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+        if conf and conf.get("pct") is not None:
+            text += f"; its range has held {conf['pct']}% of the time"
+    if items:
+        text += (". " if fc else ": ") + " · ".join(items)
+    hol = _holiday_today(today)
+    if hol:
+        text += f" · {hol}"
+    text += "."
+    if carry.get("provisional"):
+        text += " From a provisional report."
+    preds = [p["text"] for p in carry.get("predictions") or []] if show_forecast else []
+    return {"key": "today", "tone": "neutral", "source": "dsr", "dsr_date": carry.get("report_date"),
+            "forecast": bool(fc), "claim_kind": "forecast" if fc else None, "outside": bool(items or hol),
+            "confidence_pct": (conf or {}).get("pct"), "predictions": preds,
+            "text": text, "ask": "What should I focus on before service today?"}
+
+
 def _prime_stamp(pp, health):
     """" (sales through 9/23/26; labor share from 9/1/26 to 9/14/26)" — what
     the prime-cost run rate rests on, dated (#12, DH1-3). Where the nightly
@@ -323,6 +373,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         # why (#12).
         held.append("yesterday")
         y = None
+    # ── what last night's report said about today ── (memory audit 9/29/26,
+    # dsr_to_brief): its unanswered priorities under the report's own
+    # dsr_action keys (an answer anywhere silences them), and — below, in
+    # the "today" line — its forecast, confidence, Tomorrow items and
+    # predictions, instead of recomputing today without them. Only for the
+    # date the report named.
+    carry = (_safe(dsr_memory.morning_carry, restaurant_id, today, viewer, db_path)
+             if getattr(restaurant, "dsr_enabled", 1) else None)
+    for a in ((carry or {}).get("actions") or [])[:1]:
+        lines.append({"key": "dsr_action", "tone": "action", "rec": a["key"], "source": "dsr",
+                      "dsr_date": carry.get("report_date"), "claim_kind": "inferred",
+                      "text": f"From last night's report: {a['text'].rstrip('.')}.",
+                      "why": a.get("why"),
+                      "ask": f"Walk me through this from last night's report: {a['text']}"})
     if y and y.get("available"):
         # "Typical" rests on this restaurant's own same-weekday median, and
         # how many nights it is said (NS4 L5: three samples, unshown).
@@ -565,7 +629,11 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             lines.append(line)
 
     # ── today ──
-    fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
+    carried = _carry_today_line(carry, today, show_forecast="labor" not in denied) if carry else None
+    if carried:
+        lines.append(carried)
+    fc = (_safe(demand.forecast_day, restaurant_id, today, db_path=db_path)
+          if "labor" not in denied and not carried else None)
     # `outside` marks a line carrying the weather or the calendar — public
     # facts, not the restaurant's own data — so the email's footer does not
     # claim they were measured (_email_html).
@@ -583,7 +651,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
                                f"({rng})" + context + "."),
                       "ask": "What should I focus on before service today?"})
-    elif restaurant is not None:
+    elif restaurant is not None and not carried:
         # No forecast yet, but the weather and the calendar are still worth
         # knowing — and they are the only "today" the first weeks have.
         context = _day_context(restaurant, today)
@@ -821,7 +889,8 @@ def shown_on_home(line) -> bool:
     key = (line or {}).get("key")
     if key in HOME_SKIPS:
         return False
-    return not (key == "yesterday" and (line or {}).get("source") == "dsr")
+    # The report's own priorities are on Home's Last night card already.
+    return not (key in ("yesterday", "dsr_action") and (line or {}).get("source") == "dsr")
 
 
 def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict:
@@ -841,7 +910,7 @@ def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict
 
 # The slow night is Marketing's (one owner — outcomes.KIND_MODULE, the feed).
 _LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "marketing",
-                "money": "home", "fix_first": "home", "loss": "ops"}
+                "money": "home", "fix_first": "home", "loss": "ops", "dsr_action": "ops"}
 
 
 _UNLOCK = {
@@ -1045,7 +1114,8 @@ def _ask_url(prompt, rec=None, rid=None):
 _NOT_MEASURED = {"forecast": "a projection", "opportunity": "an estimate", "computed": "an estimate",
                  "estimate": "an estimate", "inferred": "an inference"}
 _FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost projection",
-                 "money": "the dollar opportunity", "fix_first": "the one thing"}
+                 "money": "the dollar opportunity", "fix_first": "the one thing",
+                 "dsr_action": "last night's report's priority"}
 
 
 def footer_source(lines, data_as_of=None, stale=None) -> str:
