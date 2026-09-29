@@ -149,7 +149,9 @@ def test_the_group_owner_can_turn_a_sibling_locations_brief_off():
     owner = _user(a, "erik", "owner")
     auth.set_morning_brief_pref(b, owner, False)
     import morning_brief
-    assert owner not in {u["id"] for u in morning_brief.recipients(b)}
+    # morning_brief binds DB_PATH at import (a default argument), so a test passes the
+    # database it patched, as every other caller in the suite does.
+    assert owner not in {u["id"] for u in morning_brief.recipients(b, db_path=models.DB_PATH)}
     stranger_rid = create_restaurant(Restaurant(name="Other", owner_email="other@x.test"))
     stranger = _user(stranger_rid, "sam", "owner")
     with pytest.raises(auth.TeamAccessError):
