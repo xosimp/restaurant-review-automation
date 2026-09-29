@@ -409,6 +409,9 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
     except ValueError:
         data = None
     if not isinstance(data, dict):
+        # Billed, and useless: the ledger says so (fix round G, #52).
+        from ai_utils import mark_outcome
+        mark_outcome(message, "unparseable", reason="newsletter copy was not JSON")
         raise ValueError("newsletter copy was unreadable")
     fields = {k: str(data.get(k) or "").strip() for k in _NEWSLETTER_KEYS}
     for k in ("subject", "preheader", "headline", "button"):
@@ -417,6 +420,8 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
     fields["headline"], fields["button"] = fields["headline"][:120], fields["button"][:40]
     fields["body"] = re.sub(r"\n{3,}", "\n\n", fields["body"].replace("\r", "")).strip()[:1500]
     if not (fields["subject"] and fields["body"]):
+        from ai_utils import mark_outcome
+        mark_outcome(message, "unparseable", reason="newsletter copy had no subject or body")
         raise ValueError("newsletter copy was unreadable")
 
     offer_source = f"{topic} {goal} {p.get('menu_notes') or ''}"

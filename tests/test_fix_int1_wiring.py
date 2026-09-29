@@ -207,3 +207,122 @@ def test_a_page_by_text_is_not_held_up_by_a_locked_database(db, monkeypatch):
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
     assert notify.send_sms("+15125550124", "Cavnar AI: still paging", use_case="alert") is True
 
+
+# ── a billed reply that could not be used is re-filed 'unparseable' (G #52) ──
+# The sites G listed for the files outside its ownership: each marks the
+# message create_with_retry returned before it raises, so the ledger's
+# outcome is the reply's, not "ok".
+
+class _Msg:
+    stop_reason = "end_turn"
+
+    def __init__(self, text, call_id):
+        import types
+        self.content = [types.SimpleNamespace(type="text", text=text)]
+        self._cavnar_call_id = call_id
+
+
+_PROFILE = {"name": "Mark Grill", "vibe": "bistro", "neighborhood": "Oak Park", "voice": "warm",
+            "known_for": "burgers"}
+
+
+@pytest.fixture
+def marks(monkeypatch):
+    got = []
+    monkeypatch.setattr(ai_utils, "mark_outcome",
+                        lambda m, outcome, reason=None, db_path=None: got.append(
+                            (m if isinstance(m, str) else m._cavnar_call_id, outcome, reason)) or True)
+    return got
+
+
+@pytest.mark.parametrize("reply,reason", [
+    ("Sorry, I can't write that one.", "newsletter copy was not JSON"),
+    ('{"subject": "", "body": ""}', "newsletter copy had no subject or body"),
+])
+def test_an_unreadable_newsletter_draft_is_marked(monkeypatch, marks, reply, reason):
+    import types
+    import guest_email
+    import marketing
+    monkeypatch.setattr(marketing, "get_profile_for_restaurant", lambda rid=None: dict(_PROFILE))
+    monkeypatch.setattr(guest_email, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(guest_email, "create_with_retry", lambda *a, **k: _Msg(reply, "c-news"))
+    with pytest.raises(ValueError, match="newsletter copy was unreadable"):
+        guest_email.draft_newsletter(types.SimpleNamespace(id=9, name="Mark Grill"), goal="Fill Thursday")
+    assert marks == [("c-news", "unparseable", reason)]
+
+
+def test_an_empty_campaign_draft_is_marked_and_not_handed_back(monkeypatch, marks):
+    import types
+    import guest_marketing
+    import marketing
+    monkeypatch.setattr(marketing, "get_profile_for_restaurant", lambda rid=None: dict(_PROFILE))
+    monkeypatch.setattr(guest_marketing, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(guest_marketing, "create_with_retry", lambda *a, **k: _Msg("   ", "c-sms"))
+    with pytest.raises(ValueError, match="came back empty"):
+        guest_marketing.draft_campaign_message(types.SimpleNamespace(id=9, name="Mark Grill"))
+    assert marks == [("c-sms", "unparseable", "empty campaign copy")]
+
+
+def test_an_unreadable_calendar_week_is_marked(marks):
+    import marketing
+    with pytest.raises(ValueError):
+        marketing._calendar_ideas("I'd rather not plan this week.", message=_Msg("", "c-week"))
+    assert marks == [("c-week", "unparseable", "no usable JSON")]
+    # A week that reads is not marked.
+    assert marketing._calendar_ideas('[{"day": "Monday", "idea": "x"}]', message=_Msg("", "c-ok")) is not None
+    assert len(marks) == 1
+
+
+def test_an_unreadable_invoice_and_recipe_card_are_marked(monkeypatch, marks):
+    import inventory_ledger
+    import invoices
+    import recipes
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: _Msg("not json", "c-ocr"))
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda *a, **k: [])
+    with pytest.raises(invoices.InvoiceError):
+        invoices.extract(9, b"\x89PNG....", "image/png", client=object())
+    with pytest.raises(recipes.RecipePhotoError):
+        recipes.extract_from_image(9, b"\x89PNG....", "image/png", client=object())
+    assert marks == [("c-ocr", "unparseable", "invoice extraction was not JSON"),
+                     ("c-ocr", "unparseable", "recipe card read was not JSON")]
+
+
+def test_an_unreadable_recipe_draft_is_marked_and_skipped(db, monkeypatch, marks):
+    import types
+    import inventory_ledger
+    import recipes
+    monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: types.SimpleNamespace(
+        id=rid, module_inventory=1, menu_notes=""))
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda *a, **k: [
+        {"name": "Beef", "unit": "lb"}, {"name": "Bun", "unit": "each"}, {"name": "Cheese", "unit": "oz"}])
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: _Msg("no recipe here", "c-draft"))
+    out = recipes.draft_missing(9, client=object(), db_path=db, items=[{"id": 1, "name": "Burger"}])
+    assert out["drafted"] == 0 and out["skipped"] == 1
+    assert marks == [("c-draft", "unparseable", "recipe draft was not JSON")]
+
+
+def test_an_unreadable_notes_read_marks_the_contexts_last_call(monkeypatch, marks):
+    import contextvars
+    import time as _time
+    import sales_audit_notes_ai as notes_ai
+    monkeypatch.setattr(notes_ai, "collect_notes", lambda audit: [
+        {"section": "labor", "source": "audit", "text": "GM works the floor.", "in_report": False}])
+    monkeypatch.setattr(notes_ai, "notes_fingerprint", lambda audit: "fp")
+    monkeypatch.setattr(notes_ai, "_prompt", lambda *a: "prompt")
+
+    def reader(action):
+        def call(prompt):
+            ai_utils._LAST_CALL.set({"call_id": "c-notes", "restaurant_id": None, "action": action,
+                                     "at": _time.time()})
+            return "I could not read these notes."
+        return call
+
+    def read(action):
+        monkeypatch.setattr(notes_ai, "_call_claude", reader(action))
+        with pytest.raises(ValueError):
+            notes_ai.read_notes({"answers": {}}, {})
+    contextvars.copy_context().run(read, "audit_notes_read")
+    assert marks == [("c-notes", "unparseable", "the notes reader returned no JSON")]
+    # Another call's id is never marked for this one.
+    contextvars.copy_context().run(read, "guest_campaign_draft")
+    assert len(marks) == 1

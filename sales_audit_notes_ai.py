@@ -341,7 +341,16 @@ def read_notes(audit, results):
     if not notes:
         return {"fingerprint": fp, "read_at": now, "model": None, "insights": [], "suggestions": [], "caveats": [], "notes_seen": 0}
     raw = _call_claude(_prompt(audit, results, notes))
-    parsed = _parse(raw)
+    try:
+        parsed = _parse(raw)
+    except ValueError:
+        # Billed, and useless: the ledger says so (fix round G, #52). The
+        # call is this context's last (ai_utils.last_call_id).
+        from ai_utils import last_call_id, mark_outcome
+        cid = last_call_id(action="audit_notes_read")
+        if cid:
+            mark_outcome(cid, "unparseable", reason="the notes reader returned no JSON")
+        raise
     insights, suggestions, caveats = _sanitize(parsed, notes, audit.get("answers") or {})
     return {"fingerprint": fp, "read_at": now, "model": MODEL, "insights": insights, "suggestions": suggestions,
             "caveats": caveats, "notes_seen": len(notes)}

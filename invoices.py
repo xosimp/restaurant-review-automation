@@ -153,6 +153,9 @@ def extract(restaurant_id, data, media_type, client=None):
     try:
         out = json.loads(text)
     except ValueError:
+        # Billed, and useless: the ledger says so (fix round G, #52).
+        from ai_utils import mark_outcome
+        mark_outcome(msg, "unparseable", reason="invoice extraction was not JSON")
         raise InvoiceError("The invoice couldn't be read. Try a clearer photo.")
     if not out.get("lines"):
         raise InvoiceError("No product lines were found on that invoice.")

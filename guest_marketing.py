@@ -1764,6 +1764,11 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     text = extract_text(message).strip()
     if getattr(message, "stop_reason", None) == "max_tokens":
         raise ValueError("campaign copy was truncated")
+    if not text:
+        # Billed, and nothing to send: the ledger says so (fix round G, #52).
+        from ai_utils import mark_outcome
+        mark_outcome(message, "unparseable", reason="empty campaign copy")
+        raise ValueError("campaign copy came back empty")
     # This goes out as an SMS to real guests. A link, a phone number or an
     # offer the restaurant never agreed to is not something to send unread.
     # The comment above promised an offer the restaurant never agreed to is
