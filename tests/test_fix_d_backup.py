@@ -166,8 +166,20 @@ def test_every_credential_looking_column_is_scrubbed_or_kept_on_purpose(tmp_path
                  ("restaurants", "rpower_token"), ("restaurants", "reservation_api_key"),
                  ("webhooks", "secret")):
         assert must in null, must
-    for t in ("staff_portal_tokens", "app_secrets", "sessions", "login_reports"):
+    for t in ("staff_portal_tokens", "app_secrets", "sessions", "login_reports", "user_backup_codes"):
         assert t in offsite_backup.SCRUB_TABLES
+    # The encrypted share link goes; its hash and four-character hint stay.
+    assert ("sales_audit_shares", "token_enc") in null
+    assert ("sales_audit_shares", "token_hint") not in null and ("sales_audit_shares", "token") not in null
+    # Every column the platform's credential registry names is blanked
+    # unless it is kept on purpose (credentials.credential_columns, #102).
+    conn = sqlite3.connect(path)
+    try:
+        registry = credentials.credential_columns(conn)
+    finally:
+        conn.close()
+    assert all(k in null or k in offsite_backup.KEEP_COLUMNS or k[0] in offsite_backup.SCRUB_TABLES
+               for k in registry)
 
 
 def test_the_keep_list_names_real_columns_with_a_reason(tmp_path):
@@ -332,6 +344,9 @@ def test_email_is_the_second_path_when_object_storage_fails(live, monkeypatch):
     out = scheduler.backup_db()
     assert out["offsite"] == ["email"] and out["failed"] == 1
     assert mailed and "stripped" in mailed[0]["html"]
+    # It names what this run took out, not a fixed sentence (#102).
+    html = mailed[0]["html"]
+    assert "Emptied" in html and "restaurants.gmb_refresh_token" in html and "Kept on purpose" in html
     run = _runs(live["path"])[-1]
     assert run["offsite_ok"] == 1 and "object storage" in (run["offsite_error"] or "")
 

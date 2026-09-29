@@ -1917,9 +1917,27 @@ def _now_utc_stamp():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _email_offsite(enc_path, enc_name, timestamp, size_kb):
+def _scrub_lines_html(scrubbed):
+    """The backup email's account of what left the copy — from what
+    offsite_backup.redact actually did (offsite_backup.describe_scrub), not
+    a fixed sentence (#102)."""
+    import offsite_backup
+    b = _emails.BRAND
+    d = offsite_backup.describe_scrub(scrubbed)
+    esc = lambda items: _html.escape(", ".join(items)) if items else "none"  # noqa: E731
+    lines = [f"<b>Emptied</b> ({len(d['emptied'])} tables): {esc(d['emptied'])}.",
+             f"<b>Blanked</b> ({len(d['blanked'])} credential columns): {esc(d['blanked'])}."]
+    if d["precaution"]:
+        lines.append(f"<b>Also blanked, not yet classified</b>: {esc(d['precaution'])} — add each to "
+                     "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
+    lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
+    return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
+
+
+def _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=None):
     """The encrypted email copy (the second off-site path). Returns None on
-    success, or why it did not go."""
+    success, or why it did not go. `scrubbed` is what redact() took out of
+    the copy; the email says exactly that."""
     if not _resend_key():
         return "RESEND_API_KEY is not set"
     enc_bytes = os.path.getsize(enc_path)
@@ -1940,9 +1958,10 @@ def _email_offsite(enc_path, enc_name, timestamp, size_kb):
     <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">File</td><td>{_html.escape(enc_name)}</td></tr>
     <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">Size</td><td>{size_kb} KB</td></tr>
   </table>
-  <p style="font-size:12px;color:{b['muted']};margin-top:16px">
-    Sessions, device tokens, staff-portal links and every API credential and secret are stripped from
-    this copy. Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db (docs/ops/RECOVERY.md).
+  <p style="font-size:12px;color:{b['muted']};margin:16px 0 6px">What was stripped from this copy:</p>
+  {_scrub_lines_html(scrubbed)}
+  <p style="font-size:12px;color:{b['muted']};margin-top:10px">
+    Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db (docs/ops/RECOVERY.md).
   </p>"""),
         "attachments": [{"filename": enc_name, "content": _base64_file(enc_path)}],
     })
@@ -2060,6 +2079,8 @@ def backup_db():
         _shutil.copy2(local_path, redacted_path)
         scrubbed = _redact_snapshot(redacted_path) or {}
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
+        run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
+        run["_detail"]["scrubbed_columns"] = len(scrubbed.get("columns") or [])
         _encrypt_file_chunked(redacted_path, enc_path, key)
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
@@ -2077,7 +2098,7 @@ def backup_db():
                 log.error(f"backup_db: object-storage copy failed: {e}")
                 _ops.capture(e, job="backup_db", context="s3")
         if cfg.get("email"):
-            why = _email_offsite(enc_path, enc_name, timestamp, size_kb)
+            why = _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=scrubbed)
             if why is None:
                 targets.append("email")
                 log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB)")
