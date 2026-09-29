@@ -1046,6 +1046,24 @@ def _live_state(conn, restaurant_id, rec_key):
     return f"{word} ({_mdy(ev['at'])})"
 
 
+def answer_state(restaurant_id, key, db_path=None):
+    """What a recommendation's latest episode got, in words with its date
+    ("answered Done (9/4/26)", "not answered yet", "the change was made
+    (9/5/26)"), or None when it was never shown. Never raises."""
+    if not restaurant_id or not key:
+        return None
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return None
+    try:
+        return _live_state(conn, restaurant_id, key)
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
 def _interim(restaurant_id, row, db_path=None):
     """"so far" reading of an open claim's number: the days since the read
     against the same number of days before, or None under INTERIM_MIN_DAYS."""
