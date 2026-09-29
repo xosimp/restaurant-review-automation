@@ -511,7 +511,10 @@ def cap_answer_silences(conn) -> int:
             "(SELECT e.meta FROM rec_events e WHERE e.rec_id=i.rec_id AND e.event IN ('completed','dismissed') "
             " ORDER BY e.at DESC, e.id DESC LIMIT 1) AS meta "
             "FROM rec_instances i WHERE i.silenced_until IS NOT NULL AND i.status IN ('completed','dismissed') "
-            "AND i.silenced_until > datetime(COALESCE(i.closed_at, i.last_event_at), '+60 days')").fetchall()
+            # Only what no rule holds today (past the longest, a year): the
+            # boot pass touches the old ten-year answers once, then nothing.
+            "AND i.silenced_until > datetime(COALESCE(i.closed_at, i.last_event_at), ?)",
+            (f"+{max(DECLINE_DAYS, DONE_DAYS) + 1} days",)).fetchall()
     except Exception as e:
         print(f"[rec_ledger] silence cap skipped: {e}")
         rows = []
@@ -533,7 +536,8 @@ def cap_answer_silences(conn) -> int:
     try:
         for hr in conn.execute("SELECT restaurant_id, key, kind, dismissed_at, expires_at FROM home_dismissals "
                                "WHERE kind IN ('done','not_for_us') "
-                               "AND expires_at > datetime(dismissed_at, '+60 days')").fetchall():
+                               "AND expires_at > datetime(dismissed_at, ?)",
+                               (f"+{max(DECLINE_DAYS, DONE_DAYS) + 1} days",)).fetchall():
             event = "completed" if hr["kind"] == "done" else "dismissed"
             days, _rule = answer_silence(hr["key"], event, kind="not_for_us" if hr["kind"] == "not_for_us" else None)
             if not days:

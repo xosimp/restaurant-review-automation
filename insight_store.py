@@ -308,10 +308,11 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
         answered_sigs = {}
     if answered_sigs:
         keep = []
+        subjects = known_subjects(restaurant_id, db_path=db_path)
         for it in items:
             sig = it.get("advice_signature")
             if sig is None:
-                sig = advice_signature(it["key"], it.get("title") or it.get("text"))
+                sig = advice_signature(it["key"], it.get("title") or it.get("text"), subjects=subjects)
             if sig and sig in answered_sigs and it["key"] not in answered_sigs[sig]["keys"] \
                     and not str(it["key"]).startswith(("stock_low:", "critical_low:")):
                 continue
