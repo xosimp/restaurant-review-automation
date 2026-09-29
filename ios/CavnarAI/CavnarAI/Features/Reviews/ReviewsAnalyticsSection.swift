@@ -389,7 +389,7 @@ struct ReviewsAnalyticsSection: View {
 
             HomeMixedText.make("\(d.category.replacingOccurrences(of: "_", with: " ")) · \(d.mentionCount) negative reviews over \(d.windowDays) days"
                  + (d.asOf.map { " · read \($0)" } ?? "")
-                 + ((d.stale ?? false) && d.staleNote == nil ? " · older read" : ""),
+                 + (((d.stale ?? false) || d.isOlderRead) && d.staleNote == nil ? " · older read" : ""),
                                size: 12, weight: 400, color: .cavnarInk3)
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
@@ -407,6 +407,13 @@ struct ReviewsAnalyticsSection: View {
             // refreshed — the same caveat the insight above uses.
             if let note = d.staleNote, !note.isEmpty {
                 CavnarCaveat(title: "Older read", detail: note)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            } else if d.isOlderRead {
+                // Too old to lean on (memory round): kept for its evidence,
+                // never answered as a live recommendation.
+                CavnarCaveat(title: "Older read",
+                             detail: "Past its refresh \u{2014} kept for the reviews it rests on, not as a live recommendation.")
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             }
@@ -432,8 +439,10 @@ struct ReviewsAnalyticsSection: View {
                 // card keeps its evidence and drops the action.
                 if let action = d.recommendedAction, d.answered != true {
                     VStack(alignment: .leading, spacing: 6) {
-                        diagnosisRow("Do this", action)
-                        if let key = d.recKey {
+                        // An older read's action is what it suggested then,
+                        // with no answer controls (controls_withheld).
+                        diagnosisRow(d.isOlderRead ? "It suggested then" : "Do this", action, quiet: d.isOlderRead)
+                        if d.showsControls, let key = d.recKey {
                             RecAnswerRow(key: key, surface: "reviews")
                         }
                     }

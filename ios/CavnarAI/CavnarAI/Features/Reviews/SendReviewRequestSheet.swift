@@ -14,9 +14,20 @@ private final class SendReviewRequestViewModel {
     struct Stats: Decodable, Equatable {
         let totalSent: Int
         let sentThisMonth: Int
+        /// How many guests asked left a review within the window (memory
+        /// round, 9/29/26: requests are matched to the reviews they
+        /// brought). `pct` is nil below its floor — shown as "—".
+        var conversion: RequestConversion? = nil
         enum CodingKeys: String, CodingKey {
+            case conversion
             case totalSent = "total_sent"
             case sentThisMonth = "sent_this_month"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            totalSent = (try? c.decode(Int.self, forKey: .totalSent)) ?? 0
+            sentThisMonth = (try? c.decode(Int.self, forKey: .sentThisMonth)) ?? 0
+            conversion = (try? c.decodeIfPresent(RequestConversion.self, forKey: .conversion)) ?? nil
         }
     }
 
@@ -144,6 +155,12 @@ struct SendReviewRequestSheet: View {
                     if let stats = viewModel.stats {
                         HomeMixedText.make("Sent this month: \(stats.sentThisMonth) · All time: \(stats.totalSent)",
                                            size: 14, color: .cavnarInk3)
+                        // "3 of 10 guests you asked left a review within 14
+                        // days (30%)" — matched request to review.
+                        if let conversion = stats.conversion, conversion.asked > 0 {
+                            HomeMixedText.make(conversion.line, size: 14, weight: 600, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
 
                     if let error = viewModel.errorMessage {
