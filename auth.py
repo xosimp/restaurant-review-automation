@@ -555,6 +555,13 @@ def init_auth(db_path: str = DB_PATH):
             print(f"[auth] PIN PEPPER WARNING: {health['message']}")
     except Exception:
         pass
+    # memberships is name-keyed (people.NAME_STORES) but created here, after
+    # init_db's init_people ran: give it its person_id on the first boot too.
+    try:
+        import people as _people_cols
+        _people_cols.ensure_person_id_columns(db_path)
+    except Exception as e:
+        print(f"[auth] person_id columns not added: {e}")
 
 
 def normalize_session_rows(db_path: str = DB_PATH) -> dict:

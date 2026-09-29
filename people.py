@@ -738,16 +738,34 @@ def init_people(db_path=None):
                 except Exception as e:
                     if "duplicate column" not in str(e).lower():
                         raise
-        have = _tables(conn)
-        for store in NAME_STORES:
-            if store.get("no_person_id") or store["table"] not in have:
-                continue
-            if "person_id" not in _cols(conn, store["table"]):
-                try:
-                    conn.execute(f"ALTER TABLE {store['table']} ADD COLUMN person_id INTEGER")
-                except Exception as e:
-                    if "duplicate column" not in str(e).lower():
-                        raise
+        _add_person_id_columns(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _add_person_id_columns(conn):
+    """A person_id on every name-keyed store that exists yet."""
+    have = _tables(conn)
+    for store in NAME_STORES:
+        if store.get("no_person_id") or store["table"] not in have:
+            continue
+        if "person_id" not in _cols(conn, store["table"]):
+            try:
+                conn.execute(f"ALTER TABLE {store['table']} ADD COLUMN person_id INTEGER")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+
+
+def ensure_person_id_columns(db_path=None):
+    """For stores created after init_db (auth's `memberships`, made by
+    init_auth, which boots after init_db): on a fresh database init_people
+    ran before the table existed, so its person_id arrived only on the
+    second boot. init_auth calls this at its end."""
+    conn = _conn(db_path)
+    try:
+        _add_person_id_columns(conn)
         conn.commit()
     finally:
         conn.close()

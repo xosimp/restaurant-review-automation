@@ -4564,6 +4564,13 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
                 if n:
                     deleted[t] = n
+        # preferences keys its scope by text, not restaurant_id: a location's
+        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
+        if "preferences" in tables:
+            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
+                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
+            if n:
+                deleted["preferences"] = n
         n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
         if n:
             deleted["restaurants"] = n

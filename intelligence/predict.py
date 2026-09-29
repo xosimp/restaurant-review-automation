@@ -280,7 +280,10 @@ def _taken(conn, rids, rec_kind, metric, tags, since):
         (rec_kind, metric, since, *rids)).fetchall()
     # A neighbour's demo era teaches nothing (INT #20: jobs.before_learning).
     from .jobs import before_learning, learning_since_by_id
-    learning_since = learning_since_by_id()
+    # The same database the rows came from (a bare call read the module's
+    # default path, so a test or a restore read the wrong file).
+    _db = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), None)
+    learning_since = learning_since_by_id(_db) if _db else learning_since_by_id()
     out = []
     for r in rows:
         if before_learning(r["restaurant_id"], r["event_at"], learning_since):

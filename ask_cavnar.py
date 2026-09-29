@@ -600,6 +600,13 @@ def _memory_context(restaurant_id, viewer=None):
     """
     import memory_context
     user = getattr(viewer, "_ask_dsr_user", None) if viewer is not None and not isinstance(viewer, dict) else viewer
+    # An unattended run whose answer becomes a shared output (the Monday
+    # weekly plan: its items are issues every console login reads) is
+    # assembled as the team, never as the owner's view it would get from
+    # user=None — owner-only lines must not reach a shared artifact
+    # (memory_context.SHARED_SURFACES; docs wave 9/29/26).
+    if getattr(viewer, "_ask_memory_viewer", None) == "team":
+        user = memory_context.TEAM
     block = memory_context.memory_context(restaurant_id, "ask", viewer=user,
                                           budget_chars=ASK_MEMORY_BUDGET_CHARS)
     if block.empty:
@@ -995,7 +1002,8 @@ def build_context(restaurant):
     # cached copy either.
     _own = (_who or {}).get("id")
     key = (restaurant.id, tuple(sorted(getattr(restaurant, "_ask_denied", ()))),
-           bool(getattr(restaurant, "_ask_sees_loss", False)), _tools.dsr_view_key(restaurant), _own)
+           bool(getattr(restaurant, "_ask_sees_loss", False)), _tools.dsr_view_key(restaurant), _own,
+           getattr(restaurant, "_ask_memory_viewer", None))
     cached = _CONTEXT_CACHE.get(key)
     if cached and (time.time() - cached[0]) < _CONTEXT_TTL_SECONDS:
         return cached[1]
@@ -2128,6 +2136,16 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # only for callers with no login behind them.
     if user is not None:
         restaurant = tools.viewer_restaurant(restaurant, user)
+    # The weekly plan is a shared output (its items become issues every
+    # console login reads), and it runs with no login: its memory is read as
+    # the team's, on a copy so the caller's restaurant is never stamped.
+    if action == "weekly_plan":
+        import dataclasses as _dc
+        _extra = {k: v for k, v in vars(restaurant).items() if k.startswith("_ask_")}
+        restaurant = _dc.replace(restaurant)
+        for _k, _v in _extra.items():
+            setattr(restaurant, _k, _v)
+        restaurant._ask_memory_viewer = "team"
         # The chat this turn is in, for the tools that read past chats (a
         # copy of the restaurant — never the request's memoised one).
         restaurant._ask_conversation_id = conversation_id
