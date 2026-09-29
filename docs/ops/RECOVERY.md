@@ -321,8 +321,8 @@ sqlite3 reviews.db "INSERT OR IGNORE INTO job_period_claims (job_key) VALUES ('w
 Writes fail, reads succeed, and **every fail-open guard in the system keeps
 failing open**. This looks like a hundred unrelated small errors, not one
 cause. `/health` names it directly: `disk_low` below max(250 MB, 4 × the
-database and its WAL), `disk_critical` below max(50 MB, 1.5 ×), and a 500
-`db_not_writable` once a write is refused.
+database and its WAL) or under 10% free, `disk_critical` below max(50 MB,
+1.5 ×) or under 2% free, and a 500 `db_not_writable` once a write is refused.
 
 People already signed in keep reading: a session's `last_active` stamp is
 best-effort and written at most once a minute, so a refused write no longer
