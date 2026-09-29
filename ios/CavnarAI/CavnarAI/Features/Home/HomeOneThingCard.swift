@@ -294,6 +294,18 @@ struct HomeLinkEvidenceSheet: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HomeMixedText.make(link.headline, size: 17, weight: 700, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
+                    // How long it has stood (memory round: link_memory) —
+                    // "Found 3 weeks running, since 9/7/26" — and the
+                    // recurring badge when it keeps coming back.
+                    if let memory = link.memory, let line = memory.line {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            if let badge = memory.badge {
+                                AccountChip(text: badge, tint: .cavnarAmber)
+                            }
+                            HomeMixedText.make(line, size: 13, weight: 600, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     if let modules = link.modules, !modules.isEmpty {
                         HStack(spacing: 8) {
                             EmberThread(axis: .horizontal, length: 34)
