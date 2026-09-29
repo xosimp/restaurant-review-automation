@@ -202,8 +202,8 @@ def test_a_target_says_your_only_when_an_account_holder_set_it(user, setter, lab
     r = models.get_restaurant(rid)
     assert r.labor_target_source == "set"
     assert json.loads(r.target_setters_json) == {"labor_target_pct": setter}
-    t = thresholds.target_for(r, "labor")
-    assert (t["label"], t["phrase"], t["setter"]) == (label, phrase, setter)
+    assert thresholds.target_setter(r, "labor") == setter
+    assert (thresholds.setter_label(r, "labor"), thresholds.setter_phrase(r, "labor", 28.0)) == (label, phrase)
 
 
 def test_a_target_set_before_setters_were_recorded_still_reads_as_yours():
@@ -212,7 +212,9 @@ def test_a_target_set_before_setters_were_recorded_still_reads_as_yours():
     conn.execute("UPDATE restaurants SET labor_target_pct=27, labor_target_source='set' WHERE id=?", (rid,))
     conn.commit()
     conn.close()
-    assert thresholds.target_for(models.get_restaurant(rid), "labor")["label"] == "your target"
+    r = models.get_restaurant(rid)
+    assert thresholds.target_setter(r, "labor") is None
+    assert thresholds.setter_label(r, "labor") == "your target"
 
 
 def test_the_admin_form_that_names_the_source_still_records_the_admin_as_setter():
@@ -222,7 +224,7 @@ def test_the_admin_form_that_names_the_source_still_records_the_admin_as_setter(
         update_restaurant(rid, {"food_cost_target": 29.0, "food_cost_target_source": "set"})
     finally:
         ctx.pop()
-    assert thresholds.target_label(models.get_restaurant(rid), "food") == "the target Cavnar AI set"
+    assert thresholds.setter_label(models.get_restaurant(rid), "food") == "the target Cavnar AI set"
 
 
 def test_the_owners_targets_card_records_the_owner(monkeypatch):
@@ -238,7 +240,7 @@ def test_the_owners_targets_card_records_the_owner(monkeypatch):
     assert code == 200
     r = _log(rid, field="labor_target_pct")[0]
     assert (r["source"], r["actor_user_id"]) == ("owner", 11)
-    assert thresholds.target_label(models.get_restaurant(rid), "labor") == "your target"
+    assert thresholds.setter_label(models.get_restaurant(rid), "labor") == "your target"
 
 
 # ── the history answers "which target applied then?" ─────────────────────────
