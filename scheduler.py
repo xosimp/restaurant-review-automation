@@ -2810,7 +2810,7 @@ def run_food_cost_snapshots():
     log.info(f"Food cost snapshots: {written} written, {skipped} skipped, {failed} failed, "
              f"{c['held']} held for depletion, {scored} forecasts scored")
     return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored,
-            "held": c["held"], "attempted": written + failed, "hit_bound": bool(ran_out)}
+            "held": c["held"], "attempted": written + failed, "ok": written, "hit_bound": bool(ran_out)}
 
 
 DATA_HEALTH_DAILY_CURSOR_KEY = "data_health_daily_cursor"
@@ -2826,7 +2826,7 @@ def run_data_health_daily():
     from models import get_all_restaurants, in_service
     from time_utils import restaurant_now
     rows = {r.id: r for r in get_all_restaurants() if in_service(r)}
-    c = {"attempted": 0, "ok": 0, "failed": 0}
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
 
     def _one(rid):
