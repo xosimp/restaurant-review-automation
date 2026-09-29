@@ -829,6 +829,12 @@ def system_report(db_path=None) -> dict:
     except Exception as e:
         lease = {"error": str(e)[:120]}
     report["lease"] = lease
+    # The last time the operator was paged, and whether it reached him (#27).
+    try:
+        import ops as _ops_alert
+        report["operator_alert"] = _ops_alert.last_operator_alert()
+    except Exception as e:
+        report["operator_alert"] = {"error": str(e)[:120]}
     try:
         report["scheduler"] = _sm.scheduler_state(path)
         report["heartbeat_minutes"] = report["scheduler"].get("beat_age_minutes")

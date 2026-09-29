@@ -3334,7 +3334,14 @@ def ai_ops(days=30):
         health = _ai.ai_health()
     except Exception:
         health = {}
-    return {"ok": True, "days": days, "window_tz": "UTC",
+    # Every UTC day of the window, zero where nothing ran — a gap was a
+    # missing bar the chart joined across (UI-2 request 5).
+    by_day = {r["day"]: r for r in daily}
+    from datetime import timezone as _tz_daily
+    first = (datetime.now(_tz_daily.utc) - timedelta(days=days - 1)).date()
+    daily = [by_day.get(day) or {"day": day, "calls": 0, "cost": 0.0, "data_api_cost": 0.0}
+             for day in ((first + timedelta(days=i)).isoformat() for i in range(days))]
+    return {"ok": True, "days": days, "window_tz": "UTC", "generated_at": _utcnow().strftime(_ZFMT),
             "labels": {"cost_card": "AI & data APIs"},
             "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
@@ -3659,8 +3666,8 @@ def emails(limit=200):
             row["operator"] = _m_sup.is_operator_address(row.get("email"))
     except Exception as e:
         _note_failure("operator_addresses", e)
-    return {"ok": True, "rows": rows, "by_type": by_type, "daily": daily, "storms": storms,
-            "suppressed": suppressed, "suppressed_total": sup_total, "suppressed_by": sup_by,
+    return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "rows": rows, "by_type": by_type, "daily": daily,
+            "storms": storms, "suppressed": suppressed, "suppressed_total": sup_total, "suppressed_by": sup_by,
             "today": today, "engagement": engagement, "rates": rates,
             "resend_webhook": resend, "reinstate_route": "/admin/api/suppressions/reinstate",
             "windows": _window_meta(), **_merge_problems(bucket)}
@@ -3721,7 +3728,8 @@ def notifications(limit=200):
     for row in engagement:
         row["open_rate"] = (round(100.0 * row["opened"] / row["delivered"], 1) if row["delivered"] else None)
     ignored = [r for r in engagement if (r["delivered"] or 0) >= 20 and not r["opened"]]
-    return {"ok": True, "pushes": pushes, "devices": devices, "devices_total": devices_total, "alerts": alerts,
+    return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "pushes": pushes, "devices": devices,
+            "devices_total": devices_total, "alerts": alerts,
             "by_type": by_type, "storms": storms, "caps": caps,
             "storm_counts": {"today": len(storms), "storm_days_7d": len(storm_days),
                              "restaurants_7d": len({s["restaurant_id"] for s in storm_days})},
@@ -4014,9 +4022,21 @@ def jobs():
     failures = _rows_dict(conn, "SELECT id, job, error, context, created_at, restaurant_id, kind FROM job_failures "
                                 "ORDER BY id DESC LIMIT 100") if _has_cols(conn, "job_failures", ("restaurant_id", "kind")) \
         else _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures ORDER BY id DESC LIMIT 100")
-    grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
-                               "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
-                               "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
+    # One group per job AND kind (#58): an AI output finding or a console
+    # request error is never folded into a job's failure count — the page
+    # guessed each group's kind from the newest hundred rows.
+    if _has_cols(conn, "job_failures", ("kind",)):
+        grouped = _rows_dict(conn, "SELECT f.job, COALESCE(f.kind,'job') AS kind, COUNT(*) AS n, MAX(f.created_at) AS last_at, "
+                                   "MIN(f.created_at) AS first_at, (SELECT g.error FROM job_failures g WHERE g.job=f.job "
+                                   "AND COALESCE(g.kind,'job')=COALESCE(f.kind,'job') ORDER BY g.id DESC LIMIT 1) AS sample "
+                                   "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') "
+                                   "GROUP BY f.job, COALESCE(f.kind,'job') ORDER BY n DESC")
+    else:
+        grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
+                                   "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
+                                   "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') GROUP BY f.job ORDER BY n DESC")
+        for g in grouped:
+            g["kind"] = _job_failure_kind({"job": g["job"], "error": g["sample"]}, False)
     runs = _rows_dict(conn, "SELECT id, job, started_at, finished_at, duration_ms, ok, error, context FROM job_runs ORDER BY id DESC LIMIT 120")
     last_ok = _rows_dict(conn, "SELECT job, MAX(finished_at) AS last_ok, ROUND(AVG(duration_ms)) AS avg_ms, COUNT(*) AS runs "
                                "FROM job_runs WHERE ok IN (1, 2) AND started_at >= datetime('now', '-7 days') GROUP BY job")
@@ -4068,7 +4088,8 @@ def jobs():
         dsr_missing = []
     schedule = [{"job": j["job"], "cadence": j["cadence"], "runnable": j["runnable"], "sends": j["sends"],
                  "what": j["what"]} for j in job_rows]
-    return {"ok": True, "heartbeat_minutes": hb, "failures": failures, "grouped": grouped, "runs": runs, "last_ok": last_ok,
+    return {"ok": True, "generated_at": _utcnow().strftime(_ZFMT), "heartbeat_minutes": hb, "failures": failures,
+            "grouped": grouped, "runs": runs, "last_ok": last_ok,
             "stuck": stuck, "scheduled_posts": posts, "inflight": inflight, "schedule": schedule,
             # Fix round D (#40, #121, #1, #27, #153, #131, #17): one row per
             # registry job with its own history and state, the scheduler's
@@ -6101,3 +6122,223 @@ def viewer_role():
         return "admin" if u.get("is_admin") else (u.get("role") or None)
     except Exception:
         return None
+
+
+# ── One read of the platform's state (#158) ──────────────────────────────────
+#
+# Overview's system tiles and the Operations header each derived a state per
+# system in the browser, from different payloads, and disagreed. This is the
+# one server reading, from the sources each workstream keeps: D's heartbeat
+# and job ledger, F's request metrics, 5xx log and provider probes, E's
+# messaging problems and outboxes, G's AI health, and the fleet's
+# integrations and inbound webhooks.
+
+OPS_SYSTEMS = ("scheduler", "jobs", "api", "email", "sms", "push", "ai", "integrations")
+_STATE_RANK = {"ok": 0, "unknown": 1, "warn": 2, "bad": 3}
+
+
+def _sys(state, reason=None, since=None, **extra):
+    return {"state": state, "reason": reason, "since": since, **extra}
+
+
+def _ago_z(minutes):
+    """The UTC moment `minutes` ago, as the console's Z stamp."""
+    return (_utcnow() - timedelta(minutes=float(minutes))).strftime(_ZFMT) if minutes is not None else None
+
+
+def ops_state():
+    """{systems: {scheduler, jobs, api, email, sms, push, ai, integrations:
+    {state: ok | warn | bad | unknown, reason, since}}, worst, generated_at}.
+    Each system is read on its own and reads `unknown` (with why) when its
+    source cannot be — never a page failure. Nothing here writes."""
+    path = _current_db_path()
+    systems = {}
+
+    def guard(name, fn):
+        try:
+            systems[name] = fn()
+        except AdminBusy:
+            systems[name] = _sys("unknown", "The console is building the fleet view — try again in a moment.")
+        except Exception as e:
+            log.warning("ops state %s unreadable: %s", name, e)
+            systems[name] = _sys("unknown", f"unreadable: {str(e)[:120]}")
+
+    providers = {}
+    try:
+        import provider_health as _ph
+        providers = _ph.latest(path) or {}
+    except Exception as e:
+        log.warning("provider probes unreadable: %s", e)
+    try:
+        import notify as _n_state
+        messaging = list(_n_state.messaging_problems(db_path=path) or [])
+    except Exception:
+        messaging = []
+
+    def probe_bad(name):
+        p = providers.get(name) or {}
+        if p.get("state") == "failing":
+            return _sys("bad", f"The {name.replace('_', ' ').title()} probe is failing: {p.get('detail') or 'refused'}",
+                        _iso_z(p.get("checked_at"), "UTC"))
+        return None
+
+    def scheduler():
+        import status_manager as _sm_state
+        st = _sm_state.scheduler_state(path)
+        beat = st.get("beat_age_minutes")
+        since = _ago_z(beat)
+        if st["state"] == "stale":
+            return _sys("bad", f"No heartbeat for {int(beat)} minutes — nothing scheduled is running.", since)
+        if st["state"] == "wedged":
+            return _sys("bad", f"Stuck in {st.get('running_job')} for {int(st.get('running_minutes') or 0)} minutes "
+                               f"(its bound is {st.get('running_bound_minutes')}).", since)
+        if st["state"] == "stalled":
+            return _sys("warn", f"No tick has completed in {int(st.get('loop_completed_age_minutes') or 0)} minutes "
+                                "— a tick is failing part-way.", _ago_z(st.get("loop_completed_age_minutes")))
+        if st["state"] == "unknown":
+            return _sys("unknown", "The heartbeat could not be read.")
+        return _sys("ok", f"Beat {beat:.0f} minute{'s' if round(beat) != 1 else ''} ago.", since)
+
+    def jobs():
+        import ops as _ops_state
+        overdue = _ops_state.jobs_overdue(db_path=path)
+        if overdue:
+            names = ", ".join(j["job"] for j in overdue[:4]) + ("…" if len(overdue) > 4 else "")
+            oldest = min((j["last_ok_at"] for j in overdue if j.get("last_ok_at")), default=None)
+            return _sys("bad", f"{len(overdue)} job{'s' if len(overdue) != 1 else ''} past {'their' if len(overdue) != 1 else 'its'} "
+                               f"SLA: {names}.", _iso_z(oldest, "UTC"), overdue=len(overdue))
+        conn = get_conn(path)
+        try:
+            kind = " AND COALESCE(kind,'job')='job'" if _has_cols(conn, "job_failures", ("kind",)) else ""
+            row = _one_dict(conn, "SELECT COUNT(*) AS n, COUNT(DISTINCT job) AS jobs, MIN(created_at) AS first_at "
+                                  f"FROM job_failures WHERE created_at >= datetime('now','-1 day'){kind}",
+                            label="job_failures") or {}
+        finally:
+            conn.close()
+        if row.get("n"):
+            return _sys("warn", f"{row['n']} failure{'s' if row['n'] != 1 else ''} in 24 hours across "
+                                f"{row['jobs']} job{'s' if row['jobs'] != 1 else ''}.", _iso_z(row.get("first_at"), "UTC"))
+        return _sys("ok", "Every job ran within its SLA.")
+
+    def api():
+        import http_layer
+        rm = http_layer.request_metrics()
+        win = max(1, rm.get("window_seconds", 300) // 60)
+        if rm["requests"] >= 20 and rm["server_error_rate"] >= 5.0:
+            return _sys("bad", f"{rm['server_error_rate']:g}% of customer requests failed (5xx) in the last "
+                               f"{win} minutes.", "now")
+        try:
+            import platform_monitor as _pm_state
+            recent = _pm_state.recent_server_errors(hours=1, limit=1, db_path=path)
+        except Exception:
+            recent = {"total": 0, "latest": []}
+        if recent.get("total"):
+            latest = (recent.get("latest") or [{}])[0]
+            return _sys("warn", f"{recent['total']} server error{'s' if recent['total'] != 1 else ''} in the last hour.",
+                        _iso_z(latest.get("created_at"), "UTC"))
+        if rm.get("p95_ms") and rm["p95_ms"] > 2000:
+            return _sys("warn", f"Slow: p95 {rm['p95_ms']:.0f} ms over the last {win} minutes.", "now")
+        if not rm["requests"]:
+            return _sys("ok", f"No customer traffic in the last {win} minutes.")
+        return _sys("ok", f"{rm['rpm']:g} requests a minute, p95 {rm['p95_ms']:.0f} ms.")
+
+    def email():
+        bad = probe_bad("resend")
+        if bad:
+            return bad
+        mine = [m for m in messaging if "Resend" in m or "Operator address" in m]
+        conn = get_conn(path)
+        try:
+            rates = _email_rates(conn, _windows()).get("7d") or {}
+            today = _one_dict(conn, "SELECT SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, COUNT(*) AS n "
+                                    "FROM email_log WHERE sent_at >= datetime('now','-1 day')", label="email_log") or {}
+        finally:
+            conn.close()
+        if rates.get("enough"):
+            for kind, crit in (("bounce", EMAIL_BOUNCE_CRIT_PCT), ("complaint", EMAIL_COMPLAINT_CRIT_PCT)):
+                pct = rates.get(f"{kind}_rate")
+                if pct is not None and pct >= crit:
+                    return _sys("bad", f"Email {kind} rate {pct:g}% this week.", None)
+        if mine:
+            return _sys("warn", mine[0])
+        if rates.get("enough"):
+            for kind, warn in (("bounce", EMAIL_BOUNCE_WARN_PCT), ("complaint", EMAIL_COMPLAINT_WARN_PCT)):
+                pct = rates.get(f"{kind}_rate")
+                if pct is not None and pct >= warn:
+                    return _sys("warn", f"Email {kind} rate {pct:g}% this week.", None)
+        if today.get("failed"):
+            return _sys("warn", f"{today['failed']} of {today['n']} email{'s' if today['n'] != 1 else ''} failed in 24 hours.")
+        return _sys("ok", f"{today.get('n') or 0} email{'s' if (today.get('n') or 0) != 1 else ''} in 24 hours.")
+
+    def sms():
+        bad = probe_bad("twilio")
+        if bad:
+            return bad
+        import notify as _n_sms
+        hour = _n_sms.sms_stats(hours=1, db_path=path)
+        if hour.get("account_errors"):
+            return _sys("bad", f"{hour['account_errors']} text{'s' if hour['account_errors'] != 1 else ''} failed in "
+                               "the last hour with a Twilio account-level error.", "now")
+        mine = [m for m in messaging if "Twilio" in m or "text" in m]
+        if mine:
+            return _sys("warn", mine[0])
+        day = _n_sms.sms_stats(hours=24, db_path=path)
+        by = day.get("by_status") or {}
+        failed = sum(v for k, v in by.items() if k in ("failed", "undelivered", "error"))
+        if failed:
+            return _sys("warn", f"{failed} of {day['attempted']} text{'s' if day['attempted'] != 1 else ''} failed in 24 hours.")
+        if (providers.get("twilio") or {}).get("state") == "unconfigured":
+            return _sys("unknown", "Twilio is not configured on this server.")
+        return _sys("ok", f"{day.get('attempted') or 0} text{'s' if (day.get('attempted') or 0) != 1 else ''} in 24 hours.")
+
+    def push():
+        bad = probe_bad("apns")
+        if bad:
+            return bad
+        import push as _push_state
+        ob = _push_state.outbox_counts(db_path=path)
+        oldest = _age_hours(ob.get("oldest_pending_at"), "UTC")
+        if oldest is not None and oldest * 60 > 30:
+            return _sys("warn", f"A push has waited {int(oldest * 60)} minutes to go out.",
+                        _iso_z(ob.get("oldest_pending_at"), "UTC"))
+        if ob.get("failed_24h"):
+            return _sys("warn", f"{ob['failed_24h']} push{'es' if ob['failed_24h'] != 1 else ''} failed in 24 hours.")
+        return _sys("ok", "Pushes are going out.")
+
+    def ai():
+        import ai_utils as _ai_state
+        h = _ai_state.ai_health(path)
+        state = {"operational": "ok", "degraded": "warn", "outage": "bad"}.get(h.get("status"), "unknown")
+        return _sys(state, h.get("reason") or ("Calls are going through." if state == "ok" else None),
+                    _iso_z((h.get("last_auth_error") or {}).get("at"), "UTC") if state != "ok" else None)
+
+    def integrations():
+        conn = get_conn(path)
+        try:
+            hooks = _webhook_health(conn)
+        finally:
+            conn.close()
+        failing_hooks = [p for p in hooks["providers"] if p.get("problem")]
+        if failing_hooks:
+            p = failing_hooks[0]
+            return _sys("bad", f"{p['label']} webhook is failing verification — check {p['secret_env']}.",
+                        p.get("first_failure_at"))
+        for name in ("stripe", "google_places", "anthropic"):
+            bad = probe_bad(name)
+            if bad:
+                return bad
+        recs, _d, _meta = _records_cached()
+        broken = [(r, i) for r in _real(recs) for i in r["integrations"] if i["state"] == "error"]
+        if broken:
+            clients = len({r["id"] for r, _i in broken})
+            first = min((i.get("error_since") or i.get("last_success") for _r, i in broken
+                         if i.get("error_since") or i.get("last_success")), default=None)
+            return _sys("warn", f"{len(broken)} integration{'s' if len(broken) != 1 else ''} failing at {clients} "
+                                f"client{'s' if clients != 1 else ''}.", first)
+        return _sys("ok", "Every connected integration is syncing.")
+
+    for name, fn in (("scheduler", scheduler), ("jobs", jobs), ("api", api), ("email", email), ("sms", sms),
+                     ("push", push), ("ai", ai), ("integrations", integrations)):
+        guard(name, fn)
+    worst = max((s["state"] for s in systems.values()), key=lambda st: _STATE_RANK.get(st, 1), default="unknown")
+    return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT)}

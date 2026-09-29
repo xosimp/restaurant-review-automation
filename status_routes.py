@@ -233,3 +233,14 @@ def admin_list_services():
                     "service_statuses": list(SERVICE_STATUSES),
                     "incident_statuses": list(INCIDENT_STATUSES),
                     "incident_severities": list(INCIDENT_SEVERITIES)})
+
+
+@status_bp.route("/admin/api/ops/state")
+def admin_ops_state():
+    """One server reading of each system's state — scheduler, jobs, api,
+    email, sms, push, ai, integrations: {state: ok|warn|bad|unknown, reason,
+    since} — for Overview and Operations (#158), which derived them in the
+    browser and disagreed. Read-only; support may read it."""
+    _require_admin()
+    import admin_ops
+    return jsonify(admin_ops.ops_state())

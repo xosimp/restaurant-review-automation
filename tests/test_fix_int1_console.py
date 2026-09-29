@@ -3,6 +3,7 @@ workstreams store, and the reads the console pass (UI-1) asked for."""
 from datetime import datetime, timedelta, timezone
 
 import admin_ops
+import auth
 from tests.test_fix_c_console import _mk, _rec, _sql, _utc, env  # noqa: F401
 
 
@@ -175,3 +176,61 @@ def test_the_stored_module_mismatch_is_the_issue(db_path):
                   "VALUES (?, 'sub_1', 'active', ?)", (rid, '{"stripe": ["labor", "reviews"], "local": ["reviews"]}'))
     i = next(x for x in _rec(rid)["issues"] if x["key"] == f"{rid}:modules_mismatch")
     assert "Stripe: labor, reviews" in i["detail"] and "Here: reviews" in i["detail"]
+
+
+# ── one server reading of the platform's state (UI-2 request 1, #158) ─────
+
+def test_the_ops_state_names_every_system_and_says_why(db_path, monkeypatch, scheduler_heartbeat):
+    import status_manager
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    _mk(db_path, "State Co", billing_status="active")
+    scheduler_heartbeat(60)
+    out = admin_ops.ops_state()
+    assert set(out["systems"]) == set(admin_ops.OPS_SYSTEMS)
+    for s in out["systems"].values():
+        assert s["state"] in ("ok", "warn", "bad", "unknown") and "reason" in s and "since" in s
+    sched = out["systems"]["scheduler"]
+    assert sched["state"] == "bad" and "No heartbeat for 60 minutes" in sched["reason"] and out["worst"] == "bad"
+    scheduler_heartbeat(1)
+    assert admin_ops.ops_state()["systems"]["scheduler"]["state"] == "ok"
+
+
+def test_the_ops_state_route_answers_admins_and_support(db_path, monkeypatch):
+    import status_manager
+    from flask import Flask
+    import status_routes
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    app = Flask(__name__)
+    app.register_blueprint(status_routes.status_bp)
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 2, "restaurant_id": None, "is_admin": 0,
+                                                           "role": "support", "username": "sup"})
+    monkeypatch.setattr(auth, "admin_second_factor_state", lambda u: "ok")
+    r = app.test_client().get("/admin/api/ops/state")
+    assert r.status_code == 200 and set(r.get_json()["systems"]) == set(admin_ops.OPS_SYSTEMS)
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 3, "restaurant_id": 1, "is_admin": 0, "role": "owner"})
+    assert app.test_client().get("/admin/api/ops/state").status_code == 403
+
+
+# ── the operations payloads say how old they are; jobs group by kind ──────
+
+def test_jobs_group_failures_by_job_and_kind_and_payloads_carry_generated_at(db_path):
+    import ops
+    ops.capture(RuntimeError("Toast 500"), job="pos_sync", context="restaurant_id=1", db_path=db_path)
+    ops.capture(RuntimeError("finding"), job="pos_sync", kind="ai_quality", context="restaurant_id=1", db_path=db_path)
+    j = admin_ops.jobs()
+    groups = {(g["job"], g["kind"]): g["n"] for g in j["grouped"]}
+    assert groups[("pos_sync", "job")] == 1 and groups[("pos_sync", "ai_quality")] == 1
+    for payload in (j, admin_ops.emails(), admin_ops.notifications(), admin_ops.ai_ops(days=7)):
+        assert payload["generated_at"].endswith("Z")
+    assert len(admin_ops.ai_ops(days=7)["daily"]) == 7, "every day of the window, zero-filled"
+
+
+def test_the_system_card_shows_the_last_operator_page(db_path, monkeypatch):
+    import ops
+    import platform_monitor
+    import status_manager
+    monkeypatch.setattr(status_manager, "DB_PATH", db_path)
+    ops._record_operator_alert("platform_sla_alert", "Cavnar AI: the platform needs you",
+                               {"sent": True, "channels": {"email": True}})
+    card = platform_monitor.system_report(db_path)
+    assert card["operator_alert"]["key"] == "platform_sla_alert"
