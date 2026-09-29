@@ -28,6 +28,7 @@ The tenant row (191 columns). Everything else hangs off `restaurants.id`. The li
 - `two_fa_backup_codes`: hashed, single-use fallback codes generated at 2FA setup.
 - `login_attempts` (models.py, used by `security.py`): durable login throttling. `kind` is `account` (a failure against a username), `ip`, `anon` (an attempt naming no account), `account_ip` (an account and address pair — internal logins are locked per address, so a stranger's guesses cannot lock the admin out from everywhere) and `reauth` (a wrong step-up password: five end the session). Rows older than two days are pruned daily (`scheduler.run_prune_login_attempts`).
 - `user_backup_codes` (auth.py, 9/29/26): an internal login's own hashed, single-use backup codes (`user_id`, `code_hash`, `used_at`). A restaurant's `two_fa_backup_codes` never pass an admin and his never pass them.
+- `users.policy_notice_dismissed` (TEXT, 9/29/26): the Privacy Policy / Terms change (`policy_notice.POLICY_UPDATED_ON`, ISO) this login dismissed the 30-day dashboard notice for — per login, so a later change (a new date) shows again. One value per row; kept with the login.
 - `organizations` + `restaurants.organization_id`: the owner-level grouping above a location group (backfilled from `location_group` + `owner_email`).
 
 ### Staff portal (auth.py `AUTH_SCHEMA`)

@@ -2715,8 +2715,25 @@ def _build(current_user, present=True):
         "quiet_hours_active": is_in_quiet_hours(rid),
         "alert_quiet_end": r.get("alert_quiet_end"),
         "empty_state": empty_state,
+        # The 30-day notice a material Privacy Policy / Terms change owes an
+        # account holder (policy_notice), per login — the cache is keyed by
+        # (rid, uid), and a dismissal drops this login's cached Homes.
+        "policy_notice": _policy_notice(current_user, local_now),
     }
     return payload, 200
+
+
+def _policy_notice(current_user, local_now=None, restaurant=None):
+    """policy_notice.notice_for on the restaurant's own day. Never raises."""
+    try:
+        import policy_notice
+        if local_now is None:
+            from time_utils import restaurant_now
+            local_now = restaurant_now(restaurant)
+        return policy_notice.notice_for(current_user, today=local_now.date())
+    except Exception as e:
+        print(f"[home] policy notice unavailable: {e}")
+        return None
 
 
 # ── consolidated view: every location in the owner's group ─────────────────
@@ -3015,6 +3032,8 @@ def build_group_brief(current_user, fresh=False):
                       "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None),
                       "last_night": group_last_night(locs)},
         "summary_line": group_summary_line(locs),
+        # The policy notice follows the owner to the group Home (per login).
+        "policy_notice": _policy_notice(current_user, restaurant=base),
     }
     # Location to location on the engine's `location` kind (#19): each
     # location against its own normal, then against the others, a gap

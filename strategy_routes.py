@@ -3255,7 +3255,27 @@ def _do_preferences_get(u):
             "can_apply_to_all": preferences.may_apply_to_all(u, r) and len(locs) > 1,
             "locations": locs, "org_keys": list(preferences.ORG_KEYS),
             "unmutable_types": sorted(preferences.UNMUTABLE_TYPES),
+            # The alert types a login may mute on its own phone, in the bell's
+            # words (client_api._NOTIFICATION_LABELS) — the checklist both
+            # clients draw, so neither keeps a second list of types.
+            "alert_types": _mutable_alert_types(preferences),
             "never_opened": preferences.never_opened_for_login(u.get("id"), _rid(u))}, 200
+
+
+def _mutable_alert_types(preferences):
+    """[{type, label}] every notification type with a label except the ones
+    no login can mute (preferences.UNMUTABLE_TYPES) — one row per label."""
+    try:
+        from client_api import _NOTIFICATION_LABELS
+    except Exception:
+        return []
+    out, seen = [], set()
+    for t, label in _NOTIFICATION_LABELS.items():
+        if t in preferences.UNMUTABLE_TYPES or label in seen:
+            continue
+        seen.add(label)
+        out.append({"type": t, "label": label})
+    return out
 
 
 def _do_preferences_mine(u):
@@ -4781,7 +4801,57 @@ def _targets_payload(rid):
             "sched_notes": getattr(r, "sched_notes", None) or "",
             "sources": {"labor_target_pct": getattr(r, "labor_target_source", None),
                         "food_cost_target": getattr(r, "food_cost_target_source", None),
-                        "hourly_rate": getattr(r, "hourly_rate_source", None)}}
+                        "hourly_rate": getattr(r, "hourly_rate_source", None)},
+            # The owner's active goal on each metric, which every module
+            # judges against in place of the setting while it holds
+            # (owner_memory.target_for; memory audit 9/29/26, owner_goals):
+            # the card says "Your goal of 26% by 12/31/26 applies" beside it.
+            "labor": {"goal": _target_goal(rid, "labor")},
+            "food": {"goal": _target_goal(rid, "food")},
+            # Who last set each target and when (change_log), "Set by the
+            # owner on 9/12/26" — M7's attributed history.
+            "set_notes": _target_set_notes(rid)}
+
+
+def _target_goal(rid, metric):
+    """{pct, label, until, until_label, goal_id} for the active goal on
+    `metric`, or None. Never raises."""
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(rid, metric)
+        if not t or not isinstance(t.get("value"), (int, float)):
+            return None
+        until = t.get("until")
+        label = str(t.get("label") or "")
+        return {"pct": float(t["value"]), "label": (label[:1].upper() + label[1:]) if label else None,
+                "until": until.isoformat() if hasattr(until, "isoformat") else (until or None),
+                "until_label": mdy(until) if until else None, "goal_id": t.get("goal_id")}
+    except Exception as e:
+        print(f"[targets] goal unreadable for {rid}/{metric}: {e}")
+        return None
+
+
+def _target_set_notes(rid):
+    """{field: "Set by the owner on 9/12/26"} for each target the change log
+    has a change for. {} when it has none. Never raises."""
+    out = {}
+    try:
+        import change_log
+        from time_utils import mdy
+        for field in ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target",
+                      "weekly_revenue_target", "hourly_rate"):
+            rows = change_log.history(rid, field=field, limit=1)
+            if not rows:
+                continue
+            row = rows[0]
+            who = change_log.SOURCE_LABELS.get(row.get("source"))
+            on = mdy(row.get("changed_at")) if row.get("changed_at") else ""
+            if who or on:
+                out[field] = "Set" + (f" by {who}" if who else "") + (f" on {on}" if on else "")
+    except Exception as e:
+        print(f"[targets] change history unreadable for {rid}: {e}")
+    return out
 
 
 def _do_targets_get(u):
@@ -4903,8 +4973,27 @@ def _do_targets_set(u):
     return {"ok": True, "targets": _targets_payload(_rid(u))}, 200
 
 
+def _do_policy_notice_dismiss(u):
+    """POST /account/policy-notice/dismiss — this account holder has read
+    the notice of the updated Privacy Policy and Terms (policy_notice): it
+    stays gone on every device and location until a later change. An
+    admin's view-as dismisses nothing for the owner."""
+    import policy_notice
+    from permissions import answer_authority
+    if answer_authority(u) != "principal":
+        return _forbidden("Only the account holder can dismiss this notice.")
+    ok = policy_notice.dismiss(u)
+    try:
+        import home_brief
+        home_brief.invalidate_user(u.get("id"))
+    except Exception:
+        pass
+    return {"ok": True, "dismissed": bool(ok)}, 200
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
+    ("/account/policy-notice/dismiss", ["POST"], _do_policy_notice_dismiss, "policy_notice_dismiss"),
     ("/issues", ["GET"], _do_issues_list, "issues_list"),
     ("/issues", ["POST"], _do_issue_create, "issue_create"),
     ("/issues/<int:issue_id>/resolve", ["POST"], _do_issue_resolve, "issue_resolve"),
