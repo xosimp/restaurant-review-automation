@@ -321,7 +321,14 @@ if not _secret_key:
     # Marked, because writing it back made SECRET_KEY look set to anything
     # that checks presence — the admin key panel included (#125).
     os.environ["CAVNAR_SECRET_KEY_EPHEMERAL"] = "1"
-    print("WARNING: SECRET_KEY not set — sessions will invalidate on every restart. Set SECRET_KEY in Railway env vars.")
+    # What a per-boot key actually breaks (docs pass): sign-ins are database
+    # session tokens and survive a restart, and the CSRF double-submit
+    # tokens are random, not signed — but everything signed with SECRET_KEY
+    # dies with the process that minted it.
+    print("WARNING: SECRET_KEY not set — a random key is used until this process restarts. Sign-ins survive a "
+          "restart (they are database tokens), but a two-factor sign-in or a Google connect in progress, "
+          "marketing tap links, and pay and table-QR join links signed before the kept link secrets stop "
+          "working on every restart. Set SECRET_KEY in Railway env vars.")
 app.secret_key = _secret_key
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
@@ -1268,5 +1275,11 @@ _post_boot()
 if __name__ == "__main__":
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    # load_dotenv=False: this file already loaded the .env beside it (above).
+    # Flask's own load walks UP from the working directory, so a copy of the
+    # app run from a git worktree under .claude/worktrees/ silently loaded
+    # the main checkout's .env — production's keys — on a test server. The
+    # main checkout's own backend (port 5050) loads the same .env it always
+    # did, through the line above.
+    app.run(host="0.0.0.0", port=PORT, debug=False, load_dotenv=False)
 # redeploy Sat Jun  6 16:35:16 CDT 2026

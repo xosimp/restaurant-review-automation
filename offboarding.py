@@ -22,9 +22,9 @@ console had refused anything that was not a demo — while App Store Guideline
                               flag (it was write-once, and the review fetch
                               skips a flagged restaurant).
   * delete_restaurant_now(...) — models.delete_restaurant behind the typed name
-                              and a finished checklist. The step-up
-                              (auth.recent_auth_required) is applied to its
-                              route in the integration wave.
+                              and a finished checklist. Its route carries the
+                              step-up (auth.recent_auth_required), as do the
+                              step marks that act (ACTING_STEPS).
 
 Every step is recorded twice on purpose: offboarding_steps is the checklist's
 state, and admin_events.record_admin_action is the audit trail. Both survive
@@ -40,14 +40,16 @@ from datetime import datetime, timedelta, timezone
 
 DELETION_NOTICE_DAYS = 30
 
-# (key, label, what the operator does). Billing and contract actions live with
-# the billing workstream; until they are wired in, these two are marked by
-# hand once done in Stripe / DocuSign.
+# (key, label, what the operator does). The Stripe and DocuSign steps carry
+# out their action when marked done — billing_jobs.cancel_subscription and
+# docusign_helper.void_envelope (integration wave) — as 'integrations' runs
+# revoke_integrations.
 STEPS = (
     ("stripe", "Cancel the Stripe subscription",
-     "Cancel the subscription in Stripe (no further invoices), then mark this done."),
+     "Marking this done cancels the live subscription in Stripe (no further invoices). A location billed "
+     "with another's subscription is refused: change the plan on the paying location and skip this step."),
     ("docusign", "Void any open DocuSign envelope",
-     "Void the envelope still waiting for a signature, then mark this done."),
+     "Marking this done voids the envelope still waiting for a signature (DocuSign tells the signer)."),
     ("integrations", "Revoke Google, Meta, POS and webhook connections",
      "Clears every stored credential for this restaurant and turns its outbound webhooks off."),
     ("export", "Send the owner their data export",
@@ -56,6 +58,11 @@ STEPS = (
 STEP_KEYS = tuple(k for k, _l, _h in STEPS)
 DELETE_STEP = "delete"
 STATUSES = ("pending", "done", "skipped")
+# Steps that CARRY OUT their action when marked done (integration wave):
+# 'integrations' clears the stored credentials, 'stripe' cancels the live
+# subscription (billing_jobs.cancel_subscription), 'docusign' voids the open
+# envelope (docusign_helper.void_envelope). Their route needs the step-up.
+ACTING_STEPS = ("integrations", "stripe", "docusign")
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS offboarding_steps (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +298,18 @@ def set_step(restaurant_id, step, status, actor, note=None, db_path=None):
         detail = revoke_integrations(restaurant_id, actor, db_path=db_path)
         if not detail.get("ok"):
             return {"ok": False, "error": detail.get("error") or "The integrations could not be revoked."}, 500
+    elif step == "stripe" and status == "done":
+        import billing_jobs
+        detail = billing_jobs.cancel_subscription(int(restaurant_id), actor, reason=note or "account closed",
+                                                  db_path=db_path)
+        if not detail.get("ok"):
+            code = 409 if (detail.get("covered") or detail.get("local_backend")) else 502
+            return {"ok": False, "error": detail.get("error") or "The subscription could not be cancelled.",
+                    **{k: detail[k] for k in ("covered", "billed_by", "local_backend") if k in detail}}, code
+    elif step == "docusign" and status == "done":
+        detail, refusal = _void_open_envelope(row, actor, note, db_path=db_path)
+        if refusal:
+            return refusal
     _upsert_step(restaurant_id, cycle, step, status, _actor_name(actor), note=note, detail=detail, db_path=db_path)
     import admin_events
     admin_events.record_admin_action(actor, f"offboarding.{step}", restaurant_id=int(restaurant_id),
@@ -300,6 +319,59 @@ def set_step(restaurant_id, step, status, actor, note=None, db_path=None):
     if detail is not None:
         payload["revoked"] = detail
     return payload, 200
+
+
+def _void_open_envelope(row, actor, note, db_path=None):
+    """(detail, None) once the restaurant's unsigned envelope is voided (or
+    there is none to void), else (None, (payload, http_status)). DocuSign
+    emails the signer that the agreement was voided, so a server that may
+    not send (a laptop with production's DocuSign key) refuses (#9)."""
+    envelope_id = (row.get("docusign_envelope_id") or "").strip()
+    if not envelope_id or (row.get("contract_status") or "") != "sent":
+        return {"ok": True, "voided": None, "note": "No envelope is waiting for a signature."}, None
+    try:
+        import scheduler
+        may_send = scheduler.scheduling_allowed()
+    except Exception:
+        may_send = False
+    if not may_send:
+        return None, ({"ok": False, "local_backend": True, "error": (
+            "Refused: this server is not the production server, and voiding an envelope emails the signer. "
+            "Void it from production, or in DocuSign and mark the step done.")}, 409)
+    import docusign_helper
+    try:
+        res = docusign_helper.void_envelope(envelope_id, (note or "Account closed")[:200],
+                                            restaurant_id=int(row["id"]))
+    except Exception as e:
+        return None, ({"ok": False, "error": f"DocuSign did not void the envelope: {str(e)[:200]}. "
+                                             "Void it in DocuSign and mark the step done."}, 502)
+    if not res.get("ok"):
+        return None, ({"ok": False, "error": "That envelope is already signed, so it cannot be voided: the signed "
+                                             "contract ends under its own terms. Skip this step with that note."}, 409)
+    import models
+    with models.billing_context(source="admin", actor=_actor_name(actor), reason="offboarding: envelope voided"):
+        models.update_restaurant(int(row["id"]), {"contract_status": "voided"}, db_path=db_path or models.DB_PATH)
+    conn = _conn(db_path)
+    try:
+        conn.execute("UPDATE docusign_envelopes SET status='voided', status_at=datetime('now'), "
+                     "status_reason=? WHERE envelope_id=?", ((note or "account closed")[:200], envelope_id))
+        conn.commit()
+    except Exception as e:
+        # The envelope IS voided at DocuSign; only the history row's status
+        # did not move. Said, not swallowed.
+        try:
+            import ops
+            ops.capture(e, job="offboarding_void_record", context=f"restaurant_id={int(row['id'])}")
+        except Exception:
+            print(f"[offboarding] envelope {envelope_id} voided but not recorded: {e}")
+    finally:
+        conn.close()
+    import admin_events
+    admin_events.record_admin_action(actor, "contract.voided", restaurant_id=int(row["id"]),
+                                     target=f"envelope:{envelope_id}", before={"contract_status": "sent"},
+                                     after={"contract_status": "voided", "already": bool(res.get("already"))},
+                                     db_path=db_path)
+    return {"ok": True, "voided": envelope_id, "already": bool(res.get("already"))}, None
 
 
 def revoke_integrations(restaurant_id, actor, db_path=None):
@@ -393,11 +465,14 @@ def withdraw_deletion_request(restaurant_id, actor, note=None, db_path=None):
 
 
 def admin_homes(restaurant_id, db_path=None) -> int:
-    """How many admin logins call this restaurant home. Deleting it would
-    delete them (models.delete_restaurant removes its users rows)."""
+    """How many internal logins — admin or support — call this restaurant
+    home. models.delete_restaurant refuses to delete a restaurant while any
+    does (it would take the login with it), so every delete path asks here
+    first and says so in a sentence."""
+    import models
     conn = _conn(db_path)
     try:
-        return conn.execute("SELECT COUNT(*) FROM users WHERE restaurant_id=? AND is_admin=1",
+        return conn.execute(f"SELECT COUNT(*) FROM users WHERE restaurant_id=? AND {models.INTERNAL_LOGIN_SQL}",
                             (int(restaurant_id),)).fetchone()[0]
     finally:
         conn.close()
@@ -414,8 +489,8 @@ def delete_restaurant_now(restaurant_id, actor, confirm_name, db_path=None):
     if (confirm_name or "").strip() != (row.get("name") or "").strip():
         return {"ok": False, "error": "The name did not match. Nothing was deleted."}, 400
     if admin_homes(restaurant_id, db_path=db_path):
-        return {"ok": False, "error": "An admin login lives on this restaurant; deleting it would delete that "
-                                      "login. Move the admin first. Nothing was deleted."}, 409
+        return {"ok": False, "error": "An admin or support login lives on this restaurant; deleting it would "
+                                      "delete that login. Move it first. Nothing was deleted."}, 409
     state = checklist(restaurant_id, db_path=db_path)
     if state["outstanding"]:
         labels = {k: l for k, l, _h in STEPS}

@@ -25,6 +25,20 @@ import admin_events as _admin_events
 _admin_events.register_audit(audit_bp)
 
 
+@audit_bp.after_request
+def _support_redaction(resp):
+    """The console's masking for a read-only support login (#87 —
+    admin_routes._admin_support_redaction, over admin_ops.redact_for_support)
+    on this blueprint's /admin/api/audits* reads too: the hook was registered
+    on admin_bp only, so prospects' contact details reached support unmasked
+    here (docs pass, integration wave). Never raises."""
+    try:
+        import admin_routes
+        return admin_routes._admin_support_redaction(resp)
+    except Exception:
+        return resp
+
+
 def _share_payload(share, audit_id):
     """The share link as the admin side shows it: the URL only when the
     token can be recovered (it is stored hashed), otherwise its last four
@@ -396,8 +410,31 @@ def latest_cheatsheet_redirect(current_user):
     return redirect("/admin/audits/%d/cheatsheet" % aid if aid else "/admin/audits")
 
 
-@audit_bp.route("/admin/audits/new")
+@audit_bp.route("/admin/audits/new", methods=["GET", "POST"])
 @admin_required
 def new_audit_redirect(current_user):
+    """Start a new audit. A GET only asks (#154): it created an audit row, so
+    any link — or a read-only support login, which may GET — made one. The
+    POST (CSRF-checked like every write on this blueprint; refused to a
+    support login by admin_required) creates it and opens it."""
+    if request.method != "POST":
+        import secrets as _sec_na
+        from markupsafe import escape as _esc_na
+        from flask import make_response
+        from csrf import CSRF_COOKIE
+        import config
+        import auth_routes as _ar_na
+        csrf_tok = request.cookies.get(CSRF_COOKIE) or _sec_na.token_urlsafe(32)
+        body = _ar_na._SIMPLE_PAGE % (
+            "<h1>Start a new sales audit?</h1><p>This creates a blank audit and opens it.</p>"
+            "<form method='post' action='/admin/audits/new'>"
+            f"<input type='hidden' name='csrf_token' value='{_esc_na(csrf_tok)}'>"
+            "<button type='submit' class='cbtn cbtn-primary'>Start the audit</button></form>"
+            "<p style='margin-top:16px'><a href='/admin/audits'>All audits</a></p>")
+        resp = make_response(body)
+        if not request.cookies.get(CSRF_COOKIE):
+            resp.set_cookie(CSRF_COOKIE, csrf_tok, max_age=30 * 24 * 3600, httponly=False,
+                            secure=config.on_railway(), samesite="Lax")
+        return resp
     aid = store.create_audit(created_by=current_user.get("id"))
     return redirect("/admin/audits/%d" % aid)

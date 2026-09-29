@@ -34,7 +34,10 @@ def _delete(rid, body, monkeypatch, db_path):
     monkeypatch.setattr(models, "delete_restaurant", lambda r, *a, **k: real(r, db_path=db_path))
     app = Flask(__name__)
     with app.test_request_context(json=body):
-        resp = admin_routes.admin_api_delete_demo.__wrapped__(rid, current_user={"is_admin": 1, "username": "will"})
+        # The route body itself, under admin_required AND the step-up
+        # (integration wave: delete-demo needs a recent password).
+        import inspect
+        resp = inspect.unwrap(admin_routes.admin_api_delete_demo)(rid, current_user={"is_admin": 1, "username": "will"})
     return (resp[0], resp[1]) if isinstance(resp, tuple) else (resp, 200)
 
 

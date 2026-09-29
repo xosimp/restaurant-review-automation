@@ -284,7 +284,9 @@ def test_an_owner_entered_26_dollar_rate_is_theirs(db):
 def test_an_explicit_admin_save_of_the_default_is_the_owners(db, monkeypatch):
     from flask import Flask
     import admin_routes
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    # reauth_at: this save re-sends a different owner email, a change that
+    # needs the step-up (integration wave); the admin typed it just now.
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "reauth_at": auth.sql_utc()})
     rid = _mk(db, "Explicit")
     app = Flask(__name__)
     app.register_blueprint(admin_routes.admin_bp)

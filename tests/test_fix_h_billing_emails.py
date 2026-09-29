@@ -60,15 +60,27 @@ def test_the_last_dunning_email_says_when_stripe_will_not_retry(sent):
     assert "won't try again" in sent[0]["payload"]["html"]
 
 
-def test_the_welcome_has_a_set_password_link_and_no_password(sent):
-    res = emails.send_signed_welcome_email("o@x.test", "Simple EJ's", "erik", "https://dash/reset-password/tok",
-                                           module_reviews=1, module_labor=1, owner_name="Erik J",
-                                           restaurant_id=3, link_hours=72)
+def test_the_welcome_has_a_set_password_link_and_no_password(sent, db_path, monkeypatch):
+    # One welcome (integration wave): the post-signing welcome is
+    # emails.send_welcome_with_set_password_link — the email resend-welcome
+    # and checkout provisioning send too. H's own template is gone.
+    import models
+    from auth import create_user, init_auth
+    init_auth(db_path=db_path)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Simple EJ's", owner_email="o@x.test",
+                                                     owner_name="Erik J"), db_path=db_path)
+    models.update_restaurant(rid, {"module_reviews": 1, "module_labor": 1}, db_path=db_path)
+    uid = create_user(rid, "erik", "o@x.test", "Owner-typed-2026", db_path=db_path)
+    res = emails.send_welcome_with_set_password_link(user_id=uid, restaurant_id=rid, db_path=db_path)
     assert res.ok
+    assert not hasattr(emails, "send_signed_welcome_email")
     html = sent[0]["payload"]["html"]
-    assert "Set your password" in html and "https://dash/reset-password/tok" in html
-    assert "Temporary password" not in html and "72 hours" in html and "Forgot password" in html
-    assert sent[0]["restaurant_id"] == 3 and sent[0]["email_type"] == "send_signed_welcome_email"
+    assert "Set your password" in html and "/reset-password/" in html
+    assert "Temporary password" not in html and "Owner-typed-2026" not in html
+    assert f"{emails.SET_PASSWORD_LINK_DAYS} days" in html and "Forgot password" in html
+    assert sent[0]["restaurant_id"] == rid and sent[0]["email_type"] == "send_welcome_set_password_email"
     assert not _brand_only(html) and _no_bare_cavnar(html)
 
 

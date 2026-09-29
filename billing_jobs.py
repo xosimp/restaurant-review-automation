@@ -875,9 +875,13 @@ OWED_KINDS = ("payment_link", "welcome", "receipt", "dunning", "pay_reminder", "
 BACKOFF_MINUTES = (5, 15, 60, 240, 720, 1440)
 MAX_ATTEMPTS = len(BACKOFF_MINUTES)
 SEND_LOCK_MINUTES = 15
-# The set-password link in the post-signing welcome. Longer than a reset's
-# hour: it is how a brand-new owner first gets in, whenever they read it.
-WELCOME_LINK_HOURS = 72
+# The set-password link in the post-signing welcome: longer than a reset's
+# hour, because it is how a brand-new owner first gets in, whenever they read
+# it. The link is minted by THE welcome (emails.send_welcome_with_set_password_link,
+# integration wave), which uses models.SET_PASSWORD_LINK_HOURS — this name is
+# kept as that value because docs/ops/SECURITY.md and its control test
+# (tests/test_docs_controls.py) read it here.
+WELCOME_LINK_HOURS = _models.SET_PASSWORD_LINK_HOURS
 
 
 def enqueue(kind, restaurant_id, dedupe_key, to_email=None, payload=None, due_at=None,
@@ -956,7 +960,12 @@ def _outcome(res):
         return "sent", None, code, mid
     text = str(err or "send failed")
     low = text.lower()
-    if "suppress" in low or code in (400, 422):
+    # The SendResult says which kind of failure it was (fix round E): a
+    # refusal (suppressed, rejected, no recipient) will not change by
+    # retrying, and a sender that decided there was nothing to send is done.
+    if getattr(res, "skipped", False) is True:
+        return "skipped", text, code, mid
+    if getattr(res, "refused", False) is True or "suppress" in low or code in (400, 422):
         return "failed", text, code, mid
     return "retry", text, code, mid
 
@@ -1001,7 +1010,6 @@ def _send_payment_link(row, db_path=None):
 
 
 def _send_welcome(row, db_path=None):
-    import config
     import emails as _emails
     p = _payload(row)
     r = _restaurant(row["restaurant_id"])
@@ -1025,19 +1033,15 @@ def _send_welcome(row, db_path=None):
     to = login.get("email") or row.get("to_email") or r.owner_email
     if not to:
         raise _Permanent("no address for the owner login")
-    # A set-password link, minted now (the TTL runs from the send, not the
-    # signing) and never stored here. No password is reset before or after:
-    # the owner chooses theirs through the link (#12).
-    token = _models.create_reset_token(to, ttl_hours=WELCOME_LINK_HOURS, user_id=login["id"])
-    if not token:
-        raise _Permanent("login inactive")
-    url = f"{config.base_url()}/reset-password/{token}"
-    return _emails.send_signed_welcome_email(
-        to_email=to, restaurant_name=r.name, username=login.get("username"), set_password_url=url,
-        module_reviews=int(r.module_reviews or 0), module_labor=int(r.module_labor or 0),
-        module_inventory=int(r.module_inventory or 0), module_marketing=int(r.module_marketing or 0),
-        google_place_id=r.google_place_id, owner_name=r.owner_name, restaurant_id=r.id,
-        link_hours=WELCOME_LINK_HOURS)
+    # THE welcome (emails.send_welcome_with_set_password_link — the one
+    # resend-welcome and checkout provisioning send too): the username and a
+    # set-password link minted at send time (models.create_set_password_token,
+    # SET_PASSWORD_LINK_HOURS from the send, not the signing), never stored
+    # here. No password is reset before or after: the owner chooses theirs
+    # through the link (#12). The restaurant's name, modules, Place ID and
+    # owner name come from its row.
+    return _emails.send_welcome_with_set_password_link(user_id=login["id"], restaurant_id=r.id, to_email=to,
+                                                       db_path=db_path)
 
 
 def _local_mdy(r, stamp):
@@ -1443,6 +1447,85 @@ def _write_reconcile(rid, local, stripe_status, sub_id, mismatches, db_path=None
         conn.commit()
     finally:
         conn.close()
+
+
+def cancel_subscription(restaurant_id, actor, reason="offboarding", stripe_mod=None, db_path=None) -> dict:
+    """Cancel this restaurant's live Stripe subscription now (no further
+    invoices) — the offboarding checklist's 'stripe' step (fix round B2 #34,
+    carried out by the integration wave: it was a step marked by hand after
+    cancelling in the Stripe dashboard). {ok, cancelled: [subscription ids],
+    note, error}.
+
+    Refused: on a server that is not production (a laptop holds production's
+    Stripe key: _sending_allowed), and for a location COVERED by another's
+    subscription — one subscription per group (owner decision 1), so
+    cancelling it here would end every location's service; change the plan
+    on the paying location instead. Idempotent: nothing live is ok with
+    nothing cancelled. The mirror row is updated from Stripe's answer;
+    billing_status follows Stripe's customer.subscription.deleted event, as
+    every cancellation does (and the nightly reconcile catches a lost one)."""
+    r = _restaurant(restaurant_id)
+    if not r:
+        return {"ok": False, "error": "Restaurant not found."}
+    payer = billed_by(restaurant_id, db_path)
+    if payer and payer != restaurant_id:
+        p = _restaurant(payer)
+        return {"ok": False, "covered": True, "billed_by": payer, "error": (
+            f"{r.name} is billed with {getattr(p, 'name', 'another location')}'s subscription, which covers every "
+            f"location of the group — cancelling it would end all of them. Change the plan on the paying "
+            f"location, then mark this step skipped with that note.")}
+    mirror = live_subscription(restaurant_id, db_path)
+    cid = (r.stripe_customer_id or "").strip()
+    if not mirror and not cid:
+        return {"ok": True, "cancelled": [], "note": "No Stripe customer and no live subscription: nothing to cancel."}
+    if not _sending_allowed():
+        return {"ok": False, "local_backend": True, "error": (
+            "Refused: this server is not the production server, so it does not change live Stripe "
+            "subscriptions. Cancel from production, or in the Stripe dashboard and mark the step done.")}
+    if stripe_mod is None:
+        key = os.getenv("STRIPE_SECRET_KEY", "")
+        if not key:
+            return {"ok": False, "error": "Stripe is not configured on this server — nothing was cancelled."}
+        import config
+        stripe_mod = config.stripe_api(key)
+    targets = []
+    if mirror and mirror.get("subscription_id"):
+        targets.append(mirror["subscription_id"])
+    if cid:
+        # Anything else live on the customer (a subscription the mirror never
+        # heard of) ends too: the account is leaving.
+        for sub in _list(stripe_mod.Subscription.list(customer=cid, status="all", limit=20)):
+            sid = _g(sub, "id")
+            if sid and sid not in targets and is_live_status(_g(sub, "status")):
+                targets.append(sid)
+    cancelled, errors = [], []
+    for sid in targets:
+        try:
+            done = stripe_mod.Subscription.cancel(sid)
+            cancelled.append(sid)
+            if mirror and sid == mirror.get("subscription_id") and _g(done, "id"):
+                upsert_subscription(restaurant_id, facts=subscription_facts(done), subscription_id=sid,
+                                    db_path=db_path)
+        except Exception as e:
+            text = str(e)
+            if "canceled" in text.lower() or "No such subscription" in text:
+                continue                    # already over at Stripe: nothing left to end
+            errors.append(f"{sid}: {text[:200]}")
+    try:
+        import admin_events
+        admin_events.record_admin_action(
+            actor, "billing.subscription_cancelled", restaurant_id=restaurant_id,
+            target=f"stripe_customer:{cid}" if cid else None,
+            before={"subscriptions": targets, "billing_status": r.billing_status},
+            after={"cancelled": cancelled, "errors": errors or None, "reason": reason},
+            result="ok" if not errors else ("partial" if cancelled else "failed"))
+    except Exception:
+        pass
+    if errors:
+        return {"ok": False, "cancelled": cancelled,
+                "error": "Stripe did not cancel " + "; ".join(errors) + ". Cancel it in the Stripe dashboard."}
+    return {"ok": True, "cancelled": cancelled,
+            "note": ("Cancelled " + ", ".join(cancelled)) if cancelled else "Nothing live to cancel."}
 
 
 def reconcile_one(restaurant_id, stripe_mod=None, db_path=None) -> dict:

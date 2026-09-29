@@ -259,7 +259,8 @@ def test_the_audit_view_folds_a_requests_generic_row_under_its_typed_action(app,
     _, admin_uid = _admin(db_path)
     rid, owner_uid = _client_restaurant(db_path)
     models.update_restaurant(rid, {"is_demo": 0}, db_path=db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    # The demo flag needs the step-up (integration wave): a fresh password sign-in.
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     _post(c, f"/admin/api/client/{rid}/demo", json={"is_demo": 1, "confirm_name": "Client Grill"})
     rows = _rows(db_path, "SELECT source, request_id FROM admin_events WHERE restaurant_id=? ORDER BY id", (rid,))
     assert {r["source"] for r in rows} == {"admin", "audit"}

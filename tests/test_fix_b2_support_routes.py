@@ -38,6 +38,8 @@ from auth import create_session, create_user, init_auth, upsert_membership
 from models import Restaurant, create_restaurant, get_restaurant, update_restaurant, Review, save_reviews
 
 CSRF = "fix-b2-support-csrf"
+# The real pool entry, kept before the autouse fixture swaps in an inline runner.
+_REAL_SUBMIT_ADMIN_JOB = admin_routes._submit_admin_job
 
 
 @pytest.fixture(autouse=True)
@@ -51,14 +53,18 @@ def _redirect_db(db_path, monkeypatch):
     init_auth(db_path=db_path)
     models.init_email_log(db_path=db_path)
     auth_routes._login_attempts.clear()
-    # Admin jobs run inline here, so a test sees their result.
-    monkeypatch.setattr(admin_routes._ADMIN_JOBS, "submit", lambda fn: fn())
+    # Admin jobs run inline here, so a test sees their result. (One admin
+    # job pool now — admin_routes._submit_admin_job — for every admin job.)
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", lambda job_id, fn, *a: fn(*a))
 
 
 @pytest.fixture
 def sending(monkeypatch):
     """This process may send (as on Railway), and every email is captured."""
     monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    # A configured key: the one welcome (emails.send_welcome_with_set_password_link)
+    # mints its link only when it can send.
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
     sent = []
 
     def fake_deliver(payload=None, restaurant_id=None, email_type=None, log_send=True):
@@ -90,7 +96,7 @@ def admin(app, db_path):
     home = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
     uid = create_user(home, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
     return c
 
@@ -182,16 +188,24 @@ def test_a_double_clicked_resend_welcome_sends_once(admin, db_path, sending):
 
 def test_a_failed_welcome_says_so_and_leaves_the_cooldown_free_for_the_retry(admin, db_path, monkeypatch):
     monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
-    results = [emails.SendResult(False, error="recipient suppressed (bounced/complained)"), emails.SendResult(True)]
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
+    results = [emails.SendResult(False, error="Resend is down", status_code=503, attempts=3, reason="transient"),
+               emails.SendResult(False, error="recipient suppressed (bounced/complained)", attempts=0,
+                                 reason="suppressed"),
+               emails.SendResult(True)]
     sent = []
     monkeypatch.setattr(emails, "deliver", lambda **k: sent.append(k) or results.pop(0))
     rid, _ = _owner_account(db_path)
     r = _post(admin, f"/admin/resend-welcome/{rid}", json={})
-    assert r.status_code == 502 and "suppression list" in r.get_json()["error"]
+    assert r.status_code == 502 and "didn't go out" in r.get_json()["error"]
+    # A suppressed address is a refusal a retry won't change: 409, with where
+    # to lift it (integration wave: resend-welcome answers 409 when suppressed).
+    r = _post(admin, f"/admin/resend-welcome/{rid}", json={})
+    assert r.status_code == 409 and r.get_json()["suppressed"] is True and "suppression list" in r.get_json()["error"]
     retry = _post(admin, f"/admin/resend-welcome/{rid}", json={})
-    assert retry.status_code == 200 and retry.get_json().get("already_sent") is None and len(sent) == 2
+    assert retry.status_code == 200 and retry.get_json().get("already_sent") is None and len(sent) == 3
     assert [r["result"] for r in _raw(db_path, "SELECT result FROM admin_events WHERE event_type='welcome.resent' ORDER BY id")] \
-        == ["failed", "ok"]
+        == ["failed", "refused", "ok"]
 
 
 def test_resend_welcome_refuses_a_churned_account_and_one_closing(admin, db_path, sending):
@@ -375,7 +389,11 @@ class _Resp:
 
 
 def test_a_failed_facebook_refresh_is_reported_not_hidden(admin, db_path, monkeypatch):
+    # Through scheduler.refresh_ig_token now — the one refresh (integration
+    # wave, D #65) — which needs the Meta app's id and secret.
     import requests
+    monkeypatch.setenv("META_APP_ID", "app-1")
+    monkeypatch.setenv("META_APP_SECRET", "app-secret")
     rid, _ = _owner_account(db_path)
     update_restaurant(rid, {"ig_token": "ig-old", "fb_page_token": "fb-old"}, db_path=db_path)
     replies = {"ig-old": _Resp(200, {"access_token": "ig-new", "expires_in": 5184000}),
@@ -385,7 +403,8 @@ def test_a_failed_facebook_refresh_is_reported_not_hidden(admin, db_path, monkey
     assert r.status_code == 200 and r.get_json()["job_id"]
     job = admin.get(f"/admin/api/admin-jobs/{r.get_json()['job_id']}")
     body = job.get_json()
-    assert job.status_code == 502 and body["refreshed"] == {"instagram": True}
+    assert job.status_code == 502 and body["refreshed"] == {"instagram": True, "facebook": False}
+    assert body["expires"] and body["ok"] is False
     assert "Facebook page token NOT refreshed" in body["error"] and "Instagram token refreshed" in body["error"]
     rest = get_restaurant(rid, db_path=db_path)
     assert rest.ig_token == "ig-new" and rest.fb_page_token == "fb-old"
@@ -455,18 +474,19 @@ def test_the_review_account_keeps_its_password_unless_rotation_is_confirmed(admi
 
 # ── the admin job pool (#153) ────────────────────────────────────────────────
 
-def test_the_admin_pool_is_bounded_and_a_full_queue_refuses(monkeypatch):
-    pool = admin_routes._AdminJobs()
-    monkeypatch.setattr(pool, "_ensure_workers", lambda: None)      # nothing drains the queue
-    for _ in range(pool.QUEUE):
-        pool.submit(lambda: None)
-    import queue
-    with pytest.raises(queue.Full):
-        pool.submit(lambda: None)
+def test_the_admin_pool_is_bounded_and_a_full_queue_refuses(db_path, monkeypatch):
+    # One bounded pool for every admin job (integration wave): B2's jobs go
+    # through B1's executor, and a full pool refuses rather than queueing.
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", _REAL_SUBMIT_ADMIN_JOB)
+    monkeypatch.setattr(admin_routes, "ADMIN_JOB_QUEUE_MAX", 0)
+    job_id, joined = admin_routes._start_admin_job("admin_redraft", 7, lambda: {"ok": True})
+    assert (job_id, joined) == (None, False)
+    src = open(admin_routes.__file__).read()
+    assert "class _AdminJobs" not in src and "_submit_admin_job(job_id, _run)" in src
 
 
 def test_a_second_press_joins_the_running_job(db_path, monkeypatch):
-    monkeypatch.setattr(admin_routes._ADMIN_JOBS, "submit", lambda fn: None)     # stays pending
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", lambda job_id, fn, *a: None)     # stays pending
     a, joined_a = admin_routes._start_admin_job("admin_redraft", 5, lambda: {"ok": True})
     b, joined_b = admin_routes._start_admin_job("admin_redraft", 5, lambda: {"ok": True})
     assert a == b and not joined_a and joined_b

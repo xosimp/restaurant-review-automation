@@ -324,7 +324,13 @@ def draft_response(review_id: int, rating: int, text: str,
                    sign_off: str = None,
                    never_say: str = None,
                    urgency: str = "normal",
-                   language: str = None) -> str:
+                   language: str = None,
+                   unedited_only: bool = False) -> str:
+    """Draft (and store) a public reply to one review. Raises
+    DraftNotReplaced when the reply went out while this one was being
+    written — or, with `unedited_only` (the admin's "Re-draft every reply",
+    #78), when the owner edited it meanwhile: models.update_draft checks
+    both in the statement that writes, so neither is overwritten."""
 
     # Extract reviewer first name if available
     reviewer_name = ""
@@ -479,6 +485,8 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     # member named in public, another tenant's name, injection residue.
     # Refused → the draft is kept for the owner and flagged with the reason,
     # so no bulk or auto publish counts it.
+    # Only when asked, so a caller's stand-in update_draft keeps its old signature.
+    _only = {"unedited_only": True} if unedited_only else {}
     reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
                                   reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
                                   restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
@@ -487,16 +495,18 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         # carrying the refusal verdict for the caller.
         import response_validation as _rv
         draft = _rv.Validated(draft, validation=checked.validation, verdict=checked.verdict)
-        stored = update_draft(review_id, draft, needs_review=True, review_reason=reason)
+        stored = update_draft(review_id, draft, needs_review=True, review_reason=reason, **_only)
     else:
         # The engine's text: identical to the draft unless a rewrite lowered
         # a claim (a model-stated confidence, a certainty word).
         draft = checked or draft
-        stored = update_draft(review_id, draft)
+        stored = update_draft(review_id, draft, **_only)
     if stored is False:
         # The reply went out (approved or posted) while this one was being
-        # written; the live text stands and this draft is dropped.
-        raise DraftNotReplaced(f"review {review_id} already has an approved or posted reply")
+        # written — or, for an unedited-only redraft, the owner edited it —
+        # so what is there stands and this draft is dropped.
+        raise DraftNotReplaced(f"review {review_id} already has an approved or posted reply"
+                               + (", or one the owner edited" if unedited_only else ""))
     return draft
 
 

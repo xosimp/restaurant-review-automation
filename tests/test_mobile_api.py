@@ -2848,12 +2848,13 @@ def test_report_bug_route(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     sent = {}
-    monkeypatch.setattr("emails.send_bug_report_email", lambda name, frm, msg, meta: sent.update(name=name, msg=msg, meta=meta) or True)
+    monkeypatch.setattr("emails.send_bug_report_email", lambda name, frm, msg, meta, restaurant_id=None: sent.update(name=name, msg=msg, meta=meta, restaurant_id=restaurant_id) or True)
     assert client.post("/mobile/api/account/report-bug", headers=_auth_headers(token), json={"message": "hi"}).status_code == 400
     resp = client.post("/mobile/api/account/report-bug", headers=_auth_headers(token),
                        json={"message": "The chart is blank on Labor", "build": "abc123+", "device": "iPhone 15"})
     assert resp.get_json()["ok"] is True
     assert sent["msg"] == "The chart is blank on Labor" and sent["meta"]["build"] == "abc123+" and sent["meta"]["username"] == "alice"
+    assert sent["restaurant_id"] == rid                    # logged against the restaurant (#119)
 
 
 def test_recovery_email_flow(client, db_path, monkeypatch):

@@ -60,7 +60,7 @@ def codes(monkeypatch):
     monkeypatch.setattr(auth, "issue_two_fa_challenge", issue)
     import emails
     import notify
-    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None: box["email"].append((to, code)) or True)
+    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None, **k: box["email"].append((to, code)) or True)
     monkeypatch.setattr(notify, "send_2fa_sms", lambda to, name, code: box["sms"].append((to, code)) or True)
     return box
 

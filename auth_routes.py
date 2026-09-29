@@ -623,11 +623,31 @@ def send_2fa_test(current_user):
     # else has in progress at this restaurant (SEC-20).
     from auth import issue_two_fa_challenge as _itfc_t
     _pending_t, code = _itfc_t(current_user["restaurant_id"], current_user["id"], "setup")
+
+    def _unsent():
+        # Nothing reached the owner: the challenge goes, so a one-a-minute
+        # limit can't refuse their retry (the app's twin does the same).
+        _c_u = get_conn()
+        try:
+            _c_u.execute("DELETE FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose='setup'",
+                         (current_user["restaurant_id"], current_user["id"]))
+            _c_u.commit()
+        finally:
+            _c_u.close()
     try:
-        _stfc_t(dest, rest, code)
+        sent = _stfc_t(dest, rest, code)
     except Exception as e:
+        _unsent()
         print(f"[2fa] setup code send failed for user {current_user['id']}: {e}")
-        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment.")
+        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment."), 500
+    if not sent:
+        # The senders report a failure (a missing key, a refusal) as False
+        # rather than raising: this answered ok:true — "Code sent" — for a
+        # code that never went (docs pass). The same answer as the app's twin.
+        _unsent()
+        channel = "text" if dest["kind"] == "sms" else "email"
+        return jsonify(ok=False, error=f"Couldn't send the code — {channel} delivery failed. "
+                                       f"Try again in a moment."), 502
     masked = dest["masked"]
     return jsonify(ok=True, masked=masked, method=method)
 
@@ -695,7 +715,8 @@ def change_password(current_user):
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
+                                        restaurant_id=restaurant.id)
     except Exception:
         pass  # the password change itself already succeeded
     return jsonify(ok=True)
@@ -747,7 +768,8 @@ def update_email_route(current_user):
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None)
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
+                                     restaurant_id=restaurant.id if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
     return jsonify(ok=True)
@@ -1365,7 +1387,8 @@ def login_not_me(token):
         from emails import send_password_reset_email
         rt = create_reset_token(email)
         if rt:
-            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}")
+            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}",
+                                      restaurant_id=user.get("restaurant_id"))
         if user.get("restaurant_id"):
             log_event(user["restaurant_id"], "login_reported_not_me", {"actor": user.get("username")})
     except Exception as _e:

@@ -115,7 +115,21 @@ _WEBHOOK_CAPTURE_MINUTES = 60
 
 
 def _webhook_seen(provider, ok, event=None, error=None):
-    """Record one inbound request's signature verdict. Never raises."""
+    """Record one inbound request's signature verdict. Never raises.
+
+    Into this provider's webhook_verifications row (the billing health
+    panel's detail) AND the inbound_webhook_health ledger Resend's and
+    Twilio's handlers write (models.record_inbound_webhook) — one table the
+    console reads for every provider's webhook health, Stripe and DocuSign
+    included (integration wave: the console read E's ledger and derived
+    these two from side tables). The page-once-an-hour capture stays this
+    function's own, so the second ledger never pages twice."""
+    try:
+        import models as _m_seen
+        _m_seen.record_inbound_webhook(provider, bool(ok), event_type=(event or "").split(" ")[0] or None,
+                                       reason=None if ok else error, db_path=_m_seen.DB_PATH)
+    except Exception as e:
+        print(f"_webhook_seen({provider}) inbound ledger not recorded: {e}")
     capture = False
     row = None
     try:

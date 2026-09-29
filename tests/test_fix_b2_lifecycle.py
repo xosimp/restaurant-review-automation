@@ -63,7 +63,7 @@ def _admin_client(app, db_path):
     home = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
     uid = create_user(home, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
     return c, home
 
@@ -270,7 +270,7 @@ def test_a_new_request_is_recorded_for_the_console_and_a_failed_notice_is_captur
     monkeypatch.setattr(ops, "capture", lambda e, **k: captured.append((str(e), k)))
     import emails
     monkeypatch.setattr(emails, "send_account_deletion_request_email",
-                        lambda *a: emails.SendResult(False, error="recipient suppressed (bounced/complained)"))
+                        lambda *a, **k: emails.SendResult(False, error="recipient suppressed (bounced/complained)"))
     rid = create_restaurant(Restaurant(name="Closing Co", owner_email="c@x.test"), db_path=db_path)
     token = _mobile_login(app, db_path, rid)
     r = app.test_client().post("/mobile/api/account/request-deletion", headers={"Authorization": f"Bearer {token}"})
@@ -287,7 +287,7 @@ def test_a_local_backend_records_the_request_but_emails_nothing(app, db_path, mo
         monkeypatch.delenv(var, raising=False)
     import emails
     sent = []
-    monkeypatch.setattr(emails, "send_account_deletion_request_email", lambda *a: sent.append(a) or True)
+    monkeypatch.setattr(emails, "send_account_deletion_request_email", lambda *a, **k: sent.append(a) or True)
     rid = create_restaurant(Restaurant(name="Local Co", owner_email="l@x.test"), db_path=db_path)
     token = _mobile_login(app, db_path, rid)
     r = app.test_client().post("/mobile/api/account/request-deletion", headers={"Authorization": f"Bearer {token}"})
@@ -302,7 +302,7 @@ def test_a_bug_report_is_stored_before_it_is_emailed_and_survives_a_failed_email
     monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     monkeypatch.setattr(ops, "capture", lambda *a, **k: None)
 
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("resend is down")
     monkeypatch.setattr("emails.send_bug_report_email", boom)
     rid = create_restaurant(Restaurant(name="Buggy Co", owner_email="b@x.test"), db_path=db_path)

@@ -20,6 +20,8 @@ import pytest
 
 import auth
 import billing_jobs
+import emails as _emails_real
+_REAL_WELCOME = _emails_real.send_welcome_with_set_password_link
 import emails
 import models
 import ops
@@ -75,7 +77,7 @@ def mail(monkeypatch):
             res = box.next if box.next is not None else emails.SendResult(True, message_id="msg_1", status_code=200)
             return res
         return _f
-    for name, kind in (("send_payment_email", "payment"), ("send_signed_welcome_email", "welcome"),
+    for name, kind in (("send_payment_email", "payment"), ("send_welcome_with_set_password_link", "welcome"),
                        ("send_payment_receipt_email", "receipt"), ("send_dunning_email", "dunning"),
                        ("send_pay_reminder_email", "reminder"), ("send_card_update_email", "card")):
         monkeypatch.setattr(emails, name, rec(kind))
@@ -176,18 +178,31 @@ def _password_hash(db_path, uid):
     return _rows(db_path, "SELECT password_hash FROM users WHERE id=?", uid)[0]["password_hash"]
 
 
-def test_the_welcome_sends_a_set_password_link_and_never_changes_the_password(db_path, mail):
+def test_the_welcome_sends_a_set_password_link_and_never_changes_the_password(db_path, mail, monkeypatch):
+    # THE welcome (integration wave): the outbox sends
+    # emails.send_welcome_with_set_password_link — the one resend-welcome and
+    # provisioning send — which mints the link and reads the restaurant row.
+    # Run for real here, with only the delivery stubbed.
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link", _REAL_WELCOME)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
+    delivered, looked = [], []
+    monkeypatch.setattr(emails, "deliver", lambda payload=None, restaurant_id=None, email_type=None, log_send=True:
+                        delivered.append((payload, restaurant_id, email_type)) or emails.SendResult(True, "msg_w"))
+    import first_look
+    monkeypatch.setattr(first_look, "build", lambda place_id, deep=False: looked.append(place_id) or {})
+    monkeypatch.setattr(models, "DB_PATH", db_path)
     rid = _rid(db_path, module_reviews=1, google_place_id="ChIJ-1", owner_name="Erik J")
     uid = create_user(rid, "erik", "erik@x.test", "admin-typed-1", db_path=db_path)
     before = _password_hash(db_path, uid)
     oid, _ = billing_jobs.enqueue("welcome", rid, f"welcome:{uid}", to_email="erik@x.test",
                                   payload={"user_id": uid})
     billing_jobs.drain_owed_sends()
-    kind, k = mail.sent[0]
-    assert kind == "welcome" and "password" not in k
-    token = k["set_password_url"].rsplit("/reset-password/", 1)[1]
+    payload, logged_rid, email_type = delivered[0]
+    html = payload["html"]
+    token = html.split("/reset-password/", 1)[1].split('"', 1)[0]
     assert models.validate_reset_token(token, db_path=db_path)["id"] == uid
-    assert k["google_place_id"] == "ChIJ-1" and k["owner_name"] == "Erik J" and k["restaurant_id"] == rid
+    assert "Temporary password" not in html and "admin-typed-1" not in html and "Hi Erik" in html
+    assert looked == ["ChIJ-1"] and logged_rid == rid and email_type == "send_welcome_set_password_email"
     assert _password_hash(db_path, uid) == before
     assert _owed(db_path, oid)["status"] == "sent"
     # Nothing secret sits in the outbox.

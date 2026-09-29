@@ -70,7 +70,7 @@ def admin(db_path):
     home = _rid(db_path, name="Cavnar HQ", owner_email="will@x.test")
     uid = create_user(home, "will", "will@x.test", "admin-pass-1", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     return c
 
 
@@ -85,7 +85,7 @@ def mail(monkeypatch):
         return _f
     monkeypatch.setattr(emails, "send_payment_email", rec("payment"))
     monkeypatch.setattr(emails, "send_card_update_email", rec("card"))
-    monkeypatch.setattr(emails, "send_signed_welcome_email", rec("welcome"))
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link", rec("welcome"))
     return box
 
 

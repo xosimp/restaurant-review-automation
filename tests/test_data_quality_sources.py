@@ -281,8 +281,9 @@ def test_turning_demo_off_tags_the_restaurant_and_keeps_it_out(db_path, monkeypa
     rid = _rid(db_path, name="Was demo", is_demo=1)
     app = Flask(__name__)
     app.secret_key = "x"
-    fn = admin_routes.admin_api_set_demo.__wrapped__ if hasattr(admin_routes.admin_api_set_demo, "__wrapped__") \
-        else admin_routes.admin_api_set_demo
+    # The route body itself, under admin_required and the step-up.
+    import inspect
+    fn = inspect.unwrap(admin_routes.admin_api_set_demo)
     with app.test_request_context(json={"is_demo": 0}):
         fn(rid, current_user={"username": "will"})
     r = models.get_restaurant(rid, db_path=db_path)

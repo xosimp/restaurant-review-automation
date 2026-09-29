@@ -273,7 +273,7 @@ def test_a_failed_text_falls_back_to_email_and_the_page_says_emailed(app, db_pat
     import notify
     mails = []
     monkeypatch.setattr(notify, "send_2fa_sms", lambda *a, **k: False)
-    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None: mails.append(to) or True)
+    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None, **k: mails.append(to) or True)
     _owner_with_sms(db_path)
     html = _login_form(app.test_client(), "owner", "Owner-pass-2026").get_data(as_text=True)
     assert mails == ["owner@x.test"]
@@ -286,7 +286,7 @@ def test_a_number_that_texted_stop_gets_its_code_by_email(app, db_path, monkeypa
     texts, mails = [], []
     monkeypatch.setattr(notify, "send_2fa_sms", lambda to, name, code: texts.append(to) or True)
     monkeypatch.setattr(notify, "sms_stopped_phones", lambda phones, **k: set(phones))
-    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None: mails.append(to) or True)
+    monkeypatch.setattr(emails, "send_2fa_code", lambda to, name, code, owner=None, **k: mails.append(to) or True)
     _owner_with_sms(db_path)
     r = app.test_client().post("/mobile/api/login", json={"username": "owner", "password": "Owner-pass-2026"}).get_json()
     assert texts == [] and mails == ["owner@x.test"]

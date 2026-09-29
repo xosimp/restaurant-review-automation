@@ -16,7 +16,7 @@ Client endpoints (login_required, scoped to session restaurant):
   POST /api/toast/disconnect
 """
 from flask import Blueprint, request, jsonify
-from auth import admin_required, login_required
+from auth import admin_required, login_required, recent_auth_required
 from models import update_restaurant
 
 toast_bp = Blueprint("toast", __name__)
@@ -30,6 +30,7 @@ _admin_events.register_audit(toast_bp)
 
 @toast_bp.route("/admin/toast/save/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def save_toast_credentials(restaurant_id, current_user):
     data          = request.get_json(force=True) or {}
     client_id     = (data.get("client_id") or "").strip()
@@ -65,6 +66,7 @@ def save_toast_credentials(restaurant_id, current_user):
         if not result["ok"]:
             return jsonify(ok=False, error=result["error"])
 
+    was = get_restaurant(restaurant_id)
     update_restaurant(restaurant_id, {
         "toast_client_id":       client_id,
         "toast_client_secret":   client_secret,
@@ -74,6 +76,11 @@ def save_toast_credentials(restaurant_id, current_user):
         "toast_sync_error":      None,
         "pos_system":            "Toast",
     })
+    # Booleans only: never a credential value in the audit trail.
+    _admin_events.record_admin_action(
+        current_user, "pos.toast.saved", restaurant_id=restaurant_id, target="integration:toast",
+        before={"connected": bool(getattr(was, "toast_client_secret", None))},
+        after={"connected": True, "verified_with_toast": bool(run_test)})
     return jsonify(ok=True, message="Toast credentials saved")
 
 
@@ -105,7 +112,10 @@ def toast_status(restaurant_id, current_user):
 
 @toast_bp.route("/admin/toast/disconnect/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def disconnect_toast(restaurant_id, current_user):
+    from models import get_restaurant
+    was = get_restaurant(restaurant_id)
     update_restaurant(restaurant_id, {
         "toast_client_id":       None,
         "toast_client_secret":   None,
@@ -115,6 +125,9 @@ def disconnect_toast(restaurant_id, current_user):
         "toast_last_synced":     None,
         "toast_sync_error":      None,
     })
+    _admin_events.record_admin_action(
+        current_user, "pos.toast.disconnected", restaurant_id=restaurant_id, target="integration:toast",
+        before={"connected": bool(getattr(was, "toast_client_secret", None))}, after={"connected": False})
     return jsonify(ok=True, message="Toast disconnected")
 
 
@@ -144,6 +157,10 @@ def client_save_toast(current_user):
         return jsonify(ok=False, error="All three fields are required.")
 
     from toast import test_credentials, demo_allowed
+    from models import owner_pos_binding_refusal
+    refusal = owner_pos_binding_refusal("toast", guid, current_user["restaurant_id"])
+    if refusal:
+        return jsonify(ok=False, error=refusal), 409
     result = test_credentials(client_id, client_secret, guid)
     if not result["ok"]:
         return jsonify(ok=False, error=result["error"])

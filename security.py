@@ -230,20 +230,42 @@ def apply_boot_unlocks(env=None, db_path=DB_PATH) -> list:
     done = []
     for n in names:
         try:
+            # Whether the name is a login at all, and said either way (docs
+            # pass): a typo used to print "unlock" for a login that does not
+            # exist while the real one stayed locked. The typed name's
+            # failure rows are cleared regardless — they are keyed on it.
+            exists = _login_named(n, db_path=db_path)
             removed = clear_account_lock(n, db_path=db_path)
-            done.append(n)
-            print(f"[security] break-glass unlock: {n} ({removed} failure rows cleared) — "
-                  "unset LOGIN_UNLOCK_USERNAMES once you are back in")
+            if exists:
+                done.append(n)
+                print(f"[security] break-glass unlock: {n} ({removed} failure rows cleared) — "
+                      "unset LOGIN_UNLOCK_USERNAMES once you are back in")
+                summary = f"LOGIN_UNLOCK_USERNAMES cleared the sign-in lock on {n} at boot"
+            else:
+                print(f"[security] break-glass unlock: NO login is named '{n}' (by username or email) — "
+                      f"check the spelling in LOGIN_UNLOCK_USERNAMES; {removed} failure rows under that name "
+                      "were cleared, and no real login was unlocked")
+                summary = f"LOGIN_UNLOCK_USERNAMES named '{n}', which is no login — nothing real was unlocked"
             try:
                 import admin_events
-                admin_events.record("admin", "lockout_cleared_break_glass",
-                                    summary=f"LOGIN_UNLOCK_USERNAMES cleared the sign-in lock on {n} at boot",
-                                    payload={"username": n, "rows": removed}, db_path=db_path)
+                admin_events.record("admin", "lockout_cleared_break_glass", summary=summary,
+                                    payload={"username": n, "rows": removed, "login_exists": exists},
+                                    db_path=db_path)
             except Exception:
                 pass
         except Exception as exc:
             print(f"[security] break-glass unlock of {n} failed: {exc}")
     return done
+
+
+def _login_named(name, db_path=DB_PATH) -> bool:
+    """Whether an active or inactive login has this username or email."""
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT 1 FROM users WHERE LOWER(username)=? OR LOWER(email)=? LIMIT 1",
+                            (name, name)).fetchone() is not None
+    finally:
+        conn.close()
 
 
 def lockout_state(username, db_path=DB_PATH, *, internal=False) -> dict:
@@ -275,7 +297,10 @@ def lockout_state(username, db_path=DB_PATH, *, internal=False) -> dict:
 
 def active_lockouts(db_path=DB_PATH) -> list:
     """Every account the throttle is holding right now (account-wide or at
-    one address), newest failure first, for Access & activity."""
+    one address), newest failure first, for Access & activity. Each row
+    names the login the lock is on — user_id and restaurant_id, None for a
+    typed name that is no login — so the console can offer Clear on every
+    locked login (#135: POST /admin/api/users/<user_id>/clear-lockout)."""
     conn = get_conn(db_path)
     try:
         since = _utc(datetime.now(timezone.utc) - timedelta(hours=24))
@@ -290,6 +315,14 @@ def active_lockouts(db_path=DB_PATH) -> list:
         internal = {n for n in names if n and conn.execute(
             "SELECT 1 FROM users WHERE LOWER(username)=? AND (is_admin=1 OR LOWER(COALESCE(role,''))='support')",
             (n,)).fetchone()}
+        logins = {}
+        for n in names:
+            if not n:
+                continue
+            u = conn.execute("SELECT id, restaurant_id FROM users WHERE LOWER(username)=? OR LOWER(email)=? "
+                             "ORDER BY (LOWER(username)=?) DESC, id LIMIT 1", (n, n, n)).fetchone()
+            if u:
+                logins[n] = (u["id"], u["restaurant_id"])
     finally:
         conn.close()
     out = []
@@ -299,6 +332,7 @@ def active_lockouts(db_path=DB_PATH) -> list:
         st = lockout_state(n, db_path=db_path, internal=n in internal)
         if st["locked"]:
             st["internal"] = n in internal
+            st["user_id"], st["restaurant_id"] = logins.get(n, (None, None))
             out.append(st)
     return out
 
@@ -366,6 +400,18 @@ PWNED_MESSAGE = "That password appears in a known data breach — choose a diffe
 
 # ── freeze ───────────────────────────────────────────────────────────────────
 
+def _capture_freeze_gap(exc, restaurant_id):
+    """A freeze step that failed — a remembered device or a switched-in
+    session left alive — reaches the operator (ops.capture); it used to be
+    an `except: pass`, and a takeover response that silently half-ran reads
+    as done. Never raises: the rest of the freeze still runs."""
+    try:
+        import ops
+        ops.capture(exc, job="account_freeze", context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        print(f"[freeze] restaurant {restaurant_id}: a step failed: {exc}")
+
+
 def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
     """The takeover response. Returns how many logins were frozen.
 
@@ -392,8 +438,10 @@ def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
             conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (uid,))
             try:
                 conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (uid,))
-            except Exception:
-                pass
+            except Exception as e:
+                # A remembered device that survives a freeze skips the code
+                # at the next sign-in: said, not swallowed.
+                _capture_freeze_gap(e, restaurant_id)
         # Anyone else's session acting here right now (switched in, or a
         # staff PIN session minted for this restaurant) ends too — never an
         # admin's own session.
@@ -401,8 +449,8 @@ def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
             conn.execute("DELETE FROM sessions WHERE (active_restaurant_id=? OR staff_restaurant_id=?) "
                          "AND user_id NOT IN (SELECT id FROM users WHERE is_admin=1)",
                          (restaurant_id, restaurant_id))
-        except Exception:
-            pass
+        except Exception as e:
+            _capture_freeze_gap(e, restaurant_id)
         conn.commit()
     finally:
         conn.close()
