@@ -2082,7 +2082,11 @@ def _do_rec_event(u):
     message = None
     tracking = None
     started = None
-    if event in ("completed", "accepted") and still_open:
+    # Whose answer this is (memory audit 9/29/26): support's through
+    # view-as starts no tracker — it is not the owner acting.
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    if event in ("completed", "accepted") and still_open and authority != "admin":
         # Accept/Done on a recommendation that carries a metric starts its
         # tracker (rec-ROI #18, #39), under the family gate. `body_metric`
         # lets a client name the metric a line was shown with.
@@ -2097,8 +2101,6 @@ def _do_rec_event(u):
     # owner's reason (rec_ledger.answer_silence, memory audit 9/29/26): the
     # message says exactly that — "won't come back" promised ten years to a
     # "bad timing" and to a Saturday trim that would be needed again.
-    from permissions import answer_authority
-    authority = answer_authority(u)
     held = _rl.silence_message(key.strip(), event, kind=meta.get("kind"), reason_code=code or None,
                                reason=meta.get("reason"))
     if authority != "principal" and event in ("dismissed", "snoozed"):

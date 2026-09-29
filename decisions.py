@@ -837,11 +837,25 @@ def quiet_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
             out[kind] = {"since": st.get("since"), "review_on": st.get("review_on"), "retest": retest,
                          "retests": int(st.get("retests") or 0),
                          "last_dollars": st.get("last_dollars") if st.get("last_dollars") is not None else last_dollars}
-        if write:
-            for kind in states:
-                if kind not in voted:
+        for kind, st in states.items():
+            if kind in voted:
+                continue
+            # The vote reads the newest 2,000 episodes; a kind that fell out
+            # of that window has not been answered — it stays quiet until an
+            # answer to one of its episodes since it went quiet says so.
+            answered = conn.execute(
+                "SELECT 1 FROM rec_instances WHERE restaurant_id=? AND kind=? AND created_at >= ? "
+                "AND status IN ('accepted','completed','dismissed','implemented') LIMIT 1",
+                (restaurant_id, kind, st.get("since") or "")).fetchone()
+            if answered:
+                if write:
                     conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family=? AND kind=?",
                                  (restaurant_id, _FAMILY, kind))
+                continue
+            retest = bool(st.get("review_on") and st["review_on"] <= now_s)
+            out[kind] = {"since": st.get("since"), "review_on": st.get("review_on"), "retest": retest,
+                         "retests": int(st.get("retests") or 0), "last_dollars": st.get("last_dollars")}
+        if write:
             conn.commit()
     except Exception as e:
         print(f"[decisions] quiet state unavailable for {restaurant_id}: {e}")

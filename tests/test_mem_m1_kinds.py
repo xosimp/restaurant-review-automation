@@ -269,3 +269,17 @@ def test_supports_schedule_saves_and_capability_changes_are_marked(db_path, monk
     models.record_capability_change(rid, "rating", "Ana", before=3, after=4, changed_by="owner", db_path=db_path)
     assert _one(db_path, "SELECT changed_by FROM capability_changes")[0].startswith("support:will")
     assert sv.SUPPORT_PREFIX == "support:" and "saved_by LIKE 'support:%'" in sv.NOT_SUPPORT_TOUCHED_SQL
+
+
+def test_a_quiet_kind_does_not_lift_by_falling_out_of_the_vote_window(db_path):
+    import decisions
+    rid = _rid(db_path)
+    _expire_four(db_path, rid, "first_post")
+    decisions.quiet_state(rid, db_path=db_path)
+    # Its episodes gone from the vote's window (here: gone altogether).
+    _sql(db_path, "DELETE FROM rec_instances WHERE restaurant_id=?", rid)
+    assert "first_post" in decisions.quiet_kinds(rid, db_path=db_path)
+    # Only an answer lifts it.
+    rl.present(rid, "first_post:new", "marketing", "home", db_path=db_path)
+    rl.record(rid, "first_post:new", "completed", db_path=db_path)
+    assert "first_post" not in decisions.quiet_kinds(rid, db_path=db_path)
