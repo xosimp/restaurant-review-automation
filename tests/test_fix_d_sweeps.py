@@ -25,7 +25,12 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+# Imported at collection, so the modules that bind get_conn at import
+# (CLAUDE.md, bound imports) bind the real one, never a test's patch.
+import admin_routes  # noqa: F401
+import loss_detection  # noqa: F401
 import models
+import morning_brief
 import ops
 import scheduler
 import strategy_jobs
@@ -42,6 +47,10 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn",
                         lambda path=None, *a, **k: orig(db_path if path in (None, default) else path))
     monkeypatch.setattr(models, "DB_PATH", db_path)
+    # morning_brief binds get_conn at import (CLAUDE.md, bound imports): if
+    # its first import happened inside another test's patch, that stale
+    # copy would be what it calls — so this test sets it.
+    monkeypatch.setattr(morning_brief, "get_conn", models.get_conn)
     for name in ("get_restaurant", "save_reviews", "get_pending_analysis", "get_pending_drafts",
                  "update_last_fetched", "get_approved_examples"):
         monkeypatch.setattr(models, name, functools.partial(getattr(models, name), db_path=db_path))

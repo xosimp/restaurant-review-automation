@@ -4,9 +4,11 @@
       check and the console's status "Change" no longer reset it.
 #121  loop_completed, the running job, and a per-job runtime watchdog.
 #27   an SMS channel to WILL_PHONE; the cooldown claimed only after a delivery.
-#3 #33 the external dead-man ping at the end of every tick and after the
-      backup and the digest; the digest covers overdue jobs and everything
-      since the last digest that was sent, and gives its day back on failure.
+#3 #33 the external dead-man ping at the end of every tick, from the pulse
+      while a job is inside its bound and the loop is keeping up, and after
+      the backup and the digest; the digest covers overdue jobs and
+      everything since the last digest that was sent, and gives its day
+      back on failure.
 #28 #105 disk and a write probe in the platform SLA, paged without a
       database write.
 #35   the Monday operator digest.
@@ -18,15 +20,25 @@ from datetime import datetime
 
 import pytest
 
+# Imported at collection, so the modules that bind get_conn at import
+# (CLAUDE.md, bound imports) bind the real one, never a test's patch.
+import admin_ops  # noqa: F401
+import marketing_publish  # noqa: F401
 import models
+import morning_brief  # noqa: F401
 import ops
 import status_manager
 
 
 @pytest.fixture(autouse=True)
 def _redirect(db_path, monkeypatch):
-    real = models.get_conn
-    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    # An explicit path other than the module default is honoured: a module
+    # that binds get_conn at import (CLAUDE.md, bound imports) and is first
+    # imported inside this patch must not carry a path-ignoring copy into
+    # the next test.
+    real, default = models.get_conn, models.DB_PATH
+    monkeypatch.setattr(models, "get_conn",
+                        lambda path=None, *a, **k: real(db_path if path in (None, default) else path))
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(status_manager, "DB_PATH", db_path)
     status_manager.seed_default_services()

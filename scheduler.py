@@ -3489,13 +3489,13 @@ def _minute_duties():
     all (#31) — and returns the standard counts over its six duties."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
-    def _duty(name, fn):
+    def _duty(fn, job):
         c["attempted"] += 1
         try:
             out = fn()
         except Exception as e:
             c["failed"] += 1
-            _ops.capture(e, job=name)
+            _ops.capture(e, job=job)
             return None
         c["ok"] += 1
         return out
@@ -3504,33 +3504,33 @@ def _minute_duties():
     def _posts():
         from marketing_publish import run_due_posts
         return run_due_posts(base_url=config.base_url())
-    posts = _duty("scheduled_posts", _posts)
+    posts = _duty(_posts, job="scheduled_posts")
     if posts and (posts.get("published") or posts.get("failed")):
         log.info(f"Scheduled posts: {posts}")
 
     def _delayed_run():
         import delayed as _delayed
         return _delayed.run_due()
-    dl = _duty("delayed_actions", _delayed_run)
+    dl = _duty(_delayed_run, job="delayed_actions")
     if dl and (dl.get("ran") or dl.get("failed")):
         log.info(f"Delayed actions: {dl}")
 
     def _issues_tick():
         import issues as _issues
         return _issues.tick()
-    _duty("issues_tick", _issues_tick)
+    _duty(_issues_tick, job="issues_tick")
 
     def _release():
         import notify as _notify_rel
         return _notify_rel.release_due_alerts()
-    _duty("release_held_alerts", _release)
+    _duty(_release, job="release_held_alerts")
 
     # The rest of any newsletter the owner sent, in bounded batches
     # (guest_email.send_newsletter, MOD-EML-3).
     def _newsletters():
         from guest_email import run_newsletter_sends
         return run_newsletter_sends()
-    nl = _duty("newsletter_sends", _newsletters)
+    nl = _duty(_newsletters, job="newsletter_sends")
     if nl and (nl.get("sent") or nl.get("failed")):
         log.info(f"Newsletter sends: {nl}")
 
@@ -3540,7 +3540,7 @@ def _minute_duties():
     def _campaigns():
         from guest_marketing import run_campaign_sends
         return run_campaign_sends()
-    gc = _duty("guest_campaign_sends", _campaigns)
+    gc = _duty(_campaigns, job="guest_campaign_sends")
     if gc and (gc.get("sent") or gc.get("failed")):
         log.info(f"Guest campaign sends: {gc}")
     return c

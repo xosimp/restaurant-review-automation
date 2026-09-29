@@ -2322,7 +2322,8 @@ def send_failure_digest():
     backup_bad = backup.get("state") in ("stale", "failed", "no_offsite")
     # A job that died without raising leaves no failure row, so "no failures"
     # was never the same thing as "nothing went wrong".
-    if not failures and not stuck and not overdue and not sec_lines and not backup_bad and not missed:
+    # (tests/test_security.py pins the first three conjuncts in this order.)
+    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed:
         _mark_digest_sent(started)
         ping_healthcheck()
         return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False, "sent": False}

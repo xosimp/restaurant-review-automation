@@ -236,8 +236,8 @@ def live(tmp_path, monkeypatch):
     models.ensure_columns(path)
     rid = create_restaurant(Restaurant(name="Backup Co", owner_email="b@x.test"), db_path=path)
     models.update_restaurant(rid, {"gmb_refresh_token": "tok-live"}, db_path=path)
-    real = models.get_conn
-    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(path))
+    real, default = models.get_conn, models.DB_PATH
+    monkeypatch.setattr(models, "get_conn", lambda p=None, *a, **k: real(path if p in (None, default) else p))
     monkeypatch.setattr(models, "DB_PATH", path)
     monkeypatch.setattr(status_manager, "DB_PATH", path)
     monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 29, 2, 0))

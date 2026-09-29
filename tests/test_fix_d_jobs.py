@@ -22,22 +22,32 @@ from datetime import datetime
 
 import pytest
 
+# Imported here, at collection, so the modules that bind get_conn at import
+# (CLAUDE.md, bound imports) bind the real one — never a test's patch, which
+# monkeypatch would then "restore" into every later test.
+import admin_ops
+import admin_routes
 import jobs_registry
+import marketing_publish  # noqa: F401
 import models
+import morning_brief  # noqa: F401
 import ops
 import scheduler
+import status_manager
 
 _LOOP_SRC = inspect.getsource(scheduler.scheduler_loop)
 
 
 @pytest.fixture
 def db(db_path, monkeypatch):
-    real = models.get_conn
-    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    real, default = models.get_conn, models.DB_PATH
+
+    def redirected(path=None, *a, **k):
+        return real(db_path if path in (None, default) else path)
+    monkeypatch.setattr(models, "get_conn", redirected)
     monkeypatch.setattr(models, "DB_PATH", db_path)
-    import admin_ops, admin_routes, status_manager
-    monkeypatch.setattr(admin_ops, "get_conn", lambda *a, **k: real(db_path))
-    monkeypatch.setattr(admin_routes, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(admin_ops, "get_conn", redirected)
+    monkeypatch.setattr(admin_routes, "get_conn", redirected)
     monkeypatch.setattr(status_manager, "DB_PATH", db_path)
     ops._claim_fallback.clear()
     return db_path

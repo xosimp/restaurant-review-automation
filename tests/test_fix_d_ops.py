@@ -10,12 +10,14 @@ import pytest
 
 import models
 import ops
+import strategy_jobs  # noqa: F401 — binds get_conn at import: bind it here, at collection
 
 
 @pytest.fixture(autouse=True)
 def _redirect(db_path, monkeypatch):
-    real = models.get_conn
-    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    real, default = models.get_conn, models.DB_PATH
+    monkeypatch.setattr(models, "get_conn",
+                        lambda path=None, *a, **k: real(db_path if path in (None, default) else path))
     monkeypatch.setattr(models, "DB_PATH", db_path)
     ops._claim_fallback.clear()
     yield
