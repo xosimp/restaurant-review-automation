@@ -580,6 +580,49 @@ def update_sms_status(sid: str, status: str, error_code=None, error=None, db_pat
     return changed
 
 
+def messaging_problems(db_path: str = None, stale_hours: int = 24) -> list:
+    """What is wrong with the messaging channels right now, one sentence each
+    — for the operator's platform check to page on (ops.check_platform_sla,
+    wired by the integration wave). Empty when all is well. Never raises.
+
+    - an inbound webhook refusing requests with none verified since (a
+      rotated or missing secret: bounces, STOPs or delivery reports lost);
+    - no verified Resend event in `stale_hours` while mail is being sent;
+    - Twilio account-level errors in the last hour;
+    - an operator address sitting on the suppression list (#101)."""
+    out = []
+    try:
+        health = models.inbound_webhook_health(db_path=db_path or DB_PATH, stale_hours=stale_hours)
+        names = {"resend": "Resend (bounces and complaints)", "twilio": "Twilio inbound texts (STOP / START)",
+                 "twilio_status": "Twilio delivery reports"}
+        for provider, h in health.items():
+            if h.get("failing"):
+                out.append(f"{names.get(provider, provider)} webhook: {h.get('failed_since_verified')} request(s) "
+                           f"refused since the last verified one — {h.get('last_failure_reason') or 'bad signature'}")
+        sent = models.email_delivery_stats(days=1, db_path=db_path or DB_PATH).get("accepted") or 0
+        resend = health.get("resend")
+        if sent and (resend is None or resend.get("stale")):
+            out.append(f"No verified Resend event in {stale_hours}h while {sent} email(s) were accepted — "
+                       "check the Resend webhook and RESEND_WEBHOOK_SECRET")
+    except Exception as e:
+        print(f"[notify] messaging health unreadable: {e}")
+    try:
+        acct = sms_stats(hours=1, db_path=db_path).get("account_errors") or 0
+        if acct:
+            out.append(f"{acct} text(s) failed in the last hour with a Twilio account-level error")
+    except Exception:
+        pass
+    try:
+        ops_bad = [r["email"] for r in models.get_email_suppressions(limit=1000, db_path=db_path or DB_PATH)
+                   if r.get("operator")]
+        if ops_bad:
+            out.append("Operator address on the suppression list (it is never suppressed now, but it bounced): "
+                       + ", ".join(ops_bad))
+    except Exception:
+        pass
+    return out
+
+
 def sms_log_rows(restaurant_id=None, limit=100, db_path: str = None) -> list:
     """The newest sms_log rows, fleet-wide or for one restaurant — the
     console's SMS view (#14)."""

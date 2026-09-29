@@ -2639,6 +2639,7 @@ def admin_api_messaging_health(current_user):
     finally:
         conn.close()
     return jsonify(ok=True,
+                   problems=notify.messaging_problems(),
                    inbound_webhooks=_m.inbound_webhook_health(),
                    email=_m.email_delivery_stats(days=7),
                    sms=notify.sms_stats(hours=24),

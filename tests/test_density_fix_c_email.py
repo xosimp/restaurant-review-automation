@@ -201,7 +201,9 @@ def test_the_brief_email_is_on_report_shell_with_a_state_headline_and_a_five_lin
 def test_the_brief_presents_only_the_lines_its_email_showed():
     import inspect
     import morning_brief
-    src = inspect.getsource(morning_brief.deliver)
+    # The email path moved into _email_brief (fix round E, #82: the push
+    # falls back to it), so both are read.
+    src = inspect.getsource(morning_brief.deliver) + inspect.getsource(morning_brief._email_brief)
     assert "_branded_email" not in src
     assert "dict(brief, lines=email_lines(brief)[0])" in src
     assert "night_verdict(restaurant_id" in src

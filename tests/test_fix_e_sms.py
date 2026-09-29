@@ -308,6 +308,20 @@ def test_the_escalation_is_claimed_and_capped(db_path, twilio, routed, monkeypat
     assert len(twilio["posted"]) == posted
 
 
+# ── #74 / #14: one list of what is wrong with messaging, for the pager ─────
+
+def test_messaging_problems_names_a_failing_webhook_and_account_errors(db_path, twilio):
+    assert notify.messaging_problems(db_path=db_path) == []
+    models.record_inbound_webhook("twilio", False, reason="signature did not verify", db_path=db_path)
+    twilio["answers"].append((401, {"code": 20003, "message": "Authenticate"}))
+    notify.send_sms("6305550100", "hi")
+    problems = notify.messaging_problems(db_path=db_path)
+    assert any("Twilio inbound" in p for p in problems)
+    assert any("account-level" in p for p in problems)
+    models.record_inbound_webhook("twilio", True, event_type="inbound_sms", db_path=db_path)
+    assert not any("Twilio inbound" in p for p in notify.messaging_problems(db_path=db_path))
+
+
 # ── #14: an alert's own row says which channels it went out on ─────────────
 
 def test_the_alert_row_records_its_channels(db_path, monkeypatch):
