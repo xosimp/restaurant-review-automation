@@ -1134,6 +1134,12 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
+            # No demo, test or internal account teaches a learner, its own
+            # included (models.learning_eligible, memory audit 9/29/26):
+            # its ranking is the neutral model.
+            if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
+                return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
+                                     perspective=perspective)
             # Only a type the owner SET: a guessed type reads no group's
             # record (Benchmarking re-audit R2-7, #14, #20).
             from intelligence import categories as _cats

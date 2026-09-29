@@ -284,3 +284,15 @@ def test_the_admin_read_compares_by_version_and_weight(db_path):
     by = {(g["version"], g["bucket"]): g for g in out["groups"]}
     assert by[(2, "raised (over 1.1x)")]["taken"] == 1
     assert by[(2, "lowered (under 0.9x)")]["shown"] == 1
+
+
+def test_an_ineligible_account_ranks_on_the_neutral_model(db_path):
+    rid = _rid(db_path, "Demo Co")
+    for dish in ("Soup", "Salad", "Steak"):
+        rl.present(rid, f"reprice:{dish}", "food", "home", db_path=db_path)
+        rl.record(rid, f"reprice:{dish}", "dismissed", meta={"kind": "not_for_us", "reason_code": "too_costly"},
+                  db_path=db_path)
+    _sql(db_path, "UPDATE restaurants SET is_demo=1 WHERE id=?", rid)
+    eff = rec_learning.effectiveness(rid, db_path=db_path)
+    assert eff.weight("reprice:Burger") == (1.0, []) or eff.weight("reprice:Burger")[0] >= 0.9
+    assert eff.reason_penalties("reprice", []) == (0, 0)
