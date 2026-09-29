@@ -269,3 +269,22 @@ def test_the_overview_carries_the_backup_and_a_failed_backup_is_an_issue(db_path
     issue = next(i for i in ov["issues"] if i["key"] == "backup")
     assert issue["severity"] == "critical" and "disk full" in issue["detail"] and issue["resolvable"] is False
     assert admin_ops.resolve_issue("backup", "", "will")["resolvable"] is False
+
+# ── the alert cap is one typed audit row (INT-2 handoff; B2's record_admin_action) ──
+
+def test_the_alert_cap_is_a_typed_audit_row_with_the_number_either_side(db_path):
+    import json
+    rid = _mk(db_path, "Capped Co")
+    assert admin_ops.set_alert_cap(rid, 12, {"id": 3, "username": "will"})["ok"]
+    assert admin_ops.set_alert_cap(rid, 0, "will")["ok"]          # an older caller's username
+    from tests.test_fix_c_console import _rows
+    rows = _rows(db_path, "SELECT source, actor, actor_id, target, before_json, after_json, summary FROM admin_events "
+                          "WHERE event_type='alert_cap.set' ORDER BY id")
+    assert [r["source"] for r in rows] == ["admin", "admin"]
+    assert (rows[0]["actor"], rows[0]["actor_id"], rows[0]["target"]) == ("will", 3, f"restaurant:{rid}")
+    assert json.loads(rows[0]["before_json"]) == {"alert_max_per_day": 0}
+    assert json.loads(rows[0]["after_json"]) == {"alert_max_per_day": 12}
+    assert rows[0]["summary"] == "Alert cap set to 12 by will"
+    assert json.loads(rows[1]["before_json"]) == {"alert_max_per_day": 12} and rows[1]["actor_id"] is None
+    assert rows[1]["summary"] == "Alert cap set to off by will"
+

@@ -3986,16 +3986,20 @@ def set_alert_cap(rid, max_per_day, actor):
     if n < 0 or n > 500:
         return {"ok": False, "error": "max_per_day must be between 0 and 500"}
     from models import update_restaurant
-    if not get_restaurant(rid):
+    r = get_restaurant(rid)
+    if not r:
         return {"ok": False, "error": "Not found"}
+    old = getattr(r, "alert_max_per_day", None)
     update_restaurant(rid, {"alert_max_per_day": n})
     invalidate_fleet_cache()
-    try:
-        import admin_events
-        admin_events.record("admin", "alert_cap.set", restaurant_id=rid, amount=n,
-                            summary=f"Alert cap set to {n or 'off'} by {actor}")
-    except Exception:
-        pass
+    # One typed row in the audit trail, the number either side (B2's
+    # record_admin_action, which never raises). `actor` is the acting
+    # login — the current_user dict, or a username from an older caller.
+    import admin_events
+    admin_events.record_admin_action(
+        actor, "alert_cap.set", restaurant_id=rid, target=f"restaurant:{rid}",
+        before={"alert_max_per_day": old}, after={"alert_max_per_day": n},
+        summary=f"Alert cap set to {n or 'off'} by {admin_events._actor_parts(actor)[0]}")
     return {"ok": True, "restaurant_id": rid, "max_per_day": n}
 
 
