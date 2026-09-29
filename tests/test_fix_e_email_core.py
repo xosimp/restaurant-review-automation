@@ -105,6 +105,9 @@ def test_send_result_kinds():
     lambda: emails.send_quarterly_summary_email("a@x.test", "R", restaurant_id=1),
     lambda: emails.send_value_recap_email(1),
     lambda: emails.send_onboarding_nudge({"key": "voice"}, "a@x.test", "R"),
+    lambda: emails.send_monthly_group_summary_email("a@x.test", "O", []),
+    lambda: emails.send_staff_schedule_email("a@x.test", "Ana", "R", "9/28/26", "https://x/s", []),
+    lambda: emails.send_welcome_with_set_password_link(999),
 ], ids=lambda f: "sender")
 def test_every_sender_returns_a_send_result_never_none(db_path, call):
     """With no key configured every sender says so in a SendResult — it
