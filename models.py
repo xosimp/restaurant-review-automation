@@ -1115,6 +1115,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # skipped. A row used to mean "attempted", delivered or not.
         ("onboarding_emails", "status", "TEXT DEFAULT 'sent'"),
         ("onboarding_emails", "error", "TEXT"),
+        # Which channels an alert actually went out on — "sms,email,push",
+        # or "none" (#14). alert_log recorded an alert as fired whether any
+        # text, email or push reached anyone.
+        ("alert_log", "channels", "TEXT"),
         # A held alert's recommendation key and audience, so its release
         # records and targets exactly what raising it would have.
         ("alert_holds", "meta_json", "TEXT"),

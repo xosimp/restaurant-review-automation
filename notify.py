@@ -1148,15 +1148,14 @@ def send_test_sms(restaurant_id: int) -> dict:
     name = restaurant.name if restaurant else f"Restaurant {restaurant_id}"
     msg = f"✓ Test alert from Cavnar AI\n{name} — SMS alert system is active and working."
     sent, errors, results = 0, [], []
-    with sms_context(restaurant_id):
-        for c in contacts:
-            res = send_sms_result(c["phone"], msg, restaurant_id=restaurant_id)
-            results.append({"to_last4": str(c["phone"])[-4:], "ok": res.ok, "status": res.status,
-                            "sid": res.sid, "error_code": res.error_code, "error": res.error})
-            if res.ok:
-                sent += 1
-            else:
-                errors.append(c["phone"])
+    for c in contacts:
+        res = send_sms_outcome(c["phone"], msg, restaurant_id=restaurant_id)
+        results.append({"to_last4": str(c["phone"])[-4:], "ok": res.ok, "status": res.status,
+                        "sid": res.sid, "error_code": res.error_code, "error": res.error})
+        if res.ok:
+            sent += 1
+        else:
+            errors.append(c["phone"])
     return {"ok": sent > 0, "sent": sent, "errors": errors, "results": results}
 
 
@@ -2543,6 +2542,19 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     _present_alert(restaurant_id, text_recs, [c for c in channels if c == "sms"], db_path)
     _present_alert(restaurant_id, recs, [c for c in channels if c == "email"], db_path)
     _note_missed(restaurant_id, alert_type, recs, channels + (["push"] if pushed else []), db_path)
+    # What went, on the alert's own row (#14): "sms,email,push" (push =
+    # queued; its delivery is in push_outbox), or "none".
+    if alert_id:
+        try:
+            _c = models.get_conn(db_path)
+            try:
+                _c.execute("UPDATE alert_log SET channels=? WHERE id=?",
+                           (",".join(channels + (["push"] if pushed else [])) or "none", alert_id))
+                _c.commit()
+            finally:
+                _c.close()
+        except Exception as e:
+            print(f"[notify] alert channels not recorded ({alert_type}): {e}")
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)

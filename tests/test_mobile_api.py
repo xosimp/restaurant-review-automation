@@ -2667,9 +2667,11 @@ def test_team_invite_email_uses_the_owners_real_name_not_their_login(client, db_
     rid = _restaurant(db_path, owner_name="Erik")
     token = _login(client, db_path, rid, username="erik", role="owner")
     captured = {}
+    # The sender takes restaurant_id now (fix round E, #119: logged against
+    # the restaurant).
     monkeypatch.setattr(
         "emails.send_team_invite_email",
-        lambda to_email, restaurant_name, username, password, inviter_name=None: captured.update(inviter_name=inviter_name),
+        lambda to_email, restaurant_name, username, password, inviter_name=None, **kw: captured.update(inviter_name=inviter_name),
     )
 
     resp = client.post(

@@ -5927,23 +5927,31 @@ def mobile_invite_team_member(current_user):
     result = invite_team_member(current_user["restaurant_id"], name, email, role=role)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error", "Couldn't add that teammate.")), 400
+    invite_sent, invite_error = False, None
     try:
         from emails import send_team_invite_email
-        from models import log_email, get_restaurant as _gr
+        from models import get_restaurant as _gr
         restaurant = _gr(current_user["restaurant_id"])
         # current_user["username"] is the login handle (lowercased, deduped
         # with a trailing digit on collision — "erik", "erik2") — never the
         # name to greet someone by. owner_name is what's actually typed in
         # with real capitalization; the login username is the last resort.
         inviter = restaurant.owner_name or current_user.get("username")
-        send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
-                               inviter_name=inviter)
-        log_email(current_user["restaurant_id"], "team_invite", email, f"You've been added to {restaurant.name}")
+        # Logged by deliver() against the restaurant with its real outcome
+        # (#119); this wrote its own 'sent' row whatever happened.
+        res = send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
+                                     inviter_name=inviter, restaurant_id=current_user["restaurant_id"])
+        invite_sent = bool(getattr(res, "ok", False))
+        if not invite_sent:
+            invite_error = ("That address can't receive our email (it bounced or complained)."
+                            if getattr(res, "reason", None) == "suppressed"
+                            else "The invite email didn't go out — share their sign-in yourself or try again.")
     except Exception:
-        pass
+        invite_error = "The invite email didn't go out — share their sign-in yourself or try again."
     _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user,
                        detail=f"{email}:{role}")
-    return jsonify(ok=True, user_id=result["user_id"], username=result["username"], role=role)
+    return jsonify(ok=True, user_id=result["user_id"], username=result["username"], role=role,
+                   invite_email_sent=invite_sent, invite_email_error=invite_error)
 
 
 @mobile_bp.route("/account/team/<int:user_id>/revoke", methods=["POST"])

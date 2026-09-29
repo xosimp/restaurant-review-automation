@@ -306,3 +306,20 @@ def test_the_escalation_is_claimed_and_capped(db_path, twilio, routed, monkeypat
     posted = len(twilio["posted"])
     issues.tick(db_path=db_path, now=later + timedelta(hours=1))
     assert len(twilio["posted"]) == posted
+
+
+# ── #14: an alert's own row says which channels it went out on ─────────────
+
+def test_the_alert_row_records_its_channels(db_path, monkeypatch):
+    import push, webhooks
+    monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
+    monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: 0)
+    rid = _rid(db_path)
+    models.update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 1}, db_path=db_path)
+    monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: False)
+    notify.deliver_alert(rid, "negative_trend", "sms", "Rating declining", "<p>x</p>", db_path=db_path)
+    monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **k: True)
+    notify.deliver_alert(rid, "labor_over", "sms", "Labor", "<p>x</p>", db_path=db_path)
+    got = {r["alert_type"]: r["channels"] for r in _rows(db_path, "SELECT alert_type, channels FROM alert_log")}
+    assert got == {"negative_trend": "none", "labor_over": "email"}

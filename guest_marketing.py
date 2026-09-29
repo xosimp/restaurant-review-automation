@@ -922,7 +922,9 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
                          disclosure_version=JOIN_DISCLOSURE_VERSION, disclosure_hash=join_disclosure_hash(),
                          detail=f"join request {request_id}", db_path=db_path)
     try:
-        sent = bool(send_sms(phone, confirmation_text(restaurant_name), use_case="guest"))
+        import notify as _notify_ctx
+        with _notify_ctx.sms_context(restaurant_id):
+            sent = bool(send_sms(phone, confirmation_text(restaurant_name), use_case="guest"))
     except Exception:
         sent = False
     if not sent:
@@ -2142,7 +2144,10 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
         last_submit = _time.monotonic()
         err = None
         try:
-            ok = bool(send_sms(phone, body, use_case="guest", validity_seconds=validity))
+            import notify as _notify_ctx
+            # Attributed to the restaurant in sms_log (fix round E, #14).
+            with _notify_ctx.sms_context(rid):
+                ok = bool(send_sms(phone, body, use_case="guest", validity_seconds=validity))
         except Exception as e:
             ok, err = False, str(e)[:300]
         except BaseException:
