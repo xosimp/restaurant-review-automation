@@ -4173,7 +4173,15 @@ def record_view_as_write(ctx, status):
         pass
 
 
+# Posts through a view-as session that change nothing and are not recorded
+# as the admin's writes: the web tab ping, which admin_routes skips for a
+# view-as session (it fires on every tab switch and would bury real writes).
+_VIEW_AS_UNRECORDED = frozenset({"admin.log_activity_route"})
+
+
 def _run_view_as_write(f, args, kwargs, user, ctx):
+    if request.endpoint in _VIEW_AS_UNRECORDED:
+        return f(*args, **kwargs, current_user=user)
     status = 500
     try:
         rv = f(*args, **kwargs, current_user=user)

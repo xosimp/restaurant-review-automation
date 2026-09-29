@@ -102,14 +102,16 @@ def test_opening_records_who_for_how_long_and_puts_the_admin_on_the_session(app,
 
 
 def test_every_write_through_view_as_is_recorded_as_the_admins(app, db_path):
+    """Owner decision 3: an admin's view keeps write access, and the change
+    is the admin's on the record."""
     c, actor, rid, owner, _ = _open(app, db_path)
-    r = c.post("/api/log-activity", json={"tab": "reviews"}, headers={"X-CSRF": CSRF})
-    assert r.status_code == 200
+    r = c.post("/api/toggle-login-notify", json={"enabled": True}, headers={"X-CSRF": CSRF})
+    assert r.status_code == 200 and models.get_restaurant(rid, db_path=db_path).login_notify
     rows = _events(db_path, "view_as_write")
     assert rows, "the write was not attributed"
     p = json.loads(rows[-1]["payload"])
     assert p["actor"] == "will" and p["actor_id"] == actor and p["as_user_id"] == owner
-    assert p["path"] == "/api/log-activity" and p["status"] == 200
+    assert p["path"] == "/api/toggle-login-notify" and p["status"] == 200 and p["result"] == "ok"
     assert "will (viewing as owner)" in rows[-1]["summary"]
 
 
@@ -118,12 +120,14 @@ def test_the_tab_ping_does_not_count_the_admin_as_the_owner(app, db_path):
     r = c.post("/api/log-activity", json={"tab": "reviews"}, headers={"X-CSRF": CSRF})
     assert r.get_json().get("skipped") == "view_as"
     assert not models.get_restaurant(rid, db_path=db_path).last_activity
+    assert _events(db_path, "view_as_write") == []            # a no-op ping is not a write on the record
 
 
 def test_a_support_view_as_refuses_writes_and_records_the_refusal(app, db_path):
     c, actor, rid, owner, _ = _open(app, db_path, support=True)
-    r = c.post("/api/log-activity", json={"tab": "x"}, headers={"X-CSRF": CSRF})
+    r = c.post("/api/toggle-login-notify", json={"enabled": True}, headers={"X-CSRF": CSRF})
     assert r.status_code == 403 and r.get_json()["read_only"] is True
+    assert not models.get_restaurant(rid, db_path=db_path).login_notify
     p = json.loads(_events(db_path, "view_as_write")[-1]["payload"])
     assert p["result"] == "denied" and p["actor"] == "sup"
 
