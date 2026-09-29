@@ -2035,6 +2035,16 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     # order sent was not the order the owner approved.
     _, _, analysis = analysis_for(restaurant_id, items=items, is_live=is_live)
 
+    # What the owner's own orders teach (ordering.order_corrections; memory
+    # audit 9/29/26, food_corrections): an item they keep cutting or raising
+    # is drafted the way they send it, and the line says so.
+    try:
+        from ordering import order_corrections, apply_order_correction
+        corrections = order_corrections(restaurant_id)
+    except Exception as e:
+        print(f"[inventory] order corrections unavailable for {restaurant_id}: {e}")
+        corrections, apply_order_correction = {}, None
+
     # critical_low first — same order the UI shows them in — then
     # reorder_soon, skipping anything already picked up.
     seen, ordered = set(), []
@@ -2054,7 +2064,7 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
             # week — capped, so a bad week never halves an order, and named
             # on the line so the owner sees why the number is lower.
             qty, trimmed = _trim_for_waste(item)
-            ordered.append({
+            line = {
                 "ingredient_id": item.get("ingredient_id"),
                 "item": name,
                 "unit": item.get("unit") or "",
@@ -2065,7 +2075,11 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
                 "urgency": "critical" if bucket == "critical_low" else "soon",
                 "supplier_name": (item.get("supplier_name") or "").strip(),
                 "supplier_email": (item.get("supplier_email") or "").strip(),
-            })
+            }
+            fix = corrections.get(item.get("ingredient_id")) if item.get("ingredient_id") else None
+            if fix and apply_order_correction:
+                line = apply_order_correction(line, fix)
+            ordered.append(line)
 
     # One group per ADDRESS (MOD-FC-3). Keyed on (name, email) it made two
     # purchase orders for one supplier whose name was typed "Sysco" on one

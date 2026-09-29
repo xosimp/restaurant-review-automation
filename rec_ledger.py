@@ -379,6 +379,7 @@ KIND_TOPIC = {
     "intraday_pulse": "hours", "pulse_cut": "hours",
     "reprice": "pricing", "price_spike": "purchasing", "invoice": "purchasing", "food_cost_driver": "food_cost",
     "cut_waste": "waste", "food_waste": "waste", "stock_low": "ordering", "critical_low": "ordering",
+    "raise_par": "ordering",          # ordering.par_suggestions (memory audit 9/29/26)
     "stock": "ordering", "diag_food": "food_cost", "food_diagnosis": "food_cost", "insight_food": "food_cost",
     "top_issue": "guest_experience", "diag_review": "guest_experience", "insight_review": "guest_experience",
     "rating": "guest_experience", "neg_spike": "guest_experience", "negative_trend": "guest_experience",
@@ -403,7 +404,7 @@ KIND_TOPIC = {
 }
 # Kinds whose subject names a dish, and kinds whose subject names an item.
 DISH_KINDS = ("reprice", "dish_promote", "dish_praise")
-ITEM_KINDS = ("cut_waste", "stock_low", "critical_low", "price_spike", "diag_food")
+ITEM_KINDS = ("cut_waste", "stock_low", "critical_low", "price_spike", "diag_food", "raise_par")
 REVIEW_CATEGORY_KINDS = ("top_issue", "diag_review")
 _TOPIC_LABELS = {"food_cost": "food cost", "guest_experience": "guest experience", "guest_outreach": "guest outreach"}
 _DAYPART_LABELS = {"late_night": "late night", "happy_hour": "happy hour"}

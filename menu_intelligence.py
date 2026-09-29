@@ -224,6 +224,73 @@ def _round_up(value, step=PRICE_ROUNDING):
     return round(math.ceil(value / step - 1e-9) * step, 2)
 
 
+# How far this owner actually goes when they take a reprice suggestion
+# (memory audit 9/29/26, food_corrections): the chosen rise over the
+# suggested rise, per decision (reprice_decisions), the median shrunk toward 1
+# by REPRICE_RATIO_SHRINK pseudo-decisions and bounded to REPRICE_RATIO_BOUNDS,
+# used from REPRICE_RATIO_MIN decisions. An owner who raises prices about half
+# as much as suggested saw the full price and its full dollars on every card;
+# each suggestion now also carries what their usual choice would be and
+# recover. The suggested price itself still restores the previous food cost %
+# (it is also what the ratio is measured against, so the ratio never feeds on
+# itself).
+REPRICE_RATIO_MIN = 3
+REPRICE_RATIO_SHRINK = 3
+REPRICE_RATIO_BOUNDS = (0.25, 1.5)
+
+
+def reprice_acceptance(restaurant_id, db_path=DB_PATH) -> dict:
+    """{"ratio", "decisions", "median", "basis"} once REPRICE_RATIO_MIN
+    decisions exist, else {"ratio": None, "decisions": n}. Never raises; a
+    restaurant that may not teach a learner (models.learning_eligible) has
+    none."""
+    try:
+        import models as _m
+        if not _m.learning_eligible(restaurant_id):
+            return {"ratio": None, "decisions": 0}
+        conn = _conn(db_path)
+        try:
+            rows = conn.execute("SELECT old_price, suggested_price, chosen_price FROM reprice_decisions "
+                                "WHERE restaurant_id=? AND old_price > 0 AND suggested_price > old_price "
+                                "AND chosen_price IS NOT NULL ORDER BY id DESC LIMIT 20",
+                                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[menu_intelligence] reprice acceptance unreadable for {restaurant_id}: {e}")
+        return {"ratio": None, "decisions": 0}
+    ratios = [(float(r["chosen_price"]) - float(r["old_price"])) / (float(r["suggested_price"]) - float(r["old_price"]))
+              for r in rows]
+    n = len(ratios)
+    if n < REPRICE_RATIO_MIN:
+        return {"ratio": None, "decisions": n}
+    import statistics
+    med = statistics.median(ratios)
+    ratio = 1.0 + (med - 1.0) * n / (n + REPRICE_RATIO_SHRINK)
+    lo, hi = REPRICE_RATIO_BOUNDS
+    ratio = round(min(hi, max(lo, ratio)), 2)
+    return {"ratio": ratio, "decisions": n, "median": round(med, 2),
+            "basis": f"on your last {n} reprices you raised the price about {round(med * 100)}% of the suggested rise"}
+
+
+def apply_owner_ratio(suggestions, acc) -> list:
+    """Each suggestion with this owner's usual choice beside it: `owner_ratio`
+    (reprice_acceptance, or None below its floor), `typical_price` (the
+    current price plus the suggested rise times the ratio, on a quarter) and
+    `typical_monthly` (the monthly margin that choice recovers — never more
+    than was lost). The suggested price and monthly_margin_lost are left as
+    they are. Mutates and returns `suggestions`."""
+    ratio = (acc or {}).get("ratio")
+    for d in suggestions or []:
+        d["owner_ratio"] = acc if ratio is not None else None
+        if ratio is not None and d.get("suggested_price") and d.get("sell_price"):
+            rise = float(d["suggested_price"]) - float(d["sell_price"])
+            d["typical_price"] = _round_up(float(d["sell_price"]) + rise * ratio)
+            d["typical_monthly"] = (round(d["monthly_margin_lost"] * min(1.0, ratio), 2)
+                                    if d.get("monthly_margin_lost") is not None else None)
+    return suggestions
+
+
 def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     """For every ingredient whose price has risen, the dishes it hit, the
     monthly margin they lost, and the price that restores their food cost %.
@@ -343,6 +410,8 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)
+    # What this owner's usual choice would be and recover (food_corrections).
+    apply_owner_ratio(out, reprice_acceptance(restaurant_id, db_path=db_path) if out else {"ratio": None})
     # Dollars a month first; per-plate-only rows (no sales mix) after them —
     # the two are different units and must not be sorted against each other.
     out.sort(key=lambda d: (d["monthly_margin_lost"] is None,

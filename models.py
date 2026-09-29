@@ -2199,6 +2199,23 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, source, ref_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_edits_rid ON marketing_edits(restaurant_id, channel, id)",
+        # The owner's own invoice matches, per supplier (food_corrections):
+        # "CHKN BRST BNLS" on Sysco's invoice is Chicken Breast because the
+        # owner picked it — written at invoices.apply, read first by
+        # invoices.propose. One row per supplier + line description; kept
+        # (a correction the owner made, bounded by what their suppliers print).
+        """CREATE TABLE IF NOT EXISTS invoice_aliases (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL,
+            supplier_key     TEXT    NOT NULL DEFAULT '',
+            description_key  TEXT    NOT NULL,
+            ingredient_id    INTEGER NOT NULL,
+            times_used       INTEGER NOT NULL DEFAULT 1,
+            created_by       INTEGER,
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_used_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, supplier_key, description_key)
+        )""",
 
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
