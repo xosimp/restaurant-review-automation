@@ -52,6 +52,9 @@ final class PendingActionViewModel {
     private(set) var isLoading = false
     private(set) var isUndoing = false
     private(set) var undone = false
+    /// What the undo did, in the server's words, and the question it asks.
+    private(set) var undoneNote: String?
+    var askWhy: UndoAskWhy?
     var errorMessage: String?
     private let client: APIClient
 
@@ -86,10 +89,13 @@ final class PendingActionViewModel {
         errorMessage = nil
         defer { isUndoing = false }
         do {
-            let r: APIClient.OKResponse = try await client.send(
-                "/mobile/api/actions/\(action.id)/cancel", method: .post, body: [String: String]())
+            let r = try await client.undoQueuedAction(action.id)
             if r.ok {
                 undone = true
+                // The server's sentence and, for an automatic send the undo
+                // counts against, its one-tap "why?" (memory round, M1).
+                undoneNote = r.message
+                askWhy = r.askWhy
                 Haptic.success()
                 // The Lock Screen countdown ends with it (F3-9).
                 PendingSendActivities.finish(actionId: action.id, status: "stopped", note: nil)
@@ -127,6 +133,10 @@ struct PendingActionSheet: View {
                         Text("Nothing went out. You can send it yourself whenever it's ready.")
                             .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk2)
+                        if let note = viewModel.undoneNote {
+                            Text(note).font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     } else if let line = action.goesOutLine() {
                         HomeMixedText.make(line, size: 14.5, weight: 600, color: .cavnarInk2)
                     }
@@ -168,6 +178,7 @@ struct PendingActionSheet: View {
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .accountSheetChrome("Queued send")
+            .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
         }
         .task { await viewModel.load(id: actionId) }
     }

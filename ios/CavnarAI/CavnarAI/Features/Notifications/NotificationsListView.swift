@@ -118,6 +118,9 @@ final class NotificationsListViewModel {
     /// Rows answered here, by id, with what happened ("Undone", "Posted").
     private(set) var answered: [String: String] = [:]
     private(set) var busyRowId: String?
+    /// "Why did you undo it?" after an undo that counts against earned
+    /// trust (memory round 9/29/26, M1).
+    var askWhy: UndoAskWhy?
     var rowError: (id: String, message: String)?
 
     private struct PendingResponse: Decodable { let ok: Bool; let actions: [PendingAction]? }
@@ -195,10 +198,11 @@ final class NotificationsListViewModel {
         rowError = nil
         defer { busyRowId = nil }
         do {
-            let r: APIClient.OKResponse = try await client.send(
-                "/mobile/api/actions/\(action.id)/cancel", method: .post, body: [String: String]())
+            let r = try await client.undoQueuedAction(action.id)
             if r.ok {
-                answered[item.id] = "Undone"
+                answered[item.id] = r.message ?? "Undone"
+                // An automatic send's undo asks why, once (M1 "undo").
+                askWhy = r.askWhy
                 pendingActions.removeAll { $0.id == action.id }
                 Haptic.success()
                 // The Lock Screen countdown ends with it (F3-9).
@@ -450,6 +454,7 @@ struct NotificationsListView: View {
             // Module background, inline styled title, and the ember chevron
             // — the same chrome every Account sheet uses.
             .accountSheetChrome("Notifications")
+            .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
         }
     }
 

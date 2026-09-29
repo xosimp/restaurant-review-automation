@@ -214,3 +214,98 @@ struct RecConflictPanel: View {
         }
     }
 }
+
+// MARK: - Why did you undo it?
+
+/// The question an undo of an automatic send earns (memory round 9/29/26,
+/// M1 "undo"): an undone schedule publish or supplier order counts against
+/// the trust that queued it, and the cancel answer carries `ask_why`
+/// {route, options[{code, label}]} — asked once, one tap, never typed.
+struct UndoAskWhy: Decodable, Hashable, Sendable {
+    struct Option: Decodable, Hashable, Sendable, Identifiable {
+        let code: String
+        let label: String
+        var id: String { code }
+    }
+    let route: String
+    let options: [Option]
+
+    enum CodingKeys: String, CodingKey { case route, options }
+
+    init(route: String, options: [Option]) { self.route = route; self.options = options }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        route = try c.decode(String.self, forKey: .route)
+        options = ((try? c.decodeIfPresent(HomeLenientListDecodable<Option>.self, forKey: .options)) ?? nil)?.items ?? []
+    }
+
+    /// The server names the shared route ("/actions/12/why"); the phone
+    /// posts to its twin under /mobile/api.
+    var mobilePath: String { route.hasPrefix("/mobile/api/") ? route : "/mobile/api" + route }
+}
+
+/// POST /mobile/api/actions/<id>/cancel's answer: the server's sentence for
+/// what the undo did, and the question it asks.
+struct UndoResponse: Decodable {
+    let ok: Bool
+    var error: String? = nil
+    var message: String? = nil
+    var askWhy: UndoAskWhy? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error, message
+        case askWhy = "ask_why"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = ((try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil) ?? false
+        error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+        message = (try? c.decodeIfPresent(String.self, forKey: .message)) ?? nil
+        askWhy = (try? c.decodeIfPresent(UndoAskWhy.self, forKey: .askWhy)) ?? nil
+    }
+}
+
+extension APIClient {
+    struct UndoWhyBody: Encodable, Equatable {
+        let reasonCode: String
+        enum CodingKeys: String, CodingKey { case reasonCode = "reason_code" }
+    }
+
+    /// The undo of a queued send (delayed.cancel).
+    func undoQueuedAction(_ id: Int) async throws -> UndoResponse {
+        try await send("/mobile/api/actions/\(id)/cancel", method: .post, body: [String: String](),
+                       retryTransient: false)
+    }
+
+    /// The owner's one-tap answer to "why did you undo it?". Quiet on failure:
+    /// the undo itself already stands.
+    @discardableResult
+    func answerUndoWhy(_ ask: UndoAskWhy, code: String) async -> Bool {
+        let r: OKResponse? = try? await send(ask.mobilePath, method: .post, body: UndoWhyBody(reasonCode: code),
+                                             hapticOnError: false, retryTransient: false)
+        return r?.ok == true
+    }
+}
+
+extension View {
+    /// "Why did you undo it?" — the server's reasons as one-tap buttons,
+    /// asked right after an undo that counts against earned trust.
+    func undoWhyDialog(_ ask: Binding<UndoAskWhy?>, client: APIClient = .shared) -> some View {
+        confirmationDialog("Why did you undo it?",
+                           isPresented: Binding(get: { ask.wrappedValue != nil },
+                                                set: { if !$0 { ask.wrappedValue = nil } }),
+                           titleVisibility: .visible,
+                           presenting: ask.wrappedValue) { a in
+            ForEach(a.options) { option in
+                Button(option.label) {
+                    Task { await client.answerUndoWhy(a, code: option.code) }
+                }
+            }
+            Button("Skip", role: .cancel) {}
+        } message: { _ in
+            Text("Cavnar AI waits for a few clean runs before doing this on its own again.")
+        }
+    }
+}
