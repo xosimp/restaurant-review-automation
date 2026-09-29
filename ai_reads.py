@@ -1267,3 +1267,99 @@ def summaries(restaurant_id, surfaces=None, db_path=None) -> list:
         return []
     finally:
         conn.close()
+
+
+# ── what was already tried on a subject ──────────────────────────────────────
+
+_ANSWER_WORDS = {"accepted": "Tracked", "completed": "Done", "implemented": "the change was made",
+                 "dismissed": "Not for us"}
+_VERDICT_WORDS = {"improved": "measured better after", "worsened": "measured worse after",
+                  "no_clear_change": "no clear change measured", "unknown": "not measurable"}
+
+
+def tried(restaurant_id, keys=(), signatures=(), days=365, limit=6, db_path=None) -> list:
+    """What was already tried on a subject (memory audit 9/29/26,
+    "diagnosis_slice"): every answered episode of `keys`, and of any key
+    whose advice signature is in `signatures`, in the last `days` —
+    [{"key", "title", "answer", "at", "reason", "result", "declined"}],
+    newest first. `result` is the linked tracker's verdict read through
+    rec_learning.learned_verdict (before and after, not proof). A plain
+    hide is not a decline. Never raises."""
+    keys = [str(k) for k in (keys or ()) if k]
+    sigs = {str(s) for s in (signatures or ()) if s}
+    if not restaurant_id or not (keys or sigs):
+        return []
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return []
+    out = []
+    try:
+        rows = conn.execute(
+            "SELECT rec_id, key, title, status, tracker_id, last_event_at FROM rec_instances WHERE restaurant_id=? "
+            "AND status IN ('accepted','completed','implemented','dismissed') "
+            "AND COALESCE(closed_at, last_event_at) >= datetime('now', ?) ORDER BY last_event_at DESC LIMIT 500",
+            (restaurant_id, f"-{int(days)} days")).fetchall()
+        picked = []
+        for r in rows:
+            if r["key"] in keys or (sigs and _signature(r["key"], r["title"]) in sigs):
+                picked.append(dict(r))
+        for r in picked[:max(1, int(limit)) * 2]:
+            ev = conn.execute("SELECT event, at, meta FROM rec_events WHERE rec_id=? AND event IN "
+                              "('accepted','completed','implemented','dismissed') ORDER BY at DESC, id DESC LIMIT 1",
+                              (r["rec_id"],)).fetchone()
+            if ev is None:
+                continue
+            meta = _loads(ev["meta"], {}) or {}
+            if ev["event"] == "dismissed" and meta.get("kind") != "not_for_us":
+                continue                      # a hide, not an answer about the advice
+            reason = meta.get("reason") or None
+            code = meta.get("reason_code")
+            if code and not reason:
+                try:
+                    import rec_ledger
+                    reason = rec_ledger.reason_label(code)
+                except Exception:
+                    reason = code
+            result = None
+            if r.get("tracker_id"):
+                tr = conn.execute("SELECT * FROM recommendation_outcomes WHERE id=? AND restaurant_id=?",
+                                  (r["tracker_id"], restaurant_id)).fetchone()
+                if tr is not None and tr["status"] == "evaluated":
+                    try:
+                        import rec_learning
+                        result = rec_learning.learned_verdict(tr["verdict"], dict(tr))
+                    except Exception:
+                        result = tr["verdict"]
+            out.append({"key": r["key"], "title": _one_line(r.get("title") or r["key"], 200),
+                        "answer": _ANSWER_WORDS.get(ev["event"], ev["event"]), "at": str(ev["at"])[:10],
+                        "reason": _one_line(reason, 120) if reason else None,
+                        "result": result, "declined": ev["event"] == "dismissed"})
+            if len(out) >= int(limit):
+                break
+    except Exception as e:
+        log.warning("ai_reads: tried unavailable rid=%s: %s", restaurant_id, e)
+        return []
+    finally:
+        conn.close()
+    return out
+
+
+def tried_block(restaurant_id, keys=(), signatures=(), db_path=None) -> str:
+    """tried() as a prompt block: each answer fenced (its title is the
+    model's own words, its reason the owner's), dated M/D/YY, with the
+    measured result after it; a closing do-not-repeat line when anything
+    was declined. "" when nothing was tried."""
+    rows = tried(restaurant_id, keys=keys, signatures=signatures, db_path=db_path)
+    if not rows:
+        return ""
+    from ai_guard import wrap_untrusted
+    lines = []
+    for t in rows:
+        said = t["title"] + (f" (reason: {t['reason']})" if t.get("reason") else "")
+        tail = f" — {_VERDICT_WORDS.get(t['result'], t['result'])} ({CAVEAT})" if t.get("result") else ""
+        lines.append(f"- {_mdy(t['at'])}: answered {t['answer']} to " + wrap_untrusted(said) + tail)
+    out = "\n".join(lines)
+    if any(t["declined"] for t in rows):
+        out += "\nDo NOT recommend again anything the owner answered Not for us above, in those words or any others."
+    return out
