@@ -1708,15 +1708,21 @@ def test_the_demo_password_can_be_pinned_across_environments(db_path, monkeypatc
 
     monkeypatch.delenv("DEMO_PASSWORD", raising=False)
     rid = models._seed_simple_ejs(db_path)
-    generated = models.get_restaurant(rid, db_path).temp_password
-    assert auth.verify_password("erikdemo", generated, db_path=db_path)
+    # Without the variable the login's password is random and kept nowhere:
+    # not in restaurants.temp_password (where this test used to read it back)
+    # and not in the log (fix round A, SECURITY-9).
+    assert not models.get_restaurant(rid, db_path).temp_password
+    conn = models.get_conn(db_path)
+    old_hash = conn.execute("SELECT password_hash FROM users WHERE username='erikdemo'").fetchone()[0]
+    conn.close()
+    assert old_hash
 
     # Setting it afterwards re-points the login that already exists, because
     # the account is always created before the variable is.
     monkeypatch.setenv("DEMO_PASSWORD", "ErikDemo2026!")
     models._seed_simple_ejs(db_path)
     assert auth.verify_password("erikdemo", "ErikDemo2026!", db_path=db_path)
-    assert not auth.verify_password("erikdemo", generated, db_path=db_path)
+    assert not models.get_restaurant(rid, db_path).temp_password
 
 
 def test_a_real_clients_password_is_never_re_pointed(db_path, monkeypatch):

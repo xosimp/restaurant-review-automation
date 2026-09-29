@@ -717,10 +717,11 @@ def _ensure_ejs_login(rid: int, db_path: str):
     on your laptop was not the one on Railway, and finding the live one
     meant digging through the admin client card first.
 
-    Without that variable it falls back to a random password, printed once
-    and stored in restaurants.temp_password where the admin client card
-    already shows it — the same place the Add Client form puts a new
-    client's first password.
+    Without that variable the login gets a random password that is stored
+    nowhere and printed nowhere — set DEMO_PASSWORD (or send a reset link)
+    to sign in. It used to be written to restaurants.temp_password and
+    printed to the process log, although no temporary password is ever
+    stored (SECURITY-9). DEMO_PASSWORD is held to the password policy.
     """
     import os as _os
     import secrets
@@ -761,6 +762,11 @@ def _ensure_ejs_login(rid: int, db_path: str):
         if not (wanted and restaurant and restaurant.is_demo
                 and row["username"] == SIMPLE_EJS_USERNAME):
             return
+        from auth import password_policy_error
+        err = password_policy_error(wanted)
+        if err:
+            print(f"[auto-seed] {SIMPLE_EJS_NAME} login NOT re-pointed: DEMO_PASSWORD {err[0].lower() + err[1:]}")
+            return
         conn = get_conn(db_path)
         try:
             conn.execute("UPDATE users SET password_hash=? WHERE id=?",
@@ -768,19 +774,20 @@ def _ensure_ejs_login(rid: int, db_path: str):
             conn.commit()
         finally:
             conn.close()
-        update_restaurant(rid, {"temp_password": wanted}, db_path=db_path)
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login reset to DEMO_PASSWORD "
               f"(username {SIMPLE_EJS_USERNAME!r})")
         return
 
-    password = wanted or secrets.token_urlsafe(9)
     try:
-        create_user(rid, SIMPLE_EJS_USERNAME, "erik+demo@cavnar.ai", password, db_path=db_path)
-        update_restaurant(rid, {"temp_password": password}, db_path=db_path)
-        source = "DEMO_PASSWORD" if wanted else f"generated: {password}"
+        if wanted:
+            create_user(rid, SIMPLE_EJS_USERNAME, "erik+demo@cavnar.ai", wanted, db_path=db_path)
+            source = "DEMO_PASSWORD"
+        else:
+            create_user(rid, SIMPLE_EJS_USERNAME, "erik+demo@cavnar.ai", secrets.token_urlsafe(24),
+                        db_path=db_path, generated=True)
+            source = "a random password stored nowhere — set DEMO_PASSWORD to sign in"
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login created — username "
-              f"{SIMPLE_EJS_USERNAME!r}, password from {source} "
-              "(also on the admin client card)")
+              f"{SIMPLE_EJS_USERNAME!r}, password from {source}")
     except Exception as e:
         print(f"[auto-seed] {SIMPLE_EJS_NAME} login not created: {e}")
 
