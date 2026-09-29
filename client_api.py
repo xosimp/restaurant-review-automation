@@ -4759,24 +4759,65 @@ def _do_billing_info(restaurant_id, current_user=None):
     if preview:
         return preview, 200
     restaurant = get_restaurant(restaurant_id)
+    # Fix round H: what the account's own state says, on every answer — a
+    # hold only Cavnar AI lifts (#114/#138), which location's subscription
+    # covers this one (owner decision 1), and a past-due invoice's link.
+    import billing_jobs as _bj
+    import models as _models_b
+    lock = _models_b.pause_lock(restaurant) if restaurant else None
+    state = {
+        "billing_status": (getattr(restaurant, "billing_status", None) or None) if restaurant else None,
+        "pause_reason": (lock or ("self" if restaurant and (restaurant.billing_status or "").lower() == "paused"
+                                  else None)),
+        "paused_until": _mdy(getattr(restaurant, "paused_until", None) or "")
+                        if restaurant and (getattr(restaurant, "paused_until", "") or "") not in ("", "open") else None,
+        "locked": bool(lock),
+    }
+    if restaurant:
+        payer = _bj.billed_by(restaurant_id)
+        if payer and payer != restaurant_id:
+            p = get_restaurant(payer)
+            name = getattr(p, "name", None) or "another location"
+            # Covered by the group's subscription: no card or invoices of the
+            # paying location are shown to this one's login.
+            return dict(state, ok=True, status="covered",
+                        billed_by={"restaurant_id": payer, "name": name},
+                        message=f"Billed with {name} — one subscription covers the group.",
+                        invoices=[]), 200
     if not restaurant or not getattr(restaurant, "stripe_customer_id", None):
-        return {"ok": False, "reason": "no_customer"}, 200
+        return dict(state, ok=False, reason="no_customer"), 200
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key:
-        return {"ok": False, "reason": "no_key"}, 200
+        return dict(state, ok=False, reason="no_key"), 200
 
     try:
         _stripe = config.stripe_api(stripe_key)
-        subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="active", limit=5)
-        if not subs.data:
-            subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="trialing", limit=5)
-        if not subs.data:
-            return {"ok": True, "status": "inactive", "message": "No active subscription found"}, 200
+        # past_due and unpaid too (#6): a card that failed at renewal left the
+        # owner with "No active subscription" and no way to fix it.
+        subs = None
+        for _st in ("active", "trialing", "past_due", "unpaid", "paused"):
+            subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status=_st, limit=5)
+            if subs.data:
+                break
+        try:
+            # The billing portal is where a card is updated; offered whether
+            # or not a subscription is live, so a lapsed client can still pay.
+            portal_url = _stripe.billing_portal.Session.create(
+                customer=restaurant.stripe_customer_id, return_url="https://dashboard.cavnar.ai").url
+        except Exception:
+            portal_url = None
+        if not subs or not subs.data:
+            return dict(state, ok=True, status="inactive", message="No active subscription found",
+                        portal_url=portal_url), 200
 
         sub = subs.data[0]
         import pricing as _pricing_billing
         amount = sum(i.price.unit_amount for i in sub["items"].data) / 100
+        # current_period_end moved onto the subscription item in newer Stripe
+        # API versions; read it wherever it is.
+        _period_end = _bj._g(sub, "current_period_end") or _bj._g(
+            (_bj._list(_bj._g(sub, "items")) or [None])[0], "current_period_end")
 
         pm_desc = "Card on file"
         try:
@@ -4790,14 +4831,27 @@ def _do_billing_info(restaurant_id, current_user=None):
         except Exception:
             pass
 
-        try:
-            portal = _stripe.billing_portal.Session.create(
-                customer=restaurant.stripe_customer_id,
-                return_url="https://dashboard.cavnar.ai",
-            )
-            portal_url = portal.url
-        except Exception:
-            portal_url = None
+        # A failed charge (#6): the open invoice's own page pays it now with
+        # a new card; attempt count and next retry say how urgent it is.
+        past_due = None
+        if (sub.status or "") in ("past_due", "unpaid") or (restaurant.billing_status or "").lower() == "past_due":
+            past_due = {"hosted_invoice_url": None, "amount_due": None, "attempt_count": None,
+                        "next_attempt": None}
+            try:
+                for _inv in _stripe.Invoice.list(customer=restaurant.stripe_customer_id, status="open",
+                                                 limit=1).data:
+                    past_due.update({
+                        "hosted_invoice_url": _inv.hosted_invoice_url,
+                        "amount_due": f"${(_inv.amount_remaining if _inv.amount_remaining is not None else _inv.amount_due) / 100:,.2f}",
+                        "attempt_count": _inv.attempt_count,
+                        "next_attempt": (_mdy(datetime.fromtimestamp(_inv.next_payment_attempt))
+                                         if _inv.next_payment_attempt else None)})
+            except Exception:
+                _local = _bj.latest_open_invoice(restaurant_id)
+                if _local:
+                    past_due.update({"hosted_invoice_url": _local.get("hosted_invoice_url"),
+                                     "amount_due": f"${(_local.get('amount_remaining_cents') or _local.get('amount_due_cents') or 0) / 100:,.2f}",
+                                     "attempt_count": _local.get("attempt_count")})
 
         # Recent invoices — the same customer and key, a second Stripe call.
         # Failing independently of the subscription/portal lookups above, so
@@ -4815,22 +4869,26 @@ def _do_billing_info(restaurant_id, current_user=None):
         except Exception:
             pass
 
-        return {
+        return dict(state, **{
             "ok": True,
-            "status": sub.status,  # active, trialing, past_due, canceled
-            "next_date": _mdy(datetime.fromtimestamp(sub.current_period_end)),
+            "status": sub.status,  # active, trialing, past_due, unpaid, canceled
+            "next_date": _mdy(datetime.fromtimestamp(_period_end)) if _period_end else None,
             # The suffix from the subscription's own billing interval: an
             # annual plan read "$11,990/mo" (NS3 H7).
             "amount": _pricing_billing.billing_amount_label(amount, *_pricing_billing.subscription_interval(sub)),
             "interval": _pricing_billing.subscription_interval(sub)[0],
             "payment_method": pm_desc,
             "portal_url": portal_url,
+            "past_due": past_due,
+            # The one link that fixes a failed payment: the open invoice when
+            # there is one, else the portal (the dashboard's past-due banner).
+            "fix_url": ((past_due or {}).get("hosted_invoice_url") or portal_url) if past_due else None,
             "trial_end": _mdy(datetime.fromtimestamp(sub.trial_end)) if sub.trial_end else None,
             "invoices": invoices,
-        }, 200
+        }), 200
     except Exception as e:
         print(f"Stripe billing info error: {e}")
-        return {"ok": False, "reason": "stripe_error", "error": _safe_err(e)}, 200
+        return dict(state, ok=False, reason="stripe_error", error=_safe_err(e)), 200
 
 
 def _stamp_local_mdy(restaurant, stamp):

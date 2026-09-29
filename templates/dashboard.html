@@ -2154,6 +2154,38 @@ function loadFailed(el, d){
     </div>
   </div>
 </header>
+{# Past-due banner (fix round H, #25): a failed card no longer surfaces only
+   as an email. past_due is still in service, so the dashboard runs; the
+   account holder gets the one button that fixes it (the open invoice, else
+   the Stripe portal — resolved at click time, because portal links expire),
+   and anyone else is told who can. Colours from the theme's variables. #}
+{% if restaurant and (restaurant.billing_status or '')|lower == 'past_due' %}
+<style>
+.pastdue-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 28px;background:var(--red-bg);border-bottom:1px solid var(--red);color:var(--ink);font-size:13.5px;line-height:1.45}
+.pastdue-banner strong{color:var(--red)}
+@media (max-width:640px){.pastdue-banner{padding:10px 16px}}
+</style>
+<div class="pastdue-banner" id="pastdue-banner" role="alert">
+  <span><strong>Your last payment didn&rsquo;t go through.</strong> The dashboard keeps running while Stripe retries &mdash; {% if is_principal %}update the card to keep it that way.{% else %}the account owner can fix it from Account &rarr; Billing.{% endif %}</span>
+  {% if is_principal %}<button type="button" class="cbtn cbtn-primary cbtn-sm" id="pastdue-fix" onclick="pastDueFix(this)">Fix payment</button>{% endif %}
+</div>
+<script>
+/* ES5 only. Asks the billing endpoint for the link that fixes the payment
+   and goes there; a failure says so in a toast. */
+function pastDueFix(btn) {
+  var done = window.cbtnBusy ? cbtnBusy(btn, 'Opening') : function() {};
+  fetch('/api/billing-info', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    var url = d && (d.fix_url || d.portal_url);
+    if (url) { window.location.href = url; return; }
+    done();
+    if (typeof toast === 'function') toast((d && d.error) || 'Billing isn’t reachable right now — reply to will@cavnar.ai.', 'error');
+  }).catch(function() {
+    done();
+    if (typeof toast === 'function') toast('Network error — try again in a moment.', 'error');
+  });
+}
+</script>
+{% endif %}
 <div class="tabs" role="tablist" aria-label="Dashboard sections">
     <button class="tab active" id="tab-home" onclick="switchTab('home',this)">Home</button>
     {# Badge = every review still actionable in the inbox: ones with a
@@ -25022,11 +25054,16 @@ function loadBillingInfo() {
     // may well be paying. Say who can see it, and leave the health item be.
     if(d&&d.owner_only){var oo=document.getElementById('billing-owner-only');if(oo)oo.hidden=false;return;}
     if(window.acctApplyBilling)acctApplyBilling(d);
+    // A location covered by its group's subscription (fix round H): say who
+    // pays for it instead of "No active subscription".
+    if(d&&d.status==='covered'){
+      var cov=document.getElementById('billing-no-sub');cov.textContent=d.message||'Billed with another location.';cov.style.display='block';return;
+    }
     if(!d.ok || d.status==='inactive') {
       document.getElementById('billing-no-sub').style.display='block'; return;
     }
     document.getElementById('billing-content').style.display='block';
-    var statusMap={active:'Active',trialing:'Trial period — first charge on day 31',past_due:'⚠ Payment past due',canceled:'Canceled'};
+    var statusMap={active:'Active',trialing:'Trial period — first charge on day 31',past_due:'⚠ Payment past due',unpaid:'⚠ Payment overdue',canceled:'Canceled'};
     document.getElementById('billing-status').textContent=statusMap[d.status]||d.status;
     // Prominent next charge
     var nextDate = d.trial_end ? 'Trial ends '+d.trial_end : (d.next_date||'—');

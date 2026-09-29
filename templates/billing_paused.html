@@ -43,7 +43,14 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
   <div class="logo">Cavnar <em style="color:var(--ember);font-style:italic">AI</em></div>
   <div class="sub">{% if paused %}Subscription paused{% else %}Subscription{% endif %}</div>
   <div class="wrap">
-    {% if paused %}
+    {% if paused and pause_lock %}
+    {# A hold only Cavnar AI lifts (a disputed charge, a full refund, an
+       admin's hold): its reason, and no Resume button — the owner's Resume
+       used to undo a chargeback pause in one click (#114). #}
+    <div class="heading">Your account is on hold.</div>
+    <div class="desc">{% if pause_lock == 'dispute' %}A payment on this account is being disputed, so the dashboard is paused until that is sorted out.{% elif pause_lock == 'refund' %}A payment on this account was refunded, so the dashboard is paused for now.{% else %}Cavnar AI has paused this account.{% endif %} Your data is safe and keeps flowing in the meantime.</div>
+    <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="mailto:will@cavnar.ai?subject=My%20Cavnar%20AI%20account%20is%20on%20hold">Email Will</a>
+    {% elif paused %}
     <div class="heading">Taking a break.</div>
     <div class="desc">Billing and the daily briefs are paused{% if paused_until and paused_until != 'open' %}. Everything resumes on its own on <span class="num" data-iso="{{ paused_until }}">{{ paused_until }}</span>{% endif %}. Your data keeps flowing in the meantime, so the first brief back will be current.</div>
       {% if can_resume %}

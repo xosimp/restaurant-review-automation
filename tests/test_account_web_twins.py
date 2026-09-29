@@ -120,8 +120,13 @@ def test_billing_with_no_customer_reads_the_same_on_both(client, db_path, monkey
     monkeypatch.delenv("BILLING_PREVIEW_IDS", raising=False)
     _web_as(monkeypatch, rid)
     h = _mobile_token(client, db_path, rid)
-    assert client.get("/api/billing-info").get_json() == {"ok": False, "reason": "no_customer"}
-    assert client.get("/mobile/api/account/billing", headers=h).get_json() == {"ok": False, "reason": "no_customer"}
+    web = client.get("/api/billing-info").get_json()
+    app = client.get("/mobile/api/account/billing", headers=h).get_json()
+    assert web == app
+    assert web["ok"] is False and web["reason"] == "no_customer"
+    # Fix round H: the account's own billing state rides on every answer
+    # (a hold only Cavnar AI lifts, the pause date, the status).
+    assert web["billing_status"] == "trial" and web["locked"] is False and web["pause_reason"] is None
 
 
 def test_a_stripe_failure_is_not_echoed_raw(client, db_path, monkeypatch):
