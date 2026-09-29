@@ -1,5 +1,6 @@
 """The controls docs/ops/SECURITY.md, RECOVERY.md and RAILWAY_SCHEDULER_SPLIT.md
-state, checked against the code (fix round, #146).
+state, checked against the code (fix round, #146) — and DATABASE_SCHEMA.md's
+off-site scrub list and retention table, against their registries.
 
 An operator reads those files during an incident and acts on them. Each test
 below pairs one stated control with the code that implements it — reading the
