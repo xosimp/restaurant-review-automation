@@ -164,9 +164,41 @@ def test_the_step_up_routes_are_the_ones_the_doc_lists():
                     found.add(d.args[0].value)
     assert found == _STEP_UP_TODAY
     import admin_routes
+    import offboarding
     for name in _STEP_UP_IN_PART:
         assert "reauth_refusal(" in inspect.getsource(getattr(admin_routes, name)), name
-    _says(SECURITY, "applied today")
+    assert tuple(admin_routes._SETTINGS_STEP_UP_FIELDS) == (
+        "billing_status", "module_reviews", "module_labor", "module_inventory", "module_marketing", "owner_email")
+    assert tuple(offboarding.ACTING_STEPS) == ("integrations", "stripe", "docusign")
+    _says(SECURITY, "applied today", f"the decorator, on {len(_STEP_UP_TODAY)} routes",
+          "`offboarding.acting_steps`: integrations, stripe, docusign",
+          "the billing status, a module switch or the owner email (`_settings_step_up_fields`)")
+
+
+def test_an_expired_console_read_is_401_json_and_a_page_is_a_redirect():
+    """A fetch() under /admin/api/ that met an expired session got a 302 to
+    the HTML login page, which fetch followed and failed to parse (INT-2):
+    it answers 401 {session_expired} like a write; a page still redirects."""
+    from flask import Blueprint, Flask
+    import auth
+    app = Flask(__name__)
+    login_bp = Blueprint("auth", __name__)
+    login_bp.add_url_rule("/login", "login", lambda: "login")
+    app.register_blueprint(login_bp)
+
+    @auth.admin_required
+    def view(current_user=None):
+        return "reached"
+
+    with app.test_request_context("/admin/api/clients/list", method="GET"):
+        resp, status = view()
+        assert status == 401 and resp.get_json()["session_expired"] is True
+    with app.test_request_context("/admin/api/anything", method="POST"):
+        assert view()[1] == 401
+    with app.test_request_context("/admin", method="GET"):
+        resp = view()
+        assert resp.status_code == 302 and resp.location.endswith("/login")
+    _says(SECURITY, "**401 `{session_expired: true}`**", "a page get is a **302** to the login page")
 
 
 def test_the_admin_second_factor_states():
@@ -236,9 +268,25 @@ def test_the_password_policy_is_eight_characters_and_not_breached():
 
 
 def test_the_welcome_carries_a_72_hour_set_password_link_not_a_password():
+    """One welcome email, whichever sender (INT-2): the outbox after signing
+    or a checkout, and the console's Resend welcome, all call
+    emails.send_welcome_with_set_password_link, which mints the link at send
+    time for models.SET_PASSWORD_LINK_HOURS (the resend used to mint a
+    one-hour link of its own)."""
+    import admin_routes
     import billing_jobs
-    assert billing_jobs.WELCOME_LINK_HOURS == 72
-    _says(SECURITY, "temporary passwords are never stored or emailed", "72 hours from signing")
+    import emails
+    import models
+    assert models.SET_PASSWORD_LINK_HOURS == 72
+    assert billing_jobs.WELCOME_LINK_HOURS == models.SET_PASSWORD_LINK_HOURS
+    assert emails.SET_PASSWORD_LINK_DAYS * 24 == models.SET_PASSWORD_LINK_HOURS
+    assert inspect.signature(models.create_set_password_token).parameters["hours"].default == 72
+    assert "create_set_password_token(user[\"id\"], db_path=dbp)" in inspect.getsource(
+        emails.send_welcome_with_set_password_link)
+    assert "send_welcome_with_set_password_link(" in inspect.getsource(admin_routes.resend_welcome_email)
+    assert "send_welcome_with_set_password_link(" in inspect.getsource(billing_jobs)
+    _says(SECURITY, "temporary passwords are never stored or emailed",
+          "one-use set-password link valid for 72 hours from the send (`models.set_password_link_hours`")
 
 
 # ── break-glass and the boot seed ───────────────────────────────────────────
@@ -253,6 +301,17 @@ def test_the_break_glass_variables_are_read_at_every_boot():
     assert os.path.exists(os.path.join(ROOT, "scripts", "unlock_login.py"))
     _says(SECURITY, "login_unlock_usernames", "admin_2fa_reset_usernames", "scripts/unlock_login.py")
     _says(RECOVERY, "login_unlock_usernames=<username>", "admin_2fa_reset_usernames=<username>")
+
+
+def test_a_break_glass_unlock_says_when_no_login_has_the_name(db_path, capsys):
+    """A misspelt LOGIN_UNLOCK_USERNAMES used to print "unlock" while the
+    real login stayed locked; it says the name is no login (INT-2)."""
+    import auth
+    import security
+    auth.init_auth(db_path)
+    assert security.apply_boot_unlocks(env={"LOGIN_UNLOCK_USERNAMES": "no-such-login"}, db_path=db_path) == []
+    assert "NO login is named 'no-such-login'" in capsys.readouterr().out
+    _says(SECURITY, "prints `no login is named '<name>'` in the boot log", "records `login_exists`")
 
 
 def test_the_admin_seed_needs_a_password_and_no_admin(db_path):
@@ -531,14 +590,32 @@ def test_a_laptop_or_a_pending_restore_sends_nothing(monkeypatch):
     _says(SECURITY, "refused 409 where `scheduler.scheduling_allowed()` is false")
 
 
-def test_the_two_sends_the_doc_named_as_ungated_are_gated_now():
-    """SECURITY.md named two admin sends not gated on a local backend; the
-    integration wave (INT-2) gated both with _send_blocked, the same 409 as
-    every other admin send. (The doc's "two exceptions today" sentence is
-    the docs pass's to take out.)"""
+def test_every_admin_send_is_gated_and_the_doc_names_the_deliberate_exceptions():
+    """The alert-contact test and the contract resend were the two admin
+    sends a local backend let through; INT-2 gated both with _send_blocked,
+    mark-signed now checks before it writes, and three kinds of send are
+    left ungated on purpose — each named in SECURITY.md."""
     import admin_routes
-    for fn in (admin_routes.test_alert_sms_route, admin_routes.resend_contract):
+    import client_api
+    for fn in (admin_routes.test_alert_sms_route, admin_routes.resend_contract, admin_routes.resend_welcome_email,
+               admin_routes.test_digest, admin_routes.test_urgent, admin_routes._send_reset_link_to):
         assert "_send_blocked()" in inspect.getsource(fn), fn.__name__
+    signed = inspect.getsource(admin_routes.admin_api_billing_mark_signed)
+    assert signed.index("_live_actions_refused()") < signed.index("update_restaurant(")
+    assert "_send_blocked" not in inspect.getsource(admin_routes.admin_two_factor_send)
+    assert '"deletion.notice_skipped"' in _read("client_api.py") and client_api
+    _says(SECURITY, "refused, 409, one shared sentence", "checked before anything is written",
+          "deliberately not gated", "`post /admin/two-factor/send`", "`post /api/send-referral`",
+          "recorded as `deletion.notice_skipped`")
+
+
+def test_a_copy_of_the_app_never_loads_another_checkouts_env():
+    """Flask's own .env lookup walks up from the working directory, so a
+    worktree's copy loaded the main checkout's .env (production's keys)."""
+    src = _read("hosted_dashboard.py")
+    assert 'load_dotenv(pathlib.Path(__file__).parent / ".env")' in src
+    assert "app.run(host=\"0.0.0.0\", port=PORT, debug=False, load_dotenv=False)" in src
+    _says(SECURITY, "`app.run(..., load_dotenv=false)`")
 
 
 # ── support masking, the AI trace, the breaker ───────────────────────────────
@@ -554,7 +631,46 @@ def test_support_reads_are_masked():
     assert "cus_ABCDEFGH1234" not in out["note"]
     admin_src = _read("admin_routes.py")
     assert 'resp.headers["X-Redacted"] = "support"' in admin_src
-    _says(SECURITY, "x-redacted: support")
+    import sales_audit_routes
+    assert "_admin_support_redaction(resp)" in inspect.getsource(sales_audit_routes._support_redaction)
+    _says(SECURITY, "x-redacted: support", "`sales_audit_routes._support_redaction`")
+
+
+def test_support_is_refused_the_legacy_client_pages():
+    import admin_routes
+    page, status = admin_routes._legacy_page_refused({"id": 9, "is_admin": 0, "role": "support"})
+    assert status == 403 and "Use the admin console" in page
+    assert admin_routes._legacy_page_refused({"id": 1, "is_admin": 1}) is None
+    for fn in (admin_routes.client_settings_page, admin_routes.client_data_page):
+        assert "_legacy_page_refused(current_user)" in inspect.getsource(fn), fn.__name__
+    _says(SECURITY, "support gets a 403 page that points at the console instead (`admin_routes._legacy_page_refused`)")
+
+
+def test_the_audit_keeps_only_a_phones_last_four():
+    import admin_events
+    out = admin_events._redact({"phone": "(512) 555-0123", "to_phone": "+15125550199", "phone_last4": "0123",
+                                "password": "hunter2hunter2"})
+    assert out["phone"] == "…0123" and out["to_phone"] == "…0199" and out["phone_last4"] == "0123"
+    assert out["password"] == "[redacted]"
+    _says(SECURITY, "keeps only the last four digits of a value under any key naming a phone (`admin_events._redact`)")
+
+
+def test_the_owner_pos_connects_refuse_a_store_bound_elsewhere():
+    import clover_routes
+    import mobile_api
+    import square_routes
+    import toast_routes
+    for fn in (toast_routes.client_save_toast, square_routes.client_save_square, clover_routes.client_save_clover,
+               mobile_api.mobile_connect_toast, mobile_api.mobile_connect_square, mobile_api.mobile_connect_clover):
+        assert "owner_pos_binding_refusal(" in inspect.getsource(fn), fn.__name__
+    _says(SECURITY, "the owner's own connects refuse it too, 409 (`models.owner_pos_binding_refusal`")
+
+
+def test_login_history_is_on_the_retention_registry():
+    import ops
+    assert ops._RETENTION_DAYS["login_history"] == 90
+    assert ops._RETENTION_COLUMN.get("login_history", "created_at") == "created_at"
+    _says(SECURITY, "`login_history` (90 days) among them")
 
 
 def test_the_task_poll_is_admin_only_and_serves_only_task_results():
@@ -566,7 +682,9 @@ def test_the_task_poll_is_admin_only_and_serves_only_task_results():
     src = inspect.getsource(admin_routes.admin_api_task)
     assert 'current_user.get("is_admin")' in src and "_ADMIN_TASK_KINDS" in src and "_ADMIN_TASK_RESULT_KEYS" in src
     assert "password_once" not in admin_routes._ADMIN_TASK_RESULT_KEYS
-    _says(SECURITY, "get /admin/api/tasks/<job_id>")
+    assert tuple(admin_routes._ADMIN_TASK_KINDS) == ("review_fetch_one", "pos_sync_one")
+    _says(SECURITY, "get /admin/api/tasks/<job_id>` is 403 for support",
+          "(`_admin_task_kinds`: `review_fetch_one`, `pos_sync_one`")
 
 
 def test_ai_trace_text_is_admin_only_and_kept_thirty_days():
