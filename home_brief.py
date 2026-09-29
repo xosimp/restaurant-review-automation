@@ -584,23 +584,44 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
     each card's rank by a bounded weight (0.6–1.25×; ROI audit #24, #47,
     #29). It reorders only — nothing is dropped — and a card with
     `critical` severity is never weighed down."""
+    import rec_learning as _rl_rank
     for r in recs:
-        r["rank_score"] = rank_score(r)
+        r["rank_score"] = base = rank_score(r)
+        info = None
         if learned is not None and r.get("severity") != "critical":
-            try:
-                w, why = learned(r["key"])
-            except Exception as e:
-                print(f"[home] learned weight unavailable for {r.get('key')}: {e}")
-                w, why = 1.0, []
+            # A model line's words name its advice signature, so what was
+            # learned about "Tuesday staffing" reaches a hashed line too.
+            info = _rl_rank.weigh(learned, r["key"], title=r.get("title"))
+            w, why = info["weight"], info["why"]
             if w != 1.0:
                 r["rank_score"] = round(r["rank_score"] * w, 2)
                 r["learned"] = {"weight": w, "why": why[:3]}
+        # What learning did to this ranking, kept with the showing
+        # (rank_log): the ledger stores it on the shown event.
+        r["rank"] = _rl_rank.rank_meta(r, base, info)
     ranked = sorted(recs, key=lambda r: -r["rank_score"])
     quiet = set(quiet_kinds or ())
+    retest = set()
+    if isinstance(quiet_kinds, dict):
+        # decisions.quiet_state: a quiet kind due its re-test, or one whose
+        # figure has since doubled, is shown again, labelled a re-test
+        # (memory audit, "quiet_kinds").
+        for r in ranked:
+            k = r["key"].split(":", 1)[0]
+            st = quiet_kinds.get(k)
+            if not st:
+                continue
+            if st.get("retest") or (st.get("last_dollars") and r.get("dollars_monthly")
+                                   and float(r["dollars_monthly"]) >= 2 * float(st["last_dollars"])):
+                retest.add(k)
+        quiet = {k for k in quiet_kinds if k not in retest}
     loud = [r for r in ranked if r["key"].split(":", 1)[0] not in quiet]
     soft = [r for r in ranked if r["key"].split(":", 1)[0] in quiet]
     for r in soft:
         r["quiet"] = True
+    for r in loud:
+        if r["key"].split(":", 1)[0] in retest:
+            r["retest"] = True
     return loud[:3] + soft + loud[3:]
 
 
@@ -709,6 +730,8 @@ def attention_answerable(a) -> bool:
 # HomeActionDeck/HomeRecommendations): at most this many of each.
 HOME_ATTENTION_SHOWN = 4
 HOME_RECS_SHOWN = 3
+# How many ranked-but-not-shown cards each build logs (rank_log).
+RANK_LOG_UNSHOWN = 7
 
 # Where each attention item's button lands (nav.py). "Reply now" used to
 # open the whole inbox unfiltered and "See the list" the top of Food Cost
@@ -2264,7 +2287,11 @@ def _build(current_user, present=True):
     # ledger weighs each card, within bounds (rec_learning, ROI #24/#47).
     try:
         import rec_learning
-        learned = rec_learning.effectiveness(rid, restaurant=restaurant)
+        # Learned from this login's side: a manager's declines never rank
+        # the owner's Home, and the owner's answers outrank a manager's on
+        # theirs (memory audit, who_answered).
+        learned = rec_learning.effectiveness(rid, restaurant=restaurant,
+                                             perspective=rec_learning.perspective_of(current_user))
     except Exception as e:
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
@@ -2291,6 +2318,10 @@ def _build(current_user, present=True):
     # with the first); iOS a deck of the first four attention items and
     # three cards. The payload keeps every attention item (web's "+N more"
     # counts them) and exactly the cards both clients show.
+    # The candidates ranked but not shown, kept for the build's rank log
+    # (rank_log): acceptance can only be corrected for exposure if what was
+    # NOT shown is known too.
+    _unshown = recs[HOME_RECS_SHOWN:HOME_RECS_SHOWN + RANK_LOG_UNSHOWN]
     recs = recs[:HOME_RECS_SHOWN]
     import rec_delivery
     for r in recs:
@@ -2331,7 +2362,9 @@ def _build(current_user, present=True):
                # The price it asks for: a new one is a new recommendation
                # (rec_ledger supersedes the open episode, ROI #37).
                "target": ((r.get("action") or {}).get("price") if (r.get("action") or {}).get("kind") == "reprice"
-                          else None)}
+                          else None),
+               # What learning did to its rank (rank_log).
+               "rank": r.get("rank")}
               for i, r in enumerate(recs) if r["answerable"])])
         batch = [it for it in batch if it["key"] not in done]
         if not batch:
@@ -2352,6 +2385,14 @@ def _build(current_user, present=True):
         recs = [r for r in recs if not r["answerable"] or shown.get(r["key"], True) is not None]
         if [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] == before:
             break
+
+    if present:
+        try:
+            rec_ledger.log_rank_build(rid, "home", shown=[dict(r.get("rank") or {}, key=r["key"]) for r in recs],
+                                      not_shown=[dict(r.get("rank") or {}, key=r["key"]) for r in _unshown],
+                                      version=getattr(learned, "version", None))
+        except Exception as e:
+            print(f"[home] rank log unavailable for {rid}: {e}")
 
     # What was said before about what is on screen now (memory audit
     # 9/29/26): a card re-offered after the owner answered it names that

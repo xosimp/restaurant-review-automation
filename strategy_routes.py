@@ -2132,6 +2132,52 @@ def _do_rec_event(u):
     return out, 200
 
 
+def _do_data_verify(u):
+    """POST /data-health/verify {"source"} — the owner has checked a data
+    source they said they don't trust ("don't trust the data" on a card,
+    memory audit 9/29/26 "reasons"): the cap on every card resting on it
+    lifts, and the answers held until it was verified are released.
+    Principal only: re-verifying the data is the owner's call."""
+    if not _principal(u):
+        return _forbidden("Only the owner can re-verify the data.")
+    import rec_ledger as _rl
+    src = _body().get("source")
+    if not isinstance(src, str) or not src.strip():
+        return {"ok": False, "error": "Which source?"}, 400
+    out = _rl.verify_source(_rid(u), src.strip().lower(), user_id=u.get("id"))
+    if not out.get("closed"):
+        return {"ok": False, "error": "Nothing is waiting to be re-verified there."}, 404
+    try:
+        import data_health
+        data_health.invalidate(_rid(u))
+    except Exception:
+        pass
+    return {"ok": True, "released": out.get("released", 0),
+            "message": "Thanks \u2014 recommendations resting on it are back at full confidence"}, 200
+
+
+def _do_rec_conflict(u):
+    """POST /recs/conflict {"conflict", "prefer"} — the owner chose between
+    two recommendations that pull against each other ("Trim Tuesday" and
+    "Fill Tuesday"): the choice is stored as a decision, so the same
+    conflict resolves the same way next time (lever_conflicts, memory audit
+    9/29/26 "conflicts"). `prefer` is the advice signature kept."""
+    import lever_conflicts
+    b = _body()
+    cid, prefer = b.get("conflict"), b.get("prefer")
+    if not isinstance(cid, str) or not isinstance(prefer, str) or not cid.strip() or not prefer.strip():
+        return {"ok": False, "error": "conflict and prefer are required"}, 400
+    out = lever_conflicts.record_choice(_rid(u), cid.strip(), prefer.strip(), user=u)
+    if not out.get("ok"):
+        return {"ok": False, "error": out.get("error") or "No such conflict."}, 404
+    try:
+        import home_brief
+        home_brief.invalidate(_rid(u))
+    except Exception:
+        pass
+    return out, 200
+
+
 # ── the owner's own recommendation record (rec_learning) ────────────────────
 #
 # What they followed, what it did, and the timeline — restaurant-scoped and
@@ -4386,6 +4432,8 @@ _ROUTES = [
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
+    ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),
+    ("/recs/conflict", ["POST"], _do_rec_conflict, "rec_conflict"),
 ]
 
 

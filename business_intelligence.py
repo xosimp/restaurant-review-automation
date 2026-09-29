@@ -1179,7 +1179,7 @@ def one_thing_confidence(restaurant_id, c, db_path=DB_PATH, ctx=None):
         return confidence_engine.unknown()
 
 
-def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx=None):
+def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx=None, log_rank=True):
     """The top candidate the owner has not already answered, and whose kind
     they have not stopped answering (decisions.quiet_kinds) — a "no" on Home
     is a no here too, and a kind ignored four times running never leads.
@@ -1214,20 +1214,21 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
         def flush():
             ordered.extend(sorted(run, key=lambda x: -(x.get("score") or 0)))
             run.clear()
+        import rec_learning as _rl_rank
         for c in candidates:
             c = dict(c)
             if c.get("urgency") == "critical":
                 flush()
                 ordered.append(c)
                 continue
-            try:
-                w, why = learned(c["key"])
-            except Exception as e:
-                log.warning("one thing: weight failed for %s: %s", c.get("key"), e)
-                w, why = 1.0, []
+            base = float(c.get("score") or 0)
+            info = _rl_rank.weigh(learned, c["key"], title=c.get("what"))
+            w, why = info["weight"], info["why"]
             if w != 1.0:
                 c["score"] = round(float(c.get("score") or 0) * w, 2)
                 c["learned"] = {"weight": w, "why": why[:3]}
+            # What learning did to its rank (memory audit 9/29/26, rank_log).
+            c["rank"] = _rl_rank.rank_meta(c, base, info)
             run.append(c)
         flush()
         candidates = ordered
@@ -1276,6 +1277,19 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
             rec_learning.attach_dollar_calibration(out, learned)
         except Exception as e:
             log.warning("one thing: dollar calibration unavailable: %s", e)
+        # The pick and the candidates it beat, logged once a day (rank_log):
+        # acceptance of the hero can be read against what was not shown.
+        if log_rank:
+            try:
+                import rec_ledger
+                idx = next((i for i, x in enumerate(candidates) if x.get("key") == c.get("key")), 0)
+                rest = [x for x in candidates[idx + 1: idx + 8] if x.get("key")]
+                rec_ledger.log_rank_build(restaurant_id, "one_thing",
+                                          shown=[dict(out.get("rank") or {}, key=out["key"])],
+                                          not_shown=[dict(x.get("rank") or {}, key=x["key"]) for x in rest],
+                                          version=getattr(learned, "version", None), db_path=db_path)
+            except Exception as e:
+                log.warning("one thing: rank log unavailable: %s", e)
         return out
     return None
 

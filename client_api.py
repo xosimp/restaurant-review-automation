@@ -11237,8 +11237,19 @@ def intel_open_recs(rid, restaurant=None) -> dict:
     parsed = parse_competitor_intel(insight) if insight else {
         "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False}
     texts = [it["text"] for it in parsed.get("recommendation_items") or []]
-    keys = [insight_store.line_key("insight_intel", t) for t in texts]
+    # Keyed by what the advice is ABOUT (signature_key), so next week's
+    # reworded line is the same recommendation after a Pass (memory audit
+    # 9/29/26, "signatures"); an answered signature on any surface counts.
+    keys = [insight_store.signature_key("insight_intel", t) for t in texts]
     done = insight_store.answered(rid, keys) if keys else set()
+    try:
+        _ans_sigs = insight_store.answered_signatures(rid)
+    except Exception:
+        _ans_sigs = {}
+    for t, k in zip(texts, keys):
+        _sig = insight_store.advice_signature(k, t)
+        if _sig and _sig in _ans_sigs:
+            done.add(k)
     return {"recs": [t for t, k in zip(texts, keys) if k not in done],
             "competitors": len(blob.get("competitors") or []),
             "withheld": int(parsed.get("withheld_recommendations") or 0),
@@ -11277,9 +11288,18 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
                                                 "rating": rv.get("rating"), "time": rv.get("time"),
                                                 "date": rv.get("date"),
                                                 "text": (rv.get("text") or "")[:300]}
-    items = [{"key": insight_store.line_key("insight_intel", it["text"]), "text": it["text"],
-              "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True}
-             for it in parsed.get("recommendation_items") or []]
+    # Keyed by what the advice is about (signature_key; its words' hash when
+    # it names no single subject), so a reworded line after a Pass is the
+    # same recommendation (memory audit 9/29/26, "signatures"). Two lines
+    # about the same advice are one.
+    items, _seen_keys = [], set()
+    for it in parsed.get("recommendation_items") or []:
+        _k = insight_store.signature_key("insight_intel", it["text"])
+        if _k in _seen_keys:
+            continue
+        _seen_keys.add(_k)
+        items.append({"key": _k, "text": it["text"],
+                      "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True})
     # Each line's measured confidence (T1): a model-written line over the
     # competitors the read compared (N_FULL "competitors"), freshness from
     # the competitor data's own date. Snapshotted by the ledger (K3).

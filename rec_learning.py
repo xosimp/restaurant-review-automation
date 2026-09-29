@@ -69,6 +69,11 @@ INFORMATIONAL_PREFIX = "observed:alert_"
 INFORMATIONAL_PREFIXES = (INFORMATIONAL_PREFIX, "observed:supplier_order_sent:", "observed:untaken:")
 
 # The effectiveness model (see the module docstring).
+# Its version, logged with every ranking it moves (rec_ledger's shown meta
+# and rec_rank_builds — memory audit 9/29/26, "rank_log"), so "did the
+# model raise acceptance?" can be read per version: 2 = the reasons'
+# penalties and per-role answers (9/29/26); 1 = everything before.
+EFFECTIVENESS_VERSION = 2
 EFFECT_WINDOW_DAYS = 365
 SHRINK_K = 5                   # pseudo-observations pulling a rate to its prior
 # How much a point of each moves the weight. Acceptance is what the owner
@@ -118,6 +123,20 @@ BASE_RATE_BOUNDS = (0.02, 0.5)
 # evaluation, so a year-old result counts a sixteenth of this month's. An
 # ADDITIONAL figure (kind_record `rate_recent`); `rate` is unchanged.
 RECENT_HALF_LIFE_DAYS = 90
+
+# What the owner's reasons teach the ranker (memory audit 9/29/26,
+# "reasons"): "too costly" is a bounded, decaying ease penalty on the KIND,
+# "doesn't fit us" a bounded, decaying decline weight on the subject's TAGS
+# (topic, focus) — so five "too costly" answers no longer leave the costly
+# cards ranked first. Each answer takes REASON_STEP off, at most REASON_CAP,
+# halving every REASON_HALF_LIFE_DAYS. Only the viewer's own side counts: a
+# principal's for the owner's ranking; a delegate's for the delegate's.
+REASON_STEP, REASON_CAP = 0.05, 0.15
+REASON_HALF_LIFE_DAYS = 90
+# The states an episode can be in that count in no rate: replaced, still
+# live, snoozed, put off for timing ("bad timing"), or answered only by a
+# delegate the owner has not answered (from the owner's side).
+UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated")
 
 
 def _stamp(d):
@@ -228,6 +247,9 @@ def viewer_sees(viewer, row) -> bool:
 
 # ── episodes, as the readers below need them ────────────────────────────────
 
+# rec_events columns the readers fold in; `authority` (memory audit
+# 9/29/26) says whose answer each is.
+_EVENT_COLS = "rec_id, event, surface, meta, at, authority"
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
 # outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
@@ -262,14 +284,19 @@ def _tracker_rows(conn, rid, tids):
     return out
 
 
-def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False):
+def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False,
+          perspective="principal"):
     """Episodes of this restaurant (bookkeeping keys excluded) with their
     events folded in. `before` is a (created_at, rec_id) cursor.
 
     `lean` is for the effectiveness model, which reads a year of episodes
     on every Home build: the `shown` rows — most of the trail, one per
     surface per day — are not loaded, only whether each episode has one
-    (re-audit B18); `surfaces` is then empty."""
+    (re-audit B18); `surfaces` is then empty.
+
+    `perspective` is whose answers decide each episode's state (_state):
+    "principal" (the owner's view — the default) or "delegate" (a manager's
+    own view). An admin's view-as answer decides nothing either way."""
     where, args = ["restaurant_id=?"], [rid]
     if since:
         where.append("created_at >= ?")
@@ -297,14 +324,14 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         chunk = ids[i:i + 400]
         marks = ",".join("?" for _ in chunk)
         if lean:
-            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN ({marks}) "
+            for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
             for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event = 'shown'", chunk).fetchall():
                 shown.add(e["rec_id"])
         else:
-            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN "
+            for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN "
                                   f"({marks}) ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
     trackers = {}
@@ -321,7 +348,7 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
-        r["state"] = _state(r, now)
+        r["state"] = _state(r, now, perspective)
         r["verdict"], r["verdict_at"] = _verdict(r, es, trackers.get(r.get("tracker_id")))
         r["tracker"] = trackers.get(r.get("tracker_id"))
     return rows
@@ -334,23 +361,52 @@ def _meta(e):
         return {}
 
 
-def _state(r, now):
+def _authority(e) -> str:
+    """Whose answer an event is: principal (also every answer from before
+    authority was recorded — production's were all a co-owner's), delegate
+    or admin."""
+    a = (e or {}).get("authority")
+    return a if a in ("delegate", "admin") else "principal"
+
+
+def _delegate_declined(r) -> bool:
+    return any(e["event"] in ("dismissed", "snoozed") and _authority(e) == "delegate" for e in r.get("events") or ())
+
+
+def _state(r, now, perspective="principal"):
     """accepted | completed | implemented | dismissed | ignored | superseded |
-    snoozed | open — what the episode amounts to now. A taken episode whose
-    change was actually made reads implemented whichever answer took it (a
-    reprice is answered and applied in one step)."""
+    snoozed | deferred | delegated | open — what the episode amounts to now.
+    A taken episode whose change was actually made reads implemented
+    whichever answer took it (a reprice is answered and applied in one
+    step).
+
+    deferred   a "bad timing" answer (silence_rule bad_timing): put off,
+               in no denominator (memory audit, "reasons").
+    delegated  from the owner's side, an episode only a delegate answered
+               (their decline held for them alone): the owner did not
+               ignore it — they left it with the manager — so it counts in
+               no rate of theirs. From the delegate's side it is their
+               dismissal ("who_answered")."""
     st = r["status"]
     if st in rec_ledger.TAKEN_STATUSES and r.get("implemented_at"):
         return "implemented"
+    if st == "dismissed" and str(r.get("silence_rule") or "") == "bad_timing":
+        return "deferred"
     if st in ("accepted", "completed", "implemented", "dismissed", "superseded"):
         return st
     if st == "expired":
-        return "ignored"
-    if r.get("snoozed_until") and r["snoozed_until"] > _stamp(now):
-        return "snoozed"
-    if rec_ledger.is_stale(r, now=now):
-        return "ignored"
-    return "open"
+        base = "ignored"
+    elif r.get("snoozed_until") and r["snoozed_until"] > _stamp(now):
+        base = "snoozed"
+    elif rec_ledger.is_stale(r, now=now):
+        base = "ignored"
+    else:
+        base = "open"
+    if base in ("ignored", "open") and _delegate_declined(r):
+        if perspective == "delegate":
+            return "dismissed"
+        return "delegated" if base == "ignored" else base
+    return base
 
 
 def _confounded(tr) -> bool:
@@ -636,12 +692,14 @@ def _cursor(before):
 
 def _answer_event(r):
     """The event that gave the episode its state, or None."""
-    want = {"accepted": ("accepted",), "completed": ("completed",), "implemented": ("implemented", "accepted"),
-            "dismissed": ("dismissed",), "snoozed": ("snoozed",)}.get(r["state"])
+    want = {"accepted": ("accepted",), "completed": ("completed", "dismissed"),
+            "implemented": ("implemented", "accepted"), "dismissed": ("dismissed",), "deferred": ("dismissed",),
+            "snoozed": ("snoozed",)}.get(r["state"])
     if not want:
         return None
     for e in reversed(r["events"]):
-        if e["event"] in want:
+        # An admin's view-as answer never decided an episode (view_as).
+        if e["event"] in want and _authority(e) != "admin":
             return e
     return None
 
@@ -714,11 +772,14 @@ class Effectiveness:
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
     reasons when nothing has been learned."""
 
-    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None):
+    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None,
+                 perspective="principal"):
         self.rid = restaurant_id
         self.cohort = cohort
         self.db_path = db_path
         self.now = now or datetime.utcnow()
+        self.perspective = perspective
+        self.version = EFFECTIVENESS_VERSION
         self._priors = {}
         self._cold = {}
         self._base_rates = base_rates
@@ -726,14 +787,29 @@ class Effectiveness:
         self.worse_keys, self.worse_kinds = {}, {}
         self.calibration = {}
         self.calibration_realised = {}
+        # The owner's reasons (REASON_*): ages of "too costly" answers by
+        # kind, of "doesn't fit us" answers by topic / focus tag.
+        self.costly_kinds, self.unfit_tags = {}, {}
+        sides = ("principal", "delegate") if perspective == "delegate" else ("principal",)
         clear_eps = {}
         for e in episodes:
-            if not e["shown"] or e["state"] in ("superseded", "open", "snoozed"):
+            for ev in e.get("events") or ():
+                if ev["event"] != "dismissed" or _authority(ev) not in sides:
+                    continue
+                code = _meta(ev).get("reason_code")
+                age = self._age_days(ev.get("at"))
+                if code == "too_costly":
+                    self.costly_kinds.setdefault(e["kind"] or rec_ledger.kind_of(e["key"]), []).append(age)
+                elif code == "doesnt_fit":
+                    for t in e["tag_list"]:
+                        if t.startswith(("topic:", "focus:")):
+                            self.unfit_tags.setdefault(t, []).append(age)
+            if not e["shown"] or e["state"] in UNSETTLED_STATES:
                 continue
             kind = e["kind"] or rec_ledger.kind_of(e["key"])
             for bucket, name in ((self.kinds, kind),
                                  *((self.tags, t) for t in e["tag_list"] if t.startswith(
-                                     ("topic:", "focus:", "category:", "dish:", "item:", "daypart:")))):
+                                     ("topic:", "focus:", "category:", "dish:", "item:", "daypart:", "sig:")))):
                 s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0})
                 s["settled"] += 1
                 if _taken(e):
@@ -885,8 +961,48 @@ class Effectiveness:
         if key_pen or kind_pen:
             w *= (1 - key_pen) * (1 - kind_pen)
             why.append("a result got worse after it here" if key_pen else f"a {kind} result got worse here")
+        costly, unfit = self.reason_penalties(kind, tags)
+        if costly:
+            w *= (1 - costly)
+            why.append(f"you said {len(self.costly_kinds.get(kind, []))} like this cost too much")
+        if unfit:
+            w *= (1 - unfit)
+            why.append("you said advice like this doesn't fit you")
         w = round(max(FLOOR_WEIGHT, min(MAX_WEIGHT, w)), 3)
         return w, why
+
+    def reason_penalties(self, kind, tags):
+        """(too_costly penalty on the kind, doesn't-fit penalty on its
+        topic/focus tags): REASON_STEP per answer, decaying with
+        REASON_HALF_LIFE_DAYS, each at most REASON_CAP."""
+        def pen(ages):
+            return min(REASON_CAP, sum(REASON_STEP * 0.5 ** (a / REASON_HALF_LIFE_DAYS) for a in ages or ()))
+        costly = pen(self.costly_kinds.get(kind))
+        unfit = max((pen(self.unfit_tags.get(t)) for t in tags or () if t in self.unfit_tags), default=0.0)
+        return round(costly, 4), round(unfit, 4)
+
+    def rung(self, key, kind=None, tags=None) -> str:
+        """Which prior the weight stood on (the "prior rung" rank_log
+        records): "own" — this restaurant's record of the kind or its tags;
+        "similar" — the similar-restaurant cold prior; "none"."""
+        kind = kind or rec_ledger.kind_of(str(key or ""))
+        tags = rec_ledger.tags_for(str(key or ""), kind=kind) if tags is None else tags
+        if self.kinds.get(kind) or any(self.tags.get(t) for t in tags):
+            return "own"
+        return "similar" if self._cold.get(kind) else "none"
+
+    def explain(self, key, kind=None, tags=None, title=None) -> dict:
+        """{weight, why, rung, version} for one key — what rank_log stores
+        beside a shown card. `title` lets a model line's words name its
+        advice signature (its sig: tag), which its hash key cannot."""
+        kind = kind or rec_ledger.kind_of(str(key or ""))
+        if tags is None:
+            tags = rec_ledger.tags_for(str(key or ""), kind=kind)
+            if title:
+                tags = rec_ledger.with_signature_tag(tags, rec_ledger.signature_for(key, title))
+        w, why = self.weight(key, kind=kind, tags=tags)
+        return {"weight": w, "why": list(why[:3]), "rung": self.rung(key, kind=kind, tags=tags),
+                "version": self.version}
 
     def ceiling(self, learned, kind=None):
         """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
@@ -953,7 +1069,11 @@ class Effectiveness:
         out["note"] = f"adjusted from {n} measured result{'s' if n != 1 else ''}"
         return out
 
-    def __call__(self, key, kind=None, tags=None):
+    def __call__(self, key, kind=None, tags=None, title=None):
+        if tags is None and title:
+            kind = kind or rec_ledger.kind_of(str(key or ""))
+            tags = rec_ledger.with_signature_tag(rec_ledger.tags_for(str(key or ""), kind=kind),
+                                                 rec_ledger.signature_for(key, title))
         return self.weight(key, kind=kind, tags=tags)
 
 
@@ -995,10 +1115,14 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
     return item
 
 
-def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> Effectiveness:
+def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal") -> Effectiveness:
     """The model for one restaurant from its last EFFECT_WINDOW_DAYS of
     episodes. Never raises: with the ledger unreadable it is the neutral
-    model (every weight 1.0)."""
+    model (every weight 1.0). `perspective` is whose answers it learns
+    from (_state): "principal" — the owner's own (a manager's decline never
+    counts as the owner's rejection) — or "delegate", a manager's view,
+    where the principal's answer still outranks theirs. An admin's view-as
+    answer teaches neither."""
     now = now or datetime.utcnow()
     cohort = None
     try:
@@ -1014,13 +1138,50 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> 
     try:
         conn = get_conn(db_path)
         try:
-            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)), lean=True)
+            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)), lean=True,
+                        perspective=perspective)
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
-    return Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now)
+    return Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now, perspective=perspective)
+
+
+def weigh(learned, key, title=None) -> dict:
+    """{weight, why, rung, version} from any ranker's `learned` — the model
+    itself (explain: its rung and version too) or a plain callable
+    key -> (weight, why). Never raises: a failure is the neutral weight."""
+    try:
+        if isinstance(learned, Effectiveness):
+            return learned.explain(key, title=title)
+        w, why = learned(key)
+        return {"weight": w, "why": list((why or [])[:3]), "rung": None, "version": None}
+    except Exception as e:
+        print(f"[rec_learning] weight unavailable for {key}: {e}")
+        return {"weight": 1.0, "why": [], "rung": None, "version": None}
+
+
+def rank_meta(item, base_score, learned_info) -> dict:
+    """The compact ranking record rank_log keeps for one candidate: the
+    score before and after learning, the weight, why, the prior rung and
+    the model version (memory audit 9/29/26, "rank_log")."""
+    li = learned_info or {}
+    return {"base": round(float(base_score or 0), 2), "score": round(float(item.get("rank_score")
+                                                                           or item.get("score") or 0), 2),
+            "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2], "rung": li.get("rung"),
+            "version": li.get("version")}
+
+
+def perspective_of(user) -> str:
+    """The effectiveness perspective for a login: "delegate" for a manager
+    or employee, else "principal" (an owner, and an admin viewing the
+    owner's ranking)."""
+    try:
+        from permissions import answer_authority
+        return "delegate" if answer_authority(user) == "delegate" else "principal"
+    except Exception:
+        return "principal"
 
 
 def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None, episodes=None) -> dict:

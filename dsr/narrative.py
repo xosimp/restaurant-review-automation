@@ -1542,6 +1542,10 @@ def settle_actions(actions, F, ctx, declined, dropped):
         a = dict(s["_a"], rank_score=s["rank_score"])
         if s.get("quiet"):
             a["quiet"] = True
+        # What learning did to its rank, carried to the showing (memory
+        # audit 9/29/26, rank_log; ledger_items passes it to the ledger).
+        if s.get("rank"):
+            a["rank"] = s["rank"]
         # The calibrated dollars beside the model's own figure (F6), the
         # rule Home cards and the one-thing hero follow.
         try:
@@ -1555,6 +1559,17 @@ def settle_actions(actions, F, ctx, declined, dropped):
     # of those presents what that reader was actually shown — on "dsr" and
     # "dsr_email" — through ledger_items() below. The answered check above
     # (silenced keys) is what keeps an answered action out of the report.
+    # What learning did to the ranking is logged once per report day
+    # (memory audit 9/29/26, rank_log): every action is shown, so the
+    # alternatives are the ones dropped above for being answered or quiet.
+    try:
+        import rec_ledger
+        rec_ledger.log_rank_build(ctx.restaurant_id, "dsr",
+                                  shown=[dict(a.get("rank") or {}, key=a["key"]) for a in ranked],
+                                  not_shown=[{"key": d.get("key")} for d in (dropped or []) if d.get("key")][:7],
+                                  version=getattr(learned, "version", None), db_path=ctx.db_path)
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "rank log")
     return ranked
 
 
@@ -1648,7 +1663,9 @@ def ledger_items(actions) -> list:
                     # An action resting on a figure the Manager DSR never shows
                     # (budget, prime cost, loss lines, the Food block) is never
                     # listed to a manager in the recommendation record either.
-                    "owner_only": any(owner_only_cite(c) for c in cites)})
+                    "owner_only": any(owner_only_cite(c) for c in cites),
+                    # What learning did to its rank (rank_log).
+                    "rank": a.get("rank") if isinstance(a.get("rank"), dict) else None})
     return out
 
 

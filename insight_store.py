@@ -298,6 +298,27 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
     is returned with rec_id None — measurement never hides a recommendation."""
     if not items:
         return []
+    # The same ADVICE answered on any surface is answered here too, for as
+    # long as that answer holds (memory audit 9/29/26, "signatures"): a
+    # regenerated read's reworded line is a new hash key, and used to come
+    # straight back after a Done, a Track or a "not for us".
+    try:
+        answered_sigs = answered_signatures(restaurant_id, db_path=db_path)
+    except Exception:
+        answered_sigs = {}
+    if answered_sigs:
+        keep = []
+        for it in items:
+            sig = it.get("advice_signature")
+            if sig is None:
+                sig = advice_signature(it["key"], it.get("title") or it.get("text"))
+            if sig and sig in answered_sigs and it["key"] not in answered_sigs[sig]["keys"] \
+                    and not str(it["key"]).startswith(("stock_low:", "critical_low:")):
+                continue
+            keep.append(it)
+        items = keep
+        if not items:
+            return []
     try:
         import rec_ledger
         batch = [{"key": it["key"], "module": module, "title": (it.get("title") or it.get("text") or "")[:200],
@@ -330,43 +351,85 @@ def present_recs(restaurant_id, module, surface, items, user_id=None, db_path=DB
     return out
 
 
-def answered_lines(restaurant_id, prefixes, limit=12, db_path=DB_PATH) -> list:
+# The advice families each read's own lines speak for (insight_store
+# prefixes -> _SIG_FAMILY values): an answer to the same advice on ANY
+# surface — Home's trim_day:Tuesday, the DSR's Tuesday cut — belongs in the
+# labor read's ALREADY ANSWERED too (memory audit 9/29/26, "signatures").
+PREFIX_FAMILIES = {
+    "insight_labor": ("labor",), "diag_labor": ("labor",),
+    "insight_food": ("waste", "ordering", "pricing", "food_cost"), "diag_food": ("waste", "ordering", "food_cost"),
+    "insight_review": ("replies", "guest_experience"), "diag_review": ("replies", "guest_experience"),
+    "insight_marketing": ("marketing", "guest_outreach"), "insight_intel": ("competition", "marketing"),
+    "digest_move": (), "monthly_move": (),
+}
+
+
+def answered_lines(restaurant_id, prefixes, limit=12, db_path=DB_PATH, families=None) -> list:
     """The words of the lines the owner has answered (Done, Not for us,
-    Track) under these key prefixes, while the answer still holds.
+    Track) under these key prefixes — and every answered recommendation on
+    another surface about the same advice (its stored signature's family,
+    PREFIX_FAMILIES) — while the answer still holds.
 
     A line's key is a hash of its exact text, so an answer silenced only
     those words: the read is regenerated at least daily, a rephrased line
     got a new key, and the same advice came back the next day (M-8). The
     insight prompts pass these to the model as "do not suggest again".
-    Sorted by key so the same answers give the same prompt (the stored
-    read's fingerprint)."""
+
+    Memory audit 9/29/26 ("relevance"): newest answer first — it was key
+    order, a sha1, so which twelve made the cut was arbitrary — every "not
+    for us" that carries the owner's reason is kept beyond `limit`, and
+    lines sharing an advice signature collapse into one. Deterministic for
+    the same answers (the stored read's fingerprint)."""
     if not restaurant_id or not prefixes:
         return []
+    fams = set(families if families is not None else
+               (f for p in prefixes for f in PREFIX_FAMILIES.get(p, ())))
     try:
         conn = get_conn(db_path)
     except Exception:
         return []
     try:
-        where = " OR ".join("key LIKE ?" for _ in prefixes)
+        where = " OR ".join("i.key LIKE ?" for _ in prefixes)
+        sig_where = ""
+        args = [restaurant_id, *[f"{p}:%" for p in prefixes]]
+        if fams:
+            sig_where = " OR " + " OR ".join("i.signature LIKE ?" for _ in fams)
+            args += [f"{f}:%" for f in sorted(fams)]
         rows = conn.execute(
-            f"SELECT key, title FROM rec_instances WHERE restaurant_id=? AND ({where}) "
-            "AND title IS NOT NULL AND TRIM(title) != '' "
-            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
-            "AND status IN ('completed', 'dismissed', 'accepted') "
-            "ORDER BY key LIMIT ?",
-            (restaurant_id, *[f"{p}:%" for p in prefixes], int(limit))).fetchall()
+            f"SELECT i.key, i.title, i.status, i.signature, COALESCE(i.closed_at, i.last_event_at) AS answered_at, "
+            "(SELECT e.meta FROM rec_events e WHERE e.rec_id=i.rec_id AND e.event='dismissed' "
+            " ORDER BY e.at DESC, e.id DESC LIMIT 1) AS dmeta "
+            f"FROM rec_instances i WHERE i.restaurant_id=? AND (({where}){sig_where}) "
+            "AND i.title IS NOT NULL AND TRIM(i.title) != '' "
+            "AND i.silenced_until IS NOT NULL AND i.silenced_until > datetime('now') "
+            "AND i.status IN ('completed', 'dismissed', 'accepted', 'implemented') "
+            "AND COALESCE(i.silence_rule, '') != 'bad_timing' "
+            "ORDER BY answered_at DESC, i.key", args).fetchall()
     except Exception as e:
         print(f"[insight_store] answered lines failed: {e}")
         return []
     finally:
         conn.close()
-    seen, out = set(), []
+    seen, sigs, reasoned, rest = set(), set(), [], []
     for r in rows:
         t = re.sub(r"\s+", " ", str(r["title"])).strip()
-        if t and t.lower() not in seen:
-            seen.add(t.lower())
-            out.append(t[:200])
-    return out
+        if not t or t.lower() in seen:
+            continue
+        sig = r["signature"] or None
+        if sig and sig in sigs:
+            continue                 # the same advice in other words: one line stands for it
+        seen.add(t.lower())
+        if sig:
+            sigs.add(sig)
+        try:
+            meta = json.loads(r["dmeta"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        if r["status"] == "dismissed" and (meta.get("reason") or meta.get("reason_code")):
+            reasoned.append(t[:200])
+        else:
+            rest.append(t[:200])
+    return reasoned + rest[:max(0, int(limit) - len(reasoned))]
 
 
 def do_not_repeat_block(restaurant_id, prefixes, db_path=DB_PATH) -> str:
@@ -377,6 +440,43 @@ def do_not_repeat_block(restaurant_id, prefixes, db_path=DB_PATH) -> str:
     return ("\n\nALREADY ANSWERED - the owner has already answered these suggestions (done them, or "
             "said they are not for this restaurant). Do NOT suggest any of them again, in these words "
             "or in any other words:\n" + "\n".join(f"- {t}" for t in lines))
+
+
+def answered_signatures(restaurant_id, db_path=DB_PATH) -> dict:
+    """{advice signature: {"until", "keys"}} for every recommendation this
+    restaurant has ANSWERED — Done, Track, made, "not for us" — while that
+    answer's own silence holds (memory audit 9/29/26, "signatures"). A
+    Labor read line taken as "cut a server Tuesday nights" answers the same
+    advice in tomorrow's words; a plain hide or a timing answer is not an
+    answer to the advice, and a delegate's answer is theirs alone (it set no
+    restaurant silence). `keys` are the keys answered under it: the key
+    itself is the ledger's to judge (it may reopen on a material change).
+    Never raises."""
+    if not restaurant_id:
+        return {}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT signature, key, silenced_until FROM rec_instances WHERE restaurant_id=? "
+            "AND signature IS NOT NULL AND signature != '' "
+            "AND status IN ('completed','dismissed','accepted','implemented') "
+            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
+            "AND COALESCE(silence_rule, '') NOT IN ('hide', 'bad_timing', 'safety_cycle')",
+            (restaurant_id,)).fetchall()
+    except Exception as e:
+        print(f"[insight_store] answered signatures failed: {e}")
+        return {}
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        o = out.setdefault(r["signature"], {"until": r["silenced_until"], "keys": set()})
+        o["until"] = max(o["until"], r["silenced_until"])
+        o["keys"].add(r["key"])
+    return out
 
 
 def answered(restaurant_id, keys, db_path=DB_PATH) -> set:
@@ -522,10 +622,14 @@ def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
     except Exception:
         return set()
     try:
+        # A "don't trust the data" or a timing answer is not a no to the
+        # advice (memory audit 9/29/26, "reasons"); the silence it holds
+        # is not a decline on other surfaces.
         rows = conn.execute(
-            "SELECT key, title FROM rec_instances WHERE restaurant_id=? AND status='dismissed' "
+            "SELECT key, title, signature FROM rec_instances WHERE restaurant_id=? AND status='dismissed' "
             "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
-            "AND silenced_until > datetime(COALESCE(closed_at, last_event_at), ?)",
+            "AND silenced_until > datetime(COALESCE(closed_at, last_event_at), ?) "
+            "AND COALESCE(silence_rule, '') NOT IN ('distrust', 'bad_timing', 'verified')",
             (restaurant_id, f"+{_DECLINE_MIN_DAYS} days")).fetchall()
     except Exception as e:
         print(f"[insight_store] declined signatures failed: {e}")
@@ -534,9 +638,40 @@ def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
         conn.close()
     out = set()
     for r in rows:
-        sig = advice_signature(r["key"], r["title"])
+        sig = r["signature"] if r["signature"] else advice_signature(r["key"], r["title"])
         if sig:
             out.add(sig)
+    return out
+
+
+def declines_by_signature(restaurant_id, db_path=DB_PATH) -> dict:
+    """{advice signature: {"on": when it was declined (UTC stamp), "title"}}
+    — declined_signatures with the date of each decline, for a caveat that
+    names it ("you passed on this on 3/12/26"). The latest decline wins."""
+    if not restaurant_id:
+        return {}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT key, title, signature, COALESCE(closed_at, last_event_at) AS at FROM rec_instances "
+            "WHERE restaurant_id=? AND status='dismissed' "
+            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
+            "AND silenced_until > datetime(COALESCE(closed_at, last_event_at), ?) "
+            "AND COALESCE(silence_rule, '') NOT IN ('distrust', 'bad_timing', 'verified')",
+            (restaurant_id, f"+{_DECLINE_MIN_DAYS} days")).fetchall()
+    except Exception as e:
+        print(f"[insight_store] declines by signature failed: {e}")
+        return {}
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        sig = r["signature"] if r["signature"] else advice_signature(r["key"], r["title"])
+        if sig and (sig not in out or str(r["at"]) > str(out[sig]["on"])):
+            out[sig] = {"on": r["at"], "title": r["title"]}
     return out
 
 

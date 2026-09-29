@@ -12069,12 +12069,23 @@ def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
 
 
 def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> list:
+    """The newest Ask action rows. `surface` (ask | command) and `user_id`
+    ride along so a reader can apply the action queue's rule (a command
+    preview is never "still open") and the viewer's (memory audit 9/29/26,
+    "proposed")."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at, surface, user_id "
+                "FROM ask_cavnar_actions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
+        except Exception:
+            # A database from before surface existed.
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
     finally:
         conn.close()
     return [dict(r) for r in rows]

@@ -276,7 +276,9 @@ def test_recs_event_takes_a_reason_code_and_refuses_an_unknown_one(client, db, m
     h = decisions.history(rid, db_path=db)
     assert h[0]["reason_code"] == "already_doing"
     ctx = decisions.context(rid, db_path=db)
-    assert "because: already doing it; we cut Mondays in May" in ctx
+    # The owner's free words are fenced (memory audit 9/29/26, "unfenced").
+    from ai_guard import wrap_untrusted
+    assert "because: already doing it; " + wrap_untrusted("we cut Mondays in May") in ctx
 
 
 def test_home_dismiss_takes_a_reason_code_on_web_and_phone(db, monkeypatch):

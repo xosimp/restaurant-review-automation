@@ -172,8 +172,19 @@ def _ask_key(proposal_id, action, summary) -> str:
 
 def _ledger_action(key, event, meta):
     """The engine's action for one rec_ledger answer, or None when the
-    event is not an answer the engine counts."""
+    event is not an answer the engine counts. The owner's reason decides
+    what a dismissal was (rec_ledger.REASON_EFFECT, memory audit 9/29/26):
+    "already doing it" is done, "bad timing" a snooze — neither a no."""
     if event == "dismissed":
+        try:
+            import rec_ledger
+            effect = rec_ledger.reason_effect(meta.get("reason_code"), meta.get("reason"))
+        except Exception:
+            effect = None
+        if effect == "taken":
+            return "done"
+        if effect == "defer":
+            return "snoozed"
         return "not_for_us" if meta.get("kind") == "not_for_us" else "hidden"
     if event == "completed":
         return "done"
@@ -479,7 +490,7 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
         start = _cursor_get(conn)
         try:
             ledger = conn.execute(
-                "SELECT e.id, e.restaurant_id, e.key, e.event, e.meta, e.at, "
+                "SELECT e.id, e.restaurant_id, e.key, e.event, e.meta, e.at, e.authority, "
                 "EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=e.rec_id AND s.event='shown') AS shown "
                 "FROM rec_events e WHERE e.id > ? AND e.event IN "
                 "('accepted','completed','dismissed','snoozed','implemented','expired') ORDER BY e.id LIMIT ?",
@@ -491,6 +502,10 @@ def sync(db_path=DB_PATH, cohorts: dict = None) -> dict:
             last = max(last, int(r["id"]))
             key = str(r["key"] or "")
             if not key or key.startswith(_BOOKKEEPING) or key.startswith("ask:") or not r["shown"]:
+                continue
+            # An admin's answer through view-as is support at work, never
+            # the restaurant's preference (memory audit 9/29/26, view_as).
+            if (r["authority"] if "authority" in r.keys() else None) == "admin":
                 continue
             try:
                 meta = _json.loads(r["meta"] or "{}") or {}

@@ -1371,6 +1371,13 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                     before = _last_shown_pct(conn, rec_id)
                     if before is not None and abs(int(snap["confidence_pct"]) - int(before)) >= CONFIDENCE_MOVE_POINTS:
                         meta["confidence_moved"] = {"from": int(before), "to": int(snap["confidence_pct"])}
+                # ...and what learning did to its rank (memory audit 9/29/26,
+                # "rank_log"): {base, score, weight, why, rung, version} —
+                # rec_learning.rank_meta. 288 shown events carried no weight.
+                rank = it.get("rank")
+                if isinstance(rank, dict) and rank:
+                    meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "rung", "version")
+                                    if rank.get(k) not in (None, [], "")}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
         kinds = [str(k) for k in (replaces or ()) if k]
@@ -1393,6 +1400,43 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     finally:
         conn.close()
     return out
+
+
+def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH) -> bool:
+    """One compact row per restaurant, surface and local day with what a
+    build ranked (memory audit 9/29/26, "rank_log"): the cards shown and
+    the top candidates NOT shown, each {key, base, score, weight, rung,
+    version}. The latest build of the day wins. Acceptance can only be
+    corrected for exposure when the alternatives are known. Never raises."""
+    if not restaurant_id or not surface:
+        return False
+
+    def compact(items):
+        out = []
+        for it in items or ():
+            if not isinstance(it, dict) or not it.get("key"):
+                continue
+            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung")
+                        if it.get(k) not in (None, "")})
+        return json.dumps(out)[:6000]
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        day = local_day(conn, restaurant_id)
+        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at) "
+                     "VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
+                     "version=excluded.version, shown=excluded.shown, not_shown=excluded.not_shown, "
+                     "built_at=excluded.built_at",
+                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now()))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[rec_ledger] rank build not logged: {e}")
+        return False
+    finally:
+        conn.close()
 
 
 def record(restaurant_id, key, event, surface=None, user_id=None, role=None, meta=None, source_ref=None,
