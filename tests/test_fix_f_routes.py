@@ -113,8 +113,10 @@ def test_incident_writes_are_validated_instead_of_500ing(app, db_path):
 
 def test_incident_routes_are_admin_only(app, db_path):
     owner = _owner_client(app, db_path)
-    assert owner.get("/admin/status/incidents").status_code == 403
-    assert _post(owner, "/admin/status/incident/1/resolve", json={}).status_code == 403
+    # auth.admin_required's answers (INT-1): a page GET goes to the login,
+    # a write is a 401.
+    assert owner.get("/admin/status/incidents").status_code == 302
+    assert _post(owner, "/admin/status/incident/1/resolve", json={}).status_code == 401
 
 
 def test_support_reads_the_incidents_but_never_posts_the_banner(app, db_path):

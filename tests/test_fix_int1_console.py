@@ -198,17 +198,21 @@ def test_the_ops_state_names_every_system_and_says_why(db_path, monkeypatch, sch
 def test_the_ops_state_route_answers_admins_and_support(db_path, monkeypatch):
     import status_manager
     from flask import Flask
+    import auth_routes
     import status_routes
     monkeypatch.setattr(status_manager, "DB_PATH", db_path)
     app = Flask(__name__)
     app.register_blueprint(status_routes.status_bp)
+    app.register_blueprint(auth_routes.auth_bp)
     monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 2, "restaurant_id": None, "is_admin": 0,
                                                            "role": "support", "username": "sup"})
     monkeypatch.setattr(auth, "admin_second_factor_state", lambda u: "ok")
     r = app.test_client().get("/admin/api/ops/state")
     assert r.status_code == 200 and set(r.get_json()["systems"]) == set(admin_ops.OPS_SYSTEMS)
     monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 3, "restaurant_id": 1, "is_admin": 0, "role": "owner"})
-    assert app.test_client().get("/admin/api/ops/state").status_code == 403
+    # auth.admin_required's refusal: to the login, or a 401 where the gate
+    # reads /admin/api/ GETs as fetch() calls (INT-2).
+    assert app.test_client().get("/admin/api/ops/state").status_code in (302, 401)
 
 
 # ── the operations payloads say how old they are; jobs group by kind ──────

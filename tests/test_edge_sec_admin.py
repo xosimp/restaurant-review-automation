@@ -304,10 +304,12 @@ def test_status_admin_write_is_refused_without_a_session_or_for_a_client_login(a
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
     anon = app.test_client()
-    assert anon.post("/admin/status/incident", json={"title": "Outage"}).status_code == 403
+    # Refused as admin_bp refuses (auth.admin_required, INT-1): a write from
+    # no session or a client's session is a 401, never a 200.
+    assert anon.post("/admin/status/incident", json={"title": "Outage"}).status_code == 401
     c = _client(app, create_session(owner, db_path=db_path))
-    assert _post(c, "/admin/status/incident", json={"title": "Outage"}).status_code == 403
-    assert _post(c, "/admin/status/update", json={"service_key": "dashboard", "status": "outage"}).status_code == 403
+    assert _post(c, "/admin/status/incident", json={"title": "Outage"}).status_code == 401
+    assert _post(c, "/admin/status/update", json={"service_key": "dashboard", "status": "outage"}).status_code == 401
     assert _incident_count(db_path) == 0
 
 

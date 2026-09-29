@@ -90,33 +90,12 @@ import admin_events as _admin_events
 status_bp.before_request(_admin_events.audit_admin_write)
 
 
-def _require_admin():
-    """The /admin gate, answered as auth.admin_required answers it on
-    admin_bp (fix round A: #5, #87, #88): the session, the admin role —
-    support may read the incidents but never post the public banner — the
-    per-session request ceiling, and the internal login's second factor
-    (enrol, verify or fail closed, the console's own refusals). A call, not
-    the decorator, so anyone else keeps this blueprint's plain 403."""
-    import auth
-    from flask import g
-    user = auth.get_current_user()
-    is_support = bool(user) and not user.get("is_admin") and user.get("role") == "support"
-    if not user or not (user.get("is_admin") or is_support):
-        abort(403)
-    limited = auth._admin_rate_limited(user)
-    if limited:
-        abort(make_response(*limited))
-    if is_support and request.method not in ("GET", "HEAD", "OPTIONS"):
-        abort(make_response(jsonify(ok=False, error="Support accounts are read-only."), 403))
-    state = auth.admin_second_factor_state(user)
-    if state != "ok":
-        refusal = auth._second_factor_refusal(state)
-        abort(make_response(*refusal) if isinstance(refusal, tuple) else refusal)
-    try:
-        g.admin_role = "admin" if user.get("is_admin") else "support"
-    except Exception:
-        pass
-    return user
+# The /admin views here take the same gate as admin_bp's: auth.admin_required
+# (fix round A: #5, #87, #88) — the session, the admin role (support may read
+# the incidents but never post the public banner), the per-session request
+# ceiling, the internal login's second factor, and flask.g.admin_role. One
+# definition, so a change to the console's door reaches the status page's.
+from auth import admin_required
 
 
 def _json_body():
@@ -128,8 +107,8 @@ def _json_body():
 
 
 @status_bp.route("/admin/status/update", methods=["POST"])
-def admin_update_status():
-    _require_admin()
+@admin_required
+def admin_update_status(current_user):
     data    = _json_body()
     key     = data.get("service_key", "").strip()
     status  = data.get("status", "operational")
@@ -153,8 +132,8 @@ def _text(data, key, default=""):
 
 
 @status_bp.route("/admin/status/incident", methods=["POST"])
-def admin_create_incident():
-    _require_admin()
+@admin_required
+def admin_create_incident(current_user):
     data     = _json_body()
     title    = _text(data, "title")
     body     = _text(data, "body")
@@ -176,12 +155,12 @@ def admin_create_incident():
 
 
 @status_bp.route("/admin/status/incident/<int:inc_id>/update", methods=["POST"])
-def admin_update_incident(inc_id):
+@admin_required
+def admin_update_incident(inc_id, current_user):
     """Post an update to an incident, or resolve it (status "resolved").
     It existed with no caller and no validation: an unknown id wrote an
     update row for an incident that did not exist, and a status outside the
     table's CHECK was a 500."""
-    _require_admin()
     data    = _json_body()
     message = _text(data, "message")
     status  = _text(data, "status", "monitoring") or "monitoring"
@@ -196,9 +175,9 @@ def admin_update_incident(inc_id):
 
 
 @status_bp.route("/admin/status/incident/<int:inc_id>/resolve", methods=["POST"])
-def admin_resolve_incident(inc_id):
+@admin_required
+def admin_resolve_incident(inc_id, current_user):
     """Resolve an incident, with an optional closing message."""
-    _require_admin()
     data = _json_body()
     inc = get_incident(inc_id)
     if inc is None:
@@ -210,10 +189,10 @@ def admin_resolve_incident(inc_id):
 
 
 @status_bp.route("/admin/status/incidents")
-def admin_list_incidents():
+@admin_required
+def admin_list_incidents(current_user):
     """Open incidents (with their updates), and the last few resolved — what
     the console lists with Update and Resolve."""
-    _require_admin()
     open_incs = [get_incident(i["id"]) for i in get_open_incidents()]
     recent = [i for i in get_recent_incidents(limit=20) if i.get("status") == "resolved"][:10]
     for inc in recent:
@@ -226,8 +205,8 @@ def admin_list_incidents():
 
 
 @status_bp.route("/admin/status/services")
-def admin_list_services():
-    _require_admin()
+@admin_required
+def admin_list_services(current_user):
     return jsonify({"services": SERVICES, "statuses": get_all_statuses(),
                     "effective": effective_statuses(get_all_statuses(), get_open_incidents()),
                     "service_statuses": list(SERVICE_STATUSES),
@@ -236,11 +215,11 @@ def admin_list_services():
 
 
 @status_bp.route("/admin/api/ops/state")
-def admin_ops_state():
+@admin_required
+def admin_ops_state(current_user):
     """One server reading of each system's state — scheduler, jobs, api,
     email, sms, push, ai, integrations: {state: ok|warn|bad|unknown, reason,
     since} — for Overview and Operations (#158), which derived them in the
     browser and disagreed. Read-only; support may read it."""
-    _require_admin()
     import admin_ops
     return jsonify(admin_ops.ops_state())
