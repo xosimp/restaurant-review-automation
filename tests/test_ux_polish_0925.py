@@ -7,8 +7,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
 
 
-def test_no_on_screen_not_for_us_label():
-    assert ">Not for us<" not in SRC and 'aria-label="Not for us"' not in SRC
+def test_the_decline_reads_not_for_us_never_pass():
+    # 9/25/26 the on-screen decline was "Pass"; the memory round (9/29/26,
+    # M1 "silences") renamed it back to "Not for us" on web and iOS - the
+    # answer now says what it does for a year, and "Pass" read as "skip it
+    # for now". Pinned the new way round, so "Pass" can't come back.
+    assert ">Pass<" not in SRC and 'aria-label="Pass"' not in SRC
+    assert ">Not for us<" in SRC or "'Not for us')+'</button>'" in SRC
 
 
 def test_focus_card_puts_the_primary_beside_could_also_be_and_answers_after():
