@@ -57,14 +57,22 @@ def _local_label(ctx, utc_stamp):
 
 
 def _posts(ctx, u0, u1):
+    """The night's published posts. Reach is REACH, over the posts whose
+    reach was measured (marketing_signals.REACH_MEASURED_SQL, through
+    canonical_facts): this summed reach + impressions — a Facebook post's
+    1,000 reach and 1,600 impressions read as 2,600 "reach" in the nightly
+    history, and the engagement rate over it ran 2-3x low (memory audit
+    9/29/26, QUALITY-15). An unmeasured post is blank, never 0."""
+    import canonical_facts
+    reach_ok = canonical_facts.reach_measured_sql()
     rows = _rows(ctx, "SELECT id, topic, post_platform, COALESCE(posted_at, created_at) AS at, "
-                      "COALESCE(reach,0) + COALESCE(impressions,0) AS seen, "
+                      f"CASE WHEN {reach_ok} THEN reach END AS seen, "
                       "COALESCE(likes,0) + COALESCE(comments,0) + COALESCE(shares,0) AS engaged "
                       "FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL "
                       "AND TRIM(post_id) != '' AND datetime(COALESCE(posted_at, created_at)) >= ? "
                       "AND datetime(COALESCE(posted_at, created_at)) < ? ORDER BY at",
                  (ctx.restaurant_id, u0, u1))
-    measured = [p for p in rows if (p["seen"] or 0) > 0]
+    measured = [p for p in rows if p["seen"] is not None]
     seen = sum(p["seen"] for p in measured)
     engaged = sum(p["engaged"] for p in measured)
     return {
@@ -73,10 +81,11 @@ def _posts(ctx, u0, u1):
         "engagement": engaged if measured else None,
         "engagement_rate": round(engaged / seen * 100, 1) if seen else None,
         "items": [{"topic": p["topic"], "platform": p["post_platform"], "at": _local_label(ctx, p["at"]),
-                   "reach": p["seen"] if (p["seen"] or 0) > 0 else None,
-                   "engagement": p["engaged"] if (p["seen"] or 0) > 0 else None} for p in rows[:10]],
+                   "reach": p["seen"] if p["seen"] is not None else None,
+                   "engagement": p["engaged"] if p["seen"] is not None else None} for p in rows[:10]],
         "measured": len(measured),
-        "basis": "posts published through Cavnar AI; reach and engagement as Meta last reported them",
+        "basis": ("posts published through Cavnar AI; reach (unique accounts, never reach plus impressions) and "
+                  "engagement as Meta last reported them"),
     }
 
 

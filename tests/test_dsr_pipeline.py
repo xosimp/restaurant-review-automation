@@ -442,7 +442,9 @@ def test_a_prediction_is_recorded_only_before_its_night_opens_and_graded_only_th
     import demand
     from dsr import predictions
     r = _restaurant(db)
-    monkeypatch.setattr(demand, "forecast_day", lambda rid, day=None, db_path=None: {
+    # The DSR's forecast is demand.forecast_net — the one on the report's own
+    # basis (memory audit 9/29/26, net_basis).
+    monkeypatch.setattr(demand, "forecast_net", lambda rid, day=None, db_path=None, effects=True: {
         "available": True, "typical_sales": 7000.0, "low": 6200.0, "high": 7900.0, "samples": 8,
         "weekday": "Wednesday"})
     wed = DAY + timedelta(days=1)

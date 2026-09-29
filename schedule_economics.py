@@ -26,6 +26,9 @@ say so. Nothing calls a model.
 from datetime import date, datetime, timedelta
 
 from models import get_conn, DB_PATH
+# Final days only (canonical_facts, memory audit 9/29/26): a half-night the
+# POS had not closed is never a week's sales or a day's labor %.
+from canonical_facts import FINAL_SQL
 
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
@@ -149,7 +152,8 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> 
     try:
         rows = conn.execute(
             "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
-            "AND date >= date('now', ?) ORDER BY date", (restaurant_id, f"-{int(weeks) * 7 + 7} days")).fetchall()
+            f"AND date >= date('now', ?) AND {FINAL_SQL} ORDER BY date",
+            (restaurant_id, f"-{int(weeks) * 7 + 7} days")).fetchall()
     except Exception:
         return {"value": None, "source": "no history", "weeks": 0}
     finally:
@@ -189,7 +193,8 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
     try:
         days = conn.execute(
             "SELECT date, day_of_week, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? "
-            "AND sales IS NOT NULL AND sales > 0 AND date >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+            f"AND sales IS NOT NULL AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
+            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         intra = conn.execute(
             "SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
             "AND business_date >= date('now', ?) ORDER BY business_date, captured_hour",
@@ -350,7 +355,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT SUM(labor_pct * sales) AS w, SUM(sales) AS s FROM labor_daily_history WHERE restaurant_id=? "
-                           "AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?)",
+                           f"AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?) AND {FINAL_SQL}",
                            (restaurant_id, f"-{int(weeks) * 7} days")).fetchone()
         if row and row["s"]:
             hist_pct = float(row["w"]) / float(row["s"])
@@ -534,11 +539,20 @@ def _holiday_dates(year: int) -> dict:
 
 
 def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
-    """{date: {"name", "lift_pct", "based_on"}} for holidays in the week,
-    with the lift THIS restaurant saw on that holiday last year against the
-    median of the same weekday in the four weeks either side. A holiday
-    with no sales on file last year is listed with lift None — a name the
-    model can react to, never a number it did not measure."""
+    """{date: {"name", "lift_pct", "based_on", "date", "source"}} for holidays
+    in the week, with the lift THIS restaurant saw on that holiday last year
+    against the median of the same weekday in the four weeks either side. A
+    holiday with no sales on file last year is listed with lift None — a
+    name the model can react to, never a number it did not measure.
+
+    Last year is read through the ONE last-year reader
+    (canonical_facts.sales_history: the night's report, the owner's imported
+    DSR workbooks, the POS sync's final nights — memory audit 9/29/26,
+    imported_year), so an owner who imported a year of workbooks has a
+    holiday lift from day one. The holiday night and the nights it is
+    compared with are on ONE basis (canonical_facts.one_basis), and
+    `source` / `based_on` say where last year came from."""
+    import canonical_facts as _cf
     if not week_dates:
         return {}
     years = {int(d[:4]) for d in week_dates}
@@ -548,7 +562,6 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
     hits = {d: names[d] for d in week_dates if d in names}
     if not hits:
         return {}
-    conn = get_conn(db_path)
     out = {}
     try:
         for d, name in hits.items():
@@ -556,29 +569,28 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
             # the holiday's own date last year, whichever weekday it fell on
             prior_dates = [k for k, n in _holiday_dates(last.year).items() if n == name]
             hol_date = prior_dates[0] if prior_dates else last.isoformat()
-            row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=?",
-                               (restaurant_id, hol_date)).fetchone()
             # `date`: the night last year's figure is read from, so a reader
             # can name ITS weekday (re-audit OPP-2).
-            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date}
-            if row and row["sales"]:
-                hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
-                same = conn.execute(
-                    "SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date BETWEEN ? AND ? "
-                    "AND date<>? AND day_of_week=? AND sales > 0",
-                    (restaurant_id, (hd - timedelta(days=28)).isoformat(), (hd + timedelta(days=28)).isoformat(),
-                     hol_date, hd.strftime("%A"))).fetchall()
-                vals = sorted(float(r["sales"]) for r in same)
+            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date, "source": None}
+            hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
+            series = _cf.sales_history(restaurant_id, (hd - timedelta(days=28)).isoformat(),
+                                       (hd + timedelta(days=28)).isoformat(), db_path=db_path)
+            night = series.get(hol_date)
+            if night and night["net"]:
+                same = {k: x for k, x in series.items() if k != hol_date and x.get("basis") == night.get("basis")
+                        and datetime.strptime(k, "%Y-%m-%d").date().weekday() == hd.weekday()}
+                vals = sorted(float(x["net"]) for x in same.values() if x["net"] and x["net"] > 0)
                 if len(vals) >= 3:
                     med = vals[len(vals) // 2]
                     if med > 0:
-                        entry["lift_pct"] = int(round((float(row["sales"]) / med - 1) * 100))
-                        entry["based_on"] = f"{name} {hd.year}: ${float(row['sales']):,.0f} against a typical {hd.strftime('%A')} of ${med:,.0f}"
+                        entry["lift_pct"] = int(round((float(night["net"]) / med - 1) * 100))
+                        src = _cf.SOURCE_LABELS.get(night.get("source"), night.get("source"))
+                        entry["source"] = night.get("source")
+                        entry["based_on"] = (f"{name} {hd.year}: ${float(night['net']):,.0f} against a typical "
+                                             f"{hd.strftime('%A')} of ${med:,.0f}, from {src}")
             out[d] = entry
     except Exception:
         return {d: {"name": n, "lift_pct": None, "based_on": None} for d, n in hits.items()}
-    finally:
-        conn.close()
     return out
 
 

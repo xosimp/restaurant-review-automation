@@ -17,6 +17,10 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+# Final nights only (canonical_facts): a night the POS had not closed when it
+# was read is provisional, never a data point in a median (memory audit
+# 9/29/26, QUALITY-10).
+from canonical_facts import FINAL_SQL
 
 
 def get_conn(db_path=None):
@@ -61,7 +65,7 @@ def _weekday_history_dated(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS,
     try:
         rows = conn.execute(
             "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND day_of_week=? "
-            "AND date>=? AND date<? AND sales IS NOT NULL AND sales > 0 ORDER BY date",
+            f"AND date>=? AND date<? AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL} ORDER BY date",
             (restaurant_id, weekday, start, before.isoformat())).fetchall()
     finally:
         conn.close()
@@ -128,23 +132,73 @@ def prediction_range(hist):
 STALE_SAMPLE_DAYS = 14
 
 
-def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
+def forecast_day(restaurant_id, day=None, db_path=DB_PATH, effects=True):
     """Typical sales for `day` (default the restaurant's today), from its own
-    weekday history.
+    weekday history — the POS sync's final daily totals.
 
     `low`/`high` are the 80% prediction range for the night (prediction_range)
     once there are RANGE_MIN_SAMPLES past nights; None before that, with
     `range_note` saying so. `newest_sample` is the newest night it rests on,
     named in `range_basis` / `range_note`; a forecast whose newest night is
-    more than STALE_SAMPLE_DAYS before `day` is withheld (DH1-18)."""
-    from time_utils import mdy as _mdy
+    more than STALE_SAMPLE_DAYS before `day` is withheld (DH1-18).
+
+    `effects` (default): the measured effects of what is known about the date
+    — a listed event, the holiday, a campaign aimed at it, the 1st or 15th —
+    from this restaurant's own nights (event_memory.effects_for_day, behind
+    its sample floor), applied to the weekday median and said: `base_sales`
+    is the plain median, `effects` what moved it, `effect_basis` the
+    sentence. False reads the plain weekday median ("a typical Tuesday")."""
     day = day or local_today(restaurant_id)
     weekday = day.strftime("%A")
     dated = _weekday_history_dated(restaurant_id, weekday, day, db_path=db_path)
+    out = _forecast_from(dated, day, weekday)
+    if effects and out.get("available"):
+        _apply_effects(restaurant_id, day, out, db_path)
+    return out
+
+
+def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True):
+    """forecast_day on the nightly report's OWN basis (canonical_facts
+    .BASIS_DSR) — the only forecast a report's net may be set beside and the
+    one its predictions are graded against (memory audit 9/29/26, net_basis).
+
+    Where the POS's daily total is built as the report's net (RPOWER), or its
+    basis is unknown, that is forecast_day itself. For any other POS (Toast's
+    businessDay netSales counts service charges and refunds its own way) the
+    counting gap was read as "N% below a typical Tuesday" and learned as
+    forecast bias: here the forecast rests on the report's own past nights
+    (and an imported DSR workbook), and until MIN_SAMPLES of the weekday
+    exist it is withheld and says why. `basis` is always BASIS_DSR."""
+    import canonical_facts as cf
+    day = day or local_today(restaurant_id)
+    weekday = day.strftime("%A")
+    if cf.pos_basis(cf._current_provider(restaurant_id)) != cf.BASIS_POS:
+        fc = forecast_day(restaurant_id, day, db_path=db_path, effects=effects)
+        return dict(fc, basis=cf.BASIS_DSR) if isinstance(fc, dict) else fc
+    start = day - timedelta(weeks=LOOKBACK_WEEKS)
+    series = cf.net_series(restaurant_id, start, day - timedelta(days=1), db_path=db_path, pos=cf.POS_SAME_BASIS)
+    dated = [(d, x["net"]) for d, x in series.items()
+             if date.fromisoformat(d).strftime("%A") == weekday and x["net"] and x["net"] > 0]
+    out = _forecast_from(dated, day, weekday, noun="nightly reports")
+    out["basis"] = cf.BASIS_DSR
+    if not out.get("available") and not out.get("stale"):
+        out["reason"] = (f"only {len(dated)} past {weekday} nightly report{'s' if len(dated) != 1 else ''} on file "
+                         f"(needs {MIN_SAMPLES}) — the POS's own daily total counts some things differently, so "
+                         "tonight's net is not set beside a forecast built from it")
+    if effects and out.get("available"):
+        _apply_effects(restaurant_id, day, out, db_path)
+    return out
+
+
+def _forecast_from(dated, day, weekday, noun="with sales on file"):
+    """The forecast dict from [(ISO date, sales)] of `weekday`, oldest first
+    (forecast_day's rules: MIN_SAMPLES, the stale newest night, the 80%
+    prediction range from RANGE_MIN_SAMPLES)."""
+    from time_utils import mdy as _mdy
     hist = [v for _d, v in dated]
     if len(hist) < MIN_SAMPLES:
         return {"available": False, "day": day.isoformat(), "weekday": weekday,
-                "reason": f"only {len(hist)} past {weekday}s with sales on file"}
+                "reason": f"only {len(hist)} past {weekday}s {noun}"}
     newest = dated[-1][0]
     try:
         newest_age = (day - date.fromisoformat(newest)).days
@@ -170,6 +224,30 @@ def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
         out["range_basis"] = f"the last {len(hist)} {weekday}s, the newest {_mdy(newest)}"
         out["range_note"] = (f"range not yet measurable — {len(hist)} past {weekday}s, "
                              f"needs {RANGE_MIN_SAMPLES}")
+    return out
+
+
+def _apply_effects(restaurant_id, day, out, db_path=DB_PATH):
+    """Scale an available forecast by the measured effects known before the
+    night (event_memory.effects_for_day). The range moves with it. Never
+    raises: a forecast without its effects is still the weekday median."""
+    try:
+        import event_memory
+        eff = event_memory.effects_for_day(restaurant_id, day, db_path=db_path)
+    except Exception as e:
+        print(f"[demand] measured effects unavailable for {restaurant_id}: {e}")
+        eff = None
+    if not eff or not eff.get("pct"):
+        return out
+    factor = 1.0 + float(eff["pct"]) / 100.0
+    out["base_sales"] = out["typical_sales"]
+    out["typical_sales"] = round(out["typical_sales"] * factor, 2)
+    for k in ("low", "high"):
+        if out.get(k) is not None:
+            out[k] = round(out[k] * factor, 2)
+    out["effect_pct"] = eff["pct"]
+    out["effects"] = eff["applied"]
+    out["effect_basis"] = eff["basis"]
     return out
 
 
@@ -218,18 +296,34 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+            "SELECT business_date, metric, value, source FROM dsr_metrics WHERE restaurant_id=? "
             "AND business_date BETWEEN ? AND ? AND metric IN "
             "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high',"
-            "'sales.forecast_net') "
+            "'sales.forecast_net','sales.forecast_same_basis') "
             "AND value IS NOT NULL", (restaurant_id, start, end)).fetchall()
     except Exception:
         rows = []
     finally:
         conn.close()
-    nights = {}
+    nights, sources = {}, {}
     for r in rows:
         nights.setdefault(r["business_date"], {})[r["metric"]] = float(r["value"])
+        if r["metric"] == "sales.net":
+            sources[r["business_date"]] = r["source"]
+    # Same basis only (memory audit 9/29/26, net_basis): a night scored
+    # against a forecast built from a POS total counted another way learned
+    # the counting gap as forecast bias. A night records whether its forecast
+    # rested on the report's own basis (sales.forecast_same_basis); a night
+    # from before that record counts unless its POS is known to build a
+    # different figure.
+    import canonical_facts as _cf
+    other_basis = [d for d, n in nights.items()
+                   if not (n.get("sales.forecast_same_basis") == 1.0
+                           or ("sales.forecast_same_basis" not in n
+                               and _cf.pos_basis(sources.get(d)) != _cf.BASIS_POS))]
+    for d in other_basis:
+        nights.pop(d, None)
+    base["excluded_other_basis"] = len(other_basis)
     pcts = [n["sales.vs_forecast_pct"] for n in nights.values() if "sales.vs_forecast_pct" in n]
     ranged = [n for n in nights.values()
               if all(k in n for k in ("sales.net", "sales.forecast_low", "sales.forecast_high"))]
@@ -288,13 +382,13 @@ def _forecast_skill(restaurant_id, nights, db_path=DB_PATH) -> dict:
         return out
     first = min(x[0] for x in dated) - timedelta(weeks=NAIVE_WEEKS)
     last = max(x[0] for x in dated)
-    conn = get_conn(db_path)
-    try:
-        hist = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
-            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<? "
-            "AND sales IS NOT NULL AND sales > 0", (restaurant_id, first.isoformat(), last.isoformat())).fetchall()}
-    finally:
-        conn.close()
+    # The naive forecasts on the SAME basis as the nights they are scored
+    # against (canonical_facts.net_series: the report's own net, an imported
+    # workbook, a POS total on the same basis) — memory audit 9/29/26,
+    # net_basis.
+    import canonical_facts as _cf
+    hist = {d: x["net"] for d, x in _cf.net_series(restaurant_id, first, last - timedelta(days=1),
+                                                   db_path=db_path).items() if x["net"] and x["net"] > 0}
     pairs_last, pairs_mean = [], []
     for d, a, f in dated:
         prev = [hist.get((d - timedelta(weeks=k)).isoformat()) for k in range(1, NAIVE_WEEKS + 1)]
@@ -375,12 +469,14 @@ def yesterday_vs_typical(restaurant_id, today=None, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=? "
-                           "AND sales IS NOT NULL AND sales > 0", (restaurant_id, y.isoformat())).fetchone()
+                           f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}", (restaurant_id, y.isoformat())).fetchone()
     finally:
         conn.close()
     if not row:
         return {"available": False, "reason": "no sales recorded for yesterday yet"}
-    fc = forecast_day(restaurant_id, y, db_path=db_path)
+    # "A typical <weekday>": the plain weekday median, not the forecast with
+    # the night's measured effects applied.
+    fc = forecast_day(restaurant_id, y, db_path=db_path, effects=False)
     if not fc["available"]:
         return {"available": False, "reason": fc["reason"]}
     actual = float(row["sales"])
@@ -454,7 +550,7 @@ def weekday_gaps(restaurant_id, today=None, db_path=DB_PATH) -> dict:
         try:
             rows = conn.execute(
                 "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<? "
-                "AND sales IS NOT NULL AND sales > 0 AND COALESCE(final, 1) != 0 ORDER BY date",
+                f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL} ORDER BY date",
                 (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
         finally:
             conn.close()

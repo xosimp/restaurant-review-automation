@@ -1164,16 +1164,27 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         pass
 
     try:
+        # Reach is REACH over the posts whose reach was measured, on the
+        # posts' own publish time (canonical_facts; the review context's
+        # rule). It summed reach + impressions over every post, unmeasured
+        # ones as 0 — "reaching 2,600" for 1,000 unique accounts, cited as
+        # operational evidence (memory audit 9/29/26, CROSS-15, QUALITY-15).
+        import canonical_facts
+        reach_ok = canonical_facts.reach_measured_sql()
         conn = get_conn(db_path)
-        row = _one_row(conn, """
-            SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(reach,0)+COALESCE(impressions,0)),0) AS reach
+        row = _one_row(conn, f"""
+            SELECT COUNT(*) AS n,
+                   SUM(CASE WHEN {reach_ok} THEN 1 ELSE 0 END) AS reach_posts,
+                   SUM(CASE WHEN {reach_ok} THEN reach END) AS reach
               FROM marketing_content_log
              WHERE restaurant_id=? AND post_id IS NOT NULL
-               AND created_at >= datetime('now','-30 days')
+               AND COALESCE(posted_at, created_at) >= datetime('now','-30 days')
         """, (restaurant_id,))
         conn.close()
         if row and (row["n"] or 0) > 0:
-            ctx["marketing"] = {"posts_30d": int(row["n"]), "reach_30d": int(row["reach"] or 0)}
+            ctx["marketing"] = {"posts_30d": int(row["n"])}
+            if (row["reach_posts"] or 0) > 0 and row["reach"] is not None:
+                ctx["marketing"]["reach_30d"] = int(row["reach"])
     except Exception:
         pass
     return ctx
@@ -1214,13 +1225,17 @@ def _operational_lines(ctx) -> dict:
              "window_days": op_field("days in the window", rev["window_days"], "count", evidence=False)})
     mk = ctx.get("marketing")
     if mk:
+        # Reach only where it was measured: "reaching —" is never said as 0.
+        fields = {"posts_30d": op_field("published posts in 30 days", mk["posts_30d"], "count",
+                                        display=f"{mk['posts_30d']} posts"),
+                  "window": op_field("days in the window", 30, "count", evidence=False)}
+        reach = mk.get("reach_30d")
+        if reach is not None:
+            fields["reach_30d"] = op_field("reach in 30 days", reach, "count", display=f"{reach:,}")
         lines["marketing"] = OperationalLine(
-            f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
-            f"{mk['reach_30d']:,} — a demand change would show up in usage",
-            {"posts_30d": op_field("published posts in 30 days", mk["posts_30d"], "count",
-                                   display=f"{mk['posts_30d']} posts"),
-             "reach_30d": op_field("reach in 30 days", mk["reach_30d"], "count", display=f"{mk['reach_30d']:,}"),
-             "window": op_field("days in the window", 30, "count", evidence=False)})
+            f"- Marketing: {mk['posts_30d']} published posts in 30 days"
+            + (f" reaching {reach:,} unique accounts" if reach is not None else " (reach not measured)")
+            + " — a demand change would show up in usage", fields)
     return lines
 
 

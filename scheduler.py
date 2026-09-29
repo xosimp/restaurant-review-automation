@@ -4388,6 +4388,14 @@ def scheduler_loop():
             if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
                 _ops.run_job("forecast_scoring", run_forecast_scoring)
 
+            # 5am+ — what the nights just finished taught (event_memory): the
+            # weather each day actually had, and the measured lift of every
+            # listed event, holiday, rain night, payday and campaign, before
+            # the morning briefs. Sends nothing; bounded and resumable.
+            if _due(now, 5) and _ops.claim_period("event_memory", str(today)):
+                import event_memory as _event_memory
+                _ops.run_job("event_memory", _event_memory.run_event_memory)
+
             # 6am+ — one Data Health snapshot per restaurant, after the
             # nightly chain (POS, depletion, snapshots) has landed.
             if _due(now, 6) and _ops.claim_period("data_health_daily", str(today)):

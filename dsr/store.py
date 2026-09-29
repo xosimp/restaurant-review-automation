@@ -723,6 +723,11 @@ def import_history(restaurant_id, rows, source_file=None, imported_by=None, db_p
         conn.commit()
     finally:
         conn.close()
+    if n:
+        # Nights the event memory's history pass has not seen: it reads the
+        # restaurant again on its next pass (memory audit 9/29/26).
+        import event_memory
+        event_memory.reset_backfill(restaurant_id, db_path=db_path)
     return n
 
 
@@ -763,39 +768,27 @@ def baselines_net(restaurant_id, days, db_path=DB_PATH, pos_sync=True) -> dict:
 
       dsr        that night's own report (dsr_metrics sales.net)
       import     the owner's old DSR workbook (dsr_history_import)
-      pos_sync   the nightly POS sync's daily sales, a positive figure only
-                 (0 there means nothing synced), and only when `pos_sync`:
-                 the POS's daily total is the DSR's own basis (D1-13)
+      pos_sync   the nightly POS sync's daily sales, a positive FINAL figure
+                 only (0 there means nothing synced; a night the POS had not
+                 closed is not a night's sales), and only when `pos_sync`
+                 and that night's POS total is the DSR's own basis (D1-13)
 
-    (None, None) for a night none of them has."""
+    The one reader is canonical_facts.net_series (memory audit 9/29/26,
+    net_basis): each POS night's basis comes from the provider that built
+    IT, so a restaurant that moved from Toast to RPOWER never sets last
+    year's Toast total beside tonight's net. (None, None) for a night none
+    of them has."""
+    import canonical_facts as _cf
     isos = sorted({(d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]) for d in days if d})
     out = {d: (None, None) for d in isos}
     if not isos:
         return out
-    marks = ",".join("?" for _ in isos)
-    conn = get_conn(db_path)
-    try:
-        measured = {r["business_date"]: float(r["value"]) for r in conn.execute(
-            f"SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='sales.net' "
-            f"AND value IS NOT NULL AND business_date IN ({marks})", (restaurant_id, *isos)).fetchall()}
-        synced = {}
-        if pos_sync:
-            try:
-                synced = {r["date"]: float(r["sales"]) for r in conn.execute(
-                    f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
-                    "AND sales IS NOT NULL AND sales > 0", (restaurant_id, *isos)).fetchall()}
-            except Exception:
-                synced = {}
-    finally:
-        conn.close()
-    imported = history_for(restaurant_id, isos[0], isos[-1], db_path=db_path)
+    series = _cf.net_series(restaurant_id, db_path=db_path, dates=isos,
+                            pos=_cf.POS_SAME_BASIS if pos_sync else _cf.POS_NONE)
     for d in isos:
-        if d in measured:
-            out[d] = (measured[d], "dsr")
-        elif (imported.get(d) or {}).get("net") is not None:
-            out[d] = (float(imported[d]["net"]), "import")
-        elif d in synced:
-            out[d] = (synced[d], "pos_sync")
+        x = series.get(d)
+        if x:
+            out[d] = (x["net"], x["source"])
     return out
 
 

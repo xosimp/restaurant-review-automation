@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from canonical_facts import FINAL_SQL
 
 
 def get_conn(db_path=None):
@@ -61,9 +62,17 @@ def _daypart(r):
 def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     """For every published week that has ended, one row per date and
     daypart: scheduled hours (from the published CSV), sales and labor %
-    (labor_daily_history, split by the intraday morning share), coverage
-    and no-show issues on that date, and the mean review rating dated that
-    day. Idempotent: rows are keyed by (history_id, date, daypart)."""
+    (labor_daily_history's FINAL day, split by this restaurant's MEASURED
+    morning share — _morning_share), coverage and no-show issues on that
+    date, and the mean review rating dated that day. Idempotent: rows are
+    keyed by (history_id, date, daypart).
+
+    A day whose morning share was never measured has NULL daypart sales
+    and split_basis 'unmeasured' (memory audit 9/29/26, QUALITY-11): the
+    split used to fall back to a stated 0.4, so every restaurant without
+    intraday data was recorded as doing 40% of its sales before 3pm — a
+    dinner-only bar included — and peer benchmarks and the schedule
+    prompt's sales per labor hour read it as measured."""
     from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
@@ -112,16 +121,20 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 e["hours"] += _hours(r)
                 e["people"].add(r["employee"])
             for (d, part), e in by.items():
-                day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? AND date=?",
-                                   (restaurant_id, d)).fetchone()
-                sales = None
+                day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
+                                   f"AND date=? AND {FINAL_SQL}", (restaurant_id, d)).fetchone()
+                sales, split_basis = None, None
                 if day and day["sales"]:
                     try:
                         wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
                     except ValueError:
                         wd = day["day_of_week"]
-                    s = share.get(wd, 0.4)
-                    sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
+                    s = share.get(wd)
+                    if s is None:
+                        split_basis = "unmeasured"
+                    else:
+                        split_basis = "measured"
+                        sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
                 issues = issue_at.get((d, part), 0)
                 # A review carries a date, not a time: it can't be split
                 # between lunch and dinner, so it is recorded once, on the
@@ -137,11 +150,13 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                         print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
                 conn.execute(
                     "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
-                    "review_rating, reviews) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
+                    "review_rating, reviews, split_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
                     "hours=excluded.hours, people=excluded.people, sales=excluded.sales, labor_pct=excluded.labor_pct, "
-                    "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, recorded_at=datetime('now')",
+                    "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, "
+                    "split_basis=excluded.split_basis, recorded_at=datetime('now')",
                     (restaurant_id, w["id"], d, part, round(e["hours"], 1), len(e["people"]), sales,
-                     (day["labor_pct"] if day else None), issues, rating, n_reviews))
+                     (day["labor_pct"] if day else None), issues, rating, n_reviews, split_basis))
                 written += 1
         conn.commit()
     finally:
@@ -149,13 +164,22 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     return {"written": written}
 
 
+MORNING_SPLIT_HOUR = 15        # schedule_rules.daypart_of: a shift starting at 3pm or later is "night"
+MORNING_SHARE_MIN_DAYS = 3
+
+
 def _morning_share(conn, restaurant_id) -> dict:
-    """{weekday: share of the day's sales taken by 3pm}, from ≥3 captured days."""
+    """{weekday: share of the day's sales taken by 3pm}, MEASURED: from ≥3
+    captured days of the POS's running total (pos_intraday), else from ≥3
+    nights of the nightly report's own hourly split (its sales block's
+    hourly nets — the source for a POS that cannot be asked during the day,
+    as Restaurant DNA reads it). A weekday with neither is absent: its
+    daypart sales are unmeasured, never a stated 0.4."""
     try:
         rows = conn.execute("SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
                             "AND business_date >= date('now','-84 days') ORDER BY business_date, captured_hour", (restaurant_id,)).fetchall()
     except Exception:
-        return {}
+        rows = []
     by = {}
     for r in rows:
         by.setdefault((r["weekday"], r["business_date"]), []).append((int(r["captured_hour"]), float(r["net_sales"] or 0)))
@@ -163,10 +187,58 @@ def _morning_share(conn, restaurant_id) -> dict:
     for (wd, _), caps in by.items():
         caps.sort()
         total = caps[-1][1]
-        at3 = max((s for h, s in caps if h <= 15), default=None)
+        at3 = max((s for h, s in caps if h <= MORNING_SPLIT_HOUR), default=None)
         if total > 0 and at3 is not None:
             tmp.setdefault(wd, []).append(min(1.0, at3 / total))
-    return {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= 3}
+    out = {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= MORNING_SHARE_MIN_DAYS}
+    for wd, v in _dsr_morning_shares(conn, restaurant_id).items():
+        if wd not in out and len(v) >= MORNING_SHARE_MIN_DAYS:
+            out[wd] = sorted(v)[len(v) // 2]
+    return out
+
+
+def _dsr_morning_shares(conn, restaurant_id) -> dict:
+    """{weekday: [share before 3pm]} from the nightly report's hourly split
+    (dsr_reports facts → blocks.sales.detail.hourly), the latest finished
+    version of each night in the last 12 weeks. An hour before the business
+    day starts (1am) belongs to the night."""
+    import json as _json
+    from time_utils import BUSINESS_DAY_START_HOUR
+    try:
+        rows = conn.execute("SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? "
+                            "AND business_date >= date('now','-84 days') AND status IN ('final','provisional') "
+                            "ORDER BY business_date, version", (restaurant_id,)).fetchall()
+    except Exception:
+        return {}
+    nights = {}
+    for r in rows:                          # later versions overwrite earlier ones
+        try:
+            blk = ((_json.loads(r["facts_json"] or "{}") or {}).get("blocks") or {}).get("sales") or {}
+        except (TypeError, ValueError):
+            continue
+        if blk.get("status") != "ready":
+            continue
+        early = tot = 0.0
+        for h in ((blk.get("detail") or {}).get("hourly") or []):
+            try:
+                hour, net = int(h.get("hour")), float(h.get("net") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if net <= 0:
+                continue
+            tot += net
+            if BUSINESS_DAY_START_HOUR <= hour < MORNING_SPLIT_HOUR:
+                early += net
+        if tot > 0:
+            nights[str(r["business_date"])[:10]] = early / tot
+    out = {}
+    for d, share in nights.items():
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        out.setdefault(wd, []).append(share)
+    return out
 
 
 def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
@@ -174,7 +246,12 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
     over the recorded weeks."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT date, daypart, hours, sales, issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
+        # Daypart sales only where the split was measured (split_basis): a
+        # row recorded before the column existed divided the day by a stated
+        # 0.4, and its sales per labor hour is not a figure to hand the
+        # schedule prompt (QUALITY-11).
+        rows = conn.execute("SELECT date, daypart, hours, CASE WHEN split_basis='measured' THEN sales END AS sales, "
+                            "issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
                             "ORDER BY date DESC LIMIT 400", (restaurant_id,)).fetchall()
     except Exception:
         return {}
@@ -1037,6 +1114,12 @@ def init_schedule_intel(db_path: str = DB_PATH):
         UNIQUE(history_id, date, daypart)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_outcomes_rest ON schedule_outcomes(restaurant_id, date)")
+    # How each row's daypart sales were split (memory audit 9/29/26,
+    # QUALITY-11): 'measured' (the POS's intraday running total or the
+    # nightly report's hourly split) or 'unmeasured' (sales NULL). A row
+    # from before the column has NULL: read as unmeasured.
+    if "split_basis" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}:
+        conn.execute("ALTER TABLE schedule_outcomes ADD COLUMN split_basis TEXT")
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_recommendation_events (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),

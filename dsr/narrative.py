@@ -216,12 +216,27 @@ _OPPORTUNITY_TOKENS = {"recoverable", "opportunity", "opportunities", "potential
 _PLAN_TOKENS = {"budget", "target", "goal", "plan"}
 
 
+# The Intel block's figures that are not measurements of the night (memory
+# audit 9/29/26, QUALITY-17): the National Weather Service FORECAST for the
+# date (dsr.block_intel says so — the actual weather is its observed_* keys),
+# and what the owner LISTED for it (events, reservations booked). They were
+# typed "measured", so sales plus a forecast cleared the two-measured-blocks
+# floor and Ask could describe "the 6 nights it rained" from probabilities.
+FORECAST_FACT_KEYS = frozenset({"weather_high_f", "weather_low_f", "weather_precip_pct"})
+LISTED_FACT_KEYS = frozenset({"events_listed", "reservations_covers"})
+
+
 def kind_of(key):
     """The money kind of a fact key, from its last part. A `vs_` key is a
     variance — the actual minus its comparator, measured against a plan or a
-    past night — and is measured."""
+    past night — and is measured. The Intel block's forecast weather is a
+    projection and what the owner listed for the date is a plan."""
     last = str(key or "").lower().split(".")[-1]
     toks = set(last.split("_"))
+    if last in FORECAST_FACT_KEYS:
+        return "projection"
+    if last in LISTED_FACT_KEYS:
+        return "plan"
     if last.startswith("vs_"):
         return "measured"
     if toks & _OPPORTUNITY_TOKENS or "at_stake" in last:

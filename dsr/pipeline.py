@@ -644,6 +644,7 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if required_missing else None
     store.schedule_retry(report_id, nxt, db_path=db, count=False)
     _deliver(restaurant, report_id, now_utc, db)
+    _remember(restaurant, day, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
 
@@ -686,6 +687,19 @@ def _tomorrow(restaurant, report_id, day, trigger, now_utc, db):
             predictions.record(restaurant.id, day, day + timedelta(days=1), preds, db_path=db, made_at=now_utc)
     except Exception as e:
         log.warning("dsr: tomorrow not built rid=%s day=%s: %s", getattr(restaurant, "id", None), day, e)
+
+
+def _remember(restaurant, day, db):
+    """What the finished night taught (event_memory.record_night: the
+    measured lift of every event, holiday, payday and campaign on it) —
+    kept as soon as the night is final, so the morning brief can already
+    say it; the nightly event_memory job re-reads it with the observed
+    weather. Never holds or fails the report."""
+    try:
+        import event_memory
+        event_memory.record_night(restaurant.id, day, db_path=db)
+    except Exception as e:
+        log.warning("dsr: event memory not recorded rid=%s day=%s: %s", getattr(restaurant, "id", None), day, e)
 
 
 def _record_attempt(restaurant, ok, db, error=None, data_through=None):

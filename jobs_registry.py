@@ -140,6 +140,12 @@ JOBS = {
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Forecast scoring", description="Score every frozen forecast whose period has closed",
         target=("scheduler", "run_forecast_scoring"), max_minutes=60, retry=True),
+    "event_memory": dict(
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Event memory",
+        description=("Observed weather, and what each finished night's events, holidays, rain, paydays and "
+                     "campaigns did to sales (bounded, resumable)"),
+        target=("event_memory", "run_event_memory"), max_minutes=30, retry=True),
     "reservation_sync": dict(
         cadence="5am CT daily, the day before each draft", sla_minutes=_D, sends=False, runnable=True,
         label="Reservations", description="Reservation feeds into events & reservations (no provider live yet)",

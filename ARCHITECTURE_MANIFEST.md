@@ -137,6 +137,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `ai_reads` | 2 | Cavnar AI's history of its own reasoning: every read, diagnosis, digest, brief and narrative kept, its claims scored at their horizon, the last claim served back (memory audit 9/29/26) |
 | `event_memory` | 2 | what each night teaches: measured effects of events, holidays, weather and campaigns on this restaurant's sales, and its public history (memory audit 9/29/26) |
 | `change_log` | 2 | a lasting, attributed history of settings, targets, prices, menu, roster and hours changes (memory audit 9/29/26) |
+| `canonical_facts` | 2 | one reader per stored fact every learner reads through (memory audit 9/29/26): final days (`FINAL_SQL`), the nightly net by basis (`net_series` — the report's net, an imported workbook, the POS total, each naming its basis and source; two figures compared only on one basis), last year (`last_year_net`, `sales_history`), live reviews on the one axis, measured reach, watched nights, published weeks, and the kinds a stored figure is; `tests/test_mem_m5_canonical_facts.py` holds the learners to it from the source |
 | `delayed` | 2 | actions with an undo window |
 | `demand` | 2 | demand forecast from same-weekday medians |
 | `demo_seed` | 4 | the Simple EJ's demo account (the Gia Mia demo was removed 9/25/26) |

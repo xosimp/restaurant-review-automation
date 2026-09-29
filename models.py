@@ -3272,6 +3272,12 @@ def init_db(db_path: str = DB_PATH):
     # the POS-department → DSR-category map (dsr/).
     from dsr import init_dsr
     init_dsr(db_path)
+    # What each night teaches and the restaurant's public history
+    # (event_memory: event_outcomes, event_effects, weather_daily,
+    # own_rating_history, market_events, competitor_rating_monthly) — memory
+    # audit 9/29/26.
+    from event_memory import init_event_memory
+    init_event_memory(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.

@@ -20,6 +20,10 @@ from datetime import date, timedelta
 import models as _models_mod
 from models import DB_PATH, REVIEW_TIME_AXIS_BARE
 from thresholds import RATING_MIN_REVIEWS
+# Final days only (canonical_facts): a night the POS had not closed when it
+# was read is provisional — a half-night synced mid-service stayed in every
+# window here as a real low day (memory audit 9/29/26, QUALITY-10).
+from canonical_facts import FINAL_SQL, final_sql
 
 
 def get_conn(db_path=None):
@@ -48,7 +52,7 @@ def _labor_pct(rid, start, end, param, db_path):
         row = conn.execute(
             "SELECT SUM(labor_cost) AS labor, SUM(sales) AS sales, COUNT(*) AS n "
             "FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-            "AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL",
+            f"AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL AND {FINAL_SQL}",
             (rid, _d(start), _d(end))).fetchone()
     finally:
         conn.close()
@@ -62,7 +66,7 @@ def _sales(rid, start, end, param, db_path):
     try:
         row = conn.execute(
             "SELECT SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
-            "WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0",
+            f"WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}",
             (rid, _d(start), _d(end))).fetchone()
     finally:
         conn.close()
@@ -82,7 +86,7 @@ def _weekday_sales(rid, start, end, param, db_path):
     try:
         rows = conn.execute(
             "SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-            "AND sales IS NOT NULL AND sales > 0 AND day_of_week=?",
+            f"AND sales IS NOT NULL AND sales > 0 AND day_of_week=? AND {FINAL_SQL}",
             (rid, _d(start), _d(end), day)).fetchall()
     finally:
         conn.close()
@@ -210,7 +214,7 @@ def _loss_rate(kind):
                 "SELECT COALESCE(SUM(p.amount),0) AS amt, COALESCE(SUM(p.events),0) AS n, "
                 "COUNT(*) AS days, SUM(l.sales) AS s FROM pos_loss_daily p "
                 "JOIN labor_daily_history l ON l.restaurant_id=p.restaurant_id AND l.date=p.business_date "
-                "AND l.sales IS NOT NULL AND l.sales > 0 "
+                f"AND l.sales IS NOT NULL AND l.sales > 0 AND {final_sql('l')} "
                 "WHERE p.restaurant_id=? AND p.kind=? AND p.business_date>=? AND p.business_date<=?",
                 (rid, kind, _d(start), _d(end))).fetchone()
             asked = conn.execute(
@@ -819,7 +823,7 @@ def noise_band(restaurant_id, key, window_days=None, end=None, baseline_days=Non
 
 def _day_sql(base, param):
     sql = ("FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-           "AND sales IS NOT NULL AND sales > 0")
+           f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}")
     extra = []
     if base == "labor_pct":
         sql += " AND labor_cost IS NOT NULL"
@@ -860,7 +864,7 @@ def sales_days(restaurant_id, start, end, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT DISTINCT date FROM labor_daily_history WHERE restaurant_id=? AND date>=? "
-                            "AND date<=? AND sales IS NOT NULL AND sales > 0",
+                            f"AND date<=? AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}",
                             (restaurant_id, _d(start), _d(end))).fetchall()
     finally:
         conn.close()
@@ -937,7 +941,7 @@ def accrual_days(restaurant_id, key, start, end, db_path=DB_PATH):
             rows = conn.execute(
                 "SELECT DISTINCT p.business_date AS d FROM pos_loss_daily p JOIN labor_daily_history l "
                 "ON l.restaurant_id=p.restaurant_id AND l.date=p.business_date AND l.sales IS NOT NULL "
-                "AND l.sales > 0 WHERE p.restaurant_id=? AND p.kind=? AND p.business_date>=? "
+                f"AND l.sales > 0 AND {final_sql('l')} WHERE p.restaurant_id=? AND p.kind=? AND p.business_date>=? "
                 "AND p.business_date<=?", (restaurant_id, base.split("_")[0], _d(start), _d(end))).fetchall()
         finally:
             conn.close()

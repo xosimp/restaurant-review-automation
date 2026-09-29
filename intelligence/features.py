@@ -13,6 +13,11 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+# The data rules every learner shares (canonical_facts, memory audit
+# 9/29/26): final days, live reviews on the one time axis, measured reach,
+# published weeks.
+import canonical_facts as _cf
+from canonical_facts import FINAL_SQL, LIVE_REVIEWS_SQL, REVIEW_AXIS
 
 
 def get_conn(db_path=None):
@@ -162,7 +167,7 @@ def structural(conn, restaurant_id: int, today: date) -> dict:
             pass
     try:
         sales = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
-            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0",
+            f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0 AND {FINAL_SQL}",
             (restaurant_id, d28)).fetchall()}
     except Exception:
         sales = {}
@@ -283,12 +288,16 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
     conn = get_conn(db_path)
     try:
         # ── reviews ────────────────────────────────────────────────────────
+        # Live reviews only, on the one review time axis (QUALITY-16): spam
+        # Google later removed kept dragging avg_rating_30d and the peer band
+        # while the Reviews screens left it out, and a review with an empty
+        # review_date fell in no window at all.
         rows = conn.execute(
-            "SELECT rating, review_date, approved_at, posted_at, response_status FROM reviews "
-            "WHERE restaurant_id=? AND COALESCE(review_date, fetched_at) >= ?",
+            f"SELECT rating, review_date, approved_at, posted_at, response_status, date({REVIEW_AXIS}) AS at "
+            f"FROM reviews WHERE restaurant_id=? AND {LIVE_REVIEWS_SQL} AND date({REVIEW_AXIS}) >= ?",
             (restaurant_id, d90.isoformat())).fetchall()
-        last30 = [r for r in rows if _d(r["review_date"]) >= d30.isoformat()]
-        prior = [r for r in rows if _d(r["review_date"]) < d30.isoformat()]
+        last30 = [r for r in rows if _d(r["at"]) >= d30.isoformat()]
+        prior = [r for r in rows if _d(r["at"]) < d30.isoformat()]
         # None, not 0, when the restaurant has no review source and nothing
         # on file: "no reviews arrive" is unmeasured, not "0 reviews", and a
         # 0 counted it as measured in completeness (CA3 F12 — group G owns
@@ -323,7 +332,8 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
 
         # ── labor ──────────────────────────────────────────────────────────
         lab = conn.execute(
-            "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? ORDER BY date",
+            "SELECT date, labor_pct, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+            f"AND {FINAL_SQL} ORDER BY date",
             (restaurant_id, d28.isoformat())).fetchall()
         # Days with a sales figure only (a missing figure is NULL — or, on
         # rows from before that fix, 0 — and has no labor %), and SALES-
@@ -354,22 +364,28 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                 tot_s = sum(float(r["sales"]) for r in hrs_rows)
                 tot_h = sum(float(r["total_hours"]) for r in hrs_rows)
                 f["labor_hours_per_1k_28d"] = round(tot_h / tot_s * 1000, 2) if tot_s else None
-            if _has_col(conn, "schedule_outcomes", "daypart"):
+            if _has_col(conn, "schedule_outcomes", "split_basis"):
+                # Measured daypart sales only (QUALITY-11): a day split by a
+                # stated 0.4 lunch share is not a measurement, and peer bands
+                # mixed it with measured ones.
                 for part, key in (("morning", "labor_hours_per_1k_day_28d"), ("night", "labor_hours_per_1k_night_28d")):
                     o = conn.execute("SELECT SUM(hours) AS h, SUM(sales) AS s, COUNT(DISTINCT date) AS n "
                                      "FROM schedule_outcomes WHERE restaurant_id=? AND daypart=? AND date >= ? "
-                                     "AND sales IS NOT NULL", (restaurant_id, part, d28.isoformat())).fetchone()
+                                     "AND sales IS NOT NULL AND split_basis='measured'",
+                                     (restaurant_id, part, d28.isoformat())).fetchone()
                     if o and (o["n"] or 0) >= MIN_MEASURED_DAYS and o["s"]:
                         f[key] = round(float(o["h"]) / float(o["s"]) * 1000, 2)
         except Exception:
             pass
-        sched = conn.execute(
-            "SELECT generated_at, edited_at FROM schedule_history WHERE restaurant_id=? AND generated_at >= ?",
-            (restaurant_id, d28.isoformat())).fetchall() if _has_col(conn, "schedule_history", "edited_at") else []
-        f["schedules_28d"] = len(sched)
-        if sched:
-            f["schedule_edits_28d"] = sum(1 for r in sched if r["edited_at"])
-            f["schedule_adjust_rate"] = round(f["schedule_edits_28d"] / len(sched), 3)
+        # Distinct PUBLISHED weeks, each adjusted only when a manager edited
+        # it before publishing (canonical_facts.published_weeks, QUALITY-20):
+        # every regenerated draft counted as a schedule and a staff swap
+        # after publishing as an adjustment.
+        weeks = _cf.published_weeks(restaurant_id, d28, db_path=db_path)
+        f["schedules_28d"] = len(weeks)
+        if weeks:
+            f["schedule_edits_28d"] = sum(1 for w in weeks if w["adjusted"])
+            f["schedule_adjust_rate"] = round(f["schedule_edits_28d"] / len(weeks), 3)
 
         # ── food cost ──────────────────────────────────────────────────────
         try:
@@ -413,10 +429,14 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         # Published posts only (post_id set), with what each was about
         # (marketing_tags) and what it did (marketing_attribution).
         tagged = _has_col(conn, "marketing_content_log", "post_kind")
+        # Reach is REACH, on posts whose reach was measured (QUALITY-15,
+        # MB-6): reach + impressions counted a viewer up to three times and
+        # the engagement rate — a benchmark key — ran 2-3x low.
+        _reach_ok = _cf.reach_measured_sql()      # one table in the FROM: unqualified names are c's
         posts = conn.execute(
             "SELECT c.id, c.created_at, COALESCE(c.posted_at, c.created_at) AS at, "
             + ("c.post_kind, c.occasion, " if tagged else "NULL AS post_kind, NULL AS occasion, ")
-            + "COALESCE(c.reach,0)+COALESCE(c.impressions,0) AS seen, "
+            + f"CASE WHEN {_reach_ok} THEN c.reach END AS seen, "
               "COALESCE(c.likes,0)+COALESCE(c.comments,0)+COALESCE(c.shares,0) AS engaged "
               "FROM marketing_content_log c WHERE c.restaurant_id=? AND c.post_id IS NOT NULL "
               "AND COALESCE(c.posted_at, c.created_at) >= ? ORDER BY at",

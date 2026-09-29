@@ -1483,12 +1483,26 @@ def _find_days(restaurant_id, metric=None, op=None, value=None, start=None, end=
     rows = store.find_days(restaurant_id, metric, op, threshold, start=lo, end=hi)
     measured = store.metric_series(restaurant_id, metric, lo or "0001-01-01", hi or "9999-12-31")
     cap = _days(limit, default=20, ceiling=_FIND_DAYS_MAX)
-    return {"metric": metric, "op": op, "value": threshold,
+    # What kind of figure the metric is (dsr.narrative.kind_of, memory audit
+    # 9/29/26 QUALITY-17): the Intel block's weather_* keys are the forecast
+    # for each night and events_listed what the owner listed — "the 6 nights
+    # it rained" must never be read off a forecast probability.
+    from dsr.narrative import kind_of as _kind_of
+    kind = _kind_of(metric)
+    note = "Newest first. Only nights with a recorded figure can match; a night with no figure is not counted."
+    if kind == "projection":
+        note += (" This metric is a FORECAST made for each night, not what happened: say 'forecast to …', never "
+                 "that it happened. Observed weather is intel.observed_* where recorded.")
+    elif kind == "plan":
+        note += " This metric is what the owner listed or planned for each night, not a measurement of it."
+    elif kind != "measured":
+        note += f" This metric is an {kind}, not a measurement: say so."
+    return {"metric": metric, "op": op, "value": threshold, "kind": kind,
             "start": lo.isoformat() if lo else None, "end": hi.isoformat() if hi else None,
             "count": len(rows), "measured_nights": len(measured),
             "nights": [{"date": d, "label": memory.day_label(d), "value": v} for d, v in rows[:cap]],
             "truncated": len(rows) > cap,
-            "note": "Newest first. Only nights with a measured figure can match; a night with no figure is not counted."}
+            "note": note}
 
 
 _GRID_ROW_KEYS = ("date", "label", "status", "provisional", "gross", "net", "cats", "transactions", "guests",
