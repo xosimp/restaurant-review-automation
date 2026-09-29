@@ -118,8 +118,12 @@ def test_breach_check_sends_only_a_prefix_and_fails_open(monkeypatch):
 
 def test_the_change_and_reset_paths_refuse_a_breached_password(monkeypatch):
     src_web = open("auth_routes.py").read(); src_mob = open("mobile_api.py").read(); src_adm = open("admin_routes.py").read()
-    assert src_web.count("password_pwned") >= 2 and "password_pwned" in src_mob and "password_pwned" in src_adm
-    assert "if len(new_pw) < 8:" in src_adm and "at least 6" not in src_adm
+    assert src_web.count("password_pwned") >= 2 and "password_pwned" in src_mob
+    # The admin console no longer sets a password at all: its reset is a
+    # one-hour reset link, so the password is chosen on the reset page above,
+    # under the same breach check (fix round B2, #86).
+    assert "reset_user_password" not in src_adm and "update_password(" not in src_adm
+    assert "at least 6" not in src_adm
 
 
 # ── reset tokens hashed at rest ──────────────────────────────────────────────

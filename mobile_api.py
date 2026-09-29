@@ -6839,19 +6839,52 @@ def mobile_request_account_deletion(current_user):
 @mobile_bp.route("/account/report-bug", methods=["POST"])
 @mobile_login_required
 def mobile_report_bug(current_user):
-    data = request.get_json() or {}
+    """Account -> More -> Report a bug. The report is STORED first
+    (admin_events.bug_reports, read by the console's Support queue), then
+    emailed to Will as a notice. It used to be emailed only: a failed send
+    lost the report, and the console never saw one (#34). The owner's
+    answer is ok once it is stored; whether the notice went is recorded on
+    the row, and a failure reaches the ops digest. A local backend stores
+    but never emails (scheduler.scheduling_allowed)."""
+    data = request.get_json(silent=True) or {}
     message = (data.get("message") or "").strip()
     if len(message) < 5:
         return jsonify(ok=False, error="Tell us a little more about what happened."), 400
-    restaurant = get_restaurant(current_user["restaurant_id"])
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
     meta = {k: str(data.get(k))[:80] for k in ("build", "app_version", "ios_version", "device", "screen") if data.get(k)}
     meta["username"] = current_user.get("username")
+    import admin_events
+    try:
+        report_id = admin_events.store_bug_report(rid, current_user, message[:4000], meta, source="ios")
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't save that right now ({_safe_err(e)})."), 500
+    try:
+        import scheduler as _sched_bug
+        may_send = _sched_bug.scheduling_allowed()
+    except Exception:
+        may_send = False
+    if not may_send:
+        admin_events.mark_bug_report_notified(report_id, False, "not emailed: not a sending server")
+        return jsonify(ok=True, report_id=report_id)
+    error = None
     try:
         from emails import send_bug_report_email
-        send_bug_report_email(restaurant.name if restaurant else "Unknown", current_user.get("email") or "", message[:4000], meta)
+        result = send_bug_report_email(restaurant.name if restaurant else "Unknown", current_user.get("email") or "",
+                                       message[:4000], dict(meta, report_id=report_id))
+        if not getattr(result, "ok", result):
+            error = getattr(result, "error", None) or "the email was not sent"
     except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't send that right now ({e})."), 500
-    return jsonify(ok=True)
+        error = _safe_err(e)
+    admin_events.mark_bug_report_notified(report_id, error is None, error)
+    if error:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"bug report {report_id} notice not delivered: {error}"),
+                        job="bug_report_notice", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
+    return jsonify(ok=True, report_id=report_id)
 
 
 # ── Analytics chart feeds ────────────────────────────────────────────────

@@ -2840,6 +2840,9 @@ def test_data_retention_route_and_purge(client, db_path):
 
 
 def test_report_bug_route(client, db_path, monkeypatch):
+    # The report is stored first; the notice is emailed only from a sending
+    # server, as on Railway (fix round B2, #9 / #34).
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     sent = {}

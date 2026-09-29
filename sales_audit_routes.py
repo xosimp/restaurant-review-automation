@@ -18,6 +18,24 @@ audit_bp = Blueprint("sales_audit", __name__)
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(audit_bp)
+# Every admin write here lands in the audit trail, as /admin's do: the tool's
+# thirteen writes (create, autosave, generate, share, link, delete…) went
+# unrecorded (#126).
+import admin_events as _admin_events
+_admin_events.register_audit(audit_bp)
+
+
+def _share_payload(share, audit_id):
+    """The share link as the admin side shows it: the URL only when the
+    token can be recovered (it is stored hashed), otherwise its last four
+    characters and dates."""
+    if not share:
+        return None
+    from time_utils import mdy
+    token = share.get("token")
+    return {"token": token, "url": (request.url_root.rstrip("/") + "/audit/r/" + token) if token else None,
+            "hint": share.get("token_hint"), "views": share.get("views"), "created_at": share.get("created_at"),
+            "expires_at": share.get("expires_at"), "expires_on": mdy((share.get("expires_at") or "")[:10])}
 
 
 @audit_bp.app_template_filter("money")
@@ -103,9 +121,9 @@ def audit_report_page(audit_id, current_user):
         res = engine.compute(a["answers"], a.get("pricing_override"))
         store.store_results(audit_id, res)
         a["results"] = res
-    share = store.active_share(audit_id)
+    share = _share_payload(store.active_share(audit_id), audit_id)
     return render_template("audit_report.html", r=store.public_view(a), is_admin=True,
-                           share_url=(request.url_root.rstrip("/") + "/audit/r/" + share["token"]) if share else None)
+                           share_url=(share or {}).get("url"), share=share)
 
 
 @audit_bp.route("/audit/r/<token>")
@@ -165,8 +183,13 @@ def api_get(audit_id, current_user):
     if not a:
         return jsonify(ok=False, error="Audit not found"), 404
     res = _results(a)
-    share = store.active_share(audit_id)
-    return jsonify(ok=True, audit=a, results=res, share=({"token": share["token"], "views": share["views"], "created_at": share["created_at"]} if share else None))
+    linked = None
+    if a.get("linked_restaurant_id"):
+        from models import get_restaurant
+        r = get_restaurant(a["linked_restaurant_id"])
+        linked = {"restaurant_id": a["linked_restaurant_id"], "name": r.name if r else None}
+    return jsonify(ok=True, audit=a, results=res, share=_share_payload(store.active_share(audit_id), audit_id),
+                   linked=linked)
 
 
 @audit_bp.route("/admin/api/audits/<int:audit_id>", methods=["PATCH", "POST"])
@@ -268,23 +291,31 @@ def api_link_restaurant(audit_id, current_user):
     against what the account actually did. See promise.py.
     """
     d = _json()
+    audit = store.get_audit(audit_id)
+    if not audit:
+        return jsonify(ok=False, error="Audit not found"), 404
+    before = audit.get("linked_restaurant_id")
     rid = d.get("restaurant_id")
+    import promise
     if rid in (None, "", 0):
-        import promise
         promise.link(audit_id, None)
+        _admin_events.record_admin_action(current_user, "sales_audit.unlinked", restaurant_id=before,
+                                          target=f"sales_audit:{audit_id}",
+                                          before={"linked_restaurant_id": before}, after={"linked_restaurant_id": None})
         return jsonify(ok=True, restaurant_id=None)
     try:
         rid = int(rid)
     except (TypeError, ValueError):
         return jsonify(ok=False, error="restaurant_id must be a number"), 400
     from models import get_restaurant
-    if not get_restaurant(rid):
+    r = get_restaurant(rid)
+    if not r:
         return jsonify(ok=False, error="No restaurant with that id"), 404
-    if not store.get_audit(audit_id):
-        return jsonify(ok=False, error="Audit not found"), 404
-    import promise
     promise.link(audit_id, rid)
-    return jsonify(ok=True, restaurant_id=rid)
+    _admin_events.record_admin_action(current_user, "sales_audit.linked", restaurant_id=rid,
+                                      target=f"sales_audit:{audit_id}",
+                                      before={"linked_restaurant_id": before}, after={"linked_restaurant_id": rid})
+    return jsonify(ok=True, restaurant_id=rid, restaurant_name=r.name)
 
 
 @audit_bp.route("/admin/api/audits/<int:audit_id>/status", methods=["POST"])
@@ -324,13 +355,20 @@ def api_share(audit_id, current_user):
     if not a.get("report_generated_at"):
         return jsonify(ok=False, error="Generate the final audit first — the link shows the generated report."), 400
     token = store.create_share(audit_id)
-    return jsonify(ok=True, token=token, url=request.url_root.rstrip("/") + "/audit/r/" + token)
+    share = _share_payload(store.active_share(audit_id), audit_id) or {}
+    _admin_events.record_admin_action(current_user, "sales_audit.shared", restaurant_id=a.get("linked_restaurant_id"),
+                                      target=f"sales_audit:{audit_id}",
+                                      after={"expires_at": share.get("expires_at"), "hint": token[-4:]})
+    return jsonify(ok=True, token=token, url=request.url_root.rstrip("/") + "/audit/r/" + token,
+                   expires_at=share.get("expires_at"), expires_on=share.get("expires_on"),
+                   share=dict(share, token=token, url=request.url_root.rstrip("/") + "/audit/r/" + token))
 
 
 @audit_bp.route("/admin/api/audits/<int:audit_id>/share", methods=["DELETE"])
 @admin_required
 def api_unshare(audit_id, current_user):
     store.revoke_shares(audit_id)
+    _admin_events.record_admin_action(current_user, "sales_audit.share_revoked", target=f"sales_audit:{audit_id}")
     return jsonify(ok=True)
 
 

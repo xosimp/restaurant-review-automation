@@ -110,12 +110,12 @@ details .b ul{margin:6px 0 0;padding-left:16px}
 </head>
 <body>
 {% if not r %}
-<div class="nf"><h2 style="margin-top:0">This audit link isn't available</h2><p class="small">The link may have been revoked, or the audit hasn't been generated yet. Contact will@cavnar.ai for a fresh copy.</p></div>
+<div class="nf"><h2 style="margin-top:0">This audit link isn't available</h2><p class="small">The link may have expired or been revoked, or the audit hasn't been generated yet. Contact will@cavnar.ai for a fresh copy.</p></div>
 {% else %}
 {% if is_admin %}
 <div class="adminbar">
   <div class="l"><a href="/admin/audits/{{ r.id }}">← Back to audit</a><span class="note">Customer-facing view · no internal notes, no sales observations, no calculation debug</span></div>
-  <div class="l">{% if share_url %}<span class="note num" style="font-size:12px">{{ share_url }}</span>{% endif %}<button class="p" onclick="window.print()">Print / Export PDF</button></div>
+  <div class="l">{% if share_url %}<span class="note num" style="font-size:12px">{{ share_url }}{% if share and share.expires_on %} · until {{ share.expires_on }}{% endif %}</span>{% elif share %}<span class="note" style="font-size:12px">Share link live (ends …{{ share.hint }}){% if share.expires_on %} until {{ share.expires_on }}{% endif %}</span>{% endif %}<button class="p" onclick="window.print()">Print / Export PDF</button></div>
 </div>
 {% endif %}
 {% set tot = r.totals or {} %}{% set ann = tot.annual or {} %}{% set mon = tot.monthly or {} %}{% set h = r.health or {} %}

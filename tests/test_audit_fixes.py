@@ -511,6 +511,7 @@ def test_a_location_group_becomes_a_real_organization(db_path):
                                          location_group="Syrup"), db_path=db_path)
     rid_b = create_restaurant(Restaurant(name="Syrup South", owner_email="group@x.test",
                                          location_group="Syrup"), db_path=db_path)
+    _as_legacy_rows(db_path)
     linked = backfill_organizations(db_path=db_path)
     assert linked >= 2
 
@@ -528,10 +529,24 @@ def test_a_location_group_becomes_a_real_organization(db_path):
     assert {r["id"] for r in group} == {rid_a, rid_b}
 
 
+def _as_legacy_rows(db_path):
+    """Rows as they were before create_restaurant joined a group's
+    organization itself (fix round B2, #42): no organization_id yet, which
+    is exactly what the boot backfill exists to repair."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE restaurants SET organization_id=NULL")
+        conn.execute("DELETE FROM organizations")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_the_organization_backfill_is_idempotent(db_path):
     from models import backfill_organizations
     create_restaurant(Restaurant(name="Syrup North", owner_email="g@x.test",
                                  location_group="Syrup"), db_path=db_path)
+    _as_legacy_rows(db_path)
     assert backfill_organizations(db_path=db_path) == 1
     assert backfill_organizations(db_path=db_path) == 0
 

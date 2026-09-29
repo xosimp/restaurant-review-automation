@@ -11,8 +11,9 @@ What these protect:
 - The public status page's admin writes sit behind the same controls as the
   rest of /admin (2FA gate, CSRF, JSON-only bodies, the admin_events audit).
 - A GET never swaps an admin's session for a view-as session.
-- An admin password reset ends the user's existing sessions and lifts the
-  forced-reset flag, so a frozen account can sign in again.
+- An admin password reset is a reset link (fix round B2): no password in the
+  response or an email, and using the link ends the user's existing sessions
+  and lifts the forced-reset flag, so a frozen account can sign in again.
 - Referral mail from Cavnar's domain is rate-limited and never carries
   caller-authored HTML.
 - A competitor refresh while one is already running joins that job rather
@@ -212,7 +213,25 @@ def test_reset_by_restaurant_targets_the_owner_and_not_a_staff_identity(app, db_
     assert chosen == [owner]
 
 
-def test_reset_by_restaurant_resets_the_owners_password(app, db_path):
+@pytest.fixture
+def reset_mail(monkeypatch):
+    """Admin resets are reset LINKS now (fix round B2, #86): the owner picks
+    the password. Sending is allowed here as on Railway, and the link email
+    is captured."""
+    import emails
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    sent = []
+    monkeypatch.setattr(emails, "deliver", lambda **k: sent.append(k) or emails.SendResult(True))
+    return sent
+
+
+def _use_reset_link(db_path, sent, new_password):
+    import re
+    token = re.search(r"/reset-password/([A-Za-z0-9_\-]+)", sent[-1]["payload"]["html"]).group(1)
+    assert models.consume_reset_token(token, new_password, db_path=db_path)
+
+
+def test_reset_by_restaurant_emails_the_owner_a_link_and_sets_nothing_itself(app, db_path, reset_mail):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -220,9 +239,13 @@ def test_reset_by_restaurant_resets_the_owners_password(app, db_path):
     c = _client(app, create_session(admin_uid, db_path=db_path))
     r = _post(c, "/admin/reset-password-by-restaurant/%d" % rid, json={"password": "Fresh-owner-pass-2026"})
     assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert "password" not in r.get_json()
+    assert reset_mail[-1]["payload"]["to"] == ["owner@client.test"]
+    assert _row(db_path, "SELECT password_hash FROM users WHERE id=?", (owner,))["password_hash"] == before
+    _use_reset_link(db_path, reset_mail, "Owner-picked-pass-2026")
     from werkzeug.security import check_password_hash
     after = _row(db_path, "SELECT password_hash FROM users WHERE id=?", (owner,))["password_hash"]
-    assert after != before and check_password_hash(after, "Fresh-owner-pass-2026")
+    assert check_password_hash(after, "Owner-picked-pass-2026")
 
 
 # ── SEC-30 / item 8: partial client-settings payload ─────────────────────────
@@ -376,19 +399,21 @@ def test_a_get_to_view_as_does_not_switch_the_admins_session(app, db_path):
 
 # ── SEC-7 / SEC-8 / item 12: admin reset ────────────────────────────────────
 
-def test_admin_reset_sets_a_password_the_user_can_sign_in_with(app, db_path):
+def test_admin_reset_never_returns_or_emails_a_password(app, db_path, reset_mail):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    r = _post(c, "/admin/reset-password/%d" % owner, json={"password": "Fresh-owner-pass-2026"})
-    assert r.get_json()["ok"] is True
+    r = _post(c, "/admin/reset-password/%d" % owner, json={"password": "Fresh-owner-pass-2026", "send_email": True})
+    assert r.get_json()["ok"] is True and "Fresh-owner-pass-2026" not in r.get_data(as_text=True)
+    assert "Fresh-owner-pass-2026" not in reset_mail[-1]["payload"]["html"]
+    _use_reset_link(db_path, reset_mail, "Owner-picked-pass-2026")
     from werkzeug.security import check_password_hash
     h = _row(db_path, "SELECT password_hash FROM users WHERE id=?", (owner,))["password_hash"]
-    assert check_password_hash(h, "Fresh-owner-pass-2026")
+    assert check_password_hash(h, "Owner-picked-pass-2026")
 
 
-def test_admin_reset_ends_every_existing_session_of_that_user(app, db_path):
+def test_a_used_reset_link_ends_every_existing_session_of_that_user(app, db_path, reset_mail):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -396,12 +421,15 @@ def test_admin_reset_ends_every_existing_session_of_that_user(app, db_path):
     ios = create_session(owner, device_type="ios", db_path=db_path)
     assert get_session_user(web, db_path=db_path) and get_session_user(ios, db_path=db_path)
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    assert _post(c, "/admin/reset-password/%d" % owner, json={"password": "Fresh-owner-pass-2026"}).get_json()["ok"]
+    assert _post(c, "/admin/reset-password/%d" % owner, json={}).get_json()["ok"]
+    # Sending the link signs nobody out; the password write does.
+    assert get_session_user(web, db_path=db_path)
+    _use_reset_link(db_path, reset_mail, "Owner-picked-pass-2026")
     assert get_session_user(web, db_path=db_path) is None
     assert get_session_user(ios, db_path=db_path) is None
 
 
-def test_admin_reset_clears_the_forced_reset_flag(app, db_path):
+def test_a_used_reset_link_clears_the_forced_reset_flag(app, db_path, reset_mail):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
@@ -409,7 +437,8 @@ def test_admin_reset_clears_the_forced_reset_flag(app, db_path):
     conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (owner,))
     conn.commit(); conn.close()
     c = _client(app, create_session(admin_uid, db_path=db_path))
-    assert _post(c, "/admin/reset-password/%d" % owner, json={"password": "Fresh-owner-pass-2026"}).get_json()["ok"]
+    assert _post(c, "/admin/reset-password/%d" % owner, json={}).get_json()["ok"]
+    _use_reset_link(db_path, reset_mail, "Owner-picked-pass-2026")
     assert _row(db_path, "SELECT must_reset_password FROM users WHERE id=?", (owner,))["must_reset_password"] == 0
 
 

@@ -10,6 +10,9 @@ clover_bp = Blueprint("clover", __name__)
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(clover_bp)
+# Its /admin writes (credentials, sync, disconnect) are in the audit trail (#126).
+import admin_events as _admin_events
+_admin_events.register_audit(clover_bp)
 
 
 # ── Admin routes ───────────────────────────────────────────────────────────────
