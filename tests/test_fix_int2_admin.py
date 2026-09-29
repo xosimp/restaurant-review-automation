@@ -790,3 +790,20 @@ def test_an_expired_console_read_answers_401_json_and_a_page_still_redirects(app
     owner = app.test_client()
     owner.set_cookie("session_token", create_session(_owner(db_path, rid), db_path=db_path))
     assert owner.get("/admin/api/lockouts").status_code == 401
+
+
+def test_the_legacy_alert_contact_writes_leave_the_same_typed_rows(app, db_path, monkeypatch):
+    import notify
+    monkeypatch.setattr(notify, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    monkeypatch.setattr(notify, "DB_PATH", db_path, raising=False)
+    c, admin_uid = _admin(app, db_path)
+    rid = _rid(db_path)
+    added = _post(c, f"/admin/alert-contacts/{rid}", {"name": "Erik", "phone": "+15125550123"}).get_json()
+    assert added["ok"] is True
+    assert _post(c, f"/admin/alert-contacts/delete/{added['id']}").get_json()["ok"] is True
+    rows = {r["event_type"]: r for r in _rows(db_path, "SELECT * FROM admin_events WHERE restaurant_id=?", (rid,))}
+    assert rows["alert_contact.added"]["actor_id"] == admin_uid
+    assert json.loads(rows["alert_contact.added"]["after_json"])["phone_last4"] == "0123"
+    assert json.loads(rows["alert_contact.removed"]["before_json"])["name"] == "Erik"
+    typed = [rows["alert_contact.added"], rows["alert_contact.removed"]]
+    assert "5125550123" not in json.dumps(typed), "a typed row keeps the number as its last four"

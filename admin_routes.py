@@ -949,6 +949,13 @@ def add_alert_contact_route(restaurant_id, current_user):
     if not phone:
         return jsonify(ok=False, error="Phone number required")
     contact_id = add_alert_contact(restaurant_id, name, phone, sms_consent=False)
+    # The same typed row the console's route writes (one audit call): no UI
+    # posts here now, but a live write route is still an admin write.
+    import admin_events
+    admin_events.record_admin_action(
+        current_user, "alert_contact.added", restaurant_id=restaurant_id, target=f"alert_contact:{contact_id}",
+        after={"contact_id": contact_id, "name": name, "phone_last4": phone[-4:], "sms_consent": False},
+        summary=f"{current_user.get('username') or 'admin'} added {name or 'a contact'} …{phone[-4:]}")
     return jsonify(ok=True, id=contact_id, name=name, phone=phone)
 
 
@@ -956,7 +963,20 @@ def add_alert_contact_route(restaurant_id, current_user):
 @admin_required
 def delete_alert_contact_route(contact_id, current_user):
     from notify import delete_alert_contact
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT restaurant_id, name, phone FROM alert_contacts WHERE id=?",
+                           (contact_id,)).fetchone()
+    finally:
+        conn.close()
     delete_alert_contact(contact_id)
+    if row:
+        import admin_events
+        admin_events.record_admin_action(
+            current_user, "alert_contact.removed", restaurant_id=row["restaurant_id"],
+            target=f"alert_contact:{contact_id}",
+            before={"contact_id": contact_id, "name": row["name"], "phone_last4": (row["phone"] or "")[-4:]},
+            after=None, summary=f"{current_user.get('username') or 'admin'} removed {row['name'] or 'a contact'}")
     return jsonify(ok=True)
 
 
