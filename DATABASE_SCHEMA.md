@@ -348,7 +348,7 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `data_health_daily` | 400 | `created_at` |
 | `stripe_events_seen` | 90 | `seen_at` |
 | `sessions` | 1 day past | `expires_at` |
-| `rec_events` | 800 (calibration reads 730) | `at` |
+| `rec_events` | 800 (calibration reads 730) — showings, opens and lifecycle rows only; the answers are kept for good (`ops._RETENTION_ONLY`) | `at` |
 | `operator_alerts` | 180 | `created_at` |
 | `backup_runs` | 400 | `started_at` |
 | `job_run_requests`, `missed_windows` | 90 | `requested_at`, `created_at` |

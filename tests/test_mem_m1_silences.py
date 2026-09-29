@@ -287,3 +287,17 @@ def test_the_answer_message_says_what_it_does():
     assert "count or delivery" in rl.silence_message("stock_low:Salmon", "completed")
     assert "comes back" in rl.silence_message("trim_day:Friday", "completed")
     assert "re-verified" in rl.silence_message("trim_day:Friday", "dismissed", "not_for_us", "dont_trust_data")
+
+
+# ── every answer kept for good ───────────────────────────────────────────────
+
+def test_the_retention_sweep_keeps_every_answer_and_prunes_old_showings(db_path):
+    import ops
+    rid = _rid(db_path)
+    rl.present(rid, "reprice:Soup", "food", "home", db_path=db_path)
+    rl.record(rid, "reprice:Soup", "dismissed", meta={"kind": "not_for_us", "reason": "regulars"}, db_path=db_path)
+    _sql(db_path, "UPDATE rec_events SET at=datetime('now','-900 days') WHERE restaurant_id=?", rid)
+    ops.prune_ledgers(db_path=db_path)
+    left = {r[0] for r in models.get_conn(db_path).execute("SELECT event FROM rec_events WHERE restaurant_id=?",
+                                                            (rid,)).fetchall()}
+    assert left == {"dismissed"}

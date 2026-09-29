@@ -2161,6 +2161,13 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
 }
+# Rows a table's retention never deletes, whatever their age: the owner's
+# ANSWERS to recommendations are kept for good (memory audit 9/29/26,
+# "silences": "keep every answer forever; only the silence changes") —
+# rec_events' showings, opens and lifecycle rows go at their age.
+_RETENTION_ONLY = {
+    "rec_events": "event IN ('shown', 'opened', 'evidence_viewed', 'superseded', 'expired')",
+}
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
 # under the write lock, and a full scan of a year of email_log there stalls
@@ -2370,7 +2377,9 @@ def prune_ledgers(db_path=None):
             col = _RETENTION_COLUMN.get(table, "created_at")
             counts["attempted"] += 1
             try:
-                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)", (f"-{days} days",), deadline)
+                only = _RETENTION_ONLY.get(table)
+                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""),
+                                    (f"-{days} days",), deadline)
                 if n:
                     deleted[table] = n
                 counts["ok"] += 1
