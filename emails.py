@@ -3698,3 +3698,233 @@ def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name
         print(f"Quarterly summary sent to {to_email}")
     except Exception as e:
         print(f"send_quarterly_summary_email failed: {e}")
+
+
+# ── Billing lifecycle emails (fix round H) ───────────────────────────────────
+# The billing lifecycle's own mail: dunning on a failed card, the card-update
+# link, one receipt per paid invoice, the pay-link reminders after signing,
+# and the post-signing welcome with a set-password link. Every one is sent
+# from billing_jobs' outbox (owed_sends), which marks it from the SendResult
+# returned here and retries a failure — so each returns deliver()'s result,
+# never None, and passes restaurant_id so it appears in that client's email
+# history. Colours are BRAND tokens only (scripts/check_email_tokens.py);
+# light mode, inline styles (DESIGN_SYSTEM.md → Email).
+
+def _billing_frame(kicker: str, title: str, body_html: str) -> str:
+    """One card: wordmark, kicker, title, the body, the seal footer."""
+    B = BRAND
+    return _html_document(f"""
+<div style="background:{B['paper']};width:100%;padding:36px 20px;box-sizing:border-box">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;border-collapse:collapse">
+  <tr>
+    <td valign="middle"><img src="{_WORDMARK}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none"></td>
+    <td valign="middle" align="right"><span style="font-family:{_SANS};font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:{B['ember']}">{kicker}</span></td>
+  </tr>
+  <tr><td colspan="2" style="padding-top:16px">
+    <div style="background:{B['card']};border:1px solid {B['border']};border-top:3px solid {B['ember']};border-radius:12px;padding:28px 26px;font-family:{_SANS}">
+      <h1 style="font-family:{_SANS};font-size:20px;font-weight:700;color:{B['strong']};margin:0 0 14px">{title}</h1>
+      {body_html}
+    </div>
+  </td></tr>
+  <tr><td colspan="2" align="center" style="padding-top:18px">
+    <p style="font-family:{_SANS};font-size:11px;color:{B['muted']};margin:0;text-align:center"><img src="{_SEAL}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;&middot;&nbsp; Cavnar AI &nbsp;&middot;&nbsp; <a href="mailto:will@cavnar.ai" style="color:{B['muted']};text-decoration:none">will@cavnar.ai</a></span></p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</div>""", bg=B["paper"])
+
+
+def _billing_p(text: str, muted: bool = False, space: int = 14) -> str:
+    color = BRAND["muted"] if muted else BRAND["body"]
+    size = "13px" if muted else "14.5px"
+    return (f'<p style="font-family:{_SANS};font-size:{size};color:{color};line-height:1.6;'
+            f'margin:0 0 {space}px">{text}</p>')
+
+
+def _billing_button(label: str, url: str) -> str:
+    return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 14px">'
+            f'<tr><td style="background:{BRAND["ember"]};border-radius:8px">'
+            f'<a href="{esc(url)}" style="display:inline-block;padding:12px 22px;font-family:{_SANS};'
+            f'font-size:14px;font-weight:700;color:{BRAND["card"]};text-decoration:none">{esc(label)}</a>'
+            f'</td></tr></table>')
+
+
+def _billing_link(label: str, url: str) -> str:
+    return (f'<a href="{esc(url)}" style="font-family:{_SANS};font-size:13.5px;font-weight:600;'
+            f'color:{BRAND["ember"]};text-decoration:none">{esc(label)} &rarr;</a>')
+
+
+def _billing_money(amount, currency: str = "usd") -> str:
+    try:
+        value = float(amount or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    sym = "$" if (currency or "usd").lower() == "usd" else (currency or "").upper() + " "
+    return f'<span style="font-family:{_NUM};font-weight:700;color:{BRAND["strong"]}">{sym}{value:,.2f}</span>'
+
+
+def _billing_hi(owner_name) -> str:
+    first = ((owner_name or "").strip().split() or [""])[0]
+    return f"Hi {esc(first)} —" if first else "Hi —"
+
+
+def send_dunning_email(to_email: str, restaurant_name: str, amount, attempt: int, pay_url: str,
+                       card_url: str, next_attempt: str = "", owner_name: str = None,
+                       restaurant_id: int = None) -> SendResult:
+    """A failed charge, attempts 1–3 (#25). The dashboard keeps running while
+    Stripe retries (past_due is in service); the buttons fix it in one step:
+    pay the open invoice, or update the card for the next retry. The links
+    are /pay routes, resolved at click time, so they never expire."""
+    name = esc(restaurant_name)
+    attempt = int(attempt or 1)
+    when = f" on <span style=\"font-family:{_NUM}\">{esc(next_attempt)}</span>" if next_attempt else ""
+    if attempt <= 1:
+        title = "Your payment didn't go through"
+        lead = (f"The {_billing_money(amount)} payment for <strong>{name}</strong> didn't go through — "
+                f"the card was declined. Your dashboard keeps running while Stripe tries again{when}.")
+    elif attempt == 2:
+        title = "The card was declined again"
+        lead = (f"Stripe tried the {_billing_money(amount)} payment for <strong>{name}</strong> a second time "
+                f"and the card was declined again. The next try is{when or ' coming up'}.")
+    else:
+        title = "Please update your card"
+        lead = (f"This is the third decline on the {_billing_money(amount)} payment for <strong>{name}</strong>. "
+                + (f"Stripe tries again{when}; if the retries run out, the subscription ends and the dashboard stops."
+                   if next_attempt else
+                   "Stripe won't try again on its own — pay the invoice to keep the dashboard running."))
+    body = (_billing_p(_billing_hi(owner_name))
+            + _billing_p(lead)
+            + _billing_button("Pay the invoice", pay_url)
+            + _billing_p(_billing_link("Or update the card on file", card_url), space=18)
+            + _billing_p("Both open Stripe's secure page. Questions? Just reply — I read every one.",
+                         muted=True, space=0))
+    return deliver(email_type="billing_dunning", restaurant_id=restaurant_id, payload={
+        "from": sender("will"), "to": [to_email],
+        "subject": f"{title} — {restaurant_name}",
+        "preheader": "Your dashboard keeps running. Fixing it takes a minute.",
+        "html": _billing_frame("Billing", title, body)})
+
+
+def send_card_update_email(to_email: str, restaurant_name: str, card_url: str, pay_url: str = None,
+                           amount_due=None, owner_name: str = None, restaurant_id: int = None) -> SendResult:
+    """The console's "Send card-update link" (#6): the Billing Portal for the
+    card on file, and the open invoice when something is owed."""
+    name = esc(restaurant_name)
+    if pay_url and amount_due:
+        action = (_billing_p(f"There is {_billing_money(amount_due)} outstanding on {name}.")
+                  + _billing_button("Pay the invoice", pay_url)
+                  + _billing_p(_billing_link("Update the card on file", card_url), space=18))
+    else:
+        action = _billing_button("Update the card on file", card_url)
+    body = (_billing_p(_billing_hi(owner_name))
+            + _billing_p(f"Here's a secure link to update the card Cavnar AI bills for <strong>{name}</strong>.")
+            + action
+            + _billing_p("The link opens Stripe's secure billing page. Questions? Just reply.", muted=True, space=0))
+    return deliver(email_type="billing_card_update", restaurant_id=restaurant_id, payload={
+        "from": sender("will"), "to": [to_email],
+        "subject": f"Update your card for Cavnar AI — {restaurant_name}",
+        "preheader": "A secure link to the card on file.",
+        "html": _billing_frame("Billing", "Update your card", body)})
+
+
+def send_payment_receipt_email(to_email: str, restaurant_name: str, amount, paid_on: str, description: str,
+                               receipt_url: str = None, restaurant_id: int = None,
+                               currency: str = "usd") -> SendResult:
+    """One receipt per paid invoice id (#155) — sent for every paid invoice,
+    in whatever order Stripe's events arrive."""
+    B = BRAND
+
+    def row(label, value):
+        return (f'<tr><td style="padding:6px 0;font-family:{_SANS};font-size:12px;color:{B["muted"]};'
+                f'width:110px">{label}</td><td style="padding:6px 0;font-family:{_SANS};font-size:14px;'
+                f'color:{B["strong"]}">{value}</td></tr>')
+    table = ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+             f'style="border-collapse:collapse;margin:4px 0 16px;width:100%;border-top:1px solid {B["rule"]};'
+             f'border-bottom:1px solid {B["rule"]}">'
+             + row("Date", f'<span style="font-family:{_NUM}">{esc(paid_on)}</span>')
+             + row("Amount", _billing_money(amount, currency))
+             + row("For", esc(description)) + row("Restaurant", esc(restaurant_name)) + "</table>")
+    body = (_billing_p(f"Thank you — your payment for <strong>{esc(restaurant_name)}</strong> was received.")
+            + table
+            + (_billing_p(_billing_link("View the receipt", receipt_url), space=16) if receipt_url else "")
+            + _billing_p("Questions about a charge? Reply to this email.", muted=True, space=0))
+    return deliver(email_type="payment_receipt", restaurant_id=restaurant_id, payload={
+        "from": sender("client"), "to": [to_email],
+        "subject": f"Payment received — {restaurant_name}",
+        "preheader": "Your receipt from Cavnar AI.",
+        "html": _billing_frame("Receipt", "Payment received", body)})
+
+
+def send_pay_reminder_email(to_email: str, restaurant_name: str, module_count: int, monthly_url: str,
+                            annual_url: str, day: int = 0, owner_name: str = None,
+                            restaurant_id: int = None) -> SendResult:
+    """The pay link again, days 2, 5 and 9 after signing (#26). Prices from
+    pricing.py, the one price list."""
+    from pricing import plan_for, money as _money
+    plan = plan_for(module_count)
+    name = esc(restaurant_name)
+    body = (_billing_p(_billing_hi(owner_name))
+            + _billing_p(f"Your agreement for <strong>{name}</strong> is signed. The last step is the setup "
+                         f"payment — <span style=\"font-family:{_NUM}\">{_money(plan['setup'])}</span> today, then "
+                         f"the retainer from day 31 — and your dashboard is fully live.")
+            + _billing_button(f"Pay monthly · {_money(plan['monthly'])}/mo", monthly_url)
+            + _billing_p(_billing_link(f"Or pay annually · {_money(plan['annual'])}/yr (two months free)",
+                                       annual_url), space=18)
+            + _billing_p("Stuck on anything? Reply and I'll sort it out with you.", muted=True, space=0))
+    return deliver(email_type="billing_pay_reminder", restaurant_id=restaurant_id, payload={
+        "from": sender("will"), "to": [to_email],
+        "subject": f"Your Cavnar AI setup link — {restaurant_name}",
+        "preheader": "Your agreement is signed — one step left.",
+        "html": _billing_frame("One step left", "Finish setting up", body)})
+
+
+def send_signed_welcome_email(to_email: str, restaurant_name: str, username: str, set_password_url: str,
+                              module_reviews=0, module_labor=0, module_inventory=0, module_marketing=0,
+                              google_place_id=None, owner_name=None, restaurant_id: int = None,
+                              link_hours: int = 72) -> SendResult:
+    """The welcome after a contract is signed (#12): the username and a link
+    to SET a password — never a password in the email. The owner's password
+    is not touched before or after it goes; the link is a `link_hours` reset
+    token billing_jobs mints at send time.
+
+    Integration note: workstream E adds a set-password variant of
+    send_welcome_email; the two are one email and should be merged."""
+    B = BRAND
+    first_look_html = ""
+    if google_place_id:
+        try:
+            import first_look as _fl
+            lines = _fl.lines(_fl.build(google_place_id, deep=True))
+            if lines:
+                rows = "".join(_billing_p(esc(line), space=8) for line in lines)
+                first_look_html = (f'<div style="border-left:3px solid {B["ember"]};padding:2px 0 2px 14px;'
+                                   f'margin:0 0 18px"><p style="font-family:{_SANS};font-size:11px;color:{B["muted"]};'
+                                   f'margin:0 0 8px;letter-spacing:1px;text-transform:uppercase;font-weight:600">'
+                                   f'What I can already see</p>{rows}</div>')
+        except Exception as e:
+            print(f"[welcome] first look unavailable: {e}")
+    names = [n for n, on in (("Review Intelligence", module_reviews), ("Labor Optimizer", module_labor),
+                             ("Food Cost Control", module_inventory), ("Marketing Autopilot", module_marketing)) if on]
+    modules_text = (names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}") if names else ""
+    body = (_billing_p(f"{_billing_hi(owner_name)} your Cavnar AI dashboard for <strong>{esc(restaurant_name)}</strong> "
+                       "is ready.")
+            + first_look_html
+            + f'<div style="background:{B["paper"]};border:1px solid {B["border"]};border-radius:10px;'
+              f'padding:16px 18px;margin:0 0 16px">'
+            + _billing_p(f'<strong style="color:{B["strong"]}">Username:</strong> '
+                         f'<span style="font-family:{_NUM};color:{B["strong"]}">{esc(username)}</span>', space=10)
+            + _billing_button("Set your password", set_password_url)
+            + _billing_p(f"The link works for {int(link_hours)} hours. After that, use <em>Forgot password</em> on "
+                         f"the sign-in page with {esc(to_email)}.", muted=True, space=0)
+            + "</div>"
+            + (_billing_p(f"Your dashboard includes {esc(modules_text)}, set up for {esc(restaurant_name)}.")
+               if modules_text else "")
+            + _billing_p("Any questions, just reply to this email. I check it daily.", space=0))
+    return deliver(email_type="welcome_set_password", restaurant_id=restaurant_id, payload={
+        "from": sender("will"), "to": [to_email],
+        "subject": f"Your Cavnar AI dashboard is ready — {restaurant_name}",
+        "preheader": "Set your password and you're in.",
+        "html": _billing_frame("Welcome", "You're all set up", body)})
