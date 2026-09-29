@@ -379,7 +379,8 @@ def _do_goal_end(u, goal_id):
         conn.close()
     if row is not None and not _metric_visible(u, row["metric"]):
         return {"ok": False, "error": "Goal not found."}, 404
-    goals.end_goal(_rid(u), goal_id)
+    from permissions import answer_authority
+    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=answer_authority(u))
     return {"ok": True}, 200
 
 

@@ -148,6 +148,7 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
     payload = payload or {}
     conn = get_conn(db_path) if db_path else get_conn()
     touched, created, counted, dishes = set(), 0, 0, 0
+    menu_changes = []
     try:
         rows = conn.execute("SELECT id, name, external_ref FROM ingredients WHERE restaurant_id=? "
                             "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
@@ -224,8 +225,9 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
         # Recipes: every dish the provider sends, its lines replaced by the
         # provider's (a line naming an ingredient the sync doesn't know is
         # left out, never guessed).
-        mrows = conn.execute("SELECT id, name, external_ref FROM menu_items WHERE restaurant_id=? "
+        mrows = conn.execute("SELECT id, name, external_ref, sell_price FROM menu_items WHERE restaurant_id=? "
                              "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
+        m_price = {r["id"]: (r["name"], r["sell_price"]) for r in mrows}
         m_ref = {str(r["external_ref"]): r["id"] for r in mrows if r["external_ref"]}
         m_name = {" ".join(str(r["name"]).lower().split()): r["id"] for r in mrows}
         for rc in payload.get("recipes") or []:
@@ -240,9 +242,17 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
             if mid:
                 conn.execute("UPDATE menu_items SET sell_price=COALESCE(?, sell_price), external_ref=COALESCE(?, external_ref) "
                              "WHERE id=? AND restaurant_id=?", (price, ref, mid, restaurant_id))
+                was_name, was_price = m_price.get(mid, (dish, None))
+                if price is not None and was_price != price:
+                    menu_changes.append(("price", "sell_price", was_price, price, was_name))
+                    m_price[mid] = (was_name, price)
             else:
                 mid = conn.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name, sell_price, external_ref) "
                                    "VALUES (?,NULL,?,?,?)", (restaurant_id, dish, price, ref)).lastrowid
+                menu_changes.append(("menu_item", "added", None, dish, dish))
+                if price is not None:
+                    menu_changes.append(("price", "sell_price", None, price, dish))
+                m_price[mid] = (dish, price)
                 m_name[dish.lower()] = mid
                 if ref:
                     m_ref[ref] = mid
@@ -268,6 +278,17 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
         conn.commit()
     finally:
         conn.close()
+    # Every sell price the provider moved and every dish it added, in the
+    # attributed change log as a sync's (memory audit 9/29/26 change_log,
+    # INT #24) — written after the commit, never inside the sync's lock.
+    if menu_changes:
+        try:
+            import change_log
+            for entity, field, before, after, subject in menu_changes:
+                change_log.record(restaurant_id, entity, field, before, after, subject=subject, source="sync",
+                                  db_path=db_path)
+        except Exception as e:
+            print(f"[inventory_sync] change not logged rid={restaurant_id}: {e}")
     return {"ok": True, "items": len(touched), "created": created, "counts": counted, "recipes": dishes}
 
 

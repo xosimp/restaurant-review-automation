@@ -43,6 +43,32 @@ def _targets_changed(restaurant_id):
         pass
 
 
+def _goal_value(g):
+    """What the change log keeps of a goal: its target and deadline."""
+    if not g:
+        return None
+    return {"target": g["target"], "deadline": g["deadline"] or None}
+
+
+def _active(conn, restaurant_id, metric):
+    row = conn.execute("SELECT id, target, deadline FROM owner_goals WHERE restaurant_id=? AND metric=? "
+                       "AND status='active' ORDER BY id DESC LIMIT 1", (restaurant_id, metric)).fetchone()
+    return dict(row) if row else None
+
+
+def _log_goal(restaurant_id, metric, before, after, user_id=None, authority=None, db_path=None):
+    """One attributed change_log row for the goal on `metric` — set,
+    replaced, confirmed or ended (memory audit 9/29/26 change_log, INT #24).
+    A proposal changes no target and is not a change. Never raises."""
+    try:
+        import change_log
+        source = {"principal": "owner", "delegate": "manager", "admin": "admin"}.get(authority)
+        change_log.record(restaurant_id, "goal", metric, before, after, subject=metric, actor_user_id=user_id,
+                          source=source, db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[goals] change not logged rid={restaurant_id} {metric}: {e}")
+
+
 def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=None,
              db_path=DB_PATH, authority=None, source=None):
     """Set the ACTIVE goal on a metric, replacing the one before it.
@@ -59,6 +85,7 @@ def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=No
     base = metrics.trailing(restaurant_id, metric, db_path=db_path)
     conn = get_conn(db_path)
     try:
+        before = _active(conn, restaurant_id, metric)
         # One active goal per metric: two live targets for labor % is two
         # answers to "am I on track", and they would disagree.
         conn.execute("UPDATE owner_goals SET status='replaced' WHERE restaurant_id=? AND metric=? "
@@ -74,6 +101,9 @@ def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=No
         gid = cur.lastrowid
     finally:
         conn.close()
+    _log_goal(restaurant_id, metric, _goal_value(before),
+              {"target": target, "deadline": str(deadline)[:10] if deadline else None},
+              user_id=user_id, authority=authority, db_path=db_path)
     _targets_changed(restaurant_id)
     return next(g for g in progress(restaurant_id, db_path=db_path) if g["id"] == gid)
 
@@ -132,10 +162,11 @@ def confirm_goal(restaurant_id, goal_id, user_id=None, db_path=DB_PATH):
     Returns the goal, or None when there is no such proposal here."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT metric FROM owner_goals WHERE id=? AND restaurant_id=? AND status='proposed'",
-                           (goal_id, restaurant_id)).fetchone()
+        row = conn.execute("SELECT metric, target, deadline FROM owner_goals WHERE id=? AND restaurant_id=? "
+                           "AND status='proposed'", (goal_id, restaurant_id)).fetchone()
         if not row:
             return None
+        before = _active(conn, restaurant_id, row["metric"])
         conn.execute("UPDATE owner_goals SET status='replaced' WHERE restaurant_id=? AND metric=? "
                      "AND status='active'", (restaurant_id, row["metric"]))
         conn.execute("UPDATE owner_goals SET status='active', confirmed_by=?, confirmed_at=datetime('now') "
@@ -143,6 +174,9 @@ def confirm_goal(restaurant_id, goal_id, user_id=None, db_path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
+    # The target changed when the account holder confirmed it.
+    _log_goal(restaurant_id, row["metric"], _goal_value(before), _goal_value(dict(row)), user_id=user_id,
+              authority="principal", db_path=db_path)
     _targets_changed(restaurant_id)
     return next((g for g in progress(restaurant_id, db_path=db_path) if g["id"] == goal_id), None)
 
@@ -179,15 +213,20 @@ def describe_target(g) -> str:
     return f"{label} {shown}{by}"
 
 
-def end_goal(restaurant_id, goal_id, db_path=DB_PATH):
+def end_goal(restaurant_id, goal_id, db_path=DB_PATH, user_id=None, authority=None):
     conn = get_conn(db_path)
     try:
+        row = conn.execute("SELECT metric, target, deadline FROM owner_goals WHERE id=? AND restaurant_id=? "
+                           "AND status='active'", (goal_id, restaurant_id)).fetchone()
         cur = conn.execute("UPDATE owner_goals SET status='abandoned' WHERE id=? AND restaurant_id=? "
                            "AND status='active'", (goal_id, restaurant_id))
         conn.commit()
         ok = cur.rowcount > 0
     finally:
         conn.close()
+    if ok and row:
+        _log_goal(restaurant_id, row["metric"], _goal_value(dict(row)), None, user_id=user_id, authority=authority,
+                  db_path=db_path)
     _targets_changed(restaurant_id)
     return ok
 

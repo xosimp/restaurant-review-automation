@@ -359,7 +359,8 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
                 # The gap is against Cavnar's starting target when the owner
                 # set none, and the item says so (re-audit #10, R4-26).
                 _tgt = _thr.target_for(restaurant, "labor")
-                _lab_label = {"set": "Scheduling against your target",
+                # "your" only when an account holder set it (INT #23).
+                _lab_label = {"set": "Scheduling against " + _thr.setter_named(restaurant, "labor"),
                               # The owner's goal (owner_goals, memory audit 9/29/26).
                               "goal": "Scheduling against your goal"}.get(
                                   _tgt["source"], "Scheduling against Cavnar AI's starting target")
