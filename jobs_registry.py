@@ -15,9 +15,9 @@ list reads it:
     long network-bound sweep runs on instead of the loop thread (`lane`).
 
 A job's NAME is the name ops.run_job records it under (job_runs.job).
-tests/test_fix_d_jobs_registry.py fails when a `run_job("…")` in the loop has
-no entry here, or an entry here is never run — the two lists cannot drift
-again.
+tests/test_fix_d_jobs.py fails when a `run_job("…")` in the loop has no
+entry here, or an entry here is never run — the two lists cannot drift
+again — and runs every entry's target to hold it to the standard counts.
 
 Fields
 ------

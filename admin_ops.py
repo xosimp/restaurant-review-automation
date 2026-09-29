@@ -705,34 +705,50 @@ def _load_with(conn):
         FROM reviews WHERE deleted_at IS NULL GROUP BY restaurant_id""",
                       (urgent_cut, urgent_cut, max_ai, max_ai, max_ai, max_ai), label="reviews")
 
-    # ai_usage is created by the first AI call, not at boot, so on a fresh
-    # database it is `unavailable` rather than an error. The CREATE TABLE this
-    # function used to run on every request is gone (SCALE-19).
+    # ai_usage is created at boot (ai_utils.init_ai_ops, fix round G); the
+    # console never creates it (SCALE-19), so a database without it reads
+    # `unavailable`. A call refused before it reached the provider (outcome
+    # 'blocked': a budget, a breaker, the readiness gate) is not a call — it
+    # counts in none of these aggregates (#48).
     ai_cols = _columns(conn, "ai_usage")
     llm_only = " AND COALESCE(vendor,'anthropic')='anthropic'" if "vendor" in ai_cols else ""
+    sent_only = f" AND {_OUTCOME_SQL} <> 'blocked'" if "outcome" in ai_cols else ""
     owner_sum = (', SUM(CASE WHEN "trigger"=\'owner\' THEN 1 ELSE 0 END) AS owner_calls'
                  if "trigger" in ai_cols else "")
-    ai_month = per_rid("""SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost,
+    ai_month = per_rid(f"""SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost,
                                  SUM(input_tokens)+SUM(output_tokens) AS tokens, MAX(created_at) AS last_at,
                                  SUM(CASE WHEN COALESCE(status,'ok')='error' THEN 1 ELSE 0 END) AS failed
-                          FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id""", (w["month"],),
+                          FROM ai_usage WHERE created_at >= ?{sent_only} GROUP BY restaurant_id""", (w["month"],),
                        label="ai_usage", optional=True)
     ai_failed_week = {}
     for row in _rows_dict(conn, "SELECT restaurant_id, created_at, error FROM ai_usage WHERE created_at >= ? "
-                                f"AND COALESCE(status,'ok')='error'{llm_only} ORDER BY id", (w["week"],),
+                                f"AND COALESCE(status,'ok')='error'{llm_only}{sent_only} ORDER BY id", (w["week"],),
                           label="ai_usage", optional=True):
         f = ai_failed_week.setdefault(row["restaurant_id"], {"n": 0, "last_at": None, "sample": None})
         f["n"] += 1
         f["last_at"] = row["created_at"]
         f["sample"] = row["error"]              # the LATEST error, not MAX(error)
     ai_today = per_rid("SELECT restaurant_id, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage "
-                       "WHERE created_at >= ? GROUP BY restaurant_id", (w["today"],), label="ai_usage",
+                       f"WHERE created_at >= ?{sent_only} GROUP BY restaurant_id", (w["today"],), label="ai_usage",
                        optional=True)
     ai_prev = per_rid(f"SELECT restaurant_id, COUNT(*) AS calls{owner_sum} FROM ai_usage WHERE created_at >= ? "
-                      "AND created_at < ? GROUP BY restaurant_id", (w["prev_week"], w["week"]),
+                      f"AND created_at < ?{sent_only} GROUP BY restaurant_id", (w["prev_week"], w["week"]),
                       label="ai_usage", optional=True)
-    ai_week = per_rid(f"SELECT restaurant_id, COUNT(*) AS calls{owner_sum} FROM ai_usage WHERE created_at >= ? "
-                      "GROUP BY restaurant_id", (w["week"],), label="ai_usage", optional=True)
+    ai_week = per_rid(f"SELECT restaurant_id, COUNT(*) AS calls{owner_sum} FROM ai_usage WHERE created_at >= ?"
+                      f"{sent_only} GROUP BY restaurant_id", (w["week"],), label="ai_usage", optional=True)
+    # Who is near or past one of their own ceilings (G's budget_watch, #122)
+    # and the anomalies of the last two days (#140), each one grouped read —
+    # the client issues read them instead of the old "$25 in 30 days" rule.
+    try:
+        budget_rows = budget_watch(conn) if "vendor" in ai_cols else []
+    except Exception as e:
+        budget_rows = []
+        _note_failure("ai_budget_watch", e)
+    try:
+        anomaly_rows = ai_anomalies(days=2, conn=conn) if "outcome" in ai_cols else []
+    except Exception as e:
+        anomaly_rows = []
+        _note_failure("ai_anomalies", e)
     # email_log.sent_at is UTC (workstream E's migration). Bounced and
     # complained are failures here too — a bounce is not a delivery (#59).
     emails = per_rid("""SELECT restaurant_id,
@@ -916,7 +932,8 @@ def _load_with(conn):
              resolved=resolved, data_health_daily=data_health_daily, source_health=source_health,
              mirror=mirror, mirror_available=bool(mirror_cols), mirror_cols=mirror_cols,
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
-             sms_cost=sms_cost, storm_caps=storm_caps, rest_names={r["id"]: r.get("name") for r in rests},
+             sms_cost=sms_cost, storm_caps=storm_caps, budget_watch=budget_rows, ai_anomalies=anomaly_rows,
+             rest_names={r["id"]: r.get("name") for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
     d["billing_groups"] = _billing_groups(rests, mirror)
@@ -2097,9 +2114,25 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         # lasts and a later spike (after it clears) raises again.
         add("ai_spike", f"AI usage {wk // max(prev, 1)}× last week's ({wk} calls)", "warning", ai.get("last_at"),
             "Open AI ops", None, zone="UTC", occurrence=None, action_kind="link", action_href=ai_href)
-    if float(ai.get("cost") or 0) > 25:
-        add("ai_cost", f"${float(ai['cost']):.2f} AI spend in 30 days", "warning", ai.get("last_at"), "Open AI ops",
-            None, zone="UTC", occurrence=None, action_kind="link", action_href=ai_href)
+    # Near or past one of this restaurant's own ceilings (G's budget_watch,
+    # #122) — it replaced a flat "$25 in 30 days", which said nothing about
+    # a trial's $5 a day or a Places ceiling. The occurrence is the ceiling's
+    # own window: a warning resolved today comes back tomorrow, a month's
+    # next month.
+    watch = [b for b in d.get("budget_watch") or [] if b["restaurant_id"] == rid]
+    for b, issue in zip(watch, ai_budget_issues(watch)):
+        window = (_utc_today() + " 00:00:00") if b["scope"].endswith("_day") else (_utc_month() + " 00:00:00")
+        add(f"ai_budget:{b['scope']}", issue["title"], issue["severity"], window, "Open AI ops", None,
+            issue["detail"], zone="UTC", occurrence=window, occurrence_zone="UTC", action_kind="link",
+            action_href=ai_href)
+    # Cost and rate anomalies and loops over the last two days (#140), one
+    # issue per kind, action and day.
+    mine = [a for a in d.get("ai_anomalies") or [] if a.get("restaurant_id") == rid]
+    for a, issue in zip([a for a in mine if a["kind"] in ("cost", "rate", "loop")], ai_anomaly_issues(mine)):
+        day = (a.get("day") or _utc_today()) + " 00:00:00"
+        add(f"ai_anomaly:{a['kind']}:{a.get('action') or ''}:{a.get('day') or ''}", issue["title"], issue["severity"],
+            day, "Open AI ops", None, issue["detail"], zone="UTC", occurrence=day, occurrence_zone="UTC",
+            action_kind="link", action_href=ai_href)
     af = d["ai_failed_week"].get(rid) or {}
     if (af.get("n") or 0) >= 3:
         add("ai_failures", f"{af['n']} AI calls failed this week", "critical" if af["n"] >= 10 else "warning",
@@ -2567,10 +2600,12 @@ def overview():
         try:
             ai_cols = _columns(conn, "ai_usage")
             llm = " AND COALESCE(vendor,'anthropic')='anthropic'" if "vendor" in ai_cols else ""
+            sent = f" AND {_OUTCOME_SQL} <> 'blocked'" if "outcome" in ai_cols else ""
             ai_today = _one_dict(conn, "SELECT COUNT(*) AS n, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage "
-                                       "WHERE created_at >= ?", (w["today"],), optional=True) or {}
+                                       f"WHERE created_at >= ?{sent}", (w["today"],), optional=True) or {}
             ai_failed_24h = _one_dict(conn, "SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? "
-                                            f"AND COALESCE(status,'ok')='error'{llm}", (w["day"],), optional=True) or {}
+                                            f"AND COALESCE(status,'ok')='error'{llm}{sent}", (w["day"],),
+                                      optional=True) or {}
             # A bounce or a complaint is not a delivery (#59); "today" is
             # midnight Central against email_log's UTC stamps (#89).
             emails_today = _one_dict(conn, "SELECT COUNT(*) AS n, "
@@ -3912,9 +3947,13 @@ def issues():
     ISSUES_IN_OVERVIEW, as the console has always read them) with the counts
     of the FULL set per segment. issues_page() pages and filters them all."""
     ov = overview()
+    # The fleet payload meta every other read carries (C's #36, #47, #89).
+    meta = {k: ov.get(k) for k in ("generated_at", "cached", "age_seconds", "errors", "query_errors",
+                                   "unavailable", "windows")}
+    meta["errors"], meta["unavailable"] = meta["errors"] or [], meta["unavailable"] or []
+    meta["query_errors"] = meta["query_errors"] or meta["errors"]
     return {"ok": True, "issues": ov["issues"], "issues_total": ov["issues_total"],
-            "issue_counts": ov["issue_counts"], "generated_at": ov.get("generated_at"),
-            "errors": ov.get("errors") or [], "unavailable": ov.get("unavailable") or []}
+            "issue_counts": ov["issue_counts"], **meta}
 
 
 def _current_issue(key):
@@ -5800,6 +5839,9 @@ _STRIPE_KEYS = {"stripe_customer_id", "customer_id", "subscription_id", "stripe_
 _EMAIL_RE = re.compile(r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 _STRIPE_RE = re.compile(r"\b((?:cus|sub|in|pi|cs|ch|seti|pm)_)[A-Za-z0-9]{6,}([A-Za-z0-9]{4})\b")
 _IP_RE = re.compile(r"\b(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}\b")
+# A phone number inside free text (an error, a note): E.164, a formatted
+# North American number, or a bare run of ten digits.
+_PHONE_TEXT_RE = re.compile(r"(?<![\w.])(?:\+\d{10,15}|\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|\d{10})(?![\w.])")
 
 
 def _mask_email(v):
@@ -5819,7 +5861,11 @@ def _mask_ip(v):
 
 
 def _mask_text(s):
-    return _STRIPE_RE.sub(lambda m: f"{m.group(1)}••••{m.group(2)}", _mask_email(s))
+    """Free text as support sees it: emails, Stripe ids, phone numbers and
+    IPv4 addresses masked wherever they sit (C's #87 contract)."""
+    s = _STRIPE_RE.sub(lambda m: f"{m.group(1)}••••{m.group(2)}", _mask_email(s))
+    s = _PHONE_TEXT_RE.sub(lambda m: _mask_phone(m.group(0)), s)
+    return _IP_RE.sub(lambda m: f"{m.group(1)}.x.x", s)
 
 
 def redact_for_support(obj, key=None):

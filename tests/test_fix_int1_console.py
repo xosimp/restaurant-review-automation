@@ -62,3 +62,62 @@ def test_the_clients_list_filters_on_the_server(db_path):
     with_issues = {r["id"] for r in admin_ops.clients()["clients"] if r["issues"]}
     assert ids(has_issues="1") == with_issues & {old, new}
     assert ids(churn="nonsense") == set()
+
+
+# ── G's AI issues in the client record (#122, #140, #48) ───────────────────
+
+def _ai_row(db_path, rid, cost, outcome="ok", when="datetime('now')", action="draft", vendor="anthropic"):
+    _sql(db_path, "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, "
+                  f"created_at, vendor, outcome, status, \"trigger\") VALUES (?, ?, 'claude-sonnet-5', 10, 10, ?, {when}, "
+                  "?, ?, ?, 'owner')", (rid, action, cost, vendor, outcome, "ok" if outcome == "ok" else "error"))
+
+
+def test_a_ceiling_nearly_spent_is_an_issue_and_thirty_dollars_a_month_is_not(db_path):
+    trial = _mk(db_path, "Trial Co", billing_status="trial")
+    active = _mk(db_path, "Busy Co", billing_status="active")
+    _ai_row(db_path, trial, 4.5)                     # 90% of a trial's $5 a day
+    for _ in range(6):
+        _ai_row(db_path, active, 5.0, when="datetime('now','-3 days')")     # $30 this month, under its ceiling
+    issues = {i["key"]: i for i in _rec(trial)["issues"]}
+    b = issues[f"{trial}:ai_budget:ai_day"]
+    assert b["severity"] == "warning" and "90% of today's AI budget" in b["title"] and "$4.50 of $5.00" in b["detail"]
+    assert not any(k.startswith(f"{active}:ai_cost") or k.startswith(f"{active}:ai_budget")
+                   for k in (i["key"] for i in _rec(active)["issues"])), "the old $25 rule is gone"
+
+
+def test_an_ai_cost_anomaly_is_a_client_issue(db_path):
+    rid = _mk(db_path, "Spiky Co", billing_status="active")
+    for d in range(3, 17):
+        _ai_row(db_path, rid, 0.10, when=f"datetime('now','-{d} days')")
+    _ai_row(db_path, rid, 6.0)
+    keys = [i["key"] for i in _rec(rid)["issues"]]
+    assert any(k.startswith(f"{rid}:ai_anomaly:cost:") for k in keys)
+
+
+def test_a_blocked_call_is_not_a_call(db_path):
+    rid = _mk(db_path, "Blocked Co", billing_status="active")
+    _ai_row(db_path, rid, 0.02)
+    for _ in range(5):
+        _ai_row(db_path, rid, 0.0, outcome="blocked")
+    rec = _rec(rid)
+    assert rec["ai"]["calls_today"] == 1 and rec["ai"]["calls_30d"] == 1
+    assert admin_ops.overview()["kpis"]["ai_calls_today"] == 1
+
+
+# ── support masking in free text (C's #87 contract) ────────────────────────
+
+def test_support_sees_phones_and_ips_masked_inside_free_text():
+    out = admin_ops.redact_for_support({"error": "Twilio 21610 to +15125550123 from 10.1.2.3",
+                                        "note": "call (512) 555-0199, or 5125550100", "when": "2026-09-29 10:00:00"})
+    assert "+15125550123" not in out["error"] and out["error"].endswith("•••-•••-0123 from 10.1.x.x")
+    assert "555-0199" not in out["note"] and "5125550100" not in out["note"] and "0199" in out["note"]
+    assert out["when"] == "2026-09-29 10:00:00", "a timestamp is not a phone number"
+
+
+# ── /admin/api/issues carries the fleet payload meta ───────────────────────
+
+def test_the_issues_payload_says_how_fresh_it_is(db_path):
+    _mk(db_path, "Meta Co")
+    out = admin_ops.issues()
+    for k in ("generated_at", "cached", "age_seconds", "windows", "errors", "query_errors", "unavailable"):
+        assert k in out, k

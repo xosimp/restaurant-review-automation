@@ -581,8 +581,10 @@ def health_snapshot(db_path=None):
         sched = scheduler_state(path)
     except Exception:
         sched = {"state": "unknown", "beat_age_minutes": None, "loop_completed_age_minutes": None}
-    if sched["state"] in ("stale", "wedged", "stalled"):
-        problems.append(f"scheduler_{sched['state']}")
+    code = {"stale": "scheduler_stale", "wedged": "scheduler_wedged",
+            "stalled": "scheduler_stalled"}.get(sched["state"])
+    if code:
+        problems.append(code)
 
     overdue = []
     try:
