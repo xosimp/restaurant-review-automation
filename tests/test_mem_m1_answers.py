@@ -296,3 +296,42 @@ def test_an_ineligible_account_ranks_on_the_neutral_model(db_path):
     eff = rec_learning.effectiveness(rid, db_path=db_path)
     assert eff.weight("reprice:Burger") == (1.0, []) or eff.weight("reprice:Burger")[0] >= 0.9
     assert eff.reason_penalties("reprice", []) == (0, 0)
+
+
+def test_the_rank_log_and_the_cards_learned_note_name_the_same_prior(db_path):
+    """rank_meta (the shown event's meta) and M8's learned_note (on the card)
+    read one prior_rung and one EFFECTIVENESS_VERSION."""
+    import home_brief
+    rid = _rid(db_path)
+    for i in range(6):
+        rl.present(rid, f"trim_day:D{i}", "labor", "home", db_path=db_path)
+        rl.record(rid, f"trim_day:D{i}", "completed", db_path=db_path)
+    eff = rec_learning.effectiveness(rid, db_path=db_path)
+    recs = home_brief.order_recommendations([{"key": "trim_day:Monday", "title": "Trim Monday",
+                                              "timeframe": "Next schedule", "dollars_monthly": 300,
+                                              "effort": "medium"}], learned=eff)
+    rank = recs[0]["rank"]
+    assert rank["version"] == rec_learning.EFFECTIVENESS_VERSION == 3
+    expect = eff.prior_rung("trim_day")
+    assert rank["prior_rung"] == {k: expect.get(k) for k in ("acceptance", "success", "cold")}
+    if recs[0].get("learned"):
+        assert recs[0]["learned"].get("prior_rung") == expect and recs[0]["learned"]["version"] == rank["version"]
+    ids = rl.present_many(rid, [{"key": "trim_day:Monday", "module": "labor", "rank": rank}], "home",
+                          db_path=db_path)
+    meta = json.loads(_one(db_path, "SELECT meta FROM rec_events WHERE rec_id=? AND event='shown'",
+                           ids["trim_day:Monday"])["meta"])
+    assert meta["rank"]["version"] == 3 and meta["rank"]["rung"].startswith("own/")
+
+
+def test_the_platform_sync_skips_a_view_as_answer_by_its_authority_column(db_path):
+    from intelligence import feedback
+    rid = _rid(db_path)
+    rl.present(rid, "reprice:Soup", "food", "home", db_path=db_path)
+    rl.present(rid, "reprice:Salad", "food", "home", db_path=db_path)
+    rl.record(rid, "reprice:Soup", "dismissed", via={"admin_id": 9, "admin": "will"}, meta={"kind": "not_for_us"},
+              db_path=db_path)
+    rl.record(rid, "reprice:Salad", "dismissed", meta={"kind": "not_for_us"}, db_path=db_path)
+    feedback.sync(db_path=db_path)
+    keys = {r[0] for r in models.get_conn(db_path).execute(
+        "SELECT source_key FROM intel_rec_events WHERE restaurant_id=? AND action='not_for_us'", (rid,)).fetchall()}
+    assert any("Salad" in k for k in keys) and not any("Soup" in k for k in keys)
