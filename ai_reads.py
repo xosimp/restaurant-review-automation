@@ -1015,6 +1015,10 @@ def confidence_calibration(restaurant_id=None, days=365, db_path=None) -> dict:
 
 # ── the memory_context provider ──────────────────────────────────────────────
 
+# Surfaces that read across modules: with no subjects they get the latest
+# claims of every surface, not only their own.
+CROSS_SURFACES = ("weekly_plan", "digest", "brief", "ask", "monthly_review")
+
 _STATE_WORDS = {"taken": "the advice was taken", "taken_late": "the advice was taken after the check window",
                 "declined": "the owner said not for us", "hidden": "the owner hid it",
                 "ignored": "it was left unanswered", "open": "not answered yet", "replaced": "it was replaced",
@@ -1096,6 +1100,8 @@ def claim_lines(req):
             marks = ",".join("?" for _ in subjects)
             where.append(f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))")
             args += subjects * 3
+        elif surface in CROSS_SURFACES:
+            pass                    # a read over the whole restaurant: every surface's latest claims
         elif surface:
             where.append("surface=?")
             args.append(surface)

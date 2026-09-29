@@ -58,6 +58,7 @@ SURFACE_SECTIONS = {
     "schedule": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "labor_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "food_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
+    "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people"),
     "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked"),
     "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "events"),
