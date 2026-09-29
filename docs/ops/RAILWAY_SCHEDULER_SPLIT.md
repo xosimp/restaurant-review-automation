@@ -90,7 +90,10 @@ inside the gunicorn web process:
 
 In the web process the scheduler thread is also watched: the
 `PlatformSupervisor` thread restarts it with backoff if it dies (never beside
-a live one).
+a live one), with the same thread body `start_scheduler` uses — the lease
+keeper, then the loop (`scheduler._run_scheduler_thread`, through
+`hosted_dashboard._restart_scheduler_loop`) — so a restarted loop keeps
+renewing its lease instead of looking abandoned after 4 minutes.
 
 ## Option: a second process in the SAME service
 
@@ -115,14 +118,14 @@ two equal), and the variable `RUN_SCHEDULER_IN_WEB=0` on the service.
   command. Either one alone is also safe — with the variable unset the web
   process runs its own scheduler thread too, and the lease lets only one work.
 
-**`worker.py`'s boot.** Today it runs `init_db()` + `ensure_columns()`,
-refuses unless `scheduler.scheduling_allowed()`, closes orphaned runs, starts
-the lease keeper and runs `scheduler_loop()` (restarting the loop, never
-exiting, if it raises), and on SIGTERM calls `ops.shutdown_scheduler()`. It
-must ALSO do what the web boot does first — `models.require_volume()` (refuse
-to run on Railway without the volume) and `logging_setup.configure()` (the
-JSON log, instead of its own `basicConfig`) — and since the integration wave
-(9/29/26) worker.py calls both at the top of main(), before `init_db()`. The web process's
+**`worker.py`'s boot.** It does what the web boot does first — since the
+integration wave (9/29/26) worker.py calls both at the top of main(), before
+`init_db()`: `logging_setup.configure()` (the JSON log, bound
+`process=worker`) and `models.require_volume()` (refuse to run on Railway
+without the volume). Then it runs `init_db()` + `ensure_columns()`, refuses
+unless `scheduler.scheduling_allowed()`, closes orphaned runs, starts the
+lease keeper and runs `scheduler_loop()` (restarting the loop, never
+exiting, if it raises), and on SIGTERM calls `ops.shutdown_scheduler()`. The web process's
 supervisor, boot records and `/health` do not exist in the worker: its
 liveness is the scheduler heartbeat and the external dead-man ping.
 
@@ -151,8 +154,10 @@ the order to move it are in `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`):
   * the admin console's fleet memo (`admin_ops._fleet_state`) — a write on one
     worker drops only that worker's memo, so the other serves a read up to
     45 seconds stale
-  * the bounded pools (the three admin pools, the webhook delivery pool,
-    `ASK_MAX_CONCURRENT`) — each bound would be N times its value
+  * the bounded pools (the two admin pools — `ops.run_admin_task` and the
+    one admin job pool, `admin_routes._submit_admin_job` — the webhook and
+    push delivery pools, `ASK_MAX_CONCURRENT`) — each bound would be N times
+    its value
   * `http_layer`'s in-memory latency window and in-flight gauge — each
     worker reports only its own traffic (the persisted per-minute rollups
     add up correctly)
