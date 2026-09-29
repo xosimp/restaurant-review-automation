@@ -4428,7 +4428,10 @@ def admin_required(f):
         user = get_current_user()
         is_support = bool(user) and not user.get("is_admin") and (user.get("role") == "support")
         if not user or not (user["is_admin"] or is_support):
-            if _wants_json_response():
+            # The console's own GETs under /admin/api/ are fetch() calls too:
+            # an expired one got a 302 to the login PAGE, which fetch follows
+            # and then fails to parse (docs pass) — it answers 401 like a POST.
+            if _admin_wants_json():
                 from flask import jsonify as _jsonify_ar
                 return _jsonify_ar(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login"))

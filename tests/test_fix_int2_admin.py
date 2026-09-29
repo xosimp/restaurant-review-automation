@@ -730,3 +730,63 @@ def test_each_lockout_row_names_the_login_it_holds(app, db_path, monkeypatch):
     rows = {r["username"]: r for r in c.get("/admin/api/lockouts").get_json()["lockouts"]}
     assert rows["erik"]["user_id"] == uid and rows["erik"]["restaurant_id"] == rid
     assert rows["nobody-here"]["user_id"] is None and rows["nobody-here"]["restaurant_id"] is None
+
+
+# ── attribution on the pool and in the logs ─────────────────────────────────
+
+def test_an_admin_jobs_ai_calls_are_the_admins(monkeypatch):
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "_request_attribution", lambda: ("admin", 42, None))
+    seen = {}
+    with admin_routes._admin_job_attribution("job-9")():
+        seen.update(ai_utils._CTX.get() or {})
+    assert seen["trigger"] == "admin" and seen["actor_user_id"] == 42 and seen["correlation_id"] == "admin_job:job-9"
+    monkeypatch.setattr(ai_utils, "_request_attribution", lambda: (None, None, None))
+    with admin_routes._admin_job_attribution("job-10")():
+        assert (ai_utils._CTX.get() or {})["trigger"] == "admin", "off a request it is still console work"
+
+
+def test_a_signed_in_request_binds_the_login_to_its_log_lines(app, db_path):
+    import logging_setup
+    rid = _rid(db_path)
+    uid = _owner(db_path, rid)
+    seen = {}
+    probe = Flask(__name__)
+
+    @probe.route("/api/probe")
+    @auth.login_required
+    def _probe(current_user):
+        seen.update(logging_setup.current())
+        return "ok"
+    c = probe.test_client()
+    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    assert c.get("/api/probe").status_code == 200
+    assert seen["user_id"] == uid and seen["restaurant_id"] == rid
+    logging_setup.clear()
+
+
+def test_support_logins_read_the_console_not_the_legacy_pages(app, db_path):
+    sup = create_user(_hq(db_path), "sup3", "sup3@cavnar.test", "Support-pass-2026", role="support", db_path=db_path)
+    s = app.test_client()
+    s.set_cookie("session_token", create_session(sup, db_path=db_path))
+    rid = _rid(db_path)
+    for path in (f"/admin/client-settings/{rid}", f"/admin/client-data/{rid}"):
+        r = s.get(path)
+        assert r.status_code == 403 and "Use the admin console" in r.get_data(as_text=True), path
+    c, _ = _admin(app, db_path)
+    assert c.get(f"/admin/client-data/{rid}").status_code == 200
+
+
+def test_an_expired_console_read_answers_401_json_and_a_page_still_redirects(app, db_path):
+    # The console's api() signs in again on a 401. A 302 to the login PAGE
+    # was followed by fetch() and failed to parse, so an expired read showed
+    # "HTTP 200" and never went back to sign-in (docs pass, §3 A).
+    anon = app.test_client()
+    r = anon.get("/admin/api/lockouts")
+    assert r.status_code == 401 and r.get_json()["session_expired"] is True
+    page = anon.get("/admin")
+    assert page.status_code == 302 and "/login" in page.headers["Location"]
+    rid = _rid(db_path)
+    owner = app.test_client()
+    owner.set_cookie("session_token", create_session(_owner(db_path, rid), db_path=db_path))
+    assert owner.get("/admin/api/lockouts").status_code == 401
