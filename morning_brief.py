@@ -1277,11 +1277,115 @@ def _claim_weekly_all_clear(restaurant_id, user_id, today):
                             f"{year}-W{week:02d}")
 
 
+# ── Per-recipient delivery ledger (#82) ──────────────────────────────────────
+# One morning_brief_deliveries row per person per brief day: what their brief
+# did — a push queued, pushed, emailed, fell back to email, or failed. The
+# brief used to count as sent the moment a push was queued, with no email
+# fallback when Apple took it on none of their phones and no record of who
+# got what.
+
+def _ledger_get(restaurant_id, user_id, brief_date, db_path=DB_PATH):
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT channel, status, error FROM morning_brief_deliveries WHERE restaurant_id=? "
+                               "AND user_id=? AND brief_date=?", (restaurant_id, user_id, brief_date)).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _ledger_set(restaurant_id, user_id, brief_date, channel, status, error=None, db_path=DB_PATH):
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute(
+                "INSERT INTO morning_brief_deliveries (restaurant_id, user_id, brief_date, channel, status, error, "
+                "updated_at) VALUES (?,?,?,?,?,?, datetime('now')) ON CONFLICT(restaurant_id, user_id, brief_date) "
+                "DO UPDATE SET channel=excluded.channel, status=excluded.status, error=excluded.error, "
+                "updated_at=excluded.updated_at",
+                (restaurant_id, user_id, brief_date, channel, status, (str(error)[:300] if error else None)))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[brief] ledger write failed rid={restaurant_id} user={user_id}: {e}")
+
+
+def delivery_ledger(restaurant_id, brief_date=None, db_path=DB_PATH) -> list:
+    """This restaurant's brief deliveries, newest day first — for the console."""
+    conn = get_conn(db_path)
+    try:
+        sql = "SELECT * FROM morning_brief_deliveries WHERE restaurant_id=?"
+        args = [restaurant_id]
+        if brief_date:
+            sql += " AND brief_date=?"
+            args.append(brief_date)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY brief_date DESC, id DESC LIMIT 200", args).fetchall()]
+    finally:
+        conn.close()
+
+
+def _held_alerts_line(holds, viewer):
+    """The brief line for alerts held through a rush that went stale before
+    they could be sent (#82) — for a person permitted to read every module
+    they are about. None when there are none or this person may not."""
+    if not holds:
+        return None
+    try:
+        import notify
+        from permissions import has_permission
+        need = notify.alert_permissions([h["alert_type"] for h in holds])
+        if need is not None and not all(has_permission(viewer, p) for p in need):
+            return None
+    except Exception:
+        return None
+    subjects = [str(h.get("subject") or h.get("alert_type") or "").strip() for h in holds]
+    subjects = [s for s in subjects if s][:3]
+    n = len(holds)
+    text = (f"{n} alert{'' if n == 1 else 's'} held during service couldn't be sent in time"
+            + (": " + "; ".join(subjects) if subjects else "") + ".")
+    return {"key": "held_alerts", "tone": "bad", "text": text,
+            "ask": "What were the alerts held during service that I didn't get?"}
+
+
+def _email_brief(restaurant_id, u, brief, name, today, db_path=DB_PATH):
+    """One person's brief by email; the SendResult. Presented only when sent."""
+    from emails import deliver as _deliver, sender as _sender
+    lead_line = next((l for l in brief["lines"] if l["tone"] == "action"),
+                     brief["lines"][0]) if brief["lines"] else {"text": ""}
+    # On report_shell (density audit #46): a whole document, capped
+    # at EMAIL_MAX_LINES — only the lines it shows are presented.
+    verdict = night_verdict(restaurant_id, today=today, viewer=u, db_path=db_path)
+    result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
+        "from": _sender("client"), "to": [u["email"]],
+        "subject": f"Your morning brief — {name}",
+        # The lead line, which is what the push shows too.
+        "preheader": lead_line["text"][:140] if brief["lines"] else "",
+        "html": _email_html(brief, name, verdict=verdict)})
+    # Read .ok explicitly rather than leaning on SendResult.__bool__.
+    if getattr(result, "ok", False):
+        _safe(_present, restaurant_id, dict(brief, lines=email_lines(brief)[0]), "brief_email",
+              u["id"], db_path)
+    return result
+
+
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     """Build and send each recipient THEIR brief. Push to that person's own
     devices when they have the app; email them otherwise — never both,
     because a brief that arrives twice is one people learn to ignore.
-    Returns counts."""
+
+    A push Apple takes on none of their phones (or that could not be queued)
+    falls back to email (#82). Each person's outcome is recorded in
+    morning_brief_deliveries, and a person whose brief already went today is
+    not sent it again, so a retried pass resends only what did not go.
+    Alerts held through a rush that went stale ride in the brief (#82).
+
+    Returns counts: "push" is pushes QUEUED (their delivery is in the
+    ledger), "email" emails Resend accepted, "failed" people nothing reached
+    now, "retry" whether any of those failures is worth another pass."""
     from models import get_restaurant
     import push
     import rec_delivery
@@ -1290,12 +1394,20 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     people = recipients(restaurant_id, db_path)
     if not people:
         return {"sent": 0, "reason": "nobody is set to receive it"}
+    from time_utils import restaurant_now as _rnow
+    brief_date = (today or _rnow(restaurant, naive=True).date()).isoformat()
     devices = {}
     for t in (_safe(push.get_device_tokens, restaurant_id, db_path) or []):
         if not t.get("disabled_reason"):
             devices.setdefault(int(t.get("user_id") or 0), []).append(t)
-    built, pushed, emailed, empty = {}, 0, 0, 0
+    import notify as _notify_h
+    holds = _safe(_notify_h.dropped_holds, restaurant_id, db_path) or []
+    folded = False
+    built, pushed, emailed, empty, failed, retry = {}, 0, 0, 0, 0, False
     for u in people:
+        done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
+        if done and done["status"] in ("sent", "queued"):
+            continue                      # already reached (or on its way) today
         key = _view_key(u)
         if key not in built:
             # Deduped against the other surfaces BEFORE anything here is
@@ -1303,6 +1415,9 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             full = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
             built[key] = _safe(_dedupe, restaurant_id, full, db_path) or full
         brief = built[key]
+        held = _held_alerts_line(holds, u)
+        if held:
+            brief = dict(brief, lines=[held] + [l for l in brief["lines"] if l.get("key") != "all_clear"])
         if not brief["lines"]:
             empty += 1
             continue
@@ -1319,6 +1434,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         if _only_all_clear(brief) and not _claim_weekly_all_clear(restaurant_id, u["id"], today):
             empty += 1
             continue
+        queued = 0
         if devices.get(u["id"]):
             pt = push_text(brief, name)
             lead = next((l for l in brief["lines"] if l["tone"] == "action"), brief["lines"][0])
@@ -1339,32 +1455,53 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             # only once a phone took the push (push.fire_push on_delivered):
             # all of them, at queue time, logged lines nobody saw on pushes
             # nobody received (re-audit C4).
-            push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
-                           data=data, db_path=db_path, user_ids={u["id"]},
-                           on_delivered=rec_delivery.when_pushed(restaurant_id, "brief_push",
-                                                                 line_items(push_lines(brief)),
-                                                                 user_id=u["id"], db_path=db_path))
-            pushed += 1
-        elif u.get("email"):
-            from emails import deliver as _deliver, sender as _sender
-            lead_line = next((l for l in brief["lines"] if l["tone"] == "action"),
-                             brief["lines"][0]) if brief["lines"] else {"text": ""}
-            # On report_shell (density audit #46): a whole document, capped
-            # at EMAIL_MAX_LINES — only the lines it shows are presented.
-            verdict = night_verdict(restaurant_id, today=today, viewer=u, db_path=db_path)
-            result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
-                "from": _sender("client"), "to": [u["email"]],
-                "subject": f"Your morning brief — {name}",
-                # The lead line, which is what the push shows too.
-                "preheader": lead_line["text"][:140] if brief["lines"] else "",
-                "html": _email_html(brief, name, verdict=verdict)})
-            # Read .ok explicitly rather than leaning on SendResult.__bool__.
-            if getattr(result, "ok", False):
+            presented = rec_delivery.when_pushed(restaurant_id, "brief_push", line_items(push_lines(brief)),
+                                                 user_id=u["id"], db_path=db_path)
+
+            def _pushed(uid=u["id"], hook=presented):
+                _ledger_set(restaurant_id, uid, brief_date, "push", "sent", db_path=db_path)
+                if hook is not None:
+                    hook()
+
+            def _push_failed(person=u, b=brief):
+                # Apple took it on none of their phones: email instead (#82).
+                if not person.get("email"):
+                    _ledger_set(restaurant_id, person["id"], brief_date, "push", "failed",
+                                "no device accepted the push and there is no email on file", db_path=db_path)
+                    return
+                res = _email_brief(restaurant_id, person, b, name, today, db_path)
+                _ledger_set(restaurant_id, person["id"], brief_date, "email",
+                            "sent" if res.ok else "failed",
+                            None if res.ok else f"push failed, email failed: {res.error}", db_path=db_path)
+
+            # 'queued' first: the pool may answer (delivered, or failed and
+            # fallen back to email) before fire_push even returns.
+            _ledger_set(restaurant_id, u["id"], brief_date, "push", "queued", db_path=db_path)
+            queued = push.fire_push(restaurant_id, "morning_brief", pt["title"], pt["body"],
+                                    data=data, db_path=db_path, user_ids={u["id"]},
+                                    on_delivered=_pushed, on_failed=_push_failed) or 0
+            if queued:
+                pushed += 1
+                folded = folded or bool(held)
+                continue
+        if u.get("email"):
+            result = _email_brief(restaurant_id, u, brief, name, today, db_path)
+            if result.ok:
                 emailed += 1
-                _safe(_present, restaurant_id, dict(brief, lines=email_lines(brief)[0]), "brief_email",
-                      u["id"], db_path)
-    return {"sent": pushed + emailed, "push": pushed, "email": emailed, "empty": empty,
-            "recipients": len(people)}
+                folded = folded or bool(held)
+                _ledger_set(restaurant_id, u["id"], brief_date, "email", "sent", db_path=db_path)
+            else:
+                failed += 1
+                retry = retry or bool(getattr(result, "transient", False))
+                _ledger_set(restaurant_id, u["id"], brief_date, "email", "failed", result.error, db_path=db_path)
+        elif devices.get(u["id"]):
+            failed += 1
+            _ledger_set(restaurant_id, u["id"], brief_date, "push", "failed",
+                        "the push could not be queued and there is no email on file", db_path=db_path)
+    if folded:
+        _notify_h.mark_holds_folded([h["id"] for h in holds], db_path)
+    return {"sent": pushed + emailed, "push": pushed, "email": emailed, "failed": failed, "empty": empty,
+            "retry": retry, "recipients": len(people)}
 
 
 def run_due(db_path=DB_PATH, now_utc=None):
@@ -1377,7 +1514,11 @@ def run_due(db_path=DB_PATH, now_utc=None):
     for r in get_all_restaurants(db_path):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
-        if (getattr(r, "billing_status", None) or "trial").lower() not in ("active", "internal", "trial"):
+        # One rule with every sender (#155): in service. A past-due client
+        # keeps the brief while Stripe retries the card; paused, churned and
+        # canceled accounts do not get it.
+        from models import in_service as _in_service
+        if not _in_service(r):
             continue
         local = restaurant_now(r, naive=True)
         hour = int(getattr(r, "morning_brief_hour", 7) or 7)

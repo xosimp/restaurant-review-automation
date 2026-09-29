@@ -96,6 +96,28 @@ CREATE INDEX IF NOT EXISTS idx_push_deliveries_created ON push_deliveries(create
 CREATE INDEX IF NOT EXISTS idx_device_tokens_restaurant ON device_tokens(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_push_deliveries_restaurant
     ON push_deliveries(restaurant_id, alert_type, created_at);
+-- One row per device per push, written BEFORE it is handed to the pool
+-- (#75): the pool and its overflow queue live in process memory, so a deploy
+-- during the 7am brief burst lost every queued push with no row anywhere.
+-- state: queued -> delivering -> sent | failed; 'expired' when a restart
+-- left it longer than it is worth delivering. push_deliveries stays the
+-- ledger of attempts made; this is the queue.
+CREATE TABLE IF NOT EXISTS push_outbox (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL,
+    device_token_id INTEGER NOT NULL,
+    alert_type      TEXT NOT NULL,
+    title           TEXT,
+    body            TEXT,
+    data_json       TEXT,
+    state           TEXT NOT NULL DEFAULT 'queued',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT,
+    done_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_state ON push_outbox(state, created_at);
 """
 
 
@@ -882,12 +904,82 @@ class OnDelivered:
             print(f"[push] delivered hook failed: {e}")
 
 
-def _run_delivery(token_row, alert_type, title, body, data, db_path, on_delivered=None):
+class _PushGroup:
+    """One fire_push across a recipient's devices. Runs the caller's
+    `on_failed` once, after every queued device has been tried, when Apple
+    took it on none of them — what the morning brief falls back to email on
+    (#82). Thread-safe; a hook that raises is logged and dropped."""
+
+    def __init__(self, n, on_failed):
+        self._left, self._ok, self._fn = int(n), False, on_failed
+        self._lock = threading.Lock()
+
+    def done(self, ok):
+        fn = None
+        with self._lock:
+            self._ok = self._ok or bool(ok)
+            self._left -= 1
+            if self._left <= 0 and not self._ok and self._fn is not None:
+                fn, self._fn = self._fn, None
+        if fn is not None:
+            try:
+                fn()
+            except Exception as e:
+                print(f"[push] failed hook failed: {e}")
+
+
+def _outbox_claim(outbox_id, db_path=DB_PATH) -> bool:
+    """queued -> delivering, by exactly one runner (the pool or the reaper)."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            won = conn.execute("UPDATE push_outbox SET state='delivering', attempts=attempts+1, "
+                               "updated_at=datetime('now') WHERE id=? AND state='queued'",
+                               (outbox_id,)).rowcount == 1
+            conn.commit()
+            return won
+        finally:
+            conn.close()
+    except Exception:
+        return True                     # deliver rather than lose it
+
+
+def _outbox_finish(outbox_id, state, error=None, db_path=DB_PATH):
+    if outbox_id is None:
+        return
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE push_outbox SET state=?, last_error=?, updated_at=datetime('now'), "
+                         "done_at=datetime('now') WHERE id=?",
+                         (state, (str(error)[:300] if error else None), outbox_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[push] outbox update failed ({outbox_id}): {e}")
+
+
+def _run_delivery(token_row, alert_type, title, body, data, db_path, on_delivered=None,
+                  outbox_id=None, group=None):
     global _queued
     try:
-        res = _deliver(token_row, alert_type, title, body, data, db_path)
-        if on_delivered is not None and (res or {}).get("ok"):
-            on_delivered()
+        # Claimed first: a row the reaper also picked up is delivered once.
+        if outbox_id is None or _outbox_claim(outbox_id, db_path):
+            ok, error = False, None
+            try:
+                res = _deliver(token_row, alert_type, title, body, data, db_path)
+                ok, error = bool((res or {}).get("ok")), (res or {}).get("error")
+            except Exception as e:
+                error = str(e)
+                print(f"[push] delivery raised ({alert_type}): {e}")
+            # Marked from the delivery's own result (#75): the ledgers used to
+            # say "sent" the moment a push was queued.
+            _outbox_finish(outbox_id, "sent" if ok else "failed", None if ok else error, db_path)
+            if on_delivered is not None and ok:
+                on_delivered()
+            if group is not None:
+                group.done(ok)
     finally:
         with _executor_lock:
             waiting = _overflow_queue()
@@ -961,11 +1053,37 @@ def _record_dropped(token_rows, alert_type, db_path=DB_PATH):
         print(f"[push] could not record dropped pushes ({alert_type}): {e}")
 
 
+def _outbox_write(token_rows, restaurant_id, alert_type, title, body, data, db_path=DB_PATH) -> list:
+    """One push_outbox row per device, written before anything is handed to
+    the pool (#75). Returns the row ids in token order; None for each when
+    the write failed (the push then goes from memory, as before)."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            payload = json.dumps(data or {}, default=str)[:8000]
+            ids = [conn.execute(
+                "INSERT INTO push_outbox (restaurant_id, device_token_id, alert_type, title, body, data_json, "
+                "updated_at) VALUES (?,?,?,?,?,?, datetime('now'))",
+                (restaurant_id, t["id"], alert_type, (title or "")[:300], (body or "")[:1000], payload)).lastrowid
+                for t in token_rows]
+            conn.commit()
+            return ids
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[push] outbox write failed ({alert_type}, rid={restaurant_id}): {e}")
+        return [None] * len(token_rows)
+
+
 def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH, user_ids=None,
-              on_delivered=None):
+              on_delivered=None, on_failed=None):
     """Fire push to every device registered for this restaurant, on a bounded
     background pool — never blocks the caller. Mirrors webhooks.fire_webhook()'s
     fire-and-forget shape.
+
+    Each device's push is written to push_outbox before it is handed to the
+    pool and marked sent or failed from Apple's answer (#75); what a restart
+    leaves behind, reap_push_outbox delivers.
 
     `user_ids` narrows delivery to those logins' devices. Every device at a
     restaurant includes managers' and teammates' phones, so anything carrying
@@ -976,6 +1094,11 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     after the first device APNs accepted this push on — where a caller
     records what the notification showed (rec_delivery). It never runs for a
     push no device took.
+
+    `on_failed` (a no-argument callable) runs once, on the push pool, when
+    every device it was queued for has been tried and Apple accepted it on
+    none — where a caller falls back to email (morning_brief, #82). Not run
+    when nothing was queued: the return value 0 says that, synchronously.
 
     Returns how many devices it was queued for (0: nobody could receive
     it)."""
@@ -1003,18 +1126,22 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         if user_ids is not None:
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
+        outbox_ids = _outbox_write(tokens, restaurant_id, alert_type, title, body, data, db_path) if tokens else []
+        group = _PushGroup(len(tokens), on_failed) if (on_failed is not None and tokens) else None
         dropped = []
         for i, token_row in enumerate(tokens):
+            outbox_id = outbox_ids[i] if i < len(outbox_ids) else None
             with _executor_lock:
                 if _queued >= _MAX_PUSH_QUEUED:
                     waiting = _overflow_queue()
                     if len(waiting) < _MAX_PUSH_OVERFLOW:
                         # The pool is busy: wait for a slot rather than drop.
-                        waiting.append((token_row, alert_type, title, body, data, db_path, hook))
+                        waiting.append((token_row, alert_type, title, body, data, db_path, hook,
+                                        outbox_id, group))
                         queued += 1
                         continue
                     full_at = _queued + len(waiting)
-                    dropped = tokens[i:]
+                    dropped = list(zip(tokens[i:], outbox_ids[i:]))
                 else:
                     full_at = None
                     _queued += 1
@@ -1028,12 +1155,96 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                 except Exception:
                     pass
                 break
+            # Positional: the delivery's arguments, then its outbox row and group.
             _push_executor().submit(
-                _run_delivery, token_row, alert_type, title, body, data, db_path, hook
+                _run_delivery, token_row, alert_type, title, body, data, db_path, hook, outbox_id, group
             )
             queued += 1
         if dropped:
-            _record_dropped(dropped, alert_type, db_path)
+            _record_dropped([t for t, _o in dropped], alert_type, db_path)
+            for _t, oid in dropped:
+                _outbox_finish(oid, "failed", "not sent: the push queue was full", db_path)
+                if group is not None:
+                    group.done(False)
     except Exception as e:
         print(f"[push] fire_push error ({alert_type}, rid={restaurant_id}): {e}")
     return queued
+
+
+# A push a restart left 'delivering' (or 'queued' past the in-memory
+# overflow) is re-driven after this long; one older than
+# PUSH_OUTBOX_MAX_AGE_MINUTES is no longer worth a banner and expires, with a
+# push_deliveries row saying so (#75).
+PUSH_OUTBOX_STALE_MINUTES = 10
+PUSH_OUTBOX_MAX_AGE_MINUTES = int(os.getenv("PUSH_OUTBOX_MAX_AGE_MINUTES", "120"))
+
+
+def reap_push_outbox(db_path=DB_PATH, limit=200) -> dict:
+    """Deliver what a restart left behind (#75). Stale 'delivering' rows go
+    back to 'queued'; rows past PUSH_OUTBOX_MAX_AGE_MINUTES expire (and are
+    recorded in push_deliveries as not sent); up to `limit` stale queued rows
+    are handed to the pool. A re-driven push carries no caller hooks — a
+    process that died took them with it. Returns {"requeued", "expired",
+    "submitted"}. Scheduled by the integration wave (a minute duty)."""
+    global _queued
+    out = {"requeued": 0, "expired": 0, "submitted": 0}
+    conn = get_conn(db_path)
+    try:
+        old = conn.execute(
+            "SELECT id, restaurant_id, device_token_id, alert_type FROM push_outbox WHERE state IN "
+            "('queued','delivering') AND created_at < datetime('now', ?) LIMIT ?",
+            (f"-{PUSH_OUTBOX_MAX_AGE_MINUTES} minutes", int(limit) * 5)).fetchall()
+        for r in old:
+            conn.execute("UPDATE push_outbox SET state='expired', done_at=datetime('now'), updated_at=datetime('now'), "
+                         "last_error=COALESCE(last_error, 'not delivered in time (a restart)') WHERE id=?", (r["id"],))
+            conn.execute("INSERT INTO push_deliveries (device_token_id, restaurant_id, alert_type, status, ok, "
+                         "attempts, error) VALUES (?,?,?,NULL,0,0,?)",
+                         (r["device_token_id"], r["restaurant_id"], r["alert_type"],
+                          "not sent: lost in a restart and too old to deliver"))
+        out["expired"] = len(old)
+        out["requeued"] = conn.execute(
+            "UPDATE push_outbox SET state='queued', updated_at=datetime('now') WHERE state='delivering' "
+            "AND COALESCE(updated_at, created_at) < datetime('now', ?)",
+            (f"-{PUSH_OUTBOX_STALE_MINUTES} minutes",)).rowcount
+        conn.commit()
+        rows = conn.execute(
+            "SELECT o.*, d.user_id, d.apns_token, d.environment, d.disabled_reason FROM push_outbox o "
+            "LEFT JOIN device_tokens d ON d.id=o.device_token_id WHERE o.state='queued' "
+            "AND COALESCE(o.updated_at, o.created_at) < datetime('now', ?) ORDER BY o.id LIMIT ?",
+            (f"-{PUSH_OUTBOX_STALE_MINUTES} minutes", int(limit))).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        if not r["apns_token"] or r["disabled_reason"]:
+            _outbox_finish(r["id"], "failed", "the device is gone or parked", db_path)
+            continue
+        try:
+            data = json.loads(r["data_json"] or "null") or {}
+        except (TypeError, ValueError):
+            data = {}
+        token_row = {"id": r["device_token_id"], "user_id": r["user_id"], "restaurant_id": r["restaurant_id"],
+                     "apns_token": r["apns_token"], "environment": r["environment"] or "production"}
+        with _executor_lock:
+            if _queued >= _MAX_PUSH_QUEUED:
+                break
+            _queued += 1
+        _push_executor().submit(_run_delivery, token_row, r["alert_type"], r["title"], r["body"], data,
+                                db_path, None, r["id"], None)
+        out["submitted"] += 1
+    return out
+
+
+def outbox_counts(db_path=DB_PATH) -> dict:
+    """{state: n, "oldest_pending_at", "failed_24h"} — the console's Queues
+    panel (#75)."""
+    conn = get_conn(db_path)
+    try:
+        by_state = {r["state"]: r["n"] for r in conn.execute(
+            "SELECT state, COUNT(*) AS n FROM push_outbox GROUP BY state").fetchall()}
+        oldest = conn.execute("SELECT MIN(created_at) FROM push_outbox WHERE state IN ('queued','delivering')"
+                              ).fetchone()[0]
+        failed_24h = conn.execute("SELECT COUNT(*) FROM push_outbox WHERE state IN ('failed','expired') "
+                                  "AND created_at >= datetime('now','-1 day')").fetchone()[0]
+    finally:
+        conn.close()
+    return {"by_state": by_state, "oldest_pending_at": oldest, "failed_24h": failed_24h}

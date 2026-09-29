@@ -795,7 +795,9 @@ def test_the_monthly_job_pushes_after_each_email(monkeypatch):
     import scheduler, emails
     monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [_fake_r(1), _fake_r(2, billing_status="paused")])
     monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
-    monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: None)
+    # Senders return a SendResult now (fix round E, #16): the job counts and
+    # pushes only an email Resend accepted. The stub used to return None.
+    monkeypatch.setattr(emails, "send_monthly_summary_email", lambda **kw: emails.SendResult(True))
     pushed = []
     monkeypatch.setattr(scheduler, "_push_month_ready", lambda r: pushed.append(r.id))
     out = scheduler.run_monthly_summaries()

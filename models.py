@@ -1156,6 +1156,32 @@ def ensure_columns(db_path: str = DB_PATH):
         # Structured detail an issue's page acts on (a coverage issue's
         # suggested covers, so "Ask Ana to cover" is one tap).
         ("ops_issues", "meta_json", "TEXT"),
+        # An issue text is claimed before it is sent and retried with backoff
+        # (#91): tick() re-texted a bad number every five minutes, forever.
+        # notify_failed_at marks a text that will not be retried (a STOP, an
+        # invalid number, or the attempt cap), after which the owner is told
+        # by push and email instead. The same for the escalation text.
+        ("ops_issues", "notify_attempts", "INTEGER DEFAULT 0"),
+        ("ops_issues", "notify_next_at", "TEXT"),
+        ("ops_issues", "notify_error", "TEXT"),
+        ("ops_issues", "notify_failed_at", "TEXT"),
+        ("ops_issues", "escalation_attempts", "INTEGER DEFAULT 0"),
+        ("ops_issues", "escalation_next_at", "TEXT"),
+        ("ops_issues", "escalation_error", "TEXT"),
+        # What became of a held alert (#82): released, dropped because it
+        # was stale, suppressed by the cap, or failed. sent_at alone could
+        # not tell them apart. folded_at: the next brief carried it.
+        ("alert_holds", "outcome", "TEXT"),
+        ("alert_holds", "folded_at", "TEXT"),
+        # How an onboarding step ended (#16): sent, failed (refused for good
+        # and raised), covered (another location of the owner got it) or
+        # skipped. A row used to mean "attempted", delivered or not.
+        ("onboarding_emails", "status", "TEXT DEFAULT 'sent'"),
+        ("onboarding_emails", "error", "TEXT"),
+        # Which channels an alert actually went out on — "sms,email,push",
+        # or "none" (#14). alert_log recorded an alert as fired whether any
+        # text, email or push reached anyone.
+        ("alert_log", "channels", "TEXT"),
         # A held alert's recommendation key and audience, so its release
         # records and targets exactly what raising it would have.
         ("alert_holds", "meta_json", "TEXT"),
@@ -2530,6 +2556,87 @@ def init_db(db_path: str = DB_PATH):
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_email_suppressions_email ON email_suppressions(email)",
+        # ── Messaging ledgers (fix round E) ──────────────────────────────
+        # One-time data migrations, each recorded by name so it never runs
+        # twice (the first: email_log.sent_at from Chicago wall time to UTC).
+        """CREATE TABLE IF NOT EXISTS data_migrations (
+            name        TEXT PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            detail      TEXT
+        )""",
+        # Every SMS attempt, whatever happened to it (#14). send_sms returned
+        # a bool and printed Twilio's answer, so a suspended account, an A2P
+        # rejection or a STOP left no trace. Twilio's status callback
+        # (/webhooks/twilio/status) moves a row on to delivered/undelivered.
+        # The number is kept as a hash and its last four digits only.
+        """CREATE TABLE IF NOT EXISTS sms_log (
+            id            INTEGER PRIMARY KEY,
+            restaurant_id INTEGER,
+            use_case      TEXT,
+            to_hash       TEXT,
+            to_last4      TEXT,
+            status        TEXT,
+            error_code    TEXT,
+            error         TEXT,
+            provider_sid  TEXT,
+            cost_usd      REAL,
+            created_at    TEXT DEFAULT (datetime('now')),
+            updated_at    TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_sms_log_created ON sms_log(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sms_log_restaurant ON sms_log(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sms_log_sid ON sms_log(provider_sid)",
+        # The last verified event, and the signature failures, per inbound
+        # provider webhook (#59, #74). A rotated secret used to turn every
+        # bounce, complaint, STOP and delivery report into a silent 403.
+        """CREATE TABLE IF NOT EXISTS inbound_webhook_health (
+            provider              TEXT PRIMARY KEY,
+            last_verified_at      TEXT,
+            last_event_type       TEXT,
+            verified_count        INTEGER NOT NULL DEFAULT 0,
+            last_failed_at        TEXT,
+            failed_count          INTEGER NOT NULL DEFAULT 0,
+            failed_since_verified INTEGER NOT NULL DEFAULT 0,
+            last_failure_reason   TEXT,
+            last_capture_at       TEXT,
+            bounces               INTEGER NOT NULL DEFAULT 0,
+            complaints            INTEGER NOT NULL DEFAULT 0,
+            last_bounce_at        TEXT,
+            last_complaint_at     TEXT
+        )""",
+        # A temporary alert cap applied automatically when one restaurant's
+        # alerts pass a rate threshold (#92). It expires on its own at the
+        # restaurant's next local midnight (until_at, UTC); an admin may lift
+        # it sooner. One per restaurant per local day.
+        """CREATE TABLE IF NOT EXISTS alert_storm_caps (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL,
+            local_day        TEXT NOT NULL,
+            started_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            until_at         TEXT NOT NULL,
+            alerts_in_window INTEGER,
+            threshold        INTEGER,
+            suppressed       INTEGER NOT NULL DEFAULT 0,
+            lifted_at        TEXT,
+            lifted_by        TEXT,
+            UNIQUE(restaurant_id, local_day)
+        )""",
+        # One row per person per brief day (#82): what their morning brief
+        # did — pushed, emailed, fell back from push to email, or failed.
+        # A brief used to count as sent the moment a push was queued.
+        """CREATE TABLE IF NOT EXISTS morning_brief_deliveries (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            user_id       INTEGER NOT NULL,
+            brief_date    TEXT NOT NULL,
+            channel       TEXT NOT NULL,
+            status        TEXT NOT NULL,
+            error         TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT,
+            UNIQUE(restaurant_id, user_id, brief_date)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_brief_deliveries_day ON morning_brief_deliveries(brief_date, status)",
         # Ask Cavnar conversations. Previously the chat lived only in the
         # client's memory, so closing the app lost it entirely. Now that the
         # assistant can propose actions, this doubles as the record of what
@@ -4993,25 +5100,101 @@ def init_email_log(db_path: str = DB_PATH):
         message_id TEXT
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)")   # prune_ledgers (DATA-40)
+    conn.execute("""CREATE TABLE IF NOT EXISTS data_migrations (
+        name        TEXT PRIMARY KEY,
+        applied_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        detail      TEXT
+    )""")
     conn.commit()
-    conn.close()
+    try:
+        _migrate_email_log_to_utc(conn)
+        # Suppressions written before scopes had a name store NULL for "all
+        # mail"; the stored value says so now, so a reader filtering on
+        # scope='all' sees them (#45). Idempotent.
+        try:
+            conn.execute("UPDATE email_suppressions SET scope='all' WHERE scope IS NULL OR TRIM(scope)=''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass                       # created by init_db; absent only on a bare file
+    finally:
+        conn.close()
+
+
+EMAIL_LOG_UTC_MIGRATION = "email_log_sent_at_utc"
+
+
+def _chicago_to_utc(stamp: str):
+    """"2026-09-28 22:14:07" read as America/Chicago wall time, returned as
+    UTC in the same form — or None when it is not that form. DST-aware per
+    row: the offset is the one in force on that date (-5 in summer, -6 in
+    winter). An ambiguous fall-back hour is read as its first occurrence."""
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        naive = _dt.strptime(str(stamp)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+    try:
+        import zoneinfo
+        local = naive.replace(tzinfo=zoneinfo.ZoneInfo("America/Chicago"), fold=0)
+    except Exception:
+        return None
+    return local.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _migrate_email_log_to_utc(conn) -> int:
+    """One-time, idempotent: move every email_log.sent_at written before
+    the UTC cutover from Chicago wall time to UTC (#89).
+
+    log_email wrote America/Chicago local time in SQLite's space form, the
+    form every reader (admin figures, the flood guard, the iOS history)
+    treats as UTC — so from 7pm to midnight Central nothing counted as
+    "today" and every time displayed 5-6 hours early. From now on log_email
+    writes UTC; the rows already there are converted once, inside one
+    write transaction, and the migration is recorded in data_migrations so
+    a second boot (or init_db on the same file) never shifts them again.
+    Returns how many rows were converted (0 when already applied)."""
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        done = conn.execute("SELECT 1 FROM data_migrations WHERE name=?",
+                            (EMAIL_LOG_UTC_MIGRATION,)).fetchone()
+        if done:
+            conn.rollback()
+            return 0
+        rows = conn.execute("SELECT id, sent_at FROM email_log WHERE sent_at IS NOT NULL").fetchall()
+        changed = 0
+        for row in rows:
+            utc = _chicago_to_utc(row[1])
+            if utc and utc != row[1]:
+                conn.execute("UPDATE email_log SET sent_at=? WHERE id=?", (utc, row[0]))
+                changed += 1
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (EMAIL_LOG_UTC_MIGRATION, f"{changed} of {len(rows)} rows moved from America/Chicago to UTC"))
+        conn.commit()
+        return changed
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # Loud, and retried on the next boot: the marker is only written in
+        # the same transaction as the conversion.
+        print(f"email_log UTC migration failed (will retry at next boot): {e}")
+        return 0
+
 
 def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH,
               status: str = "sent", error: str = None, message_id: str = None):
-    from datetime import datetime, timezone, timedelta
-    # Convert UTC to US/Chicago time
-    try:
-        import zoneinfo
-        chicago = zoneinfo.ZoneInfo("America/Chicago")
-        local_now = datetime.now(timezone.utc).astimezone(chicago).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        # Fallback: manual UTC-5 offset
-        local_now = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+    """One email_log row. sent_at is UTC in SQLite's own form ("YYYY-MM-DD
+    HH:MM:SS"), like every other ledger here (#89) — it was America/Chicago
+    wall time, which every reader took for UTC. Readers convert to a
+    restaurant's own clock when they render it (get_email_log_for_client)."""
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     conn.execute(
         "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status, error, message_id) "
         "VALUES (?,?,?,?,?,?,?,?)",
-        (restaurant_id, email_type, to_email, subject, local_now, status, error, message_id)
+        (restaurant_id, email_type, to_email, subject, now_utc, status, error, message_id)
     )
     conn.commit()
     conn.close()
@@ -5036,6 +5219,18 @@ def get_email_log(restaurant_id=None, limit=100, db_path: str = DB_PATH):
     return [dict(r) for r in rows]
 
 
+def _utc_stamp_to_local(stamp, tz):
+    """A UTC "YYYY-MM-DD HH:MM:SS" as wall time in `tz`, same form; the
+    stamp unchanged when it cannot be read or no zone is known."""
+    if not stamp or tz is None:
+        return stamp
+    try:
+        at = datetime.strptime(str(stamp)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+        return at.replace(tzinfo=timezone.utc).astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return stamp
+
+
 def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str = DB_PATH) -> list:
     """One restaurant's own email history, labelled for display.
 
@@ -5051,11 +5246,22 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
             "FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
             (restaurant_id, limit)
         ).fetchall()
+        tz_row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+    except sqlite3.OperationalError:
+        tz_row = None
     finally:
         conn.close()
+    try:
+        from time_utils import restaurant_tz
+        tz = restaurant_tz(tz_row["timezone"] if tz_row and "timezone" in tz_row.keys() else None)
+    except Exception:
+        tz = None
     out = []
     for r in rows:
         d = dict(r)
+        # sent_at is UTC (#89) — what the phone parses. sent_at_local is the
+        # restaurant's own wall clock, for a surface that prints the stamp.
+        d["sent_at_local"] = _utc_stamp_to_local(d.get("sent_at"), tz)
         d["label"] = email_type_label(d.get("email_type"))
         # Never surface a raw provider error to a restaurant owner; it's
         # noise to them and can echo internal detail. The status is the
@@ -6623,6 +6829,38 @@ def create_reset_token(email: str, db_path: str = DB_PATH, ttl_hours: float = 1,
     return token
 
 
+SET_PASSWORD_LINK_HOURS = 72
+
+
+def create_set_password_token(user_id: int, hours: int = SET_PASSWORD_LINK_HOURS,
+                              db_path: str = DB_PATH) -> str | None:
+    """A one-use link for a new owner to choose their own password — what the
+    welcome email carries instead of a plaintext temporary password (#12).
+
+    The same reset_token columns and /reset-password/<token> page as a
+    password reset, keyed by the login's id (an owner's address can be on
+    several logins) and valid for `hours`, because a welcome email is often
+    opened days after it arrives. Minting it changes nothing about the
+    current password and ends no session: a welcome that fails to send
+    leaves the login exactly as it was. None when the login is inactive."""
+    import secrets
+    from datetime import timedelta
+    conn = get_conn(db_path)
+    try:
+        user = conn.execute("SELECT id FROM users WHERE id=? AND COALESCE(is_active,1)=1",
+                            (user_id,)).fetchone()
+        if not user:
+            return None
+        token = secrets.token_urlsafe(32)
+        expires = (datetime.now(timezone.utc) + timedelta(hours=int(hours))).isoformat()
+        conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
+                     (_hash_reset_token(token), expires, user["id"]))
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
 def validate_reset_token(token: str, db_path: str = DB_PATH) -> dict | None:
     """Validate a reset token. Returns user row or None if invalid/expired."""
     from datetime import datetime, timezone
@@ -7728,6 +7966,26 @@ def in_service(restaurant) -> bool:
         except (KeyError, IndexError, TypeError):
             status = None
     return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
+
+
+PAYING_BILLING_STATES = {"active", "past_due"}
+
+
+def is_paying(restaurant) -> bool:
+    """A client with a live subscription — active, or past due while Stripe
+    retries the card (#155). The one check for "paying customer" every
+    sender and budget reads, beside in_service() for "still served": a past
+    due client stays in service AND paying (keeps the brief, onboarding and
+    the paid AI budget); trial, internal and pending are in service but not
+    paying; paused, churned and canceled are neither."""
+    if hasattr(restaurant, "billing_status"):
+        status = restaurant.billing_status
+    else:
+        try:
+            status = restaurant["billing_status"]
+        except (KeyError, IndexError, TypeError):
+            status = None
+    return (status or "").strip().lower() in PAYING_BILLING_STATES
 
 
 def in_service_sql(column: str = "billing_status") -> str:
@@ -9114,6 +9372,8 @@ CREATE TABLE IF NOT EXISTS onboarding_emails (
     restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
     email_type      TEXT    NOT NULL,  -- 'day_2', 'day_7', 'day_30'
     sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+    status          TEXT    DEFAULT 'sent',  -- sent | failed | covered | skipped
+    error           TEXT,
     UNIQUE(restaurant_id, email_type)
 );
 """
@@ -9134,18 +9394,80 @@ def get_onboarding_sent(restaurant_id: int, db_path: str = DB_PATH) -> list:
     conn.close()
     return [r["email_type"] for r in rows]
 
-def mark_onboarding_sent(restaurant_id: int, email_type: str, db_path: str = DB_PATH):
-    """Record that an onboarding email was sent. UNIQUE constraint prevents duplicates."""
+def mark_onboarding_sent(restaurant_id: int, email_type: str, db_path: str = DB_PATH,
+                         status: str = "sent", error: str = None):
+    """Record that an onboarding step is done with. UNIQUE constraint
+    prevents duplicates.
+
+    `status` says how (#16, #20): 'sent' — delivered to Resend; 'failed' —
+    refused for good (a suppressed address, a 4xx), not retried, and raised
+    to the operator; 'covered' — another location of the same owner got it;
+    'skipped' — deliberately not sent (a settled client, the switch off).
+    It was written after every attempt, delivered or not."""
     try:
         conn = get_conn(db_path)
-        conn.execute(
-            "INSERT OR IGNORE INTO onboarding_emails (restaurant_id, email_type) VALUES (?,?)",
-            (restaurant_id, email_type)
-        )
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO onboarding_emails (restaurant_id, email_type, status, error) "
+                "VALUES (?,?,?,?)", (restaurant_id, email_type, status, (error or "")[:300] or None))
+        except sqlite3.OperationalError:
+            # A database migrated before the status column: the fact still counts.
+            conn.execute("INSERT OR IGNORE INTO onboarding_emails (restaurant_id, email_type) VALUES (?,?)",
+                         (restaurant_id, email_type))
         conn.commit()
         conn.close()
     except Exception as e:
         print(f"mark_onboarding_sent error: {e}")
+
+
+def owner_got_onboarding_step(owner_email: str, email_type: str, exclude_restaurant_id: int = None,
+                              db_path: str = DB_PATH) -> bool:
+    """Whether another location of this owner (same owner_email) already
+    received onboarding step `email_type` (#20): the sequence goes to an
+    owner once, not once per location."""
+    if not owner_email:
+        return False
+    conn = get_conn(db_path)
+    try:
+        return conn.execute(
+            "SELECT 1 FROM onboarding_emails o JOIN restaurants r ON r.id=o.restaurant_id "
+            "WHERE LOWER(TRIM(r.owner_email))=LOWER(TRIM(?)) AND o.email_type=? AND o.restaurant_id != ? "
+            "AND COALESCE(o.status,'sent')='sent' LIMIT 1",
+            (owner_email, email_type, exclude_restaurant_id or -1)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def onboarding_started_at(restaurant_id: int, db_path: str = DB_PATH):
+    """When this restaurant's onboarding began, as a UTC "YYYY-MM-DD
+    HH:MM:SS" string, or None when it has not (#20).
+
+    It begins when the welcome email — the one that creates the login and
+    says so — was accepted for delivery. Onboarding mail used to count days
+    from created_at, so a prospect created before signing got "your
+    dashboard has been live for a day now… Log in anytime" before any login
+    existed. A client onboarded before welcome emails were logged against
+    their restaurant is matched by the owner's address instead; failing
+    that, a client who has already signed in has begun (from created_at)."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT owner_email, created_at FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        if not r:
+            return None
+        row = conn.execute(
+            "SELECT MIN(sent_at) FROM email_log WHERE email_type IN "
+            "('send_welcome_email', 'send_welcome_set_password_email') AND status IN ('sent', 'delivered') "
+            "AND (restaurant_id=? OR (restaurant_id IS NULL AND LOWER(to_email)=LOWER(?)))",
+            (restaurant_id, r["owner_email"] or "")).fetchone()
+        if row and row[0]:
+            return str(row[0])[:19]
+        signed_in = conn.execute("SELECT 1 FROM users WHERE restaurant_id=? AND COALESCE(is_admin,0)=0 "
+                                 "AND last_login IS NOT NULL LIMIT 1", (restaurant_id,)).fetchone()
+        if signed_in and r["created_at"]:
+            return str(r["created_at"]).replace("T", " ")[:19]
+        return None
+    finally:
+        conn.close()
 
 def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Return count of review requests sent this month."""
@@ -10548,31 +10870,105 @@ def get_schedule_share_status(restaurant_id: int, schedule_id: int, db_path: str
 # one restaurant and on staff at another (MOD-EML-7).
 GUEST_EMAIL_TYPES = frozenset({"guest_newsletter", "guest_review_request"})
 
+# Cavnar AI's OWN promotional mail: the onboarding tips and a referral to
+# someone who is not a customer. A 'marketing' suppression stops only these
+# (#45): an owner who marked the day-7 tips email as spam used to lose their
+# alerts, digests, briefs and DSR reports with it.
+MARKETING_EMAIL_TYPES = frozenset({
+    "send_onboarding_day2", "send_onboarding_day7", "send_onboarding_day30", "send_onboarding_nudge",
+    "referral",
+})
+
+# 'all' — every email (a hard bounce: the mailbox works for nobody).
+# 'marketing' — MARKETING_EMAIL_TYPES only (a complaint about owner mail).
+# 'guest' — GUEST_EMAIL_TYPES only (a complaint about a restaurant's guest
+# mail, which is about that list, not the address — MOD-EML-7).
+SUPPRESSION_SCOPES = ("all", "marketing", "guest")
+
+
+def _scope_set(scope) -> set:
+    """The scopes a stored value holds. NULL / '' / 'all' — every email (the
+    rows written before scopes existed were all-mail suppressions)."""
+    raw = str(scope or "").strip().lower()
+    if not raw or raw == "all":
+        return {"all"}
+    got = {s.strip() for s in raw.split(",") if s.strip() in SUPPRESSION_SCOPES}
+    return {"all"} if (not got or "all" in got) else got
+
+
+def _scope_str(scopes) -> str:
+    return "all" if "all" in scopes else ",".join(sorted(scopes))
+
+
+def suppressed_scope_sql(kind: str = "all", column: str = "scope") -> str:
+    """A WHERE fragment over email_suppressions: rows that stop mail of
+    `kind` ('guest' or 'marketing'; 'all' — only the every-email rows).
+    For the SQL readers (guest_email's subscriber list, the Campaign
+    Studio's counts) so they read scopes exactly as is_email_suppressed."""
+    every = f"({column} IS NULL OR TRIM({column}) IN ('', 'all'))"
+    if kind not in ("guest", "marketing"):
+        return every
+    return f"({every} OR (',' || {column} || ',') LIKE '%,{kind},%')"
+
+
+def operator_addresses() -> set:
+    """Where operator mail goes (config.will_email(), the sender address,
+    BUG_REPORT_EMAIL). Never suppressed (#101): one bounce on the operator's
+    own address silently stopped the off-site backup, the failure digest and
+    every platform alert, while the jobs logged success."""
+    import config
+    raw = {config.will_email(), config.from_email(), os.getenv("BUG_REPORT_EMAIL", "")}
+    return {a.strip().lower() for a in raw if a and "@" in a}
+
+
+def is_operator_address(email) -> bool:
+    return (email or "").strip().lower() in operator_addresses()
+
 
 def suppress_email(email: str, reason: str, detail: str = None, db_path: str = DB_PATH,
                    scope: str = None):
-    """Stop sending to an address. Idempotent; the first reason wins so a
-    later soft signal can't overwrite a hard bounce.
+    """Stop sending to an address. Idempotent. Returns True when the address
+    is (now) suppressed.
 
-    `scope` None stops every email (a hard bounce: the mailbox does not
-    work for anyone). 'guest' stops only GUEST_EMAIL_TYPES. A later
-    all-mail suppression widens a guest-only one; never the reverse."""
+    `scope` None or 'all' stops every email; 'marketing' only Cavnar AI's
+    own promotional mail; 'guest' only a restaurant's guest mail. Scopes
+    only ever WIDEN: a later all-mail bounce widens a marketing-only or
+    guest-only row (and its reason becomes the bounce); a narrower signal
+    never narrows a wider one, so a soft signal can't undo a hard bounce.
+
+    The operator's own addresses are never suppressed (#101). A bounce or
+    complaint on one is captured for the operator instead of written."""
     email = (email or "").strip().lower()
     if not email:
         return False
-    scope = scope or None
+    if is_operator_address(email):
+        try:
+            import ops
+            ops.capture(RuntimeError(f"operator address {reason}: {email} ({(detail or '')[:120]})"),
+                        job="operator_email_bounce", context="not suppressed: operator mail is never suppressed",
+                        db_path=db_path if db_path != DB_PATH else None)
+        except Exception:
+            pass
+        return False
+    new = _scope_set(scope)
     conn = get_conn(db_path)
     try:
-        conn.execute(
-            "INSERT OR IGNORE INTO email_suppressions (email, reason, detail, scope) VALUES (?,?,?,?)",
-            (email, reason, (detail or "")[:500], scope)
-        )
-        if scope is None:
-            conn.execute(
-                "UPDATE email_suppressions SET scope=NULL, reason=?, detail=? "
-                "WHERE email=? AND scope IS NOT NULL",
-                (reason, (detail or "")[:500], email))
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT scope FROM email_suppressions WHERE email=?", (email,)).fetchone()
+        if not row:
+            conn.execute("INSERT INTO email_suppressions (email, reason, detail, scope) VALUES (?,?,?,?)",
+                         (email, reason, (detail or "")[:500], _scope_str(new)))
+        else:
+            have = _scope_set(row["scope"])
+            merged = have | new
+            merged = {"all"} if "all" in merged else merged
+            if merged != have:
+                conn.execute("UPDATE email_suppressions SET scope=?, reason=?, detail=? WHERE email=?",
+                             (_scope_str(merged), reason, (detail or "")[:500], email))
         conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return True
@@ -10580,7 +10976,7 @@ def suppress_email(email: str, reason: str, detail: str = None, db_path: str = D
 
 def is_email_suppressed(email: str, db_path: str = DB_PATH, email_type: str = None) -> bool:
     """Whether a send of `email_type` to this address is suppressed. A
-    guest-scoped row only stops guest-facing mail."""
+    marketing- or guest-scoped row only stops that kind of mail."""
     email = (email or "").strip().lower()
     if not email:
         return False
@@ -10591,33 +10987,127 @@ def is_email_suppressed(email: str, db_path: str = DB_PATH, email_type: str = No
         conn.close()
     if not row:
         return False
-    scope = row["scope"] if "scope" in row.keys() else None
-    if not scope:
+    scopes = _scope_set(row["scope"] if "scope" in row.keys() else None)
+    if "all" in scopes:
         return True
-    return scope == "guest" and email_type in GUEST_EMAIL_TYPES
+    if "guest" in scopes and email_type in GUEST_EMAIL_TYPES:
+        return True
+    return "marketing" in scopes and email_type in MARKETING_EMAIL_TYPES
 
 
-def unsuppress_email(email: str, db_path: str = DB_PATH):
-    """Manual reinstatement — a bounce can be a full mailbox that got emptied,
-    or an address fixed after a typo."""
+def unsuppress_email(email: str, actor: str = None, reason: str = None, db_path: str = DB_PATH):
+    """Reinstate an address — a bounce can be a full mailbox since emptied,
+    or an address fixed after a typo. Audited: who lifted it, what the row
+    said, and why (#45). Returns the lifted row, or None when the address
+    was not suppressed."""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
     conn = get_conn(db_path)
     try:
-        conn.execute("DELETE FROM email_suppressions WHERE email=?", ((email or "").strip().lower(),))
+        row = conn.execute("SELECT email, reason, detail, scope, created_at FROM email_suppressions "
+                           "WHERE email=?", (email,)).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM email_suppressions WHERE email=?", (email,))
         conn.commit()
     finally:
         conn.close()
+    before = dict(row)
+    before["scope"] = _scope_str(_scope_set(before.get("scope")))
+    summary = (f"Email suppression lifted for {email} by {actor or 'unknown'} "
+               f"(was {before['scope']}: {before.get('reason')})" + (f" — {reason[:200]}" if reason else ""))
+    try:
+        import admin_events
+        recorder = getattr(admin_events, "record_admin_action", None)
+        if recorder is not None:
+            recorder(actor or "unknown", "email.unsuppressed", target=email, before=before, after=None,
+                     result="ok", summary=summary)
+        else:
+            admin_events.record("admin", "email.unsuppressed", email=email, summary=summary,
+                                payload={"actor": actor, "before": before, "reason": reason},
+                                db_path=db_path)
+    except Exception as e:
+        print(f"[suppression] audit of the lift for {email} failed: {e}")
+    return before
 
 
-def get_email_suppressions(limit: int = 200, db_path: str = DB_PATH) -> list:
+def _restaurant_addresses(conn, restaurant_id) -> dict:
+    """{address: [roles]} for every address this restaurant's mail goes to:
+    the owner, each login, the alert copies, the staff on file."""
+    out = {}
+
+    def _add(addr, role):
+        addr = (addr or "").strip().lower()
+        if "@" in addr:
+            out.setdefault(addr, [])
+            if role not in out[addr]:
+                out[addr].append(role)
+    r = conn.execute("SELECT owner_email, alert_extra_emails FROM restaurants WHERE id=?",
+                     (restaurant_id,)).fetchone()
+    if r:
+        _add(r["owner_email"], "owner")
+        for a in str(r["alert_extra_emails"] or "").split(","):
+            _add(a, "alert copy")
+    try:
+        for u in conn.execute("SELECT email FROM users WHERE restaurant_id=? AND COALESCE(is_active,1)=1",
+                              (restaurant_id,)).fetchall():
+            _add(u["email"], "login")
+    except sqlite3.OperationalError:
+        pass                          # users is auth's table, created by init_auth
+    try:
+        for s in conn.execute("SELECT email FROM staff_contacts WHERE restaurant_id=?",
+                              (restaurant_id,)).fetchall():
+            _add(s["email"], "staff")
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def get_email_suppressions(limit: int = 200, db_path: str = DB_PATH, q: str = None,
+                           restaurant_id: int = None) -> list:
+    """Suppressed addresses, newest first, each with its scope. `q` filters
+    by address substring; `restaurant_id` keeps only the addresses that
+    restaurant's mail goes to, each tagged with who it is (#45)."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT email, reason, detail, created_at FROM email_suppressions "
-            "ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        sql = "SELECT email, reason, detail, scope, created_at FROM email_suppressions"
+        args = []
+        if q:
+            sql += " WHERE email LIKE ?"
+            args.append(f"%{str(q).strip().lower()}%")
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                                               args + [int(limit)]).fetchall()]
+        roles = _restaurant_addresses(conn, restaurant_id) if restaurant_id else None
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    for r in rows:
+        r["scope"] = _scope_str(_scope_set(r.get("scope")))
+        r["operator"] = is_operator_address(r["email"])
+    if roles is not None:
+        rows = [dict(r, roles=roles[r["email"]]) for r in rows if r["email"] in roles]
+    return rows
+
+
+def suppressions_for_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Every suppressed address this restaurant's mail goes to, with the
+    role it plays there ("owner", "login", "alert copy", "staff") — what a
+    per-client "an owner's address is suppressed" issue reads (#45)."""
+    conn = get_conn(db_path)
+    try:
+        roles = _restaurant_addresses(conn, restaurant_id)
+        if not roles:
+            return []
+        marks = ",".join("?" * len(roles))
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT email, reason, detail, scope, created_at FROM email_suppressions WHERE email IN ({marks}) "
+            "ORDER BY created_at DESC", list(roles)).fetchall()]
+    finally:
+        conn.close()
+    for r in rows:
+        r["scope"] = _scope_str(_scope_set(r.get("scope")))
+        r["roles"] = roles.get(r["email"], [])
+    return rows
 
 
 def mark_email_engagement(message_id: str, kind: str, db_path: str = DB_PATH) -> bool:
@@ -10674,20 +11164,138 @@ def email_engagement(restaurant_id: int = None, days: int = 30, db_path: str = D
     return rows
 
 
+# How far along a sent email's delivery state is. Resend's events arrive in
+# any order, and every one used to overwrite the status: a late "delivered"
+# turned a bounce back into a delivery, a late "delayed" undid "delivered"
+# (#59). A state only ever moves forward.
+DELIVERY_STATUS_RANK = {"sent": 0, "delayed": 1, "delivered": 2, "bounced": 3, "complained": 4}
+
+
 def mark_email_delivery_event(message_id: str, status: str, detail: str = None, db_path: str = DB_PATH):
-    """Reconcile a Resend webhook back onto the row we logged at send time."""
-    if not message_id:
+    """Reconcile a Resend webhook back onto the row we logged at send time.
+    Only moves the status forward (DELIVERY_STATUS_RANK). Returns True when
+    a row changed."""
+    if not message_id or status not in DELIVERY_STATUS_RANK:
         return False
+    rank_sql = ("CASE COALESCE(status,'sent') " +
+                " ".join(f"WHEN '{s}' THEN {r}" for s, r in DELIVERY_STATUS_RANK.items()) +
+                " ELSE 0 END")
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "UPDATE email_log SET status=?, error=COALESCE(?, error) WHERE message_id=?",
-            (status, (detail or None), message_id)
+            f"UPDATE email_log SET status=?, error=COALESCE(?, error) WHERE message_id=? "
+            f"AND status != 'failed' AND {rank_sql} < ?",
+            (status, (detail or None), message_id, DELIVERY_STATUS_RANK[status])
         )
         conn.commit()
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def email_delivery_stats(days: int = 7, restaurant_id: int = None, db_path: str = DB_PATH) -> dict:
+    """What happened to the email sent in the window, by delivery state (#59):
+    attempted, failed (never accepted), accepted (sent + delayed, still
+    in flight), delivered, bounced, complained, and the bounce and complaint
+    rates over everything Resend accepted. A bounce is not a delivery."""
+    sql = ("SELECT COALESCE(status,'sent') AS status, COUNT(*) AS n FROM email_log "
+           "WHERE sent_at >= datetime('now', ?)")
+    args = [f"-{int(days)} days"]
+    if restaurant_id is not None:
+        sql += " AND restaurant_id=?"
+        args.append(restaurant_id)
+    conn = get_conn(db_path)
+    try:
+        counts = {r["status"]: r["n"] for r in conn.execute(sql + " GROUP BY 1", args).fetchall()}
+    finally:
+        conn.close()
+    accepted = sum(n for s, n in counts.items() if s in DELIVERY_STATUS_RANK)
+    out = {"days": int(days), "attempted": sum(counts.values()), "failed": counts.get("failed", 0),
+           "accepted": accepted, "in_flight": counts.get("sent", 0) + counts.get("delayed", 0),
+           "delivered": counts.get("delivered", 0), "bounced": counts.get("bounced", 0),
+           "complained": counts.get("complained", 0)}
+    out["bounce_rate"] = round(100.0 * out["bounced"] / accepted, 2) if accepted else None
+    out["complaint_rate"] = round(100.0 * out["complained"] / accepted, 3) if accepted else None
+    return out
+
+
+# ── Inbound provider webhooks: last verified event, signature failures ──────
+
+INBOUND_WEBHOOK_CAPTURE_MINUTES = 60
+
+
+def record_inbound_webhook(provider: str, verified: bool, event_type: str = None, reason: str = None,
+                           db_path: str = DB_PATH) -> bool:
+    """One inbound webhook request from `provider` ('resend', 'twilio',
+    'twilio_status'): verified, or refused on its signature (#74).
+
+    A verified event stamps last_verified_at and resets the failure run; a
+    bounce or complaint also counts (#59). A refused one counts, and returns
+    True when the operator should be told now — at most once an hour per
+    provider, so a rotated secret pages once, not on every retry. Never
+    raises: a ledger hiccup must not change the webhook's answer."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    now = _dt.now(_tz.utc)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        conn.execute("INSERT OR IGNORE INTO inbound_webhook_health (provider) VALUES (?)", (provider,))
+        if verified:
+            conn.execute(
+                "UPDATE inbound_webhook_health SET last_verified_at=?, last_event_type=?, "
+                "verified_count=verified_count+1, failed_since_verified=0, "
+                "bounces=bounces+?, complaints=complaints+?, "
+                "last_bounce_at=CASE WHEN ? THEN ? ELSE last_bounce_at END, "
+                "last_complaint_at=CASE WHEN ? THEN ? ELSE last_complaint_at END WHERE provider=?",
+                (stamp, (event_type or "")[:60] or None,
+                 1 if event_type == "email.bounced" else 0, 1 if event_type == "email.complained" else 0,
+                 1 if event_type == "email.bounced" else 0, stamp,
+                 1 if event_type == "email.complained" else 0, stamp, provider))
+            conn.commit()
+            return False
+        row = conn.execute("SELECT last_capture_at FROM inbound_webhook_health WHERE provider=?",
+                           (provider,)).fetchone()
+        due = True
+        if row and row["last_capture_at"]:
+            try:
+                last = _dt.strptime(row["last_capture_at"][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+                due = now - last >= _td(minutes=INBOUND_WEBHOOK_CAPTURE_MINUTES)
+            except ValueError:
+                due = True
+        conn.execute(
+            "UPDATE inbound_webhook_health SET last_failed_at=?, failed_count=failed_count+1, "
+            "failed_since_verified=failed_since_verified+1, last_failure_reason=?, "
+            "last_capture_at=CASE WHEN ? THEN ? ELSE last_capture_at END WHERE provider=?",
+            (stamp, (reason or "")[:200] or None, 1 if due else 0, stamp, provider))
+        conn.commit()
+        return due
+    except Exception as e:
+        print(f"[inbound-webhook] {provider} ledger write failed: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def inbound_webhook_health(db_path: str = DB_PATH, stale_hours: int = 24) -> dict:
+    """{provider: {...row, "stale", "failing"}} — `stale` when no verified
+    event arrived in `stale_hours`; `failing` when requests are being
+    refused and none has verified since (the rotated-secret signature)."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM inbound_webhook_health").fetchall()]
+    finally:
+        conn.close()
+    cutoff = (_dt.now(_tz.utc) - _td(hours=stale_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    out = {}
+    for r in rows:
+        r["stale"] = not r.get("last_verified_at") or r["last_verified_at"] < cutoff
+        r["failing"] = bool(r.get("failed_since_verified"))
+        out[r["provider"]] = r
+    return out
 
 
 # ── Marketing unsubscribe tokens ────────────────────────────────────────────
@@ -10708,6 +11316,68 @@ def _link_secret(db_path: str = None) -> bytes:
         return row["value"].encode()
     finally:
         conn.close()
+
+
+def kept_secret_version(name: str, db_path: str = None) -> int:
+    """The newest minted version of the versioned kept secret `name` (1 when
+    none has been minted yet)."""
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT name FROM app_secrets WHERE name LIKE ?", (f"{name}:v%",)).fetchall()
+    finally:
+        conn.close()
+    versions = []
+    for r in rows:
+        try:
+            versions.append(int(str(r["name"]).rsplit(":v", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return max(versions) if versions else 1
+
+
+def kept_secret(name: str, version: int = None, db_path: str = None):
+    """This install's own signing secret `name` at `version` (the newest
+    when None), minted once and kept in app_secrets (#133).
+
+    Printed table-tent QR codes and emailed pay links were HMAC'd with
+    SECRET_KEY, so rotating that key 404'd every one of them — the same
+    failure unsubscribe links had before _link_secret (MOD-EML-9). A kept
+    secret survives SECRET_KEY; its VERSION rides in the token, so a
+    deliberate rotation (rotate_kept_secret) signs new links with the next
+    version while every link already printed keeps verifying. Only the
+    current version is ever minted on demand; a token naming a version that
+    was never minted gets None (and fails verification)."""
+    import secrets as _secrets
+    current = kept_secret_version(name, db_path)
+    v = int(version) if version else current
+    key = f"{name}:v{v}"
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        row = conn.execute("SELECT value FROM app_secrets WHERE name=?", (key,)).fetchone()
+        if not row and v == current:
+            conn.execute("INSERT OR IGNORE INTO app_secrets (name, value) VALUES (?, ?)",
+                         (key, _secrets.token_hex(32)))
+            conn.commit()
+            row = conn.execute("SELECT value FROM app_secrets WHERE name=?", (key,)).fetchone()
+        return row["value"].encode() if row else None
+    finally:
+        conn.close()
+
+
+def rotate_kept_secret(name: str, db_path: str = None) -> int:
+    """Mint the next version of `name`; new links are signed with it and
+    every older version keeps verifying. Returns the new version."""
+    import secrets as _secrets
+    nxt = kept_secret_version(name, db_path) + 1
+    kept_secret(name, db_path=db_path)          # the current one exists before it is superseded
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("INSERT OR IGNORE INTO app_secrets (name, value) VALUES (?, ?)",
+                     (f"{name}:v{nxt}", _secrets.token_hex(32)))
+        conn.commit()
+    finally:
+        conn.close()
+    return nxt
 
 
 def _legacy_link_secret() -> bytes:
@@ -10773,6 +11443,33 @@ def verify_guest_optout_token(token: str):
     return email if ok else None
 
 
+# Cavnar AI's own marketing to someone who is not a customer (a referral) has
+# no restaurant behind the recipient, so its opt-out is signed over the
+# ADDRESS and lifts it out of MARKETING_EMAIL_TYPES only (#159). Served at
+# /u/<token> beside the restaurant token; the "a." prefix tells them apart.
+def marketing_optout_token(email: str) -> str:
+    import base64
+    email = (email or "").strip().lower()
+    enc = base64.urlsafe_b64encode(email.encode()).decode().rstrip("=")
+    return f"a.{enc}.{_link_sig(_link_secret(), f'marketing-optout:{email}')}"
+
+
+def verify_marketing_optout_token(token: str):
+    """The address a marketing opt-out token names, or None."""
+    import base64, hmac as _hmac
+    try:
+        prefix, enc, sig = (token or "").split(".", 2)
+        if prefix != "a":
+            return None
+        email = base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4)).decode()
+    except Exception:
+        return None
+    if "@" not in email:
+        return None
+    ok = _hmac.compare_digest(_link_sig(_link_secret(), f"marketing-optout:{email}"), sig)
+    return email if ok else None
+
+
 # Human labels for email_log.email_type. The stored value is the sender
 # function name — precise and greppable — but "send_onboarding_day2" is not
 # what an owner should read in their own email history.
@@ -10799,6 +11496,14 @@ EMAIL_TYPE_LABELS = {
     "send_bug_report_email":          "Bug report",
     "send_signup_admin_alert":        "New signup (internal)",
     "send_morning_brief":             "Morning brief",
+    "send_welcome_set_password_email": "Dashboard access",
+    "send_lifecycle_day60":           "Two-month review",
+    "send_lifecycle_day90":           "Quarter-one review",
+    "send_lifecycle_day180":          "Six-month review",
+    "send_quarterly_summary":         "Quarterly summary",
+    "send_value_recap_email":         "What Cavnar AI did for you",
+    "send_onboarding_nudge":          "Getting set up",
+    "send_issue_fallback_email":      "Issue could not be texted",
 }
 
 

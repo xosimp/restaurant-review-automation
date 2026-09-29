@@ -154,15 +154,12 @@ _MENU_MAX_REDIRECTS = 3
 
 
 def _public_url(url: str) -> bool:
+    """Whether `url` may be fetched: net_safety's rule, the one outbound
+    webhooks use."""
     try:
-        from webhooks import _validate_webhook_url, InvalidWebhookURL
-    except Exception:
-        return False
-    try:
-        _validate_webhook_url(url)
+        import net_safety
+        net_safety.vet(url)
         return True
-    except InvalidWebhookURL:
-        return False
     except Exception:
         return False
 
@@ -170,13 +167,20 @@ def _public_url(url: str) -> bool:
 def _get_public(url, headers, timeout):
     """GET `url`, following at most _MENU_MAX_REDIRECTS redirects by hand and
     refusing any hop — the first included — that is not a public address.
-    Returns the final response, or None when a hop was refused."""
+    Returns the final response, or None when a hop was refused.
+
+    Each hop goes through net_safety.safe_get (#156): the host is resolved
+    once and the connection made to the address that was checked. The check
+    used to resolve it, and then requests resolved it again to connect — a
+    name answering public to the first and private to the second passed."""
+    import net_safety
     from urllib.parse import urljoin
     for _hop in range(_MENU_MAX_REDIRECTS + 1):
-        if not _public_url(url):
+        try:
+            r = net_safety.safe_get(url, headers=headers, timeout=timeout)
+        except net_safety.UnsafeURL:
             print(f"[fetch_menu_from_url] refused a non-public address: {url[:120]}")
             return None
-        r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=False)
         if r.status_code in (301, 302, 303, 307, 308):
             location = (r.headers or {}).get("Location") or (r.headers or {}).get("location")
             if not location:

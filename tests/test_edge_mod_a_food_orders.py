@@ -60,7 +60,7 @@ def _redirect(db_path, monkeypatch):
 def mailed(monkeypatch):
     import emails
     out = []
-    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **kw: out.append(kw) or {"id": "e1"})
+    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **kw: out.append(kw) or emails.SendResult(True, message_id="e1"))
     return out
 
 
@@ -172,27 +172,37 @@ def test_a_double_click_on_send_puts_one_po_in_the_suppliers_inbox(apps, db_path
     assert len(_pos(db_path, rid)) == 1 and len(mailed) == 1
 
 
-def test_two_simultaneous_sends_are_not_both_allowed_through_the_cooldown(monkeypatch):
-    """Both request threads read the cooldown before either writes it — the
-    interleaving the audit's probe hit 1 time in 2,000, forced here with a
-    barrier inside the read so it happens every run."""
+def test_two_simultaneous_sends_are_not_both_allowed_through_the_cooldown(db_path):
+    """Two request threads — or, now, two workers — pressing Send at the same
+    instant: the cooldown lives in the database (ops.claim_cooldown, one
+    atomic upsert, fix round E #96), so exactly one is allowed. It was a
+    process-local dict under a lock, which a second worker would not see."""
     import threading
     barrier = threading.Barrier(2)
-
-    class ReadThenWait(dict):
-        def get(self, *a, **k):
-            v = dict.get(self, *a, **k)
-            try:
-                barrier.wait(timeout=1)
-            except threading.BrokenBarrierError:
-                pass
-            return v
-    monkeypatch.setattr(client_api, "_order_send_last", ReadThenWait())
     results = []
-    threads = [threading.Thread(target=lambda: results.append(client_api._order_send_allowed(1))) for _ in range(2)]
+
+    def press():
+        try:
+            barrier.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        results.append(client_api._order_send_allowed(1, ["a@fresh.test"]))
+    threads = [threading.Thread(target=press) for _ in range(2)]
     [t.start() for t in threads]
     [t.join(5) for t in threads]
     assert sorted(results) == [False, True]
+
+
+def test_the_cooldown_is_held_in_the_database_not_the_process(db_path):
+    """A second worker (or a restart) sees the first one's cooldown."""
+    assert client_api._order_send_allowed(1, ["a@fresh.test"]) is True
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT job_key FROM job_period_claims WHERE job_key LIKE 'cooldown:supplier_order:%'").fetchall()
+    conn.close()
+    assert [r["job_key"] for r in rows] == ["cooldown:supplier_order:1:a@fresh.test"]
+    assert client_api._order_send_allowed(1, ["a@fresh.test"]) is False
+    client_api._release_order_send(1, ["a@fresh.test"])
+    assert client_api._order_send_allowed(1, ["a@fresh.test"]) is True
 
 
 def test_sending_supplier_a_then_supplier_b_inside_a_minute_sends_both(apps, db_path, mailed):

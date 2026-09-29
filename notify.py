@@ -6,6 +6,8 @@ by urgent_via_sms and urgent_via_email per restaurant.
 import os
 import re
 import sqlite3
+import threading
+from contextlib import contextmanager
 import config
 import html as _html
 import requests
@@ -176,8 +178,218 @@ def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bo
     return hmac.compare_digest(expected, signature)
 
 
-def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None) -> bool:
-    """Send a single SMS via Twilio. Returns True on success.
+# ── SMS: one ledger, one "may we text this number" check (fix round E) ─────
+#
+# send_sms returned a bool and printed Twilio's answer, so a suspended
+# account, an A2P rejection or a STOP left no trace anywhere (#14). Every
+# attempt now writes an sms_log row — including the ones never sent (a STOP,
+# Twilio not configured) — and Twilio's status callback
+# (/webhooks/twilio/status, webhook_routes) moves an accepted text on to
+# delivered, undelivered or failed.
+
+SMS_STATUS_CALLBACK_PATH = "/webhooks/twilio/status"
+
+# Twilio error codes that are about the ACCOUNT, not one recipient: bad
+# credentials, a suspended or inactive account, a number or service that
+# cannot send, carrier filtering of the campaign, an unregistered A2P number.
+# Every text is failing when one of these appears, so the operator is told
+# (at most once an hour per code) instead of it being printed and lost.
+SMS_ACCOUNT_ERROR_CODES = {"20003", "20005", "21606", "21608", "21611", "21408", "21703",
+                           "30002", "30007", "30032", "30034"}
+# Twilio error codes that are about THIS recipient and will not change by
+# retrying: an invalid or non-mobile number, an unreachable handset, a STOP.
+SMS_PERMANENT_ERROR_CODES = {"21211", "21217", "21610", "21612", "21614", "30004", "30005", "30006"}
+SMS_STOP_ERROR_CODE = "21610"
+SMS_ACCOUNT_ALARM_MINUTES = 60
+
+# Delivery states in the order Twilio reports them; a status callback only
+# ever moves a row forward (a late "sent" must not undo "delivered").
+_SMS_STATUS_RANK = {"accepted": 0, "queued": 1, "sending": 2, "sent": 3,
+                    "delivered": 4, "undelivered": 4, "failed": 4, "read": 5}
+
+_sms_local = threading.local()
+
+
+class SmsResult:
+    """What happened to one text. Truthy when Twilio accepted it.
+
+    `permanent` — will not change by retrying (a STOP, an invalid number, a
+    number without consent). `account_level` — every text is failing (bad
+    credentials, a suspended account, carrier filtering). Neither — worth
+    another go later (a 429, a 5xx, Twilio not configured right now)."""
+    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id")
+
+    def __init__(self, ok, sid=None, status=None, error_code=None, error=None, permanent=False,
+                 account_level=False, log_id=None):
+        self.ok, self.sid, self.status = bool(ok), sid, status
+        self.error_code = str(error_code) if error_code not in (None, "") else None
+        self.error, self.permanent, self.account_level, self.log_id = error, permanent, account_level, log_id
+
+    def __bool__(self):
+        return self.ok
+
+    def __repr__(self):
+        return (f"<SmsResult ok={self.ok} status={self.status} code={self.error_code} "
+                f"permanent={self.permanent} err={self.error!r}>")
+
+
+@contextmanager
+def sms_context(restaurant_id=None):
+    """Attribute every text sent inside the block to `restaurant_id` in
+    sms_log. A context rather than a send_sms parameter because send_sms's
+    signature is what fifteen call sites and their tests already use."""
+    prev = getattr(_sms_local, "rid", None)
+    _sms_local.rid = restaurant_id
+    try:
+        yield
+    finally:
+        _sms_local.rid = prev
+
+
+def last_sms_result():
+    """The SmsResult of the last send_sms on this thread, or None (none made,
+    or clear_last_sms_result() since). How a caller that goes through
+    send_sms — the one path every caller and test stub shares — reads the
+    richer outcome after it."""
+    return getattr(_sms_local, "last", None)
+
+
+def clear_last_sms_result():
+    _sms_local.last = None
+
+
+def _sms_hash(phone: str) -> str:
+    import hashlib
+    return hashlib.sha256((phone or "").encode("utf-8")).hexdigest()[:32]
+
+
+def _log_sms(restaurant_id, use_case, phone, status, error_code=None, error=None, sid=None, db_path=None):
+    """One sms_log row; returns its id. Never raises: a ledger hiccup must not
+    turn a delivered text into an exception at the call site. The number is
+    stored as a hash and its last four digits, never whole."""
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO sms_log (restaurant_id, use_case, to_hash, to_last4, status, error_code, error, "
+                "provider_sid, updated_at) VALUES (?,?,?,?,?,?,?,?, datetime('now'))",
+                (restaurant_id, use_case, _sms_hash(phone), (phone or "")[-4:] or None, status,
+                 str(error_code) if error_code not in (None, "") else None,
+                 (str(error)[:300] if error else None), sid))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] sms_log write failed: {e}")
+        return None
+
+
+def _twilio_error(resp):
+    """(code, message) from a Twilio error response; either may be None."""
+    code, message = None, None
+    try:
+        body = resp.json() or {}
+        code = body.get("code")
+        message = body.get("message")
+    except Exception:
+        pass
+    if not message:
+        message = (getattr(resp, "text", "") or "")[:200] or f"HTTP {getattr(resp, 'status_code', '?')}"
+    return (str(code) if code not in (None, "") else None), message
+
+
+def _alarm_sms_account_error(code, message, db_path=None):
+    """Tell the operator — once an hour per error code — that texts are
+    failing for a reason that affects every text, not one recipient."""
+    try:
+        import ops
+        if not ops.claim_cooldown(f"sms_account_error:{code}", SMS_ACCOUNT_ALARM_MINUTES):
+            return
+        ops.capture(RuntimeError(f"Twilio account-level error {code}: {message}"),
+                    job="sms_provider", context="every text is affected, not one recipient",
+                    db_path=db_path)
+    except Exception:
+        pass
+
+
+def record_platform_stop(phone, source="twilio_21610", db_path=None):
+    """Twilio says this number texted STOP to us (error 21610): record the
+    platform STOP the inbound webhook would have (guest_sms_optouts
+    restaurant 0), so every sender's STOP check sees it before the next
+    attempt reaches Twilio."""
+    phone = _normalize_phone(phone)
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            new = conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)",
+                               (phone,)).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if new:
+            try:
+                import guest_marketing
+                guest_marketing.record_consent_event(0, "opted_out", source, phone=phone,
+                                                     detail="Twilio refused a text: the number replied STOP",
+                                                     db_path=db_path or DB_PATH)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[notify] platform STOP not recorded: {e}")
+
+
+def sms_block_reason(phone, restaurant_id=None, purpose="alert", db_path: str = DB_PATH):
+    """Why `phone` may NOT be texted for `purpose` at this restaurant, or
+    None when it may — the one check every sender uses (#107).
+
+    Two things, always both: a platform STOP (any STOP the number ever sent
+    us — guest_sms_optouts restaurant 0), and consent for the purpose:
+      'alert' — a consented alert contact at this restaurant (owner alerts,
+                issues, escalations, the pre-shift nudge, cover requests);
+      'staff' — a staff login here who ticked "text me when my schedule is
+                posted" (memberships.schedule_texts_at);
+      'otp' / 'guest' — consent is the caller's (a code the person asked
+                for; guest_marketing's own consent model).
+    Without a restaurant_id only the STOP is checked."""
+    if not phone or not str(phone).strip():
+        return "no phone number"
+    if sms_stopped_phones([phone], db_path=db_path):
+        return "the number replied STOP"
+    if restaurant_id is None or purpose not in ("alert", "staff"):
+        return None
+    want = _normalize_phone(phone)
+    try:
+        conn = models.get_conn(db_path)
+    except Exception:
+        return None                       # fail open on the consent read only; the STOP held
+    try:
+        if purpose == "alert":
+            rows = conn.execute("SELECT phone FROM alert_contacts WHERE restaurant_id=? "
+                                "AND COALESCE(sms_consent,0)=1", (restaurant_id,)).fetchall()
+            have = {_normalize_phone(r["phone"]) for r in rows if r["phone"]}
+        else:
+            rows = conn.execute(
+                "SELECT u.phone AS phone, m.claimed_by_phone AS claimed FROM memberships m "
+                "LEFT JOIN users u ON u.id=m.user_id WHERE m.restaurant_id=? AND COALESCE(m.is_active,1)=1 "
+                "AND m.schedule_texts_at IS NOT NULL", (restaurant_id,)).fetchall()
+            have = {_normalize_phone(p) for r in rows for p in (r["phone"], r["claimed"]) if p}
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return None if want in have else "no SMS consent on file for this number"
+
+
+def textable(phone, restaurant_id=None, purpose="alert", db_path: str = DB_PATH) -> bool:
+    """True when `phone` may be texted for `purpose` (see sms_block_reason)."""
+    return sms_block_reason(phone, restaurant_id, purpose, db_path) is None
+
+
+def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
+                    restaurant_id: int = None, db_path: str = None) -> SmsResult:
+    """Send one SMS via Twilio and return what happened (SmsResult), with an
+    sms_log row for every attempt.
 
     `validity_seconds` is Twilio's ValidityPeriod: how long the message may
     wait in Twilio's queue before it is dropped rather than delivered late.
@@ -201,11 +413,29 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
     TWILIO_GUEST_MESSAGING_SERVICE_SID. Sending OTP traffic through the
     alert service (or vice versa) is exactly the "mixed use case on one
     campaign" pattern carriers filter hardest.
+
+    A number that texted STOP is never sent an alert, staff or guest text
+    (#107) — the attempt is logged 'blocked' and never reaches Twilio. A
+    verification code ("otp") is the person's own request and is not
+    blocked here.
     """
-    if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
-        print(f"[notify] Twilio not configured — would send to {to_phone}: {message[:80]}")
-        return False
+    rid = restaurant_id if restaurant_id is not None else getattr(_sms_local, "rid", None)
     phone = _normalize_phone(to_phone)
+
+    def _done(res):
+        _sms_local.last = res
+        return res
+
+    if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
+        log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
+                          "the number replied STOP", db_path=db_path)
+        return _done(SmsResult(False, status="blocked", error_code=SMS_STOP_ERROR_CODE,
+                               error="the number replied STOP", permanent=True, log_id=log_id))
+    if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
+        print(f"[notify] Twilio not configured — would send to …{phone[-4:]}: {message[:80]}")
+        log_id = _log_sms(rid, use_case, phone, "not_configured", None, "Twilio is not configured",
+                          db_path=db_path)
+        return _done(SmsResult(False, status="not_configured", error="Twilio is not configured", log_id=log_id))
     data = {"To": phone, "Body": message}
     # No fallback from "otp" to the alert service on a missing OTP SID —
     # that would put verification-code traffic on the wrong campaign, which
@@ -217,7 +447,10 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
     elif use_case == "staff":
         if not TWILIO_STAFF_MESSAGING_SERVICE_SID:
             print("[notify] TWILIO_STAFF_MESSAGING_SERVICE_SID unset: staff text not sent")
-            return False
+            log_id = _log_sms(rid, use_case, phone, "not_configured", None,
+                              "TWILIO_STAFF_MESSAGING_SERVICE_SID is not set", db_path=db_path)
+            return _done(SmsResult(False, status="not_configured",
+                                   error="TWILIO_STAFF_MESSAGING_SERVICE_SID is not set", log_id=log_id))
         service_sid = TWILIO_STAFF_MESSAGING_SERVICE_SID
     elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
         service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
@@ -235,11 +468,15 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
         data["From"] = TWILIO_FROM
     if validity_seconds is not None:
         data["ValidityPeriod"] = str(max(1, min(int(validity_seconds), GUEST_SMS_MAX_VALIDITY)))
+    # Twilio reports delivered / undelivered / failed here, signed, and
+    # webhook_routes moves the sms_log row on (#14).
+    data["StatusCallback"] = config.base_url() + SMS_STATUS_CALLBACK_PATH
     # One retry for a failure Twilio says is transient (429, 5xx) or a
     # connection that failed before a response (AI-27): a single blip lost an
     # owner's health alert text. NOT for a read timeout — Twilio's Messages
     # API has no idempotency key, and a request it accepted but did not answer
     # in time would be sent twice. A 4xx is permanent and is not retried.
+    last = None
     for attempt in (1, 2):
         try:
             r = requests.post(
@@ -249,19 +486,176 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
                 timeout=10,
             )
             if r.status_code == 201:
-                return True
-            print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
+                sid, status = None, "accepted"
+                try:
+                    body = r.json() or {}
+                    sid, status = body.get("sid"), body.get("status") or "accepted"
+                except Exception:
+                    pass
+                log_id = _log_sms(rid, use_case, phone, status, None, None, sid, db_path=db_path)
+                return _done(SmsResult(True, sid=sid, status=status, log_id=log_id))
+            code, message_text = _twilio_error(r)
+            print(f"[notify] Twilio error {r.status_code}: {message_text[:200]}")
+            account = code in SMS_ACCOUNT_ERROR_CODES or r.status_code == 401
+            permanent = code in SMS_PERMANENT_ERROR_CODES
+            last = SmsResult(False, status="failed", error_code=code or str(r.status_code),
+                             error=message_text, permanent=permanent and not account, account_level=account)
             if not (r.status_code == 429 or r.status_code >= 500):
-                return False
+                break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
+            last = SmsResult(False, status="failed", error=str(e)[:300])
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
-            return False
+            last = SmsResult(False, status="failed", error=str(e)[:300])
+            break
         if attempt == 1:
             import time as _time
             _time.sleep(1.0)
-    return False
+    # Not `last or …`: SmsResult is falsy when it failed, which would throw
+    # away the real code and reason (the same trap emails.deliver notes).
+    if last is None:
+        last = SmsResult(False, status="failed", error="unknown SMS failure")
+    last.log_id = _log_sms(rid, use_case, phone, "failed", last.error_code, last.error, db_path=db_path)
+    if last.error_code == SMS_STOP_ERROR_CODE:
+        record_platform_stop(phone, db_path=db_path)
+    if last.account_level:
+        _alarm_sms_account_error(last.error_code, last.error, db_path=db_path)
+    return _done(last)
+
+
+def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
+             restaurant_id: int = None) -> bool:
+    """Send a single SMS via Twilio. Returns True when Twilio accepted it.
+    send_sms_result is the same send with the whole outcome; both write
+    sms_log, and last_sms_result() holds this thread's latest outcome."""
+    return bool(send_sms_result(to_phone, message, use_case=use_case, validity_seconds=validity_seconds,
+                                restaurant_id=restaurant_id).ok)
+
+
+def send_sms_outcome(to_phone: str, message: str, use_case: str = "alert", restaurant_id: int = None,
+                     validity_seconds: int = None) -> SmsResult:
+    """send_sms — the one path every sender and every test stand-in shares,
+    looked up by name at call time — returning the whole outcome: the
+    SmsResult of the real send (last_sms_result), or just the bool a
+    stand-in answered. Attributed to `restaurant_id` in sms_log."""
+    clear_last_sms_result()
+    kw = {"use_case": use_case}
+    if validity_seconds is not None:
+        kw["validity_seconds"] = validity_seconds
+    with sms_context(restaurant_id):
+        ok = send_sms(to_phone, message, **kw)
+    res = last_sms_result()
+    return res if res is not None else SmsResult(bool(ok))
+
+
+def update_sms_status(sid: str, status: str, error_code=None, error=None, db_path: str = None) -> bool:
+    """Twilio's status callback for one message: move its sms_log row forward
+    (never back: a late 'sent' does not undo 'delivered'). An undelivered or
+    failed text with an account-level code tells the operator; a 21610 records
+    the platform STOP. Returns True when a row changed."""
+    status = (status or "").strip().lower()
+    if not sid or status not in _SMS_STATUS_RANK:
+        return False
+    rank_sql = ("CASE COALESCE(status,'accepted') " +
+                " ".join(f"WHEN '{s}' THEN {r}" for s, r in _SMS_STATUS_RANK.items()) + " ELSE -1 END")
+    code = str(error_code) if error_code not in (None, "") else None
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            cur = conn.execute(
+                f"UPDATE sms_log SET status=?, error_code=COALESCE(?, error_code), error=COALESCE(?, error), "
+                f"updated_at=datetime('now') WHERE provider_sid=? AND {rank_sql} < ?",
+                (status, code, (str(error)[:300] if error else None), sid, _SMS_STATUS_RANK[status]))
+            conn.commit()
+            changed = cur.rowcount > 0
+            row = conn.execute("SELECT to_hash FROM sms_log WHERE provider_sid=? LIMIT 1", (sid,)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] sms status update failed for {sid}: {e}")
+        return False
+    if status in ("undelivered", "failed") and code in SMS_ACCOUNT_ERROR_CODES:
+        _alarm_sms_account_error(code, error or f"a text was {status}", db_path=db_path)
+    return changed
+
+
+def messaging_problems(db_path: str = None, stale_hours: int = 24) -> list:
+    """What is wrong with the messaging channels right now, one sentence each
+    — for the operator's platform check to page on (ops.check_platform_sla,
+    wired by the integration wave). Empty when all is well. Never raises.
+
+    - an inbound webhook refusing requests with none verified since (a
+      rotated or missing secret: bounces, STOPs or delivery reports lost);
+    - no verified Resend event in `stale_hours` while mail is being sent;
+    - Twilio account-level errors in the last hour;
+    - an operator address sitting on the suppression list (#101)."""
+    out = []
+    try:
+        health = models.inbound_webhook_health(db_path=db_path or DB_PATH, stale_hours=stale_hours)
+        names = {"resend": "Resend (bounces and complaints)", "twilio": "Twilio inbound texts (STOP / START)",
+                 "twilio_status": "Twilio delivery reports"}
+        for provider, h in health.items():
+            if h.get("failing"):
+                out.append(f"{names.get(provider, provider)} webhook: {h.get('failed_since_verified')} request(s) "
+                           f"refused since the last verified one — {h.get('last_failure_reason') or 'bad signature'}")
+        sent = models.email_delivery_stats(days=1, db_path=db_path or DB_PATH).get("accepted") or 0
+        resend = health.get("resend")
+        if sent and (resend is None or resend.get("stale")):
+            out.append(f"No verified Resend event in {stale_hours}h while {sent} email(s) were accepted — "
+                       "check the Resend webhook and RESEND_WEBHOOK_SECRET")
+    except Exception as e:
+        print(f"[notify] messaging health unreadable: {e}")
+    try:
+        acct = sms_stats(hours=1, db_path=db_path).get("account_errors") or 0
+        if acct:
+            out.append(f"{acct} text(s) failed in the last hour with a Twilio account-level error")
+    except Exception:
+        pass
+    try:
+        ops_bad = [r["email"] for r in models.get_email_suppressions(limit=1000, db_path=db_path or DB_PATH)
+                   if r.get("operator")]
+        if ops_bad:
+            out.append("Operator address on the suppression list (it is never suppressed now, but it bounced): "
+                       + ", ".join(ops_bad))
+    except Exception:
+        pass
+    return out
+
+
+def sms_log_rows(restaurant_id=None, limit=100, db_path: str = None) -> list:
+    """The newest sms_log rows, fleet-wide or for one restaurant — the
+    console's SMS view (#14)."""
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        sql = "SELECT * FROM sms_log"
+        args = []
+        if restaurant_id is not None:
+            sql += " WHERE restaurant_id=?"
+            args.append(restaurant_id)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", args + [int(limit)]).fetchall()]
+    finally:
+        conn.close()
+
+
+def sms_stats(hours: int = 24, restaurant_id=None, db_path: str = None) -> dict:
+    """{status: n} over the window plus the account-level failures in it."""
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        sql = "SELECT status, COUNT(*) AS n FROM sms_log WHERE created_at >= datetime('now', ?)"
+        args = [f"-{int(hours)} hours"]
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args.append(restaurant_id)
+        by_status = {r["status"]: r["n"] for r in conn.execute(sql + " GROUP BY status", args).fetchall()}
+        marks = ",".join("?" * len(SMS_ACCOUNT_ERROR_CODES))
+        acct = conn.execute(
+            f"SELECT COUNT(*) FROM sms_log WHERE created_at >= datetime('now', ?) AND error_code IN ({marks})",
+            [f"-{int(hours)} hours"] + sorted(SMS_ACCOUNT_ERROR_CODES)).fetchone()[0]
+    finally:
+        conn.close()
+    return {"hours": int(hours), "by_status": by_status, "account_errors": acct,
+            "attempted": sum(by_status.values())}
 
 
 def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
@@ -792,22 +1186,28 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
 
 
 def send_test_sms(restaurant_id: int) -> dict:
-    """Send a test SMS to all consented contacts for a restaurant."""
+    """Send a test SMS to all consented contacts for a restaurant, and say
+    what Twilio answered for each — accepted with its message id, or the
+    error code and reason (#14). Each attempt is in sms_log; the status
+    callback then records whether the handset got it."""
     contacts = get_alert_contacts(restaurant_id, sms_consent_only=True)
     if not contacts:
-        return {"ok": False, "error": "No alert contacts configured"}
+        return {"ok": False, "error": "No consented alert contact who can be texted (none on file, "
+                                      "no SMS consent, or the number replied STOP)."}
     from models import get_restaurant
     restaurant = get_restaurant(restaurant_id)
     name = restaurant.name if restaurant else f"Restaurant {restaurant_id}"
     msg = f"✓ Test alert from Cavnar AI\n{name} — SMS alert system is active and working."
-    sent, errors = 0, []
+    sent, errors, results = 0, [], []
     for c in contacts:
-        ok = send_sms(c["phone"], msg)
-        if ok:
+        res = send_sms_outcome(c["phone"], msg, restaurant_id=restaurant_id)
+        results.append({"to_last4": str(c["phone"])[-4:], "ok": res.ok, "status": res.status,
+                        "sid": res.sid, "error_code": res.error_code, "error": res.error})
+        if res.ok:
             sent += 1
         else:
             errors.append(c["phone"])
-    return {"ok": sent > 0, "sent": sent, "errors": errors}
+    return {"ok": sent > 0, "sent": sent, "errors": errors, "results": results}
 
 
 # ── Contact CRUD ───────────────────────────────────────────────
@@ -1016,7 +1416,149 @@ def trend_measure_text(neg) -> str:
     return ", ".join(bits)
 
 
-def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+# ── Automatic storm cap (#92) ────────────────────────────────────────────────
+# The console listed storms and an admin could set a cap by hand; nothing
+# acted on its own. At ALERT_STORM_PER_HOUR alerts in the last hour a
+# restaurant is capped for the rest of its own day: only health and safety
+# (P0) alerts get through, the operator is told at once, and the cap expires
+# at the restaurant's next local midnight (alert_storm_caps.until_at). One per
+# restaurant per local day; an admin can lift it early (lift_storm_cap).
+ALERT_STORM_PER_HOUR = int(os.getenv("ALERT_STORM_PER_HOUR", "10"))
+
+
+def storm_cap_active(restaurant_id, db_path: str = DB_PATH):
+    """The restaurant's active automatic cap (a dict), or None."""
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            row = conn.execute("SELECT * FROM alert_storm_caps WHERE restaurant_id=? AND until_at > ? "
+                               "AND lifted_at IS NULL ORDER BY id DESC LIMIT 1", (restaurant_id, now)).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _alerts_last_hour(restaurant_id, db_path: str = DB_PATH) -> int:
+    from models import NON_ALERT_TYPES
+    conn = models.get_conn(db_path)
+    try:
+        marks = ",".join("?" * len(NON_ALERT_TYPES))
+        return conn.execute(f"SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? "
+                            f"AND fired_at >= datetime('now', '-60 minutes') AND alert_type NOT IN ({marks})",
+                            (restaurant_id, *NON_ALERT_TYPES)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _storm_capped(restaurant_id, alert_type, db_path: str = DB_PATH) -> bool:
+    """True when this alert is held back by an automatic storm cap —
+    applying one first when the last hour crossed ALERT_STORM_PER_HOUR.
+    Health and safety alerts are never held by it. Fails open: bookkeeping
+    trouble must not silence an alert (the hard ceiling still holds)."""
+    if alert_type and never_silenced(alert_type):
+        return False
+    try:
+        cap = storm_cap_active(restaurant_id, db_path)
+        if cap is None:
+            n = _alerts_last_hour(restaurant_id, db_path)
+            if n < ALERT_STORM_PER_HOUR:
+                return False
+            cap = _apply_storm_cap(restaurant_id, n, db_path)
+            if cap is None:
+                return False            # lifted by an admin earlier today
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute("UPDATE alert_storm_caps SET suppressed=suppressed+1 WHERE id=?", (cap["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"[notify] rid={restaurant_id} {alert_type} held back — automatic storm cap until {cap['until_at']} UTC")
+        return True
+    except Exception as e:
+        print(f"[notify] storm check failed for rid={restaurant_id}: {e}")
+        return False
+
+
+def _apply_storm_cap(restaurant_id, alerts_in_window, db_path: str = DB_PATH):
+    """Write today's cap (once per local day) and tell the operator. Returns
+    the active cap, or None when today's was already lifted."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from time_utils import restaurant_now_by_id
+    local = restaurant_now_by_id(restaurant_id)
+    if local.tzinfo is None:
+        from time_utils import restaurant_tz
+        local = local.replace(tzinfo=restaurant_tz(None))
+    midnight = (local + _td(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    until = midnight.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn = models.get_conn(db_path)
+    try:
+        new = conn.execute("INSERT OR IGNORE INTO alert_storm_caps (restaurant_id, local_day, until_at, "
+                           "alerts_in_window, threshold) VALUES (?,?,?,?,?)",
+                           (restaurant_id, local.date().isoformat(), until, int(alerts_in_window),
+                            ALERT_STORM_PER_HOUR)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if new:
+        _tell_operator_storm(restaurant_id, alerts_in_window, until, db_path)
+    return storm_cap_active(restaurant_id, db_path)
+
+
+def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
+    """Once, when the cap goes on: captured (the console and the digest) and
+    sent to the operator now — from the production scheduler's host only, as
+    every automatic send (scheduler.scheduling_allowed)."""
+    try:
+        import ops
+        ops.capture(RuntimeError(f"alert storm: {n} alerts in an hour — automatic cap until {until} UTC"),
+                    job="alert_storm_cap", context=f"restaurant_id={restaurant_id}",
+                    db_path=db_path if db_path != DB_PATH else None)
+        import scheduler as _sched
+        if _sched.scheduling_allowed():
+            name = _restaurant_name(restaurant_id)
+            ops.alert_will(f"Cavnar AI: alert storm at {name}",
+                           [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
+                            "Only health and safety alerts go out until its local midnight.",
+                            "Lift it early from the client's page in the console if this is expected."])
+    except Exception as e:
+        print(f"[notify] storm alert to the operator failed: {e}")
+
+
+def lift_storm_cap(restaurant_id, actor, db_path: str = DB_PATH) -> bool:
+    """End today's automatic cap early; audited. True when one was lifted."""
+    cap = storm_cap_active(restaurant_id, db_path)
+    if not cap:
+        return False
+    conn = models.get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE alert_storm_caps SET lifted_at=datetime('now'), lifted_by=? "
+                         "WHERE id=? AND lifted_at IS NULL", (str(actor or "admin")[:80], cap["id"])).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if n:
+        try:
+            import admin_events
+            recorder = getattr(admin_events, "record_admin_action", None)
+            summary = f"Automatic alert storm cap lifted by {actor}"
+            if recorder is not None:
+                recorder(actor or "admin", "alert_storm_cap.lifted", restaurant_id=restaurant_id,
+                         before=cap, after=None, result="ok", summary=summary)
+            else:
+                admin_events.record("admin", "alert_storm_cap.lifted", restaurant_id=restaurant_id,
+                                    summary=summary, db_path=db_path)
+        except Exception:
+            pass
+    return bool(n)
+
+
+def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH, alert_type: str = None) -> bool:
+    if alert_type is not None and _storm_capped(restaurant_id, alert_type, db_path):
+        return True
     try:
         from models import count_alerts_today
         n = count_alerts_today(restaurant_id, db_path)
@@ -1059,7 +1601,7 @@ def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = 
             return True
     except Exception as e:
         print(f"[notify] daily-alert DND check failed for rid={restaurant_id}: {e}")
-    return _over_alert_ceiling(restaurant_id, db_path)
+    return _over_alert_ceiling(restaurant_id, db_path, alert_type)
 
 
 def health_keyword_hits(text: str) -> list:
@@ -1451,7 +1993,8 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
         _tz = getattr(models.get_restaurant(restaurant_id), "timezone", None)
     except Exception:
         _tz = None
-    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz)
+    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz,
+                            restaurant_id=restaurant_id)
     try:
         from push import fire_push
         fire_push(
@@ -1614,16 +2157,25 @@ HOLD_MAX_LATE_HOURS = 12
 def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
     """Scheduler entry point: send everything whose rush has ended. A hold is
     marked sent whether or not delivery worked, so a failing channel can't
-    replay the same alert every five minutes."""
+    replay the same alert every five minutes — and `outcome` says which it
+    was (#82): released, suppressed by the cap, failed, or dropped_stale.
+
+    A hold too late to be worth sending is not lost: it is recorded as
+    dropped_stale, reported to the operator, and folded into that
+    restaurant's next morning brief (morning_brief.deliver)."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _timezone
     now_utc = now_utc or _dt.now(_timezone.utc)
     now_s = now_utc.strftime("%Y-%m-%d %H:%M:%S")
     stale_before = (now_utc - _td(hours=HOLD_MAX_LATE_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = models.get_conn(db_path)
     try:
-        # Holds too late to be worth sending are retired in one statement.
-        dropped = conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE sent_at IS NULL "
-                               "AND release_at < ?", (stale_before,)).rowcount
+        # Holds too late to be worth sending are retired in one statement —
+        # marked, not erased (#82).
+        stale_rids = [r[0] for r in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM alert_holds WHERE sent_at IS NULL AND release_at < ?",
+            (stale_before,)).fetchall()]
+        dropped = conn.execute("UPDATE alert_holds SET sent_at=datetime('now'), outcome='dropped_stale' "
+                               "WHERE sent_at IS NULL AND release_at < ?", (stale_before,)).rowcount
         conn.commit()
         # A fair slice per restaurant: the first 200 by id used to be one
         # restaurant's backlog, so every other restaurant's held alerts waited
@@ -1636,6 +2188,16 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         conn.close()
     if dropped:
         print(f"[notify] {dropped} hold(s) dropped — {HOLD_MAX_LATE_HOURS}h past their release")
+        try:
+            import ops
+            ops.capture(RuntimeError(f"{dropped} held alert(s) were {HOLD_MAX_LATE_HOURS}h past their release "
+                                     f"and were not sent; the next morning brief carries them"),
+                        job="held_alerts_dropped",
+                        context=("restaurant_id=%s" % stale_rids[0] if len(stale_rids) == 1
+                                 else "restaurants " + ",".join(str(r) for r in stale_rids[:20])),
+                        db_path=db_path if db_path != DB_PATH else None)
+        except Exception:
+            pass
     sent = 0
     for h in rows:
         rid = h["restaurant_id"]
@@ -1647,7 +2209,8 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         # A held alert is still an alert: the owner's daily cap and the hard
         # ceiling apply when it is released, or 60 one-stars held through a
         # rush all arrived at once (MOD-NOT-1).
-        if _release_suppressed(rid, db_path):
+        if _release_suppressed(rid, db_path, h.get("alert_type")):
+            _hold_outcome(h["id"], "suppressed_cap", db_path)
             continue
         try:
             import json as _json
@@ -1661,15 +2224,65 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
                           audience_types=meta.get("audience_types"),
                           covered_types=meta.get("covered_types"),
                           text_recs=meta.get("text_recs"))
+            _hold_outcome(h["id"], "released", db_path)
             sent += 1
         except Exception as e:
             print(f"[notify] held alert {h['id']} failed: {e}")
+            _hold_outcome(h["id"], "failed", db_path)
             try:
                 import ops
                 ops.capture(e, job="release_held_alerts", context=f"hold_id={h['id']}")
             except Exception:
                 pass
     return {"released": sent, "dropped_stale": dropped}
+
+
+def _hold_outcome(hold_id, outcome, db_path: str = DB_PATH):
+    """What became of one held alert (#82). Never raises."""
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute("UPDATE alert_holds SET outcome=? WHERE id=?", (outcome, hold_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] hold {hold_id} outcome not recorded: {e}")
+
+
+def dropped_holds(restaurant_id, db_path: str = DB_PATH) -> list:
+    """The alerts held through a rush that went stale before they could be
+    released, and that no morning brief has carried yet — [{id, alert_type,
+    subject}], oldest first (#82)."""
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, alert_type, subject, created_at FROM alert_holds WHERE restaurant_id=? "
+                "AND outcome='dropped_stale' AND folded_at IS NULL ORDER BY id LIMIT 20",
+                (restaurant_id,)).fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] dropped holds unreadable for rid={restaurant_id}: {e}")
+        return []
+
+
+def mark_holds_folded(hold_ids, db_path: str = DB_PATH) -> None:
+    """The brief carried these dropped holds; never fold them twice."""
+    ids = [int(i) for i in hold_ids or ()]
+    if not ids:
+        return
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute(f"UPDATE alert_holds SET folded_at=datetime('now') WHERE id IN ({','.join('?' * len(ids))}) "
+                         "AND folded_at IS NULL", ids)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] could not mark holds folded: {e}")
 
 
 def _claim_hold(hold_id, db_path: str = DB_PATH) -> bool:
@@ -1687,7 +2300,7 @@ def _claim_hold(hold_id, db_path: str = DB_PATH) -> bool:
         return False
 
 
-def _release_suppressed(restaurant_id, db_path: str = DB_PATH) -> bool:
+def _release_suppressed(restaurant_id, db_path: str = DB_PATH, alert_type: str = None) -> bool:
     try:
         from models import count_alerts_today, get_restaurant
         r = get_restaurant(restaurant_id, db_path)
@@ -1696,7 +2309,7 @@ def _release_suppressed(restaurant_id, db_path: str = DB_PATH) -> bool:
             return True
     except Exception as e:
         print(f"[notify] cap check failed for rid={restaurant_id}: {e}")
-    return _over_alert_ceiling(restaurant_id, db_path)
+    return _over_alert_ceiling(restaurant_id, db_path, alert_type)
 
 
 def _mark_sent(hold_id, db_path: str = DB_PATH):
@@ -1928,8 +2541,10 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     if via_sms and contacts:
         texted = False
         text_out = with_sender(keyed_sms_text(sms_text, lead_rec, restaurant_id))
-        for c in contacts:
-            texted = bool(send_sms(c["phone"], text_out)) or texted
+        # Attributed to this restaurant in sms_log (#14).
+        with sms_context(restaurant_id):
+            for c in contacts:
+                texted = bool(send_sms(c["phone"], text_out)) or texted
         if texted:
             channels.append("sms")
     if via_email and owner_email:
@@ -1976,6 +2591,19 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     _present_alert(restaurant_id, text_recs, [c for c in channels if c == "sms"], db_path)
     _present_alert(restaurant_id, recs, [c for c in channels if c == "email"], db_path)
     _note_missed(restaurant_id, alert_type, recs, channels + (["push"] if pushed else []), db_path)
+    # What went, on the alert's own row (#14): "sms,email,push" (push =
+    # queued; its delivery is in push_outbox), or "none".
+    if alert_id:
+        try:
+            _c = models.get_conn(db_path)
+            try:
+                _c.execute("UPDATE alert_log SET channels=? WHERE id=?",
+                           (",".join(channels + (["push"] if pushed else [])) or "none", alert_id))
+                _c.commit()
+            finally:
+                _c.close()
+        except Exception as e:
+            print(f"[notify] alert channels not recorded ({alert_type}): {e}")
     try:
         from webhooks import fire_webhook as _fw
         _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id}, db_path)
@@ -2297,7 +2925,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             print(f"[notify] DND check error: {_de}")
         # Outside the try above so a failure in the owner's own settings can
         # never skip the ceiling — that is the one check that has to hold.
-        if _over_alert_ceiling(restaurant_id, db_path):
+        # With the alert type, so the automatic storm cap applies (#92).
+        if _over_alert_ceiling(restaurant_id, db_path, alert_type):
             return True
         return False
 

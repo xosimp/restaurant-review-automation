@@ -392,6 +392,16 @@ def reach(restaurant_id, names, db_path=None) -> dict:
             sms = (phones.get(uid) or m.get("claimed_by_phone") or "").strip() or None
         out[n] = {"push_user_id": uid if uid in tokens else None, "sms": sms,
                   "email": ((contacts.get(k) or {}).get("email") or "").strip() or None}
+    # A number that replied STOP is not a text channel, whatever its consent
+    # says (#107): staff reach checked the tick-box alone, so a STOP was
+    # texted anyway and "reachable by text" counted it.
+    candidates = [c["sms"] for c in out.values() if c["sms"]]
+    if candidates:
+        import notify
+        stopped = notify.sms_stopped_phones(candidates, db_path=db)
+        for c in out.values():
+            if c["sms"] in stopped:
+                c["sms"] = None
     return out
 
 
@@ -433,9 +443,10 @@ def tell(restaurant_id, name, title, lines, *, email_type="staff_notice", channe
         try:
             import notify
             from config import base_url
-            if notify.send_sms(channel["sms"], f"{place}: {' '.join(lines)} {base_url()}/staff "
-                                               "Reply STOP to stop these texts.", use_case="staff"):
-                return "sms"
+            with notify.sms_context(restaurant_id):
+                if notify.send_sms(channel["sms"], f"{place}: {' '.join(lines)} {base_url()}/staff "
+                                                   "Reply STOP to stop these texts.", use_case="staff"):
+                    return "sms"
         except Exception as e:
             print(f"[people] staff text failed rid={restaurant_id}: {e!r}")
     if channel.get("email"):

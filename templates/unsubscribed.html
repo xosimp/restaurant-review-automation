@@ -32,6 +32,9 @@
       {% elif audience == "guest_any" %}
         <h1>Stop getting restaurant emails from us?</h1>
         <p>No more review requests or newsletters sent through Cavnar AI will come to this address.</p>
+      {% elif audience == "prospect" %}
+        <h1>Stop getting emails about Cavnar AI?</h1>
+        <p>We won't email this address about Cavnar AI again.</p>
       {% else %}
         <h1>Unsubscribe from product emails?</h1>
         <p>You'll stop getting product tips and summary emails from Cavnar AI. Account and security email still comes.</p>
@@ -45,6 +48,9 @@
     {% elif audience == "guest_any" %}
       <h1>You're unsubscribed</h1>
       <p>No more restaurant emails sent through Cavnar AI will come to this address.</p>
+    {% elif audience == "prospect" %}
+      <h1>You're unsubscribed</h1>
+      <p>We won't email this address about Cavnar AI again.</p>
     {% else %}
       <h1>You're unsubscribed</h1>
       <p>You won't get product tips or summary emails from Cavnar AI any more.</p>

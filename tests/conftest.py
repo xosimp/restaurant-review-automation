@@ -15,6 +15,10 @@ os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
+# Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
+# (emails.postal_address, #159). Set here as production must set it; the
+# tests of the unset case delete it.
+os.environ.setdefault("CAVNAR_POSTAL_ADDRESS", "100 Test St, Testville, IL 60000")
 
 # The default database (models.DB_PATH, used by every call that passes no
 # db_path — init_db's ensure_columns(), status_manager, lazily imported
@@ -111,18 +115,6 @@ def _reset_tenant_names_cache():
     models._invalidate_tenant_names()
     yield
     models._invalidate_tenant_names()
-
-
-@pytest.fixture(autouse=True)
-def _reset_supplier_order_cooldown():
-    """Same shape of problem as _reset_ai_rate_limiter above: the
-    supplier-order send cooldown is a process-global keyed by restaurant_id,
-    and every test's fresh database starts its ids at 1 — so the first test to
-    send an order would 429 the next one."""
-    import client_api
-    client_api._order_send_last.clear()
-    yield
-    client_api._order_send_last.clear()
 
 
 @pytest.fixture(autouse=True)

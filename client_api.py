@@ -6187,12 +6187,17 @@ def delete_food_cost_custom_item(current_user):
 @client_bp.route("/api/send-review-request", methods=["POST"])
 @login_required
 def send_review_request(current_user):
-    payload, status = _do_send_review_request(current_user["restaurant_id"], request.get_json() or {})
+    payload, status = _do_send_review_request(current_user["restaurant_id"], request.get_json() or {},
+                                              actor=current_user)
     return jsonify(**payload), status
 
 
-def _do_send_review_request(rid, data):
-    """Shared by the web route above and mobile_api.py's own send-review-request."""
+def _do_send_review_request(rid, data, actor=None):
+    """Shared by the web route above and mobile_api.py's own send-review-request.
+
+    `actor` is the login pressing Send: the one who vouched that the guest
+    agreed to a text, on the consent evidence written before any text goes
+    (#159)."""
     try:
         customer_name  = (data.get("name") or "").strip()
         customer_email = (data.get("email") or "").strip().lower()
@@ -6219,6 +6224,7 @@ def _do_send_review_request(rid, data):
         review_url  = f"https://search.google.com/local/writereview?placeid={place_id}"
         first_name  = customer_name.split()[0] if customer_name else "there"
         rest_name   = restaurant.name or "us"
+        sent_sms = False
 
         # Send via SMS if phone provided
         if customer_phone:
@@ -6244,15 +6250,28 @@ def _do_send_review_request(rid, data):
                         "error": "Guest texts can only go out between "
                                  + _gm.guest_sms_window_label()
                                  + " your time. Try again then, or send it by email."}, 409
-            from notify import send_sms as _send_sms
+            # The evidence first (#159): the owner's tick-box was the only
+            # record that this guest agreed to a text, and it was kept
+            # nowhere. Who vouched, when, for which number — written before
+            # the text, like every other guest consent (guest_consent_events).
+            actor = actor or {}
+            _gm.record_consent_event(
+                rid, "review_only", "owner_attested", phone=customer_phone,
+                detail=(f"review request: {actor.get('username') or 'user'} (id {actor.get('id')}) "
+                        f"confirmed the guest agreed to be texted")[:300])
+            import notify as _notify_rr
             sms_text = (
                 f"Hi {first_name}, thanks for dining at {rest_name}! "
                 + (f"{guest_note} " if guest_note else "")
                 + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
-            sent_sms = _send_sms(customer_phone, sms_text, use_case="guest")
+            _sms = _notify_rr.send_sms_outcome(customer_phone, sms_text, use_case="guest", restaurant_id=rid)
+            sent_sms = _sms.ok
             if not sent_sms and not customer_email:
-                return {"ok": False, "error": "SMS delivery failed — check Twilio config"}, 500
+                why = ("that number can't receive texts" if _sms.permanent
+                       else "texting isn't set up" if _sms.status == "not_configured"
+                       else "the text service didn't take it — try again in a minute")
+                return {"ok": False, "error": f"The text didn't go out: {why}. Nothing was sent."}, 502
 
         # Send via Resend if email provided
         if not customer_email:
@@ -6334,10 +6353,11 @@ def _do_send_review_request(rid, data):
                                               "through Cavnar AI, so it wasn't sent."}, 409
             return {"ok": False, "error": "The email didn't go out. Try again in a minute."}, 502
 
-        # Log the request
+        # Log the request — by what actually went (#159): a text that
+        # failed while the email went was logged "both".
         from models import get_conn as _gc
         conn = _gc()
-        method = "both" if customer_phone else "email"
+        method = "both" if (customer_phone and sent_sms) else "email"
         conn.execute(
             "INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, method) VALUES (?,?,?,?,?)",
             (rid, customer_name, customer_email, customer_phone or None, method)
@@ -7671,21 +7691,22 @@ def webhook_delete(current_user):
 @client_bp.route("/api/webhook/test", methods=["POST"])
 @login_required
 def webhook_test(current_user):
-    from webhooks import get_webhook, _deliver
-    wh = get_webhook(current_user["restaurant_id"])
-    if not wh:
+    """Queue one test event to the owner's webhook (#156). Owner-only, like
+    saving, deleting and reactivating it — any teammate could fire it and
+    read back the endpoint's status. Asynchronous: it goes through the same
+    outbox and pool as every real event, so three attempts and their backoff
+    no longer hold a request thread; the outcome appears in Recent
+    deliveries (/api/webhook/deliveries) a few seconds later."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the webhook")
+    if denied:
+        return denied
+    from webhooks import queue_test_delivery
+    event_id = queue_test_delivery(current_user["restaurant_id"])
+    if not event_id:
         return jsonify(ok=False, error="No webhook configured")
-    result = _deliver(wh, "test", {
-        "message": "This is a test webhook from Cavnar AI",
-        "restaurant_id": current_user["restaurant_id"],
-    })
-    if result and result.get("ok"):
-        return jsonify(ok=True)
-    status = result.get("status") if result else 0
-    error = result.get("error") if result else None
-    if status:
-        return jsonify(ok=False, error=f"Endpoint responded with status {status} — check it's returning a 2xx.")
-    return jsonify(ok=False, error=error or "Could not reach that URL — check it's correct and publicly reachable.")
+    return jsonify(ok=True, queued=True, event_id=event_id,
+                   message="Test queued — the result appears under Recent deliveries in a few seconds.")
 
 
 # ── Guest SMS lifecycle marketing — Marketing-module clients only ───────────
@@ -8026,7 +8047,19 @@ def send_test_digest_web(current_user):
 @client_bp.route("/u/<token>", methods=["GET", "POST"])
 @csrf_exempt
 def marketing_unsubscribe(token):
-    from models import verify_unsubscribe_token
+    from models import verify_unsubscribe_token, verify_marketing_optout_token
+    # Cavnar AI's marketing to someone who is not a client (a referral)
+    # carries an opt-out signed over the ADDRESS (#159): it lifts that
+    # address out of Cavnar AI's marketing, and nothing else. Same GET-asks /
+    # POST-acts rule as below.
+    address = verify_marketing_optout_token(token)
+    if address:
+        if request.method != "POST":
+            return render_template("unsubscribed.html", ok=True, confirm=True, audience="prospect",
+                                   restaurant_name="")
+        from models import suppress_email
+        suppress_email(address, "unsubscribed", "marketing opt-out link", scope="marketing")
+        return render_template("unsubscribed.html", ok=True, audience="prospect", restaurant_name="")
     rid = verify_unsubscribe_token(token)
     if not rid:
         return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
@@ -9224,40 +9257,49 @@ def set_ingredient_supplier(current_user):
 
 
 _ORDER_SEND_COOLDOWN = 60  # seconds between sends to one supplier
-_order_send_last = {}
-_order_send_lock = threading.Lock()
+
+
+def _order_send_key(restaurant_id, supplier_email=None) -> str:
+    return (f"supplier_order:{int(restaurant_id)}:{supplier_email}" if supplier_email
+            else f"supplier_order:{int(restaurant_id)}")
 
 
 def _order_send_allowed(restaurant_id, supplier_emails=None) -> bool:
-    """One send per supplier per cooldown — the double-click guard. In
-    process, and deliberately not the real re-send guard: that is the
-    durable claim on the PO row (models.record_purchase_order, DATA-15),
-    which survives a restart and does not expire after a minute.
+    """One send per supplier per cooldown — the double-click guard. Held in
+    the database (ops.claim_cooldown, one atomic upsert per key on
+    job_period_claims), not in process memory (#96): an in-process dict is
+    per worker, so a second gunicorn worker would have doubled the limit —
+    one of the two things CLAUDE.md said kept --workers at 1. Deliberately
+    not the real re-send guard: that is the durable claim on the PO row
+    (models.record_purchase_order, DATA-15), which does not expire after a
+    minute.
 
     Keyed per (restaurant, supplier address), so sending supplier B's order
-    right after supplier A's is not refused (MOD-FC-11). The check and the
-    set happen under one lock, so two request threads cannot both be
-    allowed. Callers claim it only once the send has passed validation —
-    see _release_order_send for handing it back when nothing went out."""
-    import time as _time_po
-    keys = [(restaurant_id, e) for e in sorted(set(supplier_emails))] if supplier_emails else [restaurant_id]
-    with _order_send_lock:
-        now = _time_po.monotonic()
-        for key in keys:
-            last = _order_send_last.get(key)
-            if last is not None and (now - last) < _ORDER_SEND_COOLDOWN:
-                return False
-        for key in keys:
-            _order_send_last[key] = now
+    right after supplier A's is not refused (MOD-FC-11). All of a send's
+    keys or none: a key that is still cooling gives back the ones this call
+    already took. Callers claim it only once the send has passed validation
+    — see _release_order_send for handing it back when nothing went out.
+    Fails open on a database error, like claim_cooldown: the PO claim still
+    stops a duplicate."""
+    import ops
+    keys = ([_order_send_key(restaurant_id, e) for e in sorted(set(supplier_emails))]
+            if supplier_emails else [_order_send_key(restaurant_id)])
+    taken = []
+    for key in keys:
+        if not ops.claim_cooldown(key, _ORDER_SEND_COOLDOWN / 60.0):
+            for k in taken:
+                ops.release_period("cooldown", k)
+            return False
+        taken.append(key)
     return True
 
 
 def _release_order_send(restaurant_id, supplier_emails):
     """Give a cooldown back when nothing reached that supplier, so the fixed
     retry is not refused for a minute."""
-    with _order_send_lock:
-        for e in supplier_emails or ():
-            _order_send_last.pop((restaurant_id, e), None)
+    import ops
+    for e in supplier_emails or ():
+        ops.release_period("cooldown", _order_send_key(restaurant_id, e))
 
 
 @client_bp.route("/api/food-cost/order-draft")
@@ -9265,6 +9307,28 @@ def _release_order_send(restaurant_id, supplier_emails):
 def food_cost_order_draft(current_user):
     """Web twin — the one body is mobile_api.mobile_food_cost_order_draft."""
     return _m("mobile_food_cost_order_draft")(current_user)
+
+
+def _order_send_failure(group, po_number, result, send_error=None) -> dict:
+    """The `failed` entry for a supplier email that did not go (#103): the
+    supplier, the voided PO number, a sentence the owner can act on, and
+    whether trying again later can help (`retryable`)."""
+    who = group.get("supplier_name") or group["supplier_email"]
+    reason = getattr(result, "reason", None)
+    if send_error or result is None:
+        error, retryable = (send_error or "The order email could not be built."), True
+    elif reason == "suppressed":
+        error, retryable = (f"{who}'s address ({group['supplier_email']}) has bounced or reported our mail, "
+                            "so nothing was sent. Check the address, then send again."), False
+    elif reason == "not_configured":
+        error, retryable = "Email isn't set up on the server, so nothing was sent.", False
+    elif getattr(result, "transient", False):
+        error, retryable = "The email service didn't answer, so nothing was sent. Try again in a minute.", True
+    else:
+        error, retryable = (f"The email service refused {group['supplier_email']}, so nothing was sent. "
+                            "Check the address, then send again."), False
+    return {"supplier_email": group["supplier_email"], "voided_po": po_number, "error": error,
+            "reason": reason or ("exception" if send_error else None), "retryable": retryable}
 
 
 def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="owner", drafts=None):
@@ -9316,16 +9380,17 @@ def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="
             _pc.close()
         except Exception as _pe:
             print(f"[order] provenance not recorded on {po_number}: {_pe}")
-        try:
-            import outcomes as _oc
-            _oc.observe(rid, "supplier_order_sent", detail=group.get("supplier_name") or None,
-                        user_id=actor.get("id"))
-        except Exception as _oe:
-            import ops as _ops_o
-            _ops_o.capture(_oe, job="observe_order", context=f"restaurant_id={rid}")
+        # The send's own result decides (#103): deliver() never raises, so a
+        # suppressed address, a missing key or a 4xx came back ok=False and
+        # the order was still recorded, announced and counted as sent — with
+        # the PO left open, so the retry was refused as a duplicate. Now a
+        # send that did not go voids the PO and lands in `failed`, with no
+        # account event and nothing marked implemented. deliver() logs it
+        # against the restaurant, with its real status (#119).
+        result, send_error = None, None
         try:
             from emails import send_supplier_order_email
-            send_supplier_order_email(
+            result = send_supplier_order_email(
                 to_email=group["supplier_email"],
                 supplier_name=group.get("supplier_name") or "",
                 restaurant_name=restaurant.name,
@@ -9333,16 +9398,24 @@ def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="
                 items=group["items"],
                 total_cost=group.get("total_cost") or 0,
                 reply_to=restaurant.owner_email or None,
+                restaurant_id=rid,
             )
         except Exception as e:
+            send_error = _safe_err(e)
+        if not getattr(result, "ok", False):
             from models import void_purchase_order as _void_po
             _void_po(rid, po_number)
-            failed.append({"supplier_email": group["supplier_email"], "error": _safe_err(e)})
+            failed.append(_order_send_failure(group, po_number, result, send_error))
             continue
-
-        from models import log_email as _log_email
-        _log_email(rid, "supplier_order", group["supplier_email"],
-                   f"Order {po_number} — {restaurant.name}")
+        # Observed only once the supplier email went: an order that never
+        # left is not an outcome.
+        try:
+            import outcomes as _oc
+            _oc.observe(rid, "supplier_order_sent", detail=group.get("supplier_name") or None,
+                        user_id=actor.get("id"))
+        except Exception as _oe:
+            import ops as _ops_o
+            _ops_o.capture(_oe, job="observe_order", context=f"restaurant_id={rid}")
         # Per order, with the supplier, the number and the total — the audit
         # line used to read "2 orders" and nothing else.
         log_account_event(rid, "supplier_order_sent", actor,
@@ -9501,9 +9574,11 @@ def _send_order_request(current_user):
             return jsonify(ok=False, already_sent=True, sent=[], failed=failed,
                            error=failed[0]["error"] + " Send it again?"), 409
         # Was a 200 with ok=False, so any client branching on HTTP status read
-        # a total failure to send as a success.
+        # a total failure to send as a success. The first failure's own
+        # sentence says why (suppressed address, email down, …).
+        first = next((f.get("error") for f in failed if f.get("error")), None)
         return jsonify(ok=False, sent=[], failed=failed,
-                       error="Couldn't send the order — check the supplier addresses."), 502
+                       error=first or "Couldn't send the order — check the supplier addresses."), 502
     return jsonify(ok=True, sent=sent, failed=failed, error=None)
 
 

@@ -322,21 +322,14 @@ def _staff_contact(restaurant_id, name, db_path=DB_PATH):
 
 
 def _consented_phone(restaurant_id, phone, db_path=DB_PATH):
-    """The phone, when that number is a consented alert contact here — the
-    only numbers this product may text (staff_contacts phones carry no SMS
-    consent of their own)."""
+    """The phone, when it may be texted here: a consented alert contact (the
+    only numbers this product may text — staff_contacts phones carry no SMS
+    consent of their own) that has not replied STOP (notify.textable, #107:
+    this checked consent alone, so a STOP was ignored)."""
     if not phone:
         return None
     import notify
-    want = notify._normalize_phone(phone)
-    conn = get_conn(db_path)
-    try:
-        have = {notify._normalize_phone(r["phone"]) for r in conn.execute(
-            "SELECT phone FROM alert_contacts WHERE restaurant_id=? AND COALESCE(sms_consent,0)=1",
-            (restaurant_id,)).fetchall() if r["phone"]}
-    finally:
-        conn.close()
-    return phone if want in have else None
+    return phone if notify.textable(phone, restaurant_id, "alert", db_path) else None
 
 
 def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", db_path=DB_PATH):
@@ -374,9 +367,10 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     via = None
     phone = _consented_phone(restaurant_id, contact.get("phone"), db_path)
     if phone:
-        from notify import send_sms
-        if send_sms(phone, text[:320], use_case="alert"):
-            via = "sms"
+        import notify
+        with notify.sms_context(restaurant_id):
+            if notify.send_sms(phone, text[:320], use_case="alert"):
+                via = "sms"
     if via is None and contact.get("email"):
         try:
             import emails as _emails
