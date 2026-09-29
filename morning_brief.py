@@ -701,10 +701,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         rng = (f"usually {_money(fc['low'])}-{_money(fc['high'])}, over {fc['samples']} weeks"
                if fc.get("low") is not None and fc.get("high") is not None
                else f"from {fc['samples']} past {fc['weekday']}s; range not yet measurable")
+        effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        if effects and fc.get("base_sales") is not None:
+            # What is listed for today moved this restaurant's sales before
+            # (event_memory, measured behind its floor): the day is said as
+            # the typical weekday AND the measured effect, never as "typical".
+            said = ", ".join(f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                             f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+            text = (f"Today: about {_money(fc['typical_sales'])} — a typical {fc['weekday']} is "
+                    f"{_money(fc['base_sales'])}, with {said} ({rng})" + context + ".")
+        else:
+            text = (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
+                    f"({rng})" + context + ".")
         lines.append({"key": "today", "tone": "neutral", "outside": bool(context), "forecast": True,
-                      "claim_kind": "forecast",
-                      "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
-                               f"({rng})" + context + "."),
+                      "claim_kind": "forecast", "text": text,
                       "ask": "What should I focus on before service today?"})
     elif restaurant is not None and not carried:
         # No forecast yet, but the weather and the calendar are still worth

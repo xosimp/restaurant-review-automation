@@ -404,3 +404,19 @@ def test_the_report_shows_the_weather_that_happened_beside_the_forecast():
     assert w["basis"] == "forecast" and w["summary"] == "Rain likely"          # the forecast stays a forecast
     assert w["observed"]["rained_in_service"] == 0 and w["observed"]["summary"] == "Mostly Cloudy · high 64°"
     assert "observed by the nearest National Weather Service station" in w["observed"]["basis"]
+
+
+def test_the_brief_says_a_measured_effect_instead_of_calling_the_day_typical(monkeypatch):
+    import demand
+    import morning_brief
+    rid = _rid("Brief Effect Co")
+    monkeypatch.setattr(demand, "forecast_day", lambda r, day=None, db_path=None: {
+        "available": True, "weekday": "Tuesday", "typical_sales": 5000.0, "base_sales": 4000.0, "samples": 8,
+        "low": 4400.0, "high": 5600.0, "effects": [{"label": "cubs", "display": "Cubs home game", "lift_pct": 25.0,
+                                                    "n": 4, "kind": "event"}]})
+    monkeypatch.setattr(morning_brief, "_day_context", lambda r, d: "")
+    brief = morning_brief.build(rid, today=TUE)
+    (today,) = [l for l in brief["lines"] if l["key"] == "today"]
+    assert today["text"].startswith("Today: about $5,000 — a typical Tuesday is $4,000, with Cubs home game +25% "
+                                    "(measured 4 times here)")
+    assert "looks like a typical" not in today["text"]
