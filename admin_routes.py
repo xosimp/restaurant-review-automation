@@ -3749,7 +3749,9 @@ def admin_api_job_run(job, current_user):
 def admin_api_alert_cap(restaurant_id, current_user):
     import admin_ops
     data = request.get_json(silent=True) or {}
-    out = admin_ops.set_alert_cap(restaurant_id, data.get("max_per_day", 0), current_user.get("username") or "admin")
+    # The whole user, not a name: set_alert_cap writes one typed audit row
+    # (record_admin_action) with the actor's id beside the numbers either side.
+    out = admin_ops.set_alert_cap(restaurant_id, data.get("max_per_day", 0), current_user)
     return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Not found" else 400))
 
 

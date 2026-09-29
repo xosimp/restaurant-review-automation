@@ -3202,7 +3202,10 @@ def mobile_generate_schedule(current_user):
     if joined:
         return jsonify(ok=True, job_id=job_id, joined=True)
     from schedule_engine import _run_schedule_job as _run_sched
-    t = threading.Thread(target=_run_sched, args=(job_id, rid),
+    # The owner who pressed Generate is the actor on every model call the job
+    # makes (the thread has no request to read it from, #148).
+    from ai_utils import attributed as _ai_attributed
+    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid),
                          kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)

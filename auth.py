@@ -4165,9 +4165,10 @@ def admin_second_factor_state(user) -> str:
 
 
 def _admin_two_factor_missing(user):
-    """True when the internal-login gate refuses this session. The name is
-    kept: status_routes._require_admin calls it for the status page's admin
-    writes, so both gates answer the same question."""
+    """True when the internal-login gate refuses this session. No production
+    code calls it since the status page moved to auth.admin_required (INT-1);
+    two tests still stub it. Candidate for future cleanup after additional
+    verification."""
     return admin_second_factor_state(user) != "ok"
 
 

@@ -444,6 +444,12 @@ def _record_request(response):
     klass = getattr(g, "_req_class", None) or traffic_class(request.path)
     method = request.method
     status = response.status_code
+    # The admin console's own "busy — try again" refusal (admin_ops' single-
+    # flight fleet build answers 503 with X-Admin-Busy: 1) is a refusal, not a
+    # server error: counted as a 429, never sampled as a 5xx or sent to
+    # Sentry, so the console can't raise platform:error_rate on itself.
+    if status == 503 and response.headers.get("X-Admin-Busy") == "1":
+        status = 429
     now = time.time()
     with _metrics_lock:
         _samples.append((now, elapsed_ms, status, rule, klass))

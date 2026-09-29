@@ -2933,7 +2933,10 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
         threading.Thread(target=_busy, daemon=True).start()
     else:
         try:
-            threading.Thread(target=work, daemon=True).start()
+            # The asker is the actor on the stream's model calls (#148): the
+            # worker thread has no request to read it from.
+            from ai_utils import attributed as _ai_attributed
+            threading.Thread(target=_ai_attributed(work), daemon=True).start()
         except Exception as _te:
             # Thread creation itself failing is the memory-pressure case this
             # semaphore exists for, and it is the one path where the slot is

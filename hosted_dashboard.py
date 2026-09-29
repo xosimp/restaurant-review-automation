@@ -897,7 +897,7 @@ def payload_too_large(e):
 
 @app.errorhandler(403)
 def forbidden(e):
-    """A bare abort(403) anywhere in the app (e.g. status_routes._require_admin)
+    """A bare abort(403) anywhere in the app
     otherwise falls through to Flask's default HTML error page, which breaks
     JSON-only callers — the iOS app in particular has no HTML to parse and
     just shows a generic "Something went wrong (403)" with no real reason.
@@ -1180,7 +1180,10 @@ def _restart_scheduler_loop():
     import scheduler as _sched_mod
     if not _sched_mod.scheduling_allowed():
         return None
-    t = _sched_threading.Thread(target=_sched_mod.scheduler_loop, daemon=True, name="scheduler")
+    # The thread body start_scheduler uses: the lease keeper (safe to start
+    # twice) and then the loop — a restarted loop without the keeper would let
+    # its lease look abandoned after 4 minutes (#134).
+    t = _sched_threading.Thread(target=_sched_mod._run_scheduler_thread, daemon=True, name="scheduler")
     t.start()
     if _SCHED_START_FAILED:
         # start_scheduler never got as far as registering the clean-exit

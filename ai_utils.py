@@ -943,6 +943,20 @@ def attribution_for_thread() -> dict:
     return {"trigger": trigger, "actor_user_id": actor, "correlation_id": corr}
 
 
+def attributed(fn):
+    """`fn`, run under the attribution of the moment it was handed over — for
+    a thread a request starts (an owner's schedule generation, an Ask stream).
+    A new thread starts with no ai_context and no request, so its calls read
+    as 'system' and nobody's (#148, G's integration request)."""
+    attr = {k: v for k, v in attribution_for_thread().items() if v is not None}
+
+    def _run(*args, **kwargs):
+        with ai_context(**attr):
+            return fn(*args, **kwargs)
+    _run.__name__ = getattr(fn, "__name__", "attributed")
+    return _run
+
+
 def new_correlation_id(prefix="run"):
     """A fresh id for one unit of work ("ask:…", "aivis:…")."""
     return f"{prefix}:{uuid.uuid4().hex[:12]}"
