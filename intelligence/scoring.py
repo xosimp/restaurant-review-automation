@@ -278,10 +278,22 @@ def _eligible_rows(rows, db_path):
     """Rows whose restaurant may teach a cross-restaurant figure: not a
     demo, test or internal account, not inside its seeded quarantine
     (jobs.excluded_learning_ids — models.learning_eligible and the demo
-    rule). A deleted restaurant's kept rows are not in the table and stay."""
-    from .jobs import excluded_learning_ids
+    rule), and not recorded before a converted demo's learning_since
+    (jobs.before_learning on the row's event_at — memory fix round INT #20).
+    A deleted restaurant's kept rows are not in the table and stay."""
+    from .jobs import before_learning, excluded_learning_ids, learning_since_by_id
     out_ids = excluded_learning_ids(db_path=db_path)
-    return [r for r in rows if r["restaurant_id"] not in out_ids]
+    since = learning_since_by_id(db_path=db_path)
+    keep = []
+    for r in rows:
+        rid = r["restaurant_id"]
+        if rid in out_ids:
+            continue
+        if since and rid in since and before_learning(
+                rid, r["event_at"] if "event_at" in r.keys() else None, since):
+            continue
+        keep.append(r)
+    return keep
 
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
@@ -592,7 +604,7 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
     _pooled_filter(where, args, None)
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect "
+        rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect, event_at "
                             f"FROM intel_rec_events WHERE {' AND '.join(where)}", args).fetchall()
     finally:
         conn.close()
@@ -620,7 +632,7 @@ def platform_totals(db_path: str = DB_PATH) -> dict:
     Google user data."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, source_key, action, outcome, days_to_effect "
+        rows = conn.execute("SELECT restaurant_id, source_key, action, outcome, days_to_effect, event_at "
                             "FROM intel_rec_events WHERE COALESCE(google_data, 0) = 0").fetchall()
     finally:
         conn.close()

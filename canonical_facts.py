@@ -13,7 +13,9 @@ were compared as one. The rules live here, once:
 
   final days       FINAL_SQL / final_sql(alias): a night the POS had not
                    closed when it was read (final=0) is provisional, never a
-                   data point; an older row with no flag counts as final
+                   data point; an older row with no flag counts as final; a
+                   converted demo's seeded day (source 'seed') is none
+                   (models.own_history_sql)
   nightly net      net_series(): the ONE nightly net, per business date,
                    with its basis and where it came from. Both raw figures
                    are kept forever where they already live — the report's
@@ -74,12 +76,19 @@ KINDS = (MEASURED, FORECAST, ESTIMATE, ASSUMED, SEEDED)
 
 # ── final days ─────────────────────────────────────────────────────────────
 
-FINAL_SQL = "COALESCE(final, 1) != 0"
+# A final day that is the restaurant's OWN: a converted demo's seeded days
+# (source 'seed', models.own_history_sql) are no data point for any learner —
+# its year-over-year, holiday lift, medians and features read synthetic sales
+# forever otherwise (memory fix round INT #21, M7's rule folded into the one
+# final-day predicate every daily-history reader uses). A demo keeps its own
+# seeded days: they are what the demo shows.
+FINAL_SQL = "COALESCE(final, 1) != 0 AND " + _models_mod.own_history_sql()
 
 
 def final_sql(alias=None) -> str:
     """The final-day predicate, qualified by a table alias in a join."""
-    return f"COALESCE({alias}.final, 1) != 0" if alias else FINAL_SQL
+    return (f"COALESCE({alias}.final, 1) != 0 AND {_models_mod.own_history_sql(alias)}" if alias
+            else FINAL_SQL)
 
 
 def final_days(restaurant_id, start, end, db_path=None, weekday=None) -> list:
