@@ -533,6 +533,22 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
                                 restaurant_id=restaurant_id).ok)
 
 
+def send_sms_outcome(to_phone: str, message: str, use_case: str = "alert", restaurant_id: int = None,
+                     validity_seconds: int = None) -> SmsResult:
+    """send_sms — the one path every sender and every test stand-in shares,
+    looked up by name at call time — returning the whole outcome: the
+    SmsResult of the real send (last_sms_result), or just the bool a
+    stand-in answered. Attributed to `restaurant_id` in sms_log."""
+    clear_last_sms_result()
+    kw = {"use_case": use_case}
+    if validity_seconds is not None:
+        kw["validity_seconds"] = validity_seconds
+    with sms_context(restaurant_id):
+        ok = send_sms(to_phone, message, **kw)
+    res = last_sms_result()
+    return res if res is not None else SmsResult(bool(ok))
+
+
 def update_sms_status(sid: str, status: str, error_code=None, error=None, db_path: str = None) -> bool:
     """Twilio's status callback for one message: move its sms_log row forward
     (never back: a late 'sent' does not undo 'delivered'). An undelivered or
@@ -1350,7 +1366,149 @@ def trend_measure_text(neg) -> str:
     return ", ".join(bits)
 
 
-def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+# ── Automatic storm cap (#92) ────────────────────────────────────────────────
+# The console listed storms and an admin could set a cap by hand; nothing
+# acted on its own. At ALERT_STORM_PER_HOUR alerts in the last hour a
+# restaurant is capped for the rest of its own day: only health and safety
+# (P0) alerts get through, the operator is told at once, and the cap expires
+# at the restaurant's next local midnight (alert_storm_caps.until_at). One per
+# restaurant per local day; an admin can lift it early (lift_storm_cap).
+ALERT_STORM_PER_HOUR = int(os.getenv("ALERT_STORM_PER_HOUR", "10"))
+
+
+def storm_cap_active(restaurant_id, db_path: str = DB_PATH):
+    """The restaurant's active automatic cap (a dict), or None."""
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            row = conn.execute("SELECT * FROM alert_storm_caps WHERE restaurant_id=? AND until_at > ? "
+                               "AND lifted_at IS NULL ORDER BY id DESC LIMIT 1", (restaurant_id, now)).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _alerts_last_hour(restaurant_id, db_path: str = DB_PATH) -> int:
+    from models import NON_ALERT_TYPES
+    conn = models.get_conn(db_path)
+    try:
+        marks = ",".join("?" * len(NON_ALERT_TYPES))
+        return conn.execute(f"SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? "
+                            f"AND fired_at >= datetime('now', '-60 minutes') AND alert_type NOT IN ({marks})",
+                            (restaurant_id, *NON_ALERT_TYPES)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _storm_capped(restaurant_id, alert_type, db_path: str = DB_PATH) -> bool:
+    """True when this alert is held back by an automatic storm cap —
+    applying one first when the last hour crossed ALERT_STORM_PER_HOUR.
+    Health and safety alerts are never held by it. Fails open: bookkeeping
+    trouble must not silence an alert (the hard ceiling still holds)."""
+    if alert_type and never_silenced(alert_type):
+        return False
+    try:
+        cap = storm_cap_active(restaurant_id, db_path)
+        if cap is None:
+            n = _alerts_last_hour(restaurant_id, db_path)
+            if n < ALERT_STORM_PER_HOUR:
+                return False
+            cap = _apply_storm_cap(restaurant_id, n, db_path)
+            if cap is None:
+                return False            # lifted by an admin earlier today
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute("UPDATE alert_storm_caps SET suppressed=suppressed+1 WHERE id=?", (cap["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"[notify] rid={restaurant_id} {alert_type} held back — automatic storm cap until {cap['until_at']} UTC")
+        return True
+    except Exception as e:
+        print(f"[notify] storm check failed for rid={restaurant_id}: {e}")
+        return False
+
+
+def _apply_storm_cap(restaurant_id, alerts_in_window, db_path: str = DB_PATH):
+    """Write today's cap (once per local day) and tell the operator. Returns
+    the active cap, or None when today's was already lifted."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from time_utils import restaurant_now_by_id
+    local = restaurant_now_by_id(restaurant_id)
+    if local.tzinfo is None:
+        from time_utils import restaurant_tz
+        local = local.replace(tzinfo=restaurant_tz(None))
+    midnight = (local + _td(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    until = midnight.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn = models.get_conn(db_path)
+    try:
+        new = conn.execute("INSERT OR IGNORE INTO alert_storm_caps (restaurant_id, local_day, until_at, "
+                           "alerts_in_window, threshold) VALUES (?,?,?,?,?)",
+                           (restaurant_id, local.date().isoformat(), until, int(alerts_in_window),
+                            ALERT_STORM_PER_HOUR)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if new:
+        _tell_operator_storm(restaurant_id, alerts_in_window, until, db_path)
+    return storm_cap_active(restaurant_id, db_path)
+
+
+def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
+    """Once, when the cap goes on: captured (the console and the digest) and
+    sent to the operator now — from the production scheduler's host only, as
+    every automatic send (scheduler.scheduling_allowed)."""
+    try:
+        import ops
+        ops.capture(RuntimeError(f"alert storm: {n} alerts in an hour — automatic cap until {until} UTC"),
+                    job="alert_storm_cap", context=f"restaurant_id={restaurant_id}",
+                    db_path=db_path if db_path != DB_PATH else None)
+        import scheduler as _sched
+        if _sched.scheduling_allowed():
+            name = _restaurant_name(restaurant_id)
+            ops.alert_will(f"Cavnar AI: alert storm at {name}",
+                           [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
+                            "Only health and safety alerts go out until its local midnight.",
+                            "Lift it early from the client's page in the console if this is expected."])
+    except Exception as e:
+        print(f"[notify] storm alert to the operator failed: {e}")
+
+
+def lift_storm_cap(restaurant_id, actor, db_path: str = DB_PATH) -> bool:
+    """End today's automatic cap early; audited. True when one was lifted."""
+    cap = storm_cap_active(restaurant_id, db_path)
+    if not cap:
+        return False
+    conn = models.get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE alert_storm_caps SET lifted_at=datetime('now'), lifted_by=? "
+                         "WHERE id=? AND lifted_at IS NULL", (str(actor or "admin")[:80], cap["id"])).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if n:
+        try:
+            import admin_events
+            recorder = getattr(admin_events, "record_admin_action", None)
+            summary = f"Automatic alert storm cap lifted by {actor}"
+            if recorder is not None:
+                recorder(actor or "admin", "alert_storm_cap.lifted", restaurant_id=restaurant_id,
+                         before=cap, after=None, result="ok", summary=summary)
+            else:
+                admin_events.record("admin", "alert_storm_cap.lifted", restaurant_id=restaurant_id,
+                                    summary=summary, db_path=db_path)
+        except Exception:
+            pass
+    return bool(n)
+
+
+def _over_alert_ceiling(restaurant_id: int, db_path: str = DB_PATH, alert_type: str = None) -> bool:
+    if alert_type is not None and _storm_capped(restaurant_id, alert_type, db_path):
+        return True
     try:
         from models import count_alerts_today
         n = count_alerts_today(restaurant_id, db_path)
@@ -1393,7 +1551,7 @@ def _daily_alert_suppressed(restaurant_id: int, alert_type: str, db_path: str = 
             return True
     except Exception as e:
         print(f"[notify] daily-alert DND check failed for rid={restaurant_id}: {e}")
-    return _over_alert_ceiling(restaurant_id, db_path)
+    return _over_alert_ceiling(restaurant_id, db_path, alert_type)
 
 
 def health_keyword_hits(text: str) -> list:
@@ -1951,16 +2109,25 @@ HOLD_MAX_LATE_HOURS = 12
 def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
     """Scheduler entry point: send everything whose rush has ended. A hold is
     marked sent whether or not delivery worked, so a failing channel can't
-    replay the same alert every five minutes."""
+    replay the same alert every five minutes — and `outcome` says which it
+    was (#82): released, suppressed by the cap, failed, or dropped_stale.
+
+    A hold too late to be worth sending is not lost: it is recorded as
+    dropped_stale, reported to the operator, and folded into that
+    restaurant's next morning brief (morning_brief.deliver)."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _timezone
     now_utc = now_utc or _dt.now(_timezone.utc)
     now_s = now_utc.strftime("%Y-%m-%d %H:%M:%S")
     stale_before = (now_utc - _td(hours=HOLD_MAX_LATE_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = models.get_conn(db_path)
     try:
-        # Holds too late to be worth sending are retired in one statement.
-        dropped = conn.execute("UPDATE alert_holds SET sent_at=datetime('now') WHERE sent_at IS NULL "
-                               "AND release_at < ?", (stale_before,)).rowcount
+        # Holds too late to be worth sending are retired in one statement —
+        # marked, not erased (#82).
+        stale_rids = [r[0] for r in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM alert_holds WHERE sent_at IS NULL AND release_at < ?",
+            (stale_before,)).fetchall()]
+        dropped = conn.execute("UPDATE alert_holds SET sent_at=datetime('now'), outcome='dropped_stale' "
+                               "WHERE sent_at IS NULL AND release_at < ?", (stale_before,)).rowcount
         conn.commit()
         # A fair slice per restaurant: the first 200 by id used to be one
         # restaurant's backlog, so every other restaurant's held alerts waited
@@ -1973,6 +2140,16 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         conn.close()
     if dropped:
         print(f"[notify] {dropped} hold(s) dropped — {HOLD_MAX_LATE_HOURS}h past their release")
+        try:
+            import ops
+            ops.capture(RuntimeError(f"{dropped} held alert(s) were {HOLD_MAX_LATE_HOURS}h past their release "
+                                     f"and were not sent; the next morning brief carries them"),
+                        job="held_alerts_dropped",
+                        context=("restaurant_id=%s" % stale_rids[0] if len(stale_rids) == 1
+                                 else "restaurants " + ",".join(str(r) for r in stale_rids[:20])),
+                        db_path=db_path if db_path != DB_PATH else None)
+        except Exception:
+            pass
     sent = 0
     for h in rows:
         rid = h["restaurant_id"]
@@ -1984,7 +2161,8 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
         # A held alert is still an alert: the owner's daily cap and the hard
         # ceiling apply when it is released, or 60 one-stars held through a
         # rush all arrived at once (MOD-NOT-1).
-        if _release_suppressed(rid, db_path):
+        if _release_suppressed(rid, db_path, h.get("alert_type")):
+            _hold_outcome(h["id"], "suppressed_cap", db_path)
             continue
         try:
             import json as _json
@@ -1998,15 +2176,65 @@ def release_due_alerts(db_path: str = DB_PATH, now_utc=None):
                           audience_types=meta.get("audience_types"),
                           covered_types=meta.get("covered_types"),
                           text_recs=meta.get("text_recs"))
+            _hold_outcome(h["id"], "released", db_path)
             sent += 1
         except Exception as e:
             print(f"[notify] held alert {h['id']} failed: {e}")
+            _hold_outcome(h["id"], "failed", db_path)
             try:
                 import ops
                 ops.capture(e, job="release_held_alerts", context=f"hold_id={h['id']}")
             except Exception:
                 pass
     return {"released": sent, "dropped_stale": dropped}
+
+
+def _hold_outcome(hold_id, outcome, db_path: str = DB_PATH):
+    """What became of one held alert (#82). Never raises."""
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute("UPDATE alert_holds SET outcome=? WHERE id=?", (outcome, hold_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] hold {hold_id} outcome not recorded: {e}")
+
+
+def dropped_holds(restaurant_id, db_path: str = DB_PATH) -> list:
+    """The alerts held through a rush that went stale before they could be
+    released, and that no morning brief has carried yet — [{id, alert_type,
+    subject}], oldest first (#82)."""
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, alert_type, subject, created_at FROM alert_holds WHERE restaurant_id=? "
+                "AND outcome='dropped_stale' AND folded_at IS NULL ORDER BY id LIMIT 20",
+                (restaurant_id,)).fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] dropped holds unreadable for rid={restaurant_id}: {e}")
+        return []
+
+
+def mark_holds_folded(hold_ids, db_path: str = DB_PATH) -> None:
+    """The brief carried these dropped holds; never fold them twice."""
+    ids = [int(i) for i in hold_ids or ()]
+    if not ids:
+        return
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            conn.execute(f"UPDATE alert_holds SET folded_at=datetime('now') WHERE id IN ({','.join('?' * len(ids))}) "
+                         "AND folded_at IS NULL", ids)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] could not mark holds folded: {e}")
 
 
 def _claim_hold(hold_id, db_path: str = DB_PATH) -> bool:
@@ -2024,7 +2252,7 @@ def _claim_hold(hold_id, db_path: str = DB_PATH) -> bool:
         return False
 
 
-def _release_suppressed(restaurant_id, db_path: str = DB_PATH) -> bool:
+def _release_suppressed(restaurant_id, db_path: str = DB_PATH, alert_type: str = None) -> bool:
     try:
         from models import count_alerts_today, get_restaurant
         r = get_restaurant(restaurant_id, db_path)
@@ -2033,7 +2261,7 @@ def _release_suppressed(restaurant_id, db_path: str = DB_PATH) -> bool:
             return True
     except Exception as e:
         print(f"[notify] cap check failed for rid={restaurant_id}: {e}")
-    return _over_alert_ceiling(restaurant_id, db_path)
+    return _over_alert_ceiling(restaurant_id, db_path, alert_type)
 
 
 def _mark_sent(hold_id, db_path: str = DB_PATH):
@@ -2636,7 +2864,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             print(f"[notify] DND check error: {_de}")
         # Outside the try above so a failure in the owner's own settings can
         # never skip the ceiling — that is the one check that has to hold.
-        if _over_alert_ceiling(restaurant_id, db_path):
+        # With the alert type, so the automatic storm cap applies (#92).
+        if _over_alert_ceiling(restaurant_id, db_path, alert_type):
             return True
         return False
 

@@ -651,7 +651,10 @@ def test_managers_get_their_own_brief_and_it_never_shows_what_they_cant_see(db_p
         return {"date": "2026-09-19", "lines": [{"key": "x", "text": "t", "tone": "neutral", "ask": "?"}]}
     monkeypatch.setattr(morning_brief, "build", fake_build)
     pushed = []
-    monkeypatch.setattr(push, "fire_push", lambda *a, **k: pushed.append(k["user_ids"]))
+    # fire_push returns how many devices it queued; a stand-in that returned
+    # None read as "no device" and the brief now falls back to email for it
+    # (fix round E, #82). One device each here.
+    monkeypatch.setattr(push, "fire_push", lambda *a, **k: pushed.append(k["user_ids"]) or 1)
     r = models.get_restaurant(rid, db_path=db_path)
     out = morning_brief.deliver(rid, restaurant=r, db_path=db_path)
     assert out["push"] == 3 and sorted(next(iter(u)) for u in pushed) == sorted([owner, gm, agm])

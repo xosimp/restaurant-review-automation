@@ -2045,10 +2045,9 @@ REFERRALS_PER_HOUR = 10
 
 def _referrals_last_hour(restaurant_id) -> int:
     try:
-        from datetime import datetime as _dt, timedelta as _td
-        from zoneinfo import ZoneInfo as _ZI
-        # email_log.sent_at is America/Chicago local (models.log_email).
-        since = (_dt.now(_ZI("America/Chicago")).replace(tzinfo=None) - _td(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        # email_log.sent_at is UTC (models.log_email, fix round E #89).
+        since = (_dt.now(_tz.utc) - _td(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         try:
             return conn.execute("SELECT COUNT(*) FROM email_log WHERE restaurant_id=? AND email_type='referral' "
@@ -2514,3 +2513,145 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round E ── messaging: suppressions, SMS, delivery health, value recap ─
+
+def _sends_allowed_here():
+    """Admin actions that mail or text a CLIENT go out only from the host
+    that runs the production scheduler (scheduler.scheduling_allowed): a
+    local backend holds production's Resend and Twilio keys over a stale copy
+    of the database."""
+    try:
+        import scheduler as _sched
+        return bool(_sched.scheduling_allowed())
+    except Exception:
+        return False
+
+
+@admin_bp.route("/admin/api/suppressions")
+@admin_required
+def admin_api_suppressions(current_user):
+    """Suppressed addresses, newest first, each with its scope (all |
+    marketing | guest, comma-joined when several) and whether it is an
+    operator address. ?q= filters by address; ?restaurant_id= keeps the
+    addresses that client's mail goes to, each with its roles (#45)."""
+    from models import get_email_suppressions
+    rid = request.args.get("restaurant_id", type=int)
+    rows = get_email_suppressions(limit=min(request.args.get("limit", 200, type=int), 1000),
+                                  q=(request.args.get("q") or "").strip() or None, restaurant_id=rid)
+    return jsonify(ok=True, suppressions=rows, restaurant_id=rid)
+
+
+@admin_bp.route("/admin/api/suppressions/reinstate", methods=["POST"])
+@admin_required
+def admin_api_suppression_reinstate(current_user):
+    """Lift a suppression — body {"email", "reason"?}. Audited (who, the row
+    as it was, why). 404 when the address is not suppressed (#45)."""
+    from models import unsuppress_email
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if "@" not in email:
+        return jsonify(ok=False, error="An email address is required."), 400
+    lifted = unsuppress_email(email, actor=current_user.get("username") or "admin",
+                              reason=(data.get("reason") or "").strip()[:300] or None)
+    if not lifted:
+        return jsonify(ok=False, error="That address isn't suppressed."), 404
+    return jsonify(ok=True, email=email, lifted=lifted)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/value-recap", methods=["POST"])
+@admin_required
+def admin_api_value_recap(restaurant_id, current_user):
+    """Send the client a recap of what Cavnar AI has measurably done for them
+    (#83) — the step after a high churn-risk score. Answers with the real
+    SendResult: 502 with a sentence when it did not go, 200 "skipped" when
+    there is nothing measured to say yet."""
+    import emails
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Not found"), 404
+    if not _sends_allowed_here():
+        return jsonify(ok=False, error="Client email goes out only from the production server."), 409
+    result = emails.send_value_recap_email(restaurant_id)
+    try:
+        import admin_events
+        summary = (f"Value recap {'sent' if result.ok else 'not sent'} by {current_user.get('username')}"
+                   + ("" if result.ok else f": {result.reason or result.error}"))
+        recorder = getattr(admin_events, "record_admin_action", None)
+        if recorder is not None:
+            recorder(current_user.get("username") or "admin", "email.value_recap", restaurant_id=restaurant_id,
+                     result="ok" if result.ok else "failed", summary=summary)
+        else:
+            admin_events.record("admin", "email.value_recap", restaurant_id=restaurant_id, summary=summary)
+    except Exception:
+        pass
+    if result.ok:
+        return jsonify(ok=True, message_id=result.message_id)
+    if result.skipped:
+        return jsonify(ok=False, skipped=True, error="Nothing measured for this client yet — no recap sent."), 200
+    if result.reason == "suppressed":
+        return jsonify(ok=False, reason="suppressed",
+                       error="The owner's address is suppressed (bounced or complained). Reinstate it first."), 409
+    return jsonify(ok=False, reason=result.reason, error=f"The recap didn't go out: {result.error}"), 502
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/storm-cap/lift", methods=["POST"])
+@admin_required
+def admin_api_lift_storm_cap(restaurant_id, current_user):
+    """End today's automatic alert-storm cap early (#92). Audited."""
+    import notify
+    if not notify.lift_storm_cap(restaurant_id, current_user.get("username") or "admin"):
+        return jsonify(ok=False, error="No automatic cap is on for this client."), 404
+    return jsonify(ok=True, restaurant_id=restaurant_id)
+
+
+@admin_bp.route("/admin/api/sms")
+@admin_required
+def admin_api_sms(current_user):
+    """The SMS ledger (#14): the newest texts fleet-wide, or one client's
+    (?restaurant_id=), and the last day's counts by status with the
+    account-level failures. Numbers are shown as their last four digits."""
+    import notify
+    rid = request.args.get("restaurant_id", type=int)
+    rows = notify.sms_log_rows(restaurant_id=rid, limit=min(request.args.get("limit", 100, type=int), 500))
+    for r in rows:
+        r.pop("to_hash", None)
+    return jsonify(ok=True, rows=rows, stats=notify.sms_stats(hours=24, restaurant_id=rid))
+
+
+@admin_bp.route("/admin/api/messaging/health")
+@admin_required
+def admin_api_messaging_health(current_user):
+    """One read for the console's messaging health (#14, #59, #74, #75, #92):
+    the inbound webhooks (last verified event, signature failures, stale),
+    email delivery over 7 days (bounce and complaint rates — a bounce is not
+    a delivery), SMS over 24 hours, the push and webhook outboxes, and the
+    automatic alert-storm caps on today."""
+    import models as _m
+    import notify
+    import push
+    import webhooks
+    conn = _m.get_conn()
+    try:
+        caps = [dict(r) for r in conn.execute(
+            "SELECT c.*, r.name AS restaurant FROM alert_storm_caps c LEFT JOIN restaurants r ON r.id=c.restaurant_id "
+            "WHERE c.until_at > datetime('now') AND c.lifted_at IS NULL ORDER BY c.id DESC").fetchall()]
+    finally:
+        conn.close()
+    return jsonify(ok=True,
+                   inbound_webhooks=_m.inbound_webhook_health(),
+                   email=_m.email_delivery_stats(days=7),
+                   sms=notify.sms_stats(hours=24),
+                   push_outbox=push.outbox_counts(),
+                   webhook_outbox=webhooks.outbox_counts(),
+                   storm_caps=caps,
+                   operator_suppressed=[r for r in _m.get_email_suppressions(limit=1000) if r.get("operator")])
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/brief-deliveries")
+@admin_required
+def admin_api_brief_deliveries(restaurant_id, current_user):
+    """Who got this client's morning brief, and how (#82)."""
+    import morning_brief
+    return jsonify(ok=True, deliveries=morning_brief.delivery_ledger(restaurant_id,
+                                                                      request.args.get("date") or None))
