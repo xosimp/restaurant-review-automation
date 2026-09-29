@@ -85,6 +85,15 @@ def test_without_the_mirror_list_price_counts_once_per_group_and_says_so(db_path
     assert _rec(c)["billing"]["billed_by"]["restaurant_id"] == b and _rec(a)["billing"]["mrr_source"] == "list"
 
 
+def test_a_paused_account_is_not_mrr_while_stripe_keeps_it_active(db_path):
+    _mirror(db_path)
+    rid = _one(db_path, "On Pause", billing_status="paused")
+    _sub(db_path, rid, "sub_p")                      # pause_collection leaves Stripe 'active'
+    b = _rec(rid)["billing"]
+    assert b["monthly"] == 0 and b["paused_monthly"] == 349
+    assert admin_ops.overview()["kpis"]["mrr"] == 0
+
+
 def test_status_disagreement_and_module_mismatch_raise_issues(db_path):
     _mirror(db_path)
     gone = _one(db_path, "Gone In Stripe", billing_status="active")

@@ -1108,7 +1108,11 @@ def _billing_for(r, d, mod_count):
             "cancellation_reason": sub.get("cancellation_reason"),
             "module_keys": sub.get("module_keys"), "updated_at": _stamp_any(sub.get("updated_at"))}
         out["list_monthly"] = _list_for(mod_count, interval) if st in _STRIPE_BILLED + _STRIPE_COMMITTED else 0
-        if st in _STRIPE_BILLED and net is not None:
+        if bs == "paused" and st in _STRIPE_BILLED:
+            # Stripe keeps a subscription 'active' while collection is
+            # paused; nothing is invoiced, so it is not MRR while it lasts.
+            out.update(billed_monthly=0, paused_monthly=net, mrr_source="mirror", list_monthly=0)
+        elif st in _STRIPE_BILLED and net is not None:
             out.update(monthly=net, billed_monthly=net, mrr_source="mirror")
         elif st in _STRIPE_COMMITTED and net is not None:
             out.update(committed_monthly=net, mrr_source="mirror")
@@ -4772,7 +4776,7 @@ def adoption(days=ADOPTION_DAYS):
             row[group] = {"entitled": len(entitled), "using": len(using),
                           "rate_pct": round(100.0 * len(using) / len(entitled), 1) if entitled else None}
         out.append(row)
-    return {"ok": True, "days": days, "modules": out,
+    return {"ok": True, "days": days, "modules": out, "trial_conversion": _trial_conversion(recs, d),
             "basis": ("owner use in the window: a web screen view, or an action the module exists for (an approved "
                       "reply, a published schedule, a count or an applied invoice, a real post). iOS screen views are "
                       "not recorded, so iOS use counts only through those actions."),
