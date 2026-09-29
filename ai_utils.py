@@ -2423,8 +2423,33 @@ _PII_JSON_RE = re.compile(r'("(?:author|author_name|reviewer|reviewer_name|guest
                           r'guest|customer|to_email|phone|email)"\s*:\s*)"[^"]*"')
 
 
-def redact_pii(text):
-    """`text` with guest contact details and labelled guest names replaced,
+# A guest's name handed to a model on its own: the drafter fences the
+# reviewer's name in an UNTRUSTED block of its own (a few capitalised words,
+# no sentence), and the reply then greets them by it.
+_PII_FENCED_NAME_RE = re.compile(r"<<<UNTRUSTED_GUEST_TEXT\n([A-Z][\w'.-]*(?: [A-Z][\w'.-]*){0,3})\nUNTRUSTED_GUEST_TEXT>>>")
+_PII_JSON_NAME_RE = re.compile(r'"(?:author|author_name|reviewer|reviewer_name|guest_name|customer_name)"\s*:\s*"([^"]{2,60})"')
+
+
+def guest_names_in(text):
+    """The guest names a prompt carries — labelled lines, name fields and a
+    name fenced on its own — so a trace can redact them in the output too."""
+    t = str(text or "")
+    names = set(m.group(2).strip() for m in _PII_LABEL_RE.finditer(t))
+    names |= set(m.group(1).strip() for m in _PII_FENCED_NAME_RE.finditer(t))
+    names |= set(m.group(1).strip() for m in _PII_JSON_NAME_RE.finditer(t))
+    out = set()
+    for n in names:
+        if n and n.lower() not in ("guest", "anonymous", "a google user"):
+            out.add(n)
+            first = n.split()[0]
+            if len(first) >= 3:
+                out.add(first)          # "Hi Ann," greets the first name only
+    return out
+
+
+def redact_pii(text, names=()):
+    """`text` with guest contact details and guest names replaced — labelled
+    names, a name fenced on its own, and any of `names` wherever it appears —
     and anything credential-shaped removed (ai_guard.redact_secrets)."""
     t = str(text or "")
     try:
@@ -2437,6 +2462,9 @@ def redact_pii(text):
     t = _PII_PHONE_RE.sub("[phone]", t)
     t = _PII_JSON_RE.sub(r'\1"[redacted]"', t)
     t = _PII_LABEL_RE.sub(r"\1[name]", t)
+    t = _PII_FENCED_NAME_RE.sub("<<<UNTRUSTED_GUEST_TEXT\n[name]\nUNTRUSTED_GUEST_TEXT>>>", t)
+    for n in sorted(set(names or ()), key=len, reverse=True):
+        t = re.sub(r"(?<!\w)" + re.escape(n) + r"(?!\w)", "[name]", t)
     return t
 
 
@@ -2539,6 +2567,7 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
         static = _static_system(kwargs)
         template_hash = _sha(f"{template}:{_sha(static)}") if template else _sha(static)
         output = _content_text(getattr(message, "content", "")) if message is not None else ""
+        names = guest_names_in(prompt)
         usage = getattr(message, "usage", None)
         att = attribution or {}
         row = (call_id, restaurant_id, action or "unspecified", "anthropic", kwargs.get("model"),
@@ -2549,8 +2578,9 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
                _sha(output) if output else None,
                getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None),
                latency_ms, attempts, usage_id,
-               zlib.compress(redact_pii(prompt[:AI_TRACE_PROMPT_CHARS]).encode("utf-8", "replace")),
-               zlib.compress(redact_pii(output[:AI_TRACE_OUTPUT_CHARS]).encode("utf-8", "replace")) if output else None)
+               zlib.compress(redact_pii(prompt[:AI_TRACE_PROMPT_CHARS], names).encode("utf-8", "replace")),
+               zlib.compress(redact_pii(output[:AI_TRACE_OUTPUT_CHARS], names).encode("utf-8", "replace"))
+               if output else None)
         conn = _conn()
         try:
             conn.execute(

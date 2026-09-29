@@ -133,6 +133,21 @@ def test_a_call_leaves_a_redacted_trace_linked_from_its_ledger_row(db_path):
     assert usage["call_id"] == m._cavnar_call_id
 
 
+def test_a_reviewers_fenced_name_is_redacted_in_the_prompt_and_the_reply(db_path):
+    """The drafter fences the reviewer's name on its own and the reply
+    greets them by it; neither is kept."""
+    from ai_guard import wrap_untrusted
+    rid = _rid(db_path)
+    prompt = ("Address the reviewer by the first name given in the next block:\n" + wrap_untrusted("Ann Smith")
+              + "\nReview:\n" + wrap_untrusted("Cold soup."))
+    m = ai_utils.create_with_retry(_Client("Hi Ann, we're sorry the soup was cold."), model="claude-sonnet-5",
+                                   max_tokens=10, restaurant_id=rid, action="draft_response",
+                                   messages=[{"role": "user", "content": prompt}])
+    call = ai_utils.read_call(m._cavnar_call_id)
+    assert "Ann" not in call["prompt"] and "Cold soup." in call["prompt"]
+    assert call["output"] == "Hi [name], we're sorry the soup was cold."
+
+
 def test_only_the_newest_calls_keep_their_text(db_path, monkeypatch):
     rid = _rid(db_path)
     monkeypatch.setattr(ai_utils, "AI_TRACE_KEEP_PER_ACTION", 3)
