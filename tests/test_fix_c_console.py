@@ -6,6 +6,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import sqlite3
+
 import pytest
 from flask import Flask
 
@@ -55,7 +57,15 @@ def env(monkeypatch, db_path):
 def _sql(db_path, sql, args=()):
     c = get_conn(db_path)
     try:
-        cur = c.execute(sql, args)
+        try:
+            cur = c.execute(sql, args)
+        except sqlite3.OperationalError as e:
+            # Workstream H's boot migrations now add the mirror and billing
+            # columns these tests used to add themselves; an ALTER for a
+            # column that already exists is a no-op here.
+            if sql.lstrip().upper().startswith("ALTER TABLE") and "duplicate column name" in str(e):
+                return None
+            raise
         c.commit()
         return cur.lastrowid
     finally:

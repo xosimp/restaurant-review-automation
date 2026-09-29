@@ -3877,7 +3877,7 @@ def activity(limit=60, d=None):
                 if _job_failure_kind(j, "kind" in jf_cols) != "job":
                     continue
                 ev.append({"at": _iso_z(j["created_at"], "UTC"), "restaurant_id": j.get("restaurant_id"), "restaurant": "Platform", "kind": "job", "label": f"Job failed · {j['job']}", "tone": "bad", "detail": (j["error"] or "")[:140]})
-            for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? AND e.source != 'audit' ORDER BY e.id DESC LIMIT 40", (since,)):
+            for e in _rows_dict(conn, "SELECT e.restaurant_id, r.name, e.source, e.event_type, e.summary, e.created_at FROM admin_events e LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ? AND e.source <> 'audit' ORDER BY e.id DESC LIMIT 40", (since,)):
                 bad = any(x in e["event_type"] for x in ("failed", "deleted", "canceled", "past_due"))
                 ev.append({"at": _iso_z(e["created_at"], "UTC"), "restaurant_id": e["restaurant_id"], "restaurant": e["name"] or "Unmatched customer", "kind": e["source"],
                            "label": f"{e['source'].capitalize()} · {e['summary'] or e['event_type']}", "tone": "bad" if bad else ("good" if e["event_type"] in ("invoice.paid", "contract.signed") else "neutral")})
