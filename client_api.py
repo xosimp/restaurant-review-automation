@@ -8592,17 +8592,31 @@ def mark_notification_opened(current_user):
     return _m("mobile_mark_notification_opened")(current_user)
 
 
+def _do_notifications_engagement(current_user):
+    """Web and phone, one body. `suggestions`: types this restaurant gets a
+    lot of and never opens — the raw material for one sentence in Account,
+    not an automatic change. `mine`: the same, for THIS login's own phone
+    (memory audit 9/29/26, owner_layers): pushes delivered to their devices
+    and never opened by them — a manager who opens every 5-star push no
+    longer hides that the owner never does. Its action is the login's own
+    mute (POST /account/preferences/mine), never the restaurant's setting."""
+    import notify
+    import preferences
+    rows = notify.engagement_report(current_user["restaurant_id"])
+    for row in rows:
+        row["label"] = _NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
+    mine = preferences.never_opened_for_login(current_user.get("id"), current_user["restaurant_id"])
+    for row in mine:
+        row["label"] = _NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
+    return {"ok": True, "suggestions": rows, "mine": mine}, 200
+
+
 @client_bp.route("/api/notifications/engagement")
 @login_required
 def notifications_engagement(current_user):
-    """Types this restaurant gets a lot of and never opens — the raw material
-    for one sentence in Account, not an automatic change."""
-    import notify
-    from client_api import _NOTIFICATION_LABELS as _labels
-    rows = notify.engagement_report(current_user["restaurant_id"])
-    for row in rows:
-        row["label"] = _labels.get(row["alert_type"], row["alert_type"])
-    return jsonify(ok=True, suggestions=rows)
+    """Twin: /mobile/api/notifications/engagement (_do_notifications_engagement)."""
+    payload, status = _do_notifications_engagement(current_user)
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/notifications/unread-count")

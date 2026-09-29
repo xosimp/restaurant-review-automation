@@ -3346,11 +3346,30 @@ def set_grant(restaurant_id, user_id, permission, enabled, granted_by=None, db_p
 
 
 def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PATH):
+    """Whether this login gets THIS location's morning brief. A login is on
+    the location's team when it is based there, holds an active membership
+    there, or is the group's owner (based at another location of the same
+    group — _still_in_group, the switcher's rule): morning_brief.recipients
+    adds a group owner to every sibling's brief, and the setter used to
+    refuse them ("that login isn't on this restaurant's team"), so a
+    three-location owner could not turn off two of their three briefs
+    (memory audit 9/29/26, owner_layers)."""
     conn = get_conn(db_path)
     try:
-        u = conn.execute("SELECT role FROM users WHERE id=? AND restaurant_id=? AND is_active=1",
-                         (user_id, restaurant_id)).fetchone()
-        if not u:
+        u = conn.execute("SELECT role, restaurant_id FROM users WHERE id=? AND is_active=1",
+                         (user_id,)).fetchone()
+        on_team = bool(u) and int(u["restaurant_id"]) == int(restaurant_id)
+        if u and not on_team:
+            try:
+                on_team = bool(conn.execute("SELECT 1 FROM memberships WHERE user_id=? AND restaurant_id=? "
+                                            "AND is_active=1", (user_id, restaurant_id)).fetchone())
+            except Exception:
+                on_team = False
+        if u and not on_team:
+            from permissions import normalize_role as _nr
+            # The same logins morning_brief.recipients adds at a sibling.
+            on_team = _nr(u["role"]) == "owner" and _still_in_group(conn, u["restaurant_id"], restaurant_id)
+        if not on_team:
             raise TeamAccessError("that login isn't on this restaurant's team")
         from permissions import CONSOLE_ROLES, normalize_role
         if normalize_role(u["role"]) not in CONSOLE_ROLES:

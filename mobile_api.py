@@ -1910,11 +1910,9 @@ def notification_open_surface(data) -> str:
 @mobile_bp.route("/notifications/engagement")
 @mobile_login_required
 def mobile_notifications_engagement(current_user):
-    import notify
-    rows = notify.engagement_report(current_user["restaurant_id"])
-    for row in rows:
-        row["label"] = _capi._NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
-    return jsonify(ok=True, suggestions=rows)
+    """Twin of /api/notifications/engagement — one body (per login too)."""
+    payload, status = _capi._do_notifications_engagement(current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/notifications/unread-count")

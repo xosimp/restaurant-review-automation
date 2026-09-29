@@ -2764,6 +2764,89 @@ def _do_memory_forget(u):
     return {"ok": True}, 200
 
 
+# ── preferences: the login's own, the location's, the organisation's ─────────
+# (memory audit 9/29/26, owner_layers — preferences.py)
+
+_SHOWN_LOCATION_KEYS = ("voice_notes", "never_say", "sign_off_name", "briefing_level", "morning_brief_enabled",
+                        "morning_brief_hour", "alert_quiet_start", "alert_quiet_end", "alert_max_per_day")
+
+
+def _do_preferences_get(u):
+    """What this login's settings resolve to and where each came from:
+    `mine` (this login's own notification choices and whether they get this
+    location's brief), `location` (the location settings a group shares,
+    each with its source — "all locations", "this location" or "default"),
+    whether this login may apply them to every location, the group's
+    locations, and `never_opened` — the alert types delivered to this
+    login's phone and never opened by them."""
+    import preferences
+    from auth import get_team_access
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    mine = {k: preferences.resolve(k, r, user=u)["value"] for k in preferences.LOGIN_KEYS}
+    try:
+        mine["morning_brief"] = bool((get_team_access(_rid(u)).get(u.get("id")) or {}).get("morning_brief"))
+    except Exception:
+        mine["morning_brief"] = None
+    location = {k: preferences.resolve(k, r, user=u) for k in _SHOWN_LOCATION_KEYS}
+    locs = [{"id": loc["id"], "name": loc.get("location_name") or loc.get("name")}
+            for loc in preferences.group_locations(r)]
+    return {"ok": True, "mine": mine, "location": location,
+            "can_apply_to_all": preferences.may_apply_to_all(u, r) and len(locs) > 1,
+            "locations": locs, "org_keys": list(preferences.ORG_KEYS),
+            "unmutable_types": sorted(preferences.UNMUTABLE_TYPES),
+            "never_opened": preferences.never_opened_for_login(u.get("id"), _rid(u))}, 200
+
+
+def _do_preferences_mine(u):
+    """This login's own choices at this location: push on or off, the alert
+    types they mute on their own phone, their own quiet hours (only ever
+    taking alerts away from their phone — the owner's settings still
+    apply), and whether they get this location's morning brief. Any
+    console login, for itself only."""
+    import preferences
+    from auth import set_morning_brief_pref, TeamAccessError
+    b = _body()
+    try:
+        mine = preferences.set_login_overrides(u.get("id"), _rid(u),
+                                               {k: b[k] for k in preferences.LOGIN_KEYS if k in b})
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if "morning_brief" in b:
+        try:
+            set_morning_brief_pref(_rid(u), u.get("id"), bool(b.get("morning_brief")))
+        except TeamAccessError as e:
+            return {"ok": False, "error": e.message}, 400
+        mine["morning_brief"] = bool(b.get("morning_brief"))
+    return {"ok": True, "mine": mine}, 200
+
+
+def _do_preferences_apply_to_all(u):
+    """A group owner makes this location's settings (`keys`, from
+    preferences.ORG_KEYS) the organisation's default and every location's —
+    "add 'cheap' to never-say everywhere" in one save."""
+    import preferences
+    from client_api import log_account_event
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    if not preferences.may_apply_to_all(u, r):
+        return _forbidden("Only the owner of every location can apply a setting to all of them.")
+    keys = _body().get("keys")
+    if not isinstance(keys, list) or not keys:
+        return {"ok": False, "error": "Which settings? Send keys."}, 400
+    out = preferences.apply_to_all_locations(r, keys, user=u)
+    if not out["keys"]:
+        return {"ok": False, "error": "None of those settings can be applied to every location.",
+                "skipped": out["skipped"]}, 400
+    log_account_event(_rid(u), "preferences_applied", current_user=u,
+                      detail=f"{', '.join(out['keys'])[:100]} → {len(out['locations'])} locations")
+    return {"ok": True, **out}, 200
+
+
 def _do_memory_restore(u):
     """Put back a fact that left without anyone asking (a full lane, a date
     passed, a retracted answer) — ask_memory_archive by id."""
@@ -4431,6 +4514,9 @@ _ROUTES = [
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),
+    ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
+    ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),

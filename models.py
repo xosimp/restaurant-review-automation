@@ -3332,6 +3332,10 @@ def init_db(db_path: str = DB_PATH):
     # (menu_intelligence) — audit #22 / #26 / #41.
     from insight_store import init_insight_store
     init_insight_store(db_path)
+    # Who a setting belongs to: a login's own, the location's, or the whole
+    # organisation's (preferences — memory audit 9/29/26, owner_layers).
+    from preferences import init_preferences
+    init_preferences(db_path)
     from menu_intelligence import init_menu_intelligence
     init_menu_intelligence(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
@@ -3895,6 +3899,14 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     if "location_group" in updates or "owner_email" in updates:
         try:
             _sync_restaurant_organization(restaurant_id, db_path=db_path)
+        except Exception:
+            pass
+        # A location joining a group takes the organisation's defaults on the
+        # settings it has not made its own (preferences, memory audit 9/29/26
+        # owner_layers). A deliberate function-scope L1 -> L2 import.
+        try:
+            import preferences as _prefs
+            _prefs.inherit_org_defaults(restaurant_id, db_path=db_path)
         except Exception:
             pass
 
@@ -9886,6 +9898,9 @@ ACCOUNT_EVENT_TYPES = (
     # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
     # counted that a Places fetch never returned (scheduler._record_places_gap).
     "pos_sync_failing", "review_fetch_gap",
+    # A group owner made this location's settings every location's
+    # (preferences.apply_to_all_locations, memory audit 9/29/26).
+    "preferences_applied",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -9917,6 +9932,7 @@ ACCOUNT_EVENT_LABELS = {
     "supplier_order_sent": "Supplier order sent",
     "schedule_published": "Schedule sent to staff",
     "memory_added": "Fact added to what Cavnar AI remembers",
+    "preferences_applied": "Settings applied to every location",
     "memory_forgotten": "Fact removed from what Cavnar AI remembers",
     "time_off_decided": "Time-off request answered",
     "covers_imported": "Cover counts entered",
