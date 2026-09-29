@@ -2864,16 +2864,10 @@ def admin_api_change_own_username(current_user):
 
 
 def _clear_user_two_factor(user_id):
-    """An internal login's own second factor off: the flag, its backup codes
-    and the devices it remembered."""
-    conn = get_conn()
-    try:
-        conn.execute("UPDATE users SET two_fa_enabled=0, two_fa_method=NULL WHERE id=?", (user_id,))
-        conn.execute("DELETE FROM user_backup_codes WHERE user_id=?", (user_id,))
-        conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (user_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    """An internal login's own second factor off (auth.clear_user_two_factor:
+    the flag, its backup codes and the devices it remembered)."""
+    import auth as _auth_cl
+    _auth_cl.clear_user_two_factor(user_id)
 
 
 # ── one login's access, for Access & activity (#55) ─────────────────────────

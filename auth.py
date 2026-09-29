@@ -2498,6 +2498,59 @@ def create_user(restaurant_id: int, username: str, email: str,
     conn.close()
     return uid
 
+def clear_user_two_factor(user_id: int, db_path: str = DB_PATH) -> None:
+    """An internal login's own second factor off: the flag and method, its
+    backup codes, and the devices it remembered."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE users SET two_fa_enabled=0, two_fa_method=NULL WHERE id=?", (user_id,))
+        conn.execute("DELETE FROM user_backup_codes WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def apply_boot_two_factor_resets(env=None, db_path: str = DB_PATH) -> list:
+    """Break-glass for an internal login locked out by its own second factor
+    (codes not arriving, backup codes lost): ADMIN_2FA_RESET_USERNAMES
+    (comma-separated) turns those logins' own two-factor off at boot. Only
+    internal logins — a restaurant's switch is not touched. Set it, redeploy,
+    sign in, turn two-factor back on, unset it. Every reset is recorded and,
+    on Railway, sent to the operator. Returns the usernames reset."""
+    env = os.environ if env is None else env
+    names = [n.strip().lower() for n in (env.get("ADMIN_2FA_RESET_USERNAMES") or "").split(",") if n.strip()]
+    done = []
+    for n in names:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT id, is_admin, role FROM users WHERE LOWER(username)=?", (n,)).fetchone()
+        finally:
+            conn.close()
+        if not row or not is_internal_login(dict(row)):
+            print(f"[auth] ADMIN_2FA_RESET_USERNAMES: {n!r} is not an admin or support login — skipped")
+            continue
+        clear_user_two_factor(row["id"], db_path=db_path)
+        done.append(n)
+        line = (f"Break-glass: two-factor turned off for {n} at boot (ADMIN_2FA_RESET_USERNAMES). "
+                "Turn it back on at /admin/two-factor, then unset the variable.")
+        print("SECURITY WARNING: " + line)
+        try:
+            import admin_events
+            admin_events.record("admin", "two_factor_reset_break_glass", summary=line[:300],
+                                payload={"username": n}, db_path=db_path)
+        except Exception:
+            pass
+        try:
+            import config as _cfg_bg
+            if _cfg_bg.on_railway():
+                import ops
+                ops.alert_will("Two-factor reset at boot for " + n, [line])
+        except Exception:
+            pass
+    return done
+
+
 ADMIN_HOME_NAME = "Cavnar AI Admin"
 
 

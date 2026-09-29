@@ -127,6 +127,32 @@ def test_break_glass_unlock_by_env_and_by_script(db_path, monkeypatch):
     assert security.login_throttled("198.51.100.7", "will", internal=True)[0] is False
 
 
+def test_break_glass_turns_off_an_admins_own_second_factor_and_nothing_else(db_path):
+    """For the only admin, codes not arriving and backup codes lost: set
+    ADMIN_2FA_RESET_USERNAMES, redeploy, sign in. Only internal logins."""
+    _hq, admin = _admin(db_path)
+    rid = create_restaurant(Restaurant(name="R", owner_email="o@x.test"), db_path=db_path)
+    create_user(rid, "owner", "o@x.test", "Owner-pass-2026", db_path=db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method='email' WHERE id=?", (admin,))
+    conn.commit()
+    conn.close()
+    auth.generate_user_backup_codes(admin, db_path=db_path)
+    with redirect_stdout(io.StringIO()):
+        done = auth.apply_boot_two_factor_resets(env={"ADMIN_2FA_RESET_USERNAMES": "Will, owner"}, db_path=db_path)
+    assert done == ["will"]                                              # the restaurant login is skipped
+    conn = models.get_conn(db_path)
+    try:
+        assert conn.execute("SELECT two_fa_enabled FROM users WHERE id=?", (admin,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM admin_events WHERE event_type='two_factor_reset_break_glass'"
+                            ).fetchone()[0] == 1
+    finally:
+        conn.close()
+    assert auth.count_unused_user_backup_codes(admin, db_path=db_path) == 0
+    assert models.get_restaurant(rid, db_path=db_path).two_fa_enabled == 1
+
+
 # ── #136: the boot seed ─────────────────────────────────────────────────────
 
 def test_the_seed_does_nothing_when_any_admin_exists_even_under_another_name(db_path):

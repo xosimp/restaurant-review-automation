@@ -1062,6 +1062,11 @@ try:
     _sec_boot.apply_boot_unlocks()
 except Exception as _unlock_e:
     print(f"Break-glass unlock error: {_unlock_e}")
+try:
+    from auth import apply_boot_two_factor_resets as _a2fr_boot
+    _a2fr_boot()
+except Exception as _reset_e:
+    print(f"Break-glass two-factor reset error: {_reset_e}")
 
 # The scheduler runs in this process by default, which is how it has always
 # worked and what a single-service deployment needs.
