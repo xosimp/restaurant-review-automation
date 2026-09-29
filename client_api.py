@@ -4690,6 +4690,14 @@ def download_schedule(current_user):
         csv_clean = (detail.get("schedule_csv") or "").strip()
         if not csv_clean:
             return jsonify(ok=False, error="That schedule has no rows to download."), 400
+        # Rewritten through the export writer: names and notes come from
+        # uploads and the model, and a cell starting "=" would run as a
+        # formula in the owner's spreadsheet (fix round #156).
+        import csv as _csv_dl
+        from models import safe_csv_writer
+        _buf = io.StringIO()
+        safe_csv_writer(_buf).writerows(_csv_dl.reader(io.StringIO(csv_clean)))
+        csv_clean = _buf.getvalue()
         name = (restaurant.name if restaurant else "Restaurant").replace(" ", "_")
         return send_file(
             io.BytesIO(csv_clean.encode()),

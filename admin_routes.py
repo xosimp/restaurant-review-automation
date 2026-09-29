@@ -1675,11 +1675,15 @@ def mark_posted(review_id, current_user):
 @admin_bp.route("/api/export-reviews")
 @login_required
 def export_reviews(current_user):
-    import io, csv as _csv
+    import io
+    from models import safe_csv_writer
     restaurant = get_restaurant(current_user["restaurant_id"])
     reviews = get_reviews_data(current_user["restaurant_id"])
     buf = io.StringIO()
-    w = _csv.writer(buf)
+    # Reviewer names, review text and drafts are other people's words: a
+    # cell starting "=" ran as a formula in the owner's spreadsheet (fix
+    # round #156).
+    w = safe_csv_writer(buf)
     w.writerow(["Date","Author","Platform","Rating","Sentiment","Urgency","Review","Draft Response","Status"])
     for r in reviews:
         w.writerow([

@@ -43,18 +43,43 @@ def save_rpower_token(restaurant_id, current_user):
     full of somebody else's numbers that looks entirely normal.
     """
     import rpower
+    from models import get_restaurant, pos_binding_conflict
     data = request.get_json(silent=True) or {}
     token = (data.get("token") or "").strip()
     if not token:
         return jsonify(ok=False, error="A token is required."), 400
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
 
     probe = rpower.test_token(token)
     if not probe["ok"]:
         return jsonify(ok=False, error=probe["error"]), 400
-
-    update_restaurant(restaurant_id, {
-        "rpower_token": token, "rpower_sync_error": None, "pos_system": "RPOWER"})
     stores = probe["stores"]
+
+    # One store, one restaurant (fix round #143): refused before anything is
+    # written. A token that sees several stores is checked when one is
+    # chosen (rpower.bootstrap).
+    if len(stores) == 1 and not int(getattr(r, "is_demo", 0) or 0):
+        clash = pos_binding_conflict("rpower", (stores[0].get("cg"), stores[0].get("store_mid")),
+                                     exclude_id=restaurant_id)
+        if clash:
+            return jsonify(ok=False, error=f"That RPOWER store is already connected to {clash}. One store can "
+                                           f"feed only one restaurant — disconnect it there first."), 400
+
+    fields = {"rpower_token": token, "rpower_sync_error": None, "pos_system": "RPOWER"}
+    if token != (getattr(r, "rpower_token", None) or "").strip():
+        # A new token is a new connection. The old store binding used to stay
+        # while a choice between several stores was pending — the restaurant
+        # half-connected to a store the new token may not even see (fix
+        # round #143). Its sync stamp goes with it unless the new token
+        # resolves to the same store.
+        prev = (str(getattr(r, "rpower_cg", "") or ""), str(getattr(r, "rpower_store_mid", "") or ""))
+        fields.update({"rpower_cg": None, "rpower_store_mid": None, "rpower_store_name": None,
+                       "rpower_verified_at": None})
+        if not (len(stores) == 1 and (str(stores[0].get("cg") or ""), str(stores[0].get("store_mid") or "")) == prev):
+            fields["rpower_last_synced"] = None
+    update_restaurant(restaurant_id, fields)
     if len(stores) == 1:
         result = rpower.bootstrap(restaurant_id, store_mid=stores[0]["store_mid"])
         if not result.get("ok"):
