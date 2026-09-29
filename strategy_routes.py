@@ -2998,7 +2998,10 @@ def _do_issue_cover_answer(u, issue_id):
     day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
         else _local_today(u).isoformat()
     _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
-    return {"ok": True}, 200
+    # Kept on the issue's own ask too, so Home stops asking (UI wave).
+    import intraday as _intraday
+    _intraday.mark_cover_answer(_rid(u), int(issue_id), b["name"], b["accepted"])
+    return {"ok": True, "answer": "took" if b["accepted"] else "declined"}, 200
 
 
 def _do_person_rename(u, key):

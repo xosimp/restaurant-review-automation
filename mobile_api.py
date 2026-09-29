@@ -3025,6 +3025,8 @@ def mobile_labor_trend(current_user):
                 # A payroll week still in progress (memory audit 9/29/26,
                 # labor_periods): drawn as partial, never read as a trend.
                 "complete": bool(h.get("complete")),
+                "comparable": bool(h.get("comparable")),
+                "basis": h.get("basis"),
             })
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:

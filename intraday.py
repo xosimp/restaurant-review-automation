@@ -439,6 +439,43 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     return {"ok": True, "via": via, "name": who}
 
 
+def mark_cover_answer(restaurant_id, issue_id, name, accepted, db_path=None) -> bool:
+    """The manager's answer to "Did Zed take it?", kept on the coverage
+    issue's own `asked` entry (`answer`: "took" | "declined") so both Home
+    clients stop asking once it is answered (memory audit 9/29/26, covers;
+    the person's record is people.answer_cover's). False when the issue or
+    the ask is not there. Never raises."""
+    import json as _json
+    import issues
+    import models as _models
+    import staff_settings as _ss
+    db = db_path or _models.DB_PATH     # resolved at call time (CLAUDE.md, bound imports)
+    try:
+        issue = issues.get_issue(restaurant_id, issue_id, db_path=db)
+        if not issue or issue.get("kind") != "coverage":
+            return False
+        meta = _json.loads(issue.get("meta_json") or "null") or {}
+        hit = False
+        for a in meta.get("asked") or []:
+            if isinstance(a, dict) and _ss.name_key(a.get("name")) == _ss.name_key(name):
+                a["answer"] = "took" if accepted else "declined"
+                a["answered_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                hit = True
+        if not hit:
+            return False
+        conn = _models.get_conn(db)
+        try:
+            conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
+                         (_json.dumps(meta)[:4000], issue_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:
+        log.warning("cover answer not kept on the issue rid=%s issue=%s: %s", restaurant_id, issue_id, e)
+        return False
+
+
 def cover_key(issue) -> str:
     """The recommendation a coverage issue's suggested covers make:
     "cover:<date>:<person missing>"."""

@@ -4951,9 +4951,16 @@ def labor_trend_api(current_user):
                 "pct": round(h["labor_pct"], 1),
                 "labor": h["total_labor"],
                 "sales": h["total_sales"],
+                "start": h.get("period_start"),
+                "end": h.get("period_end"),
                 # A payroll week still in progress (memory audit 9/29/26,
                 # labor_periods): drawn as partial, never read as a trend.
                 "complete": bool(h.get("complete")),
+                # Readable against the week before it (adjacent, both ended,
+                # one costing basis) — a week recosted on another basis says
+                # "recosted, not comparable" rather than a trend.
+                "comparable": bool(h.get("comparable")),
+                "basis": h.get("basis"),
             })
         resp = jsonify(weeks=weeks)
         resp.headers['Cache-Control'] = 'no-store'
