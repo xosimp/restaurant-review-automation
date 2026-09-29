@@ -262,6 +262,10 @@ def test_the_memo_serves_request_threads_only(db_path):
         assert a[2]["cached"] is False and b[2]["cached"] is True and b[0] is a[0]
         admin_ops.invalidate_fleet_cache()
         assert admin_ops._records_cached()[2]["cached"] is False
+    with app.test_request_context("/admin/api/overview?fresh=1"):
+        assert admin_ops._records_cached()[2]["cached"] is True           # seconds old: shared
+        admin_ops._fleet_state["memo"]["at"] -= 10
+        assert admin_ops._records_cached()[2]["cached"] is False          # Refresh rebuilds
     # Off a request thread every call builds: a direct caller sees its write.
     _sql(db_path, "UPDATE restaurants SET name='Renamed' WHERE id=?", (rid,))
     assert _rec(rid)["name"] == "Renamed"

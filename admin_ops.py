@@ -492,6 +492,8 @@ HEAVY_WAIT_SECONDS = float(os.getenv("ADMIN_HEAVY_WAIT_SECONDS", "2"))
 BUSY_RETRY_AFTER = int(os.getenv("ADMIN_BUSY_RETRY_AFTER", "5"))
 # The rail badges accept a memo up to this old rather than start a build.
 BADGES_MAX_AGE_SECONDS = float(os.getenv("ADMIN_BADGES_MAX_AGE_SECONDS", "300"))
+# ?fresh=1 accepts a memo no older than this.
+FRESH_MAX_AGE_SECONDS = 5.0
 
 
 class AdminBusy(Exception):
@@ -553,9 +555,16 @@ def _records_cached():
             recs, d = _records()
         return recs, d, _build_meta(bucket)
     deadline = time.monotonic() + FLEET_WAIT_SECONDS
+    # ?fresh=1 (the console's Refresh) accepts a memo only seconds old —
+    # still single-flight, so a burst of refreshes shares one build.
+    try:
+        from flask import request as _rq
+        fresh = _rq.args.get("fresh") == "1"
+    except Exception:
+        fresh = False
     with _fleet_cv:
         while True:
-            m = _fleet_memo()
+            m = _fleet_memo(max_age=FRESH_MAX_AGE_SECONDS if fresh else None)
             if m:
                 return _served(m)
             if not _fleet_state["building"]:
