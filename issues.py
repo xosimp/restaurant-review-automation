@@ -132,14 +132,32 @@ def _public(row):
     return d
 
 
+def _issue_token(issue_id, contact_id, purpose="assignee"):
+    """The link token for one person on one issue: an HMAC over (issue,
+    person, purpose) with this install's kept issue-link secret.
+
+    Derived rather than random so it is the SAME token every time (#91): a
+    text retried after a failure, or sent by tick() and create_issue racing
+    for the same issue, carries the same link, and the link row is written
+    once. It used to be minted fresh per attempt — a bad number retried every
+    five minutes added ~288 issue_links rows a day. Only the hash is stored;
+    the token exists in the text message and nowhere else."""
+    import base64
+    import hmac as _hmac
+    from models import kept_secret
+    key = kept_secret("issue_links") or config.base_url().encode()
+    msg = f"issue:{int(issue_id)}:{int(contact_id or 0)}:{purpose}".encode()
+    return base64.urlsafe_b64encode(_hmac.new(key, msg, hashlib.sha256).digest()).decode().rstrip("=")[:32]
+
+
 def _mint_link(issue_id, contact_id, purpose="assignee", db_path=DB_PATH):
-    """A new link for one person. Only its hash is stored; the token itself
-    exists only in the text message that carries it."""
-    token = secrets.token_urlsafe(24)
+    """The link for one person on one issue — created once (INSERT OR
+    IGNORE on its hash) however many times a text is retried."""
+    token = _issue_token(issue_id, contact_id, purpose)
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT INTO issue_links (token_hash, issue_id, contact_id, purpose) VALUES (?,?,?,?)",
-                     (_hash(token), issue_id, contact_id, purpose))
+        conn.execute("INSERT OR IGNORE INTO issue_links (token_hash, issue_id, contact_id, purpose) "
+                     "VALUES (?,?,?,?)", (_hash(token), issue_id, contact_id, purpose))
         conn.commit()
     finally:
         conn.close()
@@ -229,10 +247,11 @@ def _restaurant_name(restaurant_id):
     return (r.location_name or r.name) if r else "your restaurant"
 
 
-def _sendable(issue_id, db_path=DB_PATH):
+def _sendable(issue_id, db_path=DB_PATH, now=None):
     """The issue row with its assignee's phone when a text may go out NOW,
-    else None: no consented phone, already notified, resolved, or quiet hours
-    (held, not dropped — the tick sends it when they end)."""
+    else None: no consented phone, already notified, resolved, given up on
+    (notify_failed_at), waiting out a retry backoff (notify_next_at), or quiet
+    hours (held, not dropped — the tick sends it when they end)."""
     from models import is_in_quiet_hours
     conn = get_conn(db_path)
     try:
@@ -246,30 +265,157 @@ def _sendable(issue_id, db_path=DB_PATH):
         return None
     if "notify_suppressed" in r.keys() and r["notify_suppressed"]:
         return None                      # filed deliberately without a text
+    if "notify_failed_at" in r.keys() and r["notify_failed_at"]:
+        return None                      # given up on; the owner was told instead
+    next_at = r["notify_next_at"] if "notify_next_at" in r.keys() else None
+    if next_at and next_at > _stamp(now):
+        return None                      # backing off after a failed text
     if is_in_quiet_hours(r["restaurant_id"], db_path=db_path):
         return None
     return r
 
 
-def _notify(issue_id, token, db_path=DB_PATH):
-    """Text the assignee their link. Returns True when a text went out."""
-    r = _sendable(issue_id, db_path)
-    if not r or not token:
+# A text to an issue's assignee is tried at most this many times, backing
+# off between tries (#91). tick() used to re-text a rejected number every
+# five minutes, forever, minting a new link row each time.
+MAX_NOTIFY_ATTEMPTS = 4
+NOTIFY_BACKOFF_MINUTES = (5, 15, 45)
+
+
+def _stamp(at=None):
+    return (at or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _backoff_until(attempts, now=None):
+    mins = NOTIFY_BACKOFF_MINUTES[min(max(attempts, 1), len(NOTIFY_BACKOFF_MINUTES)) - 1]
+    return _stamp((now or datetime.utcnow()) + timedelta(minutes=mins))
+
+
+def _text(phone, msg, restaurant_id):
+    """Send one issue text through notify.send_sms — the path every sender
+    and test stand-in shares — and return the whole outcome (SmsResult):
+    last_sms_result() after a real send, or just its bool from a stand-in."""
+    import notify
+    notify.clear_last_sms_result()
+    with notify.sms_context(restaurant_id):
+        ok = notify.send_sms(phone, msg[:320], use_case="alert")
+    res = notify.last_sms_result()
+    return res if res is not None else notify.SmsResult(bool(ok))
+
+
+def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
+    """Text the assignee their link. Returns True when a text went out.
+
+    CLAIMED before sending (#91, jobs #7): notified_at is set only by the
+    caller that wins `UPDATE … WHERE notified_at IS NULL`, so create_issue
+    and tick() racing for the same issue send one text, not two with two
+    links. The link is the one derived for this person (_mint_link), made
+    only once a text can go. A number that may not be texted — a STOP, no
+    consent — is given up on at once; a failed text is released and retried
+    with backoff, and after MAX_NOTIFY_ATTEMPTS, or on a failure Twilio says
+    is permanent, the issue is marked notify_failed_at and the owner is told
+    by push and email instead (_fall_back)."""
+    r = _sendable(issue_id, db_path, now)
+    if not r:
         return False
-    from notify import send_sms
+    import notify
+    blocked = notify.sms_block_reason(r["phone"], r["restaurant_id"], "alert", db_path)
+    if blocked:
+        _give_up(r, blocked, db_path, now)
+        return False
+    conn = get_conn(db_path)
+    try:
+        won = conn.execute("UPDATE ops_issues SET notified_at=? WHERE id=? AND notified_at IS NULL "
+                           "AND notify_failed_at IS NULL", (_stamp(now), issue_id)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not won:
+        return False                     # another caller has it
+    token = token or _mint_link(issue_id, r["assignee_contact_id"], db_path=db_path)
     where = _restaurant_name(r["restaurant_id"])
     msg = (f"Cavnar AI · {where}: {r['title']}. Assigned to you — "
            f"tap to respond: {_base_url()}/i/{token}")
-    sent = send_sms(r["phone"], msg[:320], use_case="alert")
-    if sent:
+    res = _text(r["phone"], msg, r["restaurant_id"])
+    if res.ok:
         conn = get_conn(db_path)
         try:
-            conn.execute("UPDATE ops_issues SET notified_at=? WHERE id=?", (_now(), issue_id))
+            conn.execute("UPDATE ops_issues SET notify_error=NULL, notify_next_at=NULL WHERE id=?", (issue_id,))
             conn.commit()
         finally:
             conn.close()
         _present(r, "issue_sms", db_path)
-    return bool(sent)
+        return True
+    attempts = int((r["notify_attempts"] if "notify_attempts" in r.keys() else 0) or 0) + 1
+    reason = res.error or res.status or "the text was not accepted"
+    if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
+        _give_up(r, reason, db_path, now, attempts=attempts)
+    else:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET notified_at=NULL, notify_attempts=?, notify_error=?, "
+                         "notify_next_at=? WHERE id=?",
+                         (attempts, str(reason)[:300], _backoff_until(attempts, now), issue_id))
+            conn.commit()
+        finally:
+            conn.close()
+    return False
+
+
+def _give_up(r, reason, db_path=DB_PATH, now=None, attempts=None):
+    """The assignee will not be texted about this issue: record why
+    (notify_error, notify_failed_at — tick() never retries it) and tell the
+    owner by push and email so the issue still reaches someone (#91, #107)."""
+    conn = get_conn(db_path)
+    try:
+        # Conditional, so two callers giving up on the same issue tell the
+        # owner once.
+        won = conn.execute("UPDATE ops_issues SET notified_at=NULL, notify_failed_at=?, notify_error=?, "
+                           "notify_attempts=COALESCE(?, notify_attempts) WHERE id=? AND notify_failed_at IS NULL",
+                           (_stamp(now), str(reason)[:300], attempts, r["id"])).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if won:
+        _fall_back(r, r["assignee_name"] or "the assigned manager", reason, db_path)
+
+
+def _fall_back(r, who, reason, db_path=DB_PATH):
+    """Push and email the owner that `who` could not be texted about issue
+    `r`. Never raises. Loss issues are never pushed beyond the logins
+    permitted to read them (notify.alert_audience)."""
+    title = f"Couldn't text {who}"
+    body = f"{r['title']} — {reason}. Open the issue to follow up yourself."
+    rid = r["restaurant_id"]
+    try:
+        import notify
+        import push
+        audience = notify.alert_audience(rid, ["issue"], db_path)
+        if audience is None or audience:
+            push.fire_push(rid, "issue", title, body[:220],
+                           data={"issue_id": r["id"], "surface": "issue_fallback"},
+                           db_path=db_path, user_ids=audience)
+    except Exception as e:
+        print(f"[issues] fallback push failed for issue {r['id']}: {e}")
+    try:
+        import emails
+        from models import get_restaurant
+        rest = get_restaurant(rid)
+        to = getattr(rest, "owner_email", None)
+        if to:
+            import html as _h
+            place = (getattr(rest, "location_name", None) or getattr(rest, "name", None) or "your restaurant")
+            html = emails.report_shell(
+                kicker=_h.escape(place), title=_h.escape(title), subtitle="",
+                sections=[emails.report_paragraph(_h.escape(r["title"])),
+                          emails.report_paragraph(_h.escape(f"The text to {who} did not go through: {reason}. "
+                                                            "Nobody has been told about this issue yet."))],
+                cta_label="Open the issue", cta_url=f"{_base_url()}/?tab=home")
+            emails.deliver(email_type="send_issue_fallback_email", restaurant_id=rid, payload={
+                "from": emails.sender("client"), "to": [to],
+                "subject": f"{title} — {place}", "preheader": str(r["title"])[:120], "html": html})
+    except Exception as e:
+        print(f"[issues] fallback email failed for issue {r['id']}: {e}")
 
 
 _KIND_MODULE = {"review": "reviews", "stock": "food", "labor": "labor", "coverage": "labor",
@@ -422,9 +568,13 @@ def reassign(restaurant_id, issue_id, contact_id, db_path=DB_PATH):
             raise ValueError("that contact is not a consented alert contact at this restaurant")
         # An owner handing it to someone by name is asking for them to be
         # told — that lifts a filed-without-a-text issue's suppression.
+        # A new person starts a new try: the old assignee's failed texts and
+        # backoff are theirs, not this person's.
         conn.execute("UPDATE ops_issues SET assignee_contact_id=?, assignee_name=?, "
                      "notified_at=NULL, status='open', acknowledged_at=NULL, escalated_at=NULL, "
-                     "notify_suppressed=0 WHERE id=?", (contact_id, c["name"], issue_id))
+                     "notify_suppressed=0, notify_attempts=0, notify_next_at=NULL, notify_error=NULL, "
+                     "notify_failed_at=NULL, escalation_attempts=0, escalation_next_at=NULL, "
+                     "escalation_error=NULL WHERE id=?", (contact_id, c["name"], issue_id))
         conn.commit()
     finally:
         conn.close()
@@ -565,8 +715,8 @@ def tick(db_path=DB_PATH, now=None):
     """Every scheduler tick: send notifications held by quiet hours, and
     escalate issues nobody acknowledged in time. Each escalates at most once."""
     now = now or datetime.utcnow()
+    now_s = _stamp(now)
     from models import is_in_quiet_hours
-    from notify import send_sms
     from models import in_service_sql
     conn = get_conn(db_path)
     try:
@@ -574,12 +724,15 @@ def tick(db_path=DB_PATH, now=None):
         # "deliberately not texted" look identical in notified_at alone.
         # Only restaurants still in service: a churned or paused account's
         # managers were still texted held issues and escalations (A-27).
+        # Never one given up on (notify_failed_at) or still backing off
+        # after a failed text (notify_next_at, #91).
         held = conn.execute("SELECT i.id, i.restaurant_id, i.kind, i.source_key FROM ops_issues i "
                             "JOIN restaurants rs ON rs.id=i.restaurant_id "
                             "WHERE i.status='open' "
                             "AND i.notified_at IS NULL AND i.assignee_contact_id IS NOT NULL "
-                            "AND COALESCE(i.notify_suppressed, 0)=0 AND " + in_service_sql("rs.billing_status")
-                            ).fetchall()
+                            "AND COALESCE(i.notify_suppressed, 0)=0 AND i.notify_failed_at IS NULL "
+                            "AND (i.notify_next_at IS NULL OR i.notify_next_at <= ?) AND "
+                            + in_service_sql("rs.billing_status"), (now_s,)).fetchall()
         stale = conn.execute(
             "SELECT i.*, r.escalate_after_minutes, r.contact_id AS esc_contact_id, "
             "c.phone AS esc_phone, c.name AS esc_name "
@@ -588,9 +741,11 @@ def tick(db_path=DB_PATH, now=None):
             "AND COALESCE(c.sms_consent,0)=1 "
             "JOIN restaurants rs ON rs.id=i.restaurant_id "
             "WHERE i.status='open' AND i.notified_at IS NOT NULL AND i.escalated_at IS NULL "
+            "AND COALESCE(i.escalation_attempts, 0) < ? "
+            "AND (i.escalation_next_at IS NULL OR i.escalation_next_at <= ?) "
             # Escalating to the person who already has it texts them twice.
             "AND r.contact_id != COALESCE(i.assignee_contact_id, -1) AND "
-            + in_service_sql("rs.billing_status")).fetchall()
+            + in_service_sql("rs.billing_status"), (MAX_NOTIFY_ATTEMPTS, now_s)).fetchall()
     finally:
         conn.close()
 
@@ -602,16 +757,9 @@ def tick(db_path=DB_PATH, now=None):
         if _coverage_shift_over(h, db_path):
             _suppress_notify(h["id"], db_path)
             continue
-        # Checked BEFORE minting. A held issue's link was never sent and its
-        # token is unrecoverable (only the hash is stored), so it needs a
-        # fresh one — but only when a text can actually go out. Minting first
-        # added a link row every tick for the whole of quiet hours, and
-        # forever for an assignee whose consent was later withdrawn.
-        r = _sendable(h["id"], db_path)
-        if not r:
-            continue
-        token = _mint_link(h["id"], r["assignee_contact_id"], db_path=db_path)
-        if _notify(h["id"], token, db_path=db_path):
+        # _notify checks it can send, claims, and only then makes the link
+        # — the one link this person has for this issue (_mint_link).
+        if _notify(h["id"], db_path=db_path, now=now):
             sent_held += 1
 
     escalated = 0
@@ -626,27 +774,84 @@ def tick(db_path=DB_PATH, now=None):
             continue
         if _coverage_shift_over(s, db_path):
             continue                    # nobody to cover any more (A-28)
-        # The escalation contact gets their OWN link. The assignee's stays
-        # valid — bringing in the regional manager must not lock the local
-        # one out of the issue they were given.
-        token = _mint_link(s["id"], s["esc_contact_id"], purpose="escalation", db_path=db_path)
-        who = s["assignee_name"] or "the assigned manager"
-        mins = int(s["escalate_after_minutes"] or DEFAULT_ESCALATE_MINUTES)
-        msg = (f"Cavnar AI · {_restaurant_name(s['restaurant_id'])}: not acknowledged by {who} "
-               f"after {mins} min — {s['title']}. {_base_url()}/i/{token}")
-        if send_sms(s["esc_phone"], msg[:320], use_case="alert"):
-            import notify as _notify_mod
-            _notify_mod.record_notification(s["restaurant_id"], "issue_escalated", db_path=db_path,
-                                            ref_kind="issue", ref_id=s["id"])
-            conn = get_conn(db_path)
-            try:
-                conn.execute("UPDATE ops_issues SET escalated_at=?, escalation_contact_id=? WHERE id=?",
-                             (_now(), s["esc_contact_id"], s["id"]))
-                conn.commit()
-            finally:
-                conn.close()
+        if _escalate(s, db_path, now):
             escalated += 1
     return {"held_sent": sent_held, "escalated": escalated}
+
+
+def _escalate(s, db_path=DB_PATH, now=None):
+    """Text the escalation contact about issue `s`. Claimed first (#91):
+    escalated_at is set by the one caller that wins it and cleared again on
+    a failure worth retrying, with backoff; a number that may not be texted,
+    a permanent failure or the attempt cap ends it — the owner is told by
+    push and email instead. Returns True when the text went out."""
+    import notify
+    rid = s["restaurant_id"]
+    attempts = int((s["escalation_attempts"] if "escalation_attempts" in s.keys() else 0) or 0)
+    blocked = notify.sms_block_reason(s["esc_phone"], rid, "alert", db_path)
+    if blocked:
+        _end_escalation(s, blocked, db_path)
+        return False
+    conn = get_conn(db_path)
+    try:
+        won = conn.execute("UPDATE ops_issues SET escalated_at=?, escalation_contact_id=? "
+                           "WHERE id=? AND escalated_at IS NULL",
+                           (_stamp(now), s["esc_contact_id"], s["id"])).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not won:
+        return False
+    # The escalation contact gets their OWN link. The assignee's stays
+    # valid — bringing in the regional manager must not lock the local
+    # one out of the issue they were given.
+    token = _mint_link(s["id"], s["esc_contact_id"], purpose="escalation", db_path=db_path)
+    who = s["assignee_name"] or "the assigned manager"
+    mins = int(s["escalate_after_minutes"] or DEFAULT_ESCALATE_MINUTES)
+    msg = (f"Cavnar AI · {_restaurant_name(rid)}: not acknowledged by {who} "
+           f"after {mins} min — {s['title']}. {_base_url()}/i/{token}")
+    res = _text(s["esc_phone"], msg, rid)
+    if res.ok:
+        notify.record_notification(rid, "issue_escalated", db_path=db_path, ref_kind="issue", ref_id=s["id"])
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET escalation_error=NULL, escalation_next_at=NULL WHERE id=?",
+                         (s["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    attempts += 1
+    reason = res.error or res.status or "the text was not accepted"
+    if res.permanent or attempts >= MAX_NOTIFY_ATTEMPTS:
+        _end_escalation(s, reason, db_path, attempts=attempts)
+    else:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET escalated_at=NULL, escalation_attempts=?, escalation_error=?, "
+                         "escalation_next_at=? WHERE id=?",
+                         (attempts, str(reason)[:300], _backoff_until(attempts, now), s["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+    return False
+
+
+def _end_escalation(s, reason, db_path=DB_PATH, attempts=None):
+    """No escalation text will go: escalation_attempts at the cap (so tick
+    never selects it again), escalated_at cleared (nobody was escalated to),
+    the reason kept, and the owner told instead. Conditional, so it is said
+    once."""
+    conn = get_conn(db_path)
+    try:
+        won = conn.execute("UPDATE ops_issues SET escalated_at=NULL, escalation_attempts=?, escalation_error=? "
+                           "WHERE id=? AND COALESCE(escalation_attempts, 0) < ?",
+                           (MAX_NOTIFY_ATTEMPTS, str(reason)[:300], s["id"], MAX_NOTIFY_ATTEMPTS)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if won:
+        _fall_back(s, s["esc_name"] or "the escalation contact", reason, db_path)
 
 
 # How long after opening an unfinished opening checklist becomes an issue.

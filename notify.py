@@ -6,6 +6,8 @@ by urgent_via_sms and urgent_via_email per restaurant.
 import os
 import re
 import sqlite3
+import threading
+from contextlib import contextmanager
 import config
 import html as _html
 import requests
@@ -176,8 +178,218 @@ def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bo
     return hmac.compare_digest(expected, signature)
 
 
-def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None) -> bool:
-    """Send a single SMS via Twilio. Returns True on success.
+# ── SMS: one ledger, one "may we text this number" check (fix round E) ─────
+#
+# send_sms returned a bool and printed Twilio's answer, so a suspended
+# account, an A2P rejection or a STOP left no trace anywhere (#14). Every
+# attempt now writes an sms_log row — including the ones never sent (a STOP,
+# Twilio not configured) — and Twilio's status callback
+# (/webhooks/twilio/status, webhook_routes) moves an accepted text on to
+# delivered, undelivered or failed.
+
+SMS_STATUS_CALLBACK_PATH = "/webhooks/twilio/status"
+
+# Twilio error codes that are about the ACCOUNT, not one recipient: bad
+# credentials, a suspended or inactive account, a number or service that
+# cannot send, carrier filtering of the campaign, an unregistered A2P number.
+# Every text is failing when one of these appears, so the operator is told
+# (at most once an hour per code) instead of it being printed and lost.
+SMS_ACCOUNT_ERROR_CODES = {"20003", "20005", "21606", "21608", "21611", "21408", "21703",
+                           "30002", "30007", "30032", "30034"}
+# Twilio error codes that are about THIS recipient and will not change by
+# retrying: an invalid or non-mobile number, an unreachable handset, a STOP.
+SMS_PERMANENT_ERROR_CODES = {"21211", "21217", "21610", "21612", "21614", "30004", "30005", "30006"}
+SMS_STOP_ERROR_CODE = "21610"
+SMS_ACCOUNT_ALARM_MINUTES = 60
+
+# Delivery states in the order Twilio reports them; a status callback only
+# ever moves a row forward (a late "sent" must not undo "delivered").
+_SMS_STATUS_RANK = {"accepted": 0, "queued": 1, "sending": 2, "sent": 3,
+                    "delivered": 4, "undelivered": 4, "failed": 4, "read": 5}
+
+_sms_local = threading.local()
+
+
+class SmsResult:
+    """What happened to one text. Truthy when Twilio accepted it.
+
+    `permanent` — will not change by retrying (a STOP, an invalid number, a
+    number without consent). `account_level` — every text is failing (bad
+    credentials, a suspended account, carrier filtering). Neither — worth
+    another go later (a 429, a 5xx, Twilio not configured right now)."""
+    __slots__ = ("ok", "sid", "status", "error_code", "error", "permanent", "account_level", "log_id")
+
+    def __init__(self, ok, sid=None, status=None, error_code=None, error=None, permanent=False,
+                 account_level=False, log_id=None):
+        self.ok, self.sid, self.status = bool(ok), sid, status
+        self.error_code = str(error_code) if error_code not in (None, "") else None
+        self.error, self.permanent, self.account_level, self.log_id = error, permanent, account_level, log_id
+
+    def __bool__(self):
+        return self.ok
+
+    def __repr__(self):
+        return (f"<SmsResult ok={self.ok} status={self.status} code={self.error_code} "
+                f"permanent={self.permanent} err={self.error!r}>")
+
+
+@contextmanager
+def sms_context(restaurant_id=None):
+    """Attribute every text sent inside the block to `restaurant_id` in
+    sms_log. A context rather than a send_sms parameter because send_sms's
+    signature is what fifteen call sites and their tests already use."""
+    prev = getattr(_sms_local, "rid", None)
+    _sms_local.rid = restaurant_id
+    try:
+        yield
+    finally:
+        _sms_local.rid = prev
+
+
+def last_sms_result():
+    """The SmsResult of the last send_sms on this thread, or None (none made,
+    or clear_last_sms_result() since). How a caller that goes through
+    send_sms — the one path every caller and test stub shares — reads the
+    richer outcome after it."""
+    return getattr(_sms_local, "last", None)
+
+
+def clear_last_sms_result():
+    _sms_local.last = None
+
+
+def _sms_hash(phone: str) -> str:
+    import hashlib
+    return hashlib.sha256((phone or "").encode("utf-8")).hexdigest()[:32]
+
+
+def _log_sms(restaurant_id, use_case, phone, status, error_code=None, error=None, sid=None, db_path=None):
+    """One sms_log row; returns its id. Never raises: a ledger hiccup must not
+    turn a delivered text into an exception at the call site. The number is
+    stored as a hash and its last four digits, never whole."""
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO sms_log (restaurant_id, use_case, to_hash, to_last4, status, error_code, error, "
+                "provider_sid, updated_at) VALUES (?,?,?,?,?,?,?,?, datetime('now'))",
+                (restaurant_id, use_case, _sms_hash(phone), (phone or "")[-4:] or None, status,
+                 str(error_code) if error_code not in (None, "") else None,
+                 (str(error)[:300] if error else None), sid))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] sms_log write failed: {e}")
+        return None
+
+
+def _twilio_error(resp):
+    """(code, message) from a Twilio error response; either may be None."""
+    code, message = None, None
+    try:
+        body = resp.json() or {}
+        code = body.get("code")
+        message = body.get("message")
+    except Exception:
+        pass
+    if not message:
+        message = (getattr(resp, "text", "") or "")[:200] or f"HTTP {getattr(resp, 'status_code', '?')}"
+    return (str(code) if code not in (None, "") else None), message
+
+
+def _alarm_sms_account_error(code, message, db_path=None):
+    """Tell the operator — once an hour per error code — that texts are
+    failing for a reason that affects every text, not one recipient."""
+    try:
+        import ops
+        if not ops.claim_cooldown(f"sms_account_error:{code}", SMS_ACCOUNT_ALARM_MINUTES):
+            return
+        ops.capture(RuntimeError(f"Twilio account-level error {code}: {message}"),
+                    job="sms_provider", context="every text is affected, not one recipient",
+                    db_path=db_path)
+    except Exception:
+        pass
+
+
+def record_platform_stop(phone, source="twilio_21610", db_path=None):
+    """Twilio says this number texted STOP to us (error 21610): record the
+    platform STOP the inbound webhook would have (guest_sms_optouts
+    restaurant 0), so every sender's STOP check sees it before the next
+    attempt reaches Twilio."""
+    phone = _normalize_phone(phone)
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            new = conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)",
+                               (phone,)).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if new:
+            try:
+                import guest_marketing
+                guest_marketing.record_consent_event(0, "opted_out", source, phone=phone,
+                                                     detail="Twilio refused a text: the number replied STOP",
+                                                     db_path=db_path or DB_PATH)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[notify] platform STOP not recorded: {e}")
+
+
+def sms_block_reason(phone, restaurant_id=None, purpose="alert", db_path: str = DB_PATH):
+    """Why `phone` may NOT be texted for `purpose` at this restaurant, or
+    None when it may — the one check every sender uses (#107).
+
+    Two things, always both: a platform STOP (any STOP the number ever sent
+    us — guest_sms_optouts restaurant 0), and consent for the purpose:
+      'alert' — a consented alert contact at this restaurant (owner alerts,
+                issues, escalations, the pre-shift nudge, cover requests);
+      'staff' — a staff login here who ticked "text me when my schedule is
+                posted" (memberships.schedule_texts_at);
+      'otp' / 'guest' — consent is the caller's (a code the person asked
+                for; guest_marketing's own consent model).
+    Without a restaurant_id only the STOP is checked."""
+    if not phone or not str(phone).strip():
+        return "no phone number"
+    if sms_stopped_phones([phone], db_path=db_path):
+        return "the number replied STOP"
+    if restaurant_id is None or purpose not in ("alert", "staff"):
+        return None
+    want = _normalize_phone(phone)
+    try:
+        conn = models.get_conn(db_path)
+    except Exception:
+        return None                       # fail open on the consent read only; the STOP held
+    try:
+        if purpose == "alert":
+            rows = conn.execute("SELECT phone FROM alert_contacts WHERE restaurant_id=? "
+                                "AND COALESCE(sms_consent,0)=1", (restaurant_id,)).fetchall()
+            have = {_normalize_phone(r["phone"]) for r in rows if r["phone"]}
+        else:
+            rows = conn.execute(
+                "SELECT u.phone AS phone, m.claimed_by_phone AS claimed FROM memberships m "
+                "LEFT JOIN users u ON u.id=m.user_id WHERE m.restaurant_id=? AND COALESCE(m.is_active,1)=1 "
+                "AND m.schedule_texts_at IS NOT NULL", (restaurant_id,)).fetchall()
+            have = {_normalize_phone(p) for r in rows for p in (r["phone"], r["claimed"]) if p}
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    return None if want in have else "no SMS consent on file for this number"
+
+
+def textable(phone, restaurant_id=None, purpose="alert", db_path: str = DB_PATH) -> bool:
+    """True when `phone` may be texted for `purpose` (see sms_block_reason)."""
+    return sms_block_reason(phone, restaurant_id, purpose, db_path) is None
+
+
+def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
+                    restaurant_id: int = None, db_path: str = None) -> SmsResult:
+    """Send one SMS via Twilio and return what happened (SmsResult), with an
+    sms_log row for every attempt.
 
     `validity_seconds` is Twilio's ValidityPeriod: how long the message may
     wait in Twilio's queue before it is dropped rather than delivered late.
@@ -201,11 +413,29 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
     TWILIO_GUEST_MESSAGING_SERVICE_SID. Sending OTP traffic through the
     alert service (or vice versa) is exactly the "mixed use case on one
     campaign" pattern carriers filter hardest.
+
+    A number that texted STOP is never sent an alert, staff or guest text
+    (#107) — the attempt is logged 'blocked' and never reaches Twilio. A
+    verification code ("otp") is the person's own request and is not
+    blocked here.
     """
-    if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
-        print(f"[notify] Twilio not configured — would send to {to_phone}: {message[:80]}")
-        return False
+    rid = restaurant_id if restaurant_id is not None else getattr(_sms_local, "rid", None)
     phone = _normalize_phone(to_phone)
+
+    def _done(res):
+        _sms_local.last = res
+        return res
+
+    if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
+        log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
+                          "the number replied STOP", db_path=db_path)
+        return _done(SmsResult(False, status="blocked", error_code=SMS_STOP_ERROR_CODE,
+                               error="the number replied STOP", permanent=True, log_id=log_id))
+    if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
+        print(f"[notify] Twilio not configured — would send to …{phone[-4:]}: {message[:80]}")
+        log_id = _log_sms(rid, use_case, phone, "not_configured", None, "Twilio is not configured",
+                          db_path=db_path)
+        return _done(SmsResult(False, status="not_configured", error="Twilio is not configured", log_id=log_id))
     data = {"To": phone, "Body": message}
     # No fallback from "otp" to the alert service on a missing OTP SID —
     # that would put verification-code traffic on the wrong campaign, which
@@ -217,7 +447,10 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
     elif use_case == "staff":
         if not TWILIO_STAFF_MESSAGING_SERVICE_SID:
             print("[notify] TWILIO_STAFF_MESSAGING_SERVICE_SID unset: staff text not sent")
-            return False
+            log_id = _log_sms(rid, use_case, phone, "not_configured", None,
+                              "TWILIO_STAFF_MESSAGING_SERVICE_SID is not set", db_path=db_path)
+            return _done(SmsResult(False, status="not_configured",
+                                   error="TWILIO_STAFF_MESSAGING_SERVICE_SID is not set", log_id=log_id))
         service_sid = TWILIO_STAFF_MESSAGING_SERVICE_SID
     elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
         service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
@@ -235,11 +468,15 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
         data["From"] = TWILIO_FROM
     if validity_seconds is not None:
         data["ValidityPeriod"] = str(max(1, min(int(validity_seconds), GUEST_SMS_MAX_VALIDITY)))
+    # Twilio reports delivered / undelivered / failed here, signed, and
+    # webhook_routes moves the sms_log row on (#14).
+    data["StatusCallback"] = config.base_url() + SMS_STATUS_CALLBACK_PATH
     # One retry for a failure Twilio says is transient (429, 5xx) or a
     # connection that failed before a response (AI-27): a single blip lost an
     # owner's health alert text. NOT for a read timeout — Twilio's Messages
     # API has no idempotency key, and a request it accepted but did not answer
     # in time would be sent twice. A 4xx is permanent and is not retried.
+    last = None
     for attempt in (1, 2):
         try:
             r = requests.post(
@@ -249,19 +486,117 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seco
                 timeout=10,
             )
             if r.status_code == 201:
-                return True
-            print(f"[notify] Twilio error {r.status_code}: {r.text[:200]}")
+                sid, status = None, "accepted"
+                try:
+                    body = r.json() or {}
+                    sid, status = body.get("sid"), body.get("status") or "accepted"
+                except Exception:
+                    pass
+                log_id = _log_sms(rid, use_case, phone, status, None, None, sid, db_path=db_path)
+                return _done(SmsResult(True, sid=sid, status=status, log_id=log_id))
+            code, message_text = _twilio_error(r)
+            print(f"[notify] Twilio error {r.status_code}: {message_text[:200]}")
+            account = code in SMS_ACCOUNT_ERROR_CODES or r.status_code == 401
+            permanent = code in SMS_PERMANENT_ERROR_CODES
+            last = SmsResult(False, status="failed", error_code=code or str(r.status_code),
+                             error=message_text, permanent=permanent and not account, account_level=account)
             if not (r.status_code == 429 or r.status_code >= 500):
-                return False
+                break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
+            last = SmsResult(False, status="failed", error=str(e)[:300])
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
-            return False
+            last = SmsResult(False, status="failed", error=str(e)[:300])
+            break
         if attempt == 1:
             import time as _time
             _time.sleep(1.0)
-    return False
+    # Not `last or …`: SmsResult is falsy when it failed, which would throw
+    # away the real code and reason (the same trap emails.deliver notes).
+    if last is None:
+        last = SmsResult(False, status="failed", error="unknown SMS failure")
+    last.log_id = _log_sms(rid, use_case, phone, "failed", last.error_code, last.error, db_path=db_path)
+    if last.error_code == SMS_STOP_ERROR_CODE:
+        record_platform_stop(phone, db_path=db_path)
+    if last.account_level:
+        _alarm_sms_account_error(last.error_code, last.error, db_path=db_path)
+    return _done(last)
+
+
+def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
+             restaurant_id: int = None) -> bool:
+    """Send a single SMS via Twilio. Returns True when Twilio accepted it.
+    send_sms_result is the same send with the whole outcome; both write
+    sms_log, and last_sms_result() holds this thread's latest outcome."""
+    return bool(send_sms_result(to_phone, message, use_case=use_case, validity_seconds=validity_seconds,
+                                restaurant_id=restaurant_id).ok)
+
+
+def update_sms_status(sid: str, status: str, error_code=None, error=None, db_path: str = None) -> bool:
+    """Twilio's status callback for one message: move its sms_log row forward
+    (never back: a late 'sent' does not undo 'delivered'). An undelivered or
+    failed text with an account-level code tells the operator; a 21610 records
+    the platform STOP. Returns True when a row changed."""
+    status = (status or "").strip().lower()
+    if not sid or status not in _SMS_STATUS_RANK:
+        return False
+    rank_sql = ("CASE COALESCE(status,'accepted') " +
+                " ".join(f"WHEN '{s}' THEN {r}" for s, r in _SMS_STATUS_RANK.items()) + " ELSE -1 END")
+    code = str(error_code) if error_code not in (None, "") else None
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            cur = conn.execute(
+                f"UPDATE sms_log SET status=?, error_code=COALESCE(?, error_code), error=COALESCE(?, error), "
+                f"updated_at=datetime('now') WHERE provider_sid=? AND {rank_sql} < ?",
+                (status, code, (str(error)[:300] if error else None), sid, _SMS_STATUS_RANK[status]))
+            conn.commit()
+            changed = cur.rowcount > 0
+            row = conn.execute("SELECT to_hash FROM sms_log WHERE provider_sid=? LIMIT 1", (sid,)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] sms status update failed for {sid}: {e}")
+        return False
+    if status in ("undelivered", "failed") and code in SMS_ACCOUNT_ERROR_CODES:
+        _alarm_sms_account_error(code, error or f"a text was {status}", db_path=db_path)
+    return changed
+
+
+def sms_log_rows(restaurant_id=None, limit=100, db_path: str = None) -> list:
+    """The newest sms_log rows, fleet-wide or for one restaurant — the
+    console's SMS view (#14)."""
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        sql = "SELECT * FROM sms_log"
+        args = []
+        if restaurant_id is not None:
+            sql += " WHERE restaurant_id=?"
+            args.append(restaurant_id)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", args + [int(limit)]).fetchall()]
+    finally:
+        conn.close()
+
+
+def sms_stats(hours: int = 24, restaurant_id=None, db_path: str = None) -> dict:
+    """{status: n} over the window plus the account-level failures in it."""
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        sql = "SELECT status, COUNT(*) AS n FROM sms_log WHERE created_at >= datetime('now', ?)"
+        args = [f"-{int(hours)} hours"]
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args.append(restaurant_id)
+        by_status = {r["status"]: r["n"] for r in conn.execute(sql + " GROUP BY status", args).fetchall()}
+        marks = ",".join("?" * len(SMS_ACCOUNT_ERROR_CODES))
+        acct = conn.execute(
+            f"SELECT COUNT(*) FROM sms_log WHERE created_at >= datetime('now', ?) AND error_code IN ({marks})",
+            [f"-{int(hours)} hours"] + sorted(SMS_ACCOUNT_ERROR_CODES)).fetchone()[0]
+    finally:
+        conn.close()
+    return {"hours": int(hours), "by_status": by_status, "account_errors": acct,
+            "attempted": sum(by_status.values())}
 
 
 def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
@@ -784,22 +1119,29 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
 
 
 def send_test_sms(restaurant_id: int) -> dict:
-    """Send a test SMS to all consented contacts for a restaurant."""
+    """Send a test SMS to all consented contacts for a restaurant, and say
+    what Twilio answered for each — accepted with its message id, or the
+    error code and reason (#14). Each attempt is in sms_log; the status
+    callback then records whether the handset got it."""
     contacts = get_alert_contacts(restaurant_id, sms_consent_only=True)
     if not contacts:
-        return {"ok": False, "error": "No alert contacts configured"}
+        return {"ok": False, "error": "No consented alert contact who can be texted (none on file, "
+                                      "no SMS consent, or the number replied STOP)."}
     from models import get_restaurant
     restaurant = get_restaurant(restaurant_id)
     name = restaurant.name if restaurant else f"Restaurant {restaurant_id}"
     msg = f"✓ Test alert from Cavnar AI\n{name} — SMS alert system is active and working."
-    sent, errors = 0, []
-    for c in contacts:
-        ok = send_sms(c["phone"], msg)
-        if ok:
-            sent += 1
-        else:
-            errors.append(c["phone"])
-    return {"ok": sent > 0, "sent": sent, "errors": errors}
+    sent, errors, results = 0, [], []
+    with sms_context(restaurant_id):
+        for c in contacts:
+            res = send_sms_result(c["phone"], msg, restaurant_id=restaurant_id)
+            results.append({"to_last4": str(c["phone"])[-4:], "ok": res.ok, "status": res.status,
+                            "sid": res.sid, "error_code": res.error_code, "error": res.error})
+            if res.ok:
+                sent += 1
+            else:
+                errors.append(c["phone"])
+    return {"ok": sent > 0, "sent": sent, "errors": errors, "results": results}
 
 
 # ── Contact CRUD ───────────────────────────────────────────────
@@ -1445,7 +1787,8 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
         _tz = getattr(models.get_restaurant(restaurant_id), "timezone", None)
     except Exception:
         _tz = None
-    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz)
+    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz,
+                            restaurant_id=restaurant_id)
     try:
         from push import fire_push
         fire_push(
@@ -1922,8 +2265,10 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     if via_sms and contacts:
         texted = False
         text_out = with_sender(keyed_sms_text(sms_text, lead_rec, restaurant_id))
-        for c in contacts:
-            texted = bool(send_sms(c["phone"], text_out)) or texted
+        # Attributed to this restaurant in sms_log (#14).
+        with sms_context(restaurant_id):
+            for c in contacts:
+                texted = bool(send_sms(c["phone"], text_out)) or texted
         if texted:
             channels.append("sms")
     if via_email and owner_email:
