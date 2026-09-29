@@ -972,6 +972,13 @@ def _request_attribution():
     try:
         if not has_request_context():
             return None, None, None
+        # The login decorators put a view-as session's context on flask.g
+        # (auth._view_as_context): the admin behind it is the actor, and no
+        # read is needed. The session row below is for a call made before
+        # (or without) the decorator.
+        va = getattr(g, "view_as", None)
+        if isinstance(va, dict) and va.get("acting_admin_id"):
+            return "admin", va["acting_admin_id"], va.get("restaurant_id")
         cached = getattr(g, "_cavnar_ai_actor", None)
         if cached is not None:
             return cached

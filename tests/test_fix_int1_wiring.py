@@ -124,6 +124,11 @@ def test_a_view_as_request_is_the_acting_admins(db, monkeypatch):
     with app.test_request_context("/api/reviews", headers={"Cookie": f"session_token={token}"}):
         trigger, actor, got_rid = ai_utils._request_attribution()
     assert (trigger, actor, got_rid) == ("admin", admin, rid)
+    # The decorator's context on flask.g wins, with no read (INT-2 #4).
+    from flask import g
+    with app.test_request_context("/api/reviews"):
+        g.view_as = {"acting_admin_id": 77, "restaurant_id": rid}
+        assert ai_utils._request_attribution() == ("admin", 77, rid)
 
 
 # ── the worker boots like the web process (F #108, #38) ────────────────────
