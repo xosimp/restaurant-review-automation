@@ -646,7 +646,10 @@ def test_the_executive_brief_says_why_it_cannot_answer_rather_than_filling_in(db
 def test_the_diagnosis_pass_is_scheduled_and_survives_one_restaurant_failing():
     import scheduler
     src = inspect.getsource(scheduler.run_review_diagnoses)
-    assert "for row in rows:" in src
+    # Every restaurant through the bounded, resumable sweep (fix round D
+    # #84) — this pinned the bare `for row in rows:` walk, which had no
+    # time bound and no cursor.
+    assert "resumable_sweep(" in src
     assert "except Exception as e:" in src
     assert "invalidate_insight_cache" in src, "a fresh cause must expire the cached read"
     loop = inspect.getsource(scheduler.run_scheduler) if hasattr(scheduler, "run_scheduler") else ""

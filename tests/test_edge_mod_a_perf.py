@@ -267,7 +267,10 @@ def test_the_emailed_backup_is_skipped_and_recorded_above_a_configured_size(monk
     sent, captured = [], []
     monkeypatch.setattr(resend.Emails, "send", staticmethod(lambda payload: sent.append(payload)), raising=False)
     monkeypatch.setattr(scheduler._ops, "capture", lambda exc, job="", context="", **k: captured.append((job, str(exc))))
-    scheduler.backup_db()
+    # Too large to email and no object storage: no off-site copy, so the run
+    # fails (#1) — it used to be a clean run with the skip only captured.
+    with pytest.raises(scheduler.BackupFailed):
+        scheduler.backup_db()
     assert sent == []
     assert any(job == "backup_db" for job, _ in captured)
 
@@ -277,6 +280,9 @@ def test_the_local_backup_snapshot_is_written_without_an_encryption_key(monkeypa
     import scheduler
     monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.delenv("BACKUP_ENCRYPTION_KEY", raising=False)
-    scheduler.backup_db()
+    # The run fails without a key (no off-site copy, #1); the local snapshot
+    # is written before it does.
+    with pytest.raises(scheduler.BackupFailed):
+        scheduler.backup_db()
     files = os.listdir(tmp_path / "backups")
     assert any(f.startswith("cavnar_ai_backup_") and f.endswith(".db") for f in files), files

@@ -88,11 +88,15 @@ def test_ai_ops_and_issue_count_failures(db_path, rid):
 
 
 def test_run_now_records_a_manual_run(db_path, rid, monkeypatch):
+    """On a server with no scheduler (this test process), a job that sends
+    nothing still runs here. review_fetch used to be the example; it texts
+    and emails owners, so it is a sending job and refused off Railway now
+    (#9) — pos_sync is the non-sending one."""
     import scheduler
     calls = []
-    monkeypatch.setattr(scheduler, "run_daily_fetch", lambda: calls.append("ran"))
-    out = admin_ops.run_job_now("review_fetch", "will")
-    assert out["ok"] and out["context"] == "manual by will"
+    monkeypatch.setattr(scheduler, "run_toast_sync", lambda: calls.append("ran"))
+    out = admin_ops.run_job_now("pos_sync", "will")
+    assert out["ok"] and out["context"] == "manual by will" and out["queued"] is False
     row = None
     for _ in range(100):
         c = get_conn(db_path)
@@ -102,7 +106,7 @@ def test_run_now_records_a_manual_run(db_path, rid, monkeypatch):
             break
         time.sleep(0.05)
     assert calls == ["ran"]
-    assert row["job"] == "review_fetch" and row["context"] == "manual by will" and row["ok"] == 1
+    assert row["job"] == "pos_sync" and row["context"] == "manual by will" and row["ok"] == 1
     assert admin_ops.run_job_now("nope", "will") == {"ok": False, "error": "Unknown job"}
     sched = admin_ops.jobs()["schedule"]
     assert {s["job"] for s in sched} >= set(admin_ops.RUNNABLE_JOBS)

@@ -660,9 +660,9 @@ def test_the_weekly_plan_files_issues_only_when_switched_on(db_path, monkeypatch
     filed = []
     monkeypatch.setattr(issues, "create_issue", lambda r_, kind, title, **k: filed.append((kind, title, k.get("notify"))) or ({}, None))
     monkeypatch.setattr(ops, "claim_period", lambda *a, **k: True)
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 0}
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 0
     update_restaurant(rid, {"weekly_plan_enabled": 1}, db_path=db_path)
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 1}
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 1
     assert filed == [("plan", "Do the thing", False)]
 
 

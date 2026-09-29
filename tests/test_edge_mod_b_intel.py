@@ -138,7 +138,7 @@ def test_the_weekly_competitor_job_counts_a_failed_analysis_as_failed(db, monkey
     monkeypatch.setattr(competitor, "run_competitor_analysis",
                         lambda rid: {"ok": False, "error": "Competitor analysis could not be generated"})
     out = scheduler.run_weekly_competitor_analysis()
-    assert out == {"analysed": 0, "failed": 1}
+    assert (out["analysed"], out["failed"], out["attempted"]) == (0, 1, 1)
 
 
 def test_a_closed_nearby_place_is_left_out_of_the_competitor_set(monkeypatch):

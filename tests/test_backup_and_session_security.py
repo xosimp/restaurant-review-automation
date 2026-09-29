@@ -134,7 +134,10 @@ def test_email_copy_is_skipped_when_no_encryption_key(tmp_path, db_path, monkeyp
     import resend as _resend
     monkeypatch.setattr(_resend.Emails, "send", lambda *a, **k: sent.append(a) or {"id": "x"})
 
-    scheduler.backup_db()
+    # No key: nothing leaves the server, and the run FAILS (#1) — it used to
+    # return normally and be recorded as a clean backup with no off-site copy.
+    with pytest.raises(scheduler.BackupFailed):
+        scheduler.backup_db()
 
     assert sent == [], "no unencrypted backup may be emailed"
     assert os.listdir(str(tmp_path / "backups")), "local snapshot must still be written"

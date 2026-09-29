@@ -1,5 +1,7 @@
 """ops.py — the silent-failure capture layer. If this breaks, failures go
 back to being invisible, so it gets its own tests."""
+import pytest
+
 import ops
 
 
@@ -48,7 +50,10 @@ def test_run_job_captures_crash_and_returns_none(monkeypatch, db_path):
 def test_digest_silent_when_no_failures(monkeypatch, db_path):
     _use_tmp_db(monkeypatch, db_path)
     monkeypatch.setenv("RESEND_API_KEY", "fake")
-    assert ops.send_failure_digest() is False  # no failures -> no email
+    import emails
+    monkeypatch.setattr(emails, "deliver", lambda **kw: pytest.fail("mailed with nothing to say"))
+    out = ops.send_failure_digest()        # no failures -> no email
+    assert out["sent"] is False and out["failed"] == 0
 
 
 def test_digest_sends_when_failures_exist(monkeypatch, db_path):
@@ -67,7 +72,7 @@ def test_digest_sends_when_failures_exist(monkeypatch, db_path):
     monkeypatch.setattr(emails, "deliver", deliver)
     monkeypatch.setenv("RESEND_API_KEY", "fake")
 
-    assert ops.send_failure_digest() is True
+    assert ops.send_failure_digest()["sent"] is True
     assert "review_fetch" in sent["html"]
     assert "failure" in sent["subject"]
 

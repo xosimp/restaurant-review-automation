@@ -795,7 +795,8 @@ def test_a37_the_evaluation_job_is_bounded_and_the_events_query_is_a_range(monke
     fc = src[src.index("def find_concurrent("):src.index("def pre_trend(")]
     assert "AND date(e.at)" not in fc and "e.at>=? AND e.at<?" in fc
     seen = []
-    monkeypatch.setattr(strategy_jobs, "_bounded_each", lambda job, fn, db_path, **k: seen.append(job) or 0)
+    # _bounded_each returns (attempted, failed, hit_bound) now (fix round D #84).
+    monkeypatch.setattr(strategy_jobs, "_bounded_each", lambda job, fn, db_path, **k: seen.append(job) or (0, 0, False))
     strategy_jobs.run_outcome_evaluations()
     assert seen == ["outcome_evaluations"]
     rid = _rid()
