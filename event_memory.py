@@ -1027,6 +1027,10 @@ def run_event_memory(db_path=None, now=None) -> dict:
 # A competitor's rating moving this much (★) since its last marked reading is
 # a market event; the monthly series keeps the rest.
 MARKET_MOVE_STARS = 0.2
+# The kind of market_events row that only holds the reading a move is
+# measured from — not an event, never listed.
+TRACKED = "tracked"
+MARKET_KINDS = ("arrived", "gone", "rating_up", "rating_down")
 
 
 def _iso_week(d):
@@ -1121,7 +1125,7 @@ def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None) ->
                 cur = conn.execute("INSERT OR IGNORE INTO market_events (restaurant_id, place_id, name, kind, "
                                    "from_rating, to_rating, review_count, observed_on) VALUES (?,?,?,?,?,?,?,?)",
                                    (restaurant_id, pid, name, kind, frm, to, count, day))
-                if cur.rowcount:
+                if cur.rowcount and kind != TRACKED:
                     written.append({"place_id": pid, "name": name, "kind": kind, "from_rating": frm,
                                     "to_rating": to, "observed_on": day})
             for pid, c in now_set.items():
@@ -1130,10 +1134,20 @@ def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None) ->
                 count = int(c["review_count"]) if isinstance(c.get("review_count"), (int, float)) else None
                 if not first_run and (pid not in latest or pid in gone):
                     _event(pid, c.get("name"), "arrived", None, rating, count)
-                else:
-                    anchor = anchors.get(pid, first_rating.get(pid))
+                elif pid not in anchors:
+                    # The reading a later move is measured from, kept as a
+                    # 'tracked' row (never listed as a market event): the
+                    # monthly series keeps only each month's latest reading.
+                    anchor = first_rating.get(pid)
                     if rating is not None and anchor is not None \
                             and abs(rating - anchor) >= MARKET_MOVE_STARS - 1e-9:
+                        _event(pid, c.get("name"), "rating_up" if rating > anchor else "rating_down",
+                               round(anchor, 2), rating, count)
+                    elif rating is not None:
+                        _event(pid, c.get("name"), TRACKED, None, anchor if anchor is not None else rating, count)
+                else:
+                    anchor = anchors[pid]
+                    if rating is not None and abs(rating - anchor) >= MARKET_MOVE_STARS - 1e-9:
                         _event(pid, c.get("name"), "rating_up" if rating > anchor else "rating_down",
                                round(anchor, 2), rating, count)
                 conn.execute("INSERT INTO competitor_rating_monthly (restaurant_id, place_id, month, name, rating, "
@@ -1162,7 +1176,7 @@ def market_history(restaurant_id, since=None, db_path=None) -> list:
         try:
             args = [restaurant_id]
             sql = "SELECT place_id, name, kind, from_rating, to_rating, review_count, observed_on FROM market_events " \
-                  "WHERE restaurant_id=?"
+                  f"WHERE restaurant_id=? AND kind != '{TRACKED}'"
             if since:
                 sql += " AND observed_on >= ?"
                 args.append(_iso(since))

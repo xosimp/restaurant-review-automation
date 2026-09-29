@@ -347,3 +347,71 @@ def test_dna_staffing_issues_are_withdrawn_without_watched_nights():
     got = dna._staffing_issues(conn, rid, today)
     conn.close()
     assert got["raw"] == 0.0 and got["n"] == 10
+
+
+# ── behaviour: the report's net is compared on its own basis (net_basis) ────
+
+def _sales_day(net):
+    return {"gross": net + 100, "net": net, "transactions": 80, "guests": 120, "discounts": 60.0, "comps": 40.0,
+            "voids": 25.0, "refunds": 0.0, "tax": 160.0, "by_department": {"Food": net}, "by_hour": {"19": net},
+            "items": [], "net_deductions": ["discounts", "comps"], "source_checks": {}}
+
+
+def _sales_ctx(monkeypatch, rid, provider, net=5000.0, day=date(2026, 9, 22)):
+    import dsr
+    import pos
+    monkeypatch.setattr(pos, "connected_provider", lambda r: (provider, object()))
+    monkeypatch.setattr(pos, "fetch_day_sales", lambda r, d: (_sales_day(net), provider))
+    ctx = dsr.Context(models.get_restaurant(rid), day, now_utc=datetime(2026, 9, 23, 5, 0))
+    ctx.day_closed = "pos"
+    return ctx
+
+
+def test_a_toast_report_is_never_set_beside_a_forecast_from_the_pos_total(monkeypatch):
+    from dsr import block_sales
+    rid = _rid("Toast Report Co")
+    day = date(2026, 9, 22)
+    for k in range(1, 9):
+        _day(rid, day - timedelta(weeks=k), 5600.0, provider="toast")     # Toast totals: +12% counting gap
+    b = block_sales.collect(_sales_ctx(monkeypatch, rid, "toast"))
+    m = b["metrics"]
+    assert m["forecast_net"] is None and m["vs_forecast_pct"] is None and m["forecast_same_basis"] is None
+    reason = b["detail"]["baselines"]["forecast"]["reason"]
+    assert "nightly report" in reason and "counts some things differently" in reason
+    # With three past Tuesday reports the forecast rests on them.
+    for k in range(1, 4):
+        _dsr_net(rid, day - timedelta(weeks=k), 5000.0)
+    b = block_sales.collect(_sales_ctx(monkeypatch, rid, "toast"))
+    m = b["metrics"]
+    assert m["forecast_net"] == 5000.0 and m["vs_forecast_pct"] == 0.0 and m["forecast_same_basis"] == 1.0
+    assert b["detail"]["baselines"]["forecast"]["forecast_basis"] == "dsr_net"
+
+
+def test_an_rpower_report_uses_the_pos_history_it_shares_a_basis_with(monkeypatch):
+    from dsr import block_sales
+    rid = _rid("RPower Report Co")
+    day = date(2026, 9, 22)
+    for k in range(1, 9):
+        _day(rid, day - timedelta(weeks=k), 4000.0, provider="rpower")
+    m = block_sales.collect(_sales_ctx(monkeypatch, rid, "rpower"))["metrics"]
+    assert m["forecast_net"] == 4000.0 and m["vs_forecast_pct"] == 25.0 and m["forecast_same_basis"] == 1.0
+
+
+def test_accuracy_scores_only_same_basis_nights(monkeypatch):
+    import demand
+    rid = _rid("Accuracy Co")
+    today = date(2026, 9, 24)
+    conn = models.get_conn()
+    for i in range(1, 11):
+        d = (today - timedelta(days=i)).isoformat()
+        legacy_toast = i > 7            # three nights from before the flag, built on Toast totals
+        for metric, value in (("sales.net", 5000.0), ("sales.vs_forecast_pct", -12.0 if legacy_toast else 1.0)):
+            conn.execute("INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source) "
+                         "VALUES (?,?,?,?,?,?)", (rid, d, metric, value, "ready", "toast"))
+        if not legacy_toast:
+            conn.execute("INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source) "
+                         "VALUES (?,?,?,?,?,?)", (rid, d, "sales.forecast_same_basis", 1.0, "ready", "toast"))
+    conn.commit()
+    conn.close()
+    acc = demand.demand_accuracy(rid, today=today)
+    assert acc["n_nights"] == 7 and acc["excluded_other_basis"] == 3 and acc["actual_vs_forecast_pct"] == 1.0
