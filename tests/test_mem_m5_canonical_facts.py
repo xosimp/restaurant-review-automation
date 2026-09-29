@@ -34,7 +34,7 @@ NOT_LEARNING = {
     ("dsr/backfill.py", "SELECT date FROM labor_daily_history"):
         "which past nights TRADED, to backfill a report for them; the report re-reads the POS itself",
     ("intelligence/dna.py", "'SELECT date, sales, total_hours, labor_pct FROM labor_daily_history WHERE restaurant_id=? "
-                            "AND date >= ? AND sales > 0 ORDER BY date'"):
+                            "AND date >= ? AND date <= ? AND sales > 0 ORDER BY date'"):
         "the fallback for a database without the final column (the try above reads final days); every "
         "init_db adds the column (models.init_db's ALTER list)",
 }
