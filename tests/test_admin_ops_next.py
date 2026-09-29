@@ -199,8 +199,12 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
 # 14-column table) — a direct link on both list views cuts that to one. ──
 
 def test_client_settings_is_one_click_from_the_clients_list():
+    """Since the 9/28/26 rebuild the list draws each restaurant with custRow:
+    its Settings button sits on the row itself (revealed on hover), one click."""
     html = open("templates/admin.html").read()
     i = html.index("async function clientsView()")
+    assert "custRow(" in html[i:html.index("\n}", i)]
+    i = html.index("function custRow(")
     j = html.index("\n}", i)
     body = html[i:j]
     assert "/admin/client-settings/${r.id}" in body
