@@ -145,11 +145,12 @@ def test_view_as_acts_as_the_owner_when_the_owner_is_the_only_login(app, db_path
     assert row is not None and row["user_id"] == owner
 
 
-def test_view_as_lasts_a_working_day_and_the_cookie_does_not_cut_it_short(app, db_path):
-    """Owner's call (Sep 23 2026): only the founder uses view-as, and 30
-    minutes signed him out mid-review. The session lasts auth.VIEW_AS_HOURS
-    from its last use, and the cookie has no max-age of its own, so the
-    server's sliding deadline is the only clock."""
+def test_view_as_lasts_its_absolute_window_and_the_cookie_ends_with_it(app, db_path):
+    """Owner decision (9/29/26): a view-as lasts auth.VIEW_AS_HOURS (2) from
+    when it was opened, absolute — use never extends it. (Sep 23 2026 it was
+    a 12-hour window sliding with use and a cookie with no max-age; this test
+    asserted that until fix round A.) The cookie now ends when the session
+    does."""
     from datetime import datetime, timedelta
     import auth
     _, admin_uid = _admin(db_path)
@@ -158,7 +159,7 @@ def test_view_as_lasts_a_working_day_and_the_cookie_does_not_cut_it_short(app, d
     c = _client(app, create_session(admin_uid, db_path=db_path))
     r = _post(c, "/admin/view-as/%d" % rid)
     cookie = next(h for h in r.headers.getlist("Set-Cookie") if h.startswith("session_token="))
-    assert "Max-Age" not in cookie and "Expires" not in cookie
+    assert "Max-Age=%d" % (auth.VIEW_AS_HOURS * 3600) in cookie
     row = _row(db_path, "SELECT expires_at FROM sessions WHERE device_type='admin-view-as'")
     left = datetime.fromisoformat(row["expires_at"][:19]) - datetime.utcnow()
     assert timedelta(hours=auth.VIEW_AS_HOURS) - timedelta(minutes=5) < left <= timedelta(hours=auth.VIEW_AS_HOURS)

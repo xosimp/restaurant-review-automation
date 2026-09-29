@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Two-factor required — Cavnar AI</title>
+<title>Two-factor — Cavnar AI admin</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
@@ -11,17 +11,29 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--r:8px}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--good:#2d6a4f;--bad:#c0392b;--r:8px}
 body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
 @keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
-.card{background:var(--paper);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:420px;border:1.5px solid var(--ember);box-shadow:0 0 0 5px rgba(200,75,47,.08),0 28px 70px rgba(0,0,0,.55);position:relative;overflow:hidden;animation:cardIn .48s cubic-bezier(.2,.9,.3,1) .08s both;z-index:1}
+.card{background:var(--paper);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:440px;border:1.5px solid var(--ember);box-shadow:0 0 0 5px rgba(200,75,47,.08),0 28px 70px rgba(0,0,0,.55);position:relative;overflow:hidden;animation:cardIn .48s cubic-bezier(.2,.9,.3,1) .08s both;z-index:1}
 .card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember)}
 .logo{font-family:'Clash Display',sans-serif;font-size:26px;color:var(--ink);margin-bottom:4px}
 .sub{font-size:12px;color:var(--ink3);margin-bottom:28px;letter-spacing:.06em;text-transform:uppercase}
 .heading{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin-bottom:8px;line-height:1.2}
-.desc{font-size:15px;color:var(--ink2);line-height:1.6;margin-bottom:22px}
-.steps{font-size:14px;color:var(--ink2);line-height:1.7;margin:0 0 22px 18px}
+.desc{font-size:15px;color:var(--ink2);line-height:1.6;margin-bottom:18px}
+.opts{border:0;margin:0 0 18px}
+.opts legend{font-size:13px;color:var(--ink3);margin-bottom:8px}
+.opt{display:flex;gap:10px;align-items:center;font-size:15px;color:var(--ink);padding:8px 0}
+.opt input{width:18px;height:18px;accent-color:var(--ember)}
+.opt .dim{color:var(--ink3)}
+.field{display:block;font-size:13px;color:var(--ink3);margin:0 0 6px}
+.input{width:100%;height:46px;border:1.5px solid var(--paper3);border-radius:var(--r);background:#fff;font-size:18px;padding:0 14px;color:var(--ink);margin-bottom:14px;letter-spacing:.08em}
+.status{font-size:14px;line-height:1.5;margin:0 0 14px;min-height:1px}
+.status.err{color:var(--bad)}
+.status.ok{color:var(--good)}
+.codes{font-family:'Space Grotesk',monospace;font-size:16px;color:var(--ink);background:var(--paper2);border-radius:var(--r);padding:14px 16px;margin:0 0 14px;columns:2;line-height:1.9}
+.stack{display:flex;flex-direction:column;gap:10px}
 .back{display:block;text-align:center;margin-top:18px;font-size:12px;color:var(--ink3);text-decoration:none}
+[hidden]{display:none !important}
 .cf-layer{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
 .cf-vignette{position:fixed;inset:0;pointer-events:none;z-index:0;background:linear-gradient(180deg,rgba(12,12,12,0) 0%,rgba(12,12,12,.28) 45%,rgba(12,12,12,.90) 100%)}
 </style>
@@ -32,18 +44,133 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
 <div class="cf-vignette" aria-hidden="true"></div>
 <div class="card">
   <div class="logo">Cavnar <em style="color:var(--ember);font-style:italic">AI</em></div>
-  <div class="sub">Admin console</div>
-  <div class="heading">Two-factor first.</div>
-  <div class="desc">{{ message }}</div>
-  <ol class="steps">
-    <li>Open the dashboard and go to <b>Account &rarr; Security</b>.</li>
-    <li>Turn on two-factor authentication and confirm the code.</li>
-    <li>Come back to <b>/admin</b>.</li>
-  </ol>
-  <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="/">Open Account</a>
+  <div class="sub">Admin console · {{ username }}</div>
+
+  {% if not enrolled %}
+  <div id="enrol">
+    <div class="heading">Two-factor for your login.</div>
+    <p class="desc">{% if required %}Every admin login here needs a code at sign-in, on top of the password. Turn it on to open the console.{% else %}A code at every sign-in, on top of your password — on every way you sign in.{% endif %}</p>
+    <div id="step-send">
+      <fieldset class="opts">
+        <legend>Send codes to</legend>
+        <label class="opt"><input type="radio" name="method" value="email" checked{% if not email_masked %} disabled{% endif %}> Email <span class="dim">{{ email_masked or "— no email on your login" }}</span></label>
+        <label class="opt"><input type="radio" name="method" value="sms"{% if not phone_masked %} disabled{% endif %}> Text <span class="dim">{{ phone_masked or "— no phone on your login" }}</span></label>
+      </fieldset>
+      <div class="status" id="send-status" role="status" aria-live="polite"></div>
+      <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="send-btn">Send code</button>
+    </div>
+    <div id="step-verify" hidden>
+      <label class="field" for="code">The 6-digit code we sent</label>
+      <input class="input" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      <div class="status" id="verify-status" role="status" aria-live="polite"></div>
+      <div class="stack">
+        <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="verify-btn">Turn on two-factor</button>
+        <button type="button" class="cbtn cbtn-text cbtn-sm" id="resend-btn">Send a new code</button>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div id="manage">
+    <div class="heading">Two-factor is on.</div>
+    <p class="desc">Codes go to your {% if method == 'sms' %}phone{% else %}email{% endif %} ({% if method == 'sms' %}{{ phone_masked }}{% else %}{{ email_masked }}{% endif %}). {{ backup_left }} backup code{% if backup_left != 1 %}s{% endif %} left.</p>
+    <div class="status" id="manage-status" role="status" aria-live="polite"></div>
+    <div class="stack">
+      <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="{{ next_url }}">Back to the console</a>
+      <button type="button" class="cbtn cbtn-secondary cbtn-block" id="codes-btn">Make new backup codes</button>
+      {% if not required %}<button type="button" class="cbtn cbtn-text cbtn-sm" id="off-btn">Turn two-factor off</button>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div id="reauth" hidden>
+    <label class="field" for="reauth-pw">Enter your password to continue</label>
+    <input class="input" id="reauth-pw" type="password" autocomplete="current-password">
+    <div class="status" id="reauth-status" role="status" aria-live="polite"></div>
+    <button type="button" class="cbtn cbtn-primary cbtn-block" id="reauth-btn">Confirm</button>
+  </div>
+
+  <div id="done" hidden>
+    <p class="desc">Save these backup codes somewhere safe. Each one signs you in once if a code can't reach you. They won't be shown again.</p>
+    <div class="codes" id="codes"></div>
+    <a class="cbtn cbtn-primary cbtn-lg cbtn-block" id="continue" href="{{ next_url }}">Continue to the console</a>
+  </div>
+
   <a href="/logout" class="back">Sign out</a>
 </div>
 <script src="/static/cavnar-field.js"></script>
 <script>window.cavnarField=CavnarField.mount({aurora:document.getElementById('cf-aurora'),sky:document.getElementById('cf-sky')});</script>
+<script>
+(function(){
+  var NEXT = {{ next_url|tojson }};
+  function $(id){ return document.getElementById(id); }
+  function csrf(){ var m = document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+  function say(id, text, tone){ var el = $(id); if (!el) return; el.textContent = text || ''; el.className = 'status' + (tone ? ' ' + tone : ''); }
+  function post(path, body, done){
+    var x = new XMLHttpRequest();
+    x.open('POST', path, true);
+    x.setRequestHeader('Content-Type', 'application/json');
+    x.setRequestHeader('X-CSRF', csrf());
+    x.onload = function(){ var d; try { d = JSON.parse(x.responseText); } catch (e) { d = {ok: false, error: 'Something went wrong (' + x.status + ').'}; } done(d, x.status); };
+    x.onerror = function(){ done({ok: false, error: 'No connection. Try again.'}, 0); };
+    x.send(JSON.stringify(body || {}));
+  }
+  function showCodes(codes){
+    var box = $('codes'); box.innerHTML = '';
+    for (var i = 0; i < codes.length; i++) { var d = document.createElement('div'); d.textContent = codes[i]; box.appendChild(d); }
+    if ($('enrol')) $('enrol').hidden = true;
+    if ($('manage')) $('manage').hidden = true;
+    $('reauth').hidden = true;
+    $('done').hidden = false;
+  }
+  // A sensitive action answered {reauth_required}: ask for the password,
+  // confirm it with /admin/api/reauth, then run the action again.
+  var pending = null;
+  function withReauth(action, statusId){
+    action(function(d, st){
+      if (d && d.reauth_required) {
+        pending = function(){ withReauth(action, statusId); };
+        $('reauth').hidden = false; $('reauth-pw').value = ''; $('reauth-pw').focus();
+        say('reauth-status', '');
+        return;
+      }
+      if (d && d.session_expired) { window.location.href = '/login?next=' + encodeURIComponent(NEXT); return; }
+      if (!d || !d.ok) { say(statusId, (d && d.error) || 'That didn’t work. Try again.', 'err'); return; }
+      if (d.backup_codes) { showCodes(d.backup_codes); return; }
+      window.location.reload();
+    });
+  }
+  if ($('reauth-btn')) $('reauth-btn').addEventListener('click', function(){
+    post('/admin/api/reauth', {password: $('reauth-pw').value}, function(d){
+      if (d && d.session_expired) { window.location.href = '/login?next=' + encodeURIComponent(NEXT); return; }
+      if (!d || !d.ok) { say('reauth-status', (d && d.error) || 'That password isn’t right.', 'err'); return; }
+      $('reauth').hidden = true;
+      if (pending) { var p = pending; pending = null; p(); }
+    });
+  });
+  function method(){ var r = document.querySelector('input[name="method"]:checked'); return r ? r.value : 'email'; }
+  function send(statusId){
+    post('/admin/two-factor/send', {method: method()}, function(d){
+      if (!d || !d.ok) { say(statusId, (d && d.error) || 'We couldn’t send a code.', 'err'); return; }
+      $('step-send').hidden = true; $('step-verify').hidden = false; $('code').focus();
+      say('verify-status', (d.method === 'sms' ? 'We texted a code to ' : 'We emailed a code to ') + d.masked + '.', 'ok');
+    });
+  }
+  if ($('send-btn')) $('send-btn').addEventListener('click', function(){ send('send-status'); });
+  if ($('resend-btn')) $('resend-btn').addEventListener('click', function(){ send('verify-status'); });
+  if ($('verify-btn')) $('verify-btn').addEventListener('click', function(){
+    post('/admin/two-factor/verify', {code: $('code').value, method: method(), next: NEXT}, function(d){
+      if (!d || !d.ok) { say('verify-status', (d && d.error) || 'That code isn’t right.', 'err'); return; }
+      if (d.next) { $('continue').setAttribute('href', d.next); }
+      showCodes(d.backup_codes || []);
+    });
+  });
+  if ($('codes-btn')) $('codes-btn').addEventListener('click', function(){
+    withReauth(function(cb){ post('/admin/two-factor/backup-codes', {}, cb); }, 'manage-status');
+  });
+  if ($('off-btn')) $('off-btn').addEventListener('click', function(){
+    withReauth(function(cb){ post('/admin/two-factor/disable', {}, cb); }, 'manage-status');
+  });
+})();
+</script>
 </body>
 </html>
