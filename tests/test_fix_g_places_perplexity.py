@@ -111,6 +111,26 @@ def test_the_places_ceiling_stops_a_loop_before_it_bills(db_path, monkeypatch):
     assert ai_utils.ai_budget_status(rid)["day"]["spend"] == 0.0
 
 
+def test_the_review_fetch_is_counted_by_the_ceiling_but_never_held_behind_it(db_path, monkeypatch):
+    """An urgent review arrives only through the fetch: a geocode loop that
+    spent the ceiling must not hold it until the day resets."""
+    rid = _rid(db_path)
+    sent = _stub_get(monkeypatch, _Resp({"status": "OK", "result": {"reviews": []}}))
+    for _ in range(int(ai_utils.AI_PLACES_DAILY_BUDGET_USD / ai_utils._PER_CALL_PRICING["google-places-details"]) + 2):
+        ai_utils.log_api_call(rid, "weather_geocode", "google-places-details")
+    ai_utils._budget_cache.clear()
+    assert ai_utils.places_budget_exceeded(rid)
+    with pytest.raises(ai_utils.PlacesUnavailable):
+        ai_utils.places_request("details", {"place_id": "x", "key": "k"}, restaurant_id=rid, action="own_rating")
+    ai_utils.places_request("details", {"place_id": "x", "key": "k"}, restaurant_id=rid, action="review_fetch")
+    assert len(sent) == 1
+    conn = sqlite3.connect(db_path)
+    stops = conn.execute("SELECT COUNT(*) FROM ai_health_events WHERE event='budget_stop' "
+                         "AND vendor='google_places'").fetchone()[0]
+    conn.close()
+    assert stops == 1, "the stop is recorded once a day, however many requests meet it"
+
+
 def test_a_denied_key_opens_the_places_breaker_on_the_first_answer(db_path, monkeypatch):
     rid = _rid(db_path)
     sent = _stub_get(monkeypatch, _Resp({"status": "REQUEST_DENIED", "error_message": "The provided API key is invalid."}))

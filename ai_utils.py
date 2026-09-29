@@ -3079,6 +3079,14 @@ class PlacesUnavailable(RuntimeError):
         return str(self)
 
 
+# Places actions the ceiling counts but never refuses: the review fetch is
+# the product's core read and the only path an urgent review (a health or
+# safety complaint) arrives by, and it is bounded by the scheduler's four
+# claimed slots a day. A loop elsewhere must not hold it back until the
+# day resets; the stop is still recorded (and warned on) when it is over.
+PLACES_ESSENTIAL_ACTIONS = frozenset({"review_fetch"})
+
+
 def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=10):
     """GET https://maps.googleapis.com/maps/api/place/<endpoint>/json — the
     one way this codebase calls Google Places.
@@ -3094,7 +3102,9 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
     requests.Response — the caller parses it as it always did.
 
     `restaurant_id`/`action` default to ai_context's (then the request
-    session's) when not given, for the helpers that take no restaurant."""
+    session's) when not given, for the helpers that take no restaurant. An
+    action in PLACES_ESSENTIAL_ACTIONS counts toward the ceiling but is
+    never refused by it."""
     kind = _PLACES_KIND.get(endpoint, endpoint)
     rid = _context_restaurant() if restaurant_id is _UNSET else restaurant_id
     act = action or (_CTX.get() or {}).get("action") or "places"
@@ -3105,8 +3115,9 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
     over = places_budget_exceeded(rid)
     if over:
         _record_budget_stop(over, rid, vendor="google_places")
-        log_blocked(rid, act, sku_model, "budget", detail=over, vendor="google_places")
-        raise PlacesUnavailable("budget", f"Google lookups are paused for this restaurant — its {over} is spent.")
+        if act not in PLACES_ESSENTIAL_ACTIONS:
+            log_blocked(rid, act, sku_model, "budget", detail=over, vendor="google_places")
+            raise PlacesUnavailable("budget", f"Google lookups are paused for this restaurant — its {over} is spent.")
     try:
         _breaker_check("google_places")
     except AIProviderDown:
