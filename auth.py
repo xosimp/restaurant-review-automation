@@ -257,6 +257,22 @@ CREATE TABLE IF NOT EXISTS view_as_sessions (
     read_only       INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Backup codes for a login's OWN second factor — Cavnar AI's internal logins
+-- (admin, support), whose two-factor lives on the users row, not on a
+-- restaurant. A restaurant's codes (two_fa_backup_codes) belong to that
+-- restaurant's logins: an admin homed on a restaurant row must never pass
+-- his second factor with that restaurant's codes, nor they with his.
+-- Hashed like passwords; each works once.
+CREATE TABLE IF NOT EXISTS user_backup_codes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    code_hash       TEXT    NOT NULL,
+    used_at         TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_user_backup_codes_user
+    ON user_backup_codes(user_id, used_at);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -288,11 +304,63 @@ CREATE INDEX IF NOT EXISTS idx_login_history_user
 LOGIN_HISTORY_RETENTION_DAYS = 90
 
 
-# How long an admin "view as" session lasts after its last request. It was 30
-# minutes, and with a cookie that never renewed, reviewing a client for half
-# an hour signed the admin out mid-review. The only admin is the founder, so
-# a working day, sliding with use; the 8-hour inactivity rule still applies.
-VIEW_AS_HOURS = 12
+# How long an admin "view as" session lasts: two hours from the moment it was
+# opened, never extended by use (owner decision, 9/29/26). It was 12 hours
+# sliding forward on every request, so a tab left open kept a client's
+# identity alive indefinitely; the stored expiry is now the only clock.
+VIEW_AS_HOURS = 2
+
+# An admin or support session lasts 12 hours from sign-in, on every device
+# (owner decision, 9/29/26). They used the owner defaults — 30 days, 8 hours
+# idle — for the one login that can read and change every tenant.
+ADMIN_SESSION_HOURS = 12
+
+# Step-up: the sensitive admin actions need the password typed again within
+# this many minutes (recent_auth_required, POST /admin/api/reauth).
+RECENT_AUTH_MINUTES = 15
+
+
+def sql_utc(dt=None) -> str:
+    """A UTC instant in SQLite's own text form, 'YYYY-MM-DD HH:MM:SS' — the
+    form datetime('now') produces. sessions.expires_at used to be written as
+    ISO text with a 'T' and an offset, and '2026-09-29T08:00…' compares
+    greater than '2026-09-29 21:00:00' as text, so every session outlived its
+    expiry to the end of that UTC day (SECURITY-14)."""
+    dt = dt or datetime.now(timezone.utc)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_utc(value):
+    """A stored UTC stamp (either text form) as a naive UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        text = str(value).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
+        try:
+            return datetime.fromisoformat(str(value)[:19])
+        except Exception:
+            return None
+
+
+def is_internal_login(user) -> bool:
+    """Cavnar AI's own staff: an admin, or a read-only support login. Their
+    second factor, session lifetime and sign-in throttling follow rules of
+    their own, because one of these logins reaches every tenant."""
+    if not user:
+        return False
+    try:
+        if user.get("is_admin"):
+            return True
+        return str(user.get("role") or "").strip().lower() == "support"
+    except Exception:
+        return False
 
 def init_auth(db_path: str = DB_PATH):
     # Tables must exist before the ALTER migrations below can run against them —
@@ -374,6 +442,30 @@ def init_auth(db_path: str = DB_PATH):
         # SEC-18: a portal hit that turned out fine (a sign-in that worked, a
         # roster read with a real code) no longer spends the failure budget.
         "ALTER TABLE portal_attempts ADD COLUMN ok INTEGER NOT NULL DEFAULT 0",
+        # Fix round A (9/29/26). What a session proved and who is behind it,
+        # on the session row itself so every check fails closed:
+        #   two_factor_at   — when this session passed a second factor (a
+        #                     code, a backup code or a remembered device);
+        #                     the admin gate reads it (SECURITY-1).
+        #   reauth_at       — when the password was last typed for this
+        #                     session: at sign-in, or again for a sensitive
+        #                     admin action (recent_auth_required).
+        #   acting_admin_id — the admin (or support login) behind a view-as
+        #                     session; every write through it is theirs.
+        #   read_only       — a view-as a support login opened. It lived only
+        #                     in view_as_sessions, pruned after two days, and
+        #                     a missing row read as writable (SECURITY-14).
+        "ALTER TABLE sessions ADD COLUMN two_factor_at TEXT",
+        "ALTER TABLE sessions ADD COLUMN reauth_at TEXT",
+        "ALTER TABLE sessions ADD COLUMN acting_admin_id INTEGER",
+        "ALTER TABLE sessions ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0",
+        # An internal login's (admin, support) own second factor. It used to
+        # be the flag on whatever restaurant the admin happened to be homed
+        # on — a client's, if the seed attached him to one — and nothing at
+        # sign-in ever asked for it (SECURITY-1). A restaurant's logins keep
+        # the restaurant-wide switch.
+        "ALTER TABLE users ADD COLUMN two_fa_enabled INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN two_fa_method TEXT",
     ]:
         try:
             import sqlite3 as _sql
@@ -437,6 +529,7 @@ def init_auth(db_path: str = DB_PATH):
     except Exception:
         pass  # restaurants not created yet (init_db runs first at boot)
 
+    normalize_session_rows(db_path=db_path)
     backfill_memberships(db_path=db_path)
     prune_login_history(db_path=db_path)
     sweep_orphan_pin_attempts(db_path=db_path)
@@ -450,6 +543,52 @@ def init_auth(db_path: str = DB_PATH):
             print(f"[auth] PIN PEPPER WARNING: {health['message']}")
     except Exception:
         pass
+
+
+def normalize_session_rows(db_path: str = DB_PATH) -> dict:
+    """Boot-time repair of session rows written under the old rules.
+    Idempotent, and a no-op once every row is in the current shape.
+
+      - expires_at / last_active written as ISO text ('…T…+00:00') are
+        rewritten in SQLite's 'YYYY-MM-DD HH:MM:SS' UTC form. Compared as
+        text with datetime('now'), the ISO form kept every session alive to
+        the end of its expiry day in UTC (SECURITY-14). strftime() reads the
+        offset and converts to UTC; an unreadable value is left alone (the
+        session lookup compares through datetime(), which refuses it).
+      - admin view-as sessions from before acting_admin_id existed are ended:
+        nothing on them says who is behind them or whether they may write,
+        and they slid forward 12 hours on every request.
+      - an internal login's session is capped at ADMIN_SESSION_HOURS from
+        when it was created (they were 30-day rows).
+    Returns the row counts, for the test."""
+    out = {"expiry_fixed": 0, "view_as_ended": 0, "internal_capped": 0}
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            cur = conn.execute(
+                "UPDATE sessions SET expires_at=COALESCE(strftime('%Y-%m-%d %H:%M:%S', expires_at), expires_at) "
+                "WHERE expires_at LIKE '%T%'")
+            out["expiry_fixed"] = cur.rowcount or 0
+            conn.execute(
+                "UPDATE sessions SET last_active=COALESCE(strftime('%Y-%m-%d %H:%M:%S', last_active), last_active) "
+                "WHERE last_active LIKE '%T%'")
+            cur = conn.execute("DELETE FROM sessions WHERE device_type='admin-view-as' AND acting_admin_id IS NULL")
+            out["view_as_ended"] = cur.rowcount or 0
+            cur = conn.execute(
+                "UPDATE sessions SET expires_at=datetime(created_at, ?) "
+                "WHERE user_id IN (SELECT id FROM users WHERE is_admin=1 OR LOWER(COALESCE(role,''))='support') "
+                "AND COALESCE(device_type,'web')<>'admin-view-as' "
+                "AND datetime(expires_at) > datetime(created_at, ?)",
+                (f"+{ADMIN_SESSION_HOURS} hours", f"+{ADMIN_SESSION_HOURS} hours"))
+            out["internal_capped"] = cur.rowcount or 0
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        # Not fatal (the session lookup enforces all three on its own), but
+        # visible: a boot that could not repair these should be known.
+        print(f"[auth] session normalization skipped: {exc}")
+    return out
 
 
 def backfill_memberships(db_path: str = DB_PATH) -> int:
@@ -1263,9 +1402,27 @@ def two_fa_destination(user, restaurant, method=None, strict=False):
 
     `method` defaults to the restaurant's chosen two_fa_method. A text code
     for a login with no phone goes to its email instead, unless `strict`
-    (the setup test, which must prove the channel being switched on)."""
+    (the setup test, which must prove the channel being switched on).
+
+    An internal login (admin, support) uses its own method
+    (users.two_fa_method) and only its own email and phone — never the
+    contact details of whatever restaurant it happens to be homed on."""
     from permissions import is_principal
-    if not user or not restaurant:
+    if not user:
+        return None
+    if is_internal_login(user):
+        method = method or (user.get("two_fa_method") or "email")
+        email = (user.get("email") or "").strip()
+        email = email if "@" in email else ""
+        phone = (user.get("phone") or "").strip()
+        if method == "sms" and phone:
+            return {"kind": "sms", "to": phone, "masked": _mask_phone(phone), "name": user.get("name") or None}
+        if method == "sms" and strict:
+            return None
+        if email:
+            return {"kind": "email", "to": email, "masked": _mask_email(email), "name": user.get("name") or None}
+        return None
+    if not restaurant:
         return None
     method = method or getattr(restaurant, "two_fa_method", None) or "email"
     email = (user.get("email") or "").strip()
@@ -1286,6 +1443,9 @@ def two_fa_destination(user, restaurant, method=None, strict=False):
     return None
 
 
+ADMIN_CONSOLE_NAME = "the Cavnar AI admin console"
+
+
 def send_two_fa_code(dest, restaurant, code) -> bool:
     """Send a code to a two_fa_destination(). True only when it went out."""
     rname = getattr(restaurant, "name", None) or "your restaurant"
@@ -1294,6 +1454,150 @@ def send_two_fa_code(dest, restaurant, code) -> bool:
         return bool(send_2fa_sms(dest["to"], rname, code))
     from emails import send_2fa_code
     return bool(send_2fa_code(dest["to"], rname, code, dest.get("name")))
+
+
+def _code_label(user, restaurant):
+    """What the code message says it is for: the restaurant, or the admin
+    console for an internal login (whose home row is not what it signs in to)."""
+    if is_internal_login(user):
+        from types import SimpleNamespace
+        return SimpleNamespace(name=ADMIN_CONSOLE_NAME)
+    return restaurant
+
+
+def deliver_two_fa_code(user, restaurant, dest, code) -> dict:
+    """Send a sign-in code and say what actually happened (COMMS-13).
+
+    Returns {"sent": bool, "kind": "sms"|"email"|None, "masked": str|None,
+    "fell_back": bool, "reason": str|None}. A text to a number that has
+    texted STOP to the platform, or one the provider refused, falls back to
+    the login's own email — the sign-in page used to say "We texted" whatever
+    happened, so a STOPped owner waited for a code that never came."""
+    label = _code_label(user, restaurant)
+
+    def _send(d):
+        try:
+            return bool(send_two_fa_code(d, label, code))
+        except Exception as exc:
+            print(f"[2fa] code send failed for user {(user or {}).get('id')}: {exc}")
+            return False
+
+    out = {"sent": False, "kind": None, "masked": None, "fell_back": False, "reason": None}
+    if not dest:
+        out["reason"] = "no_destination"
+        return out
+    if dest["kind"] == "sms":
+        stopped = False
+        try:
+            from notify import sms_stopped_phones
+            stopped = bool(sms_stopped_phones([dest["to"]]))
+        except Exception:
+            stopped = False
+        if not stopped and _send(dest):
+            out.update(sent=True, kind="sms", masked=dest["masked"])
+            return out
+        out["reason"] = "sms_stopped" if stopped else "sms_failed"
+        email_dest = two_fa_destination(user, restaurant, method="email")
+        if email_dest and email_dest["kind"] == "email" and _send(email_dest):
+            out.update(sent=True, kind="email", masked=email_dest["masked"], fell_back=True)
+        return out
+    if _send(dest):
+        out.update(sent=True, kind=dest["kind"], masked=dest["masked"])
+    else:
+        out["reason"] = "email_failed"
+    return out
+
+
+def undelivered_code_message(result) -> str:
+    """The sentence a sign-in shows when no code went out."""
+    if (result or {}).get("reason") == "sms_stopped":
+        return ("Your number has opted out of texts from us and there's no email on this login to fall back to. "
+                "Use a backup code, or ask the account owner to add an email to your login.")
+    return ("We couldn't send your code just now. Tap Resend code in a minute, or use a backup code.")
+
+
+def login_needs_second_factor(user, restaurant) -> bool:
+    """Whether this sign-in must pass a second factor before it gets a
+    session. An internal login answers from its own users row — no lookup,
+    so nothing can fail open or lock the only admin out; everyone else from
+    their restaurant's switch."""
+    if is_internal_login(user):
+        return user_two_factor_enrolled(user)
+    return bool(restaurant and getattr(restaurant, "two_fa_enabled", 0))
+
+
+def session_cookie_max_age(user) -> int:
+    """The session cookie's lifetime: the session's own for an internal
+    login (ADMIN_SESSION_HOURS), 30 days for everyone else."""
+    return ADMIN_SESSION_HOURS * 3600 if is_internal_login(user) else 30 * 24 * 3600
+
+
+def two_fa_challenge_started_at(restaurant_id: int, user_id: int, pending: str,
+                                db_path: str = DB_PATH):
+    """When this sign-in's challenge was issued — the moment its password
+    was typed (a resend replaces the code, not the row). None if gone."""
+    if not pending:
+        return None
+    conn = get_conn(db_path)
+    try:
+        row = _find_two_fa_challenge(conn, restaurant_id, user_id, pending, "login")
+        return row["created_at"] if row else None
+    finally:
+        conn.close()
+
+
+# ── an internal login's own backup codes ────────────────────────────────────
+
+def generate_user_backup_codes(user_id: int, count: int = 10, db_path: str = DB_PATH) -> list:
+    """A fresh set for one login, replacing any before. Shown once."""
+    codes = [f"{secrets.token_hex(4).upper()[:4]}-{secrets.token_hex(4).upper()[4:]}" for _ in range(count)]
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM user_backup_codes WHERE user_id=?", (user_id,))
+        for code in codes:
+            conn.execute("INSERT INTO user_backup_codes (user_id, code_hash) VALUES (?, ?)",
+                         (user_id, generate_password_hash(code)))
+        conn.commit()
+    finally:
+        conn.close()
+    return codes
+
+
+def verify_and_consume_user_backup_code(user_id: int, code: str, db_path: str = DB_PATH) -> bool:
+    from models import normalize_backup_code
+    code = normalize_backup_code(code)
+    if not code:
+        return False
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT id, code_hash FROM user_backup_codes WHERE user_id=? AND used_at IS NULL",
+                            (user_id,)).fetchall()
+        for row in rows:
+            if check_password_hash(row["code_hash"], code):
+                conn.execute("UPDATE user_backup_codes SET used_at=datetime('now') WHERE id=?", (row["id"],))
+                conn.commit()
+                return True
+        return False
+    finally:
+        conn.close()
+
+
+def count_unused_user_backup_codes(user_id: int, db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM user_backup_codes WHERE user_id=? AND used_at IS NULL",
+                            (user_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def verify_backup_code_for(user, restaurant_id: int, code: str, db_path: str = DB_PATH) -> bool:
+    """A backup code typed at a sign-in's second step: the login's own codes
+    for an internal login, the restaurant's for everyone else."""
+    if is_internal_login(user):
+        return verify_and_consume_user_backup_code(user["id"], code, db_path=db_path)
+    from models import verify_and_consume_backup_code
+    return verify_and_consume_backup_code(restaurant_id, code, db_path=db_path)
 
 
 # ── 2FA challenges (SEC-20) ─────────────────────────────────────────────────
@@ -1994,7 +2298,7 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
         # A PIN identity must not also be a password login — that would be a
         # second, weaker way into the same account.
         user_id = create_user(restaurant_id, username, f"{username}@staff.invalid",
-                              secrets.token_urlsafe(32), db_path=db_path)
+                              secrets.token_urlsafe(32), db_path=db_path, generated=True)
         conn = get_conn(db_path)
         try:
             conn.execute("UPDATE users SET phone=? WHERE id=?", (phone, user_id))
@@ -2121,9 +2425,50 @@ def _end_staff_sessions_for_membership(membership_id: int, restaurant_id: int,
 
 # ── User CRUD ─────────────────────────────────────────────────────────────────
 
+# The one password policy every owner-facing path applies — reset, change,
+# admin reset: at least 8 characters, and not in a known breach (HIBP,
+# security.password_pwned, which fails open). create_user holds every typed
+# password to it; admin create-client passed whatever was typed straight in
+# (SECURITY-9). Callers that mint a random secret themselves pass
+# generated=True.
+PASSWORD_MIN_LENGTH = 8
+
+# Switched off only by the test suite (tests/conftest.py), whose fixtures
+# create throwaway logins with short passwords; the policy's own tests switch
+# it back on. Production never changes it.
+ENFORCE_PASSWORD_POLICY = True
+
+
+class PasswordPolicyError(ValueError):
+    """A password the policy refuses. str() is the sentence to show."""
+    @property
+    def message(self):
+        return self.args[0] if self.args else "Choose a different password."
+
+
+def password_policy_error(password):
+    """The sentence refusing `password`, or None when it passes."""
+    if len(password or "") < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
+    try:
+        import security as _sec_pp
+        if _sec_pp.password_pwned(password):
+            return _sec_pp.PWNED_MESSAGE
+    except Exception:
+        pass    # the breach check fails open, as it does everywhere else
+    return None
+
+
 def create_user(restaurant_id: int, username: str, email: str,
                 password: str, is_admin: bool = False,
-                db_path: str = DB_PATH, role: str = None) -> int:
+                db_path: str = DB_PATH, role: str = None, generated: bool = False) -> int:
+    """A login. `password` must pass password_policy_error unless the caller
+    minted it at random (generated=True): a PIN identity's unused password,
+    a teammate's temporary one, a support login's placeholder."""
+    if not generated and ENFORCE_PASSWORD_POLICY:
+        err = password_policy_error(password)
+        if err:
+            raise PasswordPolicyError(err)
     conn = get_conn(db_path)
     # Scored/stamped at creation too, not just on a later change — an
     # account whose password was never touched since Will set it up used
@@ -2152,6 +2497,94 @@ def create_user(restaurant_id: int, username: str, email: str,
     uid = cur.lastrowid
     conn.close()
     return uid
+
+ADMIN_HOME_NAME = "Cavnar AI Admin"
+
+
+def ensure_admin_login(db_path: str = DB_PATH, env=None) -> dict:
+    """Boot: create the operator's admin login when there is none at all
+    (SECURITY-11, #136). It used to create one whenever no user was named
+    ADMIN_USERNAME — so a rename, or deleting the admin's home restaurant
+    (models.delete_restaurant takes its users), re-armed it — with
+    ADMIN_PASSWORD or a password written in this repo, homed on whatever
+    restaurant row came first, which it then relabelled billing 'internal'.
+
+      - Seeds only when no is_admin row exists.
+      - Never without ADMIN_PASSWORD, and only one that passes the password
+        policy; otherwise nothing is created and the refusal is loud.
+      - Homed on a restaurant row made for it (ADMIN_HOME_NAME, billing
+        'internal'), reusing one made before; no other row is touched.
+      - A creation or refusal is recorded in admin_events and, on Railway,
+        sent to the operator (ops.alert_will).
+
+    Returns {"action": "exists" | "created" | "refused", "reason", "user_id"}."""
+    env = os.environ if env is None else env
+    conn = get_conn(db_path)
+    try:
+        admin = conn.execute("SELECT id FROM users WHERE is_admin=1 LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    if admin:
+        return {"action": "exists", "reason": None, "user_id": admin["id"]}
+    username = (env.get("ADMIN_USERNAME") or "will").strip().lower()
+    password = env.get("ADMIN_PASSWORD") or ""
+    try:
+        import config as _cfg_seed
+        email = (env.get("ADMIN_EMAIL") or _cfg_seed.will_email() or "will@cavnar.ai").strip().lower()
+        on_railway = _cfg_seed.on_railway()
+    except Exception:
+        email, on_railway = (env.get("ADMIN_EMAIL") or "will@cavnar.ai").strip().lower(), False
+    reason = None
+    if not password:
+        reason = "ADMIN_PASSWORD is not set"
+    else:
+        err = password_policy_error(password)
+        if err:
+            reason = f"ADMIN_PASSWORD fails the password policy: {err}"
+    uid = None
+    if not reason:
+        conn = get_conn(db_path)
+        try:
+            home = conn.execute("SELECT id FROM restaurants WHERE name=? AND billing_status='internal' "
+                                "ORDER BY id LIMIT 1", (ADMIN_HOME_NAME,)).fetchone()
+        finally:
+            conn.close()
+        try:
+            if home:
+                home_id = home["id"]
+            else:
+                from models import create_restaurant as _cr_seed, Restaurant as _R_seed
+                home_id = _cr_seed(_R_seed(name=ADMIN_HOME_NAME, owner_email=email), db_path=db_path)
+                conn = get_conn(db_path)
+                try:
+                    conn.execute("UPDATE restaurants SET billing_status='internal' WHERE id=?", (home_id,))
+                    conn.commit()
+                finally:
+                    conn.close()
+            # Checked against the policy just above; generated=True only
+            # spares a second breach lookup.
+            uid = create_user(home_id, username, email, password, is_admin=True, db_path=db_path, generated=True)
+        except Exception as exc:
+            reason = f"could not create the admin login: {exc}"
+    action = "created" if uid else "refused"
+    line = (f"Admin login {username!r} created on the {ADMIN_HOME_NAME} row at boot — no admin existed."
+            if uid else f"No admin login exists and none was created: {reason}. "
+                        "Set ADMIN_PASSWORD (8+ characters, not breached) and redeploy.")
+    print(("" if uid else "SECURITY WARNING: ") + line)
+    try:
+        import admin_events
+        admin_events.record("admin", "admin_seed_" + action, summary=line[:300],
+                            payload={"username": username, "reason": reason}, db_path=db_path)
+    except Exception:
+        pass
+    if on_railway:
+        try:
+            import ops
+            ops.alert_will("Admin login " + ("created at boot" if uid else "missing — seed refused"), [line])
+        except Exception:
+            pass
+    return {"action": action, "reason": reason, "user_id": uid}
+
 
 def get_user_by_username(username: str, db_path: str = DB_PATH) -> Optional[dict]:
     conn = get_conn(db_path)
@@ -2318,7 +2751,7 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
     # with the row, never narrowed afterwards (DATA-56).
     try:
         user_id = create_user(restaurant_id, candidate, email, temp_password,
-                              is_admin=False, db_path=db_path, role=role)
+                              is_admin=False, db_path=db_path, role=role, generated=True)
     except sqlite3.IntegrityError:
         return {"ok": False, "error": "That email is already in use."}
     # An invited teammate also gets a membership, so authorization for this
@@ -2530,7 +2963,8 @@ def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
                    device_type: str = "web", device_id: str = None,
                    restaurant_id: int = None, hours: int = None,
-                   db_path: str = DB_PATH) -> str:
+                   db_path: str = DB_PATH, *, second_factor: bool = False,
+                   password_verified_at=None) -> str:
     """Every call used to unconditionally INSERT a new row, so a device that
     just re-logs in (session expired, signed out, reinstalled) piled up a
     fresh row every time — the Devices list in Account then showed several
@@ -2541,7 +2975,14 @@ def create_session(user_id: int, days: int = 30,
     any of THIS user's existing sessions for that same device are replaced
     rather than added to. Web logins (and any client that doesn't send one)
     keep the old accumulate-until-expiry behavior, since there's no stable
-    per-device identity to key off there."""
+    per-device identity to key off there.
+
+    `second_factor` stamps two_factor_at: this sign-in passed a code, a
+    backup code or a remembered device. `password_verified_at` stamps
+    reauth_at — True for "the password was typed just now", or the UTC
+    time it was typed (a 2FA sign-in passes the moment its challenge
+    started). An internal login's session is capped at ADMIN_SESSION_HOURS
+    whatever the caller asked for."""
     token = secrets.token_urlsafe(32)
     # Stored as a hash, like session tokens: a copy of this table must not
     # hand anyone a working "sign the owner out everywhere" link, nor the
@@ -2551,17 +2992,33 @@ def create_session(user_id: int, days: int = 30,
     # month, because those run on shared devices sitting on a pass or a host
     # stand. Everything else about the row is identical.
     span = timedelta(hours=hours) if hours else timedelta(days=days)
-    expires = (datetime.now(timezone.utc) + span).isoformat()
     conn = get_conn(db_path)
+    try:
+        who = conn.execute("SELECT is_admin, role FROM users WHERE id=?", (user_id,)).fetchone()
+    except Exception:
+        who = None
+    if who is not None and is_internal_login({"is_admin": who["is_admin"], "role": who["role"]}):
+        span = min(span, timedelta(hours=ADMIN_SESSION_HOURS))
+    # SQLite's own text form, so every `expires_at > datetime('now')` in the
+    # codebase compares instants, not strings (SECURITY-14).
+    expires = sql_utc(datetime.now(timezone.utc) + span)
+    now_sql = sql_utc()
+    if password_verified_at is True:
+        reauth_at = now_sql
+    elif password_verified_at:
+        reauth_at = str(password_verified_at)
+    else:
+        reauth_at = None
     # Prune expired sessions for this user (keep active ones for multi-device support)
-    conn.execute("DELETE FROM sessions WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id=? AND datetime(expires_at) <= datetime('now')", (user_id,))
     if device_id:
         conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
     conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id, "
-        "staff_restaurant_id) VALUES (?,?,?,?,?,?,?,?)",
+        "staff_restaurant_id, two_factor_at, reauth_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (hash_session_token(token), user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "",
-         restaurant_id if device_type == "staff_pin" else None)
+         restaurant_id if device_type == "staff_pin" else None,
+         now_sql if second_factor else None, reauth_at)
     )
     # The event names the KIND of sign-in, not just that one happened. A staff
     # PIN sign-in and an owner console sign-in are different security events
@@ -2595,14 +3052,21 @@ def get_login_history(user_id: int, limit: int = 50, db_path: str = DB_PATH) -> 
     return [dict(r) for r in rows]
 
 
+def session_handle(token_hash: str) -> str:
+    """A stable, opaque handle for one session row, for lists and for the
+    admin's single-session revoke: the first 16 hex characters of the stored
+    SHA-256. It names the row; it cannot be turned back into the token."""
+    return (token_hash or "")[:16]
+
+
 def get_sessions_for_user(user_id: int, current_token: str = None,
                           db_path: str = DB_PATH) -> list:
     """Return all active sessions for a user, marking which is current."""
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT token, created_at, last_active, ip_address, user_agent, device_type
+        SELECT token, created_at, last_active, ip_address, user_agent, device_type, expires_at
         FROM sessions
-        WHERE user_id=? AND expires_at > datetime('now')
+        WHERE user_id=? AND datetime(expires_at) > datetime('now')
         ORDER BY last_active DESC
     """, (user_id,)).fetchall()
     conn.close()
@@ -2612,14 +3076,48 @@ def get_sessions_for_user(user_id: int, current_token: str = None,
             # The stored value is a hash now, so the "hint" is just a stable
             # opaque handle for the UI, never part of the real token.
             "token_hint": row["token"][-6:],
+            "session_id": session_handle(row["token"]),
             "is_current": bool(current_token) and row["token"] == hash_session_token(current_token),
             "created_at": row["created_at"],
             "last_active": row["last_active"],
+            "expires_at": row["expires_at"],
             "ip_address": row["ip_address"] or "",
             "user_agent": row["user_agent"] or "",
             "device_type": row["device_type"] or "web",
+            # A view-as session sits in the owner's own list: say what it is
+            # instead of "Unknown device" (SECURITY-3).
+            "is_view_as": (row["device_type"] or "") == "admin-view-as",
         })
     return result
+
+
+def create_view_as_session(target_user_id: int, acting_admin: dict, *, read_only: bool,
+                           ip_address: str = None, user_agent: str = None,
+                           db_path: str = DB_PATH) -> str:
+    """Mint an admin view-as session for the login `target_user_id`.
+
+    VIEW_AS_HOURS from now, absolute (the session lookup refuses it past
+    that, whatever expires_at says). The acting admin and read-only live on
+    the session row, so the lookup can attribute every write and a missing
+    row can never turn a support view writable. Returns the token."""
+    from datetime import timedelta
+    token = secrets.token_urlsafe(32)
+    expires = sql_utc(datetime.now(timezone.utc) + timedelta(hours=VIEW_AS_HOURS))
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, expires_at, last_active, device_type, ip_address, user_agent, "
+            "acting_admin_id, read_only) VALUES (?,?,?,datetime('now'),?,?,?,?,?)",
+            (hash_session_token(token), target_user_id, expires, "admin-view-as", ip_address or "",
+             (user_agent or "")[:400], acting_admin.get("id"), 1 if read_only else 0))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        record_view_as_session(token, acting_admin.get("id"), read_only=read_only, db_path=db_path)
+    except Exception:
+        pass    # history only; the session row is the authority
+    return token
 
 
 def revoke_other_sessions(user_id: int, current_token: str,
@@ -2658,6 +3156,11 @@ _INACTIVITY_EXEMPT_DEVICES = frozenset({"ios", "staff_pin"})
 # input to it.
 _SESSION_USER_SQL = """
     SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type, s.staff_restaurant_id,
+           s.created_at      AS _s_created_at,
+           s.two_factor_at   AS _s_two_factor_at,
+           s.reauth_at       AS _s_reauth_at,
+           s.acting_admin_id AS _s_acting_admin_id,
+           s.read_only       AS _s_read_only,
            m.id            AS _m_id,
            m.role          AS _m_role,
            m.employee_name AS _m_employee_name
@@ -2671,14 +3174,32 @@ _SESSION_USER_SQL = """
                 THEN s.active_restaurant_id
                 WHEN s.staff_restaurant_id IS NOT NULL THEN s.staff_restaurant_id
                 ELSE u.restaurant_id END
-    WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
+    WHERE s.token=? AND datetime(s.expires_at) > datetime('now') AND u.is_active=1
 """
 
+# datetime() on both sides: an instant, whichever text form the row holds
+# (normalize_session_rows rewrites the old ISO rows at boot; this is the
+# belt to that brace), and an unreadable value is refused, never kept.
 _SESSION_USER_SQL_NO_MEMBERSHIP = """
     SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type FROM sessions s
     JOIN users u ON s.user_id = u.id
-    WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
+    WHERE s.token=? AND datetime(s.expires_at) > datetime('now') AND u.is_active=1
 """
+
+# The session keys get_session_user lifts off the row onto the user dict.
+_SESSION_FIELDS = (("_s_created_at", "session_created_at"), ("_s_two_factor_at", "two_factor_at"),
+                   ("_s_reauth_at", "reauth_at"), ("_s_acting_admin_id", "acting_admin_id"),
+                   ("_s_read_only", "_session_read_only"))
+
+
+def _session_too_old(created_at, hours) -> bool:
+    """True when a session created at `created_at` (UTC) is past `hours`
+    old — or when its age cannot be read, which fails closed."""
+    born = _parse_utc(created_at)
+    if born is None:
+        return True
+    from datetime import timedelta
+    return datetime.utcnow() - born > timedelta(hours=hours)
 
 
 def _grants_for(conn, user_id, restaurant_id):
@@ -2835,8 +3356,46 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     if not row:
         conn.close()
         return None
+    device = row["device_type"] or "web"
+    session_fields = {}
+    if joined:
+        for src, dst in _SESSION_FIELDS:
+            try:
+                session_fields[dst] = row[src]
+            except (IndexError, KeyError):
+                session_fields[dst] = None
+    # Absolute lifetimes, whatever expires_at says — rows written before
+    # these rules existed included. A view-as lasts VIEW_AS_HOURS from when it
+    # was opened and must name the admin behind it (fail closed: one that
+    # names nobody is refused). An internal login's own session lasts
+    # ADMIN_SESSION_HOURS from sign-in.
+    refuse = False
+    if device == "admin-view-as":
+        refuse = (not joined or session_fields.get("acting_admin_id") is None
+                  or _session_too_old(session_fields.get("session_created_at"), VIEW_AS_HOURS))
+    elif joined and is_internal_login({"is_admin": row["is_admin"], "role": row["role"]}):
+        refuse = _session_too_old(session_fields.get("session_created_at"), ADMIN_SESSION_HOURS)
+    acting_admin = None
+    if not refuse and device == "admin-view-as":
+        try:
+            acting_admin = conn.execute("SELECT id, username, is_admin, role, is_active FROM users WHERE id=?",
+                                        (session_fields.get("acting_admin_id"),)).fetchone()
+        except Exception:
+            acting_admin = None
+        # The admin behind it must still be an active internal login: a
+        # deactivated or demoted admin's view-as ends with their access.
+        if not acting_admin or not acting_admin["is_active"] or not is_internal_login(dict(acting_admin)):
+            refuse = True
+    if refuse:
+        try:
+            conn.execute("DELETE FROM sessions WHERE token=?", (hash_session_token(token),))
+            conn.commit()
+        except Exception as _re:
+            _note_session_touch_failure(_re)
+        conn.close()
+        return None
     # Check inactivity timeout, except for the device kinds above.
-    is_ios_session = (row["device_type"] or "web") in _INACTIVITY_EXEMPT_DEVICES
+    is_ios_session = device in _INACTIVITY_EXEMPT_DEVICES
     last_active = row["last_active"] or ""
     if last_active and not is_ios_session:
         try:
@@ -2864,12 +3423,9 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
                             context=f"last_active={last_active!r}")
             except Exception:
                 pass
-    # Update last_active timestamp. admin-view-as sessions also get their
-    # expires_at pushed forward on every use: view_as_client() gives them a
-    # VIEW_AS_HOURS expires_at instead of the usual 30-day one (bounding how
-    # long an admin can wear a client's identity), and sliding it on each use
-    # means an abandoned view-as session dies VIEW_AS_HOURS after the last
-    # real request while an active one never cuts out mid-review.
+    # Update last_active timestamp. A view-as session is no longer slid
+    # forward here: its VIEW_AS_HOURS run from when it was opened, and use
+    # never extends them (owner decision, 9/29/26).
     #
     # Best-effort and at most once a minute per session (DATA-1). This was an
     # unguarded write + commit on every authenticated request, so a full,
@@ -2879,7 +3435,7 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     _touch_due = True
     try:
         from datetime import datetime as _dt_la
-        if ((row["device_type"] or "") != "admin-view-as" and last_active
+        if (last_active
                 and (_dt_la.utcnow() - _dt_la.fromisoformat(last_active[:19])).total_seconds() < 60):
             _touch_due = False
     except Exception:
@@ -2887,13 +3443,7 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     if _touch_due:
         try:
             conn.execute("PRAGMA busy_timeout=1500")
-            if (row["device_type"] or "") == "admin-view-as":
-                conn.execute(
-                    "UPDATE sessions SET last_active=datetime('now'), expires_at=datetime('now', ?) WHERE token=?",
-                    (f"+{VIEW_AS_HOURS} hours", hash_session_token(token))
-                )
-            else:
-                conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
+            conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (hash_session_token(token),))
             conn.commit()
         except Exception as e:
             try:
@@ -2902,6 +3452,10 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
                 pass
             _note_session_touch_failure(e)
     user = dict(row)
+    for _src, _dst in _SESSION_FIELDS:
+        user.pop(_src, None)
+    user.update(session_fields)
+    session_read_only = user.pop("_session_read_only", None)
     staff_rid = user.pop("staff_restaurant_id", None)
     owner_switched = user.get("role") == "owner" and user.get("active_restaurant_id")
 
@@ -2927,8 +3481,12 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     acting_rid = (user.get("active_restaurant_id") if owner_switched
                   else (staff_rid or user.get("restaurant_id")))
     user["grants"] = _grants_for(conn, user["id"], acting_rid)
-    if (user.get("device_type") or "") == "admin-view-as":
-        user["view_as_read_only"] = _view_as_read_only(conn, token)
+    if device == "admin-view-as":
+        # Read-only lives on the session row now; the old view_as_sessions
+        # row still counts when it says read-only, never the other way.
+        user["view_as_read_only"] = bool(session_read_only) or _view_as_read_only(conn, token)
+        user["acting_admin"] = acting_admin["username"] if acting_admin else None
+        user["acting_admin_role"] = "admin" if (acting_admin and acting_admin["is_admin"]) else "support"
 
     # SEC-1: fail closed. An identity that HAS memberships but none active
     # where this session acts is not authorised there — it used to fall back
@@ -2993,11 +3551,80 @@ def switch_active_restaurant(token: str, restaurant_id: int, db_path: str = DB_P
     conn.close()
 
 def set_user_role(user_id: int, role: str, db_path: str = DB_PATH):
-    """Set role on a user: 'client' or 'owner'."""
+    """Set users.role on a restaurant's login (provisioning pairs it with
+    upsert_membership). Never an admin row: nothing here should be able to
+    rewrite the operator's own login (SECURITY #93). The console's role
+    change goes through admin_set_role, which also writes the membership."""
     conn = get_conn(db_path)
-    conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    conn.execute("UPDATE users SET role=? WHERE id=? AND is_admin=0", (role, user_id))
     conn.commit()
     conn.close()
+
+
+# The roles the admin console may give a restaurant's login: the owner
+# path's three (TEAM_ROLES) plus 'owner', the multi-location login.
+ADMIN_ASSIGNABLE_ROLES = ("client", "owner", "manager", "member")
+
+
+def admin_set_role(user_id: int, role: str, acting_user_id: int = None, db_path: str = DB_PATH) -> dict:
+    """The console's role change, on the owner path's rules (set_team_role):
+    users.role and the membership at the login's home restaurant written
+    together — get_session_user reads the membership, so writing users.role
+    alone never took effect (SECURITY #60) — and the last owner cannot be
+    demoted. Refuses admin rows (#93), support logins, staff PIN identities
+    and your own login. Returns {"before", "after", "restaurant_id",
+    "username"}; raises TeamAccessError with an operator-facing sentence."""
+    role = (role or "").strip().lower()
+    if role not in ADMIN_ASSIGNABLE_ROLES:
+        raise TeamAccessError("Pick Owner (multi-location), Co-owner, Manager or Teammate.")
+    if acting_user_id is not None and int(user_id) == int(acting_user_id):
+        raise TeamAccessError("You can't change your own role.")
+    conn = get_conn(db_path)
+    try:
+        u = conn.execute("SELECT id, restaurant_id, username, email, is_admin, "
+                         "COALESCE(NULLIF(role,''),'client') AS role FROM users WHERE id=?", (user_id,)).fetchone()
+        if not u:
+            raise TeamAccessError("That login wasn't found.")
+        if u["is_admin"]:
+            raise TeamAccessError("An admin login's role can't be changed here.")
+        if u["role"] == "support":
+            raise TeamAccessError("A support login's access is managed under Support logins.")
+        if u["role"] == "employee" or (u["email"] or "").lower().endswith("@staff.invalid"):
+            raise TeamAccessError("A staff PIN identity has no console role.")
+        before = u["role"]
+        if before in _PRINCIPAL_ROLES and role not in _PRINCIPAL_ROLES \
+                and _principal_count(conn, u["restaurant_id"], excluding=user_id) == 0:
+            raise TeamAccessError("Every restaurant needs at least one owner.")
+        conn.execute("UPDATE users SET role=? WHERE id=? AND is_admin=0", (role, user_id))
+        try:
+            cur = conn.execute("UPDATE memberships SET role=?, updated_at=datetime('now') "
+                               "WHERE user_id=? AND restaurant_id=?", (role, user_id, u["restaurant_id"]))
+            if not cur.rowcount:
+                conn.execute("INSERT INTO memberships (user_id, restaurant_id, role) VALUES (?,?,?)",
+                             (user_id, u["restaurant_id"], role))
+        except sqlite3.OperationalError:
+            pass    # a database predating memberships: users.role is the whole story
+        conn.commit()
+        return {"before": before, "after": role, "restaurant_id": u["restaurant_id"], "username": u["username"]}
+    finally:
+        conn.close()
+
+
+def end_login_access(user_id: int, db_path: str = DB_PATH) -> dict:
+    """End every way one login is signed in: its sessions (web, phone, staff
+    PIN) and the devices it remembered for two-factor. Deactivate, and an
+    admin's "sign out everywhere", share it. Returns the counts."""
+    conn = get_conn(db_path)
+    try:
+        s = conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,)).rowcount or 0
+        try:
+            d = conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (user_id,)).rowcount or 0
+        except sqlite3.OperationalError:
+            d = 0
+        conn.commit()
+        return {"sessions": s, "devices": d}
+    finally:
+        conn.close()
 
 def delete_session(token: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)
@@ -3380,6 +4007,182 @@ def _billing_blocked_page(user):
                            can_resume=can_resume, message=_BILLING_BLOCKED_MESSAGE), 402
 
 
+_SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def _admin_wants_json():
+    """_wants_json_response, plus the console's own GETs under /admin/api/
+    and the phone's /mobile/api/ — fetch() and the app parse JSON."""
+    path = request.path or ""
+    return _wants_json_response() or path.startswith("/admin/api/") or path.startswith("/mobile/api/")
+
+
+# ── the internal logins' second factor (SECURITY-1) ──────────────────────────
+#
+# An admin or support login's two-factor lives on its own users row
+# (users.two_fa_enabled / two_fa_method) and every sign-in path asks for it
+# (auth_routes.login, the Google callback, mobile login, Sign in with Apple).
+# The session records that it passed (sessions.two_factor_at), and this is
+# what every gate reads:
+#
+#   'ok'     — no second factor on this login and the deployment does not
+#              require one (ADMIN_REQUIRE_2FA unset: the only admin, 2FA off,
+#              still signs in), or this session passed it.
+#   'enrol'  — ADMIN_REQUIRE_2FA=1 and this login has none yet: it is sent to
+#              /admin/two-factor, which it can reach (it used to be sent to
+#              "/", which redirects every admin straight back to /admin).
+#   'verify' — the login has a second factor but this session never passed
+#              it (a session from before enrolment): it is ended, and signing
+#              in again asks for the code.
+#   'error'  — the state could not be read: this request is refused (fail
+#              closed). Every input is on the session row the lookup already
+#              read, so nothing persistent can put a login here; the old gate
+#              looked up a restaurant and answered "fine" on any error.
+
+# The enrolment page and its two posts are the only /admin routes a login in
+# the 'enrol' state may reach.
+_ADMIN_2FA_ENROL_ENDPOINTS = frozenset({"admin.admin_two_factor_page", "admin.admin_two_factor_send",
+                                        "admin.admin_two_factor_verify"})
+# The old name, kept for readers of it.
+_ADMIN_2FA_EXEMPT = _ADMIN_2FA_ENROL_ENDPOINTS
+
+
+def _flag(value) -> bool:
+    return str(value if value is not None else "").strip().lower() not in ("", "0", "none", "null", "false")
+
+
+def admin_two_factor_required() -> bool:
+    """ADMIN_REQUIRE_2FA=1: every internal login must have a second factor.
+    Opt-in: shipping it default-on locked the only admin out of /admin on
+    the deploy that introduced it, before he had enrolled."""
+    return (os.getenv("ADMIN_REQUIRE_2FA", "0") or "").strip() == "1"
+
+
+def user_two_factor_enrolled(user) -> bool:
+    """Whether an internal login has its own second factor turned on."""
+    return _flag((user or {}).get("two_fa_enabled"))
+
+
+def admin_second_factor_state(user) -> str:
+    """'ok' | 'enrol' | 'verify' | 'error' for this session (see above).
+    Anyone who is not an internal login is 'ok' here — a restaurant's logins
+    are gated by their restaurant's switch at sign-in."""
+    if not is_internal_login(user):
+        return "ok"
+    try:
+        if user_two_factor_enrolled(user):
+            return "ok" if user.get("two_factor_at") else "verify"
+        return "enrol" if admin_two_factor_required() else "ok"
+    except Exception as exc:
+        try:
+            import ops
+            ops.capture(exc, job="admin_second_factor_gate", context=f"user_id={(user or {}).get('id')}")
+        except Exception:
+            pass
+        return "error"
+
+
+def _admin_two_factor_missing(user):
+    """True when the internal-login gate refuses this session. The name is
+    kept: status_routes._require_admin calls it for the status page's admin
+    writes, so both gates answer the same question."""
+    return admin_second_factor_state(user) != "ok"
+
+
+def _second_factor_refusal(state):
+    """The response for a session the gate refuses."""
+    from flask import jsonify as _jsonify_sf
+    from urllib.parse import quote as _quote_sf
+    wants_json = _admin_wants_json()
+    if state == "enrol":
+        msg = "Turn on two-factor authentication for your login to use the admin console."
+        if wants_json:
+            return _jsonify_sf(ok=False, error=msg, two_factor_required=True, enrol_url="/admin/two-factor"), 403
+        nxt = request.path if (request.path or "").startswith("/admin") else "/admin"
+        return redirect("/admin/two-factor?next=" + _quote_sf(nxt, safe="/"))
+    if state == "verify":
+        # This session predates the second factor its login now has. It is
+        # ended here, so the next sign-in is the one that asks for the code.
+        tok = current_session_token()
+        if tok:
+            try:
+                delete_session(tok)
+            except Exception:
+                pass
+        msg = "Sign in again — your login now asks for a two-factor code."
+        if wants_json:
+            return _jsonify_sf(ok=False, error=msg, session_expired=True, two_factor_required=True), 401
+        return redirect(url_for("auth.login", next="/admin"))
+    msg = "We couldn't confirm your sign-in just now. Try again in a moment."
+    if wants_json:
+        return _jsonify_sf(ok=False, error=msg), 503
+    return msg, 503
+
+
+# ── view-as: every write attributed to the admin behind it (SECURITY-3) ──────
+
+def _view_as_context(user):
+    """For a view-as session, who is really acting — also put on flask.g
+    (g.view_as) so anything recording a change can attribute it. None for
+    every other session."""
+    if not user or (user.get("device_type") or "") != "admin-view-as":
+        return None
+    ctx = {"acting_admin_id": user.get("acting_admin_id"), "acting_admin": user.get("acting_admin"),
+           "acting_admin_role": user.get("acting_admin_role"),
+           "as_user_id": user.get("id"), "as_username": user.get("username"),
+           "restaurant_id": user.get("restaurant_id"), "read_only": bool(user.get("view_as_read_only"))}
+    try:
+        from flask import g as _g_va
+        _g_va.view_as = ctx
+    except Exception:
+        pass
+    return ctx
+
+
+def _status_of(rv) -> int:
+    try:
+        if isinstance(rv, tuple):
+            for part in rv[1:]:
+                if isinstance(part, int):
+                    return part
+            return int(getattr(rv[0], "status_code", 200) or 200)
+        return int(getattr(rv, "status_code", 200) or 200)
+    except Exception:
+        return 200
+
+
+def record_view_as_write(ctx, status):
+    """One admin_events row per write made through a view-as session: the
+    admin behind it, the login it was made as, what was sent and how it
+    ended. Never raises — the record must not break the write."""
+    if not ctx:
+        return
+    try:
+        import admin_events
+        who = ctx.get("acting_admin") or f"admin #{ctx.get('acting_admin_id')}"
+        admin_events.record(
+            "admin", "view_as_write", restaurant_id=ctx.get("restaurant_id"),
+            summary=f"{who} (viewing as {ctx.get('as_username')}) {request.method} {request.path} → {status}",
+            payload={"actor_id": ctx.get("acting_admin_id"), "actor": ctx.get("acting_admin"),
+                     "actor_role": ctx.get("acting_admin_role"), "as_user_id": ctx.get("as_user_id"),
+                     "as_username": ctx.get("as_username"), "method": request.method, "path": request.path,
+                     "endpoint": request.endpoint, "status": status,
+                     "result": "ok" if int(status) < 400 else ("denied" if int(status) in (401, 403) else "error"),
+                     "ip": request.remote_addr})
+    except Exception:
+        pass
+
+
+def _run_view_as_write(f, args, kwargs, user, ctx):
+    status = 500
+    try:
+        rv = f(*args, **kwargs, current_user=user)
+        status = _status_of(rv)
+        return rv
+    finally:
+        record_view_as_write(ctx, status)
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -3389,6 +4192,13 @@ def login_required(f):
                 from flask import jsonify as _jsonify_lr
                 return _jsonify_lr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login", next=request.path))
+        # An internal login reaches client routes too (an admin import names
+        # a restaurant_id); the same second-factor gate as /admin, or
+        # ADMIN_REQUIRE_2FA was one import route away from meaningless.
+        if is_internal_login(user):
+            state = admin_second_factor_state(user)
+            if state != "ok":
+                return _second_factor_refusal(state)
         if _console_denied(user):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_cd
@@ -3410,12 +4220,16 @@ def login_required(f):
             from flask import jsonify as _jsonify_mp
             return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
                                module_forbidden=True, module=unauthorised), 403
+        view_as = _view_as_context(user)
         if view_as_write_denied(user):
+            record_view_as_write(view_as, 403)
             from flask import jsonify as _jsonify_vr
             return _jsonify_vr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         moved = _tab_location_moved(user)
         if moved:
             return moved
+        if view_as and request.method not in _SAFE_METHODS:
+            return _run_view_as_write(f, args, kwargs, user, view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -3446,25 +4260,56 @@ def _tab_location_moved(user):
 
 # Support accounts (role='support', is_admin=0) may READ the admin console
 # and open a view-as session; every other admin write needs the admin bit.
-_SUPPORT_WRITE_OK = frozenset({"admin.view_as_client", "admin.stop_viewing"})
-_ADMIN_2FA_EXEMPT = frozenset({"admin.stop_viewing"})
+# Their own two-factor enrolment is theirs to write, too. (/admin/stop-viewing
+# runs on the view-as session itself, never through admin_required.)
+_SUPPORT_WRITE_OK = frozenset({"admin.view_as_client", "admin.admin_two_factor_send",
+                               "admin.admin_two_factor_verify"})
 
 
-def _admin_two_factor_missing(user):
-    """True when this admin has not turned on 2FA and the deployment
-    requires it. OPT-IN (ADMIN_REQUIRE_2FA=1): shipping it default-on
-    locked the only admin out of /admin on the deploy that introduced it,
-    before he had enrolled. Enrol first (Account → Security), then set the
-    variable in Railway; the gate is then permanent for every admin."""
-    import os as _os
-    if _os.getenv("ADMIN_REQUIRE_2FA", "0") != "1":
-        return False
+def current_admin_role():
+    """'admin' | 'support' | None for this request — so the console's data
+    layer (admin_ops) can redact what a read-only support login sees without
+    being handed the user. admin_required sets flask.g.admin_role; outside
+    it this resolves the session once."""
     try:
-        from models import get_restaurant as _gr
-        r = _gr(user.get("restaurant_id")) if user.get("restaurant_id") else None
-        return not (r and getattr(r, "two_fa_enabled", 0))
+        from flask import g as _g_ar, has_request_context
+        if not has_request_context():
+            return None
+        role = getattr(_g_ar, "admin_role", None)
+        if role:
+            return role
+        user = get_current_user()
+        if user and user.get("is_admin"):
+            return "admin"
+        if is_internal_login(user):
+            return "support"
     except Exception:
-        return False
+        pass
+    return None
+
+
+def _admin_rate_limited(user):
+    """The per-session ceiling on /admin (SECURITY-4, #88): a 429 response,
+    or None. A limiter that cannot count lets the request through — it is an
+    abuse brake, and it must never be what locks the operator out."""
+    try:
+        import security
+        tok = current_session_token()
+        key = hash_session_token(tok)[:24] if tok else f"user:{(user or {}).get('id')}"
+        allowed, retry_after = security.admin_request_allowed(key, request.method not in _SAFE_METHODS)
+    except Exception:
+        return None
+    if allowed:
+        return None
+    from flask import jsonify as _jsonify_rl
+    msg = "Too many requests from this session. Wait a minute and try again."
+    if _admin_wants_json():
+        resp = _jsonify_rl(ok=False, error=msg, rate_limited=True, retry_after=retry_after)
+    else:
+        from flask import make_response as _mr_rl
+        resp = _mr_rl(msg)
+    resp.headers["Retry-After"] = str(retry_after)
+    return resp, 429
 
 
 def admin_required(f):
@@ -3477,19 +4322,112 @@ def admin_required(f):
                 from flask import jsonify as _jsonify_ar
                 return _jsonify_ar(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login"))
-        if is_support and request.method not in ("GET", "HEAD", "OPTIONS") \
+        limited = _admin_rate_limited(user)
+        if limited:
+            return limited
+        if is_support and request.method not in _SAFE_METHODS \
                 and request.endpoint not in _SUPPORT_WRITE_OK:
             from flask import jsonify as _jsonify_sr
             return _jsonify_sr(ok=False, error="Support accounts are read-only."), 403
-        if request.endpoint not in _ADMIN_2FA_EXEMPT and _admin_two_factor_missing(user):
-            from flask import jsonify as _jsonify_2f
-            msg = "Turn on two-factor authentication in Account → Security to use the admin console."
-            if _wants_json_response():
-                return _jsonify_2f(ok=False, error=msg, two_factor_required=True), 403
-            from flask import render_template as _rt_2f
-            return _rt_2f("admin_two_factor.html", message=msg), 403
+        state = admin_second_factor_state(user)
+        if state != "ok" and not (state == "enrol" and request.endpoint in _ADMIN_2FA_ENROL_ENDPOINTS):
+            return _second_factor_refusal(state)
+        try:
+            from flask import g as _g_adm
+            _g_adm.admin_role = "admin" if user.get("is_admin") else "support"
+        except Exception:
+            pass
         return f(*args, **kwargs, current_user=user)
     return decorated
+
+
+# ── step-up: the password again for a sensitive admin action ──────────────────
+
+def reauth_is_recent(user, minutes: int = RECENT_AUTH_MINUTES) -> bool:
+    """Whether this session's password was typed within `minutes` — at
+    sign-in, or again through POST /admin/api/reauth."""
+    at = _parse_utc((user or {}).get("reauth_at"))
+    if at is None:
+        return False
+    from datetime import timedelta
+    age = datetime.utcnow() - at
+    return timedelta(minutes=-1) <= age <= timedelta(minutes=minutes)
+
+
+def recent_auth_required(minutes: int = RECENT_AUTH_MINUTES):
+    """Step-up for a sensitive admin action (owner decision, 9/29/26):
+    refused with 403 {reauth_required: true} unless this session's password
+    was typed in the last `minutes`. The console answers by asking for the
+    password, POSTing /admin/api/reauth, and sending the action again.
+
+    Goes UNDER admin_required, which resolves the session:
+
+        @admin_bp.route(...)
+        @admin_required
+        @recent_auth_required()
+        def route(..., current_user): ..."""
+    if callable(minutes):           # used bare: @recent_auth_required
+        return recent_auth_required()(minutes)
+
+    def deco(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            user = kwargs.get("current_user")
+            if user is None:
+                user = get_current_user()
+            if not reauth_is_recent(user, minutes):
+                from flask import jsonify as _jsonify_ra
+                return _jsonify_ra(ok=False, reauth_required=True, reauth_url="/admin/api/reauth",
+                                   window_minutes=minutes,
+                                   error="Enter your password again to do this."), 403
+            return f(*args, **kwargs)
+        return wrapped
+    return deco
+
+
+def mark_reauthenticated(token: str, db_path: str = DB_PATH) -> bool:
+    """Stamp this session: its password was just typed again."""
+    if not token:
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE sessions SET reauth_at=datetime('now') WHERE token=?",
+                           (hash_session_token(token),))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def mark_second_factor(token: str, db_path: str = DB_PATH) -> bool:
+    """Stamp this session: it has just passed a second factor (the admin
+    enrolment's confirming code)."""
+    if not token:
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE sessions SET two_factor_at=datetime('now') WHERE token=?",
+                           (hash_session_token(token),))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def password_matches(user_id: int, password: str, db_path: str = DB_PATH) -> bool:
+    """Whether `password` is this active login's password. Unlike
+    verify_password it neither looks the login up by name nor stamps
+    last_login — it is the step-up's check, not a sign-in."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT password_hash FROM users WHERE id=? AND is_active=1", (user_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        check_password_hash(_dummy_password_hash(), password or "")
+        return False
+    return check_password_hash(row["password_hash"], password or "")
+
 
 def mobile_login_required(f):
     """Bearer-token variant of login_required for the iOS app's /mobile/api/
@@ -3507,6 +4445,11 @@ def mobile_login_required(f):
         if not user:
             from flask import jsonify as _jsonify_mlr
             return _jsonify_mlr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
+        # The web decorator's internal-login gate, on the phone's door too.
+        if is_internal_login(user):
+            state = admin_second_factor_state(user)
+            if state != "ok":
+                return _second_factor_refusal(state)
         # Same console gate as the web decorator — the iOS app ships both the
         # owner dashboard and the staff portal against this one blueprint, so
         # a PIN session must be refused here too or the whole owner API is
@@ -3528,9 +4471,13 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mmp
             return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorised),
                                 module_forbidden=True, module=unauthorised), 403
+        view_as = _view_as_context(user)
         if view_as_write_denied(user):
+            record_view_as_write(view_as, 403)
             from flask import jsonify as _jsonify_mvr
             return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
+        if view_as and request.method not in _SAFE_METHODS:
+            return _run_view_as_write(f, args, kwargs, user, view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -3613,7 +4560,10 @@ def remembered_device_ok(user: dict, token: str, db_path: str = DB_PATH) -> bool
         return False
     try:
         from permissions import is_principal
-        principal = is_principal(user)
+        # An internal login counts only devices it remembered itself: a
+        # token naming no login, or the restaurant's legacy single slot, is
+        # the restaurant's — and the admin may be homed on a client's row.
+        principal = is_principal(user) and not is_internal_login(user)
     except Exception:
         principal = False
     return trusted_device_ok(user.get("restaurant_id"), token, user.get("id"),

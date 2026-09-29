@@ -145,6 +145,30 @@ def _reset_ask_context_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_admin_rate_limits():
+    """security's per-session /admin ceiling is a process-global window, and
+    tests that fake an admin without a session share one key ("user:<id>"),
+    so a long run would 429 whichever admin test came after the 240th
+    request in a minute. Same shape as the resets above."""
+    import security
+    security.reset_admin_rate_limits()
+    yield
+    security.reset_admin_rate_limits()
+
+
+@pytest.fixture(autouse=True)
+def _fixture_logins_skip_the_password_policy(monkeypatch):
+    """auth.create_user holds every typed password to the password policy
+    (8+ characters, not breached — fix round A, #86). The suite's fixtures
+    make throwaway logins with passwords like "pw" in ~300 places; the
+    policy's own tests (tests/test_fix_a_*.py) switch it back on with
+    monkeypatch.setattr(auth, "ENFORCE_PASSWORD_POLICY", True)."""
+    import auth
+    monkeypatch.setattr(auth, "ENFORCE_PASSWORD_POLICY", False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_real_email_or_sms(monkeypatch):
     """The suite must never reach Resend, Twilio, Stripe or DocuSign.
 

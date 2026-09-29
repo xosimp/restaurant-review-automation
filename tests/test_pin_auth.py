@@ -261,7 +261,10 @@ def test_a_staff_session_is_shift_length_and_tagged(db_path):
     conn.close()
     assert row["device_type"] == "staff_pin"
     from datetime import datetime as _dt, timezone as _tz
-    remaining = _dt.fromisoformat(row["expires_at"]) - _dt.now(_tz.utc)
+    # SQLite's own UTC form since fix round A ('YYYY-MM-DD HH:MM:SS', no
+    # offset), so it compares as an instant with datetime('now').
+    assert "T" not in row["expires_at"]
+    remaining = _dt.fromisoformat(row["expires_at"]).replace(tzinfo=_tz.utc) - _dt.now(_tz.utc)
     assert 0 < remaining.total_seconds() <= auth.STAFF_SESSION_HOURS * 3600 + 60
 
 

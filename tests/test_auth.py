@@ -196,45 +196,65 @@ def test_session_within_inactivity_window_stays_valid(db_path):
     assert get_session_user(token, db_path=db_path) is not None
 
 
-def test_admin_view_as_session_slides_its_expiry_on_use(db_path):
-    """view_as_client() gives admin-view-as sessions an auth.VIEW_AS_HOURS
-    expires_at. Without renewal, a real testing session that stayed active
-    past that wall-clock mark would start failing every request even though
-    it never went idle. get_session_user must push expires_at forward on
-    each use so an actively-used view-as session doesn't die mid-session."""
+def _view_as_token(db_path):
+    """A view-as session the way admin_routes.view_as_client mints one:
+    auth.create_view_as_session, naming the admin behind it."""
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
-    token = create_session(uid, db_path=db_path)
-    near_expiry = (datetime.utcnow() + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
+    admin_home = _restaurant(db_path, name="Cavnar HQ")
+    admin_id = create_user(admin_home, "will", "will@x.com", "pw", is_admin=True, db_path=db_path)
+    token = auth.create_view_as_session(uid, {"id": admin_id, "is_admin": 1}, read_only=False, db_path=db_path)
+    return token, uid, admin_id
+
+
+def test_admin_view_as_session_never_slides_and_stops_at_its_absolute_cap(db_path):
+    """Owner decision (9/29/26): a view-as lasts auth.VIEW_AS_HOURS from when
+    it was opened and use never extends it. (It used to slide forward
+    12 hours on every request, so an open tab kept a client's identity
+    alive indefinitely — this test asserted that slide until then.)"""
+    token, _uid, _admin = _view_as_token(db_path)
     conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE sessions SET device_type='admin-view-as', expires_at=? WHERE token=?",
-        (near_expiry, hash_session_token(token))
-    )
-    conn.commit()
+    before = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()["expires_at"]
     conn.close()
-    # A use just before the deadline succeeds,
-    # and must push expires_at back out rather than leaving it near-expired.
     assert get_session_user(token, db_path=db_path) is not None
     conn = get_conn(db_path)
-    row = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()
+    after = conn.execute("SELECT expires_at FROM sessions WHERE token=?", (hash_session_token(token),)).fetchone()["expires_at"]
     conn.close()
-    new_expiry = datetime.fromisoformat(row["expires_at"][:19])
-    import auth as _auth
-    assert new_expiry - datetime.utcnow() > timedelta(hours=_auth.VIEW_AS_HOURS) - timedelta(minutes=5)
+    assert before == after, "use must not push a view-as session's expiry out"
+    left = datetime.fromisoformat(after) - datetime.utcnow()
+    assert timedelta(hours=auth.VIEW_AS_HOURS) - timedelta(minutes=5) < left <= timedelta(hours=auth.VIEW_AS_HOURS)
+    # Even with its expiry pushed out by hand, a view-as older than the cap
+    # is refused — the cap is on when it was opened.
+    conn = get_conn(db_path)
+    conn.execute("UPDATE sessions SET created_at=datetime('now', ?), expires_at=datetime('now','+1 day') WHERE token=?",
+                 (f"-{auth.VIEW_AS_HOURS * 60 + 1} minutes", hash_session_token(token)))
+    conn.commit()
+    conn.close()
+    assert get_session_user(token, db_path=db_path) is None
 
 
 def test_admin_view_as_session_still_dies_once_abandoned(db_path):
-    """The sliding renewal must not turn view-as into a long-lived session —
-    an abandoned one (no request since its deadline) still expires."""
+    """An abandoned view-as (no request since its deadline) expires."""
+    token, _uid, _admin = _view_as_token(db_path)
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE sessions SET expires_at=datetime('now','-1 minute') WHERE token=?",
+        (hash_session_token(token),)
+    )
+    conn.commit()
+    conn.close()
+    assert get_session_user(token, db_path=db_path) is None
+
+
+def test_a_view_as_session_naming_no_admin_is_refused(db_path):
+    """Fail closed: a view-as row with no acting admin on it (from before
+    acting_admin_id existed) says neither who is behind it nor whether it
+    may write, so it is refused rather than served as the client."""
     rid = _restaurant(db_path)
     uid = create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
     token = create_session(uid, db_path=db_path)
     conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE sessions SET device_type='admin-view-as', expires_at=datetime('now','-1 minute') WHERE token=?",
-        (hash_session_token(token),)
-    )
+    conn.execute("UPDATE sessions SET device_type='admin-view-as' WHERE token=?", (hash_session_token(token),))
     conn.commit()
     conn.close()
     assert get_session_user(token, db_path=db_path) is None
