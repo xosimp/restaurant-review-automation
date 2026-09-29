@@ -96,16 +96,43 @@ def build(google_place_id, restaurant_id=None, deep=False):
     hit = _cached(cache_key)
     if hit is not None:
         return hit
+    # Every Places request here — the details, and the neighbourhood's
+    # nearby searches — goes through ai_utils.places_request (#123), billed
+    # to this restaurant: the caller's id, else the account that owns the
+    # Place ID (the welcome email names no restaurant), else the request's.
+    import ai_utils
+    if restaurant_id is None:
+        restaurant_id = _restaurant_for_place(google_place_id)
+    with ai_utils.ai_context(restaurant_id=restaurant_id, action="first_look"):
+        out = _build(google_place_id, deep, out)
+    _remember(cache_key, out)
+    return out
+
+
+def _restaurant_for_place(google_place_id):
+    """The restaurant this Place ID belongs to, or None."""
     try:
-        import requests
+        import models
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT id FROM restaurants WHERE google_place_id=? ORDER BY id LIMIT 1",
+                               (google_place_id,)).fetchone()
+        finally:
+            conn.close()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
+def _build(google_place_id, deep, out):
+    try:
+        import ai_utils
         key = config.google_places_key()
         if not key:
             return out
-        r = requests.get(
-            "https://maps.googleapis.com/maps/api/place/details/json",
-            params={"place_id": google_place_id,
-                    "fields": "name,rating,user_ratings_total",
-                    "key": key},
+        r = ai_utils.places_request(
+            "details",
+            {"place_id": google_place_id, "fields": "name,rating,user_ratings_total", "key": key},
             timeout=PLACES_TIMEOUT)
         data = r.json()
         if data.get("status") == "OK":
@@ -149,7 +176,6 @@ def build(google_place_id, restaurant_id=None, deep=False):
                 }
         except Exception as e:
             log.warning("first_look competitors failed: %s", e)
-    _remember(cache_key, out)
     return out
 
 

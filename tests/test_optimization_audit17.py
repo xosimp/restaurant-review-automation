@@ -225,7 +225,7 @@ def test_a_geocode_that_returns_no_geometry_is_not_retried(db_path, monkeypatch)
         return _Resp()
 
     monkeypatch.setattr(weather.requests, "get", _get)
-    monkeypatch.setattr(weather, "_meter_places", lambda *a, **k: None)
+    monkeypatch.setattr(ai_utils, "meter_places", lambda *a, **k: None)
 
     r = models.get_restaurant(rid, db_path=db_path)
     assert weather._geocode(r, db_path=db_path) == (None, None)
@@ -249,7 +249,7 @@ def test_a_successful_geocode_clears_a_standing_failure(db_path, monkeypatch):
         def json(self): return {"result": {"geometry": {"location": {"lat": 41.9, "lng": -88.3}}}}
 
     monkeypatch.setattr(weather.requests, "get", lambda *a, **k: _Resp())
-    monkeypatch.setattr(weather, "_meter_places", lambda *a, **k: None)
+    monkeypatch.setattr(ai_utils, "meter_places", lambda *a, **k: None)
 
     r = models.get_restaurant(rid, db_path=db_path)   # stamp is old, so it retries
     assert weather._geocode(r, db_path=db_path) == (41.9, -88.3)

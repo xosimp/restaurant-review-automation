@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from models import Review, save_reviews
 
 
-from ai_utils import meter_places as _meter_places, places_error as _places_error
+# Every Places request goes through ai_utils.places_request (#123): metered
+# as it is made, refused before it is sent with no key, an open Places
+# breaker or a spent Places ceiling (PlacesUnavailable, a failed fetch).
+from ai_utils import places_error as _places_error, places_request as _places_request
 
 GOOGLE_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_API_KEY
 
@@ -18,27 +21,19 @@ class PlacesReviews(list):
 
 
 def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
     # author_url rides along inside each review; user_ratings_total is how a
     # window with more than five new reviews is seen (MOD-REV-11).
     params = {"place_id": place_id, "fields": "reviews,user_ratings_total",
               "key": GOOGLE_API_KEY, "reviews_sort": "newest"}
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        from ai_guard import safe_error as _se
-        _meter_places(restaurant_id, "review_fetch", "details", status="error",
-                      error=_se(e)[:200])
-        raise
+    # Metered (an error at no cost) and breaker-counted by places_request;
+    # anything but a real answer raises, so the caller neither stamps
+    # last_fetched_at nor calls it a sync (MOD-REV-1 / AI-6).
+    resp = _places_request("details", params, restaurant_id=restaurant_id, action="review_fetch", timeout=10)
+    resp.raise_for_status()
     body = resp.json()
     refused = _places_error(body)
     if refused:
-        # Metered as an error at no cost, and raised so the caller neither
-        # stamps last_fetched_at nor calls it a sync (MOD-REV-1 / AI-6).
-        _meter_places(restaurant_id, "review_fetch", "details", status="error", error=str(refused)[:200])
         raise refused
-    _meter_places(restaurant_id, "review_fetch", "details")
     raw = (body.get("result") or {}).get("reviews", [])
     tz = _restaurant_tz(restaurant_id)
     out = PlacesReviews()

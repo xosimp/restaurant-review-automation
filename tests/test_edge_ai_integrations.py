@@ -273,6 +273,9 @@ def _stub_places(monkeypatch, body, status=200):
         return _Resp(status, body)
 
     monkeypatch.setattr(fetcher.requests, "get", get)
+    # A configured deployment: with no key, places_request refuses before
+    # sending anything (fix round G #151).
+    monkeypatch.setattr(fetcher, "GOOGLE_API_KEY", "test-key")
     return calls
 
 
