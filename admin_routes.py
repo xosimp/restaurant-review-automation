@@ -3530,7 +3530,11 @@ def admin_set_brand(restaurant_id, current_user):
         if ov not in ("", "include", "exclude"):
             return jsonify(ok=False, error="learning_override is include, exclude or blank"), 400
         updates["learning_override"] = ov or None
-        if ov == "include" and not data.get("learning_history"):
+        # Only a change TO include starts the clock: a save that re-sends
+        # the override already stored must not move learning_since forward
+        # and drop the history it has been teaching from since.
+        already = str(getattr(stored, "learning_override", "") or "").strip().lower() == "include"
+        if ov == "include" and not already and not data.get("learning_history"):
             from time_utils import utc_stamp as _us_lo
             updates["learning_since"] = _us_lo()
     if not updates:
@@ -3578,6 +3582,24 @@ def admin_api_intelligence(current_user):
         return jsonify(ok=False, error="Cavnar AI admins only."), 403
     from intelligence import dashboard as _dash
     return jsonify(**_dash.build())
+
+
+@admin_bp.route("/admin/api/intelligence/pattern-history")
+@admin_required
+def admin_api_pattern_history(current_user):
+    """One pattern's weekly record (memory audit 9/29/26, platform_history):
+    what the platform believed about it each ISO week it was tested — its
+    status, n, effect, d, p and q that week — from the append-only
+    intel_pattern_history (patterns.history, asserted anonymous). The
+    Intelligence page's history drawer. ?key=<pattern key>. is_admin only,
+    like the page."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Cavnar AI admins only."), 403
+    key = (request.args.get("key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Which pattern? Send its key."), 400
+    from intelligence import patterns as _pat
+    return jsonify(ok=True, key=key, rows=_pat.history(key))
 
 
 @admin_bp.route("/admin/api/recommendations")

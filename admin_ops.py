@@ -2339,10 +2339,13 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         for f in lflags:
             if not isinstance(f, dict) or not f.get("curve"):
                 continue
+            months = [_month_word(m) for m in f.get("months") or []]
             add(f"learning:{f['curve']}", f"Learning curve {f.get('state')}: {f.get('label') or f['curve']}",
                 "warning", lrow.get("computed_at"), "Open AI quality", None,
-                f"{', '.join(str(m) for m in f.get('months') or [])}: latest {f.get('latest')}, the two months "
-                f"before {f.get('before')}.", zone="UTC", action_kind="link", action_href=f"{client}?tab=ai")
+                (f"{months[-1] if months else 'The latest month'}: {_curve_fig(f['curve'], f.get('latest'))}, "
+                 f"against {_curve_fig(f['curve'], f.get('before'))} over "
+                 f"{' and '.join(months[:-1]) if len(months) > 1 else 'the two months before'}."),
+                zone="UTC", action_kind="link", action_href=f"{client}?tab=ai")
         if lrow.get("fatigued"):
             add("learning:fatigue", "Owner fatigue: most recommendations dismissed or ignored", "warning",
                 lrow.get("computed_at"), "Open AI quality", None,
@@ -3674,6 +3677,10 @@ def ai_client(rid, days=30):
             # memory audit 9/29/26): whether Cavnar AI is getting better at
             # this restaurant, with its flags and fatigue.
             "learning": _learning_scorecards(rid),
+            # What each curve means, so the page draws it without guessing:
+            # its label, which way is better, and the sample under which a
+            # month is not read (learning_scorecard.MIN_N — flags() skips it).
+            "learning_curves": _learning_curve_meta(),
             "stalled_reviews": stalled, "stalled_total": int(stalled.get("unanalysed") or 0) + int(stalled.get("undrafted") or 0)}
 
 
@@ -3684,6 +3691,41 @@ def _learning_scorecards(rid):
     except Exception as e:
         log.warning("learning scorecards unavailable for %s: %s", rid, e)
         return []
+
+
+def _learning_curve_meta():
+    """{curves: {name: {label, better, min_n, unit}}, fatigue_share,
+    fatigue_min_n} from learning_scorecard's own constants. `unit` is
+    "share" (0-1) or "pct" (forecast_error is already a percentage miss)."""
+    try:
+        import learning_scorecard as lsc
+    except Exception as e:
+        log.warning("learning curve meta unavailable: %s", e)
+        return None
+    return {"curves": {name: {"label": lsc.CURVE_LABELS.get(name, name), "better": spec[0],
+                              "min_n": lsc.MIN_N.get(name), "unit": "pct" if name == "forecast_error" else "share"}
+                       for name, spec in lsc.CURVES.items()},
+            "fatigue_share": lsc.FATIGUE_SHARE, "fatigue_min_n": lsc.FATIGUE_MIN_N}
+
+
+def _curve_fig(curve, v):
+    """A learning curve's figure as words: a share as a percent, the forecast
+    miss (already a percent) as a percent miss."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "unknown"
+    if curve == "forecast_error":
+        return f"{v:.1f}% miss"
+    return f"{round(v * 100)}%"
+
+
+def _month_word(m):
+    """'2026-08' as 'Aug 2026' — a month, never read as a day."""
+    try:
+        return datetime.strptime(str(m)[:7], "%Y-%m").strftime("%b %Y")
+    except (TypeError, ValueError):
+        return str(m or "")
 
 
 def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):
@@ -4271,7 +4313,24 @@ def jobs():
             "operator_alert": _ops.last_operator_alert(), "missed_windows": missed, "dsr_missing": dsr_missing,
             "jobs_overdue": overdue, "local_sends_refused": local_refused,
             "local_sends_refused_reason": LOCAL_SENDS_REFUSED if local_refused else None,
-            "history_runs": JOB_HISTORY_RUNS}
+            "history_runs": JOB_HISTORY_RUNS,
+            # The retention windows set under their floor right now (memory
+            # audit 9/29/26): prune_ledgers refuses each one — nothing is
+            # deleted from it — until its RETAIN_* variable is fixed.
+            "retention": _retention_now()}
+
+
+def _retention_now():
+    """{refused: [{table, days, floor}], cap_rows} from ops' one registry;
+    None when it cannot be read (the page says unknown, never "none")."""
+    try:
+        import ops as _ops_r
+        return {"refused": [{"table": r["table"], "days": r["days"], "floor": r["floor"]}
+                            for r in _ops_r.retention_refusals()],
+                "cap_rows": _ops_r.RETENTION_PASS_MAX_ROWS}
+    except Exception as e:
+        log.warning("retention state unreadable: %s", e)
+        return None
 
 
 def _has_cols(conn, table, cols):
