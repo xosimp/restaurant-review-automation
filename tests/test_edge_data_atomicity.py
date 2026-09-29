@@ -278,7 +278,7 @@ def test_a_checkout_whose_user_creation_fails_can_be_retried_by_stripe(db_path, 
     # Fix round H (#12): the welcome is owed by provisioning and sent by the
     # outbox's drain, with a set-password link — never inline with a password.
     monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **kw: welcomed.append(kw["to_email"]) or emails.SendResult(True))
     real_create_user = auth.create_user
     calls = {"n": 0}

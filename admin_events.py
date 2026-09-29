@@ -298,8 +298,16 @@ _AUDIT_COLUMNS = (("actor", "TEXT"), ("actor_id", "INTEGER"), ("target", "TEXT")
                   ("ip", "TEXT"), ("request_id", "TEXT"))
 
 _SCHEMA = (
-    "CREATE INDEX IF NOT EXISTS idx_admin_events_rest ON admin_events(restaurant_id, id)",
-    "CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at)",
+    # One definition of each index (integration wave): these two are the ones
+    # ops._ensure_retention_indexes also names, with the same columns, so
+    # whichever boot step runs first creates them and the other is a no-op.
+    # This file briefly created them as idx_admin_events_rest / _created as
+    # well — a second copy of each to maintain on every write — so those are
+    # dropped where a database got them.
+    "CREATE INDEX IF NOT EXISTS idx_admin_events_rid ON admin_events(restaurant_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_admin_events_created_at ON admin_events(created_at)",
+    "DROP INDEX IF EXISTS idx_admin_events_rest",
+    "DROP INDEX IF EXISTS idx_admin_events_created",
     "CREATE INDEX IF NOT EXISTS idx_admin_events_source ON admin_events(source, id)",
     "CREATE INDEX IF NOT EXISTS idx_admin_events_actor ON admin_events(actor, id)",
     "CREATE INDEX IF NOT EXISTS idx_admin_events_request ON admin_events(request_id)",

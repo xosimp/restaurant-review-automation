@@ -695,7 +695,8 @@ def change_password(current_user):
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
+                                        restaurant_id=restaurant.id)
     except Exception:
         pass  # the password change itself already succeeded
     return jsonify(ok=True)
@@ -747,7 +748,8 @@ def update_email_route(current_user):
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None)
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
+                                     restaurant_id=restaurant.id if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
     return jsonify(ok=True)
@@ -1365,7 +1367,8 @@ def login_not_me(token):
         from emails import send_password_reset_email
         rt = create_reset_token(email)
         if rt:
-            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}")
+            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}",
+                                      restaurant_id=user.get("restaurant_id"))
         if user.get("restaurant_id"):
             log_event(user["restaurant_id"], "login_reported_not_me", {"actor": user.get("username")})
     except Exception as _e:

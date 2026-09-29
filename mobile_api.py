@@ -458,7 +458,8 @@ def mobile_reset_password():
         restaurant = get_restaurant(get_user_by_email_rid(email))
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
+                                        restaurant_id=restaurant.id)
     except Exception:
         pass
     return jsonify(ok=True)
@@ -5452,7 +5453,8 @@ def mobile_change_password(current_user):
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
             from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone)
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
+                                        restaurant_id=restaurant.id)
     except Exception:
         pass  # the password change itself already succeeded — a failed confirmation email isn't worth failing the request over
     return jsonify(ok=True)
@@ -5508,7 +5510,8 @@ def mobile_update_email(current_user):
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None)
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
+                                     restaurant_id=restaurant.id if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
     return jsonify(ok=True)
@@ -5599,6 +5602,10 @@ def mobile_connect_toast(current_user):
     # get_toast_token, so a typo overwrote working credentials — and with a
     # cached token for the OLD credentials still on the row, get_toast_token
     # returned that token and never asked Toast about the new ones at all.
+    from models import owner_pos_binding_refusal
+    refusal = owner_pos_binding_refusal("toast", restaurant_guid, rid)
+    if refusal:
+        return jsonify(ok=False, error=refusal), 409
     result = _toast.test_credentials(client_id, client_secret, restaurant_guid)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error") or "Toast rejected those credentials")
@@ -5659,6 +5666,10 @@ def mobile_connect_square(current_user):
     if not access_token or not location_id:
         return jsonify(ok=False, error="Access token and location ID are both required"), 400
 
+    from models import owner_pos_binding_refusal
+    refusal = owner_pos_binding_refusal("square", location_id, rid)
+    if refusal:
+        return jsonify(ok=False, error=refusal), 409
     result = _square.test_credentials(access_token, location_id)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error") or "Square rejected those credentials")
@@ -5708,6 +5719,10 @@ def mobile_connect_clover(current_user):
     if not merchant_id or not api_token:
         return jsonify(ok=False, error="Merchant ID and API token are both required"), 400
 
+    from models import owner_pos_binding_refusal
+    refusal = owner_pos_binding_refusal("clover", merchant_id, rid)
+    if refusal:
+        return jsonify(ok=False, error=refusal), 409
     result = _clover.test_credentials(merchant_id, api_token)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error") or "Clover rejected those credentials")
@@ -6206,8 +6221,10 @@ def mobile_create_staff(current_user):
         suffix += 1
         username = f"{base}.{rid}.{suffix}"
     try:
+        # A PIN identity's password is a random secret nobody types
+        # (generated=True: no policy or breach lookup for it).
         user_id = create_user(rid, username, f"{username}@staff.invalid",
-                              _sec.token_urlsafe(32))
+                              _sec.token_urlsafe(32), generated=True)
     except _sq3.IntegrityError:
         return jsonify(ok=False, error="That employee already has a staff account."), 400
 
@@ -6880,7 +6897,7 @@ def mobile_report_bug(current_user):
     try:
         from emails import send_bug_report_email
         result = send_bug_report_email(restaurant.name if restaurant else "Unknown", current_user.get("email") or "",
-                                       message[:4000], dict(meta, report_id=report_id))
+                                       message[:4000], dict(meta, report_id=report_id), restaurant_id=rid)
         if not getattr(result, "ok", result):
             error = getattr(result, "error", None) or "the email was not sent"
     except Exception as e:

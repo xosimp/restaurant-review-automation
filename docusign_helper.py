@@ -180,6 +180,36 @@ def resend_envelope(envelope_id: str, restaurant_id: int = None) -> dict:
         raise
 
 
+def void_envelope(envelope_id: str, reason: str, restaurant_id: int = None) -> dict:
+    """Void an envelope still waiting for a signature — the offboarding
+    checklist's 'docusign' step (fix round B2 #34: it was marked by hand
+    after voiding in DocuSign). {ok, status, already, voidable}: an envelope
+    already voided or declined is ok with `already`; a completed (signed)
+    one cannot be voided and says so (`voidable` False) — the signed
+    contract is ended under its own terms, not voided. Raises on a DocuSign
+    failure, after recording it (ops.capture)."""
+    import requests
+    try:
+        base, headers = _api()
+        resp = requests.get(f"{base}/envelopes/{envelope_id}", headers=headers, timeout=DOCUSIGN_TIMEOUT)
+        if resp.status_code != 200:
+            raise Exception(f"DocuSign envelope lookup failed: {resp.status_code} {resp.text[:300]}")
+        status = ((resp.json() or {}).get("status") or "").lower()
+        if status in ("voided", "declined"):
+            return {"ok": True, "status": status, "already": True, "voidable": False}
+        if status == "completed":
+            return {"ok": False, "status": status, "already": False, "voidable": False}
+        r = requests.put(f"{base}/envelopes/{envelope_id}", headers=headers,
+                         json={"status": "voided", "voidedReason": (reason or "Account closed")[:200]},
+                         timeout=DOCUSIGN_TIMEOUT)
+        if r.status_code not in (200, 201):
+            raise Exception(f"DocuSign void failed: {r.status_code} {r.text[:300]}")
+        return {"ok": True, "status": "voided", "already": False, "voidable": True}
+    except Exception as e:
+        _capture(e, "void", restaurant_id)
+        raise
+
+
 def _send_contract(
     owner_email: str,
     owner_name: str,

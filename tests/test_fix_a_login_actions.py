@@ -113,8 +113,9 @@ def test_a_role_change_takes_effect_on_the_session(app, db_path):
     assert r.status_code == 200 and r.get_json()["previous_role"] == "client"
     assert get_session_user(gm_tok, db_path=db_path)["role"] == "member"      # the membership moved too
     ev = _events(db_path, "login_role_changed")[-1]
-    p = json.loads(ev["payload"])
-    assert p["before"] == {"role": "client"} and p["after"] == {"role": "member"}
+    # Typed columns (integration wave: the one audit call, record_admin_action).
+    assert json.loads(ev["before_json"]) == {"role": "client"} and json.loads(ev["after_json"]) == {"role": "member"}
+    assert ev["actor"] == "will" and ev["target"] == f"user_id:{gm},username:gm"
 
 
 def test_teammate_and_manager_are_accepted_and_junk_is_not(app, db_path):
@@ -233,8 +234,9 @@ def test_a_2fa_reset_turns_the_restaurants_switch_off_and_says_so(app, db_path):
     assert r.status_code == 200 and r.get_json()["scope"] == "restaurant"
     assert not models.get_restaurant(rid, db_path=db_path).two_fa_enabled
     assert models.count_unused_backup_codes(rid, db_path=db_path) == 0
-    p = json.loads(_events(db_path, "two_factor_reset")[-1]["payload"])
-    assert p["before"]["two_fa_enabled"] is True and p["after"]["two_fa_enabled"] is False
+    ev = _events(db_path, "two_factor_reset")[-1]
+    assert json.loads(ev["before_json"])["two_fa_enabled"] is True
+    assert json.loads(ev["after_json"])["two_fa_enabled"] is False
 
 
 def test_a_2fa_reset_on_an_internal_login_clears_its_own_second_factor(app, db_path):

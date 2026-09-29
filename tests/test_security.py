@@ -276,7 +276,14 @@ def test_no_path_persists_a_temporary_password():
     # all — the welcome carries a set-password link (a reset token minted at
     # send time), and nothing resets the password first.
     assert "reset_user_password" not in wh and "tmp_pw" not in wh
-    assert "create_reset_token(" in bj and "reset_user_password" not in bj
+    # Integration wave: the outbox sends THE welcome,
+    # emails.send_welcome_with_set_password_link, which mints the one-use
+    # set-password link itself (models.create_set_password_token).
+    em = open("emails.py").read()
+    welcome = em[em.index("def send_welcome_with_set_password_link("):]
+    welcome = welcome[:welcome.index("\ndef ")]
+    assert "send_welcome_with_set_password_link(" in bj and "reset_user_password" not in bj
+    assert "create_set_password_token(" in welcome and "reset_user_password" not in welcome
     assert "send_welcome_email(" not in prov
     assert "UPDATE restaurants SET temp_password=NULL" in open("models.py").read()
 

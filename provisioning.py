@@ -5,8 +5,10 @@ checkout that arrived without restaurant_id metadata ended in an email
 saying "Nothing was provisioned. Set this up by hand". The checkout
 session knows the payer's email and name, the restaurant name and the
 module keys — the same fields the admin console's create-client form asks
-for. This does what that form does, sends the welcome email with the
-temporary password, and tells Will what it did instead of what to do.
+for. This does what that form does, owes the owner THE welcome email (a
+set-password link — emails.send_welcome_with_set_password_link, sent by
+billing_jobs' outbox; no password is ever emailed), and tells Will what it
+did instead of what to do.
 
 Refuses (returns None) rather than guessing when there is no email, or the
 email already belongs to a login — that is a reconciliation, not a
@@ -132,7 +134,10 @@ def _provision(session, meta, details, email, db_path):
     password = secrets.token_urlsafe(24)
     username = _username_for(email, db_path)
     try:
-        uid = create_user(restaurant_id=rid, username=username, email=email, password=password, db_path=db_path)
+        # generated=True: a random secret nobody types, so no policy or
+        # breach lookup applies to it (auth.create_user).
+        uid = create_user(restaurant_id=rid, username=username, email=email, password=password, db_path=db_path,
+                          generated=True)
     except BaseException:
         _drop_restaurant(rid, db_path)
         raise

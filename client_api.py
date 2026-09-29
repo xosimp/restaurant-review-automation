@@ -5139,7 +5139,8 @@ def _notify_deletion_request(rid, restaurant, current_user, requested_at):
     try:
         from emails import send_account_deletion_request_email
         result = send_account_deletion_request_email(restaurant.name, restaurant.owner_name,
-                                                     (current_user or {}).get("email"), requested_at)
+                                                     (current_user or {}).get("email"), requested_at,
+                                                     restaurant_id=rid)
         if not getattr(result, "ok", result):
             error = getattr(result, "error", None) or "the email was not sent"
     except Exception as e:
@@ -5791,10 +5792,11 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
             log_event(restaurant_id, "admin_data_upload",
                       {"by": _actor, "data_type": data_type, "source": source, "rows": len(rows)})
             import admin_events
-            admin_events.record("admin", "client_data.upload", restaurant_id=restaurant_id,
-                                summary=f"{_actor} loaded {len(rows)} {data_type} rows ({source})",
-                                payload={"actor": _actor, "data_type": data_type, "rows": len(rows),
-                                         "source": source})
+            admin_events.record_admin_action(
+                current_user, "client_data.upload", restaurant_id=restaurant_id,
+                target=f"client_data:{data_type}",
+                after={"data_type": data_type, "rows": len(rows), "source": source},
+                summary=f"{_actor} loaded {len(rows)} {data_type} rows ({source})")
         except Exception as _au_e:
             _ops.capture(_au_e, job="admin_data_upload_audit", context=f"restaurant_id={restaurant_id}")
         return jsonify(ok=True, rows=len(rows), message=f"{len(rows)} rows loaded successfully")
@@ -8747,7 +8749,10 @@ def staff_availability_submit(token):
 def log_account_event(restaurant_id, event_type, current_user=None, detail=None):
     """Account activity log (Account -> Security -> Account activity).
     Shared so a change made on the web is recorded identically to one made
-    in the app — mobile_api._log_account_event delegates here."""
+    in the app — mobile_api._log_account_event delegates here. A change made
+    through an admin's view-as session is recorded as the admin's: the
+    actor becomes "will (Cavnar AI, viewing as …)" (models.log_event reads
+    flask.g.view_as), with acting_admin / acting_admin_id beside it."""
     try:
         from models import log_event
         data = {"detail": detail}

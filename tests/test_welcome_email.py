@@ -54,9 +54,16 @@ def test_the_first_look_speaks_miles_and_american_english():
 
 def test_the_signing_webhook_reads_the_place_id_and_owner_name():
     """Fix round H (#12): the post-signing welcome is owed by the DocuSign
-    webhook and sent by billing_jobs' outbox, from the restaurant row itself
-    — so the first look's Place ID and the owner's name come with it."""
+    webhook and sent by billing_jobs' outbox — as THE welcome,
+    emails.send_welcome_with_set_password_link (integration wave), which
+    builds it from the restaurant row itself, so the first look's Place ID
+    and the owner's name come with it."""
     src = open(os.path.join(ROOT, "billing_jobs.py"), encoding="utf-8").read()
-    call = src[src.index("_emails.send_signed_welcome_email("):]
-    call = call[:call.index("link_hours=")]
-    assert "google_place_id=r.google_place_id" in call and "owner_name=r.owner_name" in call
+    call = src[src.index("_emails.send_welcome_with_set_password_link("):]
+    call = call[:call.index(")")]
+    assert "user_id=login[\"id\"]" in call and "restaurant_id=r.id" in call
+    em = open(os.path.join(ROOT, "emails.py"), encoding="utf-8").read()
+    body = em[em.index("def send_welcome_with_set_password_link("):]
+    body = body[:body.index("\ndef ")]
+    assert 'google_place_id=getattr(r, "google_place_id", None)' in body
+    assert 'owner_name=getattr(r, "owner_name", None)' in body

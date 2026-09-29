@@ -683,7 +683,69 @@ textarea{resize:vertical;min-height:60px}
   </div>
 </div>
 
+<!-- The step-up prompt (owner decision 4): a sensitive action — a billing,
+     module or owner-email change, a welcome email — asks for the admin's
+     password again when it was not typed in the last 15 minutes. -->
+<div id="cav-reauth" role="dialog" aria-modal="true" aria-labelledby="cav-reauth-title"
+     style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(14,12,10,.55);align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:22px 22px 18px;max-width:360px;width:100%">
+    <div id="cav-reauth-title" style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px">Enter your password again</div>
+    <p style="font-size:13px;color:var(--ink2);line-height:1.5;margin-bottom:12px">This change needs your password from the last 15 minutes.</p>
+    <input type="password" id="cav-reauth-pw" autocomplete="current-password" aria-label="Your password"
+           style="width:100%;padding:9px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:14px;background:var(--paper);color:var(--ink)">
+    <div id="cav-reauth-err" role="alert" style="font-size:12px;color:var(--ember);min-height:16px;margin:8px 0 4px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" class="btn-data" id="cav-reauth-cancel">Cancel</button>
+      <button type="button" class="btn-save" id="cav-reauth-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <script>
+// ── Step-up (owner decision 4) ──────────────────────────────────────────────
+// A sensitive action answers 403 {reauth_required: true} until the admin's
+// password was typed in the last 15 minutes: ask for it, confirm it with
+// /admin/api/reauth, and send the action once more. cavFetch is fetch() with
+// that one retry.
+function cavReauth() {
+  return new Promise(function (resolve) {
+    var box = document.getElementById('cav-reauth');
+    var input = document.getElementById('cav-reauth-pw');
+    var err = document.getElementById('cav-reauth-err');
+    var okBtn = document.getElementById('cav-reauth-ok');
+    var cancelBtn = document.getElementById('cav-reauth-cancel');
+    err.textContent = ''; input.value = '';
+    box.style.display = 'flex'; input.focus();
+    function done(ok) {
+      box.style.display = 'none'; okBtn.onclick = null; cancelBtn.onclick = null; input.onkeydown = null;
+      resolve(ok);
+    }
+    cancelBtn.onclick = function () { done(false); };
+    okBtn.onclick = function () {
+      okBtn.disabled = true;
+      fetch('/admin/api/reauth', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                  body: JSON.stringify({password: input.value})})
+        .then(function (r) { return r.json().then(function (d) { return {status: r.status, data: d}; }); })
+        .then(function (r) {
+          okBtn.disabled = false;
+          if (r.data && r.data.ok) { done(true); return; }
+          if (r.status === 401) { window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname); return; }
+          err.textContent = (r.data && r.data.error) || 'That password isn\u2019t right.';
+        })['catch'](function () { okBtn.disabled = false; err.textContent = 'Couldn\u2019t check the password — try again.'; });
+    };
+    input.onkeydown = function (e) { if (e.key === 'Enter') { okBtn.onclick(); } };
+  });
+}
+function cavFetch(url, opts) {
+  return fetch(url, opts).then(function (res) {
+    if (res.status !== 403) { return res; }
+    return res.clone().json().then(function (d) {
+      if (!d || !d.reauth_required) { return res; }
+      return cavReauth().then(function (ok) { return ok ? fetch(url, opts) : res; });
+    }, function () { return res; });
+  });
+}
+
 // One escaper for every value this page writes into HTML. Ingredient,
 // category, unit and recipe names come from POS syncs, CSV imports and the
 // owner's own screens; four of them went into innerHTML raw while the menu
@@ -875,23 +937,26 @@ function refreshMenuFromGoogle(ev){
 }
 
 async function resendWelcome(){
+  // The welcome carries the username and a one-use link to set a password;
+  // nothing about the login changes (fix round #22 — it used to reset the
+  // password and email a temporary one).
   const btn = document.getElementById('resend-welcome-btn');
   const status = document.getElementById('test-email-status');
-  if(!confirm('This will reset the client password and send them a new welcome email with their credentials. Continue?')) return;
+  if(!confirm('Email the owner their username and a one-use link to set their password? Their current password keeps working.')) return;
   btn.textContent = 'Sending...'; btn.disabled = true;
   status.style.display = 'block'; status.textContent = 'Sending welcome email...'; status.style.color = 'var(--ink3)';
   try {
-    const res = await fetch('/admin/resend-welcome/{{ restaurant.id }}', {method:'POST'});
+    const res = await cavFetch('/admin/resend-welcome/{{ restaurant.id }}', {method:'POST'});
     const data = await res.json();
     if(data.ok){
-      status.style.color = '#2d6a4f';
-      status.textContent = '\u2713 Welcome email sent to ' + data.email + ' with a new temporary password.';
+      status.style.color = 'var(--green)';
+      status.textContent = '\u2713 ' + (data.message || ('Welcome email sent to ' + data.email + '.'));
     } else {
-      status.style.color = '#c84b2f';
-      status.textContent = 'Error: ' + (data.error || 'failed');
+      status.style.color = 'var(--ember)';
+      status.textContent = 'Not sent: ' + (data.error || 'failed');
     }
   } catch(e) {
-    status.style.color = '#c84b2f';
+    status.style.color = 'var(--ember)';
     status.textContent = 'Request failed';
   }
   btn.textContent = 'Resend welcome email'; btn.disabled = false;
@@ -918,14 +983,28 @@ async function sendTestUrgent() {
   status.textContent = data.ok ? '✓ Urgent alert sent to ' + data.email : 'Error: ' + (data.error || 'failed');
 }
 async function refreshIgToken() {
+  // A job on the admin pool now (#153): the answer is a job id, and the
+  // result — which token refreshed, which didn't — comes from polling it.
   const status = document.getElementById('test-email-status');
   status.style.display = 'block';
   status.style.color = 'var(--ink3)';
   status.textContent = 'Refreshing tokens…';
   const res = await fetch('/admin/refresh-ig-token/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
+  const started = await res.json();
+  if (!started.ok || !started.job_id) {
+    status.style.color = 'var(--ember)';
+    status.textContent = 'Error: ' + (started.error || 'failed');
+    return;
+  }
+  for (let i = 0; i < 40; i++) {
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    const job = await (await fetch('/admin/api/admin-jobs/' + encodeURIComponent(started.job_id))).json();
+    if (job.status === 'pending') continue;
+    status.style.color = job.ok ? 'var(--green)' : 'var(--ember)';
+    status.textContent = job.ok ? '✓ ' + (job.message || 'Tokens refreshed.') : 'Error: ' + (job.error || 'failed');
+    return;
+  }
+  status.textContent = 'Still refreshing — reload this page in a minute to see the new expiry.';
 }
 // ── Save: only what the admin touched (fix round #8, #113) ──────────────────
 // Every save used to post ~60 fields, so fixing one typo reverted anything
@@ -1020,7 +1099,9 @@ function saveSettings() {
   payload.expected_version = CAV_VERSION;
   payload.touched = cavTouchedList();
   btn.textContent = 'Saving…'; btn.disabled = true;
-  fetch(window.location.pathname, {
+  // cavFetch: a billing, module or owner-email change asks for the password
+  // again (the step-up) and is sent once more.
+  cavFetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)

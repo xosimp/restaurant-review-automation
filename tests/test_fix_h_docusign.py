@@ -53,7 +53,7 @@ def _world(monkeypatch, db_path):
     mail = []
     monkeypatch.setattr(emails, "send_payment_email",
                         lambda **k: mail.append(("payment", k)) or emails.SendResult(True))
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **k: mail.append(("welcome", k)) or emails.SendResult(True))
     return mail
 
@@ -104,7 +104,9 @@ def test_signing_owes_and_sends_the_payment_link_and_a_set_password_welcome(db_p
     assert r.contract_status == "signed" and r.contract_signed_at
     assert [k for k, _ in _world] == ["payment", "welcome"]
     welcome = _world[1][1]
-    assert "password" not in welcome and "/reset-password/" in welcome["set_password_url"]
+    # THE welcome (emails.send_welcome_with_set_password_link) mints the
+    # set-password link itself; the outbox hands it the login, never a password.
+    assert "password" not in welcome and welcome["user_id"] == uid and welcome["restaurant_id"] == rid
     assert _password_hash(db_path, uid) == before
     owed = _rows(db_path, "SELECT kind, status FROM owed_sends ORDER BY id")
     assert owed == [{"kind": "payment_link", "status": "sent"}, {"kind": "welcome", "status": "sent"}]
@@ -116,7 +118,7 @@ def test_signing_owes_and_sends_the_payment_link_and_a_set_password_welcome(db_p
 def test_a_welcome_that_fails_at_signing_stays_owed_and_the_webhook_still_answers_200(db_path, ds, monkeypatch):
     rid = _rid(db_path, docusign_envelope_id="env_1", contract_status="sent", module_reviews=1)
     create_user(rid, "owner", "owner@x.test", "admin-typed-1", db_path=db_path)
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **k: emails.SendResult(False, error="Resend 429 quota", status_code=429))
     assert ds("env_1").status_code == 200
     (w,) = _rows(db_path, "SELECT status, last_status_code FROM owed_sends WHERE kind='welcome'")
@@ -232,13 +234,18 @@ def test_a_declined_envelope_cannot_be_resent(monkeypatch):
 # ── #78 the resend-contract route ───────────────────────────────────────────
 
 @pytest.fixture
-def admin(db_path):
+def admin(db_path, monkeypatch):
+    # resend-contract reaches DocuSign, which emails the client: it is
+    # refused on a local backend (integration wave), so these run as the
+    # production server would.
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    monkeypatch.delenv("RESTORE_FROM", raising=False)
     app = Flask(__name__, template_folder="../templates")
     app.register_blueprint(admin_routes.admin_bp)
     home = _rid(db_path, name="Cavnar HQ", owner_email="will@x.test")
     uid = create_user(home, "will", "will@x.test", "admin-pass-1", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     return c
 
 

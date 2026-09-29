@@ -195,7 +195,7 @@ def admin_client(db_path):
     home = _rid(db_path, "HQ")
     uid = create_user(home, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
     return c
 

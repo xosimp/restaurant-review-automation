@@ -148,9 +148,12 @@ def test_a_stripe_failure_is_not_echoed_raw(client, db_path, monkeypatch):
 # ── Close my account: the app's recorded request, on the web ──────────────
 
 def test_web_close_account_records_the_same_request_as_the_app(client, db_path, monkeypatch):
+    # The notice to Will is emailed only from a sending server, as on Railway
+    # (fix round B2, #9 / #34): this runs as one.
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     mine, theirs = _restaurant(db_path), _restaurant(db_path, name="Other Co")
     sent = []
-    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a: sent.append(a) or True)
+    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a, **k: sent.append(a) or True)
     _web_as(monkeypatch, mine, email="owner@x.test")
     first = client.post("/api/account/request-deletion", json={"restaurant_id": theirs})
     assert first.status_code == 200

@@ -70,7 +70,7 @@ def _admin_client(app, db_path):
     home = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
     uid = create_user(home, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
     return c, home
 
@@ -218,12 +218,16 @@ def test_a_billing_change_needs_a_reason_and_is_recorded_with_it(app, db_path):
     ok = _save(c, rid, {"billing_status": "active", "billing_status_reason": "Paid by check on 9/28"})
     assert ok.get_json()["ok"] is True and get_restaurant(rid).billing_status == "active"
     conn = models.get_conn(db_path)
-    ev = conn.execute("SELECT summary, payload FROM admin_events WHERE event_type='billing_status.override'").fetchone()
+    ev = conn.execute("SELECT summary, actor, before_json, after_json FROM admin_events "
+                      "WHERE event_type='billing_status.override'").fetchone()
     act = conn.execute("SELECT event_data FROM activity_log WHERE event_type='admin_settings_update' "
                        "ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     assert "past_due" in ev["summary"] and "Paid by check" in ev["summary"]
-    assert json.loads(ev["payload"])["actor"] == "will"
+    # Typed before/after (integration wave: the one audit call, record_admin_action).
+    assert ev["actor"] == "will" and json.loads(ev["before_json"])["billing_status"] == "past_due"
+    assert json.loads(ev["after_json"])["billing_status"] == "active"
+    assert json.loads(ev["after_json"])["reason"] == "Paid by check on 9/28"
     data = json.loads(act["event_data"])
     assert data["changed"]["billing_status"] == {"from": "past_due", "to": "active"}
     assert data["billing_override_reason"] == "Paid by check on 9/28"

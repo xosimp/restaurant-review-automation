@@ -139,7 +139,7 @@ def test_view_as_acts_as_the_owner_when_the_owner_is_the_only_login(app, db_path
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/view-as/%d" % rid)
     assert r.status_code == 302
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
@@ -157,7 +157,7 @@ def test_view_as_lasts_its_absolute_window_and_the_cookie_ends_with_it(app, db_p
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     _owner(db_path, rid)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/view-as/%d" % rid)
     cookie = next(h for h in r.headers.getlist("Set-Cookie") if h.startswith("session_token="))
     assert "Max-Age=%d" % (auth.VIEW_AS_HOURS * 3600) in cookie
@@ -172,7 +172,7 @@ def test_view_as_targets_the_owner_even_when_a_staff_identity_was_created_first(
     staff = _staff_identity(db_path, rid)            # lower id: first row LIMIT 1 sees
     owner = _owner(db_path, rid)
     assert staff < owner
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     _post(c, "/admin/view-as/%d" % rid)
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
@@ -187,7 +187,7 @@ def test_view_as_targets_the_owner_even_when_a_manager_login_was_created_first(a
     conn.commit(); conn.close()
     upsert_membership(mgr, rid, "manager", db_path=db_path)
     owner = _owner(db_path, rid)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     _post(c, "/admin/view-as/%d" % rid)
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
@@ -207,7 +207,7 @@ def test_reset_by_restaurant_targets_the_owner_and_not_a_staff_identity(app, db_
     staff = _staff_identity(db_path, rid)            # lower id: first row LIMIT 1 sees
     owner = _owner(db_path, rid)
     assert staff < owner
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/reset-password-by-restaurant/%d" % rid, json={"password": "Fresh-owner-pass-2026"})
     assert r.get_json()["ok"] is True
     assert chosen == [owner]
@@ -236,7 +236,7 @@ def test_reset_by_restaurant_emails_the_owner_a_link_and_sets_nothing_itself(app
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
     before = _row(db_path, "SELECT password_hash FROM users WHERE id=?", (owner,))["password_hash"]
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/reset-password-by-restaurant/%d" % rid, json={"password": "Fresh-owner-pass-2026"})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     assert "password" not in r.get_json()
@@ -265,7 +265,7 @@ def _configured_restaurant(db_path):
 def test_a_full_settings_payload_still_saves_every_field_it_carries(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _configured_restaurant(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/client-settings/%d" % rid, json={
         "name": "Renamed Grill", "owner_email": "owner@client.test", "billing_status": "active",
         "module_reviews": 1, "module_labor": 1, "module_inventory": 1, "module_marketing": 0,
@@ -281,7 +281,7 @@ def test_a_full_settings_payload_still_saves_every_field_it_carries(app, db_path
 def test_saving_client_settings_with_one_field_changes_only_that_field(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _configured_restaurant(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/client-settings/%d" % rid, json={"name": "Renamed Grill"})
     assert r.get_json()["ok"] is True
     rest = get_restaurant(rid, db_path=db_path)
@@ -313,7 +313,7 @@ def test_status_admin_write_is_refused_without_a_session_or_for_a_client_login(a
 
 def test_status_admin_write_works_for_a_real_admin_with_a_json_body(app, db_path):
     _, admin_uid = _admin(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/status/incident", json={"title": "Slow drafts", "body": "Investigating"})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     assert _incident_count(db_path) == 1
@@ -324,7 +324,7 @@ def test_an_admin_blueprint_write_is_recorded_in_admin_events(app, db_path):
     are audited before they run."""
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     _post(c, "/admin/client-settings/%d" % rid, json={"name": "Audited Grill", "owner_email": "owner@client.test"})
     rows = _rows(db_path, "SELECT event_type FROM admin_events WHERE event_type LIKE 'admin_write:%'")
     assert any("save_client_settings" in r["event_type"] for r in rows)
@@ -334,7 +334,7 @@ def test_status_admin_write_is_refused_for_an_admin_without_two_factor_when_requ
     home, admin_uid = _admin(db_path)
     monkeypatch.setenv("ADMIN_REQUIRE_2FA", "1")
     assert not get_restaurant(home, db_path=db_path).two_fa_enabled
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     # The same admin is held at the door of an admin_bp write...
     held = _post(c, "/admin/client-settings/%d" % home, json={"name": "x"})
     assert held.status_code == 403 and held.get_json().get("two_factor_required") is True
@@ -346,7 +346,7 @@ def test_status_admin_write_is_refused_for_an_admin_without_two_factor_when_requ
 
 def test_status_admin_write_does_not_parse_a_text_plain_body_as_json(app, db_path):
     _, admin_uid = _admin(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/status/incident", data='{"title": "Forged outage"}',
               content_type="text/plain")
     assert r.status_code >= 400
@@ -355,7 +355,7 @@ def test_status_admin_write_does_not_parse_a_text_plain_body_as_json(app, db_pat
 
 def test_status_admin_write_is_recorded_in_admin_events(app, db_path):
     _, admin_uid = _admin(db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/status/incident", json={"title": "Slow drafts"})
     assert r.status_code == 200
     rows = _rows(db_path, "SELECT event_type, summary FROM admin_events")
@@ -390,7 +390,7 @@ def test_a_get_to_view_as_does_not_switch_the_admins_session(app, db_path):
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     _owner(db_path, rid)
-    admin_token = create_session(admin_uid, db_path=db_path)
+    admin_token = create_session(admin_uid, password_verified_at=True, db_path=db_path)
     c = _client(app, admin_token)
     c.get("/admin/view-as/%d" % rid)
     assert _row(db_path, "SELECT COUNT(*) AS n FROM sessions WHERE device_type='admin-view-as'")["n"] == 0
@@ -403,7 +403,7 @@ def test_admin_reset_never_returns_or_emails_a_password(app, db_path, reset_mail
     _, admin_uid = _admin(db_path)
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     r = _post(c, "/admin/reset-password/%d" % owner, json={"password": "Fresh-owner-pass-2026", "send_email": True})
     assert r.get_json()["ok"] is True and "Fresh-owner-pass-2026" not in r.get_data(as_text=True)
     assert "Fresh-owner-pass-2026" not in reset_mail[-1]["payload"]["html"]
@@ -420,7 +420,7 @@ def test_a_used_reset_link_ends_every_existing_session_of_that_user(app, db_path
     web = create_session(owner, db_path=db_path)
     ios = create_session(owner, device_type="ios", db_path=db_path)
     assert get_session_user(web, db_path=db_path) and get_session_user(ios, db_path=db_path)
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     assert _post(c, "/admin/reset-password/%d" % owner, json={}).get_json()["ok"]
     # Sending the link signs nobody out; the password write does.
     assert get_session_user(web, db_path=db_path)
@@ -436,7 +436,7 @@ def test_a_used_reset_link_clears_the_forced_reset_flag(app, db_path, reset_mail
     conn = models.get_conn(db_path)
     conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (owner,))
     conn.commit(); conn.close()
-    c = _client(app, create_session(admin_uid, db_path=db_path))
+    c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
     assert _post(c, "/admin/reset-password/%d" % owner, json={}).get_json()["ok"]
     _use_reset_link(db_path, reset_mail, "Owner-picked-pass-2026")
     assert _row(db_path, "SELECT must_reset_password FROM users WHERE id=?", (owner,))["must_reset_password"] == 0

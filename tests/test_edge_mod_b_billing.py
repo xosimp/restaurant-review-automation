@@ -354,7 +354,7 @@ def ds(monkeypatch):
     monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
     monkeypatch.setattr(emails, "send_payment_email",
                         lambda **k: mail["payment"].append(k["to_email"]) or emails.SendResult(True))
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **k: mail["welcome"].append(k["to_email"]) or emails.SendResult(True))
     # Signed like DocuSign Connect signs them: the webhook refuses anything
     # unsigned (SEC-11), so an unsigned fixture would only ever test the 401.

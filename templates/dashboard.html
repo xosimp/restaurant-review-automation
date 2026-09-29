@@ -15,7 +15,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
 <link rel="stylesheet" href="/static/css/cavnar-buttons.css">
-{% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
+{# A brand colour is drawn only when it is a six-digit hex (^#[0-9a-f]{6}$):
+   it goes into CSS, and a stored "red;}body{…" went in as CSS. Writes are
+   validated (admin_routes.brand_color_value); rows stored before that are
+   not, so the check is here too. #}
+{% set _brand_hex = (restaurant.brand_color or '') | lower | trim %}
+{% if _brand_hex | length == 7 and _brand_hex[0] == '#' and _brand_hex[1:].strip('0123456789abcdef') == '' %}<style>:root{--ember:{{ _brand_hex | e }};--ember2:{{ _brand_hex | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 /* The hidden attribute always hides. A class that sets display (flex, grid,
@@ -24112,7 +24117,8 @@ function loadEmailHistory(){
       html += '<tr style="border-bottom:1px solid var(--paper3)">';
       html += '<td style="padding:9px 6px;color:var(--ink)">' + _ehEsc(e.label) + '</td>';
       html += '<td style="padding:9px 6px;color:var(--ink3)">' + _ehEsc(e.to_email) + '</td>';
-      html += '<td style="padding:9px 6px;color:var(--ink3);white-space:nowrap">' + _ehFmtDateTime(e.sent_at) + '</td>';
+      /* sent_at is UTC (email_log, #89); sent_at_local is the restaurant's own clock. */
+      html += '<td style="padding:9px 6px;color:var(--ink3);white-space:nowrap">' + _ehFmtDateTime(e.sent_at_local || e.sent_at) + '</td>';
       html += '<td style="padding:9px 6px;text-align:right">' + badge + '</td>';
       html += '</tr>';
     });

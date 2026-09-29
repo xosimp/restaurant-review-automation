@@ -21,7 +21,7 @@ restaurant — an owner has nothing to paste, and offering them a field would
 imply otherwise.
 """
 from flask import Blueprint, request, jsonify
-from auth import admin_required, login_required
+from auth import admin_required, login_required, recent_auth_required
 from models import update_restaurant
 
 rpower_bp = Blueprint("rpower", __name__)
@@ -35,6 +35,7 @@ _admin_events.register_audit(rpower_bp)
 
 @rpower_bp.route("/admin/rpower/save/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def save_rpower_token(restaurant_id, current_user):
     """Save a token, after checking it actually works.
 
@@ -96,6 +97,7 @@ def save_rpower_token(restaurant_id, current_user):
 
 @rpower_bp.route("/admin/rpower/bootstrap/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def bootstrap_rpower(restaurant_id, current_user):
     """Bind this restaurant to one of the stores the token can see."""
     import rpower
@@ -129,6 +131,7 @@ def rpower_status_admin(restaurant_id, current_user):
 
 @rpower_bp.route("/admin/rpower/disconnect/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def disconnect_rpower(restaurant_id, current_user):
     """Clear every RPOWER field.
 

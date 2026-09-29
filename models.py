@@ -3893,6 +3893,17 @@ def request_account_deletion(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return now
 
 
+# An internal login — Cavnar AI's own admin or support — as a WHERE fragment
+# over users: delete_restaurant never deletes one (integration wave), and
+# offboarding.admin_homes counts them before any delete.
+INTERNAL_LOGIN_SQL = "(COALESCE(is_admin, 0) = 1 OR LOWER(COALESCE(role, '')) = 'support')"
+
+
+class InternalLoginHome(ValueError):
+    """delete_restaurant refused: an admin or support login calls this
+    restaurant home, and deleting the restaurant would delete that login."""
+
+
 # Tables delete_restaurant leaves alone although they carry a restaurant_id:
 # the admin audit trail (admin_events — Stripe, DocuSign and admin actions),
 # the offboarding checklist that led to the delete, and the billing status
@@ -3922,6 +3933,13 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     What stays: the tables in _KEEP_ON_RESTAURANT_DELETE — the audit trail
     and the offboarding record. The account is gone; the record of what was
     done to it (and that it was deleted, by whom) must not go with it (#126).
+
+    Never an admin or support login (integration wave): one homed here that
+    cannot be re-homed makes the whole delete refuse (InternalLoginHome,
+    rolled back) — deleting Cavnar AI's own login with a client's row is
+    not a side effect any caller wants. The routes ask
+    offboarding.admin_homes first and say so in a sentence; this is the
+    backstop for every other caller.
     """
     rid = int(restaurant_id)
     conn = get_conn(db_path)
@@ -3939,6 +3957,15 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                     "FROM users u WHERE u.restaurant_id=?", (rid, rid)).fetchall():
                 if other is not None:
                     conn.execute("UPDATE users SET restaurant_id=? WHERE id=?", (other, uid))
+        internal = 0
+        if "users" in tables:
+            ucols = {r[1] for r in conn.execute('PRAGMA table_info("users")')}
+            who = INTERNAL_LOGIN_SQL if "role" in ucols else "COALESCE(is_admin, 0) = 1"
+            internal = conn.execute(f"SELECT COUNT(*) FROM users WHERE restaurant_id=? AND {who}",
+                                    (rid,)).fetchone()[0]
+        if internal:
+            raise InternalLoginHome(f"restaurant {rid} is home to {internal} admin or support login(s); "
+                                    f"move them before deleting it")
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -4760,7 +4787,8 @@ def update_analysis(review_id: int, sentiment: str, categories: list,
 
 
 def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
-                 needs_review: bool = False, review_reason: str = None):
+                 needs_review: bool = False, review_reason: str = None,
+                 unedited_only: bool = False):
     """Store a drafted reply.
 
     needs_review marks a draft that passed generation but states something
@@ -4770,7 +4798,11 @@ def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
 
     Never overwrites an approved or posted reply: a regenerate racing a
     publish used to flip a live Google reply back to "drafted" with other
-    text (M-25). Returns True when the draft was stored.
+    text (M-25). With unedited_only, never overwrites one the owner edited
+    either (draft_edited=1) — checked in the same statement, so an edit
+    saved while the model was writing still wins: the admin's "Re-draft
+    every reply" read draft_edited=0, spent a model call, and then wrote
+    over the owner's words (#78). Returns True when the draft was stored.
     """
     conn = get_conn(db_path)
     cur = conn.execute("""
@@ -4778,7 +4810,8 @@ def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
            SET draft_response=?, response_status='drafted',
                draft_needs_review=?, draft_review_reason=?
          WHERE id=? AND COALESCE(response_status, '') NOT IN ('posted', 'approved')
-    """, (draft, 1 if needs_review else 0, review_reason, review_id))
+    """ + (" AND COALESCE(draft_edited, 0) = 0" if unedited_only else ""),
+        (draft, 1 if needs_review else 0, review_reason, review_id))
     conn.commit()
     conn.close()
     return cur.rowcount == 1
@@ -7311,11 +7344,17 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
 
 def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
     """Deletes one schedule history row, scoped to restaurant_id so one
-    tenant can never delete another's by guessing an id. Schedules are
-    never removed automatically anywhere in this codebase -- this is the
-    only deletion path, and it only ever fires on an explicit user action
-    (the iOS swipe-to-delete). Returns True if a row was actually deleted,
-    False if the id didn't exist or belonged to a different restaurant.
+    tenant can never delete another's by guessing an id — the explicit user
+    action (the iOS swipe-to-delete). Returns True if a row was actually
+    deleted, False if the id didn't exist or belonged to a different
+    restaurant.
+
+    It is not the only way a schedule row goes (it used to say it was):
+    the nightly retention (ops.prune_ledgers, fix round #72) removes drafts
+    a later regeneration superseded that were never published or shared
+    and have no requests or outcomes, past SUPERSEDED_DRAFTS_KEEP_DAYS — a
+    published week is never pruned — and delete_restaurant removes a
+    deleted restaurant's schedules with the rest of its rows.
     """
     conn = get_conn(db_path)
     try:
@@ -7648,12 +7687,39 @@ def log_activity(restaurant_id: int, tab: str,
     _invalidate_request_cache(restaurant_id)
 
 
+def _with_acting_admin(event_data):
+    """event_data, attributed to the admin behind a view-as session when this
+    event is made through one (owner decision 3: a view-as keeps write
+    access, and every write in it is the acting admin's). auth's decorators
+    put the view-as context on flask.g.view_as; the owner's own Account
+    activity then reads "will (Cavnar AI, viewing as erik)" instead of
+    "erik", with the admin's name and id kept beside it. Outside a view-as
+    session, or outside a request, the data is returned as it was."""
+    try:
+        from flask import g, has_request_context
+        ctx = getattr(g, "view_as", None) if has_request_context() else None
+    except Exception:
+        ctx = None
+    if not ctx:
+        return event_data
+    data = dict(event_data or {})
+    admin = ctx.get("acting_admin") or f"admin #{ctx.get('acting_admin_id')}"
+    data["acting_admin"] = admin
+    data["acting_admin_id"] = ctx.get("acting_admin_id")
+    data["actor"] = f"{admin} (Cavnar AI, viewing as {ctx.get('as_username') or 'the owner'})"
+    return data
+
+
 def log_event(restaurant_id: int, event_type: str, event_data: dict = None,
               db_path: str = DB_PATH):
-    """Log a named event to activity_log (login, review_approved, csv_upload, etc.)"""
+    """Log a named event to activity_log (login, review_approved, csv_upload, etc.).
+    An event made through an admin's view-as session names the admin
+    (_with_acting_admin) — web and phone alike, since
+    client_api.log_account_event and every other caller land here."""
     import json
     from datetime import datetime
     from zoneinfo import ZoneInfo
+    event_data = _with_acting_admin(event_data)
     conn = get_conn(db_path)
     try:
         conn.execute("""
@@ -8356,6 +8422,33 @@ def pos_binding_conflict(provider: str, values, exclude_id=None, db_path: str = 
             continue
         return r["name"] or f"restaurant #{r['id']}"
     return None
+
+
+_POS_LABELS = {"toast": "Toast restaurant", "square": "Square location", "clover": "Clover merchant",
+               "rpower": "RPOWER store"}
+
+
+def owner_pos_binding_refusal(provider: str, values, restaurant_id, db_path: str = DB_PATH):
+    """The sentence an OWNER'S own POS connect (web and app) answers when the
+    store is already bound to another live restaurant, or None.
+
+    pos_binding_conflict for the owner-side connects, which had no check (the
+    admin saves did, fix round #143): one store syncing into two restaurants
+    fills both with the same sales and labor. The sentence never names the
+    other restaurant — that is another client's name, and an owner typing a
+    store id must not learn who else uses it. A demo restaurant is exempt,
+    as for the admin save."""
+    try:
+        r = get_restaurant(restaurant_id, db_path)
+    except Exception:
+        r = None
+    if r is not None and int(getattr(r, "is_demo", 0) or 0):
+        return None
+    if not pos_binding_conflict(provider, values, exclude_id=restaurant_id, db_path=db_path):
+        return None
+    what = _POS_LABELS.get(provider, "POS store")
+    return (f"That {what} is already connected to another Cavnar AI account, and one store can feed only "
+            f"one restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
 
 
 def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,
@@ -11519,6 +11612,15 @@ EMAIL_TYPE_LABELS = {
     "send_value_recap_email":         "What Cavnar AI did for you",
     "send_onboarding_nudge":          "Getting set up",
     "send_issue_fallback_email":      "Issue could not be texted",
+    # The billing lifecycle's own mail (fix round H), sent from the outbox.
+    "send_dunning_email":             "Payment didn't go through",
+    "send_card_update_email":         "Card update link",
+    "send_payment_receipt_email":     "Payment receipt",
+    "send_pay_reminder_email":        "Setup payment reminder",
+    # The post-signing welcome before it became THE welcome
+    # (send_welcome_set_password_email); kept so any row already logged under
+    # it still reads as what it was.
+    "send_signed_welcome_email":      "Dashboard access",
 }
 
 

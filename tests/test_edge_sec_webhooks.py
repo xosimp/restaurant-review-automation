@@ -81,7 +81,7 @@ def sent(monkeypatch):
     monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
     monkeypatch.setattr(emails, "send_payment_email",
                         lambda **k: out.append(("payment", k)) or emails.SendResult(True))
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **k: out.append(("welcome", k)) or emails.SendResult(True))
     return out
 

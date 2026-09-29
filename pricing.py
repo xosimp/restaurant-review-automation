@@ -97,6 +97,13 @@ def billing_amount_label(amount, interval, interval_count=1) -> str:
     return base + ("/" + suf if n == 1 else " every %d %ss" % (n, str(interval).lower()))
 
 
+def setup_product_name(module_count: int) -> str:
+    """The Stripe Product the one-time setup Price hangs off — the name
+    emails.create_stripe_checkout finds or creates."""
+    n = max(1, min(int(module_count or 1), 4))
+    return f"Cavnar AI Setup — {n} Module{'s' if n > 1 else ''}"
+
+
 def retainer_product_name(module_count: int, period: str = "monthly") -> str:
     """The Stripe Product a retainer Price hangs off — the exact name
     emails.create_stripe_checkout creates, so a plan change reuses the

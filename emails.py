@@ -138,6 +138,23 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
     still backed by it (the engine's hybrid mode)."""
     if not os.getenv("ANTHROPIC_API_KEY"):
         return fallback
+
+    def _served_fallback(why, msg=None, outcome=None):
+        """The fixed copy went out instead of the model's paragraph: a
+        quality finding on the AI page (fix round G #140), not a silent
+        swap — and a reply the model wrote but nobody could use is filed
+        against its ledger row (#52). Never raises."""
+        try:
+            import ai_utils as _au_p
+            if msg is not None and outcome:
+                _au_p.mark_outcome(msg, outcome, reason=why)
+            _au_p.record_quality_event("email_personalization", "fallback", restaurant_id=restaurant_id,
+                                       detail=why, action="email_personalization")
+        except Exception:
+            pass
+        return fallback
+
+    msg = None
     try:
         from ai_utils import create_with_retry, extract_text, get_client, model_for
         client = get_client()
@@ -177,9 +194,10 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
         )
         text = extract_text(msg).strip()
         if getattr(msg, "stop_reason", None) == "max_tokens":
-            return fallback
+            # create_with_retry already filed it 'truncated'.
+            return _served_fallback("truncated reply")
         if not text:
-            return fallback
+            return _served_fallback("empty reply", msg, "unparseable")
         # This paragraph is written in Will's first person and sent from his
         # address, so anything it asserts reads as Will personally asserting
         # it — and nobody reads it before the client does. It passes the
@@ -205,9 +223,15 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
                                    tenant_names_denied=denied,
                                    policy={"action": "email_personalization", "check_counts": True})
         out = rv.enforce(text, ctx, marker=False)
-        return str(out) if str(out).strip() else fallback
-    except Exception:
-        return fallback
+        if str(out).strip():
+            return str(out)
+        # The validation layer refused the paragraph (its own finding is
+        # recorded there); the fixed copy is what went out.
+        return _served_fallback("refused by validation")
+    except Exception as e:
+        # A blocked call (budget, breaker) or a provider error is already in
+        # the ledger; the fallback served is the quality finding.
+        return _served_fallback(f"{type(e).__name__}: {str(e)[:120]}")
 
 
 def _personalise_facts(**figures) -> list:
@@ -2088,15 +2112,20 @@ SET_PASSWORD_LINK_DAYS = 3        # models.SET_PASSWORD_LINK_HOURS / 24
 
 def send_welcome_with_set_password_link(user_id: int, restaurant_id: int = None, to_email: str = None,
                                         db_path: str = None) -> "SendResult":
-    """The welcome email for one login, carrying a one-use link to choose a
+    """THE welcome email for one login, carrying a one-use link to choose a
     password instead of a temporary one (#12).
 
-    For the post-signing flow and "Resend welcome": nothing about the login
-    changes — no password is set and no session ends — so a send that fails
-    (a suppressed address, a Resend outage) leaves the owner exactly where
-    they were, and the caller can retry or raise an issue from the
-    SendResult. The restaurant's name, modules and Place ID come from its
-    row; the address defaults to the login's own email."""
+    One email, three senders (integration wave): billing_jobs' outbox after
+    a contract is signed or a checkout provisions a restaurant, and the
+    console's "Resend welcome". There were three copies — this one, the
+    outbox's own template and the console's — each with its own link
+    lifetime. Nothing about the login changes — no password is set and no
+    session ends — so a send that fails (a suppressed address, a Resend
+    outage) leaves the owner exactly where they were, and the caller reads
+    the SendResult: `.reason` 'suppressed' / 'no_recipient' are refusals a
+    retry will not change. The restaurant's name, modules and Place ID come
+    from its row; the address defaults to the login's own email; logged
+    against the restaurant."""
     import models
     dbp = db_path or models.DB_PATH
     user = None
@@ -2349,7 +2378,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         return None
 
     _stripe = config.stripe_api(stripe_key)
-    from pricing import plan_for
+    from pricing import plan_for, price_lookup_key, retainer_product_name, setup_product_name
     from pricing import money, RETAINER_START_DAYS
     plan = plan_for(module_count)
     setup_amount = plan["setup"] * 100   # cents, same for both billing periods
@@ -2374,7 +2403,9 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             # checkout used to create two new Prices, so the Stripe account
             # filled with thousands of identical ones (MOD-BIL-10). Found by
             # lookup_key (in this process first, then Stripe), created once.
-            lookup = f"cavnar-{product_id}-{int(unit_amount)}-{interval if recurring else 'once'}"
+            # The key scheme is pricing's, the one Change plan reads too, so
+            # checkout and a plan change can't drift apart (#106).
+            lookup = price_lookup_key(product_id, unit_amount, interval if recurring else None)
             if lookup in _PRICE_IDS:
                 return _PRICE_IDS[lookup]
             try:
@@ -2395,13 +2426,11 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             _PRICE_IDS[lookup] = _stripe.Price.create(**kwargs).id
             return _PRICE_IDS[lookup]
 
-        period_label = "Annual" if billing_period == "annual" else "Monthly"
-        setup_price_id   = get_or_create_price(
-            f"Cavnar AI Setup — {module_count} Module{'s' if module_count>1 else ''}",
-            setup_amount
-        )
+        # Product names from pricing, the names Change plan's
+        # pricing.retainer_price_id finds (fix round H #106).
+        setup_price_id   = get_or_create_price(setup_product_name(plan["modules"]), setup_amount)
         retainer_price_id = get_or_create_price(
-            f"Cavnar AI Retainer {period_label} — {module_count} Module{'s' if module_count>1 else ''}",
+            retainer_product_name(plan["modules"], "annual" if billing_period == "annual" else "monthly"),
             retainer_amount,
             recurring=True,
             interval=retainer_interval
@@ -4168,13 +4197,15 @@ def send_quarterly_summary_email(to_email: str, restaurant_name: str, owner_name
 
 # ── Billing lifecycle emails (fix round H) ───────────────────────────────────
 # The billing lifecycle's own mail: dunning on a failed card, the card-update
-# link, one receipt per paid invoice, the pay-link reminders after signing,
-# and the post-signing welcome with a set-password link. Every one is sent
-# from billing_jobs' outbox (owed_sends), which marks it from the SendResult
-# returned here and retries a failure — so each returns deliver()'s result,
-# never None, and passes restaurant_id so it appears in that client's email
-# history. Colours are BRAND tokens only (scripts/check_email_tokens.py);
-# light mode, inline styles (DESIGN_SYSTEM.md → Email).
+# link, one receipt per paid invoice and the pay-link reminders after signing.
+# Every one is sent from billing_jobs' outbox (owed_sends), which marks it
+# from the SendResult returned here and retries a failure — so each returns
+# deliver()'s result, never None, and passes restaurant_id so it appears in
+# that client's email history. (The post-signing welcome is THE welcome,
+# send_welcome_with_set_password_link above — one email, sent by the outbox,
+# checkout provisioning and the console's Resend welcome alike.) Colours are
+# BRAND tokens only (scripts/check_email_tokens.py); light mode, inline
+# styles (DESIGN_SYSTEM.md → Email).
 
 def _billing_frame(kicker: str, title: str, body_html: str) -> str:
     """One card: wordmark, kicker, title, the body, the seal footer."""
@@ -4345,52 +4376,3 @@ def send_pay_reminder_email(to_email: str, restaurant_name: str, module_count: i
         "subject": f"Your Cavnar AI setup link — {restaurant_name}",
         "preheader": "Your agreement is signed — one step left.",
         "html": _billing_frame("One step left", "Finish setting up", body)})
-
-
-def send_signed_welcome_email(to_email: str, restaurant_name: str, username: str, set_password_url: str,
-                              module_reviews=0, module_labor=0, module_inventory=0, module_marketing=0,
-                              google_place_id=None, owner_name=None, restaurant_id: int = None,
-                              link_hours: int = 72) -> SendResult:
-    """The welcome after a contract is signed (#12): the username and a link
-    to SET a password — never a password in the email. The owner's password
-    is not touched before or after it goes; the link is a `link_hours` reset
-    token billing_jobs mints at send time.
-
-    Integration note: workstream E adds a set-password variant of
-    send_welcome_email; the two are one email and should be merged."""
-    B = BRAND
-    first_look_html = ""
-    if google_place_id:
-        try:
-            import first_look as _fl
-            lines = _fl.lines(_fl.build(google_place_id, deep=True))
-            if lines:
-                rows = "".join(_billing_p(esc(line), space=8) for line in lines)
-                first_look_html = (f'<div style="border-left:3px solid {B["ember"]};padding:2px 0 2px 14px;'
-                                   f'margin:0 0 18px"><p style="font-family:{_SANS};font-size:11px;color:{B["muted"]};'
-                                   f'margin:0 0 8px;letter-spacing:1px;text-transform:uppercase;font-weight:600">'
-                                   f'What I can already see</p>{rows}</div>')
-        except Exception as e:
-            print(f"[welcome] first look unavailable: {e}")
-    names = [n for n, on in (("Review Intelligence", module_reviews), ("Labor Optimizer", module_labor),
-                             ("Food Cost Control", module_inventory), ("Marketing Autopilot", module_marketing)) if on]
-    modules_text = (names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}") if names else ""
-    body = (_billing_p(f"{_billing_hi(owner_name)} your Cavnar AI dashboard for <strong>{esc(restaurant_name)}</strong> "
-                       "is ready.")
-            + first_look_html
-            + f'<div style="background:{B["paper"]};border:1px solid {B["border"]};border-radius:10px;'
-              f'padding:16px 18px;margin:0 0 16px">'
-            + _billing_p(f'<strong style="color:{B["strong"]}">Username:</strong> '
-                         f'<span style="font-family:{_NUM};color:{B["strong"]}">{esc(username)}</span>', space=10)
-            + _billing_button("Set your password", set_password_url)
-            + _billing_p(f"The link works for {int(link_hours)} hours. After that, use <em>Forgot password</em> on "
-                         f"the sign-in page with {esc(to_email)}.", muted=True, space=0)
-            + "</div>"
-            + (_billing_p(f"Your dashboard includes {esc(modules_text)}, set up for {esc(restaurant_name)}.")
-               if modules_text else "")
-            + _billing_p("Any questions, just reply to this email. I check it daily.", space=0))
-    return deliver(email_type="send_signed_welcome_email", restaurant_id=restaurant_id, payload={
-        "from": sender("will"), "to": [to_email],
-        "subject": f"Your Cavnar AI dashboard is ready — {restaurant_name}",
-        "preheader": "Set your password and you're in.",
-        "html": _billing_frame("Welcome", "You're all set up", body)})

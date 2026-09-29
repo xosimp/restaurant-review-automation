@@ -284,9 +284,10 @@ CREATE INDEX IF NOT EXISTS idx_user_backup_codes_user
 # revoke). Unindexed, both are full scans of a table that now grows with
 # headcount × shifts, and they all land at once during the pre-shift rush.
 #
-# login_history is append-only and never pruned by design (it is what the
-# Account sign-in history reads), so it grows fastest of all — one row per
-# sign-in forever. get_login_history orders by created_at per user.
+# login_history is append-only (it is what the Account sign-in history
+# reads), so it grows fastest of all — one row per sign-in; only its
+# retention window (LOGIN_HISTORY_RETENTION_DAYS, below) bounds it.
+# get_login_history orders by created_at per user.
 AUTH_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_sessions_user
     ON sessions(user_id, device_type);
@@ -294,7 +295,13 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires
     ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_login_history_user
     ON login_history(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_login_history_created
+    ON login_history(created_at);
 """
+# idx_login_history_created serves the retention prune (created_at < cutoff):
+# idx_login_history_user leads with user_id, so that DELETE scanned the whole
+# table under the write lock — at boot here (prune_login_history) and nightly
+# once ops' retention registry carries login_history (fix round D #72).
 
 # login_history is the only append-only table in the schema, so it is also the
 # only one with no natural ceiling: 250k employees × one sign-in per shift is
@@ -1447,13 +1454,17 @@ ADMIN_CONSOLE_NAME = "the Cavnar AI admin console"
 
 
 def send_two_fa_code(dest, restaurant, code) -> bool:
-    """Send a code to a two_fa_destination(). True only when it went out."""
+    """Send a code to a two_fa_destination(). True only when it went out.
+    The email is logged against the restaurant (#119), so it appears in that
+    client's email history; an internal login's code (whose label names the
+    admin console, not a restaurant) is logged against none."""
     rname = getattr(restaurant, "name", None) or "your restaurant"
     if dest["kind"] == "sms":
         from notify import send_2fa_sms
         return bool(send_2fa_sms(dest["to"], rname, code))
     from emails import send_2fa_code
-    return bool(send_2fa_code(dest["to"], rname, code, dest.get("name")))
+    return bool(send_2fa_code(dest["to"], rname, code, dest.get("name"),
+                              restaurant_id=getattr(restaurant, "id", None)))
 
 
 def _code_label(user, restaurant):
@@ -4003,15 +4014,18 @@ def _console_denied(user):
 
 
 def _billing_state(user):
-    """(paused, paused_until) for the blocked branches below — so a pause the
-    owner chose is never described as a lapse. Fails to (False, None)."""
+    """(paused, paused_until, hold) for the blocked branches below — so a
+    pause the owner chose is never described as a lapse, and a hold only an
+    admin lifts (a dispute, a full refund, an admin's pause: models.billing_hold,
+    fix round H #114) is never offered the owner's Resume. Fails to
+    (False, None, None)."""
     try:
-        from models import get_restaurant
+        from models import get_restaurant, billing_hold
         r = get_restaurant(user["restaurant_id"])
         paused = (getattr(r, "billing_status", "") or "").lower() == "paused"
-        return paused, (getattr(r, "paused_until", None) if paused else None)
+        return paused, (getattr(r, "paused_until", None) if paused else None), billing_hold(r)
     except Exception:
-        return False, None
+        return False, None, None
 
 
 def _mdy(iso):
@@ -4022,16 +4036,26 @@ def _mdy(iso):
         return None
 
 
+_BILLING_HOLD_MESSAGE = ("Your account is on hold — contact Will at will@cavnar.ai to sort it out. "
+                         "Your data is safe in the meantime.")
+
+
 def _billing_blocked_message(user):
-    """The lapse message, or the pause message with its resume date. The
-    phone shows this string on the Home tab, so it has to say which."""
-    paused, until = _billing_state(user)
+    """The lapse message, the pause message with its resume date, or the
+    hold message. The phone shows this string on the Home tab, so it has to
+    say which — a held account was told "Resume any time", and Resume
+    refuses a hold (fix round H #114). The extras carry `locked` and
+    `pause_reason` for a hold, as billing info and pause status do."""
+    paused, until, hold = _billing_state(user)
+    if hold:
+        return _BILLING_HOLD_MESSAGE, {"paused": bool(paused), "paused_until": until if paused else None,
+                                       "locked": True, "pause_reason": hold}
     if not paused:
         return _BILLING_BLOCKED_MESSAGE, {}
     when = _mdy(until)
     return ((f"Your subscription is paused until {when}. " if when else "Your subscription is paused. ")
             + "Resume any time from Account → Billing.",
-            {"paused": True, "paused_until": until})
+            {"paused": True, "paused_until": until, "locked": False, "pause_reason": "self"})
 
 
 def _billing_blocked_page(user):
@@ -4045,19 +4069,24 @@ def _billing_blocked_page(user):
     to ask. /api/account/resume is billing-exempt for exactly this page.
     """
     from flask import render_template
-    paused = paused_until = None
+    paused = paused_until = hold = None
     can_resume = False
     try:
-        from models import get_restaurant
+        from models import get_restaurant, billing_hold
         r = get_restaurant(user["restaurant_id"])
         paused = (getattr(r, "billing_status", "") or "").lower() == "paused"
         paused_until = getattr(r, "paused_until", None)
+        # A dispute, refund or admin hold is lifted by an admin only (fix
+        # round H #114): the page shows the hold and no Resume button — the
+        # template already renders pause_lock; it was never passed.
+        hold = billing_hold(r)
         from permissions import has_permission, TEAM_INVITE
-        can_resume = bool(paused and has_permission(user, TEAM_INVITE))
+        can_resume = bool(paused and not hold and has_permission(user, TEAM_INVITE))
     except Exception:
         pass
     return render_template("billing_paused.html", paused=paused, paused_until=paused_until,
-                           can_resume=can_resume, message=_BILLING_BLOCKED_MESSAGE), 402
+                           pause_lock=hold, can_resume=can_resume,
+                           message=(_BILLING_HOLD_MESSAGE if hold else _BILLING_BLOCKED_MESSAGE)), 402
 
 
 _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
@@ -4206,22 +4235,24 @@ def _status_of(rv) -> int:
 
 def record_view_as_write(ctx, status):
     """One admin_events row per write made through a view-as session: the
-    admin behind it, the login it was made as, what was sent and how it
-    ended. Never raises — the record must not break the write."""
+    admin behind it (name AND id, in the typed actor columns), the login it
+    was made as, what was sent and how it ended — through the one audit
+    call, admin_events.record_admin_action, so the fleet audit filters by
+    the admin find it. Never raises — the record must not break the write."""
     if not ctx:
         return
     try:
         import admin_events
         who = ctx.get("acting_admin") or f"admin #{ctx.get('acting_admin_id')}"
-        admin_events.record(
-            "admin", "view_as_write", restaurant_id=ctx.get("restaurant_id"),
-            summary=f"{who} (viewing as {ctx.get('as_username')}) {request.method} {request.path} → {status}",
-            payload={"actor_id": ctx.get("acting_admin_id"), "actor": ctx.get("acting_admin"),
-                     "actor_role": ctx.get("acting_admin_role"), "as_user_id": ctx.get("as_user_id"),
-                     "as_username": ctx.get("as_username"), "method": request.method, "path": request.path,
-                     "endpoint": request.endpoint, "status": status,
-                     "result": "ok" if int(status) < 400 else ("denied" if int(status) in (401, 403) else "error"),
-                     "ip": request.remote_addr})
+        code = int(status)
+        admin_events.record_admin_action(
+            {"id": ctx.get("acting_admin_id"), "username": who}, "view_as_write",
+            restaurant_id=ctx.get("restaurant_id"), target=f"user:{ctx.get('as_user_id')}",
+            after={"actor_role": ctx.get("acting_admin_role"), "as_user_id": ctx.get("as_user_id"),
+                   "as_username": ctx.get("as_username"), "method": request.method, "path": request.path,
+                   "endpoint": request.endpoint, "status": code},
+            result="ok" if code < 400 else ("denied" if code in (401, 403) else "error"),
+            summary=f"{who} (viewing as {ctx.get('as_username')}) {request.method} {request.path} → {status}")
     except Exception:
         pass
 
@@ -4415,6 +4446,27 @@ def reauth_is_recent(user, minutes: int = RECENT_AUTH_MINUTES) -> bool:
     return timedelta(minutes=-1) <= age <= timedelta(minutes=minutes)
 
 
+def reauth_refusal(user=None, minutes: int = RECENT_AUTH_MINUTES):
+    """The step-up's answer — 403 {reauth_required: true} — when this
+    session's password was not typed in the last `minutes`, else None.
+
+    recent_auth_required is this as a decorator. A route that needs the
+    step-up for only some of what it does calls it directly: the legacy
+    settings save when a payload changes the billing status, a module or the
+    owner email; the review-account seed when it rotates the password; an
+    offboarding step that acts on Stripe, DocuSign or the stored
+    credentials. One answer, so the console's reauth prompt handles all of
+    them the same way."""
+    if user is None:
+        user = get_current_user()
+    if reauth_is_recent(user, minutes):
+        return None
+    from flask import jsonify as _jsonify_ra
+    return _jsonify_ra(ok=False, reauth_required=True, reauth_url="/admin/api/reauth",
+                       window_minutes=minutes,
+                       error="Enter your password again to do this."), 403
+
+
 def recent_auth_required(minutes: int = RECENT_AUTH_MINUTES):
     """Step-up for a sensitive admin action (owner decision, 9/29/26):
     refused with 403 {reauth_required: true} unless this session's password
@@ -4433,14 +4485,9 @@ def recent_auth_required(minutes: int = RECENT_AUTH_MINUTES):
     def deco(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
-            user = kwargs.get("current_user")
-            if user is None:
-                user = get_current_user()
-            if not reauth_is_recent(user, minutes):
-                from flask import jsonify as _jsonify_ra
-                return _jsonify_ra(ok=False, reauth_required=True, reauth_url="/admin/api/reauth",
-                                   window_minutes=minutes,
-                                   error="Enter your password again to do this."), 403
+            refused = reauth_refusal(kwargs.get("current_user"), minutes)
+            if refused:
+                return refused
             return f(*args, **kwargs)
         return wrapped
     return deco

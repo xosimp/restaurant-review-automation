@@ -331,12 +331,14 @@ def test_staff_note_routes_add_and_say_what_they_removed(admin, db_path):
     assert gone["deleted"] == {"employee_name": "Maria", "notes": "mornings only; no Sundays", "restaurant_id": rid}
     assert _post(admin, f"/admin/staff-notes/{second.get_json()['id']}/delete").status_code == 404
     conn = models.get_conn(db_path)
-    rows = conn.execute("SELECT event_type, restaurant_id, payload FROM admin_events WHERE event_type LIKE "
-                        "'staff_note.%' ORDER BY id").fetchall()
+    rows = conn.execute("SELECT event_type, restaurant_id, actor, before_json, after_json FROM admin_events "
+                        "WHERE event_type LIKE 'staff_note.%' ORDER BY id").fetchall()
     conn.close()
     assert [r["event_type"] for r in rows] == ["staff_note.saved", "staff_note.saved", "staff_note.removed"]
-    assert all(r["restaurant_id"] == rid for r in rows)
-    assert json.loads(rows[-1]["payload"])["removed"] == "mornings only; no Sundays"
+    assert all(r["restaurant_id"] == rid and r["actor"] == "will" for r in rows)
+    # Typed before/after (integration wave: the one audit call, record_admin_action).
+    assert json.loads(rows[-1]["before_json"])["notes"] == "mornings only; no Sundays"
+    assert json.loads(rows[-1]["after_json"]) == {"notes": None}
 
 
 @pytest.mark.parametrize("field,value", [("par_level", "abc"), ("unit_cost", "NaN"), ("current_stock", -2),

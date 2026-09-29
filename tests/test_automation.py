@@ -305,7 +305,7 @@ def test_default_thresholds_come_from_the_baseline_and_the_owner_still_wins(db_p
 def test_a_checkout_with_no_match_provisions_the_restaurant_and_welcomes_the_owner(db_path, monkeypatch):
     import provisioning, emails, billing_jobs
     welcomed = {}
-    monkeypatch.setattr(emails, "send_signed_welcome_email",
+    monkeypatch.setattr(emails, "send_welcome_with_set_password_link",
                         lambda **kw: welcomed.update(kw) or emails.SendResult(True))
     monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
     import auth
@@ -321,7 +321,11 @@ def test_a_checkout_with_no_match_provisions_the_restaurant_and_welcomes_the_own
     # Fix round H (#12): the welcome is owed, then sent by the outbox with a
     # set-password link — no password is emailed, or stored.
     billing_jobs.run_owed_sends()
-    assert welcomed["username"] == "new.owner" and "/reset-password/" in welcomed["set_password_url"]
+    # THE welcome (emails.send_welcome_with_set_password_link) is handed the
+    # new login and mints its own set-password link — never a password.
+    login = models.get_conn(db_path).execute("SELECT username FROM users WHERE id=?",
+                                             (welcomed["user_id"],)).fetchone()
+    assert login["username"] == "new.owner" and welcomed["restaurant_id"] == rid
     assert "password" not in welcomed
     assert not r.temp_password                                   # never stored (security audit A3)
     # The same email again is a reconciliation, not a provisioning.

@@ -3,7 +3,7 @@ square_routes.py — Flask routes for Square POS integration
 Blueprint: square_bp
 """
 from flask import Blueprint, request, jsonify
-from auth import admin_required, login_required
+from auth import admin_required, login_required, recent_auth_required
 from models import update_restaurant
 
 square_bp = Blueprint("square", __name__)
@@ -19,6 +19,7 @@ _admin_events.register_audit(square_bp)
 
 @square_bp.route("/admin/square/save/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def admin_save_square(restaurant_id, current_user):
     data         = request.get_json(force=True) or {}
     access_token = (data.get("access_token") or "").strip()
@@ -45,34 +46,44 @@ def admin_save_square(restaurant_id, current_user):
         "square_sync_error":   None,
         "pos_system":          "Square",
     })
+    # Booleans only: never a credential value in the audit trail.
+    _admin_events.record_admin_action(
+        current_user, "pos.square.saved", restaurant_id=restaurant_id, target="integration:square",
+        before={"connected": bool(getattr(r, "square_access_token", None))}, after={"connected": True})
     return jsonify(ok=True, message="Square credentials saved")
 
 
 @square_bp.route("/admin/square/sync/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def admin_sync_square(restaurant_id, current_user):
-    from square import is_connected, sync_to_db
+    """A background sync through pos.sync_restaurant on the bounded admin
+    pool (scheduler.start_manual_pos_sync), as Toast's and RPOWER's are
+    (#65): a direct sync_to_db on an unbounded thread per click skipped the
+    Data Health ledger, so the issue it was pressed to clear never cleared.
+    Returns a job id to poll (GET /admin/api/tasks/<job_id>)."""
+    from square import is_connected
     if not is_connected(restaurant_id):
         return jsonify(ok=False, error="Square not connected for this restaurant")
-    import threading
-    def _run():
-        try:
-            sync_to_db(restaurant_id)
-        except Exception as e:
-            print(f"[square_routes] sync error rid={restaurant_id}: {e}")
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify(ok=True, message="Sync started")
+    import scheduler
+    job_id, _joined = scheduler.start_manual_pos_sync(restaurant_id, current_user.get("username") or "admin")
+    return jsonify(ok=True, job_id=job_id, message="Sync started")
 
 
 @square_bp.route("/admin/square/disconnect/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def admin_disconnect_square(restaurant_id, current_user):
+    from models import get_restaurant
+    was = get_restaurant(restaurant_id)
     update_restaurant(restaurant_id, {
         "square_access_token": None,
         "square_location_id":  None,
         "square_last_synced":  None,
         "square_sync_error":   None,
     })
+    _admin_events.record_admin_action(
+        current_user, "pos.square.disconnected", restaurant_id=restaurant_id, target="integration:square",
+        before={"connected": bool(getattr(was, "square_access_token", None))}, after={"connected": False})
     return jsonify(ok=True, message="Square disconnected")
 
 
@@ -105,6 +116,10 @@ def client_save_square(current_user):
     location_id  = (data.get("location_id") or "").strip()
     if not access_token or not location_id:
         return jsonify(ok=False, error="Access token and location ID are required.")
+    from models import owner_pos_binding_refusal
+    refusal = owner_pos_binding_refusal("square", location_id, current_user["restaurant_id"])
+    if refusal:
+        return jsonify(ok=False, error=refusal), 409
     from square import test_credentials
     result = test_credentials(access_token, location_id)
     if not result["ok"]:
@@ -121,18 +136,14 @@ def client_save_square(current_user):
 @square_bp.route("/api/square/sync", methods=["POST"])
 @login_required
 def client_sync_square(current_user):
-    from square import is_connected, sync_to_db
+    from square import is_connected
     rid = current_user["restaurant_id"]
     if not is_connected(rid):
         return jsonify(ok=False, error="Square is not connected yet.")
-    import threading
-    def _run():
-        try:
-            sync_to_db(rid)
-        except Exception as e:
-            print(f"[square_routes] client sync error rid={rid}: {e}")
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify(ok=True, message="Sync started — labor data refreshes in ~30 seconds")
+    # The same path as the console's button and the nightly sync (#65).
+    import scheduler
+    job_id, _joined = scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
+    return jsonify(ok=True, job_id=job_id, message="Sync started — labor data refreshes in ~30 seconds")
 
 
 @square_bp.route("/api/square/disconnect", methods=["POST"])

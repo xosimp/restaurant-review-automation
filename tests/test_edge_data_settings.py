@@ -423,10 +423,15 @@ def test_a_location_switch_does_not_clear_other_restaurants_home_briefs(app):
 
 # ── DATA-30 · resend-contract then sign the first envelope ──────────────────
 
-def _admin_client(app):
+def _admin_client(app, monkeypatch):
+    """A fresh password sign-in (the step-up's stamp: resend-welcome and
+    friends need it), on a server that may send — resend-contract and the
+    welcome are refused on a local backend (integration wave)."""
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    monkeypatch.delenv("RESTORE_FROM", raising=False)
     admin_rid = _restaurant("Cavnar HQ", owner_email="will@x.test")
     uid = create_user(admin_rid, "will", "will@x.test", "admin-pass-1", is_admin=True)
-    return _web(app, create_session(uid))
+    return _web(app, create_session(uid, password_verified_at=True))
 
 
 def test_a_signature_on_an_earlier_envelope_still_completes_onboarding(app, monkeypatch):
@@ -444,7 +449,7 @@ def test_a_signature_on_an_earlier_envelope_still_completes_onboarding(app, monk
                         or {"ok": True, "status": "sent", "resendable": True})
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "client-pass-1")
-    admin = _admin_client(app)
+    admin = _admin_client(app, monkeypatch)
 
     # The admin double-clicks Resend contract. Fix round H (#26): that is one
     # envelope, re-sent — a resend no longer mints a second envelope.
@@ -524,7 +529,7 @@ def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
     sent = []
     monkeypatch.setattr(emails, "deliver", lambda **k: sent.append(k))
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
-    admin = _admin_client(app)
+    admin = _admin_client(app, monkeypatch)
 
     for _ in range(2):
         assert admin.post(f"/admin/resend-payment/{rid}").get_json()["ok"] is True
@@ -546,9 +551,12 @@ def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_link_working(a
     monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     emailed = []
     monkeypatch.setattr(emails, "deliver", lambda **k: emailed.append(k) or emails.SendResult(True))
+    # The one welcome (emails.send_welcome_with_set_password_link) mints its
+    # link only where email is configured.
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "client-pass-1")
-    admin = _admin_client(app)
+    admin = _admin_client(app, monkeypatch)
 
     for _ in range(2):
         assert admin.post(f"/admin/resend-welcome/{rid}").get_json()["ok"] is True

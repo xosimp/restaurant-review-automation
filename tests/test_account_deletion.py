@@ -96,12 +96,14 @@ def test_first_request_notifies_will_logs_the_event_and_returns_a_timestamp(clie
     token = _login(client, db_path, rid)
     sent = {}
     monkeypatch.setattr("emails.send_account_deletion_request_email",
-                        lambda name, owner, email, at: sent.update(name=name, owner=owner, email=email, at=at) or True)
+                        lambda name, owner, email, at, restaurant_id=None: sent.update(name=name, owner=owner, email=email, at=at,
+                                                                              restaurant_id=restaurant_id) or True)
     resp = client.post("/mobile/api/account/request-deletion", headers=_hdr(token))
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["ok"] is True and body["requested_at"]
     assert sent["name"] == "Close Test Co" and sent["owner"] == "Erik" and sent["email"] == "alice@x.com"
+    assert sent["restaurant_id"] == rid                    # logged against the restaurant (#119)
     assert sent["at"] == body["requested_at"]
     conn = get_conn(db_path)
     row = conn.execute("SELECT event_type FROM activity_log WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
@@ -114,7 +116,7 @@ def test_second_request_does_not_send_a_second_email_or_move_the_timestamp(clien
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     calls = []
-    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a: calls.append(a) or True)
+    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a, **k: calls.append(a) or True)
     first = client.post("/mobile/api/account/request-deletion", headers=_hdr(token)).get_json()
     second = client.post("/mobile/api/account/request-deletion", headers=_hdr(token)).get_json()
     assert len(calls) == 1, "re-tapping the button must not re-notify Will"
@@ -127,7 +129,7 @@ def test_a_reader_failure_still_records_the_request(client, db_path, monkeypatch
     monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
-    def _boom(*a):
+    def _boom(*a, **k):
         raise RuntimeError("resend is down")
     monkeypatch.setattr("emails.send_account_deletion_request_email", _boom)
     resp = client.post("/mobile/api/account/request-deletion", headers=_hdr(token))
@@ -138,7 +140,7 @@ def test_a_reader_failure_still_records_the_request(client, db_path, monkeypatch
 def test_account_summary_reflects_a_pending_request(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a: True)
+    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a, **k: True)
     before = client.get("/mobile/api/account", headers=_hdr(token)).get_json()
     assert before["profile"]["deletion_requested_at"] is None
     requested_at = client.post("/mobile/api/account/request-deletion", headers=_hdr(token)).get_json()["requested_at"]
@@ -149,7 +151,7 @@ def test_account_summary_reflects_a_pending_request(client, db_path, monkeypatch
 def test_request_is_scoped_to_the_caller_own_restaurant_over_http(client, db_path, monkeypatch):
     rid1 = _restaurant(db_path, name="Co One")
     rid2 = _restaurant(db_path, name="Co Two")
-    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a: True)
+    monkeypatch.setattr("emails.send_account_deletion_request_email", lambda *a, **k: True)
     token1 = _login(client, db_path, rid1, username="one")
     client.post("/mobile/api/account/request-deletion", headers=_hdr(token1))
     token2 = _login(client, db_path, rid2, username="two")

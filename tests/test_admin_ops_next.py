@@ -184,7 +184,10 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
     app = Flask(__name__, template_folder="../templates")
     app.register_blueprint(admin_bp); app.register_blueprint(auth_bp)
     cl = app.test_client()
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": None, "is_admin": 1, "username": "will", "email": "x@x.com", "role": "admin"})
+    # reauth_at: the demo flag needs the step-up (integration wave), and this
+    # admin typed the password just now.
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": None, "is_admin": 1, "username": "will", "email": "x@x.com", "role": "admin",
+                                                           "reauth_at": auth.sql_utc()})
     # Marking a demo needs the restaurant's typed name (fix round B2, #118).
     assert cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1}).status_code == 400
     r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1, "confirm_name": "Cap Test Grill"})
