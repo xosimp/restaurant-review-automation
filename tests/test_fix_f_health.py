@@ -154,13 +154,18 @@ def test_a_held_write_lock_reads_busy_and_degraded_not_down(db, monkeypatch):
 
 
 def test_the_write_probe_writes_nothing(db):
-    before = sqlite3.connect(db).execute("PRAGMA data_version").fetchone()[0]
+    """data_version changes, for every other connection, whenever a
+    connection commits a change to the file."""
     watcher = sqlite3.connect(db)
     v0 = watcher.execute("PRAGMA data_version").fetchone()[0]
     assert sm.db_write_probe(db_path=db)["state"] == "ok"
     assert watcher.execute("PRAGMA data_version").fetchone()[0] == v0, "BEGIN IMMEDIATE + ROLLBACK committed nothing"
+    writer = sqlite3.connect(db)
+    writer.execute("INSERT INTO status_incidents (title) VALUES ('control')")
+    writer.commit()
+    writer.close()
+    assert watcher.execute("PRAGMA data_version").fetchone()[0] != v0, "control: a real commit is seen"
     watcher.close()
-    assert before is not None
 
 
 def test_a_database_that_cannot_take_a_write_is_a_500(db, monkeypatch):
