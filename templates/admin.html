@@ -1736,7 +1736,7 @@ function cData(c, d){
       ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Job',key:'job'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red-t)">${esc(r.error||'')}</span>`}], d.jobs, {id:'cjobs-t', limit:10, empty:'No job failures mention this client.'})}
       ${(d.ai_quality||[]).length ? table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'AI check',key:'job'},{h:'Finding',key:'error',wrap:true,cell:r=>`<span class="dim">${esc(r.error||'')}</span>`}], d.ai_quality, {id:'caiq-t', limit:10}) : ''}
       ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Event',key:'event_type'},{h:'Result',cell:r=>r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.webhook_deliveries, {id:'chook-t', limit:10, empty:'No webhook configured or no deliveries yet.'})}</div></details>`,
-    after: () => { lazy('cd-contacts', () => contactsHtml(c)); lazy('cd-templates', () => templatesHtml(c)); }};
+    after: () => { lazy('cd-contacts', () => contactsHtml(c)); lazy('cd-templates', () => templatesHtml(c)); lazy('cd-menunotes', () => menuNotesHtml(c)); }};
 }
 async function reviewsFetching(id, name, on){
   if(!confirm((on ? 'Turn on review fetching for ' : 'Turn off review fetching for ') + name + '?' + (on ? ' Reviews are fetched at 8am, noon, 4pm and 8pm Central.' : ' No new reviews arrive until it is turned back on.'))) return;
@@ -1802,13 +1802,87 @@ async function staffNoteDelete(id, nid, who, name){
   route();
   if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes);
 }
-// Menu extraction (#142, #153): a background job whose text comes back to
-// review; nothing is saved here. The notes are saved from Settings.
+// Menu (#73, #142, #153). The menu notes the AI writes from, edited here: read
+// from the client's settings (INT-2's GET …/settings) and saved under B1's
+// contract — only this field, with the version and the value it loaded at
+// (`expected_version`, `base`), so a save never reverts anybody else's edit.
+// A 409 refills the box with what is stored now and keeps the admin's own
+// text beside it to put back: nothing typed is lost, and nothing is saved
+// over someone else's change by a second click. Extraction is a background
+// job whose text comes back to review; it goes into the notes only when
+// asked, and is saved only with Save.
 function menuHtml(c, p){
-  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Menu</h2><a href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Menu notes in Settings</a></div>
-    <span class="muted" style="font-size:12.5px">Pull the dishes from Google, a menu page or a PDF. The text comes back here to review — nothing is saved until you save it in Settings.</span>
+  return `<h2>Menu</h2>
+    <div class="w" id="cd-menunotes" style="display:flex;flex-direction:column;gap:8px">${skel(2)}</div>
+    <span class="muted" style="font-size:12.5px">Pull the dishes from Google, a menu page or a PDF. The text comes back here to review — nothing is saved until you save the menu notes.</span>
     <div style="display:flex;gap:6px;flex-wrap:wrap">${p.google_place_id?`<button class="btn s w" onclick="menuExtract(${c.id},'places')">From Google</button>`:''}<input id="mx-url" placeholder="https://… menu page" style="flex:1;min-width:150px"><button class="btn s w" onclick="menuExtract(${c.id},'url')">From the page</button><label class="btn s w" style="cursor:pointer">From a PDF<input type="file" id="mx-pdf" accept="application/pdf" hidden onchange="menuExtract(${c.id},'pdf')"></label></div>
     <div id="mx-out"></div>`;
+}
+const MENU_NOTES_MAX = 2000;           // admin_routes: menu_notes is cut at 2,000 characters
+let _mn = null;
+async function menuNotesHtml(c){
+  const d = await need('/admin/api/client/' + c.id + '/settings');
+  const s = d.settings || {};
+  _mn = {id: c.id, name: c.name, version: d.version, base: s.menu_notes == null ? null : s.menu_notes,
+         url: d.save_url || ('/admin/client-settings/' + c.id), mine: null};
+  return `<label class="lbl" for="mn-text">Menu notes</label>
+    <textarea id="mn-text" rows="6" maxlength="${MENU_NOTES_MAX}" style="width:100%" placeholder="Signature dishes, current specials — what the AI should know about the menu" oninput="mnCount()">${esc(_mn.base || '')}</textarea>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn s w" id="mn-save" onclick="mnSave()">Save menu notes</button><span class="dim" id="mn-count">${mnCountText(_mn.base || '')}</span><span id="mn-status" role="status" style="font-size:12.5px"></span></div>
+    <div id="mn-mine"></div>`;
+}
+function mnCountText(v){ return fmtN(v.length) + ' / ' + fmtN(MENU_NOTES_MAX) + (_mn && v.trim() !== String(_mn.base || '').trim() ? ' · not saved' : ''); }
+function mnCount(){ const t = $('mn-text'), n = $('mn-count'); if(t && n) n.textContent = mnCountText(t.value); }
+function mnSay(tone, msg){ const st = $('mn-status'); if(!st) return; st.textContent = msg; st.style.color = tone === 'good' ? 'var(--green-t)' : (tone === 'bad' ? 'var(--red-t)' : ''); }
+async function mnSave(){
+  const t = $('mn-text'), m = _mn;
+  if(!t || !m) return;
+  const v = t.value.trim();
+  if(v === String(m.base || '').trim()){ mnSay('', 'Nothing changed.'); return; }
+  $('mn-save').disabled = true; mnSay('', 'Saving…');
+  let d; try{ d = await post(m.url, {menu_notes: v, expected_version: m.version, base: {menu_notes: m.base}}); }catch(e){ d = null; }
+  if($('mn-save')) $('mn-save').disabled = false;
+  if(_mn !== m || !$('mn-text')) return;                 // the admin has moved on
+  if(!d){ mnSay('bad', 'No answer from the server — the outcome is unknown. Reload before saving again.'); return; }
+  if(okRes(d)){
+    const saved = (d.saved || {}).menu_notes;
+    m.base = saved == null ? null : saved; m.version = d.version; m.mine = null;
+    $('mn-text').value = m.base || ''; $('mn-mine').innerHTML = ''; mnCount();
+    mnSay('good', (m.base || '') === v ? 'Saved for ' + m.name + '.' : 'Saved for ' + m.name + ' — as the box now shows (tags are removed, and anything past ' + fmtN(MENU_NOTES_MAX) + ' characters is cut).');
+    return;
+  }
+  if(d._status === 409){
+    // Somebody changed the notes since they loaded: refill with what is stored
+    // now (the 409 carries it; a race lost at the write itself doesn't, so
+    // read it again) and keep this text to put back.
+    const cur = d.current || {};
+    if(Object.prototype.hasOwnProperty.call(cur, 'menu_notes') && d.current_version != null){ m.base = cur.menu_notes; m.version = d.current_version; }
+    else {
+      let f; try{ f = await api('/admin/api/client/' + m.id + '/settings', {method:'GET'}); }catch(e){ f = null; }
+      if(okRes(f)){ m.base = (f.settings || {}).menu_notes; m.version = f.version; }
+      else { mnSay('bad', errText(d) + ' The notes stored now couldn\'t be read — reload the page.'); return; }
+    }
+    if(_mn !== m || !$('mn-text')) return;
+    m.mine = v; $('mn-text').value = m.base || ''; mnCount();
+    $('mn-mine').innerHTML = `<div class="warnline" style="flex-direction:column;align-items:stretch;margin:0"><span>Your text, not saved:</span><span class="pre ink2" style="max-height:140px;overflow:auto">${esc(v)}</span><span><button class="btn s w" onclick="mnPutBack()">Put mine back in the box</button></span></div>`;
+    mnSay('bad', 'Not saved — someone changed the menu notes for ' + m.name + ' since they loaded. The box now shows what is stored.');
+    return;
+  }
+  mnSay('bad', errText(d));
+}
+// After a conflict: the admin's own text back in the box, against the version
+// now stored — the next Save replaces the other change, on purpose.
+function mnPutBack(){
+  const t = $('mn-text'); if(!t || !_mn || _mn.mine == null) return;
+  t.value = _mn.mine; _mn.mine = null; $('mn-mine').innerHTML = ''; mnCount();
+  mnSay('', 'Your text is back in the box. Save replaces what is stored now.'); t.focus();
+}
+// An extraction's text into the notes box, to review before Save.
+function mnUse(){
+  const t = $('mn-text'), x = $('mx-text'); if(!t || !x) return;
+  const long = x.value.length > MENU_NOTES_MAX;
+  t.value = x.value.slice(0, MENU_NOTES_MAX); mnCount();
+  mnSay('', 'The extracted menu is in the box — review it, then Save menu notes.' + (long ? ' Cut to ' + fmtN(MENU_NOTES_MAX) + ' characters, the most the notes keep.' : ''));
+  t.focus();
 }
 async function menuExtract(id, source){
   const out = $('mx-out'); let d;
@@ -1820,7 +1894,10 @@ async function menuExtract(id, source){
   const r = await pollJob('/admin/api/menu-extract/' + encodeURIComponent(d.job_id));
   if(!$('mx-out')) return;
   if(!okRes(r) || !r.menu_notes){ $('mx-out').innerHTML = `<div class="warnline">${esc(errText(r, 'Nothing came back'))}</div>`; return; }
-  $('mx-out').innerHTML = `<textarea id="mx-text" rows="8" style="width:100%">${esc(r.menu_notes)}</textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn s" onclick="navigator.clipboard&&navigator.clipboard.writeText($('mx-text').value).then(()=>toast('Copied','good'))">Copy</button><a class="btn s p" href="/admin/client-settings/${id}">Open Settings to save it</a><span class="dim">Not saved.${r.message?' '+esc(r.message):''}</span></div>`;
+  // Into the notes box above when it loaded for this client; the legacy
+  // settings page only when it couldn't be read.
+  const box = _mn && _mn.id === id && $('mn-text');
+  $('mx-out').innerHTML = `<textarea id="mx-text" rows="8" style="width:100%">${esc(r.menu_notes)}</textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn s" onclick="navigator.clipboard&&navigator.clipboard.writeText($('mx-text').value).then(()=>toast('Copied','good'))">Copy</button>${box ? '<button class="btn s w" onclick="mnUse()">Put it in the menu notes</button>' : `<a class="btn s w" href="/admin/client-settings/${id}">Open Settings to save it</a>`}<span class="dim">Not saved.${r.message?' '+esc(r.message):''}</span></div>`;
 }
 // ── the client's Messages & AI tab ──
 function cMessages(c, d){
@@ -1831,11 +1908,12 @@ function cMessages(c, d){
       <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Send</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="testSend('digest',${c.id},'${n}','${em}')">Test digest…</button><button class="btn s w" onclick="testSend('urgent',${c.id},'${n}','${em}')">Test urgent alert…</button><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="valueRecap(${c.id},'${n}','${em}')">Value recap…</button></div><span class="dim">A test goes to the owner, or to you — you choose each time.</span></div>
         <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-sup"><h2>Suppressed addresses</h2>${skel(2)}</div></div></section>`,
     after: () => lazy('cm-sup', () => suppressionsHtml(c))};
-  if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>`,
+  if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>
+      <section class="card" style="overflow:hidden">${issueTextsHtml(d.issue_texts, readErr(d, ['ops_issues']), false)}</section>`,
     after: () => lazy('cm-sms', () => smsHtml(c))};
   if(_cmsg === 'push') return {html: seg + `<section class="split">
       <div class="stack"><div class="lbl">Push deliveries</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Status',cell:r=>r.ok?'<span class="b ok nodot">delivered</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.pushes, {id:'cpush-t', limit:15, empty:'No pushes yet.'})}
-        <div class="lbl">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', limit:15, empty:'No alerts yet.'})}</div>
+        <div class="lbl">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Went out on',key:'channels',cell:r=>chanCell(r.channels)},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', limit:15, empty:'No alerts yet.'})}</div>
       <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Daily alert cap</h2>${c.alert_cap?pill('good','capped · '+c.alert_cap+'/day'):pill('neu','off',false)}</div><span class="muted" style="font-size:13px">${c.alert_cap?`At most <span class="n">${c.alert_cap}</span> alerts a day reach this client; the rest are logged. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`:`Every alert sends. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`}</span><div style="display:flex;gap:8px"><button class="btn s w" onclick="capOpen(${c.id},'${jsq(c.name||'')}',${c.alert_cap||0})">${c.alert_cap?'Change cap':'Cap alerts'}</button>${c.alert_cap?`<button class="btn s g w" onclick="capSet(${c.id},0,'${n}')">Remove cap</button>`:''}</div></div>
         <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-storm"><h2>Storm cap</h2>${skel(1)}</div>
         <div class="lbl">Devices</div>${table([{h:'User',key:'user_id',cell:r=>esc(loginName(c, r.user_id))},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — notifications not allowed on the app yet.'})}
@@ -2426,7 +2504,23 @@ function opsJobs(d){
 // A bounce or a complaint is not a delivery (#59); "today" is midnight
 // Central against email_log's UTC stamps (#89); counts are over the full
 // set, never the newest 50 (#160).
-function rateCell(label, r, key, warnPct, critPct){
+
+// One window's delivery (#59), read as a sum: accepted is what Resend took —
+// delivered + in flight + bounced + complaints — and the rates divide by it.
+// In flight (sent or delayed, no outcome reported yet) sits apart from
+// delivered and bounced; failed never reached Resend and is in no rate. A
+// window whose read failed is unknown.
+function deliveryFig(n, word, tip){ return `<span${tip ? ` title="${esc(tip)}"` : ''}><span class="n">${fmtN(n)}</span> <span class="dim">${word}</span></span>`; }
+function deliveryRow(label, w, err){
+  return `<div style="display:grid;grid-template-columns:70px repeat(6,minmax(0,1fr));gap:8px;font-size:12.5px;align-items:baseline"><span class="lbl">${label}</span>${w
+    ? deliveryFig(w.accepted, 'accepted', 'What Resend took — the bounce and complaint rates divide by this') + deliveryFig(w.delivered, 'delivered')
+      + deliveryFig(w.in_flight, 'in flight', 'Resend took it and has not reported delivery, a bounce or a complaint yet — counted as accepted, so the rates can read low until these settle')
+      + deliveryFig(w.bounces, 'bounced') + deliveryFig(w.complaints, w.complaints === 1 ? 'complaint' : 'complaints') + deliveryFig(w.failed, 'failed', 'Never accepted by Resend — in no rate')
+    : `<span style="grid-column:span 6">${err ? unknownV(err) : '—'}</span>`}</div>`;
+}
+function rateCell(label, r, key, warnPct, critPct, err){
+  // A window whose read failed (email_delivery_stats) is unknown, not a dash.
+  if(!r && err) return stripDiv(label, unknownV(err), "couldn't be read");
   const v = r ? r[key + '_rate'] : null, n = r ? r[key === 'bounce' ? 'bounces' : 'complaints'] : null;
   const tone = v == null || !(r && r.enough) ? '' : (v >= critPct ? 'color:var(--red-t)' : v >= warnPct ? 'color:var(--amber-t)' : '');
   return stripDiv(label, v == null ? '—' : v + '<small>%</small>', r ? (r.enough ? `${fmtN(n)} of ${fmtN(r.accepted)} · warn ${warnPct}%, critical ${critPct}%` : `too few sends to judge (${fmtN(r.accepted)})`) : '—', tone);
@@ -2438,6 +2532,7 @@ function opsEmail(d, mh){
   const types = [...new Set(d.rows.map(r => r.email_type))];
   const rows = d.rows.filter(r => _ef === 'all' || (_ef === 'failed' ? ['failed', 'bounced', 'complained'].indexOf(r.status) >= 0 : r.email_type === _ef));
   const t = d.today || {}, rates = d.rates || {}, th = rates.thresholds || {}, r7 = rates['7d'], r30 = rates['30d'];
+  const rE = readErr(d, ['email_delivery_stats']);
   const rw = d.resend_webhook, mx = Math.max(1, ...d.by_type.map(x => x.n));
   const undeliverable = (t.failed || 0) + (t.bounced || 0) + (t.complained || 0);
   const hooks = mhE ? null : (mh.inbound_webhooks || {});
@@ -2452,8 +2547,8 @@ function opsEmail(d, mh){
     <section class="card strip">
       ${stripDiv('Sent today', figOr(d, ['email_log'], fmtN(t.sent)), 'accepted, not bounced · since midnight Central')}
       ${stripDiv('Undeliverable today', figOr(d, ['email_log'], fmtN(undeliverable)), undeliverable ? `${fmtN(t.failed)} failed · ${fmtN(t.bounced)} bounced · ${fmtN(t.complained)} complained` : 'none', undeliverable ? 'color:var(--red-t)' : '')}
-      ${rateCell('Bounce rate · 7 days', r7, 'bounce', th.bounce_warn_pct, th.bounce_crit_pct)}
-      ${rateCell('Complaints · 7 days', r7, 'complaint', th.complaint_warn_pct, th.complaint_crit_pct)}
+      ${rateCell('Bounce rate · 7 days', r7, 'bounce', th.bounce_warn_pct, th.bounce_crit_pct, rE)}
+      ${rateCell('Complaints · 7 days', r7, 'complaint', th.complaint_warn_pct, th.complaint_crit_pct, rE)}
       ${stripDiv('Suppressed', figOr(d, ['email_suppressions'], fmtN(d.suppressed_total)), (d.suppressed_by || []).slice(0, 2).map(s => esc(s.scope) + ' · ' + esc(s.reason) + ' ' + fmtN(s.n)).join(' · ') || 'no address', d.suppressed_total ? 'color:var(--amber-t)' : '')}
       ${stripDiv('Resend webhook', rw && rw.last_verified_at ? ago(rw.last_verified_at) + '<small> ago</small>' : 'never', rw ? (rw.problem ? `<span style="color:var(--red-t)">${fmtN(rw.failures_24h)} signature failures · 24h</span>` : (rw.stale ? 'no verified event in a day while mail went out' : 'last verified event · ' + esc(rw.source || ''))) : 'not recorded', rw && (rw.problem || rw.stale) ? 'color:var(--red-t)' : '')}
     </section>
@@ -2464,7 +2559,8 @@ function opsEmail(d, mh){
     </section>
     <section class="grid g2">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Delivery · 7 and 30 days</h2><span class="muted" style="font-size:12px">a rate needs ${fmtN(th.min_sends)} accepted sends</span></div>
-        ${[['7 days', r7], ['30 days', r30]].map(p => p[1] ? `<div style="display:grid;grid-template-columns:70px repeat(5,minmax(0,1fr));gap:8px;font-size:12.5px;align-items:baseline"><span class="lbl">${p[0]}</span><span><span class="n">${fmtN(p[1].accepted)}</span> <span class="dim">accepted</span></span><span><span class="n">${fmtN(p[1].delivered)}</span> <span class="dim">delivered</span></span><span><span class="n">${fmtN(p[1].failed)}</span> <span class="dim">failed</span></span><span><span class="n">${fmtN(p[1].bounces)}</span> <span class="dim">bounced</span></span><span><span class="n">${fmtN(p[1].complaints)}</span> <span class="dim">complaints</span></span></div>` : '').join('')}</div>
+        ${deliveryRow('7 days', r7, rE)}${deliveryRow('30 days', r30, rE)}
+        <span class="muted" style="font-size:12px">Accepted = delivered + in flight + bounced + complaints, and the rates divide by it. In flight: Resend has it but hasn't reported delivery, a bounce or a complaint yet${r7 && r7.in_flight ? ` — <span class="n">${fmtN(r7.in_flight)}</span> in 7 days, so the 7-day rates may still rise` : ''}. Failed never reached Resend.</span></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Inbound webhooks</h2>
         ${hooks ? (Object.keys(hooks).length ? Object.keys(hooks).map(p => { const hk = hooks[p]; return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(HOOK[p] || p)}</span><span>${hk.failing ? pill('bad', fmtN(hk.failed_since_verified) + ' refused since the last good one') : hk.stale ? pill('warn', 'nothing verified in 24h') : pill('good', 'verified ' + agoWord(hk.last_verified_at))}</span></div>${hk.failing && hk.last_failure_reason ? `<span class="dim" style="font-size:12px">${esc(hk.last_failure_reason)}</span>` : ''}`; }).join('') : '<span class="muted" style="font-size:13px">No webhook has called in yet.</span>') : unknownV(mhE)}</div>
     </section>
@@ -2503,9 +2599,43 @@ async function supReinstate(email, scope){
   await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
 }
 
+// Which channels an alert really went out on (#14) — alert_log.channels,
+// "sms,email,push" as they went (push = queued to the phones; each delivery
+// is in the push log) or "none". Blank on a row from before it was recorded,
+// or from a path that doesn't record it (a sign-in alert, the morning batch):
+// a dash, never a guess. Used by Push & alerts and the client page.
+const CHAN_LABEL = {sms:'text', email:'email', push:'push'};
+function chanCell(ch){
+  if(ch == null || ch === '') return '<span class="dim" title="Not recorded for this alert">—</span>';
+  if(ch === 'none') return '<span class="chip warn" title="Raised, but it went out on no channel: every channel was off or had nobody to reach">none</span>';
+  return String(ch).split(',').filter(Boolean).map(c => `<span class="chip"${c === 'push' ? ' title="Queued to the phones — each delivery is in the push log"' : ''}>${esc(CHAN_LABEL[c] || c)}</span>`).join('');
+}
+// Issue texts (#91): the text that tells an issue's assignee. Tried up to four
+// times (5, 15 and 45 minutes apart); on a permanent error or the fourth
+// failure it is given up on and the owner gets a push and an email about the
+// issue instead. A given-up text is red with its reason; a read that failed
+// is unknown, never "none given up". `fleet` adds each row's client. Used by
+// Push & alerts (notifications.issue_texts) and the client page's Texts
+// (client_detail.issue_texts).
+function issueTextsHtml(it, err, fleet){
+  const hd = right => `<div class="ch" style="padding-bottom:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0"><h2>Issue texts</h2><span class="muted" style="font-size:12.5px">to an issue's assignee · tried up to 4 times, then the owner is told by push and email</span></div><span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${right}</span></div>`;
+  if(err) return hd(unknownV(err)) + `<div class="cb"><span class="muted" style="font-size:13px">Couldn't read what happened to the issue texts — unknown, not none.</span></div>`;
+  if(!it) return hd('') + `<div class="cb"><span class="muted" style="font-size:13px">Not recorded on this database yet.</span></div>`;
+  const rows = it.recent || [];
+  const told = '<span title="When a text is given up on, the owner gets a push and an email about the issue instead">' + pill('neu', 'owner told instead', false) + '</span>';
+  const row = r => `<div class="li"><span class="ico bad">${ico('alert')}</span><div class="tt"><b>${esc(r.title || ('Issue #' + r.id))}</b><span>${fleet && r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant || ('#' + r.restaurant_id)) + ' · ' : ''}to ${esc(r.assignee_name || 'the assigned manager')} · <span class="n">${fmtN(r.notify_attempts || 0)}</span> ${r.notify_attempts === 1 ? 'try' : 'tries'} · given up ${fmtDT(r.notify_failed_at)}${r.status === 'resolved' ? ' · the issue is resolved now' : ''}</span><span style="color:var(--red-t)">${esc(r.notify_error || 'No reason was recorded')}</span></div>${told}</div>`;
+  const pills = pill(it.failed_7d ? 'bad' : 'good', fmtN(it.failed_7d) + ' given up · 7 days')
+    + pill(it.retrying ? 'warn' : 'neu', fmtN(it.retrying) + ' retrying now', !!it.retrying)
+    + (it.not_texted_open ? `<span title="Open issues filed without a text, by choice">${pill('neu', fmtN(it.not_texted_open) + ' open, not texted', false)}</span>` : '');
+  if(!rows.length) return hd(pills) + `<div class="cb"><span class="muted" style="font-size:13px">No issue text has been given up on${it.retrying ? ' — ' + fmtN(it.retrying) + ' waiting to try again' : ''}.</span></div>`;
+  return hd(pills) + `<div class="lst" style="border-top:1px solid var(--line)">${rows.slice(0, 5).map(row).join('')}</div>`
+    + (rows.length > 5 ? `<details class="more-d"><summary>${fmtN(rows.length - 5)} more given up · newest ${fmtN(rows.length)}</summary><div class="lst">${rows.slice(5).map(row).join('')}</div></details>` : '');
+}
+
 // Push & alerts: delivery, devices, storm caps — the manual ones and the
 // automatic ones that expire at the client's midnight (#92) — and whether
-// anyone opens them: opens ÷ pushes DELIVERED of that type (#160).
+// anyone opens them: opens ÷ pushes DELIVERED of that type (#160); the texts
+// that tell an issue's assignee (#91); each alert's channels (#14).
 function opsPush(d, mh){
   const err = readErr(d);
   if(err){ V().innerHTML = `<div class="err">Couldn't load notifications — ${esc(err)}. Refresh to try again.</div>`; return; }
@@ -2516,6 +2646,7 @@ function opsPush(d, mh){
   // (auto_caps_supported false) messaging health lists alert_storm_caps.
   const auto = d.auto_caps_supported ? (d.auto_caps || []) : (mhE ? null : (mh.storm_caps || []));
   const pE = readErr(d, ['push_deliveries']), dE = readErr(d, ['device_tokens']), aE = readErr(d, ['alert_log']), poE = readErr(d, ['marketing_scheduled_posts']);
+  const itE = readErr(d, ['ops_issues']);
   const ob = mhE ? null : (mh.push_outbox || null);
   V().innerHTML = `
     ${errBanner(d)}
@@ -2539,11 +2670,12 @@ function opsPush(d, mh){
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="${esc(d.engagement_basis || 'opens ÷ pushes delivered, per device, last 30 days')}">Opened · 30 days · of delivered pushes</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.delivered)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ' · none delivered'}</span></div>`).join('') || '<span class="muted">—</span>'}
         ${(d.ignored || []).length ? `<div class="lbl" style="margin-top:6px;color:var(--amber-t)" title="20+ delivered in 30 days, none opened — a candidate for the morning brief instead of a push">Nobody opens these</div>${d.ignored.map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.delivered)} delivered</span></div>`).join('')}` : ''}</div>
     </section>
+    <section class="card" style="overflow:hidden">${issueTextsHtml(d.issue_texts, itE, true)}</section>
     <div class="seg"><button class="${_nf === 'all' ? 'on' : ''}" onclick="_nf='all';opsRender()">All deliveries <b>${d.pushes.length}</b></button><button class="${_nf === 'failed' ? 'on' : ''}" onclick="_nf='failed';opsRender()">Failed <b>${d.pushes.filter(p => !p.ok).length}</b></button></div>
     ${table([{h:'When', key:'created_at', cell:r => `<span class="num">${fmtDT(r.created_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'User', key:'username'}, {h:'Type', key:'alert_type'}, {h:'Status', key:'ok', cell:r => r.ok ? '<span class="b ok nodot">delivered</span>' : `<span class="b bad nodot">${esc(r.status || 'failed')}</span>`}, {h:'Attempts', key:'attempts', r:true}, {h:'Error', key:'error', wrap:true, cell:r => r.error ? `<span style="color:var(--red-t)">${esc(r.error)}</span>` : ''}], pushes, {id:'push-t', sort:'created_at', limit:15, empty:'No push deliveries recorded yet.'})}
     <details class="card"><summary>Devices · <span class="n">${fmtN(d.devices_total)}</span></summary><div class="cb">${table([{h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'User', key:'username'}, {h:'Env', key:'environment'}, {h:'Registered', key:'created_at', cell:r => `<span class="num">${fmtD(r.created_at)}</span>`}, {h:'Last success', key:'last_success_at', cell:r => `<span class="num">${ago(r.last_success_at)}</span>`}, {h:'Fails', key:'consecutive_failures', r:true, cell:r => `<span class="num">${r.consecutive_failures || 0}</span>`}, {h:'State', key:'disabled_reason', cell:r => r.disabled_reason ? `<span class="b bad nodot">${esc(r.disabled_reason)}</span>` : '<span class="b ok nodot">live</span>'}], d.devices, {id:'dev-t', limit:20, empty:'No devices registered.'})}</div></details>
     <details class="card"><summary>Scheduled posts · <span class="n">${d.scheduled_posts.length}</span> newest</summary><div class="cb">${table([{h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Platform', key:'platform'}, {h:'Topic', key:'topic', wrap:true, cell:r => esc(r.topic || r.content_type)}, {h:'Scheduled', key:'scheduled_for', cell:r => `<span class="num">${fmtDT(r.scheduled_for)}</span>`}, {h:'Status', key:'status', cell:r => `<span class="b ${r.status === 'posted' ? 'ok' : r.status === 'failed' ? 'bad' : 'info'} nodot">${esc(r.status)}</span>`}, {h:'Error', key:'error', wrap:true, cell:r => r.error ? `<span style="color:var(--red-t)">${esc(r.error)}</span>` : ''}], d.scheduled_posts, {id:'sp-t', sort:'scheduled_for', limit:20, empty:'Nothing scheduled.'})}</div></details>
-    <details class="card"><summary>Recent alerts · <span class="n">${Math.min(60, d.alerts.length)}</span></summary><div class="cb">${table([{h:'When', key:'fired_at', cell:r => `<span class="num">${fmtDT(r.fired_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Type', key:'alert_type'}, {h:'Review', key:'review_id', cell:r => r.review_id ? '#' + r.review_id : ''}], d.alerts.slice(0, 60), {id:'al-t', sort:'fired_at', limit:20})}</div></details>`;
+    <details class="card"><summary>Recent alerts · <span class="n">${Math.min(60, d.alerts.length)}</span></summary><div class="cb">${table([{h:'When', key:'fired_at', cell:r => `<span class="num">${fmtDT(r.fired_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Type', key:'alert_type'}, {h:'Went out on', key:'channels', cell:r => chanCell(r.channels)}, {h:'Review', key:'review_id', cell:r => r.review_id ? '#' + r.review_id : ''}], d.alerts.slice(0, 60), {id:'al-t', sort:'fired_at', limit:20})}</div></details>`;
 }
 
 // AI: every call in ai_usage — the vendors (Claude, Perplexity, Google
