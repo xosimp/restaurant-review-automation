@@ -100,7 +100,9 @@ def test_create_ingredient_requires_name(app, db_path):
     rid = _restaurant(db_path)
     with app.test_request_context(f"/admin/inventory/ingredients/{rid}", method="POST", json={}):
         resp = create_ingredient_route(rid)
-    assert resp.get_json()["ok"] is False
+    # A refused create is a 400 since fix round B1: (response, status).
+    assert isinstance(resp, tuple) and resp[1] == 400
+    assert resp[0].get_json()["ok"] is False
 
 
 def test_update_ingredient_cannot_set_current_stock_directly(app, db_path):
@@ -211,7 +213,9 @@ def test_create_menu_item_route_requires_name(app, db_path):
     rid = _restaurant(db_path)
     with app.test_request_context(f"/admin/inventory/menu-items/{rid}", method="POST", json={}):
         resp = create_menu_item_route(rid)
-    assert resp.get_json()["ok"] is False
+    # A refused create is a 400 since fix round B1: (response, status).
+    assert isinstance(resp, tuple) and resp[1] == 400
+    assert resp[0].get_json()["ok"] is False
 
 
 def test_discover_add_delete_recipe_flow(app, db_path, monkeypatch):
