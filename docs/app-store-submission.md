@@ -254,4 +254,13 @@ Recorded so nobody re-litigates them at submission time:
 - **Dynamic Type** works: every custom font goes through helpers that pass
   `relativeTo:`.
 - **Offline** writes queue to a durable outbox and drain on reconnect.
+- **"Wound down by us" is a real procedure** (fix round, 9/29/26): a Close account
+  request sets `deletion_requested_at` and raises a critical console issue
+  with its 30-day due date; the admin works the offboarding checklist
+  (`offboarding.py` — the Stripe subscription and the DocuSign envelope, each
+  marked by the admin; every stored integration credential revoked by the
+  checklist itself; the export; each step audited, a step with nothing to do
+  reads "not needed") and then deletes the restaurant behind its typed name
+  (`/admin/api/client/<rid>/delete`). A request can be withdrawn. The audit
+  trail and the checklist outlive the account.
 - Every outbound link in the app returns 200.

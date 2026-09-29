@@ -1151,6 +1151,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Marketing states (web) | 9/28/26 (AUX-10/11/14, MB-17): every Marketing loader — the h1 status, Scheduled, Drafts, the window tiles, "What posts did to sales", performance, recently generated — calls `loadFailed(el, d)` on a refusal or a dropped connection, and its empty state is one `.hb-empty` sentence (never an italic `.no-data`, never "Nothing queued" for a failed load); the h1 never stays "Reading your posts…". An unmeasured figure is "—" (reach from `reach_posts`, engagement from `measured_posts`), a platform with none says "reach not measured". Analytics reads the stored sync; its header carries one `cbtn-text` "Refresh from Meta" (a `role="status"` line under it says refreshed / partial / throttled). The top post is an `.hb-card` with an `.hb-kicker`, or an `.hb-empty` "A top post is named once 6 posts are measured — N so far". Recently generated chips are `.mkt-topic-chip` (`--hb-tint` / `--green-bg` on tokens, figures in words, no emoji); calendar channel chips are one neutral `.cal-platform` (`--ink2` on `--hb-tint`; brand colours stay on the brand's own buttons). Keyboard: the sub-tabs are a `role="tablist"` whose buttons carry `aria-selected`; content-type cards are `role="radio"` in a `radiogroup`, `tabindex="0"`, Enter or Space picks one (`mktCtKey`); `#mktopic` has an `.sr-only` label and `#mkoutput` is a labelled `role="textbox"` |
 | Opportunity Feed (web) | Marketing, above the sub-tabs (`#mkt-opps`, `data-nav="marketing/opportunities"`, 9/28/26): "Cavnar AI found / Opportunities this week" over Home's recommendation cards (`.hb-card.hb-rec` in `.hb-recs`, three across, the rest behind "Show N more"). Each card: a kind label in ember caps (Slow night, Holiday, Sales dip, Dish, Guest favorite, Your list, Posting) with "Tomorrow / In N days", a verb-first title, the one-line why, the measured gap as the `.usd` pill ("$3,500 a Tuesday night under a typical day" - a gap, never an expected return) and its facts as pills, then ONE `cavConfLine` (none on a fact card: a list or a posting gap), `recControlsHtml` Done / Pass (no Measure it), and "Draft it ->" - primary on the first card only, `aria-label` "Draft it: <title>" - which opens the Campaign Studio with the goal typed and only the card's channels that can reach someone on (a posting card with no account says so and drafts nothing). While it drafts it is a `cbtnBusy` button and every other Draft it waits; over a draft in progress for another goal its first tap reads "Replace your draft? Tap again" (the Studio send button's two-press pattern, 6s) instead of replacing it silently. Loading: the section opens on a `.dr-pulse.wide`, not hidden until the fetch lands. "Show N more" fetches the rest (`?show=all`) and the list stays open after an answer; a failed reload clears it. Empty: a `.cv-ok` line naming what was checked, what had nothing to read yet (and why) and what couldn't be read (`.cv-warn` then); with cards, a failed read is one muted `.mkt-opps-note` line. A link to one card (`marketing/opportunities?card=<key>`, the morning brief's slow night) brings it into view with `cavFlash`. No model call on load |
 | Opportunity Feed (web) | Marketing, above the sub-tabs (`#mkt-opps`, `data-nav="marketing/opportunities"`, 9/28/26): "Cavnar AI found / Opportunities this week" over Home's recommendation cards (`.hb-card.hb-rec` in `.hb-recs`, three across, the rest behind "Show N more"). Each card: a kind label in ember caps (Slow night, Holiday, Sales dip, Dish, Guest favorite, Your list, Posting) with "Tomorrow / In N days", a verb-first title, the one-line why, the measured gap as the `.usd` pill ("$3,500 a Tuesday night under a typical day" - a gap, never an expected return) and its facts as pills, then ONE `cavConfLine` (none on a fact card: a list or a posting gap), `recControlsHtml` Done / Pass (no Measure it), and "Draft it ->" - primary on the first card only, `aria-label` "Draft it: <title>" - which opens the Campaign Studio with the goal typed and only the card's channels that can reach someone on (a posting card with no account says so and drafts nothing). While it drafts it is a `cbtnBusy` button and every other Draft it waits; over a draft in progress for another goal its first tap reads "Replace your draft? Tap again" (the Studio send button's two-press pattern, 6s) instead of replacing it silently. Loading: the section opens on a `.dr-pulse.wide`, not hidden until the fetch lands. "Show N more" fetches the rest (`?show=all`) and the list stays open after an answer; a failed reload clears it. Empty: a `.cv-ok` line naming what was checked, what had nothing to read yet (and why) and what couldn't be read (`.cv-warn` then); with cards, a failed read is one muted `.mkt-opps-note` line. A link to one card (`marketing/opportunities?card=<key>`, the morning brief's slow night) brings it into view with `cavFlash`. No model call on load |
+| Account banner (web) | A full-width strip directly under the header, above the tabs, for a state of the whole ACCOUNT the owner must not miss while the dashboard keeps working (fix round, 9/29/26): flex row, text left and at most one `.cbtn cbtn-sm` right, wrapping on a phone (the past-due banner's side padding drops to 16px under 640px), `role="alert"` (a problem) or `role="status"` (information). Colours from variables only: **past due** `.pastdue-banner` — `var(--red-bg)` ground, a `var(--red)` bottom rule and a red `<strong>` lead ("Your last payment didn't go through."), then what keeps working; the account holder (`is_principal`) gets **Fix payment** (`pastDueFix`: asks `/api/billing-info` at click time for `fix_url` — the open invoice, else the Stripe portal, because portal links expire — and a toast if it cannot), anyone else is told who can fix it. **View-as** `#view-as-banner` — `var(--amber)` ground, `var(--paper)` text, 12px/600: whose login this is and the acting admin, "Anything you change is recorded under your name." or "Read-only: nothing can be changed.", when it closes (2 hours), and **Back to admin** as a POST form (a GET only asks). One banner per state; never a second colour for the same state |
 
 ---
 
@@ -1305,7 +1306,7 @@ duplicated literals may never rise. Migrate the ones you touch and lower
 
 ### Frames
 
-Three exist. Pick by what the email *is*, not by which is nearest:
+Pick by what the email *is*, not by which is nearest:
 
 1. **`report_shell(kicker, title, subtitle, sections, cta_label, cta_url)`** —
    anything an owner reads for information. The digest, the monthly review,
@@ -1332,6 +1333,17 @@ Three exist. Pick by what the email *is*, not by which is nearest:
    not a report), the letter at 16px in `body`, ONE `ember` button (only
    with an http(s) link), the CAN-SPAM footer (why, unsubscribe, address).
    560px like `report_shell`.
+5. **`_billing_frame(kicker, title, body_html)`** — the billing emails
+   (dunning, card update, receipt, pay reminder, the signed welcome; the
+   section at the end of `emails.py`, fix round H 9/29/26): the wordmark
+   with the kicker set right in `ember` caps, ONE white card with a 3px
+   `ember` top rule and a 20px `strong` title, the seal footer. 560px. Body
+   parts: `_billing_p` (14.5px `body`, or 13px `muted`), `_billing_button`
+   (the one `ember` button), `_billing_link` (a secondary `ember` link with
+   an arrow), `_billing_money` (the amount in `_NUM`, `strong`),
+   `_billing_hi` (the owner's first name, or "Hi —"). Every billing sender
+   returns a `SendResult` and passes `restaurant_id`, so it appears in the
+   client's email history.
 
 Widths are 560px (`report_shell`) and 480px (`_branded_email`). Do not
 introduce a third.
@@ -1386,11 +1398,21 @@ its button reads "A reply is drafted: read and post it".
   and `monthly_review.cost_of_waiting` state what another period of a
   *worsened* metric costs, in dollars, and say nothing when nothing worsened
   or no dollar figure exists.
-- **An unsubscribe, if it is marketing.** Applied centrally in
-  `emails.deliver` for `_MARKETING_TYPES` — visible footer plus
-  `List-Unsubscribe-Post`, which is what gets Gmail to show its own affordance
-  instead of the spam button. Security and operational mail must never carry
-  one.
+- **An unsubscribe and a postal address, if it is marketing — the CAN-SPAM
+  footer.** Applied centrally in `emails.deliver` for `_MARKETING_TYPES`
+  (`emails._add_unsubscribe`): one centred 11px `muted` line under the card —
+  why the reader gets it ("You get this because you use Cavnar AI." / "…
+  because a Cavnar AI client introduced us."), an underlined opt-out link
+  ("Unsubscribe from product emails" / "Don't email me about Cavnar AI
+  again"), for an owner "Account and security emails are sent regardless.",
+  and "Cavnar AI · <postal address>" — plus `List-Unsubscribe` and
+  `List-Unsubscribe-Post`, which is what gets Gmail to show its own
+  affordance instead of the spam button. An owner's opt-out is signed over
+  their restaurant; a prospect's over their address (a marketing-only
+  suppression). **No address, no send**: without `CAVNAR_POSTAL_ADDRESS` the
+  marketing email is not sent and the operator is told once a day. A
+  restaurant's guest newsletter carries its own restaurant's version.
+  Security and operational mail must never carry one.
 
 ### Never
 
