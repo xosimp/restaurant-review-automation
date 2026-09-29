@@ -102,6 +102,11 @@ input::placeholder{color:var(--ink4)}
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// A value inside a quoted JS string in an onclick attribute: made a JS string
+// first, then HTML-escaped — admin.html's jsq. esc() alone is undone by the
+// HTML parser before the JS runs, so "Simple EJ's" became del(3,'Simple EJ's'),
+// a syntax error, and Delete did nothing for any name with an apostrophe.
+const jsq = (v) => esc(JSON.stringify(String(v == null ? '' : v)).slice(1, -1).replace(/'/g, '\\x27'));
 function csrf(){ const m = document.cookie.match(/(?:^|; )csrf_js=([^;]+)/); return m ? decodeURIComponent(m[1]) : ''; }
 async function api(path, opts){ opts = opts||{}; opts.headers = Object.assign({'X-CSRF': csrf()}, opts.headers||{}); const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j={ok:false,error:'HTTP '+r.status}; } if(r.status===401){ location.href='/login?next=/admin/audits'; } return j; }
 const post = (p,b) => api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
@@ -146,7 +151,7 @@ async function load(){
         <a class="btn s" href="/admin/audits/${a.id}">${a.status==='Completed'||a.status==='Closed / Converted'?'Open':'Resume'}</a>
         ${a.health!=null?`<a class="btn s" href="/admin/audits/${a.id}/report" target="_blank">Report</a>`:''}
         <button class="btn s" onclick="dup(${a.id})">Duplicate</button>
-        ${arch?`<button class="btn s danger" onclick="del(${a.id},'${esc(a.restaurant_name)}')">Delete</button>`:`<button class="btn s" onclick="archive(${a.id})">Archive</button>`}
+        ${arch?`<button class="btn s danger" onclick="del(${a.id},'${jsq(a.restaurant_name)}')">Delete</button>`:`<button class="btn s" onclick="archive(${a.id})">Archive</button>`}
       </div></div>`;
   }).join('');
 }

@@ -265,7 +265,7 @@ async function load(){
   const [s, d] = await Promise.all([api('/admin/api/audits/schema'), api('/admin/api/audits/'+AUDIT_ID)]);
   if(!s.ok || !d.ok){ $('main').innerHTML = '<div class="warn">'+esc((d.error||s.error)||'Could not load this audit')+'</div>'; return; }
   SCHEMA = s.schema; SCHEMA._q = {}; SCHEMA.sections.forEach(sec => sec.questions.forEach(qq => { SCHEMA._q[qq.id] = Object.assign({}, qq, {section:sec.key}); }));
-  AUDIT = d.audit; RESULTS = d.results; AUDIT.share = d.share;
+  AUDIT = d.audit; RESULTS = d.results; AUDIT.share = d.share; LINKED = d.linked || null;
   AUDIT.answers = AUDIT.answers||{}; AUDIT.notes = AUDIT.notes||{}; AUDIT.sales = AUDIT.sales||{};
   recoverLocal();
   const h = location.hash.replace('#',''); if(h) SECTION = h;
@@ -589,13 +589,48 @@ function renderResults(){
   h += `<h2 class="sub">Top opportunities</h2><div class="list">${r.opportunities.length?r.opportunities.map((o,i)=>`<div class="item"><span class="n">${i+1}</span><div><h4>${esc(o.title)}</h4><p>${esc(o.opportunity)}</p><div class="ev">${esc(o.module)} · ${esc(o.feasibility)} · ${esc(o.confidence||'')} confidence</div></div><span class="rg">${esc(o.range||'')}</span></div>`).join(''):'<div class="item"><span class="n">–</span><p>No sized opportunities yet.</p></div>'}</div>`;
   h += `<h2 class="sub">Doing well</h2><div class="list">${r.wins.length?r.wins.map(w=>`<div class="item" style="grid-template-columns:1fr"><p style="color:var(--green)">${esc(w)}</p></div>`).join(''):'<div class="item" style="grid-template-columns:1fr"><p>Nothing confirmed as strong yet.</p></div>'}</div>`;
   h += renderConversation({suggestions:false});
-  const share = AUDIT.share ? `<div class="banner" style="margin-top:18px"><span>Share link is live · ${AUDIT.share.views} view${AUDIT.share.views===1?'':'s'} · <span class="num" id="share-url">${esc(location.origin+'/audit/r/'+AUDIT.share.token)}</span></span><span style="display:flex;gap:8px"><button class="btn s" onclick="copyShare()">Copy</button><button class="btn s danger" onclick="revokeShare()">Revoke</button></span></div>` : '';
+  // Share links are stored hashed (#162): the full URL comes back only when
+  // the server can recover it (or right after creating it); otherwise the
+  // banner names its last four characters and a new link is the way to copy.
+  const sh = AUDIT.share, shareUrl = sh ? (sh.url || (sh.token ? location.origin+'/audit/r/'+sh.token : '')) : '';
+  const share = sh ? `<div class="banner" style="margin-top:18px"><span>Share link is live · ${sh.views||0} view${sh.views===1?'':'s'}${sh.expires_on?' · works until '+esc(sh.expires_on):''} · ${shareUrl?`<span class="num" id="share-url">${esc(shareUrl)}</span>`:`<span>ends …${esc(sh.hint||'')} — create a new link to copy one again</span>`}</span><span style="display:flex;gap:8px">${shareUrl?'<button class="btn s" onclick="copyShare()">Copy</button>':''}<button class="btn s danger" onclick="revokeShare()">Revoke</button></span></div>` : '';
   h += `<div style="text-align:center;margin:44px 0 20px"><button class="btn primary big" onclick="generate()">Generate Final Cavnar AI Audit</button><div style="color:var(--ink4);font-size:12.5px;margin-top:10px">${AUDIT.report_generated_at?'Last generated '+ago(AUDIT.report_generated_at)+' · regenerating replaces the snapshot':'Freezes the numbers and opens the customer-facing report'}</div>
   <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">${AUDIT.report_generated_at?`<a class="btn" href="/admin/audits/${AUDIT_ID}/report" target="_blank">Open report</a><button class="btn" onclick="createShare()">${AUDIT.share?'New share link':'Create share link'}</button>`:''}</div>${share}</div>`;
+  h += renderLink();
   return h;
 }
+// ── the client this audit became (#66) ─────────────────────────────────────
+// Linking turns on the audit-versus-results comparison on the owner's value
+// page and monthly email (promise.py). The link API existed with no caller.
+let LINKED = null, _lsT = null;
+function renderLink(){
+  if(LINKED && LINKED.restaurant_id) return `<div class="banner" style="margin:0 0 20px"><span>Linked to client <b>${esc(LINKED.name||('#'+LINKED.restaurant_id))}</b> (#${LINKED.restaurant_id}) · their value page compares this audit with their real results</span><span><button class="btn s" onclick="unlinkClient()">Unlink</button></span></div>`;
+  return `<div class="banner" style="margin:0 0 20px;display:block"><span>Won the deal? Link this audit to the client it became, so their value page and monthly email can compare this audit's estimate with what actually happened.</span><div style="margin-top:10px"><input id="link-q" placeholder="Search clients by name, email or id" style="width:100%" oninput="linkSearch()"></div><div id="link-results" style="margin-top:8px"></div></div>`;
+}
+function linkSearch(){
+  clearTimeout(_lsT);
+  _lsT = setTimeout(async () => {
+    const q = (($('link-q')||{}).value||'').trim(), box = $('link-results');
+    if(!box) return;
+    if(q.length < 2){ box.innerHTML = ''; return; }
+    const d = await api('/admin/api/search?q='+encodeURIComponent(q));
+    const locs = (d.results||[]).filter(r => r.type==='location' && r.id);
+    box.innerHTML = locs.length ? locs.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--paper3)"><span><b>${esc(r.title)}</b> <span style="color:var(--ink4)">#${r.id}${r.sub?' · '+esc(r.sub):''}</span></span><button class="btn s" data-rid="${r.id}" onclick="linkClient(+this.dataset.rid)">Link</button></div>`).join('') : '<div style="color:var(--ink4);padding:6px 0">No client matches.</div>';
+  }, 250);
+}
+async function linkClient(rid){
+  const d = await post('/admin/api/audits/'+AUDIT_ID+'/link', {restaurant_id: rid});
+  if(!d.ok) return toast(d.error||'Failed', true);
+  LINKED = {restaurant_id: d.restaurant_id, name: d.restaurant_name}; render(); toast('Linked to '+(d.restaurant_name||('#'+rid)));
+}
+async function unlinkClient(){
+  if(!confirm('Unlink this audit from '+((LINKED&&LINKED.name)||'the client')+'? Their value page stops comparing against it.')) return;
+  const d = await post('/admin/api/audits/'+AUDIT_ID+'/link', {restaurant_id: null});
+  if(!d.ok) return toast(d.error||'Failed', true);
+  LINKED = null; render(); toast('Unlinked');
+}
 async function generate(){ if(dirtyAny()){ await save(); } const b = document.querySelector('.btn.big'); if(b){ b.disabled = true; b.textContent = hasNotes() ? 'Reading notes and generating…' : 'Generating…'; } const d = await post('/admin/api/audits/'+AUDIT_ID+'/generate'); if(!d.ok){ if(b){ b.disabled=false; b.textContent='Generate Final Cavnar AI Audit'; } return toast(d.error||'Failed', true); } if(d.notes_warning) toast(d.notes_warning, true); RESULTS = d.results; renderSide(); AUDIT.report_generated_at = new Date().toISOString(); if(AUDIT.status==='Draft'||AUDIT.status==='In Progress') AUDIT.status='Completed'; renderStatusMenu(); render(); window.open(d.report_url, '_blank'); }
-async function createShare(){ const d = await post('/admin/api/audits/'+AUDIT_ID+'/share'); if(!d.ok) return toast(d.error||'Failed', true); AUDIT.share = {token:d.token, views:0}; render(); try{ await navigator.clipboard.writeText(d.url); toast('Share link copied'); }catch(e){ toast('Share link created'); } }
+async function createShare(){ const d = await post('/admin/api/audits/'+AUDIT_ID+'/share'); if(!d.ok) return toast(d.error||'Failed', true); AUDIT.share = d.share || {token:d.token, url:d.url, views:0, expires_on:d.expires_on}; render(); try{ await navigator.clipboard.writeText(d.url); toast('Share link copied'); }catch(e){ toast('Share link created'); } }
 async function revokeShare(){ if(!confirm('Revoke the share link? Anyone with it loses access immediately.')) return; const d = await api('/admin/api/audits/'+AUDIT_ID+'/share', {method:'DELETE'}); if(d.ok){ AUDIT.share = null; render(); toast('Share link revoked'); } }
 async function copyShare(){ try{ await navigator.clipboard.writeText($('share-url').textContent); toast('Copied'); }catch(e){ toast('Select and copy the link', true); } }
 

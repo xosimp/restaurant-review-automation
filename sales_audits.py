@@ -68,6 +68,14 @@ def init_sales_audits(db_path=DB_PATH):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sales_audits)").fetchall()}
         if "notes_ai_json" not in cols:
             conn.execute("ALTER TABLE sales_audits ADD COLUMN notes_ai_json TEXT NOT NULL DEFAULT '{}'")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_audits_linked ON sales_audits(linked_restaurant_id)")
+        # Share links are stored hashed, with an expiry (#162): the columns,
+        # then the links already out there moved onto them.
+        share_cols = {r[1] for r in conn.execute("PRAGMA table_info(sales_audit_shares)").fetchall()}
+        for col in ("expires_at", "token_enc", "token_hint"):
+            if col not in share_cols:
+                conn.execute(f"ALTER TABLE sales_audit_shares ADD COLUMN {col} TEXT")
+        _migrate_plaintext_shares(conn)
         conn.commit()
     finally:
         conn.close()
@@ -277,13 +285,100 @@ def delete_audit(audit_id, db_path=DB_PATH):
 
 
 # ── Share links ──────────────────────────────────────────────────────────────
+#
+# A share link's token is stored HASHED (sales_audit_shares.token holds
+# "sha256:<hex>"), with an expiry (#162). It was stored in plaintext and never
+# expired, while SECURITY.md's rule for public pages is a hashed or signed
+# token: a read of the database (or a nightly snapshot) was every live link.
+# So the admin can still copy a live link, the token is also kept encrypted
+# under CREDENTIAL_KEY (credentials.py) when that key is set — never in
+# plaintext; without the key, the link is shown once, at creation.
+# Links created before this were moved onto the scheme at boot
+# (_migrate_plaintext_shares) and keep working until their expiry.
+
+SHARE_TTL_DAYS = 90            # a new link works this long
+LEGACY_SHARE_GRACE_DAYS = 30   # a pre-hashing link gets at least this from the migration
+_HASH_PREFIX = "sha256:"
+
+
+def _hash_token(token):
+    import hashlib
+    return _HASH_PREFIX + hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _encrypt_token(token):
+    """The token encrypted for later display, or None when no CREDENTIAL_KEY
+    is set (credentials.encrypt passes plaintext through without one, and
+    plaintext is exactly what this replaces)."""
+    try:
+        import credentials
+        if not credentials.key_configured():
+            return None
+        enc = credentials.encrypt(token)
+        return enc if enc and enc != token else None
+    except Exception:
+        return None
+
+
+def _decrypt_token(token_enc):
+    if not token_enc:
+        return None
+    try:
+        import credentials
+        value = credentials.decrypt(token_enc)
+        return value if value and value != token_enc else None
+    except Exception:
+        return None
+
+
+def _stamp_plus_days(days, base=None):
+    from datetime import timedelta
+    return ((base or datetime.now(timezone.utc)) + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _migrate_plaintext_shares(conn):
+    """Move links stored in plaintext onto the hashed scheme, in place: the
+    same URL keeps working (it resolves by its hash) until its new expiry —
+    SHARE_TTL_DAYS from creation, but never sooner than
+    LEGACY_SHARE_GRACE_DAYS from now. Idempotent."""
+    rows = conn.execute("SELECT id, token, created_at, expires_at FROM sales_audit_shares "
+                        "WHERE token NOT LIKE ?", (_HASH_PREFIX + "%",)).fetchall()
+    floor = _stamp_plus_days(LEGACY_SHARE_GRACE_DAYS)
+    for r in rows:
+        token = r[1] or ""
+        expires = r[3]
+        if not expires:
+            try:
+                created = datetime.strptime((r[2] or "")[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                expires = max(_stamp_plus_days(SHARE_TTL_DAYS, created), floor)
+            except ValueError:
+                expires = floor
+        conn.execute("UPDATE sales_audit_shares SET token=?, token_enc=?, token_hint=?, expires_at=? WHERE id=?",
+                     (_hash_token(token), _encrypt_token(token), token[-4:], expires, r[0]))
+
+
+def _share_view(row):
+    """What the admin side may see of a share row: never the stored hash;
+    the token itself only when it can be decrypted."""
+    if not row:
+        return None
+    d = dict(row)
+    token = _decrypt_token(d.pop("token_enc", None))
+    d.pop("token", None)
+    d["token"] = token
+    return d
+
 
 def create_share(audit_id, db_path=DB_PATH):
+    """A new share link for this audit (the previous one is revoked).
+    Returns the token — the only time it exists in plaintext."""
     token = secrets.token_urlsafe(24)
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE sales_audit_shares SET revoked_at=? WHERE audit_id=? AND revoked_at IS NULL", (_now(), audit_id))
-        conn.execute("INSERT INTO sales_audit_shares (audit_id, token, created_at) VALUES (?,?,?)", (audit_id, token, _now()))
+        conn.execute("INSERT INTO sales_audit_shares (audit_id, token, token_enc, token_hint, created_at, expires_at) "
+                     "VALUES (?,?,?,?,?,?)", (audit_id, _hash_token(token), _encrypt_token(token), token[-4:],
+                                              _now(), _stamp_plus_days(SHARE_TTL_DAYS)))
         conn.commit()
         return token
     finally:
@@ -291,10 +386,28 @@ def create_share(audit_id, db_path=DB_PATH):
 
 
 def active_share(audit_id, db_path=DB_PATH):
+    """The audit's live (unrevoked, unexpired) share link, or None:
+    {id, audit_id, token (None unless it can be decrypted), token_hint,
+    views, created_at, expires_at, last_viewed_at, revoked_at}."""
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT * FROM sales_audit_shares WHERE audit_id=? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1", (audit_id,)).fetchone()
-        return dict(r) if r else None
+        r = conn.execute("SELECT * FROM sales_audit_shares WHERE audit_id=? AND revoked_at IS NULL "
+                         "AND (expires_at IS NULL OR expires_at > ?) ORDER BY id DESC LIMIT 1",
+                         (audit_id, _now())).fetchone()
+        return _share_view(r)
+    finally:
+        conn.close()
+
+
+def linked_audits(restaurant_id, db_path=DB_PATH):
+    """The audits linked to this restaurant (promise.link), newest first."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, restaurant_name, owner_name, audit_date, status, report_generated_at, archived_at "
+            "FROM sales_audits WHERE linked_restaurant_id=? ORDER BY audit_date DESC, id DESC",
+            (int(restaurant_id),)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -309,12 +422,14 @@ def revoke_shares(audit_id, db_path=DB_PATH):
 
 
 def resolve_share(token, db_path=DB_PATH):
-    """The audit behind a live token, or None. Counts the view."""
+    """The audit behind a live token, or None. Counts the view. Looked up
+    by the token's hash; a revoked or expired link resolves to nothing."""
     if not token or len(token) > 64:
         return None
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT * FROM sales_audit_shares WHERE token=? AND revoked_at IS NULL", (token,)).fetchone()
+        r = conn.execute("SELECT * FROM sales_audit_shares WHERE token=? AND revoked_at IS NULL "
+                         "AND expires_at IS NOT NULL AND expires_at > ?", (_hash_token(token), _now())).fetchone()
         if not r:
             return None
         conn.execute("UPDATE sales_audit_shares SET views=views+1, last_viewed_at=? WHERE id=?", (_now(), r["id"]))
