@@ -2024,6 +2024,26 @@ _RETENTION_DAYS = {
     "backup_runs":        int(os.getenv("RETAIN_BACKUP_RUNS_DAYS", "400")),
     "job_run_requests":   int(os.getenv("RETAIN_JOB_RUN_REQUESTS_DAYS", "90")),
     "missed_windows":     int(os.getenv("RETAIN_MISSED_WINDOWS_DAYS", "90")),
+    # The other workstreams' ledgers, registered by the integration wave.
+    # business_metrics_daily is NOT here, on purpose: it is the history MRR
+    # and account trends are drawn from, and nothing earlier is rebuilt.
+    # The platform telemetry (request_rollups, http_5xx_log, boot_events,
+    # provider_health) is pruned hourly by the web process's supervisor
+    # (platform_monitor.TELEMETRY_RETENTION_DAYS) — one pruner, not two.
+    # The AI-operations tables are ai_utils.prune_ai_ops', run by the
+    # rollup below.
+    "value_figures_daily": int(os.getenv("RETAIN_VALUE_FIGURES_DAYS", "120")),
+    "admin_issue_resolution_history": int(os.getenv("RETAIN_RESOLUTION_HISTORY_DAYS", "400")),
+    "sms_log":            int(os.getenv("RETAIN_SMS_LOG_DAYS", "90")),
+    "push_outbox":        int(os.getenv("RETAIN_PUSH_OUTBOX_DAYS", "30")),
+    "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
+    "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
+    "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
+    # login_history (90 days, auth.LOGIN_HISTORY_RETENTION_DAYS, pruned at
+    # boot today) and view_as_sessions join once auth.init_auth indexes
+    # their created_at: every delete here must use an index
+    # (tests/test_edge_data_claims_and_lease.py), and both tables are made
+    # after this module's boot init runs.
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2040,6 +2060,9 @@ _RETENTION_COLUMN = {
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
+    "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
+    "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
+    "alert_storm_caps": "started_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
@@ -2072,6 +2095,12 @@ def _ensure_retention_indexes(conn):
         ("ai_validation_log", "CREATE INDEX IF NOT EXISTS idx_ai_validation_log_created ON ai_validation_log(created_at)"),
         ("activity_log", "CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)"),
         ("schedule_versions", "CREATE INDEX IF NOT EXISTS idx_schedule_versions_created ON schedule_versions(created_at)"),
+        # Messaging ledgers made in models.init_db before this runs (fix
+        # round E). sms_log's, the outboxes' and the resolution history's
+        # live with their own tables.
+        ("morning_brief_deliveries",
+         "CREATE INDEX IF NOT EXISTS idx_morning_brief_deliveries_created ON morning_brief_deliveries(created_at)"),
+        ("alert_storm_caps", "CREATE INDEX IF NOT EXISTS idx_alert_storm_caps_started ON alert_storm_caps(started_at)"),
     ):
         if table in have:
             try:
@@ -2218,6 +2247,19 @@ def prune_ledgers(db_path=None):
         text = str(err).lower()
         return "no such table" in text or "no such column" in text
 
+    # The AI ledger's daily rollup first (fix round G, #70): ai_usage_daily
+    # and ai_validation_daily are never pruned, so what the raw rows said
+    # outlives them. models.prune_operational_logs ran it, and is no longer
+    # scheduled. A rollup that failed keeps tonight's raw AI rows.
+    rolled = True
+    try:
+        import ai_utils
+        ai_utils.rollup_usage(db_path)
+    except Exception as e:
+        rolled = False
+        log.error(f"prune_ledgers: the AI usage rollup failed, so the AI ledgers are kept tonight: {e}")
+        capture(e, job="prune_ledgers", context="ai_utils.rollup_usage", db_path=db_path)
+
     try:
         for table, days in _RETENTION_DAYS.items():
             if days <= 0:
@@ -2225,6 +2267,9 @@ def prune_ledgers(db_path=None):
             if time.monotonic() > deadline:
                 counts["hit_bound"] = True
                 break
+            if not rolled and table in ("ai_usage", "ai_validation_log"):
+                counts["skipped"] += 1
+                continue
             col = _RETENTION_COLUMN.get(table, "created_at")
             counts["attempted"] += 1
             try:

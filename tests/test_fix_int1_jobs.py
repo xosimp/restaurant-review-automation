@@ -151,3 +151,63 @@ def test_the_minute_duties_reap_both_outboxes(monkeypatch):
     del reaped[:]
     out = scheduler._minute_duties()
     assert reaped == ["webhooks"] and out["failed"] == 1 and captured == ["push_outbox_reaper"]
+
+
+# ── retention: the other workstreams' ledgers, and the AI rollup first ─────
+
+def test_the_other_workstreams_ledgers_are_registered_for_retention():
+    for table, col, days in (("value_figures_daily", "date", 120), ("admin_issue_resolution_history", "created_at", 400),
+                             ("sms_log", "created_at", 90), ("push_outbox", "created_at", 30),
+                             ("webhook_outbox", "created_at", 30), ("morning_brief_deliveries", "created_at", 90),
+                             ("alert_storm_caps", "started_at", 365)):
+        assert ops._RETENTION_DAYS[table] == days and ops._RETENTION_COLUMN[table] == col, table
+    assert "business_metrics_daily" not in ops._RETENTION_DAYS, "the MRR history is never pruned"
+    # One pruner per table: the platform telemetry is the supervisor's.
+    import platform_monitor
+    assert not set(platform_monitor.TELEMETRY_RETENTION_DAYS) & set(ops._RETENTION_DAYS)
+
+
+def _old_ai_row(db_path):
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    try:
+        c.execute("INSERT INTO ai_usage (restaurant_id, action, model, cost_usd, created_at) "
+                  "VALUES (1, 'draft', 'm', 0.01, datetime('now','-400 days'))")
+        c.commit()
+    finally:
+        c.close()
+
+
+def _ai_rows(db_path):
+    import sqlite3
+    c = sqlite3.connect(db_path)
+    try:
+        return c.execute("SELECT COUNT(*) FROM ai_usage").fetchone()[0]
+    finally:
+        c.close()
+
+
+def test_the_ai_rollup_runs_before_its_raw_rows_are_pruned(db_path, monkeypatch):
+    import ai_utils
+    order = []
+    monkeypatch.setattr(ai_utils, "rollup_usage", lambda db_path=None, **k: order.append("rollup") or {})
+    real_delete = ops._chunked_delete
+
+    def spy(conn, table, *a, **k):
+        order.append(table)
+        return real_delete(conn, table, *a, **k)
+    monkeypatch.setattr(ops, "_chunked_delete", spy)
+    _old_ai_row(db_path)
+    ops.prune_ledgers(db_path)
+    assert order[0] == "rollup" and "ai_usage" in order
+    assert _ai_rows(db_path) == 0
+
+
+def test_a_failed_rollup_keeps_the_raw_ai_rows(db_path, monkeypatch):
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "rollup_usage",
+                        lambda db_path=None, **k: (_ for _ in ()).throw(RuntimeError("rollup broke")))
+    _old_ai_row(db_path)
+    out = ops.prune_ledgers(db_path)
+    assert _ai_rows(db_path) == 1, "a raw row went before its day was rolled up"
+    assert out["skipped"] >= 2 and "ai_usage" not in out

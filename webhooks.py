@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS webhook_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_outbox_state ON webhook_outbox(state, created_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_outbox_restaurant ON webhook_outbox(restaurant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_outbox_created ON webhook_outbox(created_at);
 """
 
 def init_webhooks(db_path=DB_PATH):

@@ -435,6 +435,8 @@ _BOOT_SQL = (
         created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
     "CREATE INDEX IF NOT EXISTS idx_issue_res_history_key ON admin_issue_resolution_history(key, id)",
+    # The nightly retention delete (ops._RETENTION_DAYS, about 400 days).
+    "CREATE INDEX IF NOT EXISTS idx_issue_res_history_created ON admin_issue_resolution_history(created_at)",
     # Each paying account's churn-risk level and since when (#83), written by
     # the nightly snapshot, so "at risk for 7+ days" is a fact, not a guess.
     """CREATE TABLE IF NOT EXISTS account_risk_state (
