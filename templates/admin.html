@@ -1499,28 +1499,39 @@ async function resolvedIssues(nav){
 }
 
 // ── Client page ─────────────────────────────────────────────────────────────
-// Five tabs where there were twelve, and one searchable Actions menu where
-// there were 25 buttons in six cards. Every action still asks first.
+// Six tabs and one searchable Actions menu. The header says what the account
+// is: its segment, its billing (who pays for it, why it is paused and until
+// when, how long in trial, when it signed), a deletion countdown, churn risk,
+// and where the owner uses it (#49). Each tab reads its own extra data after
+// the page is drawn (lazy), so the page itself is one read. Every action
+// still asks first, names the client or the recipient, and says what the
+// server really answered.
 const CLIENT_TAB = {overview:'overview', subscription:'billing', billing:'billing', integrations:'data', modules:'data', locations:'data', jobs:'data', data:'data',
-  ai:'messages', emails:'messages', notifications:'messages', messages:'messages', activity:'access', errors:'access', access:'access', actions:'overview'};
-let _cmsg = 'ai';
+  ai:'messages', emails:'messages', notifications:'messages', messages:'messages', sms:'messages', brief:'messages',
+  activity:'access', errors:'access', access:'access', logins:'access', offboarding:'access', actions:'overview',
+  support:'support', notes:'support', timeline:'support', audit:'support'};
+const CMSG_OF = {ai:'ai', emails:'email', notifications:'push', sms:'sms', brief:'brief'};
+let _cmsg = 'ai', _cd = null;
 const HEALTH_TILE = {critical:'background:var(--red-bg);color:var(--red-t)', warning:'background:var(--amber-bg);color:var(--amber-t)', healthy:'background:var(--green-bg);color:var(--green-t)', inactive:'background:rgba(255,255,255,.06);color:var(--ink3)'};
-function actionsMenu(c){
-  const b = (label, js, cls) => `<button data-a class="${cls||''}" onclick="menusClose();${js}">${label}</button>`;
+function actionsMenu(c, d){
+  const b = (label, js, cls) => `<button data-a class="w ${cls||''}" onclick="menusClose();${js}">${label}</button>`;
   const a = (label, href) => `<a data-a href="${href}">${label}</a>`;
-  const login = c.logins.find(l=>l.is_active) || {};
-  return `<div class="menu" id="cl-actions" style="width:310px">
+  const login = c.logins.find(l=>l.is_active && (l.role==='client'||l.role==='owner')) || c.logins.find(l=>l.is_active) || {};
+  const n = jsq(c.name), em = jsq((c.owner||{}).email || c.owner_email || '');
+  const status = (c.billing||{}).status || 'trial';
+  return `<div class="menu" id="cl-actions" style="width:320px">
     <label class="mf">${ico('search','xs')}<input placeholder="Find an action…" oninput="menuFilter(this)"></label>
-    <span class="lbl">Reviews</span>${b('Fetch reviews now', `act('/admin/fetch-reviews/${c.id}','Fetch reviews now')`)}${b('Re-draft every pending reply with AI', `act('/admin/redraft-all/${c.id}','Re-draft every pending reply with AI',true)`)}
-    ${b('Import TripAdvisor CSV…', `importOpen(${c.id},'${jsq(c.name)}','tripadvisor')`)}${b('Import DoorDash CSV…', `importOpen(${c.id},'${jsq(c.name)}','doordash')`)}${b('Import Uber Eats CSV…', `importOpen(${c.id},'${jsq(c.name)}','ubereats')`)}${b('Seed sample reviews', `act('/admin/seed-reviews/${c.id}','Seed sample reviews',true)`)}
-    <span class="lbl">Messages</span>${b('Resend welcome email', `act('/admin/resend-welcome/${c.id}','Resend the welcome email')`)}${b('Resend contract', `act('/admin/resend-contract/${c.id}','Resend the DocuSign contract')`)}${b('Resend payment link', `act('/admin/resend-payment/${c.id}','Resend the payment link')`)}
-    ${b('Send test digest', `act('/admin/test-digest/${c.id}','Send a test digest')`)}${b('Send test urgent alert', `act('/admin/test-urgent/${c.id}','Send a test urgent alert')`)}
-    <span class="lbl">Integrations &amp; data</span>${b('RPOWER token &amp; sync…', `rpowerOpen(${c.id},'${jsq(c.name)}')`)}${b('Toast credentials…', `toastOpen(${c.id},'${jsq(c.name)}')`)}${b('Sync Toast now', `act('/admin/toast/sync/${c.id}','Sync Toast now')`)}${b('Refresh Instagram token', `act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')`)}
-    ${b('Branding &amp; peer profile…', `brandOpen(${c.id},'${jsq(c.name)}')`)}${a('Full settings', '/admin/client-settings/'+c.id)}${a('Manage data (CSV)', '/admin/client-data/'+c.id)}${a('Recommendations for this client', '#analytics/recommendations/'+c.id)}
-    <span class="lbl">Access</span>${a('View dashboard as this client', '/admin/view-as/'+c.id)}${b('Send a password-reset link', `sendResetLink(${login.id||0}, '${jsq(login.username||'')}')`)}${b('Set a temporary password…', `resetPassword(${c.id})`)}
-    ${b(c.is_demo ? 'Mark as real client' : 'Mark as demo', `setDemo(${c.id},${c.is_demo?0:1})`)}
-    <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)', `freezeAccount(${c.id})`, 'dz')}${c.is_demo?`<button data-a class="dz" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
-    <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Nothing here changes billing or deletes a real restaurant. Each action confirms first.</span></div>`;
+    <span class="lbl">Reviews</span>${b('Fetch reviews now', `act('/admin/fetch-reviews/${c.id}','Fetch new reviews for ${n} now')`)}${b('Re-draft every pending reply with AI', `act('/admin/redraft-all/${c.id}','Re-draft every pending reply for ${n} with AI (replies the owner edited are left alone)')`)}
+    ${b('Import TripAdvisor CSV…', `importOpen(${c.id},'${n}','tripadvisor')`)}${b('Import DoorDash CSV…', `importOpen(${c.id},'${n}','doordash')`)}${b('Import Uber Eats CSV…', `importOpen(${c.id},'${n}','ubereats')`)}${c.is_demo?b('Seed sample reviews (demo)', `act('/admin/seed-reviews/${c.id}','Seed 12 invented sample reviews into the demo account ${n}')`):''}
+    <span class="lbl">Messages</span>${b('Resend welcome email…', `resendWelcome(${c.id},'${n}','${em}')`)}${b('Resend contract…', `resendContract(${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${status!=='active'?b(status==='past_due'?'Send card-update link…':'Resend payment link…', `resendPayment(${c.id},'${n}','${jsq(status)}','${jsq(c.owner_email||'')}')`):''}
+    ${b('Send test digest…', `testSend('digest',${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${b('Send test urgent alert…', `testSend('urgent',${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${b('Send value recap…', `valueRecap(${c.id},'${n}','${jsq(c.owner_email||'')}')`)}
+    <span class="lbl">Integrations &amp; data</span>${b('RPOWER token &amp; sync…', `rpowerOpen(${c.id},'${jsq(c.name)}')`)}${b('Toast credentials…', `toastOpen(${c.id},'${jsq(c.name)}')`)}${b('Sync Toast now', `act('/admin/toast/sync/${c.id}','Sync Toast now for ${n}')`)}${b('Refresh Instagram token', `act('/admin/refresh-ig-token/${c.id}','Refresh the Instagram and Facebook tokens for ${n}')`)}
+    ${b('Branding &amp; peer profile…', `brandOpen(${c.id},'${n}')`)}${a('Full settings', '/admin/client-settings/'+c.id)}${a('Manage data (CSV)', '/admin/client-data/'+c.id)}${a('Recommendations for this client', '#analytics/recommendations/'+c.id)}
+    ${b('Add a location to this brand…', `addLocationOpen(${c.id},'${jsq(c.brand||c.name)}')`)}
+    <span class="lbl">Access</span>${a('View dashboard as this client', '/admin/view-as/'+c.id)}${b('Send a password-reset link…', `sendResetLink(${login.id||0}, '${jsq(login.username||'')}', '${jsq(login.email||'')}')`)}
+    ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
+    <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
+    <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Plan, holds and contract changes are on the Billing tab. A real restaurant is deleted only through the offboarding checklist on Access. Each action confirms first.</span></div>`;
 }
 function stripDiv(label, value, sub, tone){ return `<div><span class="lbl">${label}</span><span class="v" style="${tone||''}">${value}</span><span class="s">${sub}</span></div>`; }
 function setupRing(sc){
@@ -1528,102 +1539,551 @@ function setupRing(sc){
   const c = 2*Math.PI*38, tone = sc>=75?'var(--green)':sc>=50?'var(--amber)':'var(--ember2)';
   return `<svg width="92" height="92" viewBox="0 0 92 92" aria-label="Setup ${sc}%" style="flex-shrink:0"><g transform="rotate(-90 46 46)"><circle cx="46" cy="46" r="38" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="8"/><circle cx="46" cy="46" r="38" fill="none" stroke="${tone}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${(c*sc/100).toFixed(1)} ${c.toFixed(1)}"/></g><text x="46" y="52" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:19px;font-weight:600">${sc}%</text></svg>`;
 }
+function locName(d, rid){ if(_cd && _cd.client && _cd.client.id === rid) return _cd.client.name; const s = ((d || _cd || {}).siblings || []).find(x=>x.id === rid); return s ? (s.location_name || s.name) : '#' + rid; }
 async function clientView(id, qs){
   const raw = new URLSearchParams(qs).get('tab') || 'overview', tab = CLIENT_TAB[raw] || 'overview';
-  const d = await api('/admin/api/client/'+id); if(!d.ok) throw new Error(d.error||'client failed'); const c = d.client;
-  const login = c.owner, errs = d.errors.length, intErr = c.integrations.filter(i=>i.state==='error').length;
-  const churn = c.churn_risk || {}, sc = setupDone(c).score;
-  const tabs = [['overview','Overview',c.issues.length,c.issues.some(i=>i.severity==='critical')?'bad':'warn'],['billing','Billing'],['data','Data &amp; integrations',intErr,'bad'],['messages','Messages &amp; AI'],['access','Access &amp; activity',errs,'bad']];
+  if(CMSG_OF[raw]) _cmsg = CMSG_OF[raw];
+  const d = await api('/admin/api/client/'+id); if(!okRes(d)) throw new Error(errText(d, 'This client couldn\'t be read')); const c = d.client; _cd = d;
+  const b = c.billing || {}, login = c.owner, errs = (d.errors||[]).length, intErr = c.integrations.filter(i=>i.state==='error').length;
+  const churn = c.churn_risk || {}, sc = setupDone(c).score, del = c.deletion, crit = c.issues.some(i=>i.severity==='critical');
+  const bits = [];
+  if(b.billed_by) bits.push(`billed by <a href="#client/${b.billed_by.restaurant_id}?tab=billing">${esc(b.billed_by.name || ('#' + b.billed_by.restaurant_id))}</a>`);
+  if((b.covers||[]).length) bits.push(`pays for ${b.covers.map(x=>`<a href="#client/${x}">${esc(locName(d, x))}</a>`).join(', ')}`);
+  if(b.status === 'paused') bits.push(`<span style="color:var(--amber-t)">${esc(PAUSE_LABEL[b.pause_reason] || 'paused')}${b.paused_until ? ' until ' + fmtD(b.paused_until) : ''}</span>`);
+  if(b.days_in_trial != null) bits.push(`trial day <span class="n">${b.days_in_trial}</span>`);
+  if(b.signed_at) bits.push(`signed ${fmtD(b.signed_at)}`);
+  if(b.converted_at) bits.push(`paying since ${fmtD(b.converted_at)}`);
+  const act = c.activity || {}, actTitle = ['sign_in','console_login','session','web_tab'].filter(k=>act[k]).map(k=>k.replace('_',' ') + ' ' + fmtDT(act[k])).join(' · ');
+  const tabs = [['overview','Overview',c.issues.length,crit?'bad':'warn'],['billing','Billing',(b.status==='past_due'||b.status==='paused')?'!':'', 'bad'],['data','Data &amp; integrations',intErr,'bad'],['messages','Messages &amp; AI'],['access','Access &amp; activity',del?'!':errs,'bad'],['support','Support']];
   const hdr = `
-    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px" class="muted"><a href="#customers/restaurants" style="color:var(--ink4)">Customers</a>${ico('chev','xs')}${c.brand!==c.name?`<a href="#locations?brand=${encodeURIComponent(c.brand)}" style="color:var(--ink4)">${esc(c.brand)}</a>${ico('chev','xs')}`:''}<span class="ink2">${esc(c.name)}</span></div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px" class="muted"><a href="#customers/restaurants" style="color:var(--ink4)">Customers</a>${ico('chev','xs')}${c.brand!==c.name?`<a href="#locations?brand=${encodeURIComponent(c.brand)}" style="color:var(--ink4)">${esc(c.brand)}</a>${ico('chev','xs')}`:''}<span class="ink2">${esc(c.name)}</span><span style="margin-left:auto">${asOf(d)}</span></div>
+    ${errBanner(d, true)}
+    ${del ? `<div class="warnline" role="status" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} Asked to close their account on ${fmtD(del.requested_at)} — ${del.days_left < 0 ? 'overdue by ' + (-del.days_left) + ' day' + (del.days_left === -1 ? '' : 's') + ' (was due ' + esc(del.due_label || fmtD(del.due_at)) + ')' : 'due ' + esc(del.due_label || fmtD(del.due_at)) + ', ' + del.days_left + ' day' + (del.days_left === 1 ? '' : 's') + ' left'}. <a href="#client/${c.id}?tab=offboarding" style="color:inherit;text-decoration:underline">Open offboarding</a></div>` : ''}
     <section style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap">
       <span class="mono-tile" style="width:64px;height:64px;border-radius:18px;font-size:20px;${HEALTH_TILE[c.health]||HEALTH_TILE.inactive}">${esc(monoTile(c.name, c.health).replace(/<[^>]+>/g,''))}</span>
       <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px">
         <h1>${esc(c.name)}${c.location_name?` <span style="font-family:var(--sans);font-size:16px;font-weight:400;color:var(--ink4)">${esc(c.location_name)}</span>`:''}</h1>
-        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${pill(BILL[c.billing.status]==='ok'?'neu':(BILL[c.billing.status]==='bad'?'bad':'neu'), esc((c.billing.status||'trial').replace('_',' '))+(c.billing.monthly?' · <span class="n">'+fmtUSD(c.billing.monthly)+'</span>/mo':''), false)}<span class="b ${c.billing.contract_status==='signed'?'ok':'warn'}">contract ${esc(c.billing.contract_status)}</span>${pill('neu', c.billing.modules+' module'+(c.billing.modules===1?'':'s'), false)}${c.is_demo?pill('warn','demo',false):''}</span>
-        <span class="muted" style="font-size:13px">${esc(login?login.username:'no login')}${c.owner_name?' ('+esc(c.owner_name)+')':''}${c.owner_email?' · '+esc(c.owner_email):''}${c.owner_phone?' · '+esc(c.owner_phone):''} · joined <span class="n">${fmtD(c.created_at)}</span> · active <span class="n">${ago(c.last_active)}</span> ago · #${c.id}</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'?pill('neu', c.is_demo?'demo · internal':'internal', false):''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
+        <span class="muted" style="font-size:13px">${esc(login?login.username:'no login')}${c.owner_name?' ('+esc(c.owner_name)+')':''}${c.owner_email?' · '+esc(c.owner_email):''}${c.owner_phone?' · '+esc(c.owner_phone):''} · joined <span class="n">${fmtD(c.created_at)}</span> · <span title="${esc(actTitle || 'No owner activity on record')}">active <span class="n">${c.last_active?ago(c.last_active)+' ago':'never'}</span></span>${c.on_ios?' <span class="chip" title="The owner uses the iOS app">iOS</span>':''}${c.team_last_seen?' · team '+ago(c.team_last_seen)+' ago':''} · #${c.id}</span>
+        ${bits.length ? `<span class="muted" style="font-size:13px">${bits.join(' · ')}</span>` : ''}
       </div>
       <div style="display:flex;gap:8px;position:relative">
         <a class="btn" href="/admin/view-as/${c.id}">${ico('eye','s')}View as client</a><a class="btn g" href="/admin/client-settings/${c.id}">Settings</a>
         <button class="btn" data-menu style="background:rgba(255,255,255,.075);border-color:rgba(240,235,224,.22)" onclick="menuToggle('cl-actions')">Actions ${ico('down','xs')}</button>
-        ${actionsMenu(c)}
+        ${actionsMenu(c, d)}
       </div>
     </section>
     <section class="card strip">
-      ${stripDiv('Reviews awaiting', fmtN(c.reviews.awaiting), c.reviews.urgent_stale ? c.reviews.urgent_stale+' urgent · 48h+' : fmtN(c.reviews.total)+' reviews in all', c.reviews.urgent_stale?'color:var(--red-t)':'')}
+      ${stripDiv('Reviews awaiting', fmtN(c.reviews.awaiting), c.reviews.urgent_stale ? c.reviews.urgent_stale+' urgent · 48h+' : (c.reviews.stalled ? '<span style="color:var(--amber-t)">'+c.reviews.stalled+' stuck after AI failures</span>' : fmtN(c.reviews.draft_ready)+' drafted · '+fmtN(c.reviews.no_draft)+' not yet'), c.reviews.urgent_stale?'color:var(--red-t)':'')}
       ${stripDiv('Setup', sc==null?'—':sc+'%', c.onboarding.complete ? 'onboarding done' : c.onboarding.done+' of '+c.onboarding.total+' steps')}
-      ${stripDiv('Churn risk', esc((churn.level||'—').replace(/^./,x=>x.toUpperCase())), esc((churn.reasons||[])[0]||'no risk signals'), churn.level==='high'?'color:var(--red-t)':churn.level==='medium'?'color:var(--amber-t)':'')}
-      ${stripDiv('AI · 30 days', fmtUSD(c.ai.cost_30d,2), fmtN(c.ai.calls_30d)+' calls · '+fmtN(c.ai.failed_30d)+' failed')}
+      ${stripDiv('Churn risk', churn.scored === false ? '—' : esc((churn.level||'—').replace(/^./,x=>x.toUpperCase())), churn.scored === false ? 'scored for paying accounts only' : esc((churn.reasons||[])[0]||'no risk signals') + (churn.days_at_level ? ' · ' + churn.days_at_level + 'd' : ''), churn.level==='high'?'color:var(--red-t)':churn.level==='medium'?'color:var(--amber-t)':'')}
+      ${stripDiv('AI · 30 days', figOr(d, ['ai_usage'], fmtUSD(c.ai.cost_30d,2)), fmtN(c.ai.calls_30d)+' calls · '+fmtN(c.ai.failed_30d)+' failed')}
       ${stripDiv('Alerts · 7 days', fmtN(c.alerts_7d), c.alert_cap ? 'capped at '+c.alert_cap+'/day' : 'no daily cap')}
     </section>
     ${tabsNav('client/'+c.id+'?tab=', tabs, tab).replace(/#client\/(\d+)\?tab=\//g, '#client/$1?tab=')}`;
-  let body = '';
-  if(tab === 'overview') body = `<section class="split">
+  const T = {overview: cOverview, billing: cBilling, data: cData, messages: cMessages, access: cAccess, support: cSupport}[tab] || cOverview;
+  const out = T(c, d);
+  $('view').innerHTML = hdr + (out.html || '');
+  if(out.after) out.after();
+  if(raw === 'actions') menuToggle('cl-actions');
+  if(raw === 'offboarding'){ const el = $('off-card'); if(el) el.scrollIntoView({block:'start'}); }
+}
+function cOverview(c, d){
+  const churn = c.churn_risk || {}, act = c.activity || {};
+  return {html: `<section class="split">
     <div class="stack">
-      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}))).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div></div>
+      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}))).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div>
+        ${(d.issues_resolved||[]).length ? `<details class="more-d"><summary>Resolved · <span class="n">${d.issues_resolved.length}</span></summary><div class="lst">${d.issues_resolved.map(i=>`<div class="li"><div class="tt"><b>${esc(i.title)}</b><span>resolved by ${esc((i.resolution||{}).resolved_by||'')} ${fmtD((i.resolution||{}).resolved_at)}${(i.resolution||{}).note?' — '+esc(i.resolution.note):''}</span></div><button class="btn s g w" onclick="unresolve('${jsq(i.key)}')">Reopen</button></div>`).join('')}</div></details>` : ''}</div>
       <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><div style="display:flex;align-items:center;justify-content:space-between"><h2>Setup completeness</h2><span class="muted" style="font-size:12.5px">what is connected and configured</span></div>
-        <div style="display:flex;gap:22px;align-items:center">${setupRing(sc)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:${k.ok?'var(--ink4)':'var(--ink)'}" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;${k.ok?'background:var(--green-bg);color:var(--green-t)':'border:1.5px solid rgba(240,235,224,.25)'}">${k.ok?ico('check','xs'):''}</span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
-      ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.filter(s=>!s.done).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${c.onboarding.done} done</div></div></div>` : ''}
-      ${(churn.reasons||[]).length ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Churn risk</h2>${pill(churn.level==='high'?'bad':churn.level==='medium'?'warn':'neu', esc(churn.level||''), false)}</div><div class="steps">${churn.reasons.map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('')}</div></div>` : ''}
+        <div style="display:flex;gap:22px;align-items:center">${setupRing(setupDone(c).score)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink)" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid rgba(240,235,224,.25)"></span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
+      ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.filter(s=>!s.done).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${c.onboarding.done} done${c.onboarding.dismissed?' · the owner hid their setup card':''}</div></div></div>` : ''}
+      <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Churn risk</h2>${churn.scored===false?pill('neu','not scored',false):pill(churn.level==='high'?'bad':churn.level==='medium'?'warn':'neu', esc(churn.level||'—'), false)}</div>
+        ${churn.scored===false ? `<span class="muted" style="font-size:13px">${esc(churn.why_not || 'Only paying accounts are scored — a trial or internal account has nothing to churn from yet.')}</span>` : `<div class="steps">${(churn.reasons||[]).map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('') || '<div class="muted">No risk signals.</div>'}</div>${churn.since?`<span class="muted" style="font-size:12.5px">At this level since ${fmtD(churn.since)}${churn.days_at_level?' ('+churn.days_at_level+' days)':''}.</span>`:''}`}
+        ${churn.level==='high'?`<button class="btn s w" style="align-self:flex-start" onclick="valueRecap(${c.id},'${jsq(c.name)}','${jsq(c.owner_email||'')}')">Send value recap…</button>`:''}</div>
     </div>
     <div class="stack">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><h2>Modules</h2><div class="grid g2" style="gap:10px">${c.modules.map(m=>`<div style="padding:14px;border-radius:12px;background:var(--strip);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px"><span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-weight:700">${esc(m.label)}</span>${m.enabled?`<span class="chip ${MOD[m.state]}">${MODL[m.state]}</span>`:'<span class="chip off">off</span>'}</span><span class="muted" style="font-size:12px">${m.enabled ? (m.last_data ? 'last data '+ago(m.last_data)+' ago' : (m.configured ? 'no data yet' : 'not configured')) : 'not on the plan'}</span></div>`).join('')}</div></div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Where the owner works</h2><span class="muted" style="font-size:12.5px">view-as and staff PINs never count</span></div>
+        <div class="kv"><span class="k">Signed in</span><span class="n">${act.sign_in?fmtDT(act.sign_in):'—'}</span><span class="k">Console sign-in</span><span class="n">${act.console_login?fmtDT(act.console_login):'—'}</span><span class="k">Web or iOS use</span><span class="n">${act.session?fmtDT(act.session):'—'}${c.on_ios?' <span class="chip">iOS</span>':''}</span><span class="k">Web tab</span><span class="n">${act.web_tab?fmtDT(act.web_tab):'—'}</span><span class="k">Team</span><span class="n">${c.team_last_seen?fmtDT(c.team_last_seen):'—'}</span></div></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Profile</h2><a href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Edit</a></div>
-        <div class="kv"><span class="k">Logins</span><span>${c.logins.map(l=>`<span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(l.role)}</span>`).join(' ')||'—'}</span>
-        <span class="k">POS</span><span>${esc(d.profile.pos_system||'—')}</span><span class="k">Timezone</span><span>${esc(d.profile.timezone||'—')}</span>
+        <div class="kv"><span class="k">Logins</span><span>${c.logins.map(l=>`<span class="chip ${l.is_active?'':'off'}">${esc(l.username)} · ${esc(ROLE_LABEL[l.role]||l.role||'')}</span>`).join(' ')||'—'}</span>
+        <span class="k">POS</span><span>${esc(d.profile.pos_system||'—')}</span><span class="k">Timezone</span><span>${esc(((TZ_CHOICES.find(z=>z[0]===d.profile.timezone)||[])[1])||d.profile.timezone||'—')}</span>
         <span class="k">Labor target</span><span class="n">${d.profile.labor_target_pct!=null?d.profile.labor_target_pct+'%':'—'}</span><span class="k">Food cost target</span><span class="n">${d.profile.food_cost_target!=null?d.profile.food_cost_target+'%':'—'}</span>
-        <span class="k">Neighborhood</span><span>${esc(d.profile.neighborhood||'—')}</span><span class="k">Place ID</span><span class="mono">${esc(d.profile.google_place_id||'—')}</span>
-        ${d.profile.internal_notes?`<span class="k">Internal note</span><span style="white-space:normal;color:var(--amber-t)">${esc(d.profile.internal_notes)}</span>`:''}</div>
+        <span class="k">Neighborhood</span><span>${esc(d.profile.neighborhood||'—')}</span><span class="k">Place ID</span><span class="mono">${esc(d.profile.google_place_id||'—')}</span></div>
         <details class="more-d" style="margin:0 -18px -16px"><summary>Voice, vibe and digest</summary><div style="padding:0 18px 16px"><div class="kv"><span class="k">Vibe</span><span>${esc(d.profile.vibe||'—')}</span><span class="k">Known for</span><span>${esc(d.profile.known_for||'—')}</span><span class="k">Digest day</span><span>${esc(d.profile.digest_day||'—')}</span><span class="k">Voice notes</span><span style="white-space:normal">${esc(d.profile.voice_notes||'—')}</span></div></div></details>
       </div>
-    </div></section>`;
-  else if(tab === 'billing') body = `<section class="split">
-    <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><h2>Subscription</h2><div class="kv"><span class="k">Status</span><span>${bill(c.billing.status)}</span><span class="k">Tier</span><span>${esc(c.billing.tier||'—')}</span><span class="k">Modules</span><span class="num">${c.billing.modules}</span><span class="k">Monthly (list)</span><span class="num">${c.billing.monthly?fmtUSD(c.billing.monthly):'—'}</span><span class="k">Stripe customer</span><span>${c.billing.stripe_customer_id?`<a class="mono" target="_blank" href="https://dashboard.stripe.com/customers/${esc(c.billing.stripe_customer_id)}">${esc(c.billing.stripe_customer_id)} ↗</a>`:'—'}</span><span class="k">Contract</span><span><span class="b ${c.billing.contract_status==='signed'?'ok':'warn'} nodot">${esc(c.billing.contract_status)}</span>${c.billing.envelope_id?' <span class="mono dim">'+esc(c.billing.envelope_id)+'</span>':''}</span><span class="k">Since</span><span class="num">${fmtD(c.created_at)}</span></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${c.billing.status!=='active'?`<button class="btn" onclick="act('/admin/resend-payment/${c.id}','Resend payment link')">Resend payment link</button>`:''}${c.billing.contract_status!=='signed'?`<button class="btn" onclick="act('/admin/resend-contract/${c.id}','Resend contract')">Resend contract</button>`:''}</div>
-      <div class="dim">Plan and payment changes happen in Stripe.</div></div>
-    <div class="stack"><div class="lbl">Payment &amp; contract history</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'cev-t', sort:'created_at', limit:15, empty:'No Stripe or DocuSign events for this client yet.'})}</div></section>`;
-  else if(tab === 'data') body = `
-    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Integrations</h2></div><div class="lst" style="border-top:1px solid var(--line)">${c.integrations.map(r=>`<div class="li"><span class="ico ${r.state==='connected'?'good':r.state==='error'?'bad':'neu'}">${ico('plug')}</span><div class="tt"><b>${esc(r.label)}</b><span>${r.state==='connected'?'Connected':r.state==='error'?'Error':(r.configured?'Configured':'Not connected')}${r.auth?' · '+esc(r.auth):''}${r.last_success?' · last success '+ago(r.last_success)+' ago':''}</span>${r.error?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:''}</div>
-      <span style="display:flex;gap:6px">${r.key==='toast'?`<button class="btn s" onclick="toastOpen(${c.id},'${jsq(c.name)}')">Credentials</button><button class="btn s" onclick="act('/admin/toast/sync/${c.id}','Sync Toast')">Sync now</button>`:r.key==='rpower'?`<button class="btn s" onclick="rpowerOpen(${c.id},'${jsq(c.name)}')">Token &amp; sync</button>`:r.key==='instagram'?`<button class="btn s" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh Instagram token')">Refresh token</button>`:r.key==='google_business'?`<button class="btn s" onclick="act('/admin/fetch-reviews/${c.id}','Fetch reviews now')">Fetch reviews</button>`:`<a class="btn s g" href="/admin/client-settings/${c.id}">Settings</a>`}</span></div>`).join('')}</div></section>
-    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Modules</h2><a href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Turn modules on or off</a></div><div class="lst" style="border-top:1px solid var(--line)">${c.modules.map(m=>`<div class="li"><div class="tt"><b>${esc(m.label)}</b><span>${m.enabled?'on':'off'} · ${m.configured?'configured':'not configured'} · ${m.receiving?'receiving data':'no data coming in'}</span></div><span class="chip ${MOD[m.state]}">${MODL[m.state]}</span><span class="n muted" style="font-size:12.5px;width:120px;text-align:right">${m.last_data?fmtDT(m.last_data):'—'}</span></div>`).join('')}</div></section>
-    ${d.siblings.length ? `<section class="stack"><div class="lbl">Other locations of ${esc(c.brand)}</div><div class="card" style="overflow:hidden"><div class="lst">${d.siblings.map(r=>custRow(r)).join('')}</div></div></section>` : ''}
+    </div></section>`};
+}
+// ── the client's Billing tab (H: /admin/api/billing/<rid>) ──
+function cBilling(c, d){
+  return {html: `<section class="split">
+      <div class="stack"><div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px" id="cb-main"><h2>Billing</h2>${skel(4)}</div></div>
+      <div class="stack"><div class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px" id="cb-live"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Stripe, right now</h2><button class="btn s" onclick="billingLive(${c.id})">Check Stripe now</button></div><span class="muted" style="font-size:12.5px">Everything on this page is from the local mirror of Stripe. This asks Stripe directly, for this client only.</span></div>
+        <div id="cb-lists" class="stack">${skel(3)}</div>
+        <div class="stack"><div class="lbl">Payment &amp; contract events</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'cev-t', sort:'created_at', limit:15, empty:'No Stripe or DocuSign events for this client yet.'})}</div></div>
+    </section>`, after: () => lazy('cb-main', () => cBillingMain(c)) };
+}
+async function cBillingMain(c){
+  const d = await need('/admin/api/billing/' + c.id);
+  const sub = d.subscription || null, inv = d.open_invoice || null, hold = d.hold || d.pause_lock, n = jsq(c.name), em = jsq(c.owner_email||'');
+  const mm = sub && sub.module_mismatch ? sub.module_mismatch : null;
+  const lists = $('cb-lists');
+  if(lists) lists.innerHTML = cBillingLists(d);
+  const envs = d.envelopes || [], env0 = envs[0] || null;
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Billing</h2>${bill(d.billing_status)}</div>
+    ${hold ? `<div class="warnline" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} On hold: ${esc(PAUSE_LABEL[hold] || hold)}. The owner can't resume it — only you can lift it.</div>` : ''}
+    <div class="kv">
+      <span class="k">Status</span><span>${bill(d.billing_status)}${d.pause_reason?` <span class="chip warn">${esc(PAUSE_LABEL[d.pause_reason]||d.pause_reason)}</span>`:''}${d.paused_until?` <span class="dim">until ${fmtD(d.paused_until)}</span>`:''}</span>
+      <span class="k">Modules</span><span>${(d.modules||[]).map(m=>`<span class="chip">${esc(((MODULE_KEYS.find(x=>x[0]===m)||[])[1])||m)}</span>`).join('') || '<span class="dim">none</span>'}${mm?` <span class="chip bad" title="${esc(JSON.stringify(mm))}">Stripe bills a different plan</span>`:''}</span>
+      <span class="k">Billed by</span><span>${d.billed_by && d.billed_by.restaurant_id !== c.id ? `<a href="#client/${d.billed_by.restaurant_id}?tab=billing">${esc(d.billed_by.name||('#'+d.billed_by.restaurant_id))}</a> — this location is covered by its subscription` : (((d.covers||[]).filter(x=>x!==c.id)).length ? 'this location — it also pays for ' + (d.covers||[]).filter(x=>x!==c.id).map(x=>`<a href="#client/${x}">${esc(locName(null, x))}</a>`).join(', ') : 'this location')}</span>
+      <span class="k">Stripe customer</span><span>${d.stripe_customer_id?`<a class="mono" target="_blank" rel="noopener" href="https://dashboard.stripe.com/customers/${esc(d.stripe_customer_id)}">${esc(d.stripe_customer_id)} ↗</a>`:'<span class="dim">none attached</span>'}</span>
+      <span class="k">Contract</span><span>${contractPill(d.contract_status)}${d.contract_signed_at?` <span class="dim">signed ${fmtD(d.contract_signed_at)}</span>`:''}${env0&&env0.status_reason?` <span class="dim" title="DocuSign's reason">${esc(env0.status_reason)}</span>`:''}</span>
+      <span class="k">Paying since</span><span class="n">${d.converted_at?fmtD(d.converted_at):'—'}</span>
+    </div>
+    ${sub ? `<div class="lbl">Subscription</div><div class="kv">
+      <span class="k">Stripe status</span><span><span class="b ${sub.status==='active'?'ok':sub.status==='past_due'?'bad':'warn'} nodot">${esc(sub.status||'unknown')}</span>${sub.cancel_at_period_end?' <span class="chip warn">cancels at period end</span>':''}</span>
+      <span class="k">Price</span><span class="n">${sub.amount_cents!=null?fmtUSD(sub.amount_cents/100,2):'—'} / ${esc((sub.interval_count>1?sub.interval_count+' ':'')+(sub.interval||'month'))}${sub.quantity>1?' × '+sub.quantity:''}${sub.discount_pct?' · '+sub.discount_pct+'% off':''}</span>
+      <span class="k">Billed MRR</span><span class="n">${fmtUSD(sub.billed_mrr,2)}</span>
+      <span class="k">Period ends</span><span class="n">${sub.current_period_end?fmtD(sub.current_period_end):'—'}${sub.trial_end?' · trial ends '+fmtD(sub.trial_end):''}</span>
+      ${sub.canceled_at||sub.ended_at?`<span class="k">Ended</span><span>${fmtD(sub.canceled_at||sub.ended_at)}${sub.cancellation_reason?' — '+esc(sub.cancellation_reason):''}</span>`:''}
+      <span class="k">Stripe modules</span><span class="mono">${esc(sub.module_keys||'—')}</span></div>` : '<span class="muted" style="font-size:13px">No Stripe subscription on file for this location.</span>'}
+    ${inv ? `<div class="warnline" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} Open invoice: <span class="n">${fmtUSD((inv.amount_remaining_cents!=null?inv.amount_remaining_cents:inv.amount_due_cents)/100,2)}</span> due · ${inv.attempt_count||0} attempt${inv.attempt_count===1?'':'s'}${inv.next_payment_attempt?' · Stripe retries '+fmtDT(inv.next_payment_attempt):' · no retry scheduled'}${inv.last_failed_at?' · last failed '+fmtD(inv.last_failed_at):''}${inv.hosted_invoice_url?` · <a href="${esc(inv.hosted_invoice_url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">Open invoice ↗</a>`:''}</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${d.stripe_customer_id ? `<button class="btn s w" onclick="cardLink(${c.id},'${n}','${em}')">Send card-update link…</button>` : ''}
+      ${['active','internal'].indexOf(d.billing_status)<0 && !(d.billed_by && d.billed_by.restaurant_id !== c.id) ? `<button class="btn s w" onclick="resendPayment(${c.id},'${n}','${jsq(d.billing_status||'')}','${em}')">${d.billing_status==='past_due'?'Resend card-update link…':'Resend payment link…'}</button>` : ''}
+      <button class="btn s w" onclick="changePlan(${c.id},'${n}','${jsq((d.modules||[]).join(','))}',${sub&&['active','past_due','trialing'].indexOf(sub.status)>=0?1:0})">Change plan…</button>
+      ${d.contract_status!=='signed' ? `<button class="btn s w" onclick="resendContract(${c.id},'${n}','${em}')">Resend contract…</button><button class="btn s w" onclick="markSigned(${c.id},'${n}','${em}')">Mark signed (offline)…</button>` : `<button class="btn s g w" onclick="resendContract(${c.id},'${n}','${em}')">Send an amendment…</button>`}
+      <button class="btn s g w" onclick="attachCustomer(${c.id},'${n}','${jsq(d.stripe_customer_id||'')}')">${d.stripe_customer_id?'Replace Stripe customer…':'Attach Stripe customer…'}</button>
+      ${hold ? `<button class="btn s d w" onclick="liftHold(${c.id},'${n}','${jsq(hold)}')">Lift the ${esc(hold)} hold…</button>` : ''}
+    </div>`;
+}
+function cBillingLists(d){
+  const inv = d.invoices || [], hist = d.history || [], owed = d.owed_sends || [], envs = d.envelopes || [], rec = d.reconcile || null;
+  const mism = rec && Array.isArray(rec.mismatches) ? rec.mismatches : [];
+  return `${mism.length ? `<div class="warnline">${ico('alert','xs')} The nightly reconcile found ${mism.length} mismatch${mism.length===1?'':'es'} with Stripe (since ${fmtD(rec.first_seen_at)}): ${esc(mism.map(m=>m.detail||m.kind).join('; '))}</div>` : ''}
+    <div class="lbl">Invoices</div>${table([{h:'Created',key:'created',cell:r=>`<span class="num">${fmtD(r.created)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='paid'?'ok':r.status==='open'?'bad':'off'} nodot">${esc(r.status||'')}</span>`},{h:'Total',key:'total_cents',r:true,cell:r=>`<span class="num">${r.total_cents!=null?fmtUSD(r.total_cents/100,2):'—'}</span>`},{h:'Tries',key:'attempt_count',r:true,cell:r=>`<span class="num">${r.attempt_count||0}</span>`},{h:'',cell:r=>r.hosted_invoice_url?`<a href="${esc(r.hosted_invoice_url)}" target="_blank" rel="noopener">Open ↗</a>`:''}], inv, {id:'cinv-t', limit:6, empty:'No invoices mirrored yet.'})}
+    <div class="lbl">Billing email owed</div>${table([{h:'Queued',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'What',key:'kind',cell:r=>esc((r.kind||'').replace(/_/g,' '))},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email||'')}</span>`},{h:'State',key:'status',cell:r=>`<span class="b ${/sent/.test(r.status)?'ok':r.status==='failed'?'bad':'warn'} nodot" title="${esc(r.last_error||'')}">${esc((r.status||'').replace('_',' '))}</span>${r.attempts?' <span class="dim">'+r.attempts+' tries</span>':''}`}], owed, {id:'cowed-t', limit:6, empty:'Nothing owed to this client.'})}
+    <div class="lbl">Status and plan history</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Field',key:'field',cell:r=>esc((r.field||'').replace('module_','').replace(/_/g,' '))},{h:'Change',cell:r=>`<span class="dim">${esc(r.old_value==null?'—':r.old_value)}</span> → ${esc(r.new_value==null?'—':r.new_value)}`},{h:'By',key:'actor',cell:r=>`${esc(r.actor||r.source||'')}${r.reason?'<div class="dim">'+esc(r.reason)+'</div>':''}`}], hist, {id:'chist-t', sort:'created_at', limit:8, empty:'No status or plan changes recorded yet.'})}
+    ${envs.length ? `<div class="lbl">Contract envelopes</div>${table([{h:'Sent',key:'sent_at',cell:r=>`<span class="num">${fmtD(r.sent_at)}</span>`},{h:'State',key:'status',cell:r=>contractPill(r.status||'sent')},{h:'Terms',key:'modules_list',wrap:true,cell:r=>`<span class="dim">${esc(r.modules_list||'')}</span>`},{h:'Resent',key:'resend_count',r:true,cell:r=>`<span class="num">${r.resend_count||0}</span>`}], envs, {id:'cenv-t', limit:5})}` : ''}`;
+}
+async function billingLive(id){
+  const el = $('cb-live'); if(!el) return;
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Stripe, right now</h2></div>${skel(2)}`;
+  let d; try{ d = await api('/admin/api/client/' + id + '/billing/live', {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
+  const subs = (d && d.subscriptions) || [];
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Stripe, right now</h2><button class="btn s" onclick="billingLive(${id})">Check again</button></div>
+    ${!okRes(d) ? `<div class="warnline">${esc(errText(d, 'Stripe didn\'t answer'))}</div>` : (d.note ? `<span class="muted">${esc(d.note)}</span>` : '')}
+    ${d && d.mirror_stale ? `<div class="warnline">${ico('alert','xs')} The local mirror disagrees with Stripe (${esc((d.mirror||{}).status||'none')} here). The nightly reconcile or the next Stripe event corrects it.</div>` : ''}
+    ${subs.map(s=>`<div class="kv"><span class="k">Subscription</span><span class="mono">${esc(s.id)}</span><span class="k">Status</span><span>${esc(s.status||'')}${s.cancel_at_period_end?' · cancels at period end':''}</span><span class="k">Price</span><span class="n">${s.amount!=null?fmtUSD(s.amount,2):'—'} / ${esc(s.interval||'')}${s.quantity>1?' × '+s.quantity:''}</span><span class="k">Period ends</span><span class="n">${fmtD(s.current_period_end)}</span><span class="k">Modules</span><span class="mono">${esc(s.module_keys||'—')}</span></div>`).join('') || (okRes(d) && !d.note ? '<span class="muted">No subscriptions in Stripe for this customer.</span>' : '')}`;
+}
+// ── the client's Data & integrations tab ──
+// The review fetch's real state and a switch for it (#110); Google access
+// that was revoked (#44); every data source's sync health (#46); and the
+// configuration that used to live only on the legacy settings page (#73):
+// response templates, alert contacts, staff scheduling notes, menu extraction.
+function cData(c, d){
+  const g = c.integrations.find(i=>i.key==='google_business') || {}, p = d.profile || {};
+  const revMod = c.modules.find(m=>m.key==='reviews') || {};
+  const fetching = g.source === 'gbp' ? 'Fetching through the Google Business Profile.' : (g.source === 'places_sampled' ? 'Fetching from Google Places — five reviews at a time (a sample of the listing).' : 'Review fetching is off.');
+  const canOn = g.source === 'none' && p.google_place_id && revMod.enabled;
+  const why = g.source === 'none' ? (!p.google_place_id ? ' There is no Google Place ID — add one in Settings first.' : (!revMod.enabled ? ' Reviews is not on the plan.' : '')) : '';
+  const srcs = d.data_sources || [];
+  return {html: `
+    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Integrations</h2></div><div class="lst" style="border-top:1px solid var(--line)">${c.integrations.map(r=>`<div class="li"><span class="ico ${r.state==='connected'?'good':r.state==='error'?'bad':'neu'}">${ico('plug')}</span><div class="tt"><b>${esc(r.label)}</b><span>${r.state==='connected'?'Connected':r.state==='error'?'Error':(r.configured?'Configured':'Not connected')}${r.auth?' · '+esc(r.auth):''}${r.last_success?' · last success '+ago(r.last_success)+' ago':''}${r.sync_state&&r.sync_state!=='not_connected'?' · sync '+esc(r.sync_state):''}</span>${r.revoked_at?`<span style="color:var(--red-t)">Google access was revoked ${fmtD(r.revoked_at)} — the owner has to reconnect Google from their account.</span>`:''}${r.error&&!r.revoked_at?`<span style="color:var(--red-t)">${esc(r.error)}${r.error_since?' · since '+fmtD(r.error_since):''}</span>`:''}</div>
+      <span style="display:flex;gap:6px">${r.key==='toast'?`<button class="btn s w" onclick="toastOpen(${c.id},'${jsq(c.name)}')">Credentials</button><button class="btn s w" onclick="act('/admin/toast/sync/${c.id}','Sync Toast now for ${jsq(c.name)}')">Sync now</button>`:r.key==='rpower'?`<button class="btn s w" onclick="rpowerOpen(${c.id},'${jsq(c.name)}')">Token &amp; sync</button>`:r.key==='instagram'?`<button class="btn s w" onclick="act('/admin/refresh-ig-token/${c.id}','Refresh the Instagram and Facebook tokens for ${jsq(c.name)}')">Refresh token</button>`:r.key==='google_business'?`<button class="btn s w" onclick="act('/admin/fetch-reviews/${c.id}','Fetch new reviews for ${jsq(c.name)} now')">Fetch reviews</button>`:`<a class="btn s g" href="/admin/client-settings/${c.id}">Settings</a>`}</span></div>`).join('')}</div></section>
+    <section class="card" style="padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span class="ico ${g.source==='none'?'warn':'good'}">${ico('refresh')}</span><div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:3px"><b>Review fetching</b><span class="muted" style="font-size:12.5px">${esc(fetching + why)}</span></div>
+      ${canOn?`<button class="btn s p w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',true)">Turn on review fetching</button>`:''}${g.source==='places_sampled'?`<button class="btn s g w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',false)">Turn off</button>`:''}</section>
+    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each feed's own sync health</span></div>
+      ${srcs.length ? table([{h:'Source',key:'source',cell:r=>`<b>${esc(r.source)}</b>${r.provider?' <span class="dim">'+esc(r.provider)+'</span>':''}`},{h:'Last good',key:'last_ok_at',cell:r=>`<span class="num">${r.last_ok_at?fmtDT(r.last_ok_at):'never'}</span>`},{h:'Failing',key:'consecutive_failures',r:true,cell:r=>r.consecutive_failures?`<span class="chip ${r.error_class==='auth'?'bad':'warn'}">${r.consecutive_failures} in a row</span>${r.first_failed_at?' <span class="dim">since '+fmtD(r.first_failed_at)+'</span>':''}`:'<span class="chip ok">ok</span>'},{h:'Next try',key:'next_retry_at',cell:r=>`<span class="num">${r.next_retry_at?fmtDT(r.next_retry_at):'—'}</span>`},{h:'Data through',key:'data_through',cell:r=>`<span class="num">${r.data_through?fmtD(r.data_through):'—'}</span>`},{h:'Last error',key:'last_error',wrap:true,cell:r=>r.last_error?`<span style="color:var(--red-t)">${esc(String(r.last_error).slice(0,160))}</span>`:''}], srcs, {id:'csrc-t'}) : `<div class="cb">${readFailed(d,['source_health'])?unknownV(readFailed(d,['source_health'])):'<span class="muted">No data-source history yet.</span>'}</div>`}</section>
+    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Modules</h2><a href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Turn modules on or off</a></div><div class="lst" style="border-top:1px solid var(--line)">${c.modules.map(m=>`<div class="li"><div class="tt"><b>${esc(m.label)}</b><span>${m.enabled?'on':'off'} · ${m.configured?'configured':'not configured'} · ${m.receiving?'receiving data':'no data coming in'}</span></div><span class="chip ${MOD[m.state]}">${MODL[m.state]}</span><span class="n muted" style="font-size:12.5px;width:140px;text-align:right">${m.last_data?fmtDT(m.last_data):'—'}</span></div>`).join('')}</div></section>
+    <section class="grid g2">
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-contacts"><h2>Alert contacts</h2>${skel(2)}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-templates"><h2>Reply templates</h2>${skel(2)}</div>
+    </section>
+    <section class="grid g2">
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-staff">${staffNotesHtml(c, d.staff_notes || [])}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-menu">${menuHtml(c, p)}</div>
+    </section>
+    ${d.siblings.length ? `<section class="stack"><div class="lbl">Other locations of ${esc(c.brand)}</div><div class="card" style="overflow:hidden"><div class="lst">${d.siblings.map(r=>custRow(slimOf(r))).join('')}</div></div></section>` : ''}
     <details class="card"><summary>Schedules generated · <span class="n">${d.schedules.length}</span></summary><div class="cb">${table([{h:'Week',key:'week_start',cell:r=>`<span class="num">${fmtD(r.week_start)} – ${fmtD(r.week_end)}</span>`},{h:'Generated',key:'generated_at',cell:r=>`<span class="num">${fmtDT(r.generated_at)}</span>`},{h:'Hours',r:true,cell:r=>`<span class="num">${r.hours_scheduled!=null?Math.round(r.hours_scheduled):'—'}</span> <span class="dim">/ ${r.hours_budget!=null?Math.round(r.hours_budget):'—'}</span>`},{h:'Model time',r:true,cell:r=>r.generation_seconds!=null?`<span class="num">${Math.round(r.generation_seconds)}s</span>`:'<span class="dim">—</span>'},{h:'State',cell:r=>r.published_at?`<span class="b ok nodot">published</span> <span class="dim">${esc(r.published_by||'')}</span>`:(r.hard_breaches?`<span class="b warn nodot">${r.hard_breaches} hard breach${r.hard_breaches===1?'':'es'}</span>`:'<span class="b info nodot">draft</span>')}], d.schedules, {id:'csch-t', limit:10, empty:'No schedules generated.'})}</div></details>
     <details class="card"><summary>Job runs, failures and webhooks</summary><div class="cb stack">
-      ${table([{h:'Job',key:'job'},{h:'Started',key:'started_at',cell:r=>`<span class="num">${fmtDT(r.started_at)}</span>`},{h:'Result',cell:r=>r.finished_at?(r.ok?'<span class="b ok nodot">ok</span>':'<span class="b bad nodot">failed</span>'):'<span class="chip warn">running</span>'},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.job_runs, {id:'cruns-t', limit:10, empty:'No runs mention this client.'})}
+      ${table([{h:'Job',key:'job'},{h:'Started',key:'started_at',cell:r=>`<span class="num">${fmtDT(r.started_at)}</span>`},{h:'Result',cell:r=>r.finished_at?(r.ok?'<span class="b ok nodot">ok</span>':'<span class="b bad nodot">failed</span>'):'<span class="chip">running</span>'},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.job_runs, {id:'cruns-t', limit:10, empty:'No runs mention this client.'})}
       ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Job',key:'job'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red-t)">${esc(r.error||'')}</span>`}], d.jobs, {id:'cjobs-t', limit:10, empty:'No job failures mention this client.'})}
-      ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Event',key:'event_type'},{h:'Result',cell:r=>r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.webhook_deliveries, {id:'chook-t', limit:10, empty:'No webhook configured or no deliveries yet.'})}</div></details>`;
-  else if(tab === 'messages') {
-    const segs = [['ai','AI'],['email','Email'],['push','Push &amp; alerts']];
-    let inner = '';
-    if(_cmsg === 'email') inner = `${table([{h:'When',key:'sent_at',cell:r=>`<span class="num">${fmtDT(r.sent_at)}</span>`},{h:'Type',key:'email_type'},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email)}</span>`},{h:'Subject',key:'subject',wrap:true},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='failed'?'bad':'ok'} nodot">${esc(r.status||'sent')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:''}], d.emails, {id:'cem-t', sort:'sent_at', limit:20, empty:'No emails logged for this client.'})}
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="act('/admin/test-digest/${c.id}','Send a test digest')">Send test digest</button><button class="btn" onclick="act('/admin/test-urgent/${c.id}','Send a test urgent alert')">Send test urgent alert</button><button class="btn" onclick="act('/admin/resend-welcome/${c.id}','Resend the welcome email')">Resend welcome</button></div>`;
-    else if(_cmsg === 'push') inner = `<section class="split">
+      ${(d.ai_quality||[]).length ? table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'AI check',key:'job'},{h:'Finding',key:'error',wrap:true,cell:r=>`<span class="dim">${esc(r.error||'')}</span>`}], d.ai_quality, {id:'caiq-t', limit:10}) : ''}
+      ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Event',key:'event_type'},{h:'Result',cell:r=>r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.webhook_deliveries, {id:'chook-t', limit:10, empty:'No webhook configured or no deliveries yet.'})}</div></details>`,
+    after: () => { lazy('cd-contacts', () => contactsHtml(c)); lazy('cd-templates', () => templatesHtml(c)); }};
+}
+async function reviewsFetching(id, name, on){
+  if(!confirm((on ? 'Turn on review fetching for ' : 'Turn off review fetching for ') + name + '?' + (on ? ' Reviews are fetched at 8am, noon, 4pm and 8pm Central.' : ' No new reviews arrive until it is turned back on.'))) return;
+  const d = await post('/admin/api/client/' + id + '/reviews-fetching', {on: !!on});
+  if(say(d, on ? ('Review fetching is on' + (d.via === 'google_business_profile' ? ', through the Google Business Profile' : (d.via === 'places' ? ', from Google Places' : ''))) : 'Review fetching is off')) route();
+}
+async function contactsHtml(c){
+  const d = await need('/admin/alert-contacts/' + c.id);
+  const rows = d.contacts || [];
+  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Alert contacts</h2><span class="muted" style="font-size:12px">${rows.length} of 2</span></div>
+    ${rows.map(x=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(x.name||'Unnamed')}</b> <span class="mono dim">${esc(x.phone||'')}</span></span>${x.sms_consent?'<span class="chip ok" title="They consented to texts themselves">texts</span>':'<span class="chip" title="No SMS consent: email alerts only. Only the owner\'s own Alerts form can record consent.">email only</span>'}<button class="btn s g w" onclick="contactDelete(${c.id},${x.id},'${jsq(x.name||'this contact')}','${jsq(c.name)}')">Remove</button></div>`).join('') || '<span class="muted" style="font-size:13px">No alert contacts.</span>'}
+    ${rows.length < 2 ? `<div style="display:flex;gap:6px;flex-wrap:wrap"><input id="ac-name" placeholder="Name" style="flex:1;min-width:100px"><input id="ac-phone" placeholder="Mobile number" style="flex:1;min-width:120px"><button class="btn s w" onclick="contactAdd(${c.id},'${jsq(c.name)}')">Add</button></div><span class="dim">Added here they get email alerts; texts need their own consent in the owner's Alerts screen.</span>` : ''}
+    <a class="lnk" style="align-self:flex-start" href="#client/${c.id}?tab=sms">Send a test text →</a>`;
+}
+async function contactAdd(id, name){
+  const nm = $('ac-name').value.trim(), ph = $('ac-phone').value.trim();
+  if(!ph){ toast('Enter a mobile number', 'bad'); return; }
+  if(!confirm('Add ' + (nm || ph) + ' as an alert contact for ' + name + '?')) return;
+  const d = await post('/admin/api/alert-contacts/' + id, {name: nm, phone: ph});
+  if(say(d, 'Alert contact added')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+}
+async function contactDelete(id, cid, who, name){
+  if(!confirm('Remove ' + who + ' from ' + name + "'s alert contacts? They stop getting alerts.")) return;
+  const d = await post('/admin/api/alert-contacts/' + id + '/' + cid + '/delete', {});
+  if(say(d, who + ' removed')) lazy('cd-contacts', () => contactsHtml({id:id, name:name}));
+}
+async function templatesHtml(c){
+  const d = await need('/admin/api/templates/' + c.id);
+  const rows = d.templates || [];
+  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Reply templates</h2><button class="btn s w" onclick="templateAdd(${c.id},'${jsq(c.name)}')">Add…</button></div>
+    ${rows.map(t=>`<details class="more-d" style="margin:0 -18px"><summary style="display:flex;justify-content:space-between"><span>${esc(t.title||'Untitled')} <span class="chip">${esc(t.category||'general')}</span></span></summary><div style="padding:0 18px 12px;display:flex;flex-direction:column;gap:8px"><span class="ink2 pre" style="font-size:13px">${esc(t.body||'')}</span><button class="btn s g w" style="align-self:flex-start" onclick="templateDelete(${c.id},${t.id},'${jsq(t.title||'this template')}','${jsq(c.name)}')">Delete</button></div></details>`).join('') || '<span class="muted" style="font-size:13px">No reply templates.</span>'}`;
+}
+function templateAdd(id, name){
+  formOpen({title:'New reply template — ' + name, go:'Add template', done:'Template added',
+    fields:[{id:'title', label:'Title', placeholder:'e.g. Thanks for a 5-star visit'},{id:'category', label:'For', type:'select', options:[['general','Any review'],['positive','Positive reviews'],['negative','Negative reviews'],['neutral','Neutral reviews']]},{id:'body', label:'Reply text', type:'textarea', rows:5}],
+    submit: v => post('/admin/api/templates/' + id, v), after: () => lazy('cd-templates', () => templatesHtml({id:id, name:name}))});
+}
+async function templateDelete(id, tid, title, name){
+  if(!confirm('Delete the reply template “' + title + '” from ' + name + '?')) return;
+  const d = await post('/admin/api/templates/' + id + '/' + tid + '/delete', {});
+  if(say(d, 'Template deleted')) lazy('cd-templates', () => templatesHtml({id:id, name:name}));
+}
+// Staff scheduling notes (#142): a new note is added to the person's notes,
+// never written over them; a removal offers Undo.
+function staffNotesHtml(c, notes){
+  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Scheduling notes</h2><span class="muted" style="font-size:12px">what the schedule must respect</span></div>
+    ${notes.map(x=>`<div style="display:flex;gap:10px;font-size:13px;align-items:flex-start"><span style="flex:1;min-width:0"><b>${esc(x.employee_name)}</b> <span class="ink2 pre">${esc(x.notes||'')}</span></span><button class="btn s g w" onclick="staffNoteDelete(${c.id},${x.id},'${jsq(x.employee_name)}','${jsq(c.name)}')">Remove</button></div>`).join('') || '<span class="muted" style="font-size:13px">No scheduling notes.</span>'}
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="sn-name" placeholder="Employee name" style="flex:1;min-width:110px"><input id="sn-notes" placeholder="e.g. no Sundays; off by 4pm" style="flex:2;min-width:150px"><button class="btn s w" onclick="staffNoteAdd(${c.id},'${jsq(c.name)}')">Add</button></div>
+    <span class="dim">A note for someone who already has one is added to theirs, never written over it.</span>`;
+}
+async function staffNoteAdd(id, name, who, text){
+  const nm = who || $('sn-name').value.trim(), nt = text || $('sn-notes').value.trim();
+  if(!nm || !nt){ toast('Enter the employee and the note', 'bad'); return; }
+  const fd = new FormData(); fd.append('employee_name', nm); fd.append('notes', nt);
+  const d = await api('/admin/staff-notes/' + id, {method:'POST', body: fd});
+  if(say(d, d.appended ? ('Added to ' + nm + "'s notes") : ('Note saved for ' + nm))) route();
+}
+async function staffNoteDelete(id, nid, who, name){
+  if(!confirm('Remove ' + who + "'s scheduling notes at " + name + '? The next schedule stops respecting them.')) return;
+  const d = await post('/admin/staff-notes/' + nid + '/delete', {});
+  if(!say(d, who + "'s notes removed")) return;
+  const gone = d.deleted || {};
+  route();
+  if(gone.notes && confirm('Removed ' + who + '’s notes. Undo — put them back?')) staffNoteAdd(id, name, gone.employee_name || who, gone.notes);
+}
+// Menu extraction (#142, #153): a background job whose text comes back to
+// review; nothing is saved here. The notes are saved from Settings.
+function menuHtml(c, p){
+  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Menu</h2><a href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Menu notes in Settings</a></div>
+    <span class="muted" style="font-size:12.5px">Pull the dishes from Google, a menu page or a PDF. The text comes back here to review — nothing is saved until you save it in Settings.</span>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${p.google_place_id?`<button class="btn s w" onclick="menuExtract(${c.id},'places')">From Google</button>`:''}<input id="mx-url" placeholder="https://… menu page" style="flex:1;min-width:150px"><button class="btn s w" onclick="menuExtract(${c.id},'url')">From the page</button><label class="btn s w" style="cursor:pointer">From a PDF<input type="file" id="mx-pdf" accept="application/pdf" hidden onchange="menuExtract(${c.id},'pdf')"></label></div>
+    <div id="mx-out"></div>`;
+}
+async function menuExtract(id, source){
+  const out = $('mx-out'); let d;
+  if(source === 'url'){ const u = ($('mx-url').value || '').trim(); if(!u){ toast('Paste the menu page’s address first', 'bad'); return; } d = await post('/admin/fetch-menu-from-url/' + id, {url: u}); }
+  else if(source === 'pdf'){ const f = $('mx-pdf').files[0]; if(!f) return; const fd = new FormData(); fd.append('pdf', f); d = await api('/admin/upload-menu-pdf/' + id, {method:'POST', body: fd}); }
+  else d = await post('/admin/refresh-menu-notes/' + id, {});
+  if(!okRes(d) || !d.job_id){ out.innerHTML = `<div class="warnline">${esc(errText(d, 'The extraction didn\'t start'))}</div>`; return; }
+  out.innerHTML = `<span class="muted" style="font-size:12.5px">Reading the menu… this can take a minute.</span>`;
+  const r = await pollJob('/admin/api/menu-extract/' + encodeURIComponent(d.job_id));
+  if(!$('mx-out')) return;
+  if(!okRes(r) || !r.menu_notes){ $('mx-out').innerHTML = `<div class="warnline">${esc(errText(r, 'Nothing came back'))}</div>`; return; }
+  $('mx-out').innerHTML = `<textarea id="mx-text" rows="8" style="width:100%">${esc(r.menu_notes)}</textarea><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn s" onclick="navigator.clipboard&&navigator.clipboard.writeText($('mx-text').value).then(()=>toast('Copied','good'))">Copy</button><a class="btn s p" href="/admin/client-settings/${id}">Open Settings to save it</a><span class="dim">Not saved.${r.message?' '+esc(r.message):''}</span></div>`;
+}
+// ── the client's Messages & AI tab ──
+function cMessages(c, d){
+  const segs = [['ai','AI'],['email','Email'],['sms','Texts'],['push','Push &amp; alerts'],['brief','Morning brief']];
+  const seg = `<div class="seg">${segs.map(s=>`<button class="${_cmsg===s[0]?'on':''}" onclick="_cmsg='${s[0]}';route()">${s[1]}</button>`).join('')}</div>`;
+  const n = jsq(c.name), em = jsq(c.owner_email||'');
+  if(_cmsg === 'email') return {html: seg + `<section class="split"><div class="stack">${table([{h:'When',key:'sent_at',cell:r=>`<span class="num">${fmtDT(r.sent_at)}</span>`},{h:'Type',key:'email_type'},{h:'To',key:'to_email',cell:r=>`<span class="dim">${esc(r.to_email)}</span>`},{h:'Subject',key:'subject',wrap:true},{h:'Status',key:'status',cell:r=>`<span class="b ${['failed','bounced','complained'].indexOf(r.status)>=0?'bad':(r.status==='delivered'?'ok':'off')} nodot">${esc(r.status||'sent')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:''}], d.emails, {id:'cem-t', sort:'sent_at', limit:20, empty:'No emails logged for this client.'})}</div>
+      <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Send</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="testSend('digest',${c.id},'${n}','${em}')">Test digest…</button><button class="btn s w" onclick="testSend('urgent',${c.id},'${n}','${em}')">Test urgent alert…</button><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="valueRecap(${c.id},'${n}','${em}')">Value recap…</button></div><span class="dim">A test goes to the owner, or to you — you choose each time.</span></div>
+        <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-sup"><h2>Suppressed addresses</h2>${skel(2)}</div></div></section>`,
+    after: () => lazy('cm-sup', () => suppressionsHtml(c))};
+  if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>`,
+    after: () => lazy('cm-sms', () => smsHtml(c))};
+  if(_cmsg === 'push') return {html: seg + `<section class="split">
       <div class="stack"><div class="lbl">Push deliveries</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Status',cell:r=>r.ok?'<span class="b ok nodot">delivered</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.pushes, {id:'cpush-t', limit:15, empty:'No pushes yet.'})}
         <div class="lbl">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', limit:15, empty:'No alerts yet.'})}</div>
-      <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Storm protection</h2>${c.alert_cap?pill('good','capped · '+c.alert_cap+'/day'):pill('neu','off',false)}</div><span class="muted" style="font-size:13px">${c.alert_cap?`At most <span class="n">${c.alert_cap}</span> alerts a day reach this client; the rest are logged. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`:`Every alert sends. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`}</span><div style="display:flex;gap:8px"><button class="btn s" onclick="capOpen(${c.id},'${jsq(c.name||'')}',${c.alert_cap||0})">${c.alert_cap?'Change cap':'Cap alerts'}</button>${c.alert_cap?`<button class="btn s g" onclick="capSet(${c.id},0)">Remove cap</button>`:''}</div></div>
-        <div class="lbl">Devices</div>${table([{h:'User',key:'user_id'},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — notifications not allowed on the app yet.'})}
-        <div class="lbl">Scheduled posts</div>${table([{h:'Platform',key:'platform'},{h:'Topic',key:'topic',wrap:true,cell:r=>esc(r.topic||r.content_type)},{h:'Scheduled',key:'scheduled_for',cell:r=>`<span class="num">${fmtDT(r.scheduled_for)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='posted'?'ok':r.status==='failed'?'bad':'info'} nodot">${esc(r.status)}</span>`}], d.scheduled_posts, {id:'cpost-t', limit:10, empty:'Nothing scheduled.'})}</div></section>`;
-    else inner = `<section class="card strip">${stripDiv('Calls · 30 days', fmtN(c.ai.calls_30d), fmtN(c.ai.tokens_30d)+' tokens')}${stripDiv('Cost · 30 days', fmtUSD(c.ai.cost_30d,2), 'at metered rates', 'color:var(--ember2)')}${stripDiv('This week', fmtN(c.ai.calls_7d), c.ai.calls_prev_7d+' the week before')}${stripDiv('Failed · 7 days', fmtN(c.ai.failed_7d), c.ai.failed_30d+' in 30 days', c.ai.failed_7d?'color:var(--red-t)':'')}</section>
-      <div class="card" style="padding:16px 18px"><div class="lbl" style="margin-bottom:10px">Calls a day · 30 days</div>${bars(d.ai.daily,'calls')}</div>
-      <section class="grid g2">${table([{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-',''))}</span>`},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,3)}</span>`},{h:'Last',key:'last_at',cell:r=>`<span class="num">${ago(r.last_at)}</span>`}], d.ai.by_action, {id:'cai-a', sort:'cost', limit:10})}
-      ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Workflow',key:'action'},{h:'Status',key:'status',cell:r=>aiStatus(r)},{h:'Tokens',r:true,cell:r=>`<span class="num">${fmtN((r.input_tokens||0)+(r.output_tokens||0))}</span>`},{h:'Cost',key:'cost_usd',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost_usd,4)}</span>`}], d.ai.recent, {id:'cai-r', sort:'created_at', limit:10})}</section>`;
-    body = `<div class="seg">${segs.map(s=>`<button class="${_cmsg===s[0]?'on':''}" onclick="_cmsg='${s[0]}';route()">${s[1]}</button>`).join('')}</div>${inner}`;
-  }
-  else body = `<section class="split">
+      <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Daily alert cap</h2>${c.alert_cap?pill('good','capped · '+c.alert_cap+'/day'):pill('neu','off',false)}</div><span class="muted" style="font-size:13px">${c.alert_cap?`At most <span class="n">${c.alert_cap}</span> alerts a day reach this client; the rest are logged. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`:`Every alert sends. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`}</span><div style="display:flex;gap:8px"><button class="btn s w" onclick="capOpen(${c.id},'${jsq(c.name||'')}',${c.alert_cap||0})">${c.alert_cap?'Change cap':'Cap alerts'}</button>${c.alert_cap?`<button class="btn s g w" onclick="capSet(${c.id},0,'${n}')">Remove cap</button>`:''}</div></div>
+        <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-storm"><h2>Storm cap</h2>${skel(1)}</div>
+        <div class="lbl">Devices</div>${table([{h:'User',key:'user_id',cell:r=>esc(loginName(c, r.user_id))},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — notifications not allowed on the app yet.'})}
+        <div class="lbl">Scheduled posts</div>${table([{h:'Platform',key:'platform'},{h:'Topic',key:'topic',wrap:true,cell:r=>esc(r.topic||r.content_type)},{h:'Scheduled',key:'scheduled_for',cell:r=>`<span class="num">${fmtDT(r.scheduled_for)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${r.status==='posted'?'ok':r.status==='failed'?'bad':'info'} nodot" title="${esc(r.error||'')}">${esc(r.status)}</span>`}], d.scheduled_posts, {id:'cpost-t', limit:10, empty:'Nothing scheduled.'})}</div></section>`,
+    after: () => lazy('cm-storm', () => stormHtml(c))};
+  if(_cmsg === 'brief') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Morning brief deliveries</h2><select id="cm-bday" onchange="const v=this.value;lazy('cm-brief', () => briefHtml(${c.id}, v))" style="height:30px;padding:0 10px"><option value="">Every day on record</option>${dayKeysBack(7).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')}</select></div><div id="cm-brief">${skel(3)}</div></div>`,
+    after: () => lazy('cm-brief', () => briefHtml(c.id, ''))};
+  // AI
+  return {html: seg + `<section class="card strip">${stripDiv('Calls · 30 days', fmtN(c.ai.calls_30d), fmtN(c.ai.tokens_30d)+' tokens')}${stripDiv('Cost · 30 days', fmtUSD(c.ai.cost_30d,2), 'at metered rates', 'color:var(--ember2)')}${stripDiv('This week', fmtN(c.ai.calls_7d), c.ai.calls_prev_7d+' the week before'+(c.ai.owner_calls_7d!=null?' · '+c.ai.owner_calls_7d+' by the owner':''))}${stripDiv('Failed · 7 days', fmtN(c.ai.failed_7d), c.ai.failed_30d+' in 30 days', c.ai.failed_7d?'color:var(--red-t)':'')}</section>
+      <div id="cm-ai" class="stack">${skel(4)}</div>
+      <div class="card" style="padding:16px 18px"><div class="lbl" style="margin-bottom:10px">Calls a day · 30 days</div>${bars(d.ai.daily,'calls')}</div>`,
+    after: () => lazy('cm-ai', () => aiClientHtml(c))};
+}
+function loginName(c, uid){ const l = (c.logins||[]).find(x=>x.id===uid); return l ? l.username : (uid == null ? '' : '#' + uid); }
+function dayKeysBack(n){ const out = []; for(let i = 0; i < n; i++){ const x = new Date(); x.setDate(x.getDate() - i); out.push([x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'), mdy(x)]); } return out; }
+async function suppressionsHtml(c){
+  const d = await need('/admin/api/suppressions?restaurant_id=' + c.id);
+  const rows = d.suppressions || [];
+  return `<h2>Suppressed addresses</h2>${rows.map(s=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><b>${esc(s.email)}</b> <span class="dim">${esc((s.roles||[]).join(', '))} · ${esc(s.reason||'')} ${fmtD(s.created_at)}</span><div class="dim">${s.scope==='marketing'?'Marketing only — alerts and reports still go.':(s.scope==='guest'?'Guest mail only.':'Gets no email from Cavnar AI — alerts, briefs and reports included.')}${s.operator?' (operator address: never suppressed for operator mail)':''}</div></span><button class="btn s w" onclick="reinstate('${jsq(s.email)}','${jsq(c.name)}')">Reinstate</button></div>`).join('') || '<span class="muted" style="font-size:13px">No address this client\'s mail goes to is suppressed.</span>'}`;
+}
+async function reinstate(email, name){
+  const why = prompt('Reinstate ' + email + (name ? ' (' + name + ')' : '') + '? Mail to it starts going out again. Why (for the record)?');
+  if(why === null) return;
+  const d = await post('/admin/api/suppressions/reinstate', {email, reason: why});
+  if(say(d, email + ' reinstated')) route();
+}
+async function smsHtml(c){
+  const d = await need('/admin/api/sms?restaurant_id=' + c.id + '&limit=100');
+  const st = d.stats || {}, by = st.by_status || {};
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap">${Object.keys(by).map(k=>`<span class="chip ${/fail|undeliv|error/.test(k)?'bad':(/deliver|accept|sent/.test(k)?'ok':'')}">${esc(k)} · ${by[k]}</span>`).join('') || '<span class="muted" style="font-size:13px">No texts in the last 24 hours.</span>'}${st.account_errors?`<span class="chip bad" title="Twilio account-level errors (suspension, A2P, carrier blocks)">${st.account_errors} account-level error${st.account_errors===1?'':'s'}</span>`:''}</div>
+    ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'For',key:'use_case',cell:r=>esc((r.use_case||'').replace(/_/g,' '))},{h:'To',key:'to_last4',cell:r=>`<span class="mono">…${esc(r.to_last4||'')}</span>`},{h:'Status',key:'status',cell:r=>`<span class="b ${/fail|undeliv|error/.test(r.status||'')?'bad':(/deliver/.test(r.status||'')?'ok':'off')} nodot">${esc(r.status||'')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error||r.error_code?`<span style="color:var(--red-t)">${esc((r.error_code?r.error_code+' · ':'')+(r.error||''))}</span>`:''}], d.rows||[], {id:'csms-t', sort:'created_at', limit:20, empty:'No texts on record for this client.'})}`;
+}
+async function testText(id, name){
+  let contacts = [];
+  try{ const d = await api('/admin/alert-contacts/' + id, {method:'GET'}); contacts = ((d && d.contacts) || []).filter(x=>x.sms_consent); }catch(e){ contacts = []; }
+  if(!contacts.length){ toast(name + ' has no alert contact who consented to texts', 'bad'); return; }
+  if(!confirm('Text a test alert to ' + contacts.map(x=>(x.name||'contact') + ' (…' + String(x.phone||'').slice(-4) + ')').join(', ') + ' for ' + name + '?')) return;
+  const d = await post('/admin/alert-contacts/test/' + id, {});
+  const res = (d && d.results) || [];
+  const el = $('cm-test');
+  if(el) el.innerHTML = res.length ? res.map(r=>`<div style="font-size:13px"><span class="chip ${r.ok?'ok':'bad'}">${r.ok?'accepted':'failed'}</span> …${esc(r.to_last4||'')} ${r.ok?'<span class="dim">Twilio took it; the status updates when the phone gets it</span>':'<span style="color:var(--red-t)">'+esc((r.error_code?r.error_code+' · ':'')+(r.error||r.status||''))+'</span>'}</div>`).join('') : `<div class="warnline">${esc(errText(d, 'No text went out'))}</div>`;
+  say(d, 'Test text sent to ' + ((d && d.sent) || 0) + ' contact' + ((d && d.sent) === 1 ? '' : 's'));
+  lazy('cm-sms', () => smsHtml({id:id, name:name}));
+}
+async function stormHtml(c){
+  const d = await need('/admin/api/messaging/health');
+  const cap = (d.storm_caps || []).find(x=>x.restaurant_id === c.id);
+  return `<div style="display:flex;justify-content:space-between;align-items:center"><h2>Storm cap</h2>${cap?pill('warn','on',false):pill('neu','off',false)}</div>
+    <span class="muted" style="font-size:13px">${cap ? `An alert storm (<span class="n">${cap.alerts_in_window||'?'}</span> alerts in an hour) capped this client until ${fmtDT(cap.until_at)}; <span class="n">${cap.suppressed||0}</span> held back so far. Health alerts still go through.` : 'Applied on its own when a restaurant passes the hourly alert limit, until its next local midnight.'}</span>
+    ${cap ? `<button class="btn s w" style="align-self:flex-start" onclick="stormLift(${c.id},'${jsq(c.name)}')">Lift it now</button>` : ''}`;
+}
+async function stormLift(id, name){
+  if(!confirm('Lift the automatic storm cap on ' + name + '? Every alert sends again from now.')) return;
+  const d = await post('/admin/api/client/' + id + '/storm-cap/lift', {});
+  if(say(d, 'Storm cap lifted for ' + name)) route();
+}
+async function briefHtml(id, day){
+  const d = await need('/admin/api/client/' + id + '/brief-deliveries' + (day ? '?date=' + encodeURIComponent(day) : ''));
+  const c = (_cd && _cd.client) || {logins: []};
+  return table([{h:'Brief',key:'brief_date',cell:r=>`<span class="num">${esc(mdy(dayOf(r.brief_date)))}</span>`},{h:'Person',key:'user_id',cell:r=>esc(loginName(c, r.user_id))},{h:'How',key:'channel',cell:r=>esc((r.channel||'').replace(/_/g,' '))},{h:'Result',key:'status',cell:r=>`<span class="b ${/fail/.test(r.status||'')?'bad':(/sent|deliver|pushed|emailed/.test(r.status||'')?'ok':'off')} nodot">${esc((r.status||'').replace(/_/g,' '))}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>r.error?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:''},{h:'At',key:'updated_at',cell:r=>`<span class="num">${fmtDT(r.updated_at||r.created_at)}</span>`}], d.deliveries||[], {id:'cbrief-t', sort:'brief_date', limit:20, empty:'No morning brief on record' + (day ? ' for ' + mdy(dayOf(day)) : '') + '.'});
+}
+// One client's AI (#48, #122, #124): spend against each of its own ceilings,
+// what was blocked and why, outcomes and latency by workflow, recent calls,
+// quality, and reviews the AI gave up on — with Retry AI.
+function meter(label, w){
+  if(!w || w.budget == null) return '';
+  const pct = Math.min(100, +w.pct || 0), col = w.over ? 'var(--red)' : (w.warn ? 'var(--amber)' : 'var(--green)');
+  return `<div class="meter"><span class="lbl">${esc(label)}</span><span class="n">${fmtUSD(w.spend,2)} <span class="muted" style="font-size:12.5px">of ${w.budget?fmtUSD(w.budget,2):'no ceiling'}</span></span><span class="bar"><i style="width:${pct}%;background:${col}"></i></span><span class="muted" style="font-size:12px">${w.budget?(+w.pct||0)+'%':''}${w.over?' · <span style="color:var(--red-t)">stopped until '+fmtDT(w.resets_at)+'</span>':(w.warn?' · <span style="color:var(--amber-t)">past the warning line</span>':'')}${!w.over&&w.resets_at?' · resets '+fmtD(w.resets_at):''}</span></div>`;
+}
+const TIER_LABEL = {paid:'Paid ceiling', trial:'Trial ceiling', unpaid:'Unpaid ceiling'};
+async function aiClientHtml(c){
+  const d = await need('/admin/api/ai/client/' + c.id + '?days=30');
+  const bud = d.budget || {}, ai = bud.ai || {}, pl = bud.places || {}, q = d.quality || {}, st = d.stalled_reviews || {};
+  const outc = o => ['ok','error','refused','truncated','unparseable','blocked'].filter(k=>o && o[k]).map(k=>`<span class="chip ${k==='ok'?'ok':(k==='blocked'?'':'bad')}">${k} ${o[k]}</span>`).join('');
+  const dr = q.drafts || {}, ask = q.ask || {}, saf = q.safety || {};
+  return `<section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Spend against its ceilings</h2>${bud.tier?pill('neu', esc(TIER_LABEL[bud.tier]||bud.tier), false):''}</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">${meter('AI · today', ai.day)}${meter('AI · this month', ai.month)}${meter('Google Places · today', pl.day)}${meter('Google Places · this month', pl.month)}</div>
+      <span class="dim">Days and months are UTC. Admin-started calls count only toward the platform's own pool.</span></section>
+    <section class="card" style="padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span class="ico ${d.stalled_total?'warn':'good'}">${ico('spark')}</span><div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:3px"><b>${d.stalled_total ? d.stalled_total + ' review' + (d.stalled_total===1?'':'s') + ' the AI gave up on' : 'No stalled reviews'}</b><span class="muted" style="font-size:12.5px">${d.stalled_total ? (st.unanalysed||0) + ' never analysed · ' + (st.undrafted||0) + ' never drafted. Nothing retries them on its own.' : 'Every review was analysed and drafted, or is still within its retries.'}</span></div>${d.stalled_total?`<button class="btn s p w" onclick="retryAi(${c.id},'${jsq(c.name)}',${d.stalled_total})">Retry AI</button>`:''}</section>
+    ${(d.blocked||[]).length ? `<section class="stack"><div class="lbl">Blocked before sending · 30 days</div>${table([{h:'Why',key:'reason',cell:r=>`<b>${esc((r.reason||'').replace(/_/g,' '))}</b>`},{h:'Vendor',key:'vendor'},{h:'Times',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},{h:'Last',key:'last_at',cell:r=>`<span class="num">${fmtDT(r.last_at)}</span>`},{h:'Detail',key:'detail',wrap:true,cell:r=>`<span class="dim">${esc(r.detail||'')}</span>`}], d.blocked, {id:'caib-t'})}</section>` : ''}
+    <section class="stack"><div class="lbl">By workflow · 30 days</div>${table([{h:'Workflow',key:'action'},{h:'Model',key:'model',cell:r=>`<span class="dim">${esc((r.model||'').replace('claude-',''))}</span>`},{h:'Calls',key:'calls',r:true,cell:r=>`<span class="num">${fmtN(r.calls)}</span>`},{h:'Outcomes',cell:r=>outc(r.outcomes)},{h:'p50 / p95',key:'p95_ms',r:true,cell:r=>`<span class="num">${r.p50_ms!=null?fmtN(Math.round(r.p50_ms)):'—'} / ${r.p95_ms!=null?fmtN(Math.round(r.p95_ms)):'—'} ms</span>`},{h:'Cost',key:'cost',r:true,cell:r=>`<span class="num">${fmtUSD(r.cost,3)}</span>`}], d.by_action||[], {id:'caia-t', sort:'cost', limit:10, empty:'No AI calls in 30 days.'})}</section>
+    <section class="stack"><div class="lbl">Recent calls</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Workflow',key:'action'},{h:'Outcome',key:'outcome',cell:r=>`<span class="b ${r.outcome==='ok'?'ok':'bad'} nodot" title="${esc(r.stop_reason||'')}">${esc(r.outcome||'')}</span>`},{h:'Started by',key:'trigger',cell:r=>esc(r.trigger||'')},{h:'Time',key:'latency_ms',r:true,cell:r=>`<span class="num">${r.latency_ms!=null?fmtN(r.latency_ms)+' ms':'—'}</span>${r.attempts>1?' <span class="dim">'+r.attempts+' tries</span>':''}`},{h:'Tokens',r:true,cell:r=>`<span class="num">${fmtN((r.input_tokens||0)+(r.output_tokens||0))}</span>`}], d.recent_calls||[], {id:'caic-t', sort:'created_at', limit:10, empty:'No traced calls yet.'})}</section>
+    <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Quality · 30 days</h2>
+      <div class="kv"><span class="k">Drafts</span><span>${fmtN(dr.drafted||0)} written${dr.needs_review_pct!=null?' · '+dr.needs_review_pct+'% flagged for review':''}${dr.regenerations?' · '+dr.regenerations+' regenerated':''}</span>
+      <span class="k">Ask Cavnar AI</span><span>${ask.helpful_pct!=null?ask.helpful_pct+'% helpful of '+ask.rated+' rated':'no ratings yet'}</span>
+      <span class="k">Safety checks</span><span>${saf.rate_pct!=null?saf.rate_pct+'% of '+saf.reviews_analysed+' reviews disagreed':'nothing analysed yet'}</span></div>
+      ${(q.events||[]).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${q.events.map(e=>`<span class="chip" title="${e.per_100_calls!=null?e.per_100_calls+' per 100 calls':''}">${esc(e.surface)} · ${esc((e.kind||'').replace(/_/g,' '))} · ${e.n}</span>`).join('')}</div>` : '<span class="muted" style="font-size:13px">No guard or validation findings.</span>'}</section>`;
+}
+async function retryAi(id, name, n){
+  if(!confirm('Put ' + n + ' stalled review' + (n===1?'':'s') + ' for ' + name + ' back in the AI queue? The next review cycle (8am, noon, 4pm or 8pm Central) picks them up.')) return;
+  const d = await post('/admin/api/client/' + id + '/retry-ai', {});
+  if(say(d, 'Queued again')) route();
+}
+// ── the client's Access & activity tab ──
+// Each login with its role (as the owner's team screen names it, #60), its
+// sign-in security on open — two-factor and its scope, any lockout, live
+// sessions with view-as marked, remembered devices (#55) — and the account's
+// offboarding (#34, #138).
+function cAccess(c, d){
+  const n = jsq(c.name);
+  return {html: `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px" id="off-card">${c.deletion?'<h2>Close this account</h2>':'<h2>Offboarding</h2>'}${skel(2)}</div>
+    <section class="split">
     <div class="stack">
-      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Logins</h2></div><div class="lst" style="border-top:1px solid var(--line)">${c.logins.map(l=>`<div class="li"><div class="tt"><b>${esc(l.username)}</b><span>${esc(l.role)} · ${esc(l.email||'')} · ${l.last_login?'signed in '+ago(l.last_login)+' ago':'never signed in'}</span></div>${l.is_active?'':pill('neu','inactive',false)}
-        <select onchange="setRole(${l.id},this.value)" style="height:28px;padding:0 8px;font-size:12px"><option value="" selected disabled>role…</option><option value="client">GM (single location)</option><option value="owner">Owner (multi-location)</option><option value="member">Teammate</option></select>
-        ${l.is_active?`<button class="btn s d" onclick="act('/admin/deactivate-client/${l.id}','Deactivate ${jsq(l.username)} (they are signed out everywhere)',true)">Deactivate</button>`:`<button class="btn s" onclick="act('/admin/reactivate-client/${l.id}','Reactivate ${jsq(l.username)}')">Reactivate</button>`}</div>`).join('') || '<div class="empty">No logins.</div>'}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line)"><button class="btn s" onclick="sendResetLink(${(c.logins.find(l=>l.is_active)||{}).id||0}, '${jsq((c.logins.find(l=>l.is_active)||{}).username||'')}')">Send a password-reset link</button><button class="btn s g" onclick="resetPassword(${c.id})">Set a temporary password</button><button class="btn s d" onclick="freezeAccount(${c.id})">Freeze account</button></div></div>
+      <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Logins</h2><span class="muted" style="font-size:12.5px">open one for its sign-in security</span></div><div class="lst" style="border-top:1px solid var(--line)">${c.logins.map(l=>`<div class="li click" onclick="toggleRow(this);secLoad(${l.id})"><div class="tt"><b>${esc(l.username)}${l.is_active?'':' <span class="chip">inactive</span>'}</b><span>${esc(ROLE_LABEL[l.role]||l.role||'')} · ${esc(l.email||'')} · ${l.last_login?'signed in '+ago(l.last_login)+' ago':'never signed in'}</span></div>
+          ${ROLE_LABEL[l.role]||!l.role?`<select class="w" onclick="event.stopPropagation()" onchange="setRole(${l.id},this.value,'${jsq(l.username)}',this)" style="height:28px;padding:0 8px;font-size:12px" aria-label="Role for ${esc(l.username)}"><option value="" selected disabled>role…</option>${Object.keys(ROLE_LABEL).filter(r=>r!==l.role).map(r=>`<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}</select>`:''}
+          ${l.is_active?`<button class="btn s d w" onclick="event.stopPropagation();deactivateLogin(${l.id},'${jsq(l.username)}','${n}')">Deactivate</button>`:`<button class="btn s w" onclick="event.stopPropagation();reactivateLogin(${l.id},'${jsq(l.username)}','${n}')">Reactivate</button>`}<span class="chev">${ico('chev','s')}</span></div>
+          <div class="lx"><div class="box" id="sec-${l.id}">${skel(2)}</div></div>`).join('') || '<div class="empty">No logins.</div>'}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line)"><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="resetPassword(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Send the owner a reset link…</button><button class="btn s d w" onclick="freezeAccount(${c.id},'${n}')">Freeze account…</button></div></div>
       <div class="card" style="padding:4px 18px 12px"><div class="ch" style="padding:14px 0 6px"><h2>Account activity</h2></div>${d.activity.length?`<div class="list">${d.activity.slice(0,20).map(a=>`<div class="it"><span class="when">${esc(fmtDT(a.at))}</span><span>${esc((a.type||'').replace(/_/g,' '))}${a.data?' <span class="dim">'+esc(String(a.data).slice(0,80))+'</span>':''}</span><span></span></div>`).join('')}</div>`:'<div class="empty">Nothing yet.</div>'}</div>
     </div>
     <div class="stack">
-      <div class="lbl">Active sessions</div>${table([{h:'User',key:'username'},{h:'Device',key:'device_type'},{h:'Last active',key:'last_active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`}], d.sessions, {id:'cses-t', empty:'No active sessions.'})}
-      <div class="lbl">Sign-ins</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Device',key:'device_type'},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`},{h:'Agent',key:'user_agent',wrap:true,cell:r=>`<span class="dim">${esc((r.user_agent||'').slice(0,60))}</span>`}], d.logins, {id:'clog-t', limit:10, empty:'No sign-ins recorded.'})}
+      <div class="lbl">Active sessions</div>${table([{h:'User',key:'username'},{h:'Device',key:'device_type',cell:r=>r.device_type==='admin-view-as'?'<span class="chip warn">admin view-as</span>':esc(r.device_type||'web')},{h:'Last active',key:'last_active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`}], d.sessions, {id:'cses-t', empty:'No active sessions.'})}
+      <div class="lbl">Sign-ins</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'What',key:'label',cell:r=>esc(r.label||r.event||'')},{h:'Device',key:'device_type'},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`},{h:'Agent',key:'user_agent',wrap:true,cell:r=>`<span class="dim">${esc((r.user_agent||'').slice(0,60))}</span>`}], d.logins, {id:'clog-t', limit:10, empty:'No sign-ins recorded.'})}
       <div class="lbl">Errors</div>${table([{h:'When',key:'at',cell:r=>`<span class="num">${fmtDT(r.at)}</span>`},{h:'Kind',key:'kind',cell:r=>`<span class="chip">${esc(r.kind)}</span>`},{h:'What',key:'label'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red-t)">${esc(r.error||'')}</span>`}], d.errors, {id:'cerr-t', sort:'at', limit:10, empty:'No errors on record for this client.'})}
-    </div></section>`;
-  $('view').innerHTML = hdr + body;
-  if(raw === 'actions') menuToggle('cl-actions');
+    </div></section>`, after: () => lazy('off-card', () => offboardHtml(c))};
+}
+async function secLoad(uid, force){
+  const el = $('sec-' + uid); if(!el || (el.dataset.loaded && !force)) return; el.dataset.loaded = '1';
+  let d; try{ d = await api('/admin/api/users/' + uid + '/security', {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
+  const box = $('sec-' + uid); if(!box) return;
+  if(!okRes(d)){ box.innerHTML = `<div class="warnline">${esc(errText(d, 'Its security couldn\'t be read'))}</div>`; box.dataset.loaded = ''; return; }
+  const u = d.user || {}, t = d.two_factor || {}, lk = d.lockout || {}, ss = d.sessions || [], un = jsq(u.username || ''), rn = jsq((_cd && _cd.client && _cd.client.name) || '');
+  box.innerHTML = `<div class="kv">
+      <span class="k">Two-factor</span><span>${t.enabled?'<span class="chip ok">on</span> '+esc(t.method||'')+(t.backup_codes_left!=null?' · '+t.backup_codes_left+' backup codes left':''):'<span class="chip">off</span>'}${t.scope==='restaurant'?' <span class="dim">— one switch for the whole restaurant</span>':''}</span>
+      <span class="k">Sign-in lock</span><span>${lk.locked?`<span class="chip bad">locked</span> for about ${Math.max(1, Math.ceil((lk.seconds_left||0)/60))} more minutes`:'<span class="chip ok">not locked</span>'} <span class="dim">${lk.failures_15m||0} failures in 15 minutes · ${lk.failures_24h||0} in 24 hours</span>${(lk.addresses||[]).filter(a=>a.locked).length?'<div class="dim">locked at '+esc((lk.addresses||[]).filter(a=>a.locked).map(a=>a.ip||'an address').join(', '))+'</div>':''}</span>
+      <span class="k">Remembered devices</span><span class="n">${fmtN(d.trusted_devices||0)}</span>
+      ${u.must_reset_password?'<span class="k">Password</span><span><span class="chip warn">must reset before signing in</span></span>':''}
+    </div>
+    ${ss.length ? table([{h:'Session',key:'device_type',cell:r=>r.is_view_as?'<span class="chip warn">admin view-as</span>':esc(r.device_type||'web')},{h:'Started',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last active',key:'last_active',cell:r=>`<span class="num">${ago(r.last_active)}</span>`},{h:'Ends',key:'expires_at',cell:r=>`<span class="num">${fmtD(r.expires_at)}</span>`},{h:'IP',key:'ip_address',cell:r=>`<span class="mono">${esc(r.ip_address||'')}</span>`},{h:'',cell:r=>`<button class="btn s g w" onclick="revokeSession(${uid},'${jsq(r.session_id)}','${un}')">Sign out</button>`}], ss, {id:'sess-'+uid}) : '<span class="muted" style="font-size:13px">No live sessions.</span>'}
+    <span style="display:flex;gap:8px;flex-wrap:wrap">${t.enabled?`<button class="btn s w" onclick="reset2fa(${uid},'${un}','${jsq(t.scope||'')}','${rn}')">Reset two-factor…</button>`:''}${lk.locked||lk.failures_15m?`<button class="btn s w" onclick="clearLockout(${uid},'${un}')">Clear the lock</button>`:''}${ss.length||d.trusted_devices?`<button class="btn s w" onclick="revokeAll(${uid},'${un}')">Sign out everywhere</button>`:''}${u.email||u.username?`<button class="btn s g w" onclick="sendResetLink(${uid},'${un}','')">Send a reset link…</button>`:''}</span>`;
+}
+async function reset2fa(uid, username, scope, rname){
+  const msg = scope === 'restaurant'
+    ? 'Turn two-factor OFF for everyone at ' + (rname || 'this restaurant') + '? Here it is one switch for the whole restaurant, not just ' + username + '. Its backup codes and remembered devices are cleared too; the owner can turn it back on.'
+    : 'Reset ' + username + "'s two-factor? Their second factor, backup codes and remembered devices are cleared.";
+  if(!confirm(msg)) return;
+  const d = await post('/admin/api/users/' + uid + '/reset-2fa', {});
+  if(say(d, d.scope === 'restaurant' ? 'Two-factor is off for ' + (rname || 'the restaurant') : 'Two-factor reset for ' + username)) secLoad(uid, true);
+}
+async function clearLockout(uid, username){
+  if(!confirm('Clear the sign-in lock on ' + username + '? They can try their password again at once.')) return;
+  const d = await post('/admin/api/users/' + uid + '/clear-lockout', {});
+  if(say(d, 'Lock cleared for ' + username)) secLoad(uid, true);
+}
+async function revokeSession(uid, sid, username){
+  if(!confirm('Sign ' + username + ' out of this one session?')) return;
+  const d = await post('/admin/api/users/' + uid + '/sessions/' + encodeURIComponent(sid) + '/revoke', {});
+  if(say(d, 'Session ended')) secLoad(uid, true);
+}
+async function revokeAll(uid, username){
+  if(!confirm('Sign ' + username + ' out everywhere and forget their remembered devices? The login stays active.')) return;
+  const d = await post('/admin/api/users/' + uid + '/revoke-sessions', {});
+  if(say(d, username + ' signed out everywhere — ' + (d.sessions_ended||0) + ' session(s), ' + (d.devices_forgotten||0) + ' remembered device(s)')) secLoad(uid, true);
+}
+async function deactivateLogin(uid, username, rname){
+  if(!confirm('Deactivate ' + username + (rname ? ' at ' + rname : '') + '? Every session they have ends now and their remembered devices are forgotten. You can reactivate the login later.')) return;
+  const d = await post('/admin/deactivate-client/' + uid, {});
+  if(say(d, username + ' deactivated — ' + (d.sessions_ended||0) + ' session(s) ended, ' + (d.devices_forgotten||0) + ' remembered device(s) forgotten')){ _clients = null; route(); }
+}
+async function reactivateLogin(uid, username, rname){
+  if(!confirm('Reactivate ' + username + (rname ? ' at ' + rname : '') + '? They sign in fresh — no old session comes back.')) return;
+  const d = await post('/admin/reactivate-client/' + uid, {});
+  if(say(d, username + ' reactivated' + (d.emailed ? ' — a welcome-back email went to them' : (d.email_note ? ' (' + d.email_note + ')' : '')))){ _clients = null; route(); }
+}
+// Offboarding (#34, #138): the deletion request and its 30-day due date,
+// the checklist a step at a time (a skip needs a reason; revoking the
+// integrations clears every stored credential), withdraw, and delete —
+// unlocked only when the checklist is finished.
+const STEP_TONE = {done:'good', skipped:'neu', not_needed:'neu', pending:'warn'};
+async function offboardHtml(c){
+  const d = await need('/admin/api/client/' + c.id + '/offboarding');
+  const rq = d.request, n = jsq(c.name), open = (d.steps||[]).filter(s=>s.status==='pending').length;
+  const conn = Object.keys(d.connected||{}).filter(k=>d.connected[k]);
+  const body = `${rq ? `<span class="ink2" style="font-size:13px">The owner asked to close the account on ${esc(rq.requested_on)}. Finish the checklist and delete it by ${esc(rq.due_on)}, or withdraw the request with them.</span>` : '<span class="muted" style="font-size:13px">No deletion request is open. The checklist is here for a client you are closing yourself.</span>'}
+    <div class="lst">${(d.steps||[]).map(s=>`<div class="li" style="padding:12px 0"><span style="width:92px;flex-shrink:0">${pill(STEP_TONE[s.status]||'neu', esc((s.status||'').replace('_',' ')), false)}</span><div class="tt"><b>${esc(s.label)}</b><span>${esc(s.note || s.hint || '')}${s.actor?' · '+esc(s.actor)+' '+fmtD(s.updated_at):''}${s.step==='integrations'&&conn.length&&s.status==='pending'?' · connected now: '+esc(conn.join(', ')):''}</span></div>
+      ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')">Undo</button>`)}</div>`).join('')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${rq?`<button class="btn s w" onclick="withdrawDeletion(${c.id},'${n}')">Withdraw the request…</button>`:''}<button class="btn s d w" ${d.ready_to_delete?'':'disabled'} title="${d.ready_to_delete?'Permanently delete this restaurant':esc('Finish the checklist first: ' + (d.outstanding||[]).join(', '))}" onclick="deleteRestaurant(${c.id},'${n}')">Delete permanently…</button><span class="dim">${d.ready_to_delete ? 'The checklist is finished. The audit trail and this checklist are kept after the delete.' : open + ' step' + (open===1?'':'s') + ' left before it can be deleted.'}</span></div>`;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>${rq ? 'Close this account' : 'Offboarding'}</h2>${rq ? pill(rq.overdue ? 'bad' : 'warn', rq.overdue ? 'overdue' : 'due ' + esc(rq.due_on), false) : ''}</div>` + (rq ? body : `<details class="more-d" style="margin:0 -18px -18px"><summary>The checklist, withdraw and delete</summary><div style="padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">${body}</div></details>`);
+}
+async function offStep(id, step, status, label, name){
+  let note = '';
+  if(status === 'skipped'){ note = prompt('Skip “' + label + '” for ' + name + '? Say why (it is kept with the step):'); if(note === null) return; if(!note.trim()){ toast('A skip needs a reason', 'bad'); return; } }
+  else if(status === 'done' && step === 'integrations'){ if(!confirm('Revoke every connection for ' + name + '? This clears its stored Google, Meta, POS, back-office and reservation credentials and turns its outbound webhooks off. It cannot be undone from here — they would reconnect.')) return; }
+  else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
+  const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
+  if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
+}
+async function withdrawDeletion(id, name){
+  const note = prompt('Withdraw ' + name + "'s request to close their account? The account carries on as before. A note for the record (optional):");
+  if(note === null) return;
+  const d = await post('/admin/api/client/' + id + '/deletion/withdraw', {note});
+  if(say(d, 'Request withdrawn')){ _clients = null; route(); badges(); }
+}
+async function deleteRestaurant(id, name){
+  const typed = prompt('Permanently delete ' + name + ' (#' + id + ') and everything stored for it? This cannot be undone. The audit trail and the offboarding record are kept.\n\nType its name to confirm:');
+  if(typed === null) return;
+  if(typed.trim() !== name){ toast('The name did not match — nothing was deleted', 'bad'); return; }
+  const d = await post('/admin/api/client/' + id + '/delete', {confirm_name: typed.trim()});
+  if(say(d, 'Deleted ' + name + ' (' + (d.rows||0) + ' rows)')){ _clients = null; location.hash = '#customers/restaurants'; badges(); }
+}
+// ── the client's Support tab ──
+// Notes (authored, dated, append-only, #55), the whole history on one line
+// with type filters (#54), the admin audit trail (#53), and the sales audits
+// linked to the client (#66).
+const TIMELINE_TYPES = ['email','sms','push','alert','login','billing','admin','job','ai','webhook','note','activity'];
+let _tlTypes = [];
+function cSupport(c, d){
+  return {html: `<section class="split">
+    <div class="stack">
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cs-notes"><h2>Notes</h2>${skel(2)}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cs-timeline"><h2>Timeline</h2>${skel(4)}</div>
+    </div>
+    <div class="stack">
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cs-audits"><h2>Sales audits</h2>${skel(1)}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cs-audit"><h2>Admin actions</h2>${skel(3)}</div>
+    </div></section>`,
+    after: () => { lazy('cs-notes', () => notesHtml(c)); lazy('cs-timeline', () => timelineHtml(c, null)); lazy('cs-audits', () => salesAuditsHtml(c)); lazy('cs-audit', () => auditHtml(c, null)); }};
+}
+async function notesHtml(c, before){
+  const d = await need('/admin/api/client/' + c.id + '/notes' + (before ? '?before_id=' + before : ''));
+  const rows = d.notes || [];
+  return `<h2>Notes</h2>
+    <div style="display:flex;flex-direction:column;gap:6px"><textarea id="note-body" rows="3" placeholder="What happened, what was agreed, what to watch"></textarea><button class="btn s p w" style="align-self:flex-start" onclick="noteAdd(${c.id},'${jsq(c.name)}')">Add note</button></div>
+    ${rows.map(x=>`<div style="display:flex;flex-direction:column;gap:3px;padding:8px 0;border-top:1px solid var(--line)"><span class="dim">${esc(x.author||'')} · ${fmtDT(x.created_at)}</span><span class="ink2 pre" style="font-size:13px">${esc(x.body||'')}</span></div>`).join('') || '<span class="muted" style="font-size:13px">No notes yet.</span>'}
+    ${d.next_before_id ? `<button class="lnk" onclick="lazy('cs-notes', () => notesHtml({id:${c.id}, name:'${jsq(c.name)}'}, ${d.next_before_id}))">Older notes</button>` : ''}
+    ${d.legacy_internal_notes ? `<div class="warnbox" style="font-size:13px"><b>Older internal note</b> (from before notes were kept one at a time — read-only)<div class="pre" style="margin-top:6px">${esc(d.legacy_internal_notes)}</div></div>` : ''}`;
+}
+async function noteAdd(id, name){
+  const body = ($('note-body').value || '').trim(); if(!body){ toast('Write the note first', 'bad'); return; }
+  const d = await post('/admin/api/client/' + id + '/notes', {body});
+  if(say(d, 'Note added to ' + name)) lazy('cs-notes', () => notesHtml({id:id, name:name}));
+}
+async function timelineHtml(c, before, keep){
+  const q = new URLSearchParams({limit:'60'}); if(_tlTypes.length) q.set('types', _tlTypes.join(',')); if(before) q.set('before', before);
+  const d = await need('/admin/api/client/' + c.id + '/timeline?' + q.toString());
+  const tone = {good:'ok', bad:'bad', warn:'warn', neutral:'off'};
+  const rows = (d.events || []).map(e=>`<div class="it"><span class="when">${esc(fmtDT(e.at))}</span><span><span class="dot ${tone[e.tone]||'off'}"></span><span class="chip">${esc(e.type)}</span> ${esc(e.label)}${e.detail?' <span class="dim">— '+esc(String(e.detail).slice(0,160))+'</span>':''}</span><span></span></div>`).join('');
+  const chips = `<div style="display:flex;gap:4px;flex-wrap:wrap">${['all'].concat(TIMELINE_TYPES).map(t=>{ const on = t==='all' ? !_tlTypes.length : _tlTypes.indexOf(t)>=0; return `<button class="btn s ${on?'on':'g'}" onclick="tlType('${t}',${c.id},'${jsq(c.name)}')">${t==='all'?'Everything':esc(t)}</button>`; }).join('')}</div>`;
+  const more = d.next_before ? `<button class="lnk" id="tl-more" onclick="tlMore(${c.id},'${jsq(c.name)}','${jsq(d.next_before)}')">Older</button>` : '';
+  if(keep) return {rows: rows, more: more};
+  return `<h2>Timeline</h2>${errBanner(d)}${chips}<div class="list" id="tl-list">${rows || '<div class="empty">Nothing on record.</div>'}</div><div id="tl-more-wrap">${more}</div>`;
+}
+function tlType(t, id, name){ if(t === 'all') _tlTypes = []; else { const i = _tlTypes.indexOf(t); if(i >= 0) _tlTypes.splice(i, 1); else _tlTypes.push(t); } lazy('cs-timeline', () => timelineHtml({id:id, name:name}, null)); }
+async function tlMore(id, name, before){
+  let r; try{ r = await timelineHtml({id:id, name:name}, before, true); }catch(e){ toast(String(e.message || e), 'bad'); return; }
+  const list = $('tl-list'), wrap = $('tl-more-wrap'); if(!list || !wrap) return;
+  list.insertAdjacentHTML('beforeend', r.rows); wrap.innerHTML = r.more;
+}
+async function auditHtml(c, before){
+  const d = await need('/admin/api/client/' + c.id + '/audit' + (before ? '?before_id=' + before : ''));
+  const ev = d.events || [];
+  return `<h2>Admin actions</h2><span class="muted" style="font-size:12.5px">Every admin write on this client, with who, what and the before and after.</span>
+    <div class="list">${ev.map(e=>`<div class="it" style="grid-template-columns:120px minmax(0,1fr) auto"><span class="when">${esc(fmtDT(e.created_at))}</span><span><b>${esc(e.action||'')}</b> <span class="dim">${esc(e.actor||'')}</span>${e.summary?'<div class="dim">'+esc(e.summary)+'</div>':''}${e.before!=null||e.after!=null?`<details><summary class="dim" style="cursor:pointer">before / after</summary><pre class="mono pre" style="margin:4px 0 0;font-size:11.5px">${esc(JSON.stringify({before:e.before, after:e.after}, null, 1))}</pre></details>`:''}</span><span>${e.result&&e.result!=='ok'?`<span class="chip ${e.result==='denied'||e.result==='refused'||e.result==='failed'||e.result==='error'?'bad':'warn'}">${esc(e.result)}</span>`:''}</span></div>`).join('') || '<div class="empty">No admin actions on record.</div>'}</div>
+    ${d.next_before_id ? `<button class="lnk" onclick="lazy('cs-audit', () => auditHtml({id:${c.id}, name:'${jsq(c.name)}'}, ${d.next_before_id}))">Older actions</button>` : ''}`;
+}
+async function salesAuditsHtml(c){
+  const d = await need('/admin/api/client/' + c.id + '/audits');
+  const rows = d.audits || [];
+  return `<h2>Sales audits</h2>
+    ${rows.map(a=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0"><a href="/admin/audits/${a.id}">${esc(a.restaurant_name||'Audit #'+a.id)}</a> <span class="dim">${a.audit_date?esc(mdy(dayOf(a.audit_date))):''} · ${esc(a.status||'')}</span></span><button class="btn s g w" onclick="auditLink(${a.id},null,'${jsq(a.restaurant_name||'')}','${jsq(c.name)}',${c.id})">Unlink</button></div>`).join('') || '<span class="muted" style="font-size:13px">No sales audit is linked — the estimate-versus-actual comparison needs one.</span>'}
+    <div style="display:flex;gap:6px"><input id="au-q" placeholder="Find an audit to link" style="flex:1" onkeydown="if(event.key==='Enter')auditFind(${c.id},'${jsq(c.name)}')"><button class="btn s" onclick="auditFind(${c.id},'${jsq(c.name)}')">Find</button></div><div id="au-res" class="fl"></div>`;
+}
+async function auditFind(id, name){
+  const q = ($('au-q').value || '').trim();
+  let d; try{ d = await api('/admin/api/audits' + (q ? '?q=' + encodeURIComponent(q) : ''), {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
+  const el = $('au-res'); if(!el) return;
+  if(!okRes(d)){ el.innerHTML = `<div class="warnline">${esc(errText(d))}</div>`; return; }
+  el.innerHTML = (d.audits || []).slice(0, 8).map(a=>`<div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1;min-width:0">${esc(a.restaurant_name||'Audit #'+a.id)} <span class="dim">${a.audit_date?esc(mdy(dayOf(a.audit_date))):''} · ${esc(a.status||'')}${a.city?' · '+esc(a.city):''}</span></span><button class="btn s w" onclick="auditLink(${a.id},${id},'${jsq(a.restaurant_name||'')}','${jsq(name)}',${id})">Link</button></div>`).join('') || '<span class="muted" style="font-size:13px">No audit matches.</span>';
+}
+async function auditLink(aid, rid, auditName, name, pageId){
+  if(!confirm((rid ? 'Link the sales audit “' + auditName + '” to ' : 'Unlink the sales audit “' + auditName + '” from ') + name + '?')) return;
+  const d = await post('/admin/api/audits/' + aid + '/link', {restaurant_id: rid});
+  if(say(d, rid ? 'Audit linked to ' + name : 'Audit unlinked')) lazy('cs-audits', () => salesAuditsHtml({id:pageId, name:name}));
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────

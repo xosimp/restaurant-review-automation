@@ -1232,6 +1232,9 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Server-paged lists** end in a pager row (`.pager`: "N rows · page X of
   Y", Previous / Next); filters and search go to the server, counts come
   from the full set.
+- **Spend against a ceiling** is a `.meter` tile: spend of budget, a bar
+  (green, amber past the warning line, red when stopped) and when it resets
+  (M/D/YY).
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a
