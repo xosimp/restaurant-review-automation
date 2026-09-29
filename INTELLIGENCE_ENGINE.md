@@ -4,7 +4,7 @@ How Cavnar AI gets smarter every week as more restaurants use it — without
 one restaurant ever seeing another's data. Written before implementation
 (Sep 2026) and kept current with it. The code lives in `intelligence/`.
 
-## The three rules everything below obeys
+## The rules everything below obeys
 
 1. **A restaurant's own data only ever serves that restaurant** (Level 1).
 2. **Cross-restaurant learning reads one table** — `intel_features`, which
@@ -18,14 +18,25 @@ one restaurant ever seeing another's data. Written before implementation
    login is internal; a test-pattern name — automatically, with the admin's
    `learning_override`), and every cohort reader leaves out the restaurants
    it refuses (CA3 F7; memory audit 9/29/26). Every row a converted demo
-   recorded before its `learning_since` teaches nothing
-   (`models.learning_rows_sql` / `learning_since_map` for a reader's rows).
-   A deleted restaurant's rows under a tombstoned (negative) id still count
-   (`DATABASE_SCHEMA.md` → *What delete_restaurant keeps*).
+   recorded before its `learning_since` teaches nothing, pooled or its own
+   (see *Who may teach* below). An admin's answer — support triage or a
+   view-as — teaches no learner. A deleted restaurant's rows under a
+   tombstoned (negative) id still count (`DATABASE_SCHEMA.md` → *What
+   delete_restaurant keeps*).
 3. **Nothing is generated to fill a gap.** A pattern exists only when a
    permutation test and a false-discovery correction say so; a benchmark
    only when the cohort is large enough; a confidence score only from
    factors that were measured.
+4. **Google user data never enters a pooled figure.** A restaurant whose
+   reviews come through the owner's Google connection contributes no
+   review-derived figure to anything pooled across restaurants
+   (`intelligence/provenance.py`, *Google user data* below); its own
+   screens keep everything.
+
+What a customer is told (`public/privacy.html`) is exactly this: the
+benchmarks and recommendations use only de-identified ratios pooled across
+at least five restaurants (`MIN_COHORT`), never a figure that identifies
+one.
 
 ## Architecture
 
@@ -44,7 +55,7 @@ one restaurant ever seeing another's data. Written before implementation
                  │ benchmarks.py  (p25/p50/p75 per cohort per metric)       │
                  │ trends.py      (weekly slope per cohort per metric)      │
                  │ scoring.py     (acceptance and success by rec kind)      │
-                 │ confidence.py  (seven factors → kind score; admin only)  │
+                 │ confidence.py  (seven factors → kind score; tests only)  │
                  └────────────────────────────┬──────────────────────────────┘
                                               ▼
         Ask (tools + context)   rec_trust (Recommendation Confidence, K1)
@@ -61,15 +72,17 @@ other modules need.
 |---|---|---|
 | `restaurants.category` | the owner's or admin's category (taxonomy in `categories.py`); inferred from name/vibe/menu when unset and labelled so | own row |
 | `restaurants` profile columns (Benchmarking #7) | `service_model` (counter / full_service / bar_led / daytime), `concept` (a taxonomy value), `bar_led`, `ownership` (independent / franchise / corporate), `opened_year`, `profile_source` (set / inferred), `profile_confirmed_at`; `google_types` + `google_price_level` (the restaurant's own listing, a cross-check for the guess only) | own row; the peer partition is built from the CONFIRMED profile only |
-| `restaurants.exclude_from_learning`, `learning_override`, `learning_since` | a test or internal account: out of every learner exactly as a demo is (`models.learning_exclusion`; `learning_override` 'include' / 'exclude' is the admin's word over the automatic rule); rows recorded before `learning_since` teach nothing | — |
+| `restaurants.exclude_from_learning`, `learning_override`, `learning_since` | a test or internal account: out of every learner exactly as a demo is (`models.learning_exclusion`; `learning_override` 'include' / 'exclude' is the admin's word over the automatic rule); rows recorded before `learning_since` teach nothing (*Who may teach*) | — |
 | `restaurants.labor_target_source`, `food_cost_target_source` | set / seeded / default — where a target came from (#13) | own row |
-| `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
-| `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
+| `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1; `version` (the `features.FEATURES_VERSION` it was computed under, now 3) and `backfilled` (a past week the backfill computed from the raw tables, not that week's own nightly pass) | no names, no dollars, no people; tenant-keyed |
+| `intel_rec_events` | one row per recommendation EPISODE and action: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time and its `trust_version`; `rec_id`; the labels a pooled reader filters on — `cohort`, `partition_key` (the confirmed partition of the kind's metric family), `review_derived`, `google_data` | kind is a key prefix, never text |
+| `intel_pattern_history` | append-only (a trigger refuses UPDATE): one row per pattern per ISO week per status it reached, with its n, effect, d, p and q that week — what the platform believed, week by week (`patterns.history`, `weeks_held`) | counts and effects only |
+| `recommendation_outcomes.changed_at` | kept by insert and update triggers (`models.ensure_tracker_change_stamps`; the update trigger fires only when a column the learning reads changes) — the feedback sync's tracker cursor | own row |
 | `intel_patterns` | discovered patterns: cohort, behaviour, outcome, n with / n without, effect, p, q, confidence, sentence, status | counts and effects only |
 | `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, `vals_json` (the member values, sorted), `members_json` (each value beside an organisation HASH), `orgs` (distinct organisations) and `max_org_share` — server-side only, so the band shown to a member leaves its whole organisation out. The cohort is a peer PARTITION key (`sm:<service model>[|bar][|protein|starch][|t<ticket band>][|v<volume band>][|u<urbanity band>]` — the ladder's rungs) or `platform` (behaviour metrics only). Frozen for the ISO week: the first computation of a week stands | stored over ≥ MIN_COHORT members from ≥ `privacy.MIN_ORGS` organisations; SHOWN only through `benchmarks.published()` (a viewer required and its organisation excluded, an organisation over ⅓ held to ⅓, ≥ 8 others from ≥ 5 organisations, spread gate, Harrell–Davis quartiles at a coarse step, ≤ 8 weeks old) |
 | `intel_peer_assignments` | per restaurant × week × family (format / labor / food): the rung reached (self / published / platform / peers), the partition, a hash of the peer set (never the ids), n and organisations with the viewer's own out, profile source and confirmation date, measured drift (#29) | tenant-keyed; server-side |
 | `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
-| `intel_confidence_log` | per week × cohort × kind: mean confidence, acceptance, success | aggregates |
+| `intel_confidence_log` | per week × cohort × kind: mean confidence (current `trust_version` snapshots only), acceptance, success, `n` (recommendations, not event rows), `orgs` | aggregates |
 | `intel_rec_events` effect columns (boot ALTERs) | `metric`, `effect_pct`, `effect_z` (signed so positive = better), `baseline_kind`, `after_end`, `tags_json` — what a counted result MOVED (BM4-6) | tenant-keyed; filled only for results `rec_learning.learned_verdict` counts |
 | `intel_dna` | one row per restaurant-week of its Restaurant DNA: `dims_json` `{dim: {raw, z, n, basis, norm}}`, `coverage`, `version` | ratios, rates, shares and bands only — never dollars; `assert_anonymous` on every row |
 | `intel_benchmark_facts` | per restaurant × metric × week: the engine's `compare()` payload (kinds self/peers/platform/industry/market — never the viewer-dependent `location`), `available` | the restaurant's own comparisons only |
@@ -77,27 +90,72 @@ other modules need.
 | `staff_first_seen.last_seen` | the newest shift date ever seen per name (`remember_tenure` keeps the MAX) | own row |
 | `job_cursors['intelligence_features']` | where the nightly feature pass stopped (the DNA rides the same pass) | — |
 | `job_cursors['intelligence_patterns' / 'intelligence_benchmark_facts' / 'intelligence_effects']` | where bounded discovery, the comparison materialisation and the weekly prediction pass stopped | — |
+| `job_cursors['intelligence_features_backfill' / 'intelligence_features_backfill:<rid>']` | where the backfill stopped, and each restaurant's watermark (the `FEATURES_VERSION` and the last week done) | — |
+| `job_cursors['intelligence_feedback_trackers' / 'intelligence_feedback_labels']` | the tracker cursor (a tracker's `changed_at` and id) and the labels each restaurant's rows were last stamped with | — |
 
-No existing table changes shape. Feedback is **derived** by a sync, so no
-write path changes; new callers may record events directly through
-`feedback.record`. Since the ROI audit (Sep 2026) the sync's main input is
-**rec_ledger** (`rec_events`), which every surface writes — Home, the brief,
-Reviews, Food, Marketing, Intel, the DSR, the schedule, the queue, alerts
-and issues — read forward from a cursor
-(`job_cursors['intelligence_feedback_ledger']`), bounded per pass. The four
-older tables are still read for what predates the ledger:
+Feedback is **derived** by a sync, so no write path changes; new callers
+may record events directly through `feedback.record`. Since the ROI audit
+(Sep 2026) the sync's main input is **rec_ledger** (`rec_events`), which
+every surface writes — Home, the brief, Reviews, Food, Marketing, Intel,
+the DSR, the schedule, the queue, alerts and issues — read forward from a
+cursor (`job_cursors['intelligence_feedback_ledger']`), bounded per pass.
+The four older tables are still read for what predates the ledger:
 `home_dismissals`, `recommendation_outcomes` (the source of every measured
 verdict and its days to effect), `ask_cavnar_actions` and
-`delayed_actions`. Nothing is counted twice: the same answer reaches the
-same (restaurant, key, action) row from either path and UNIQUE keeps one;
-the ledger's Ask keys and outcome copies are skipped (their sources are
-read directly). Ledger mapping: dismissed → `not_for_us` | `hidden`;
-completed → `done`; accepted → `tracking` (a tracker named) | `accepted`;
-implemented → `implemented`; snoozed → `snoozed` (a "Not today" is not a
-no — it used to be learned as `hidden`, and old rows are repaired);
-expired → `ignored`. Ask answers are keyed `ask:<proposal id>`, the identity
-Ask, the queue, decisions and the ledger share (legacy
-`ask:<action>:<summary>` rows are re-keyed).
+`delayed_actions`. Trackers are read forward from a (`changed_at`, id)
+cursor (memory audit PLATFORM-18), plus the other trackers on the same
+number for the one-result-per-window rule — a night re-reads only what
+changed, never every tracker ever written; `_fill_confidence` rescans only
+rows derived in the last 30 days.
+
+**One row per episode** (memory audit PLATFORM-4). An answer is filed under
+`<key>#e<rec_id>` (`feedback.episode_key`; `base_key` and `kind_of` strip
+the suffix), each with its own `event_at`, as a measured result already was
+under `<key>#o<tracker id>`. The unique (restaurant, key, action) row used
+to keep only the first answer a key ever had: nine declines and one take
+on `trim_day:Monday` read as one "taken", and a key hidden 14 months ago
+and again last week fell out of the 365-day window. A Home dismissal or a
+tracker is filed under its episode (the tracker's linked episode, else the
+episode current then), so the ledger copy of the same answer lands on the
+same row and UNIQUE keeps one; an answer older than the ledger keeps the
+bare key. The ledger's Ask keys and outcome copies are skipped (their
+sources are read directly). A one-off repair
+(`intelligence_feedback_repair:per_episode_v1`) dropped the bare rows the
+ledger still holds (a bare row whose events were pruned stays — it is the
+only record) and reset the ledger and tracker cursors, so everything was
+re-derived per episode.
+
+A tracker's result is filed under the kind of the recommendation it
+measures — its linked episode, else its `measures_key`
+(`outcomes.record`'s `rec_key`) — so a fill-a-night text's result is
+`slow_day`'s, as the restaurant's own learner reads it, never a
+`campaign` kind no recommendation has.
+
+Ledger mapping: dismissed → by the owner's reason
+(`rec_ledger.reason_effect`, the one table `REASON_EFFECT`): "already
+doing it" is `done`, "bad timing" (or a free reason that names a time) is
+`snoozed`, any other → `not_for_us` | `hidden`; completed → `done`;
+accepted → `tracking` (a tracker named) | `accepted`; implemented →
+`implemented`; snoozed → `snoozed` (a "Not today" is not a no — it used to
+be learned as `hidden`, and old rows are repaired); expired → `ignored`.
+An answer whose `rec_events.authority` (or the meta's `authority` /
+`answer_authority`) is `admin` — support triage, or anyone through a
+view-as (`permissions.answer_authority`) — is skipped: it is nobody's
+preference. Ask answers are keyed `ask:<proposal id>`, the identity Ask,
+the queue, decisions and the ledger share (legacy `ask:<action>:<summary>`
+rows are re-keyed).
+
+**Labels are re-stamped whenever they change** (PLATFORM-15):
+`feedback._stamp_labels`, handed `jobs.learning_labels` for every restaurant
+— seeded and excluded ones too, since a label is a fact about the
+restaurant and eligibility is each reader's rule — rewrites all of a
+restaurant's rows when its `cohort` (the owner-confirmed concept, NULL
+included, so a guess that was later withdrawn leaves the group), its
+confirmed partitions or its Google connection changed since the last stamp
+(`intelligence_feedback_labels`). `partition_key` is the partition of the
+row's kind's family (`scoring.kind_family`), so a stamp and a prior read
+always agree. The first sync after deploy stamped every restaurant. A
+deleted restaurant's kept rows keep the labels they had.
 
 ## Services (the `intelligence/` package)
 
@@ -106,22 +164,23 @@ Ask, the queue, decisions and the ledger share (legacy
 | `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder), effect rounding |
 | `stats.py` | all | pure-Python mean / sd / Cohen's d / percentiles / least-squares slope / **permutation test** (seeded, two-sided) / **Benjamini–Hochberg** |
 | `categories.py` | 3 | taxonomy; `category_for(restaurant)` → (category, source) — the confirmed concept first; `profile_for` / `partition_key(profile, family)` (the hard split: service model; × bar-led for labor and food; × menu family for food cost and waste) / `partition_label`; `infer_detail` (format before cuisine, name before menu, Google types, a confidence) and `suggestion` ("We think you're a pizzeria — is that right?"); `clean_profile` / `profile_payload` for the Account block |
-| `features.py` | 1 | `compute(rid, week_end)` from own tables; `store()`; `latest_by_restaurant()` |
+| `features.py` | 1 | `compute(rid, week_end)` from own tables (every query bounded above by the as-of day); `store()` at `FEATURES_VERSION`; `latest` / `series` / `latest_by_restaurant()` / `weekly_by_restaurant()` read only current-version rows; the backfill helpers (`weeks_to_backfill`, `backfill_week`) |
 | `memory.py` | 1 | `restaurant_memory(rid)`: busiest weekdays, seasonality, own recommendation record by kind, what worked, what was ignored, metric slopes; `lines()` for the prompt |
-| `feedback.py` | 1 | `sync()` derives events; `record()` for new callers |
-| `scoring.py` | 2 | `kind_stats(kind, cohort)`: acceptance, success, median days; `rank_kinds()` |
+| `feedback.py` | 1 | `sync()` derives events, one row per episode, and re-stamps changed labels; `record()` for new callers |
+| `scoring.py` | 2 | `kind_stats(kind, cohort or partition)`: acceptance, success, median days, `decay=True` for the decayed figures; `similar_prior`; `rank_kinds()`; `org_map` (`privacy.org_map`, cached 300 s); `kind_family` / `kind_comparability` (the prior ladder's family and whether a kind is behaviour) |
 | `patterns.py` | 2/3 | declarative `HYPOTHESES`; `discover()` per cohort and platform-wide; `active(cohort)` |
 | `benchmarks.py` | 3 | `compute()` weekly over each member's confirmed partition (eligible members only: ≥ 8 live weeks, completeness ≥ 0.5, not excluded, a non-default labor cost basis for labor-cost metrics; one per Google listing); `published(cohort, metric, exclude_org=)` — what may be shown; `benchmark(rid, metric)` — the wrapper older callers keep: the confirmed partition, never an all-types band for a non-behaviour metric ("no like-for-like peers yet"); `context_line(b)`; `cohort_table()` rounded as published (admin) |
 | `metrics_registry.py` | 3 | one row per metric: comparability (behaviour / format / economics), `partition_family`, `DEFINITIONS` (what Cavnar's figure measures), the spread ceilings of the quality gate, `module_key` for aliases |
 | `engine.py` | 3 | the Benchmark Engine: `compare()` / `compare_all()` / `facts()` / `prompt_lines()` / `payload_for()`; `own_eligible()` (the viewer's figure passes a member's eligibility), `standing()`, `strength()`, `outcome_words()`; the peers kind walks the ladder (below) |
-| `trends.py` | 2/3 | weekly medians per cohort × metric over a balanced panel (present ≥ 6 of 8 weeks), joined / left, slope, `emerging()`; `persist()` writes `intel_cohort_series` in the learning pass |
-| `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
+| `trends.py` | 2/3 | weekly medians per cohort × metric over a balanced panel (present ≥ 6 of 8 weeks), joined / left, slope; `persist()` writes `intel_cohort_series` in the learning pass, each COMPLETE week once and never again; `emerging()` reads that frozen series (`stored_series` / `stored_trends`) — what was measured each week, never past weeks recomputed with tonight's members |
+| `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model; NOT what owners see (see Recommendation Confidence below). No production code calls it or its facade `intelligence.confidence_for` — only tests (the admin Intelligence page reads `intel_confidence_log`); a candidate for future cleanup after additional verification. `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
 | `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); partition bands (with the sales band once the restaurant's own is measured) come from `benchmarks.compute`; `starting_headcount` lends a restaurant with a CONFIRMED profile and no history of its own the PUBLISHED median (≥ 8 others from ≥ 5 organisations, 0.05 step) scaled by ITS OWN sales, labelled borrowed; `payload()` ships the rounded headcount, the group label and n — never `people_per_1k` (#10) |
 | `dna.py` | 1 → 3 | Restaurant DNA (BM4 §5, Top-50 #24): `measure`/`compute`/`store` the ~30 dimensions (22+ buildable today; S5 beverage share dormant; B10 retention dormant until `last_seen` fills), `normalise` (stated anchors below `MIN_ROBUST_N` = 30 measuring a dimension, robust z = (x − median) ÷ 1.4826·MAD from 30, clipped ±3; the centre and scale ride with each value), `distance(a, b, weights, norms)` (Gower-style, missing-aware, both rows re-normalised from `raw` under one norm set; None below 60% shared weight or 4 shared structural dimensions — 40% and 3 when size, ticket and service model are all shared), `prediction_weights`, `profile(rid)` — the owner's own read — and `payload_for(user)` |
 | `predict.py` | 3 | `predict_effect(rid, kind, metric, tags)` → a fact of kind `prediction` for the P2 rule; `neighbours()` (server-side only); `run_weekly()` into `intel_effects` (DNA, organisations and norms loaded once per pass; bounded and resumable per (kind, metric) pair). Dormant below its floors (every restaurant today) |
 | `comparison_cache.py` | 3 | `materialise()` the engine's comparisons nightly into `intel_benchmark_facts` (bounded, cursor-resumable); `read()` — `engine.compare(..., use_cache=True)` serves a fresh row computed from the restaurant's current settings (`inputs_key`); `engine.payload_for` (the card, the Home strip, `/api/benchmarks`) reads it |
-| `jobs.py` | — | `run_features()` (bounded, cursor-resumable; writes the DNA row beside the features), `run_learning()` |
+| `jobs.py` | — | `run_features()` (bounded, cursor-resumable; writes the DNA row beside the features), `run_features_backfill()`, `run_learning()`; `excluded_learning_ids` / `learning_since_by_id` / `before_learning` / `learning_since_week` (who and what may teach); `learning_labels`; `purge_google_pooled` |
+| `provenance.py` | all | the Google user-data rule and its trace: `google_connected_ids`, `pooled_features`, `review_derived`, `review_metric`, `pooled_row_excluded` (the admin calibrations) |
 
 ## Background jobs
 
@@ -129,7 +188,8 @@ Ask, the queue, decisions and the ledger share (legacy
   restaurant, compute this ISO week's feature row (upsert). Worker pool of
   4, wall-clock bound of 4 minutes, and a cursor in `job_cursors` so the
   next night resumes where this one stopped — `run_daily_fetch`'s pattern.
-- **`intelligence_learning`** nightly at 4am: `feedback.sync` →
+- **`intelligence_learning`** nightly at 4am: once, `jobs.purge_google_pooled`
+  (below) → `feedback.sync` →
   `patterns.discover` → `benchmarks.compute` (over `jobs.peer_partitions`)
   → the peer assignment ledger (`jobs.record_assignments`) →
   `trends.persist` (the balanced-panel cohort series, `intel_cohort_series`;
@@ -144,8 +204,26 @@ Ask, the queue, decisions and the ledger share (legacy
   observed difference); the confidence log reads the last 365 days of
   events; the comparison materialisation and the prediction pass by wall
   clock and cursor.
-- Both go through `ops.run_job` (lands in `job_runs`) and
-  `ops.claim_period` (one runner). Both only run on Railway, like every job.
+- **`intelligence_features_backfill`** daily at 5am (memory audit
+  PLATFORM-5): each past ISO week a restaurant has raw data for (labor and
+  sales days, reviews, the nightly report's metrics, schedules — back to
+  its first raw day, at most `features.BACKFILL_MAX_WEEKS` = 72, never this
+  week) and no row of the current `FEATURES_VERSION`, computed as of the
+  week's last day and stored `backfilled`. A restaurant that arrived with
+  months of history used to wait about 11 weeks for "vs your normal" and a
+  year for a seasonal one, and a definition change mixed weeks measured
+  two ways in one baseline. Bounded by a 180-second wall clock, resumed from
+  a cursor, and each restaurant's watermark moves week by week; a version
+  bump starts every watermark over. A converted demo's weeks before its
+  `demo_cleared_at` are never backfilled, and a week the raw tables measure
+  nothing in is not stored.
+- **`schedule_experiment_verdicts`** Mondays at 5am: each schedule A/B
+  experiment's clustered verdict for the week, stored
+  (`schedule_experiments.record_verdicts` → `schedule_experiment_verdicts`),
+  so the readout carries `verdict_history` (below).
+- All go through `ops.run_job` (lands in `job_runs`) and
+  `ops.claim_period` (one runner), and each is a `jobs_registry.JOBS`
+  entry. They only run on Railway, like every job.
 
 ## The intelligence pipeline
 
@@ -160,11 +238,23 @@ Ask, the queue, decisions and the ledger share (legacy
    #11): a 28-day day-based ratio (labor %, its day-to-day spread, weekend
    share, hours per $1k, food cost %, waste as % of sales) needs
    `features.MIN_MEASURED_DAYS` (14) days carrying its data; a daypart
-   ratio 14 schedule-outcome days; a review ratio `MIN_REVIEWS_FOR_RATIO`
+   ratio 14 schedule-outcome days whose split was MEASURED
+   (`schedule_outcomes.split_basis = 'measured'` — a day with no measured
+   morning share has NULL daypart sales, never a stated 0.4 split); a review ratio `MIN_REVIEWS_FOR_RATIO`
    (5) reviews (and timed replies); a campaign rate `MIN_SENT_FOR_RATE` (20)
    messages; a post rate `MIN_POSTS_FOR_RATE` (3) posts. Below it the
    feature is None, so it neither enters benchmarks nor counts in
    completeness (one day at 61% used to publish `labor_pct_28d` = 61.0).
+   Features read the day facts through `canonical_facts` (memory audit
+   9/29/26): final days only (`FINAL_SQL`, which also drops a converted
+   demo's seeded days), live reviews on the one review time axis, reach
+   alone, measured daypart splits, published schedule weeks. A row is
+   computed under `FEATURES_VERSION` (now 3), stored with it, and read only
+   at it: a definition change bumps the version, readers take none of the
+   old rows, and the backfill re-derives the past weeks (a boot trigger,
+   `features.init_feature_versions`, stamps an insert that names no
+   version). Every query has an upper date bound, so a backfilled week is
+   measured as it stood on its last day.
 2. **Feedback** — every recommendation's life, derived from the tables
    that already record it.
 3. **Discovery** — for each cohort (and platform-wide), each hypothesis
@@ -175,8 +265,19 @@ Ask, the queue, decisions and the ledger share (legacy
    p ≤ 0.05 **and** the BH-adjusted q ≤ 0.10 across all hypotheses tested
    that night. A pattern that stops meeting the bar is retired, not deleted.
 4. **Benchmarks** — p25/p50/p75 per cohort per metric per week.
-5. **Trends** — slope of the weekly cohort median over the last 8 weeks.
-6. **Confidence log** — the week's mean confidence and success by kind.
+5. **Trends** — slope of the weekly cohort median over the last 8 weeks,
+   from the frozen `intel_cohort_series` (each complete week written once).
+   Every pattern written, confirmed or retired also leaves its week's row in
+   `intel_pattern_history`, so how long an association has held
+   (`weeks_held`) and a retired pattern's past can be read
+   (`GET /admin/api/intelligence/pattern-history`, admin only).
+6. **Confidence log** — the week's mean confidence and success by kind
+   (`jobs.log_confidence`): the mean averages only snapshots of the current
+   trust version (`confidence_engine.VERSION`, stored as `trust_version` — a
+   version-1 % measured something else), `n` counts recommendations, the
+   floors count organisations (`orgs` stored beside n), and rows of
+   restaurants that may not teach, rows before a `learning_since` and Google
+   user data are never in it.
 
 ## The recommendation pipeline (what changes for the reader)
 
@@ -250,10 +351,16 @@ either: one calm factor alone must never read as certainty. Each factor is
 
 The weights sum to 1.0 (a test holds it). Bands: high ≥ 0.70, medium ≥
 0.45, else low. Deterministic: same rows → same score. This model rates a
-KIND; it feeds the admin Intelligence page, never an owner's card.
+KIND and is never an owner's card. Nothing in production calls it today —
+the admin Intelligence page draws confidence over time from
+`intel_confidence_log`, not from `score()` — so it and its facade
+`intelligence.confidence_for` are exercised by tests only (a candidate for
+future cleanup after additional verification).
 
 **Success and acceptance, as `scoring` counts them** (per recommendation —
-restaurant and key — never per event row):
+restaurant and row key, which is per EPISODE since the memory audit, so
+nine declines and one take of one key are ten recommendations — never per
+event row):
 
 - `success_rate` = improved ÷ (improved + worsened + no clear change). A
   result that could not be measured (`unknown`) is **not a failure**: it is
@@ -410,12 +517,25 @@ word and the object rides beside it as `confidence_detail`.
 - **Historical Accuracy** = how likely this kind of advice beats DOING
   NOTHING here — `pct = round(100 × P(p_taken > p_nothing))`, held to 1–99.
   The record is `rec_learning.kind_record`: this restaurant's shown AND
-  taken episodes of the kind, read only through `learned_verdict`
+  taken episodes of the kind inside `DECAY_HORIZON_DAYS` (and from its
+  `learning_since`), read only through `learned_verdict`
   (disowned, conditions-changed, informational, faded, reversed,
   baseline-overlap and confounded results are never wins), one result per
   overlapping window. `p_taken` ~ Beta(m·k + improved, (1−m)·k + measured −
   improved) with k = `SHRINK_K` 5 and the prior centre m = the do-nothing
-  rate. `p_nothing` is the kind's untaken record when it has 5 results
+  rate, where the Beta counts each result by its age — the record's
+  `measured_eff` / `improved_eff`, weighed by `rec_learning.decay_weight`
+  (memory audit PLATFORM-11). A weight is at most 1, so decay only weakens
+  the evidence; the floor and the words stay on the plain counts. Below its
+  own floor a kind may stand on the results of every kind pulling the same
+  lever here (`kind_record["pooled"]`, `rec_learning._lever_pool`: the
+  topic tag — `trim_day`, a nightly report's staffing action and a labor
+  read's cut are all "staffing"), read the same way and said as pooled
+  ("… across your staffing advice here … (this kind alone: 1 of 2)"), with
+  `source: "pooled"`. A diagnosis's or nightly report's own claims scored at
+  their horizon (`ai_reads.claims_record`) count in the record too, only
+  for advice that was taken. `p_nothing` is the kind's untaken record when
+  it has 5 results
   (`base_rate` from untaken — the untaken share shrunk by 5 toward chance —
   held as Beta(base_rate·(n+5), …)), else the chance rate (half the false-
   alarm rate of this restaurant's own noise bands, else half the stated 10%
@@ -440,12 +560,18 @@ word and the object rides beside it as `confidence_detail`.
   10-of-12 cohort read 86% high); below the own floor the basis names it
   by its group ("(Pizza on Cavnar: 10 of 12 improved — not counted until
   your own are in)", `prior_label`) and the figure is `null`. `kind_record` fills the cohort's
-  `prior_*` counts at any own count for this. Its other additive fields
-  (group Q): `base_rate`, `base_rate_source`, `base_rate_n`,
-  `base_rate_basis`, `untaken`, `rate_recent` / `rate_recent_n_eff` /
-  `recent_half_life_days` (not used by the figure: a recency-weighted rate
-  would re-inflate a short recent run the Beta read deliberately holds
-  back).
+  `prior_*` counts at any own count for this, from the finest NAMED rung
+  of the prior ladder (*Peer priors*, below — never the all-types rung),
+  and says which (`prior_rung`) and, for an unconfirmed profile,
+  `prior_unlock: "confirm_profile"` — the Why? panel's "Confirm your
+  restaurant profile to compare with restaurants like yours". Its other
+  additive fields (group Q): `base_rate`, `base_rate_source`,
+  `base_rate_n`, `base_rate_basis`, `untaken`, `measured_eff` /
+  `improved_eff`, `window_days`. `rate_recent` / `rate_recent_n_eff` /
+  `recent_half_life_days` are still returned (a test pins them) and read by
+  no production code: the
+  decay-weighted counts superseded them (`rec_learning.recency_weighted_rate`
+  is a candidate for future cleanup after additional verification).
 - **Data Freshness** = 100 × the minimum over the card's sources of
   recency × completeness (`data_freshness.SOURCES`, one threshold table:
   recency is 1 within `grace` days of the expected lag, then falls to 0
@@ -560,7 +686,13 @@ with the tracker's `concurrent` and `baseline_overlaps_trigger`, i.e.
 and kind (`rec_learning._one_per_window`). The decile reliability table
 and the Brier score stay, labelled "not the meaning of the %".
 `admin_ops.recommendation_calibration` (the dollar pairs) reads verdicts by
-the same rule.
+the same rule. Pooled across the fleet (no `restaurant_id`), all three
+admin calibrations — this one, the dollar pairs and the model's own
+confidence check (`ai_reads.confidence_calibration`) — leave out a demo,
+test or internal account, a converted demo's rows before its
+`learning_since`, and a Google-connected restaurant's review-derived
+results (`provenance.pooled_row_excluded`, *Google user data* below). One
+restaurant's own view keeps everything.
 
 ## The per-restaurant effectiveness model (`rec_learning`)
 
@@ -568,13 +700,37 @@ What the ledger learned about ONE restaurant, read by every ranker — Home's
 card order (`home_brief.order_recommendations`), the cross-module "one
 thing" (`business_intelligence.pick_one_thing`) and the DSR's action order
 (`dsr/narrative.settle_actions`). Level 1: `WHERE restaurant_id = ?`, over
-the last 365 days of episodes.
+every episode inside `DECAY_HORIZON_DAYS` (730) and after the restaurant's
+`learning_since` (`rec_learning._learning_floor`), each weighed by
+`decay_weight` (below). An ineligible account (`models.learning_eligible`)
+ranks on the neutral model. `EFFECTIVENESS_VERSION` (now 3) and the prior
+rung ride on every ranked card (`rec_learning.learned_note` →
+`learned.prior_rung` / `learned.version`, and the shown event's `rank`
+meta), so "did learning raise acceptance?" can be read per version.
+
+**One window, with decay** (memory audit PLATFORM-11). A hard 365-day window
+dropped everything known about once-a-year advice just as it came back, and
+counted three-year-old results the same as last month's. Every learner —
+the rankers, Historical Accuracy, the cross-restaurant priors
+(`scoring.kind_stats(decay=True)`, `similar_prior`) and Ask's memory
+(`intelligence.memory.own_record`) — now reads ONE window and one weight,
+`rec_learning.decay_weight`: an exponential half-life by the kind's topic
+(365 days by default, 180 for posting, marketing, guest outreach, replies,
+sales, competition and visibility, 270 for guest experience); for
+`holiday_promo`, a result from the same season a year back weighs 0.85 per
+year instead; tapering to 0 over the last 120 days before
+`DECAY_HORIZON_DAYS` = 730, so nothing falls off a cliff. The horizon sits
+inside the ledger's retention (`ops._RETENTION_DAYS["rec_events"]`, 800
+days, and a test holds it there): an older episode's answers are pruned and
+could not be read. `EFFECT_WINDOW_DAYS` and `PRIOR_WINDOW_DAYS` (both
+modules) equal the horizon.
 
 - Per kind and per subject tag (topic, focus such as "weekend staffing",
   review category, dish, item, daypart): acceptance (taken ÷ settled, the
   ignored included) and success (improved ÷ clear verdicts), each shrunk
-  toward its prior by 5 pseudo-observations. The prior is the cohort's own
-  shrunk rate for the kind, the cohort **without this restaurant**, each
+  toward its prior by 5 pseudo-observations. The prior is the shrunk rate
+  of the finest rung of the prior ladder (*Peer priors*, below) that clears
+  the floors, **without this restaurant's organisation**, each
   rate **only when its own population clears `MIN_COHORT`** (answering
   restaurants for acceptance, measuring restaurants for success — through
   `intelligence.recommendation_success`, asserted anonymous; the success
@@ -586,8 +742,16 @@ the last 365 days of episodes.
   per tracker and one per overlapping after-window on a number, the rule
   `kind_record` uses; the worse-result penalties and dollar pairs come
   from the same set. With nothing learned the weight is exactly 1.0. The
-  model reads a year of episodes without their `shown` rows (only whether
-  each has one — B18).
+  model reads its episodes without their `shown` rows (only whether each
+  has one — B18). Answers are read per side (`effectiveness(perspective=)`,
+  M1 who_answered): the owner's ranking learns from the account holders'
+  answers only — a manager's decline is not the owner's rejection, and an
+  admin's view-as answer is nobody's; a delegate's view weighs the
+  principal's answer above its own. The owner's reasons move it too: each
+  "too costly" takes a bounded, decaying step off the kind, each "doesn't
+  fit us" off the subject's topic and focus tags (0.05 each, at most 0.15,
+  halving every 90 days — `Effectiveness.reason_penalties`); a "bad timing"
+  answer is `deferred` and counts in no rate.
 - weight = 1 + mean over the kind and its tags of
   0.2 × (acceptance − prior) + 1.0 × (success − prior), times the kind's
   dollar calibration (median measured ÷ predicted, ≥ 3 pairs, shrunk toward
@@ -618,9 +782,18 @@ the last 365 days of episodes.
 - A worse result downweights that key (0.20 each, capped 0.30) and its kind
   (0.08 each, capped 0.20), halving every 60 days; with the penalty the
   weight never goes below 0.6.
-- It reorders only. Nothing is dropped, and nothing learned is applied to a
-  critical item: the one thing keeps every critical candidate exactly where
-  it was, and reorders only the candidates between them.
+- It reorders — and, since the memory audit, can hold a kind back and ask.
+  Nothing learned is applied to a critical item: the one thing keeps every
+  critical candidate exactly where it was, and reorders only the candidates
+  between them. A kind this restaurant's own record says to STOP proposing
+  (`Effectiveness.held`: at least 5 measured results, and either the upper
+  end of the 90% interval of its success sits below the do-nothing rate, or
+  the lower end of its interval of harm sits above it) is taken off Home
+  and is never the one thing (`home_brief.order_recommendations`,
+  `business_intelligence.pick_one_thing`); Home asks instead — "Keep
+  suggesting …?" (`rec_learning.hold_ask`, key `kind_hold:<kind>`). Done or
+  Track keeps the kind proposed for `KIND_HOLD_KEEP_DAYS` (180); Not for us
+  leaves it stopped. Nothing else is dropped.
 
 The owner's own record of the same trail — what they followed by module,
 what worked by tag, the timeline, the check-in — is `rec_learning.summary`,
@@ -730,9 +903,17 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
   withholds a rate below 5; an `auto` action (delayed.py) is its own bucket,
   neither taken nor declined. `memory.own_record` names a kind as "worked"
   only as `rec_learning.most_effective` would (≥5 measured, success ≥ even,
-  ranked by the Wilson lower bound) and says "k of n"; a memory slope is
-  said only when the series moved past the metric's stated band over the
-  weeks read.
+  ranked by the Wilson lower bound, on decay-weighted counts inside
+  `DECAY_HORIZON_DAYS`) and says "k of n"; a memory slope is said only when
+  the series moved past the metric's stated band over the weeks read. What
+  the owner has plainly declined is named by SUBJECT, never a whole kind
+  (`decisions.declined_subjects`, memory audit "one_hide"): only "not for
+  us" answers count — a plain hide, a timing answer, "already doing it" and
+  "don't trust the data" are not a no — at least 3 of a kind within 180
+  days whose recency-weighted sum (half-life 90 days) reaches 1.5, the
+  account holders' answers only. It used to be declined + hidden >
+  accepted over all history, so one two-week hide put a whole kind on
+  Ask's do-not-propose list.
 - **Advice not taken (CA2 #11).** `outcomes.observe_untaken` (run by
   `evaluate_due` for each restaurant) gives a recommendation that was shown
   and then dismissed (not "already doing it") or left to expire an
@@ -757,8 +938,10 @@ can measure (BM4 §5.1): sales (volume band from stated edges on mean daily
 sales — the band index is stored, never the dollars; Friday-to-Sunday share;
 share rung before 4pm from the POS's hourly totals, or for a POS that cannot
 be asked during the day (RPOWER) the nightly Daily Sales Report's hourly
-split — the schedule_outcomes split is not used, it divides a day by a
-stated 0.4 morning share; busiest vs quietest month; the service model, only
+split — the schedule_outcomes split is not read here (since the memory
+audit it holds a day's daypart sales only where the morning share was
+measured, else NULL with `split_basis = 'unmeasured'` — never the stated
+0.4 it used to fall back to); busiest vs quietest month; the service model, only
 from a CONFIRMED profile (S6); the restaurant type, only when the owner SET
 it (S7, its own dimension — S6 no longer falls back to it); average-ticket
 band, hours open a week and the urbanity band from Intel's competitor
@@ -796,7 +979,12 @@ they share size, ticket and service model (so a non-Toast restaurant with
 under 12 months of sales can be placed, R4-16). Prediction weights add the
 target metric's baseline dimension at 0.25, renormalised. Weights become
 fitted only when the admin ordering check can judge them. Similarity reads
-only rows at the current `DNA_VERSION`.
+only rows at the current `DNA_VERSION` — 3 since the memory audit: staffing
+issues are counted over WATCHED nights only (`canonical_facts.watched_nights`,
+withdrawn below 8 — `schedule_outcomes` stores 0 issues whether or not a
+night was watched), reviews Google removed are left out of the review mix,
+and loss rates read final days only. `dna.platform_norms` leaves a
+Google-connected restaurant's review dimensions out (`REVIEW_DNA_DIMS`).
 
 **Effect sizes in learning (BM4-6).** `feedback.sync` writes `metric`,
 `effect_pct`, `effect_z` (delta ÷ the restaurant's noise sigma), signed so
@@ -811,14 +999,37 @@ them cleared.
 trends — unless `waste_log_regularity_8w` ≥ 0.75. The DNA applies the same
 gate. The restaurant's own screens still see its waste %.
 
-**Peer priors (BM3-12).** `scoring.kind_stats` takes `window_days`
-(priors pass 365) and `half_life_days` (`*_recent` figures). When the cohort
-record lowers Historical Accuracy's prior, the basis says so ("— Pizza on
-Cavnar saw this rarely help (0 of 20), which lowers it"); it never lifts it.
-A kind this restaurant has no record of is RANKED with help from similar
-restaurants' results (`scoring.similar_prior`: DNA similarity × recency,
-capped per restaurant, over the privacy floors and 10 results), bounded to
-[0.9, 1.1] and said: "ranked with help from N similar restaurants' results".
+**Peer priors (BM3-12; the prior ladder, memory audit PLATFORM-1).** A
+prior used to exist only for an owner-confirmed concept: of 40 restaurants
+with measured `trim_day` results, 3 pizzerias left a new pizzeria at
+exactly 1.0, and an owner who never confirmed a type never had one. The
+ladder (`rec_learning.prior_rungs`) mirrors `categories.partition_ladder`:
+the confirmed concept (`cohort`), then the confirmed partition of the
+kind's metric family (`scoring.kind_family`: staffing, hours, overtime and
+training read the labor family; pricing, purchasing, food cost, waste and
+ordering the food family; everything else by service model — finest first,
+with the bar-led split and then without), then every restaurant on Cavnar
+AI for a BEHAVIOUR kind only (`scoring.kind_comparability`: replies and
+posting topics), where a type difference cannot pass as an effect. Each rung
+must clear the floors on its own population, and a reader takes the finest
+that does. The platform rung is a ranking weight or a prior centre only,
+never an owner-facing figure: `kind_record` reads the named rungs only
+(`owner_facing=True`), and the platform rung's "why" never quotes a count.
+A row's `partition_key` is stamped with its kind's family partition, and
+membership follows the ladder's rule, so a bar-led member stands in its
+service-model group too (`scoring.partition_rows_sql`).
+`scoring.kind_stats` takes `window_days` (priors pass `PRIOR_WINDOW_DAYS`,
+the 730-day horizon) and `decay=True` (the `*_decayed` figures every prior
+reads); its `half_life_days` / `*_recent` path and `PRIOR_HALF_LIFE_DAYS`
+are superseded by decay and pinned only by a test (a candidate for future
+cleanup after additional verification). When the cohort record lowers
+Historical Accuracy's prior, the basis says so ("— Pizza on Cavnar saw this
+rarely help (0 of 20), which lowers it"); it never lifts it. A kind this
+restaurant has no record of is RANKED with help from similar restaurants'
+results (`scoring.similar_prior` over the finest rung that clears the
+floors: DNA similarity × `decay_weight`, capped per organisation, over the
+privacy floors and 10 results), bounded to [0.9, 1.1] and said: "ranked
+with help from N similar restaurants' results".
 
 **Borrowed headcount (BM3-13).** A schedule whose slots come from the
 borrowed starting headcount caps the Shift Quality Evidence at 49 ("N shifts
@@ -940,8 +1151,9 @@ all-types patterns are served (`patterns.active(None)`; the admin view is
   cap_organisations`) — and the band is withheld only when that leaves
   fewer than 8 others or 5 organisations (fix round #35, R2-10: the first
   multi-location customer in a format used to withhold it from everyone).
-  A test or internal account (`exclude_from_learning`) and a lapsed
-  customer (billing not trial/active) are never members.
+  A demo, test or internal account (`models.learning_eligible` — the
+  pooled feature readers drop it before a band builder sees its row) and a
+  lapsed customer (billing not trial/active) are never members.
 - **One publishing gate** (fix round #41): `benchmarks.published()` needs
   a viewer (`exclude_org`) — with none, nothing is shown (the unused
   `industry_intelligence` facade therefore publishes no band) — and
@@ -982,6 +1194,112 @@ all-types patterns are served (`patterns.active(None)`; the admin view is
 - Level 1 reads only `WHERE restaurant_id = ?`. The Ask context names the
   restaurant's own figures only to its own owner.
 
+## Who may teach (memory audit, 9/29/26)
+
+**One predicate.** `models.learning_eligible(restaurant, since=None)` —
+`learning_exclusion` says why not: `demo`, `excluded` (an admin's
+`exclude_from_learning` or `learning_override='exclude'`), `internal`
+(billing), `admin_home` (every login on it is internal), `test_name` (a
+word such as "test", "demo", "qa", "preview" or "admin" standing alone in
+the name, or "Cavnar AI"). The admin's `learning_override='include'` wins
+over the three automatic rules. It governs every learner, the restaurant's
+own and the platform's, and every admin learning check. Test and internal
+accounts used to be excluded only when an admin ticked the flag, so the
+internal rid 1 counted as live. The admin console shows the status beside
+the override (`models.learning_status`).
+
+**The demo era.** When a demo becomes a real account its seeded history
+stays (never hard-deleted), and `learning_since` is stamped at the
+conversion (`admin_routes`, with `demo_cleared_at`). Nothing recorded before
+it teaches any learner. An admin's save of `learning_override='include'`
+starts the clock only when it CHANGES the override to include (unless the
+save says `learning_history`, the account's history counts): re-saving an
+include already stored no longer moves `learning_since` forward and drops
+the history it had been teaching from. The row filters:
+
+- pooled readers: `jobs.learning_since_by_id` (cached with
+  `excluded_learning_ids`), `before_learning(rid, when)` on a row's stamp,
+  `learning_since_week` for a week-keyed row — in `scoring._eligible_rows`
+  (every `kind_stats`, `similar_prior`, `rank_kinds`, `platform_totals`),
+  `jobs.log_confidence`, `predict._taken`,
+  `features.latest_by_restaurant` / `weekly_by_restaurant` (which also drop
+  every account `learning_eligible` refuses, not only demos) and the
+  schedule A/B readout (`schedule_experiments.readout`: eligible
+  restaurants only, no week before `learning_since`);
+- the restaurant's own model: `rec_learning._learning_floor` in
+  `effectiveness` and `kind_record`;
+- SQL readers: `models.learning_rows_sql(rid_col, time_col)` (the admin
+  calibrations) and `learning_since_map`;
+- its own daily history: a converted demo's seeded days (`source='seed'`)
+  are no data point for its own year-over-year, holiday and seasonal
+  baselines either (`models.own_history_sql`, folded into
+  `canonical_facts.FINAL_SQL` / `final_sql`); a demo's own screens keep
+  them.
+
+The 90-day quarantine it replaces (`jobs.SEEDED_HISTORY_DAYS`, from
+`demo_cleared_at`) is still applied beside it by `seeded_restaurant_ids` and
+`excluded_learning_ids`; the feature backfill never computes a week before
+`demo_cleared_at`.
+
+**Whose answer.** `permissions.answer_authority(user)` is `admin` (an admin
+or support login, or anyone acting through a view-as), `principal` (an
+account holder) or `delegate` (a manager or employee). Only a principal's
+answer is the restaurant's preference; a delegate's silences its own login
+and trains only the delegate's view; an admin's trains nothing — the
+feedback sync skips it (`rec_events.authority`), and so does every
+restaurant-level learner (`docs/ops/SECURITY.md` → *Who teaches the
+learners* lists them).
+
+## Google user data (memory audit, 9/29/26)
+
+Google's API Services User Data Policy (Limited Use), and
+`public/privacy.html`, allow data received through an owner's Google OAuth
+connection — Business Profile reviews, their text and ratings, and anything
+derived from them — to be used only for the restaurant that authorised it,
+never to train a generalized model. Every pooled read here is that kind of
+learning, so `intelligence/provenance.py` holds one rule and the trace
+behind it: a restaurant whose reviews come, or ever came, through the
+owner's connection (`google_connected_ids`: a GBP token or location on
+file, a revoked connection, or any stored review carrying a Business
+Profile `review_name`) contributes NO review-derived figure to any pooled
+read. The rule is conservative: a Places-fetched review of a connected
+restaurant counts as Google user data too, and a restaurant that
+disconnected keeps its stored reviews, so it stays out.
+
+- **Features**: `features.cross_restaurant_view(f, google)` →
+  `provenance.pooled_features` withdraws `REVIEW_FEATURES` (None, never 0)
+  and swaps the recommendation loop's counts for their review-free
+  variants (`*_ex_reviews`) — so bands, patterns, trends and the cohort
+  series never see them. A caller that has not looked is treated as
+  connected.
+- **Recommendation rows**: `intel_rec_events.review_derived` (a review kind
+  or topic — guest experience, replies, competition — or a result on a
+  review metric) and `google_data` (review-derived AND connected), filtered
+  in every pooled reader: `kind_stats`, `similar_prior`, `rank_kinds`,
+  `platform_totals`, the confidence log and predict's taken arm.
+- **DNA and prediction**: `dna.platform_norms` leaves a connected
+  restaurant's review dimensions out; `predict` leaves connected
+  restaurants out of a review metric's neighbours.
+- **The admin calibrations**: the dollar pairs, the support-score order
+  check and the model-confidence check apply the same rule through
+  `provenance.pooled_row_excluded` (the lead's decision, INT #5) — only Will
+  sees them, but calibrating a score on pooled results is generalized
+  learning all the same.
+- **What stays**: the restaurant's own screens keep every figure; the peer
+  ledger reads each restaurant's own rows
+  (`latest_by_restaurant(pooled=False)`), because a connected restaurant is
+  still shown its own rating beside a band. Places, Yelp and CSV reviews of
+  an unconnected restaurant still pool; marketing features (Meta metrics,
+  POS lift) and structural features (Intel's Places distances) are not
+  Google user data.
+- **The one-off purge**: `jobs.purge_google_pooled`
+  (`intelligence_google_purge:v1`, the learning pass's first stage) dropped
+  every pooled row a connected restaurant's review figures could have
+  entered — review-metric bands, the cohort series, cached comparisons,
+  predictions and review-hypothesis patterns — to be rebuilt that night.
+- `tests/test_mem_m8_google.py` pins the rule, including that every feature
+  the reviews table can move is on the list.
+
 ## Performance impact
 
 Features: ~12 small indexed queries per restaurant per night, bounded and
@@ -989,8 +1307,9 @@ resumable. Learning: reads one row per restaurant per cohort; ~20
 hypotheses × permutation (2,000 shuffles) ≈ 40k list operations per cohort,
 milliseconds at present scale, seconds at thousands. Request paths read
 only materialized rows (`intel_patterns`, `intel_benchmarks`,
-`intel_features` latest) — one indexed query each; `confidence.score` is
-four indexed reads and no model call.
+`intel_features` latest) — one indexed query each. The backfill is a
+separate 5am pass under its own wall clock, so a restaurant with a year of
+history is filled over several nights, never inside the feature pass.
 
 ## Scalability to 100,000+ restaurants
 
@@ -1007,9 +1326,12 @@ four indexed reads and no model call.
 
 ## What this deliberately does not do yet
 
-- Weather and holiday effects: no per-restaurant weather history is stored;
-  the hypothesis slots exist and will light when the labor weather feed is
-  persisted.
+- Weather effects across restaurants: the weather that actually happened
+  is now stored per restaurant and local day (`weather_daily`, kept by
+  `event_memory` from the nearest NWS station's observations — never a
+  forecast) and each restaurant's own event memory measures what rain and
+  events did to its nights, but no feature or hypothesis in this package
+  reads it yet.
 - Employee retention: staff rows have no start/end dates yet.
 - Promotion effectiveness beyond campaigns and specials cadence.
 - At present the platform has fewer than `MIN_COHORT` live restaurants, so
@@ -1246,7 +1568,11 @@ measured. They are peer coordinates and the drift detector's input.
 target records where it came from (`thresholds.target_source`: set / seeded
 / default), and every surface that judges a figure against one reads
 `thresholds.target_for(restaurant, kind)` → `{pct, source, label,
-alerts_allowed, phrase}` (kind `labor` | `food`): the Food Cost label and
+alerts_allowed, phrase}` (kind `labor` | `food`) — the owner's ACTIVE goal
+on the metric first (source `goal`, "your goal of 28% by 12/1/26";
+`owner_memory.target_for`, memory audit 9/29/26 — a teammate's or an
+admin's goal is only proposed until an account holder confirms it), then the
+restaurant's own setting: the Food Cost label and
 dish colours (`cogs`), the digest's labor tag (`reporter.labor_tag`), Home's
 labor attention item, the group brief's labor issue and the value
 opportunity's label. On Cavnar's starting target nothing reads "Over" in
@@ -1323,15 +1649,23 @@ none.
 
 **The confirmed type** (#20): `categories.confirmed_type(restaurant)` is
 the one accessor for a type a cross-restaurant read may use — None unless
-the owner (or admin) set it. Recommendation priors (`rec_learning`), the
-confidence model's cohort (`confidence.score`) and the Ask tool's label
-read it; patterns read the confirmed partitions (#21, above).
+the owner (or admin) set it. Recommendation priors (`rec_learning`, the
+concept rung of the prior ladder; the confirmed partition is the next
+rung), the kind-level confidence model's cohort (`confidence.score`) and
+the Ask tool's label read it; patterns read the confirmed partitions (#21,
+above). A row's `cohort` label is re-stamped whenever the confirmed type
+changes, NULL included (*Feedback*, above), so a withdrawn guess leaves
+the group.
 
 **Recommendation priors by organisation** (#14): `scoring.kind_stats` and
-`similar_prior` leave the asking restaurant's whole organisation out
-(`privacy.org_key`), need `privacy.MIN_ORGS` organisations as well as
-MIN_COHORT restaurants (`answered_orgs` / `measured_orgs`), and cap the
-share per organisation. `rec_learning.kind_record` returns only the capped
+`similar_prior` leave the asking restaurant's whole organisation out, need
+`privacy.MIN_ORGS` organisations as well as MIN_COHORT restaurants
+(`answered_orgs` / `measured_orgs`), and cap the share per organisation.
+The organisation is `privacy.org_map`'s everywhere — bands, priors
+(`scoring.org_map`, cached 300 seconds), the confidence log and predict's
+neighbours (`predict._orgs`) — so two emails behind one owner login, or
+one Stripe customer, are one organisation (memory audit PLATFORM-19; a
+restaurant with no row, a deleted one's kept rows, is its own). `rec_learning.kind_record` returns only the capped
 counts — `prior_measured_raw` / `prior_improved_raw` are gone.
 
 **Peer freshness** (#24): Data Health's "Peer benchmarks" source is dated
