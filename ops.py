@@ -2134,6 +2134,12 @@ _RETENTION_DAYS = {
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
+    # The memory audit's recommendation ledgers (9/29/26, M1): one compact
+    # row per restaurant, surface and day of what a ranking did (a year and
+    # a month, so a model version can be compared with last year's); a
+    # delegate's per-login silence, a month after it ended.
+    "rec_rank_builds":    int(os.getenv("RETAIN_REC_RANK_BUILDS_DAYS", "400")),
+    "rec_silences":       int(os.getenv("RETAIN_REC_SILENCES_DAYS", "30")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2153,6 +2159,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "rec_rank_builds": "built_at", "rec_silences": "until",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run

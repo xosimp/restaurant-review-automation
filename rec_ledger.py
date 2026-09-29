@@ -436,6 +436,7 @@ def init_rec_ledger(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, subject_id, key)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_until ON rec_silences(restaurant_id, until)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_prune ON rec_silences(until)")   # ops retention
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_created ON rec_silences(created_at)")
         # "Don't trust the data" held per DATA SOURCE until it is
         # re-verified ("reasons"): every card resting on the source is capped
