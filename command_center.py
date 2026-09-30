@@ -319,7 +319,8 @@ def _search_people(rid, q):
 def _search_issues(user, rid, q):
     import issues
     out = []
-    for i in issues.list_issues(rid, status="unresolved", limit=30, sees_loss=issues.viewer_sees_loss(user)):
+    for i in issues.list_issues(rid, status="unresolved", limit=30, sees_loss=issues.viewer_sees_loss(user),
+                                hide_modules=issues.hidden_modules(user)):
         s = _score(q, i.get("title"), i.get("assignee_name"))
         if s:
             out.append((s, {"type": "issue", "id": i["id"], "title": i["title"],

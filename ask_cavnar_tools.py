@@ -407,6 +407,12 @@ def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, v
         gone = [e["fact"] for e in saved.get("evicted_facts") or []]
         out["note"] = ("That lane was full, so its least-used note moved to the archive the owner can see in "
                        "Account" + (f": “{gone[0]}”." if gone else "."))
+    if saved.get("private_default"):
+        # Personnel or money (owner_memory.is_private — memory re-audit
+        # PEOPLE-10): said, so the person knows who will read it.
+        out["audience_note"] = ("Kept for the account holders (and whoever said it) only, because it is about "
+                                "someone's job or pay. Tell them, and that 'Share with the team' beside it in "
+                                "Account changes that.")
     return out
 
 
@@ -1298,15 +1304,32 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
     if isinstance(feats, dict) and denied:
         feats = {k: v for k, v in feats.items() if intelligence.visible(k, denied)}
     slopes = {k: v for k, v in (mem["slopes"] or {}).items() if intelligence.visible(k, denied)}
+    # The advice record, projected by the recommendation rules too (memory
+    # re-audit PEOPLE-11): a kind — and the subjects declined under it — only
+    # when this login may see what it rests on (rec_learning.line_gate: its
+    # modules, a loss, owner-only figures). A manager was told "reprice:
+    # Salmon, Short rib" and a loss kind's subjects.
+    rec = mem["record"]
+    who = _viewer_user(_viewer)
+    if who is not None:
+        import rec_learning
+        gates = rec_learning.record_gates(restaurant_id)
+
+        def _ok(kind):
+            return rec_learning.viewer_sees_record(who, "kind", kind, gates)
+    else:
+        def _ok(kind):
+            return True
     return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
             # `declined`: advice said "not for us" 3+ times in 180 days, by
             # subject (memory audit 9/29/26, "one_hide") — `ignored` keeps
             # the kinds for older readers.
-            "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
-                       "declined": mem["record"].get("declined_detail") or [],
+            "record": {"worked": [k for k in rec["worked"] if _ok(k)],
+                       "ignored": [k for k in rec["ignored"] if _ok(k)],
+                       "declined": [d for d in rec.get("declined_detail") or [] if _ok(d.get("kind"))],
                        "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
-                                   for k, v in mem["record"]["by_kind"].items()}},
+                                   for k, v in rec["by_kind"].items() if _ok(k)}},
             "slopes": slopes, "features": feats,
             # Every cross-module link kept, open or answered, labelled
             # (re-audit 9/29/26, CROSSMODULE-15): "have we seen this Friday
@@ -1414,8 +1437,11 @@ def _read_open_issues(restaurant_id, _viewer=None):
     # with LOSS_VIEW (viewer_restaurant stamps it), never the routed manager
     # who may be their subject (re-audit A-8).
     loss = getattr(_viewer, "_ask_sees_loss", True) if _viewer is not None else True
-    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20, sees_loss=loss)
-    return {"summary": issues.summary(restaurant_id, sees_loss=loss),
+    # ...and no issue built from a module this login may not open (a food
+    # cost plan item — memory re-audit PEOPLE-14).
+    hide = issues.hidden_modules(_viewer_user(_viewer)) if _viewer_user(_viewer) is not None else frozenset()
+    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20, sees_loss=loss, hide_modules=hide)
+    return {"summary": issues.summary(restaurant_id, sees_loss=loss, hide_modules=hide),
             "issues": [{k: r.get(k) for k in ("id", "title", "severity", "status", "assignee_name",
                                               "created_at", "acknowledged_at", "escalated_at")}
                        for r in rows],
@@ -1437,12 +1463,22 @@ def _read_goals(restaurant_id, _viewer=None):
 
 
 def _read_outcomes(restaurant_id, _viewer=None):
+    """Results and trackers this login may see — the REST route's rule
+    (outcomes.visible_to: the metric, the module it is credited to, and the
+    recommendation behind it — owner-only, a loss, a module it lacks), not
+    only the metric (memory re-audit PEOPLE-2)."""
     import outcomes
+    who = _viewer_user(_viewer)
+    linked = outcomes.linked_episodes(restaurant_id) if who is not None else None
+
+    def _sees(r):
+        if not metric_visible(_viewer, r.get("metric")):
+            return False
+        return who is None or outcomes.visible_to(who, dict(r, restaurant_id=restaurant_id), linked=linked)
     closed = [dict(r, summary=outcomes.summarise(r))
               for r in outcomes.list_outcomes(restaurant_id, limit=20)
-              if r.get("status") != "tracking" and metric_visible(_viewer, r.get("metric"))]
-    return {"tracking": [r for r in outcomes.progress(restaurant_id)
-                         if metric_visible(_viewer, r.get("metric"))],
+              if r.get("status") != "tracking" and _sees(r)]
+    return {"tracking": [r for r in outcomes.progress(restaurant_id) if _sees(r)],
             "results": closed,
             "caveat": outcomes.CAUSATION_CAVEAT}
 
@@ -1455,7 +1491,7 @@ def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None,
     holder to confirm in Goals (memory audit 9/29/26, owner_goals)."""
     import goals
     if not metric_visible(_viewer, metric):
-        return {"error": "Food cost goals are for logins that can see food cost."}
+        return {"error": "That goal is for logins that can see its figures (food cost, or comps and voids)."}
     user = _viewer_user(_viewer)
     try:
         from permissions import answer_authority
@@ -1517,7 +1553,7 @@ def track_rec_key(restaurant_id, metric, source_key=None, db_path=None):
 def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _viewer=None):
     import outcomes
     if not metric_visible(_viewer, metric):
-        return {"error": "Food cost tracking is for logins that can see food cost."}
+        return {"error": "Tracking that is for logins that can see its figures (food cost, or comps and voids)."}
     if not title or not metric:
         return {"error": "title and metric are required"}
     # One tracker per metric, whoever started it. The model's title (and any
@@ -3558,9 +3594,19 @@ def _denied(restaurant):
 
 
 def metric_visible(restaurant, metric):
-    """A goal/outcome metric this viewer may see or set."""
-    base = (metric or "").split(":", 1)[0]
-    return not (base in _FOOD_METRICS and "inventory" in _denied(restaurant))
+    """A goal/outcome metric this viewer may see or set — the one rule
+    (metrics.metric_permission): the food-cost family (item waste too)
+    needs the Food Cost module, comps and voids LOSS_VIEW (viewer_restaurant
+    stamps _ask_sees_loss; a plain restaurant is an internal caller). Ask
+    showed a manager the owner's comp goal the REST route hid (memory
+    re-audit PEOPLE-2)."""
+    import metrics
+    need = metrics.metric_permission(metric)
+    if need == "food":
+        return "inventory" not in _denied(restaurant)
+    if need == "loss":
+        return bool(getattr(restaurant, "_ask_sees_loss", True)) if restaurant is not None else True
+    return True
 
 
 def tool_allowed(name, restaurant):

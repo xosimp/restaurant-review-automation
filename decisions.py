@@ -62,6 +62,7 @@ def _redact(rows, viewer, conn, restaurant_id):
     read_decisions tool used to carry the owner's food-cost and owner-only
     DSR decisions verbatim."""
     import json as _json
+    import metrics
     import rec_learning
     from permissions import has_permission, is_principal, FOOD_COST_VIEW
     try:
@@ -106,10 +107,12 @@ def _redact(rows, viewer, conn, restaurant_id):
         if r.get("kind") == "proposal" and r.get("_uid") is not None and r["_uid"] != viewer.get("id") \
                 and not is_principal(viewer):
             continue
-        metric = str((r.get("outcome") or {}).get("metric") or "").split(":", 1)[0]
-        if metric in _FOOD_METRICS and not has_permission(viewer, FOOD_COST_VIEW):
+        # The one metric rule (metrics.metric_permission): item waste is
+        # food cost too (memory re-audit PEOPLE-2).
+        need = metrics.metric_permission((r.get("outcome") or {}).get("metric"))
+        if need == "food" and not has_permission(viewer, FOOD_COST_VIEW):
             continue
-        if metric in _LOSS_METRICS and not loss_ok:
+        if need == "loss" and not loss_ok:
             continue
         out.append(r)
     return out

@@ -65,6 +65,9 @@ h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:v
     {% elif channel == 'email' %}
     <h1>Check your email</h1>
     <p class="desc">We emailed a 6-digit code to <strong>{{ masked_email }}</strong>. Enter it to sign in.</p>
+    {% elif channel == 'app' %}
+    <h1>Open your authenticator app</h1>
+    <p class="desc">Enter the 6-digit code your authenticator app (Duo Mobile, Google Authenticator or similar) shows for <strong>Cavnar AI</strong>. Codes for this login are never emailed or texted — lost your phone? Use a backup code.</p>
     {% else %}
     <h1>Enter your code</h1>
     <p class="desc">Enter the 6-digit code we sent you to sign in.</p>
@@ -97,7 +100,7 @@ h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:v
     </div>
     <label class="remember"><input type="checkbox" name="remember_device" id="remember" value="1" checked> Remember this device for 30 days</label>
     <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="verify-btn" style="margin-bottom:12px">Verify</button>
-    <button type="button" class="cbtn cbtn-secondary cbtn-lg cbtn-block" id="resend-btn"{% if backup_mode %} hidden{% endif %}>Resend code</button>
+    {% if channel != 'app' %}<button type="button" class="cbtn cbtn-secondary cbtn-lg cbtn-block" id="resend-btn"{% if backup_mode %} hidden{% endif %}>Resend code</button>{% endif %}
   </form>
   <p class="status" id="twofa-status" role="status" aria-live="polite"></p>
   <div class="switch">
@@ -178,7 +181,7 @@ h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:v
     document.getElementById('mode-backup').hidden = !backup;
     boxes.hidden = backup;
     backupBox.hidden = !backup;
-    resendBtn.hidden = backup;
+    if (resendBtn) resendBtn.hidden = backup;
     switchBtn.textContent = backup ? 'Use the 6-digit code instead' : 'Use a backup code instead';
     say('');
     if (backup) backupInput.focus(); else inputs[0].focus();
@@ -223,7 +226,8 @@ h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:v
     tick();
     cooldownTimer = setInterval(tick, 1000);
   }
-  resendBtn.addEventListener('click', function(){
+  /* An authenticator-app login has no Resend: nothing is ever sent. */
+  if (resendBtn) resendBtn.addEventListener('click', function(){
     if (resendBtn.disabled) return;
     resendBtn.disabled = true;
     say('Sending a new code…');

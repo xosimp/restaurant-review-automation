@@ -622,27 +622,37 @@ def mobile_verify_2fa():
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    from auth import two_fa_challenge_exists, check_two_fa_code, end_two_fa_challenge
+    from auth import two_fa_challenge_exists, end_two_fa_challenge
     if not two_fa_challenge_exists(rid, pending_user_id, pending_secret):
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    otp_result = check_two_fa_code(rid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+    # The web's check (auth.check_sign_in_code): an authenticator-app login
+    # is checked against its app, and throttled per login too (R10).
+    from auth import get_user_by_id as _gubi_bc, verify_backup_code_for, check_sign_in_code, \
+        second_factor_throttle_key
+    _pending_user = _gubi_bc(pending_user_id)
+    app_key = second_factor_throttle_key(_pending_user)
+    if app_key and _is_rate_limited(app_key):
+        return jsonify(ok=False, error="Too many attempts. Please wait 15 minutes and try again."), 429
+    otp_result = check_sign_in_code(_pending_user, rid, pending_user_id, code_entered, pending_secret)
     if otp_result == "wrong":
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
         # scenario recovery codes exist for). The login's own codes for an
         # internal login, the restaurant's for everyone else.
-        from auth import get_user_by_id as _gubi_bc, verify_backup_code_for
-        _pending_user = _gubi_bc(pending_user_id)
         if not (_pending_user and verify_backup_code_for(_pending_user, rid, code_entered)):
             _record_failed_attempt("2fa:" + ip)
+            if app_key:
+                _record_failed_attempt(app_key)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
     elif otp_result != "ok":
         return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
+    if app_key:
+        _clear_attempts(app_key, clear_key=True)
     # When the password step happened, for the session's re-auth stamp.
     from auth import two_fa_challenge_started_at
     pw_at = two_fa_challenge_started_at(rid, pending_user_id, pending_secret)
@@ -5601,6 +5611,10 @@ def mobile_update_email(current_user):
     return jsonify(ok=True)
 
 
+# Profile fields only an account holder may change (PROMPTS-9).
+_BRAND_VOICE_FIELDS = ("voice_notes", "never_say", "menu_notes", "sign_off_name", "owner_name")
+
+
 @mobile_bp.route("/account/update-profile", methods=["POST"])
 @mobile_login_required
 def mobile_update_profile(current_user):
@@ -5621,14 +5635,32 @@ def mobile_update_profile(current_user):
         return value[:max_len].strip() or None
 
     data = request.get_json() or {}
-    updates = {
+    # Only the fields sent: the web profile form sends no menu_notes, and
+    # every save of it cleared the menu the drafters name dishes from.
+    updates = {k: v for k, v in {
         "owner_name":  _clean(data.get("owner_name"), 200),
         "owner_phone": (data.get("owner_phone") or "").strip()[:30] or None,
         "voice_notes": _clean(data.get("voice_notes"), 1000),
         "never_say":   _clean(data.get("never_say"), 1000),
         "menu_notes":  _clean(data.get("menu_notes"), 2000),
         "sign_off_name": _clean(data.get("sign_off_name"), 80),
-    }
+    }.items() if k in data}
+    # The brand voice and the owner's name are trusted instruction to every
+    # drafter and the offer source public copy is checked against: an
+    # account holder's to change (memory re-audit PROMPTS-9; the web twin is
+    # client_api._do_brand_voice). The same form carries them for everyone,
+    # so a teammate's save leaves them as they are — and a change to one is
+    # refused, not silently dropped.
+    from permissions import is_principal as _is_principal_up
+    if not _is_principal_up(current_user):
+        current = get_restaurant(current_user["restaurant_id"])
+        for key in _BRAND_VOICE_FIELDS:
+            if key not in updates:
+                continue
+            if (updates[key] or None) != ((getattr(current, key, None) or "").strip() or None):
+                return jsonify(ok=False, owner_only=True,
+                               error="Only the account owner can change the brand voice or the owner's name."), 403
+            updates.pop(key)
     # Fixed sets — these are dropped straight into the drafting prompt.
     lang = (data.get("response_language") or "").strip().lower()
     updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None

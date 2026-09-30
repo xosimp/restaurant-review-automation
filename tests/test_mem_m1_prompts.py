@@ -174,8 +174,13 @@ def test_the_provider_ranks_by_subject_and_collapses_by_signature(db_path):
 def test_memory_context_serves_the_decisions_section_on_every_surface_that_needs_it(db_path):
     import memory_context as mc
     for surface in ("competitor_read", "digest", "review_diagnosis", "food_diagnosis", "labor_read", "food_read",
-                    "weekly_plan", "brief", "dsr_narrative", "marketing", "schedule"):
+                    "brief", "marketing", "schedule"):
         assert "decisions" in mc.SURFACE_SECTIONS[surface], surface
+    # The Monday plan and the nightly report carry decisions.context in their
+    # own prompt, read as the same team viewer — a second copy through
+    # memory_context paid twice under two viewers (memory re-audit PROMPTS-14).
+    for surface in ("weekly_plan", "dsr_narrative"):
+        assert "decisions" not in mc.SURFACE_SECTIONS[surface], surface
     rid = _rid(db_path)
     rl.present(rid, "trim_day:Friday", "labor", "home", title="Trim Friday", db_path=db_path)
     rl.record(rid, "trim_day:Friday", "dismissed", meta={"kind": "not_for_us", "reason": "no"}, db_path=db_path)

@@ -4068,6 +4068,7 @@ def admin_two_factor_page(current_user):
         method=current_user.get("two_fa_method") or "email",
         required=_auth_tf.admin_two_factor_required(),
         email_masked=email_m, phone_masked=phone_m,
+        app_available=_auth_tf.totp_available(),
         backup_left=_auth_tf.count_unused_user_backup_codes(current_user["id"]),
         next_url=safe_next_url(request.args.get("next"), "/admin"),
         username=current_user.get("username"),
@@ -4077,13 +4078,27 @@ def admin_two_factor_page(current_user):
 @admin_bp.route("/admin/two-factor/send", methods=["POST"])
 @admin_required
 def admin_two_factor_send(current_user):
-    """Send the enrolment code to this login's own email (or phone). Only
-    to the contact already on the login — never an address typed here."""
+    """Start setting up a method: send the enrolment code to this login's
+    own email (or phone) — only to the contact already on the login, never
+    an address typed here — or, for method "app", make a new pending
+    authenticator secret and answer with its QR code (nothing is sent).
+
+    Switching a login that already has two-factor to another method (or the
+    app to a new phone) needs the step-up (auth.reauth_refusal): the
+    session already passed its current second factor to be here at all
+    (admin_second_factor_state), and the password is asked again."""
     import auth as _auth_tf
-    if _auth_tf.user_two_factor_enrolled(current_user):
-        return jsonify(ok=False, error="Two-factor is already on for your login."), 409
     data = request.get_json(silent=True) or {}
+    switching = _auth_tf.user_two_factor_enrolled(current_user)
+    if switching:
+        refused = _auth_tf.reauth_refusal(current_user)
+        if refused:
+            return refused
+    if data.get("method") == _auth_tf.TOTP_METHOD:
+        return _start_app_enrolment(current_user, switching)
     method = "sms" if data.get("method") == "sms" else "email"
+    if switching and method == (current_user.get("two_fa_method") or "email"):
+        return jsonify(ok=False, error="Your codes already go there."), 409
     dest = _auth_tf.two_fa_destination(dict(current_user, two_fa_method=method), None, method=method, strict=True)
     if not dest:
         return jsonify(ok=False, error=("There's no phone number on your login — use email." if method == "sms"
@@ -4123,32 +4138,97 @@ def admin_two_factor_send(current_user):
 def admin_two_factor_verify(current_user):
     """Confirm the enrolment code: the login's two-factor goes on, its backup
     codes are shown once, and this session counts as having passed the
-    second factor (it just did)."""
+    second factor (it just did).
+
+    Method "app": the code comes from the authenticator the QR code was
+    scanned into (auth.confirm_totp_enrolment), and wrong codes are
+    throttled per login like a sign-in's. A login that already had
+    two-factor is SWITCHING (step-up again): its method changes, its backup
+    codes are kept, and the method it leaves stops working."""
     import auth as _auth_tf
-    if _auth_tf.user_two_factor_enrolled(current_user):
-        return jsonify(ok=False, error="Two-factor is already on for your login."), 409
     data = request.get_json(silent=True) or {}
-    method = "sms" if data.get("method") == "sms" else "email"
-    result = _auth_tf.check_two_fa_code(current_user["restaurant_id"], current_user["id"],
-                                        (data.get("code") or "").strip(), purpose=_ADMIN_SETUP_PURPOSE % method)
-    if result in ("wrong", "missing"):
+    switching = _auth_tf.user_two_factor_enrolled(current_user)
+    if switching:
+        refused = _auth_tf.reauth_refusal(current_user)
+        if refused:
+            return refused
+    before_method = (current_user.get("two_fa_method") or "email") if switching else None
+    code = (data.get("code") or "").strip()
+    if data.get("method") == _auth_tf.TOTP_METHOD:
+        method = _auth_tf.TOTP_METHOD
+        from auth_routes import _is_rate_limited, _record_failed_attempt, _clear_attempts
+        key = "2fa-app-enrol:%d" % current_user["id"]
+        if _is_rate_limited(key):
+            return jsonify(ok=False, error="Too many wrong codes. Wait 15 minutes, then scan a new QR code."), 429
+        result = _auth_tf.confirm_totp_enrolment(current_user["id"], code)
+        if result == "wrong":
+            _record_failed_attempt(key)
+        elif result == "ok":
+            _clear_attempts(key, clear_key=True)
+    else:
+        method = "sms" if data.get("method") == "sms" else "email"
+        result = _auth_tf.check_two_fa_code(current_user["restaurant_id"], current_user["id"],
+                                            code, purpose=_ADMIN_SETUP_PURPOSE % method)
+    if result == "wrong":
         return jsonify(ok=False, error="That code isn't right. Try again."), 400
+    if result == "missing":
+        return jsonify(ok=False, error=("That QR code is no longer the current one. Show a new one."
+                                        if method == _auth_tf.TOTP_METHOD else "That code isn't right. Try again.")), 400
     if result == "expired":
-        return jsonify(ok=False, error="That code expired. Send a new one."), 400
-    conn = get_conn()
-    try:
-        conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method=? WHERE id=?", (method, current_user["id"]))
-        conn.commit()
-    finally:
-        conn.close()
-    codes = _auth_tf.generate_user_backup_codes(current_user["id"])
+        return jsonify(ok=False, error=("That QR code expired. Show a new one." if method == _auth_tf.TOTP_METHOD
+                                        else "That code expired. Send a new one.")), 400
+    if method != _auth_tf.TOTP_METHOD:
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method=? WHERE id=?", (method, current_user["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        # Leaving the app: its secret is forgotten, so it can never pass again.
+        _auth_tf.clear_user_totp(current_user["id"])
     _auth_tf.mark_second_factor(_auth_tf.current_session_token())
+    from auth_routes import safe_next_url
+    nxt = safe_next_url(data.get("next"), "/admin")
+    if switching:
+        _audit_admin_action(current_user, "admin_two_factor_method_changed", target={"user_id": current_user["id"]},
+                            before={"two_fa_enabled": True, "method": before_method},
+                            after={"two_fa_enabled": True, "method": method},
+                            summary=(f"{current_user.get('username')} moved their authenticator app to a new device"
+                                     if before_method == method else
+                                     f"{current_user.get('username')} changed their two-factor from "
+                                     f"{before_method} to {method}"))
+        return jsonify(ok=True, method=method, switched=True, next=nxt)
+    codes = _auth_tf.generate_user_backup_codes(current_user["id"])
     _audit_admin_action(current_user, "admin_two_factor_enabled", target={"user_id": current_user["id"]},
                         before={"two_fa_enabled": False}, after={"two_fa_enabled": True, "method": method},
                         summary=f"{current_user.get('username')} turned on two-factor ({method})")
-    from auth_routes import safe_next_url
-    return jsonify(ok=True, backup_codes=codes, method=method,
-                   next=safe_next_url(data.get("next"), "/admin"))
+    return jsonify(ok=True, backup_codes=codes, method=method, next=nxt)
+
+
+def _start_app_enrolment(current_user, switching):
+    """The QR code for a new pending authenticator secret — the only
+    response that ever carries the secret (never stored in clear, never in
+    a list, an audit row or a log). Refused without a working
+    CREDENTIAL_KEY: the secret is only ever stored encrypted."""
+    import auth as _auth_tf
+    if not _auth_tf.totp_available():
+        return jsonify(ok=False, error="An authenticator app needs CREDENTIAL_KEY set on the server "
+                                       "(its secret is stored encrypted). Use email or text for now."), 409
+    try:
+        secret = _auth_tf.start_totp_enrolment(current_user["id"])
+        uri = _auth_tf.totp_uri(current_user.get("username") or "admin", secret)
+        qr = _auth_tf.totp_qr_data_uri(uri)
+    except Exception as e:
+        print(f"[admin 2fa] authenticator enrolment failed for user {current_user['id']}: {type(e).__name__}")
+        return jsonify(ok=False, error="We couldn't make a QR code just now. Try again."), 500
+    _audit_admin_action(current_user, "admin_two_factor_app_qr_shown", target={"user_id": current_user["id"]},
+                        after={"switching": bool(switching)},
+                        summary=f"{current_user.get('username')} opened an authenticator-app setup")
+    resp = jsonify(ok=True, method=_auth_tf.TOTP_METHOD, qr=qr, secret=_auth_tf.totp_secret_groups(secret),
+                   issuer=_auth_tf.TOTP_ISSUER, account=current_user.get("username"),
+                   expires_minutes=_auth_tf.TOTP_PENDING_MINUTES)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @admin_bp.route("/admin/two-factor/disable", methods=["POST"])

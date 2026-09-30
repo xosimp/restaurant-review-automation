@@ -91,7 +91,7 @@ struct TwoFactorView: View {
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
                     .disabled(!viewModel.canSubmit)
 
-                    if !viewModel.useBackupCode {
+                    if !viewModel.useBackupCode && !viewModel.usesAuthenticatorApp {
                         Button {
                             Task { await viewModel.resend() }
                         } label: {

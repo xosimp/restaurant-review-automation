@@ -44,17 +44,21 @@ provider is `fn(req) -> list[dict]`, each dict one memory line:
      "until": date|str,          # "until M/D/YY" for a time-bound fact
      "audience": "team"|"principals"|"author",   # who may read the line
      "author_id": int,           # the login that wrote it (audience "author")
-     "module": str}              # the module whose view permission the line
-                                 # needs ("labor", "food", "reviews", ...)
+     "module": str,              # the module whose view permission the line
+                                 # needs ("labor", "food", "reviews", ...;
+                                 # "loss" for comps and voids)
+     "modules": list}            # every module a line is about — each one's
+                                 # view is needed (a "food,labor" fact)
 
 What the assembler does, once, for every caller:
 
   * VIEWER SCOPING. A line a viewer may not read never reaches the prompt:
     `audience` "principals" only for an account holder (or an internal
     caller), "author" only for the login that wrote it, and a line about a
-    module the login may not open (`module`) not at all. `viewer` is the
-    login dict (auth's current_user); None is an internal caller, which
-    reads the owner's view.
+    module the login may not open (`module` / `modules` — every one) not
+    at all. `viewer` is the login dict (auth's current_user); None is an
+    owner-level output with no login behind it, assembled as PRINCIPALS
+    (the account holders' view — never one login's own "author" line).
   * SHARED OUTPUTS READ AS THE TEAM. A surface whose output more than one
     login reads (a stored read, a diagnosis, the schedule draft, a public
     reply or post, the nightly report — SHARED_SURFACES) is always
@@ -126,13 +130,17 @@ PROVIDERS = {
 
 # Which sections each surface reads. A surface not listed reads every section.
 SURFACE_SECTIONS = {
-    # Ask's cached snapshot (ask_cavnar.build_context). Not "decisions" or
-    # "what_worked": the snapshot already carries decisions.context and the
-    # intelligence section's own-history lines, and a second copy of each
-    # would pay twice for the same memory. Not "conversation": that is per
-    # chat and per turn, so it rides on "ask_conversation" below, outside the
-    # snapshot the viewer's other chats share.
-    "ask": ("owner_rules", "constraints", "goals", "last_claim", "events", "market", "people", "marketing"),
+    # Ask's cached snapshot (ask_cavnar.build_context). Not "decisions": the
+    # snapshot already carries decisions.context, and a second copy would
+    # pay twice for the same memory. "what_worked" is here, and the
+    # intelligence section no longer carries its own copy of the record
+    # (intelligence.memory.own_record, which the viewer projection did not
+    # cover — memory re-audit QUALITY-16 / PEOPLE-11): one record, module-,
+    # loss- and owner-only-gated like every other surface's. Not
+    # "conversation": that is per chat and per turn, so it rides on
+    # "ask_conversation" below, outside the snapshot the viewer's other
+    # chats share.
+    "ask": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events", "market", "people", "marketing"),
     # Ask, per turn: the chat's rolling summary, what its last answer read,
     # and the questions this login keeps asking — the first context block.
     "ask_conversation": ("conversation",),
@@ -147,7 +155,11 @@ SURFACE_SECTIONS = {
     # complaints to a lean or no-show weekday, or to the visibility drop.
     "review_diagnosis": ("owner_rules", "constraints", "last_claim", "decisions", "what_worked", "people", "links"),
     "food_diagnosis": ("owner_rules", "constraints", "last_claim", "decisions", "what_worked", "links"),
-    "dsr_narrative": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
+    # Not "decisions" on the nightly report or the Monday plan: each prompt
+    # carries decisions.context itself, read as the same team viewer — a
+    # second copy paid for the same answers twice, under two viewers
+    # (memory re-audit PROMPTS-14).
+    "dsr_narrative": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events"),
     "brief": ("owner_rules", "constraints", "goals", "decisions", "events"),
     "digest": ("owner_rules", "constraints", "goals", "decisions", "what_worked"),
     # Not "marketing" on the marketing generators or the reply drafter: they
@@ -166,7 +178,7 @@ SURFACE_SECTIONS = {
     # owner's rules and the team's words, the marketing goals, what it said
     # last time and how that turned out, and what the owner decided.
     "marketing_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked"),
-    "weekly_plan": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "events", "market"),
+    "weekly_plan": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events", "market"),
 }
 
 DEFAULT_BUDGET_CHARS = 2400
@@ -224,6 +236,9 @@ RECENCY_DAYS = 365.0
 
 # The module a line may carry, as the permission module that gates it
 # (permissions.MODULE_VIEW_PERMISSIONS keys).
+# A line about comps and voids carries module "loss" (LOSS_VIEW, not a module
+# view — _may_read_module).
+LOSS_MODULE = "loss"
 _MODULE_PERMISSION = {"food": "inventory", "inventory": "inventory", "food_cost": "inventory",
                       "labor": "labor", "schedule": "labor", "reviews": "reviews",
                       "marketing": "marketing", "guests": "marketing", "intel": "intel"}
@@ -276,7 +291,36 @@ SHARED_SURFACES = {
 
 
 def is_team(viewer) -> bool:
-    return isinstance(viewer, TeamViewer) or viewer == "team"
+    # A dict copy of TEAM (viewer_restaurant stamps dict(user)) is still TEAM.
+    return (isinstance(viewer, TeamViewer) or viewer == "team"
+            or (isinstance(viewer, dict) and viewer.get("team") is True and viewer.get("id") is None))
+
+
+# ── the principals viewer (owner-level unattended outputs) ──────────────────
+#
+# The weekly digest is emailed to the account holders; an unattended Ask
+# run answers for the owner. Assembled with no login they used to read
+# EVERY line, a manager's own ("author") note and rating-derived preference
+# included, and present them as the owner's (memory re-audit PEOPLE-8,
+# QUALITY-9, PROMPTS-8). PRINCIPALS reads what an account holder reads —
+# "team" and "principals" lines, every module and comps and voids — and no
+# login's own line: symmetric with TEAM. memory_context() assembles any
+# call with no viewer as PRINCIPALS; `visible(line, None)` stays the
+# internal "everything" the data paths filter later.
+
+class PrincipalsViewer(dict):
+    """The viewer an owner-level output with no login behind it is
+    assembled for: login-shaped (an owner role with no id), recognised by
+    memory_context.is_principals."""
+    principals = True
+
+
+PRINCIPALS = PrincipalsViewer(id=None, role="client", is_admin=0, principals=True)
+
+
+def is_principals(viewer) -> bool:
+    return (isinstance(viewer, PrincipalsViewer) or viewer == "principals"
+            or (isinstance(viewer, dict) and viewer.get("principals") is True and viewer.get("id") is None))
 
 
 def team_viewer(surface=None) -> TeamViewer:
@@ -478,6 +522,8 @@ def viewer_user(viewer):
         return viewer
     if viewer == "team":
         return TEAM
+    if viewer == "principals":
+        return PRINCIPALS
     user = getattr(viewer, "_ask_dsr_user", None)
     return user if isinstance(user, dict) else None
 
@@ -485,6 +531,8 @@ def viewer_user(viewer):
 def _authority(user):
     if user is None:
         return "internal"
+    if is_principals(user):
+        return "principal"
     try:
         from permissions import answer_authority
         return answer_authority(user)
@@ -495,7 +543,21 @@ def _authority(user):
 def _may_read_module(user, module, _cache):
     if user is None or not module:
         return True
-    perm_module = _MODULE_PERMISSION.get(str(module).strip().lower())
+    key = str(module).strip().lower()
+    if key == LOSS_MODULE:
+        # Comps and voids (a goal on comp_rate, a loss kind's record): the
+        # loss rule, not a module view — they can name the manager who
+        # approved the comps (issues.viewer_sees_loss; memory re-audit
+        # PEOPLE-2). TEAM holds no LOSS_VIEW, so a shared output never reads
+        # one; PRINCIPALS is the owner's view.
+        if LOSS_MODULE not in _cache:
+            try:
+                import issues
+                _cache[LOSS_MODULE] = is_principals(user) or bool(issues.viewer_sees_loss(user))
+            except Exception:
+                _cache[LOSS_MODULE] = False      # fail closed
+        return _cache[LOSS_MODULE]
+    perm_module = _MODULE_PERMISSION.get(key)
     if perm_module is None:
         return True
     if perm_module not in _cache:
@@ -508,22 +570,44 @@ def _may_read_module(user, module, _cache):
     return _cache[perm_module]
 
 
+def line_modules(line):
+    """Every module a line is about: its `module` and each of its `modules`
+    (a fact tagged "food,labor" carries both — memory re-audit PROMPTS-7)."""
+    out = []
+    for m in [line.get("module")] + list(line.get("modules") or ()):
+        m = str(m or "").strip().lower()
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
 def visible(line, user, authority=None, _cache=None) -> bool:
     """Whether the login `user` may read this memory line (None: internal —
-    the owner's view; TEAM: a shared output — "team" lines only, and a
-    module line only where a manager, or the output's own module, may).
-    Fails closed on an unknown audience."""
+    every line, for the data paths that filter later; PRINCIPALS: the
+    account holders' view, never one login's own "author" line; TEAM: a
+    shared output — "team" lines only, and a module line only where a
+    manager, or the output's own module, may). A line about several
+    modules needs the view of EVERY one of them (a fact tagged "food,labor"
+    lost its food gate — memory re-audit PROMPTS-7 / INVENTORY-4); "loss"
+    needs the loss rule. Fails closed on an unknown audience."""
     if user is None:
         return True
     authority = authority or _authority(user)
     cache = _cache if _cache is not None else {}
-    if not _may_read_module(user, line.get("module"), cache):
-        return False
+    for m in line_modules(line):
+        if not _may_read_module(user, m, cache):
+            return False
     audience = str(line.get("audience") or "team").strip().lower()
     if audience == "team":
         return True
     if is_team(user):
         return False                             # a shared output reads no one's private line
+    if is_principals(user):
+        # The owner-level unattended outputs (the weekly digest, an
+        # unattended Ask): what the account holders share, never one
+        # login's own note or rating-derived preference (memory re-audit
+        # PEOPLE-8 / QUALITY-9).
+        return audience == "principals"
     # Through view-as the reader is the admin behind it, never the owner it
     # views as: support does not read the owner's author-only lines
     # (permissions.acting_login_id — PEOPLE-20).
@@ -795,6 +879,10 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
     # A shared output is read as the team, whoever asked for it (SHARED_SURFACES):
     # the owner's own view never shapes what a manager, or the public, reads.
     user = team_viewer(surface) if (surface in SHARED_SURFACES or is_team(viewer)) else viewer_user(viewer)
+    # No login behind an owner-level output (the digest, an unattended Ask):
+    # the account holders' view, never every login's own lines (PRINCIPALS).
+    if user is None:
+        user = PRINCIPALS
     tz = _restaurant_tz(restaurant_id)
     req = MemoryRequest(restaurant_id=restaurant_id, surface=surface, viewer=user,
                         subjects=tuple(subjects or ()), now=now or _local_now(restaurant_id, tz), db_path=db_path)

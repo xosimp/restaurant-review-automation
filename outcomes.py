@@ -190,12 +190,14 @@ def metric_visible_to(viewer, metric) -> bool:
     caller; an admin sees everything. Fails closed."""
     if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
         return True
-    base = metrics.parse(metric)[0]
+    # One rule (metrics.metric_permission): item_waste is food-cost dollars
+    # too — it passed this gate while food cost % did not (re-audit PEOPLE-2).
+    need = metrics.metric_permission(metric)
     try:
         from permissions import has_permission, FOOD_COST_VIEW, LOSS_VIEW
-        if base in ("food_cost_pct", "weekly_waste"):
+        if need == "food":
             return has_permission(viewer, FOOD_COST_VIEW)
-        if base in LOSS_METRICS:
+        if need == "loss":
             return has_permission(viewer, LOSS_VIEW)
         return True
     except Exception as e:

@@ -459,11 +459,19 @@ def test_a_teammate_cannot_delete_the_owners_conversation(db_path):
 
 def test_history_from_before_the_user_column_stays_readable(db_path):
     """Legacy rows carry user_id NULL — hiding them from everyone would be a
-    silent data loss, not a fix."""
+    silent data loss, not a fix. Updated (memory re-audit PEOPLE-18 /
+    PROMPTS-17): NULL used to mean "anyone's", so a teammate read the
+    owner's legacy chat ("should I let Dana go?") through past conversations
+    and Ask memory. Boot now gives it to the restaurant's owner login
+    (models._attribute_ownerless_ask_chats): still readable — by the owner —
+    and no longer by a teammate."""
     rid = _loc(db_path, "Chicago")
-    mate = create_user(rid, "mate", "mate@x.test", "pw", db_path=db_path)
+    owner = create_user(rid, "owner", "owner@x.test", "pw", db_path=db_path)
+    mate = create_user(rid, "mate", "mate@x.test", "pw", db_path=db_path, role="manager")
     cid = models.save_ask_message(rid, "user", "old chat", user_id=None, db_path=db_path)
-    assert models.get_ask_conversation(rid, cid, db_path=db_path, viewer_id=mate) is not None
+    models.init_db(db_path)
+    assert models.get_ask_conversation(rid, cid, db_path=db_path, viewer_id=owner) is not None
+    assert models.get_ask_conversation(rid, cid, db_path=db_path, viewer_id=mate) is None
 
 
 def test_a_conversation_is_still_refused_across_restaurants(db_path):

@@ -10,6 +10,13 @@ import pytest
 import demand
 import demand_signals
 import event_memory as em
+# Imported here, not inside a test: marketing_publish/marketing_tags bind
+# get_conn and DB_PATH at import, so a first import under this file's patch
+# left them pointing at this file's temporary database for every later test
+# (test_mem_m2_ask_reach read no posts after it, 9/29/26).
+import marketing_publish
+import marketing_signals
+import marketing_tags
 import models
 import staffing_signals
 from models import Restaurant, create_restaurant
@@ -24,8 +31,8 @@ def _db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", fake)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(demand_signals, "get_conn", fake)
-    import marketing_tags
     monkeypatch.setattr(marketing_tags, "get_conn", fake)
+    monkeypatch.setattr(marketing_publish, "get_conn", fake)
     yield
 
 

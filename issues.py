@@ -594,15 +594,75 @@ def viewer_sees_loss(user) -> bool:
         return False
 
 
-def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH, sees_loss=True):
+# An issue built from a module's figures names the modules in its meta
+# (meta["modules"], permissions.MODULE_VIEW_PERMISSIONS keys — the Monday
+# plan tags each item with what it draws on): a login without one of those
+# modules' view does not read it. The plan is assembled with the owner's
+# food-cost view, and every console login read its food-cost items here
+# (memory re-audit PEOPLE-14 / PROMPTS-8).
+_ALL_MODULES = ("reviews", "labor", "inventory", "marketing", "intel")
+
+
+def hidden_modules(user) -> frozenset:
+    """The module keys whose tagged issues this login may not read. None
+    (an internal caller) and an admin: none. Fails closed: all of them."""
+    if user is None or (isinstance(user, dict) and user.get("is_admin")):
+        return frozenset()
+    try:
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        return frozenset(k for k, perm in MODULE_VIEW_PERMISSIONS.items() if not has_permission(user, perm))
+    except Exception:
+        return frozenset(_ALL_MODULES)
+
+
+def issue_modules(row) -> list:
+    """The modules an issue row (or its public form) is tagged with."""
+    import json as _json
+    meta = (row or {}).get("meta")
+    if not isinstance(meta, dict):
+        try:
+            meta = _json.loads((row or {}).get("meta_json") or "null") or {}
+        except (TypeError, ValueError):
+            meta = {}
+    mods = meta.get("modules") if isinstance(meta, dict) else None
+    return [str(m) for m in mods] if isinstance(mods, list) else []
+
+
+def viewer_sees_issue(user, row) -> bool:
+    """One issue, by the list's rules: a loss issue needs LOSS_VIEW, and a
+    module-tagged one the view of every module it names."""
+    if not row:
+        return False
+    if row.get("kind") == "loss" and not viewer_sees_loss(user):
+        return False
+    hide = hidden_modules(user)
+    return not any(m in hide for m in issue_modules(row))
+
+
+def _module_clause(hide_modules):
+    """SQL excluding issues tagged with any of `hide_modules`."""
+    hide = sorted({str(m) for m in hide_modules or () if m})
+    if not hide:
+        return "", []
+    return (" AND NOT EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(ops_issues.meta_json) "
+            "THEN ops_issues.meta_json ELSE '{}' END, '$.modules') j WHERE j.value IN ("
+            + ",".join("?" for _ in hide) + "))"), hide
+
+
+def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH, sees_loss=True, hide_modules=()):
     """`sees_loss=False` leaves out kind='loss' — every listing a manager can
-    read passes viewer_sees_loss(viewer) (re-audit A-8)."""
+    read passes viewer_sees_loss(viewer) (re-audit A-8) — and
+    `hide_modules` (hidden_modules(viewer)) the issues tagged with a module
+    that login may not open."""
     conn = get_conn(db_path)
     try:
         sql = "SELECT * FROM ops_issues WHERE restaurant_id=?"
         args = [restaurant_id]
         if not sees_loss:
             sql += " AND kind!='loss'"
+        _msql, _margs = _module_clause(hide_modules)
+        sql += _msql
+        args += _margs
         if status == "unresolved":
             sql += " AND status!='resolved'"
         elif status:
@@ -615,17 +675,18 @@ def list_issues(restaurant_id, status=None, limit=50, db_path=DB_PATH, sees_loss
         conn.close()
 
 
-def summary(restaurant_id, db_path=DB_PATH, sees_loss=True):
+def summary(restaurant_id, db_path=DB_PATH, sees_loss=True, hide_modules=()):
     """Counts and the oldest unacknowledged issue — what the brief and the
-    portfolio view show. `sees_loss` as list_issues."""
+    portfolio view show. `sees_loss` and `hide_modules` as list_issues."""
+    _msql, _margs = _module_clause(hide_modules)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT SUM(status='open') AS open_n, SUM(status='acknowledged') AS ack_n, "
             "MIN(CASE WHEN status='open' THEN created_at END) AS oldest_open, "
             "SUM(status='resolved' AND resolved_at >= datetime('now','-7 days')) AS resolved_7d "
-            "FROM ops_issues WHERE restaurant_id=?" + ("" if sees_loss else " AND kind!='loss'"),
-            (restaurant_id,)).fetchone()
+            "FROM ops_issues WHERE restaurant_id=?" + ("" if sees_loss else " AND kind!='loss'") + _msql,
+            (restaurant_id, *_margs)).fetchone()
     finally:
         conn.close()
     oldest_h = None

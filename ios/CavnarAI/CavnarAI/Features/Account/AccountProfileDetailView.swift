@@ -254,7 +254,10 @@ struct AccountProfileDetailView: View {
 
     private var contactSection: some View {
         AccountSection(kicker: "Contact") {
+            // The owner's name signs guest copy: an owner's to change
+            // (mobile_update_profile refuses anyone else's edit).
             AccountField(label: "Owner", text: $ownerName, focus: $focusedField, field: .ownerName)
+                .disabled(!isOwner)
             AccountField(label: "Phone", text: $ownerPhone, focus: $focusedField, field: .ownerPhone, keyboardType: .phonePad, isNumber: true)
             // Shares AccountFieldRow's exact label/value/reserved-underline
             // footprint (see AccountDisplayRow's own doc comment) — Email
@@ -330,10 +333,20 @@ struct AccountProfileDetailView: View {
 
     private var voiceSection: some View {
         AccountSection(kicker: "How the AI writes for you") {
-            AccountEditor(label: "Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, focus: $focusedField, field: .voiceNotes)
-            AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
-            AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes)
-            AccountField(label: "Signs off as", text: $signOffName, focus: $focusedField, field: .signOff)
+            // The brand voice is the offer source for public copy and an
+            // instruction every drafter follows, so only an owner changes
+            // it (memory re-audit PROMPTS-9); everyone else reads it.
+            Group {
+                AccountEditor(label: "Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, focus: $focusedField, field: .voiceNotes)
+                AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
+                AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes)
+                AccountField(label: "Signs off as", text: $signOffName, focus: $focusedField, field: .signOff)
+            }
+            .disabled(!isOwner)
+            if !isOwner {
+                Text("Only an owner can change the brand voice.")
+                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+            }
             AccountKVRow(label: "Reply language", showsDivider: false) {
                 Picker("", selection: $responseLanguage) {
                     ForEach(Self.languageOptions, id: \.value) { Text($0.label).tag($0.value) }
