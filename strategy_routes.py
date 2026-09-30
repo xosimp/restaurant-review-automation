@@ -3731,7 +3731,7 @@ def _do_pause(u):
     try:
         import emails as _emails
         _emails.deliver(email_type="pause_notice_ops", restaurant_id=rid, payload={
-            "from": _emails.sender("ops"), "to": [_emails._from_email()],
+            "from": _emails.sender("ops"), "to": [_emails.config.will_email()],
             "subject": f"Paused: {r.name} — {days} days, resumes {resumes.date().isoformat()}",
             "preheader": "A client paused their own subscription.",
             "html": _emails._branded_email(f"<p>{r.name} paused for {days} days from the app. Stripe resumes "

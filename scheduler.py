@@ -129,7 +129,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     Cavnar AI &#183;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
     &#183;
-    <a href="mailto:{_from_email()}" style="color:#c84b2f;text-decoration:none">{_from_email()}</a>
+    <a href="mailto:{config.will_email()}" style="color:#c84b2f;text-decoration:none">{config.will_email()}</a>
   </p>
 </div>
 </div>"""),

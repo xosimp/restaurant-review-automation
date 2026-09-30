@@ -3381,7 +3381,7 @@ def send_referral(current_user):
         # Tell Will.
         _emails.deliver(email_type="referral_notice", restaurant_id=rid, payload={
             "from": _emails.sender("client"),
-            "to": [_from_email()],
+            "to": [config.will_email()],
             "subject": f"New referral from {referrer} — {ref_name}",
             "html": _html_doc(f"<p>{esc(referrer)} referred {esc(ref_name)} ({esc(ref_email)}).</p>"
                               f"<p>Note: {esc(note) or 'none'}</p>"),

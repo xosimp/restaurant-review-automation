@@ -36,7 +36,13 @@ def sender(kind: str = "client") -> str:
     """The From header. `kind` is an audience, not a topic — an alert and a
     digest are both "client", because to the recipient they are both Cavnar
     AI writing to them."""
-    return f"{SENDERS.get(kind, SENDERS['client'])} <{_from_email()}>"
+    # The first-person emails come from Will's own address; everything else
+    # from the product's sending address (FROM_EMAIL, notifications@cavnar.ai
+    # in production). Sharing will@cavnar.ai made every Cavnar AI email show
+    # as "Will Cavnar" to anyone with that address in their contacts — Apple
+    # Mail shows the contact's name over the sender's (owner, 9/29/26).
+    addr = config.will_email() if kind == "will" else _from_email()
+    return f"{SENDERS.get(kind, SENDERS['client'])} <{addr}>"
 
 
 def greeting_name(restaurant) -> str:
@@ -523,6 +529,10 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # A copy: popping `preheader` out of the caller's own dict meant a caller
     # that retried with the same dict lost it (MOD-EML-9).
     payload = dict(payload or {})
+    # Replies to product mail reach a person: the sending address is not
+    # Will's inbox. A restaurant-branded send sets its own reply_to.
+    if not payload.get("reply_to") and config.will_email() and config.will_email() != _from_email():
+        payload["reply_to"] = config.will_email()
     # Lifted out before the payload reaches Resend, which has no such field.
     preheader = payload.pop("preheader", None)
     if preheader:
