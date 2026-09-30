@@ -53,7 +53,8 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
-                  "before_arrival", "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown"})
+                  "before_arrival", "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
+                  "owner_rule"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -85,6 +86,7 @@ LABELS = {
     "keyholder_until_close": "no keyholder on until close",
     "nobody_at_close": "nobody scheduled until close",
     "notice_short": "less notice than the schedule notice rule",
+    "owner_rule": "fewer on than a standing rule the owner set",
 }
 
 
@@ -665,6 +667,13 @@ class Constraints:
     close_times: dict = field(default_factory=dict)
     role_buffers: dict = field(default_factory=dict)
     closed_dates: set = field(default_factory=set)         # iso dates the restaurant does not trade this week
+    # The owner's standing rules about staffing (owner_memory rules, memory
+    # re-audit 9/29/26 PROMPTS-1): parsed ones the code checks (owner_rules;
+    # those naming a daypart are also floors, rule_floor_sources says which),
+    # and the schedule rules it could not read, which the review names.
+    owner_rules: list = field(default_factory=list)
+    owner_rules_unchecked: list = field(default_factory=list)
+    rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
     tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
 
     # ── lookups ────────────────────────────────────────────────────────
@@ -908,7 +917,147 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _published_tail(c, restaurant_id, db_path)
     except Exception:
         pass
+    # the owner's standing staffing rules, as checks and floors
+    try:
+        apply_owner_rules(c, restaurant_id, db_path=db_path)
+    except Exception:
+        pass
     return c
+
+
+# ── the owner's standing rules about staffing (memory re-audit 9/29/26) ──────
+#
+# "Never cut the host, she's our brand" reached the schedule prompt inside
+# the guest fence the prompt says never to follow, and nothing deterministic
+# checked it (PROMPTS-1). A rule an account holder set about staffing is
+# read here in the common shapes — "never cut the host", "always two
+# servers on Saturday night", "at least 1 bartender every day", "never
+# below 2 cooks at dinner" — against the restaurant's own roles:
+#
+#   * with a daypart, it raises that role's floor for those days
+#     (role_floors), so the draft is built to it (_ensure_role_floors) and
+#     a draft short of it is a coverage_floor breach naming the rule;
+#   * without one, it is checked per trading day (the owner_rule flag:
+#     fewer of the role on that day than the rule says);
+#   * a staffing rule it cannot read is named in the review, so the owner
+#     checks the draft against it — never silently dropped.
+#
+# Only a rule the whole team may read (audience "team", as the schedule
+# prompt reads memory): an owner-only line never surfaces in a shared review.
+
+_RULE_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+# ("day", "am" and "pm" are not here: "every day" is not lunch, and "I am"
+# is not a daypart.)
+_RULE_DAYPARTS = {"lunch": "morning", "brunch": "morning", "morning": "morning", "mornings": "morning",
+                  "breakfast": "morning", "daytime": "morning",
+                  "dinner": "night", "night": "night", "nights": "night", "evening": "night", "evenings": "night",
+                  "close": "night", "closing": "night"}
+_RULE_MAX = 10
+
+
+def _rule_days(low: str):
+    """The weekdays a rule's words name, or None for every day."""
+    import re as _re
+    days = []
+    for d in DAYS:
+        if _re.search(r"\b" + d.lower() + r"s?\b", low) or _re.search(r"\b" + d.lower()[:3] + r"\b", low):
+            days.append(d)
+    if _re.search(r"\bweekends?\b", low):
+        days += ["Saturday", "Sunday"]
+    if _re.search(r"\bweekdays?\b", low):
+        days += ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    out = [d for d in DAYS if d in days]
+    return tuple(out) or None
+
+
+def _rule_daypart(low: str):
+    import re as _re
+    for word, part in _RULE_DAYPARTS.items():
+        if _re.search(r"\b" + word + r"\b", low):
+            return part
+    return None
+
+
+def parse_owner_rule(text: str, roles) -> dict:
+    """{"role", "min", "days", "daypart", "text"} for a staffing rule in one
+    of the shapes above, naming one of `roles` (the restaurant's own role
+    names, matched case-insensitively, singular or plural), or None. `days`
+    None is every trading day; `daypart` None is anywhere in the day."""
+    import re as _re
+    low = " ".join(str(text or "").lower().replace("’", "'").split())
+    if not low:
+        return None
+    role = None
+    for r in sorted({str(x).strip() for x in roles or () if str(x or "").strip()}, key=len, reverse=True):
+        rl = r.lower()
+        if _re.search(r"\b" + _re.escape(rl) + r"(s|es)?\b", low):
+            role = r
+            break
+    if role is None:
+        return None
+    rl = _re.escape(role.lower()) + r"(?:s|es)?"
+    num = r"(\d+|a|an|one|two|three|four|five|six)"
+    n = None
+    m = (_re.search(r"\b(?:at least|no fewer than|not fewer than|minimum of|min(?:imum)?)\s+" + num + r"\s+" + rl, low)
+         or _re.search(r"\bnever\s+(?:go\s+|drop\s+|run\s+)?(?:below|under|fewer than|less than)\s+" + num + r"\s+" + rl, low)
+         or _re.search(r"\balways\s+(?:(?:have|staff|schedule|keep|need|put on|run(?: with)?)\s+)?(?:at least\s+)?"
+                       + num + r"\s+" + rl, low))
+    if m:
+        raw = m.group(1)
+        n = int(raw) if raw.isdigit() else _RULE_NUMBERS.get(raw)
+    elif (_re.search(r"\bnever\s+(?:cut|send home|drop|remove|skip|schedule without|go without|run without)\s+"
+                     r"(?:the\s+|our\s+|a\s+|an\s+|any\s+)?" + rl, low)
+          or _re.search(r"\balways\s+(?:have|staff|schedule|keep|need)\s+(?:the\s+|our\s+|a\s+|an\s+)?" + rl, low)
+          or _re.search(r"\b(?:the\s+|our\s+|a\s+)?" + rl + r"\s+(?:is|are)\s+(?:always\s+on|never\s+cut)", low)):
+        n = 1
+    if not n or n < 1:
+        return None
+    return {"role": role, "min": min(int(n), _RULE_MAX), "days": _rule_days(low), "daypart": _rule_daypart(low),
+            "text": " ".join(str(text).split())}
+
+
+def _is_staffing_rule(fact) -> bool:
+    mods = {m for m in str(fact.get("modules") or "").split(",") if m}
+    return bool(mods & {"labor", "schedule"})
+
+
+def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
+    """Read the owner's staffing rules into `c` (see above). Never raises
+    into a generation: a rule that cannot be read costs a check, never the
+    week."""
+    import owner_memory
+    import memory_context
+    facts = owner_memory.facts_for(restaurant_id, viewer=memory_context.team_viewer("schedule"),
+                                   surface="schedule", kinds=list(owner_memory.RULE_KINDS),
+                                   db_path=None if db_path == DB_PATH else db_path)
+    roles = set()
+    try:
+        import staff_settings as _ss
+        roles |= {str(e.get("role") or "").strip() for e in _ss.roster(restaurant_id, db_path=db_path)
+                  if e.get("role")}
+    except Exception:
+        pass
+    roles |= {str(r).strip() for r in (c.role_floors or {})}
+    roles.discard("")
+    for f in facts:
+        if not owner_memory.is_owner_rule(f):
+            continue
+        rule = parse_owner_rule(f.get("fact"), roles)
+        if rule is None:
+            if _is_staffing_rule(f):
+                c.owner_rules_unchecked.append(" ".join(str(f.get("fact") or "").split()))
+            continue
+        c.owner_rules.append(rule)
+        if not rule["daypart"]:
+            continue
+        # A daypart rule is a floor: the draft is built to it and checked
+        # against it like any floor the owner set in the schedule settings.
+        key = next((r for r in c.role_floors if r.strip().lower() == rule["role"].lower()), rule["role"])
+        spec = c.role_floors.setdefault(key, {"morning": 0, "night": 0, "days": {}})
+        for day in rule["days"] or DAYS:
+            if floor_for(c.role_floors, key, day, rule["daypart"]) < rule["min"]:
+                spec.setdefault("days", {}).setdefault(day, {})[rule["daypart"]] = rule["min"]
+                c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
 
 
 def _pending_in_window(restaurant_id, start, end, db_path):
@@ -1319,8 +1468,21 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                 if len(on) < need:
                     i0, r0 = (mine or items)[0]
                     word = "lunch/day" if part == "morning" else "dinner/night"
+                    src = (c.rule_floor_sources or {}).get((role_low, day, part))
                     out.append(_v("coverage_floor", i0, r0,
-                                  f"{len(on)} {role} on for {word} {day}, your floor is {need}"))
+                                  f"{len(on)} {role} on for {word} {day}, your floor is {need}"
+                                  + (f" (your rule: \u201c{src[:120]}\u201d)" if src else "")))
+        # the owner's rules that name no daypart: the role on the day at all
+        for rule in (c.owner_rules or []):
+            if rule.get("daypart") or (rule.get("days") and day not in rule["days"]):
+                continue
+            role_low = rule["role"].strip().lower()
+            mine = [(i, r) for i, r in items if (r.get("role") or "").strip().lower() == role_low]
+            on = {(r.get("employee") or "").strip().lower() for _i, r in mine}
+            if len(on) < rule["min"]:
+                i0, r0 = (mine or items)[0]
+                out.append(_v("owner_rule", i0, r0,
+                              f"{len(on)} {rule['role']} on {day} — your rule: \u201c{rule['text'][:120]}\u201d"))
         ends = [(end_minutes(r), i, r) for i, r in items]
         ends = [(e, i, r) for e, i, r in ends if e is not None]
         if not ends:

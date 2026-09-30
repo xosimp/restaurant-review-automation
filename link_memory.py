@@ -753,6 +753,7 @@ def link_lines(req) -> list:
                       "subject": f"labor:day:{str(r.get('day') or '').lower()}" if r.get("day") else r["link_key"],
                       "weight": 8.0, "trusted": True, "module": LINE_MODULE.get(r["kind"], "labor")})
     for i, r in enumerate(rows[:6]):
+        measured = None
         m = r["memory"]
         when = m["label"][:1].lower() + m["label"][1:]
         module = LINE_MODULE.get(r["kind"], "food")
@@ -761,15 +762,23 @@ def link_lines(req) -> list:
             # logins without food-cost view (memory_context reads the marketing
             # surface as the team), so the line carries the instruction and the
             # guests' side of why — never the dish's cost (INT #41).
-            text = (f"DO NOT PROMOTE {r['dish']}: guests name it in {_complaints_phrase(r)} ({when}). Do not "
-                    f"feature, discount or push it until that clears.")
+            # The dish is guests' words (fenced); the instruction is Cavnar
+            # AI's own, so it is the line's trusted suffix — inside the guest
+            # fence it read as a stranger's text never to follow (memory
+            # re-audit 9/29/26, PROMPTS-1).
+            text = f"A dish guests keep complaining about: {r['dish']}"
+            measured = (f"DO NOT PROMOTE that dish: guests name it in {_complaints_phrase(r)} ({when}). Do not "
+                        f"feature, discount or push it until that clears.")
             module = "reviews"
         else:
             d = r.get("detail") or {}
             text = f"{r.get('headline')} ({when}) — two modules pointing at the same thing, not a proven cause"
             if d.get("confirm_by"):
                 text += f". Confirm by: {d['confirm_by']}"
-        lines.append({"text": text, "date": r.get("last_seen"), "source": "link", "subject": r["link_key"],
-                      "weight": 10.0 - i + (2.0 if m["recurring"] else 0.0), "trusted": False,
-                      "module": module})
+        line = {"text": text, "date": r.get("last_seen"), "source": "link", "subject": r["link_key"],
+                "weight": 10.0 - i + (2.0 if m["recurring"] else 0.0), "trusted": False,
+                "module": module}
+        if measured:
+            line["measured"] = measured
+        lines.append(line)
     return lines

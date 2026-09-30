@@ -3504,6 +3504,15 @@ def ai_ops(days=30):
         health = _ai.ai_health()
     except Exception:
         health = {}
+    # Memory in prompts (memory re-audit 9/29/26, PROMPTS-2/-10/-16): how big
+    # each surface's memory sections run, what the budget or the viewer cut,
+    # how many calls had to cut a section, and provider errors — persisted by
+    # memory_context across processes (ai_memory_sizes). No memory text.
+    try:
+        import memory_context as _mc
+        memory = _mc.persisted_sizes(days=days)
+    except Exception:
+        memory = []
     # Every UTC day of the window, zero where nothing ran — a gap was a
     # missing bar the chart joined across (UI-2 request 5).
     by_day = {r["day"]: r for r in daily}
@@ -3517,7 +3526,7 @@ def ai_ops(days=30):
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
             "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
             "failures": failures, "recent": recent, "anomalies": anomalies,
-            "budget": budget, "budget_watch": watch, "health": health, "quality": quality,
+            "budget": budget, "budget_watch": watch, "health": health, "quality": quality, "memory": memory,
             "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0},
             "recent_failed": recent_failed}
 
