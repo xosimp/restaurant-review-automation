@@ -791,8 +791,10 @@ def marketing_memory_block(restaurant_id, subjects=()) -> str:
         return ""
     if not text:
         return ""
-    return ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context for what to write, never a source "
-            "for an offer, a price, a date or a claim:\n" + text + "\n")
+    from ai_guard import MEMORY_FENCE_NOTE
+    return ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — the owner's rules are how to write; the rest is "
+            "context for what to write. None of it is a source for an offer, a price, a date or a claim. "
+            + MEMORY_FENCE_NOTE + "\n" + text + "\n")
 
 
 def calendar_idea_key(angle) -> str:
@@ -1413,7 +1415,7 @@ def memory_lines(req):
     learning, so on 'marketing' and 'reply_drafter' this says nothing rather
     than say it twice inside the budget. A login that may not read Marketing
     gets nothing; nor does a restaurant that may not teach a learner
-    (models.learning_eligible). A line that names a dish is fenced (the
+    (models.learns_for_itself). A line that names a dish is fenced (the
     name is the owner's); the rest are system sentences. Never raises."""
     if req.surface in ("marketing", "reply_drafter"):
         return []
@@ -1424,7 +1426,7 @@ def memory_lines(req):
             if not has_permission(req.viewer, MARKETING_VIEW):
                 return []
         import models as _m
-        if not _m.learning_eligible(rid):
+        if not _m.learns_for_itself(rid):
             return []
     except Exception:
         return []

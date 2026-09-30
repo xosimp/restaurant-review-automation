@@ -622,27 +622,37 @@ def mobile_verify_2fa():
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    from auth import two_fa_challenge_exists, check_two_fa_code, end_two_fa_challenge
+    from auth import two_fa_challenge_exists, end_two_fa_challenge
     if not two_fa_challenge_exists(rid, pending_user_id, pending_secret):
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    otp_result = check_two_fa_code(rid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+    # The web's check (auth.check_sign_in_code): an authenticator-app login
+    # is checked against its app, and throttled per login too (R10).
+    from auth import get_user_by_id as _gubi_bc, verify_backup_code_for, check_sign_in_code, \
+        second_factor_throttle_key
+    _pending_user = _gubi_bc(pending_user_id)
+    app_key = second_factor_throttle_key(_pending_user)
+    if app_key and _is_rate_limited(app_key):
+        return jsonify(ok=False, error="Too many attempts. Please wait 15 minutes and try again."), 429
+    otp_result = check_sign_in_code(_pending_user, rid, pending_user_id, code_entered, pending_secret)
     if otp_result == "wrong":
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
         # scenario recovery codes exist for). The login's own codes for an
         # internal login, the restaurant's for everyone else.
-        from auth import get_user_by_id as _gubi_bc, verify_backup_code_for
-        _pending_user = _gubi_bc(pending_user_id)
         if not (_pending_user and verify_backup_code_for(_pending_user, rid, code_entered)):
             _record_failed_attempt("2fa:" + ip)
+            if app_key:
+                _record_failed_attempt(app_key)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
     elif otp_result != "ok":
         return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
+    if app_key:
+        _clear_attempts(app_key, clear_key=True)
     # When the password step happened, for the session's re-auth stamp.
     from auth import two_fa_challenge_started_at
     pw_at = two_fa_challenge_started_at(rid, pending_user_id, pending_secret)
@@ -1973,7 +1983,7 @@ def mobile_ask_cavnar(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_ask_cavnar(
         current_user["restaurant_id"], data.get("question"), history=data.get("history"),
-        user_id=current_user.get("id"),
+        user_id=_capi._ask_uid(current_user),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
         user=current_user, screen=data.get("screen"),
@@ -1994,7 +2004,7 @@ def mobile_ask_cavnar_stream(current_user):
     """
     data = request.get_json(silent=True) or {}
     return _capi._ask_cavnar_stream_response(
-        current_user["restaurant_id"], current_user.get("id"), data.get("question"),
+        current_user["restaurant_id"], _capi._ask_uid(current_user), data.get("question"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")), user=current_user,
         screen=data.get("screen"))
@@ -2005,14 +2015,14 @@ def mobile_ask_cavnar_stream(current_user):
 def mobile_ask_cavnar_history(current_user):
     from models import get_ask_history
     return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"],
-                                                     viewer_id=current_user.get("id")))
+                                                     viewer_id=_capi._ask_uid(current_user)))
 
 
 @mobile_bp.route("/ask-cavnar/history", methods=["DELETE"])
 @mobile_login_required
 def mobile_ask_cavnar_clear_history(current_user):
     from models import clear_ask_history
-    clear_ask_history(current_user["restaurant_id"], viewer_id=current_user.get("id"))
+    clear_ask_history(current_user["restaurant_id"], viewer_id=_capi._ask_uid(current_user))
     return jsonify(ok=True)
 
 
@@ -2023,14 +2033,14 @@ def mobile_ask_cavnar_clear_history(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_conversations(current_user):
     payload, status = _capi._do_list_ask_conversations(current_user["restaurant_id"],
-                                                       viewer_id=current_user.get("id"))
+                                                       viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
 @mobile_bp.route("/ask-cavnar/conversations", methods=["POST"])
 @mobile_login_required
 def mobile_ask_cavnar_new_conversation(current_user):
-    payload, status = _capi._do_create_ask_conversation(current_user["restaurant_id"], current_user.get("id"))
+    payload, status = _capi._do_create_ask_conversation(current_user["restaurant_id"], _capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2038,7 +2048,7 @@ def mobile_ask_cavnar_new_conversation(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_conversation(current_user, conversation_id):
     payload, status = _capi._do_get_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                                     viewer_id=current_user.get("id"))
+                                                     viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2046,7 +2056,7 @@ def mobile_ask_cavnar_conversation(current_user, conversation_id):
 @mobile_login_required
 def mobile_ask_cavnar_delete_conversation(current_user, conversation_id):
     payload, status = _capi._do_delete_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                                        viewer_id=current_user.get("id"))
+                                                        viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2057,7 +2067,7 @@ def mobile_ask_cavnar_record_action(current_user):
     the same route its own button uses. See client_api's shared body."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_record_ask_action(
-        current_user["restaurant_id"], current_user.get("id"), data, user=current_user)
+        current_user["restaurant_id"], _capi._ask_uid(current_user), data, user=current_user)
     return jsonify(**payload), status
 
 
@@ -4832,7 +4842,11 @@ def mobile_set_rating(current_user):
             score=data.get("score"),
             flag=data.get("flag"),
             notes=data.get("notes"),
-            updated_by=who,
+            # Through view-as the rating is support's, never filed under the
+            # owner's name (PEOPLE-15); `user` stores whose it is.
+            updated_by=(f"support:{current_user.get('acting_admin') or current_user.get('acting_admin_id')}"
+                        if current_user.get("acting_admin_id") else who),
+            user=current_user,
         )
         record_capability_change(rid, "rating", subject=f"{name} · {attribute}",
                                  before=before, after=out, changed_by=who)
@@ -5597,6 +5611,10 @@ def mobile_update_email(current_user):
     return jsonify(ok=True)
 
 
+# Profile fields only an account holder may change (PROMPTS-9).
+_BRAND_VOICE_FIELDS = ("voice_notes", "never_say", "menu_notes", "sign_off_name", "owner_name")
+
+
 @mobile_bp.route("/account/update-profile", methods=["POST"])
 @mobile_login_required
 def mobile_update_profile(current_user):
@@ -5617,14 +5635,32 @@ def mobile_update_profile(current_user):
         return value[:max_len].strip() or None
 
     data = request.get_json() or {}
-    updates = {
+    # Only the fields sent: the web profile form sends no menu_notes, and
+    # every save of it cleared the menu the drafters name dishes from.
+    updates = {k: v for k, v in {
         "owner_name":  _clean(data.get("owner_name"), 200),
         "owner_phone": (data.get("owner_phone") or "").strip()[:30] or None,
         "voice_notes": _clean(data.get("voice_notes"), 1000),
         "never_say":   _clean(data.get("never_say"), 1000),
         "menu_notes":  _clean(data.get("menu_notes"), 2000),
         "sign_off_name": _clean(data.get("sign_off_name"), 80),
-    }
+    }.items() if k in data}
+    # The brand voice and the owner's name are trusted instruction to every
+    # drafter and the offer source public copy is checked against: an
+    # account holder's to change (memory re-audit PROMPTS-9; the web twin is
+    # client_api._do_brand_voice). The same form carries them for everyone,
+    # so a teammate's save leaves them as they are — and a change to one is
+    # refused, not silently dropped.
+    from permissions import is_principal as _is_principal_up
+    if not _is_principal_up(current_user):
+        current = get_restaurant(current_user["restaurant_id"])
+        for key in _BRAND_VOICE_FIELDS:
+            if key not in updates:
+                continue
+            if (updates[key] or None) != ((getattr(current, key, None) or "").strip() or None):
+                return jsonify(ok=False, owner_only=True,
+                               error="Only the account owner can change the brand voice or the owner's name."), 403
+            updates.pop(key)
     # Fixed sets — these are dropped straight into the drafting prompt.
     lang = (data.get("response_language") or "").strip().lower()
     updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None
@@ -7646,7 +7682,7 @@ def mobile_ask_opening(current_user):
                 ok=True,
                 # How the owner has rated answers so far (ask_feedback) —
                 # aggregate only, read with no model call (#48).
-                feedback=_ask_feedback_tally(rid, current_user.get("id")),
+                feedback=_ask_feedback_tally(rid, _capi._ask_uid(current_user)),
                 briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
                            "detail": None, "module": None, "ask": l.get("ask")}
                           for l in _lines[:5]],
@@ -7691,7 +7727,7 @@ def mobile_ask_opening(current_user):
         changes = payload.get("changes") or {}
         return jsonify(
             ok=True,
-            feedback=_ask_feedback_tally(rid, current_user.get("id")),
+            feedback=_ask_feedback_tally(rid, _capi._ask_uid(current_user)),
             briefing=briefing,
             suggestions=suggestions[:5],
             headline=_opening_headline(payload, briefing),

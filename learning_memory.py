@@ -16,12 +16,21 @@ and resumable), each step isolated so one failing never stops the others:
                (restaurant_thresholds.refresh)
   scorecard    this month's learning scorecard and its flags
                (learning_scorecard.snapshot; kept forever)
+  observe_links  run the cross-module read once, in the owner's full view
+               (business_intelligence.correlations → link_memory.observe),
+               so link memory — first and last found, weeks running, the
+               misses that make a link "gone", the do-not-promote list and
+               the reprice guard — no longer depends on some surface
+               happening to read it (re-audit 9/29/26, CROSSMODULE-8)
   links        resolve the cross-module links the owner answered or that a
                later read no longer found (link_memory.settle)
 
-Only restaurants that may teach a learner are passed in
-(models.learning_eligible): a demo, a test account or an internal one never
-scores a claim or writes a summary another reader would learn from.
+Only restaurants that learn for themselves are passed in
+(models.learns_for_itself, memory re-audit 9/29/26 INVENTORY-1): a demo or an
+account an admin excluded is skipped — and counted skipped. A test-named or
+internal account keeps its own bookkeeping (claims, trackers, thresholds, the
+scorecard); every pooled reader of those rows filters it out
+(models.learning_filter_sql / learning_ineligible_ids).
 """
 import logging
 
@@ -63,6 +72,13 @@ def _scorecard(restaurant_id, today, db_path):
     return learning_scorecard.snapshot(restaurant_id, today=today, db_path=db_path)
 
 
+def _observe_links(restaurant_id, today, db_path):
+    import business_intelligence as bi
+    kw = {"db_path": db_path} if db_path else {}
+    links = bi.correlations(restaurant_id, **kw)
+    return {"found": len(links or [])}
+
+
 def _links(restaurant_id, today, db_path):
     import link_memory
     return link_memory.settle(restaurant_id, today=today, db_path=db_path)
@@ -75,6 +91,7 @@ STEPS = [
     ("implemented_trackers", _implemented_trackers),
     ("thresholds", _thresholds),
     ("scorecard", _scorecard),
+    ("observe_links", _observe_links),
     ("links", _links),
 ]
 
@@ -98,16 +115,22 @@ def nightly(restaurant_id, today=None, db_path=None) -> dict:
     return out
 
 
-def eligible_ids(db_path=None) -> list:
-    """The restaurants the nightly pass walks: in service and allowed to
-    teach a learner (models.learning_eligible)."""
+def eligible_ids(db_path=None, skipped=None) -> list:
+    """The restaurants the nightly pass walks: in service and learning for
+    themselves (models.learns_for_itself). `skipped`, a list, receives the
+    in-service ids left out (a demo, an admin's exclusion), so the job can
+    say how many it passed over."""
     import models
     rows = models.get_all_restaurants(db_path=db_path) if db_path else models.get_all_restaurants()
     out = []
     for r in rows or []:
         try:
-            if models.in_service(r) and models.learning_eligible(r):
+            if not models.in_service(r):
+                continue
+            if models.learns_for_itself(r):
                 out.append(r.id)
+            elif skipped is not None:
+                skipped.append(r.id)
         except Exception:
             continue
     return out

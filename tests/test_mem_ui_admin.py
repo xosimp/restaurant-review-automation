@@ -116,7 +116,11 @@ def test_the_brand_form_has_the_learning_override_and_sends_it_only_when_changed
         assert key in st, key
     assert re.search(r'<button class="[^"]*\bw\b[^"]*"[^>]*onclick="brandLearnInclude\(\)"', st)   # support can't
     sv = _fn(page, "brandSave")
-    assert "if(lov !== lov0){ body.learning_override = lov;" in sv and "body.learning_history = true" in sv
+    # The history choice is sent whenever the save includes the account
+    # (memory re-audit 9/29/26, PLATFORM-8): the box defaults to ticked for
+    # an account with a billing history, so an unticked box is a choice too.
+    assert "if(lov !== lov0){ body.learning_override = lov;" in sv \
+        and "body.learning_history = $('b-lhist').checked" in sv
     assert "brandReset" in _fn(page, "brandClose") and "$('b-lov').value=''" in _fn(page, "brandReset")
 
 
@@ -414,7 +418,8 @@ def test_the_learning_override_is_sent_only_when_it_changed(page):
     assert "No" in o["status"] and "a test account (by its name)" in o["status"] and "Include it" in o["status"]
     assert o["lov"] == "" and o["nothing"] == [0, "Nothing changed."]
     assert o["hist_shown"] and "starts its teaching today" in o["hint"]
-    assert o["first"] == {"expected_version": 7, "learning_override": "include"}
+    # the history box is sent as it stands (unticked: no billing history here)
+    assert o["first"] == {"expected_version": 7, "learning_override": "include", "learning_history": False}
     assert "Yes" in o["after"] and "9/29/26" in o["after"] and "included by an admin" in o["after"]
     assert o["second"] == {"expected_version": 8, "brand_name": "Simple EJ's Grill"}      # no override re-sent
     assert o["hist"] == {"expected_version": 7, "learning_override": "include", "learning_history": True}
@@ -668,7 +673,9 @@ def test_re_sending_include_does_not_restart_its_teaching(world):
     c, rid = world["c"], world["rid"]
     post = lambda body: c.post(f"/admin/api/brand/{rid}", json=body, headers={"X-CSRF": CSRF})  # noqa: E731
     v = c.get(f"/admin/api/brand/{rid}").get_json()["version"]
-    r = post({"expected_version": v, "learning_override": "include"})
+    # learning_history False: this world's account has a billing history, so
+    # an include that says nothing keeps its history (PLATFORM-8, below).
+    r = post({"expected_version": v, "learning_override": "include", "learning_history": False})
     assert r.status_code == 200, r.get_json()
     d = r.get_json()
     since = d["learning"]["since"]
@@ -687,7 +694,20 @@ def test_re_sending_include_does_not_restart_its_teaching(world):
     v = post({"expected_version": v, "learning_override": ""}).get_json()["version"]
     r = post({"expected_version": v, "learning_override": "include", "learning_history": True})
     assert r.status_code == 200 and r.get_json()["learning"]["since"] == "2026-01-01 00:00:00"
-    # A change to include without it starts the clock now.
+    # A change to include that says the history doesn't count starts the clock now.
     v = post({"expected_version": r.get_json()["version"], "learning_override": "exclude"}).get_json()["version"]
-    r = post({"expected_version": v, "learning_override": "include"})
+    r = post({"expected_version": v, "learning_override": "include", "learning_history": False})
     assert r.get_json()["learning"]["since"] not in (None, "2026-01-01 00:00:00")
+
+
+def test_including_a_paying_account_keeps_its_history_by_default(world):
+    """Memory re-audit 9/29/26 (PLATFORM-8): an include that says nothing
+    about the history keeps it for an account with a billing history — a
+    paying restaurant the name rule caught lost every recorded month."""
+    c, rid = world["c"], world["rid"]
+    v = c.get(f"/admin/api/brand/{rid}").get_json()["version"]
+    r = c.post(f"/admin/api/brand/{rid}", json={"expected_version": v, "learning_override": "include"},
+               headers={"X-CSRF": CSRF})
+    assert r.status_code == 200, r.get_json()
+    d = r.get_json()["learning"]
+    assert d["override"] == "include" and d["since"] is None and d["billing_history"] is True

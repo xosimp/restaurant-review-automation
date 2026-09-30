@@ -69,7 +69,11 @@ def test_the_monday_plan_reads_the_latest_claims_across_surfaces(db_path, monkey
     assert "Friday runs a server short." in sec and ai_guard.UNTRUSTED_OPEN in sec
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 21, 8, 0))
     asked = []
+    # The plan's memory is a system block and part of the verified corpus
+    # (memory_block), no longer appended to the question (memory re-audit
+    # 9/29/26, PROMPTS-3).
     monkeypatch.setattr(ask_cavnar, "ask_with_tools",
-                        lambda r, q, **k: asked.append(q) or ("[]", False, [], {"confidence": "low"}))
+                        lambda r, q, **k: asked.append(k.get("memory_block") or "")
+                        or ("[]", False, [], {"confidence": "low"}))
     strategy_jobs.run_weekly_plan()
     assert asked and "Friday runs a server short." in asked[0]

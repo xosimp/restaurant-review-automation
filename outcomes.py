@@ -190,12 +190,14 @@ def metric_visible_to(viewer, metric) -> bool:
     caller; an admin sees everything. Fails closed."""
     if viewer is None or (isinstance(viewer, dict) and viewer.get("is_admin")):
         return True
-    base = metrics.parse(metric)[0]
+    # One rule (metrics.metric_permission): item_waste is food-cost dollars
+    # too — it passed this gate while food cost % did not (re-audit PEOPLE-2).
+    need = metrics.metric_permission(metric)
     try:
         from permissions import has_permission, FOOD_COST_VIEW, LOSS_VIEW
-        if base in ("food_cost_pct", "weekly_waste"):
+        if need == "food":
             return has_permission(viewer, FOOD_COST_VIEW)
-        if base in LOSS_METRICS:
+        if need == "loss":
             return has_permission(viewer, LOSS_VIEW)
         return True
     except Exception as e:
@@ -817,9 +819,18 @@ def autostart_implemented(restaurant_id, key, user_id=None, db_path=DB_PATH, tod
     try:
         conn = get_conn(db_path)
         try:
-            ep = conn.execute("SELECT title, tracker_id, module, implemented_at FROM rec_instances WHERE "
-                              "restaurant_id=? AND key=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                              (restaurant_id, key)).fetchone()
+            # The episode the change was made on (memory re-audit 9/29/26,
+            # LOOPS-7): the newest episode could be a later showing nobody
+            # answered, whose missing tracker started one for the wrong
+            # episode. The key's latest otherwise (a caller that records
+            # the change and starts the tracker in one step).
+            ep = (conn.execute("SELECT title, tracker_id, module, implemented_at FROM rec_instances WHERE "
+                               "restaurant_id=? AND key=? AND implemented_at IS NOT NULL "
+                               "ORDER BY implemented_at DESC, created_at DESC, rowid DESC LIMIT 1",
+                               (restaurant_id, key)).fetchone()
+                  or conn.execute("SELECT title, tracker_id, module, implemented_at FROM rec_instances WHERE "
+                                  "restaurant_id=? AND key=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                                  (restaurant_id, key)).fetchone())
         finally:
             conn.close()
         if ep is None or ep["tracker_id"]:

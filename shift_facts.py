@@ -164,6 +164,14 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         kept = [r for r in load_shifts(csv_string=prior) if not (lo <= (r.get("date") or "") <= hi)]
         _respell(restaurant_id, kept, new_rows, db_path)
         merged = kept + merged
+    # The file keeps no more than shift_facts does (memory re-audit 9/29/26,
+    # FORGET-12): every ingest kept all stored rows outside the new window,
+    # so the three-year window bounded the table and nothing else — a
+    # person who left in 2026 was in the file, every backup of it and every
+    # labor parse in 2031. The quarterly summaries are written from
+    # shift_facts, never from this file, so trimming it loses nothing kept.
+    edge = blob_edge()
+    merged = [r for r in merged if not (str(r.get("date") or "")[:10] and str(r.get("date") or "")[:10] < edge)]
     merged.sort(key=lambda r: (r.get("date") or "", str(r.get("shift_start") or "")))
     fields = []
     for r in merged:
@@ -191,6 +199,17 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
             conn.close()
     return {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
             "resolved": new_rows}
+
+
+def blob_edge(today=None) -> str:
+    """The oldest date the stored shifts file keeps: shift_facts' own raw
+    window (the retention registry's, else RETAIN_DAYS)."""
+    try:
+        import ops
+        days = int(ops._RETENTION_DAYS.get("shift_facts", RETAIN_DAYS))
+    except Exception:
+        days = RETAIN_DAYS
+    return ((today or date.today()) - timedelta(days=days)).isoformat()
 
 
 def rewrite_window_from_csv(restaurant_id, csv_text, lo, hi, source="upload", db_path=None) -> int:

@@ -131,7 +131,9 @@ def test_the_digest_reads_memory_and_keeps_its_read():
     import inspect
     import reporter
     src = inspect.getsource(reporter.generate_ai_digest_summary)
-    assert '_mc_dig.memory_context(_rid_dg, "digest")' in src
+    # Read as the account holders (PRINCIPALS), never one login's own lines
+    # (memory re-audit PEOPLE-8 / QUALITY-9).
+    assert '_mc_dig.memory_context(_rid_dg, "digest", viewer=_mc_dig.PRINCIPALS)' in src
     assert "{_mem_section}" in src and "_untrusted_texts.append" in src
     assert '_air_dig.record_read(\n                    _rid_dg, "digest"' in src
 
@@ -144,11 +146,14 @@ def test_the_brief_shows_memory_dated_today_and_keeps_what_was_sent(monkeypatch)
     def fake(r, surface, viewer=None, subjects=(), budget_chars=None, now=None, db_path=None):
         assert surface == "brief"
         return memory_context.MemoryBlock(text="x", sections={
-            "constraints": [{"text": "Closed from 3pm for the private party", "date": today, "source": "owner"},
+            # Written by the login the brief is for (author_id 5): "Your
+            # note" only then (memory re-audit PEOPLE-9).
+            "constraints": [{"text": "Closed from 3pm for the private party", "date": today, "source": "owner",
+                             "author_id": 5},
                             {"text": "Never schedule Ana on Sundays", "date": date(2026, 9, 1), "source": "owner"}],
             "events": [{"text": "Tue 9/22/26: Cubs game — nights like it ran a median 25% above", "date": today}]})
     monkeypatch.setattr(memory_context, "memory_context", fake)
-    got = morning_brief._memory_lines(rid, today, None, [], None)
+    got = morning_brief._memory_lines(rid, today, {"id": 5}, [], None)
     assert [l["key"] for l in got] == ["memory:constraint", "memory:event"]
     assert got[0]["text"] == "Your note for today: Closed from 3pm for the private party"
     assert got[1]["text"].startswith("Remembered: Tue 9/22/26: Cubs game")

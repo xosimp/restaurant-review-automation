@@ -610,6 +610,11 @@ NAME_STORES = (
      "unique": ("employee_key", "role"), "fold": "fill"},
     {"table": "person_quarters", "cols": ("employee_name",), "key": "employee_key",
      "unique": ("employee_key", "quarter"), "fold": "sum"},
+    # What the draft learned about a person, and the owner's dismissals of
+    # it (memory re-audit 9/29/26, INVENTORY-2): the pattern key carries the
+    # name, so these are re-keyed, not just re-pointed (_repoint_patterns).
+    {"table": "schedule_standing_patterns", "cols": ("employee",), "fold": "patterns", "no_create": True},
+    {"table": "schedule_pattern_dismissals", "cols": ("employee",), "fold": "patterns", "no_create": True},
 )
 
 # A source name as aliases store it.
@@ -731,7 +736,10 @@ def init_people(db_path=None):
                                 ("person_quarters", "covers_taken", "INTEGER NOT NULL DEFAULT 0"),
                                 ("person_quarters", "covers_declined", "INTEGER NOT NULL DEFAULT 0"),
                                 ("person_quarters", "mentions_positive", "INTEGER NOT NULL DEFAULT 0"),
-                                ("person_quarters", "mentions_negative", "INTEGER NOT NULL DEFAULT 0")):
+                                ("person_quarters", "mentions_negative", "INTEGER NOT NULL DEFAULT 0"),
+                                # An undone merge (memory re-audit 9/29/26, INVENTORY-11).
+                                ("person_merges", "undone_at", "TEXT"),
+                                ("person_merges", "undone_by", "INTEGER")):
             if col not in _cols(conn, table):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -1223,6 +1231,23 @@ def _store_rows(conn, rid, store, col, keys, pid):
     return where, args, has_pid
 
 
+def _json_maps_sum(a, b) -> str:
+    """Two {label: count} JSON maps added together (roles, dayparts,
+    weekdays of one quarter)."""
+    out = {}
+    for raw in (a, b):
+        try:
+            m = _json.loads(raw or "{}") or {}
+        except (TypeError, ValueError):
+            m = {}
+        for k, v in (m.items() if isinstance(m, dict) else []):
+            try:
+                out[k] = out.get(k, 0) + (float(v) if isinstance(v, float) else int(v))
+            except (TypeError, ValueError):
+                continue
+    return _json.dumps(out)
+
+
 def _fold(conn, store, keep, gone):
     """Fold one person's row into the surviving one's (same unique slot)."""
     table, how = store["table"], store.get("fold")
@@ -1247,18 +1272,131 @@ def _fold(conn, store, keep, gone):
                      "last_seen=MAX(COALESCE(last_seen, ''), COALESCE(?, '')), shifts_seen=shifts_seen+? WHERE rowid=?",
                      (gone["first_seen"], gone["last_seen"], int(gone["shifts_seen"] or 0), keep["rowid"]))
     elif how == "sum":
+        # Every count, both people's maps and the wider of the two date
+        # ranges (memory re-audit 9/29/26, FORGET-13): a quarter past its raw
+        # window is never re-summarised, so what a merge drops here — the
+        # covers, the guest mentions, the roles, the first day — is gone.
         nums = [c for c in ("shifts", "hours", "scheduled_shifts", "watched", "no_shows", "called_out", "late",
-                            "left_early", "covered") if c in gone.keys()]
-        if nums:
-            conn.execute(f"UPDATE {table} SET " + ", ".join(f"{c}=COALESCE({c},0)+COALESCE(?,0)" for c in nums)
-                         + " WHERE rowid=?", (*[gone[c] for c in nums], keep["rowid"]))
+                            "left_early", "covered", "covers_taken", "covers_declined", "mentions_positive",
+                            "mentions_negative") if c in gone.keys()]
+        sets, vals = [f"{c}=COALESCE({c},0)+COALESCE(?,0)" for c in nums], [gone[c] for c in nums]
+        for c in ("roles_json", "dayparts_json", "weekdays_json"):
+            if c in gone.keys():
+                sets.append(f"{c}=?")
+                vals.append(_json_maps_sum(keep[c], gone[c]))
+        for c, pick in (("first_date", min), ("last_date", max)):
+            if c in gone.keys():
+                both = [d for d in (keep[c], gone[c]) if d]
+                sets.append(f"{c}=?")
+                vals.append(pick(both) if both else None)
+        if sets:
+            conn.execute(f"UPDATE {table} SET " + ", ".join(sets) + " WHERE rowid=?", (*vals, keep["rowid"]))
     conn.execute(f"DELETE FROM {table} WHERE rowid=?", (gone["rowid"],))
+
+
+_PATTERN_STATUS_RANK = {"ruled": 3, "active": 2, "dormant": 1, "retired": 0}
+
+
+def _repoint_patterns(conn, rid, store, keys, from_pid, into_name, into_pid) -> dict:
+    """A person's learned schedule patterns (schedule_standing_patterns) and
+    the owner's dismissals of them (schedule_pattern_dismissals) moved to
+    `into_name`: their keys carry the name, so they are re-keyed with it —
+    a rename used to strand "Bob S. off Tuesday dinner" under a name no
+    schedule carried any more, where it read as kept every week (memory
+    re-audit 9/29/26, INVENTORY-2). Two rows landing on one key fold: the
+    counts add, the earliest learning and newest confirmation stand, and a
+    rule beats a habit. {moved, folded, rows, keeps}, the undo's record."""
+    import schedule_intel as _si
+    table = store["table"]
+    rec = {"moved": 0, "folded": [], "rows": [], "keeps": []}
+    tcols = _cols(conn, table)
+    if table == "schedule_standing_patterns":
+        found = conn.execute("SELECT rowid AS rowid, * FROM schedule_standing_patterns WHERE restaurant_id=?",
+                             (rid,)).fetchall()
+        for row in found:
+            if not (_nk(row["employee"]) in keys or (from_pid and "person_id" in tcols and row["person_id"] == from_pid)):
+                continue
+            if not (row["employee"] or "").strip():
+                continue
+            try:
+                det = _json.loads(row["detail"] or "{}") if "detail" in row.keys() else {}
+            except (TypeError, ValueError):
+                det = {}
+            new_key = _si.pattern_key({"kind": row["kind"], "employee": into_name, "day": row["day"],
+                                       "daypart": row["daypart"], "role": row["role"],
+                                       "was_role": det.get("was_role"), "time": row["time"]})
+            old_name = row["employee"]
+            text = (row["text"] or "").replace(old_name, into_name) if old_name else row["text"]
+            keep = conn.execute("SELECT rowid AS rowid, * FROM schedule_standing_patterns WHERE restaurant_id=? AND "
+                                "pattern_key=? AND rowid!=?", (rid, new_key, row["rowid"])).fetchone()
+            if keep is not None:
+                rec["folded"].append({k: row[k] for k in row.keys() if k != "rowid"})
+                rec["keeps"].append({"rowid": keep["rowid"], "before": {k: keep[k] for k in keep.keys() if k != "rowid"}})
+                status = max((keep["status"], row["status"]), key=lambda s_: _PATTERN_STATUS_RANK.get(s_, 0))
+                conn.execute("UPDATE schedule_standing_patterns SET times_applied=times_applied+?, "
+                             "times_confirmed=COALESCE(times_confirmed,0)+?, "
+                             "times_overridden=MAX(times_overridden, ?), first_learned=MIN(first_learned, ?), "
+                             "last_confirmed=MAX(last_confirmed, ?), checked_through=MAX(checked_through, ?), status=?, "
+                             "rule_note=COALESCE(rule_note, ?), ruled_by=COALESCE(ruled_by, ?), "
+                             "updated_at=datetime('now') WHERE rowid=?",
+                             (int(row["times_applied"] or 0), int(row["times_confirmed"] or 0)
+                              if "times_confirmed" in row.keys() else 0, int(row["times_overridden"] or 0),
+                              row["first_learned"], row["last_confirmed"], int(row["checked_through"] or 0), status,
+                              row["rule_note"], row["ruled_by"], keep["rowid"]))
+                conn.execute("DELETE FROM schedule_standing_patterns WHERE rowid=?", (row["rowid"],))
+                continue
+            was = {"employee": old_name, "pattern_key": row["pattern_key"], "text": row["text"]}
+            sets, vals = ["employee=?", "pattern_key=?", "text=?"], [into_name, new_key, text]
+            if "person_id" in tcols:
+                was["person_id"] = row["person_id"]
+                sets.append("person_id=?")
+                vals.append(into_pid)
+            conn.execute(f"UPDATE schedule_standing_patterns SET {', '.join(sets)} WHERE rowid=?",
+                         (*vals, row["rowid"]))
+            rec["rows"].append({"rowid": row["rowid"], "col": "employee", "was": was})
+            rec["moved"] += 1
+        return rec
+    # schedule_pattern_dismissals: the name is the key's second field (and,
+    # from 9/29/26, the employee column beside it).
+    found = conn.execute("SELECT rowid AS rowid, * FROM schedule_pattern_dismissals WHERE restaurant_id=?",
+                         (rid,)).fetchall()
+    for row in found:
+        parts = str(row["key"] or "").split("|")
+        if len(parts) < 4:
+            continue
+        who = (row["employee"] if "employee" in row.keys() and row["employee"] else parts[1]) or ""
+        if not who.strip():
+            continue
+        if not (_nk(who) in keys or (from_pid and "person_id" in tcols and row["person_id"] == from_pid)):
+            continue
+        parts[1] = into_name.lower()
+        new_key = "|".join(parts)
+        if conn.execute("SELECT 1 FROM schedule_pattern_dismissals WHERE restaurant_id=? AND key=? AND rowid!=?",
+                        (rid, new_key, row["rowid"])).fetchone():
+            rec["folded"].append({k: row[k] for k in row.keys() if k != "rowid"})
+            rec["keeps"].append(None)
+            conn.execute("DELETE FROM schedule_pattern_dismissals WHERE rowid=?", (row["rowid"],))
+            continue
+        was = {"key": row["key"]}
+        sets, vals = ["key=?"], [new_key]
+        for c, v in (("employee", into_name), ("person_id", into_pid)):
+            if c in tcols:
+                was[c] = row[c]
+                sets.append(f"{c}=?")
+                vals.append(v)
+        conn.execute(f"UPDATE schedule_pattern_dismissals SET {', '.join(sets)} WHERE rowid=?", (*vals, row["rowid"]))
+        rec["rows"].append({"rowid": row["rowid"], "col": "employee", "was": was})
+        rec["moved"] += 1
+    return rec
 
 
 def _repoint_all(conn, rid, from_keys, from_pid, into_name, into_pid) -> dict:
     """Every NAME_STORES row of the person known by `from_keys` (or carrying
     `from_pid`) moved to `into_name` / `into_pid`; two rows landing in one
-    unique slot are folded by the store's rule. {table: {moved, folded}}."""
+    unique slot are folded by the store's rule. {table: {moved, folded,
+    rows, keeps, deleted}} — `rows` each moved row's rowid and its values
+    before, `keeps` each fold's surviving row as it was, `deleted` rows a
+    tidy-up removed: what unmerge_people replays (INVENTORY-11)."""
     moved = {}
     keys = sorted({k for k in from_keys if k})
     if not keys:
@@ -1269,8 +1407,13 @@ def _repoint_all(conn, rid, from_keys, from_pid, into_name, into_pid) -> dict:
         table = store["table"]
         if table not in have:
             continue
+        if store.get("fold") == "patterns":
+            rec = _repoint_patterns(conn, rid, store, set(keys), from_pid, into_name, into_pid)
+            if rec["moved"] or rec["folded"]:
+                moved[table] = rec
+            continue
         tcols = _cols(conn, table)
-        rec = {"moved": 0, "folded": []}
+        rec = {"moved": 0, "folded": [], "rows": [], "keeps": [], "deleted": []}
         for col in store["cols"]:
             if col not in tcols:
                 continue
@@ -1287,44 +1430,58 @@ def _repoint_all(conn, rid, from_keys, from_pid, into_name, into_pid) -> dict:
                     keep = conn.execute(sql, (rid, row["rowid"], into_key, *[row[u] for u in tail])).fetchone()
                     if keep is not None:
                         rec["folded"].append({k: row[k] for k in row.keys() if k != "rowid"})
+                        rec["keeps"].append({"rowid": keep["rowid"],
+                                             "before": {k: keep[k] for k in keep.keys() if k != "rowid"}})
                         _fold(conn, store, keep, row)
                         continue
                 sets, vals = [f"{col}=?"], [into_name]
+                was = {col: row[col]}
                 if has_pid and into_pid:
                     sets.append("person_id=?")
                     vals.append(into_pid)
+                    was["person_id"] = row["person_id"]
                 if store.get("key") and col == store["cols"][0]:
                     sets.append(f"{store['key']}=?")
                     vals.append(into_key)
+                    was[store["key"]] = row[store["key"]]
                 conn.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE rowid=?", (*vals, row["rowid"]))
+                rec["rows"].append({"rowid": row["rowid"], "col": col, "was": was})
                 rec["moved"] += 1
         if store.get("fold") == "pairs":
             # A pairing of the person with themself, or the same pair twice.
-            for r in conn.execute("SELECT id, employee_a, employee_b, kind FROM staff_pairs WHERE restaurant_id=? "
-                                  "ORDER BY id DESC", (rid,)).fetchall():
+            for r in conn.execute("SELECT rowid AS rowid, * FROM staff_pairs WHERE restaurant_id=? ORDER BY id DESC",
+                                  (rid,)).fetchall():
                 if _nk(r["employee_a"]) == _nk(r["employee_b"]):
+                    rec["deleted"].append({k: r[k] for k in r.keys() if k != "rowid"})
                     conn.execute("DELETE FROM staff_pairs WHERE id=?", (r["id"],))
             seen = set()
-            for r in conn.execute("SELECT id, employee_a, employee_b, kind FROM staff_pairs WHERE restaurant_id=? "
-                                  "ORDER BY id DESC", (rid,)).fetchall():
+            for r in conn.execute("SELECT rowid AS rowid, * FROM staff_pairs WHERE restaurant_id=? ORDER BY id DESC",
+                                  (rid,)).fetchall():
                 k = (frozenset((_nk(r["employee_a"]), _nk(r["employee_b"]))), r["kind"])
                 if k in seen:
+                    rec["deleted"].append({k2: r[k2] for k2 in r.keys() if k2 != "rowid"})
                     conn.execute("DELETE FROM staff_pairs WHERE id=?", (r["id"],))
                 seen.add(k)
-        if rec["moved"] or rec["folded"]:
+        if rec["moved"] or rec["folded"] or rec["deleted"]:
             moved[table] = rec
     # The shift history itself (client_data.shifts_csv) — every reader of it
     # would otherwise still see two people.
-    n = _rewrite_shifts_csv(conn, rid, set(keys), into_name)
+    sig = []
+    n = _rewrite_shifts_csv(conn, rid, set(keys), into_name, record=sig)
     if n:
-        moved["shifts_csv"] = {"moved": n, "folded": []}
+        moved["shifts_csv"] = {"moved": n, "folded": [], "rows": sig}
     return moved
 
 
-def _rewrite_shifts_csv(conn, rid, keys, into_name, ext_map=None) -> int:
+def _shift_sig(r) -> list:
+    return [str(r.get(k) or "") for k in ("date", "shift_start", "shift_end", "role")]
+
+
+def _rewrite_shifts_csv(conn, rid, keys, into_name, ext_map=None, record=None) -> int:
     """Rows of the stored shifts file under one of `keys` (or, with
     `ext_map`, carrying a POS id in it) renamed to `into_name` / the id's
-    person. Returns rows rewritten."""
+    person. Returns rows rewritten; `record` (a list) collects each one's
+    [date, start, end, role] and its name before, for an undo."""
     import csv as _csv
     import io as _io
     row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
@@ -1341,10 +1498,19 @@ def _rewrite_shifts_csv(conn, rid, keys, into_name, ext_map=None) -> int:
             r["employee"] = ext_map[ext]
             n += 1
         elif keys and _nk(r.get("employee")) in keys and r.get("employee") != into_name:
+            if record is not None:
+                record.append(_shift_sig(r) + [r.get("employee")])
             r["employee"] = into_name
             n += 1
     if not n:
         return 0
+    _write_shifts_csv(conn, rid, rows)
+    return n
+
+
+def _write_shifts_csv(conn, rid, rows):
+    import csv as _csv
+    import io as _io
     fields = []
     for r in rows:
         for k in r:
@@ -1355,7 +1521,6 @@ def _rewrite_shifts_csv(conn, rid, keys, into_name, ext_map=None) -> int:
     w.writeheader()
     w.writerows(rows)
     conn.execute("UPDATE client_data SET shifts_csv=? WHERE restaurant_id=?", (buf.getvalue(), rid))
-    return n
 
 
 def _rename_in(conn, idx, pid, new_name, source="rename", actor_user_id=None):
@@ -1375,7 +1540,7 @@ def _rename_in(conn, idx, pid, new_name, source="rename", actor_user_id=None):
     _alias(conn, idx, pid, "rename", old)
     conn.execute("INSERT INTO person_merges (restaurant_id, kind, from_person, into_person, from_name, into_name, "
                  "moved_json, actor_user_id, source) VALUES (?,?,?,?,?,?,?,?,?)",
-                 (idx.rid, "rename", pid, pid, old, new, _json.dumps(moved, default=str)[:20000], actor_user_id, source))
+                 (idx.rid, "rename", pid, pid, old, new, _merge_record(moved), actor_user_id, source))
     return moved
 
 
@@ -1437,25 +1602,54 @@ def merge_people(restaurant_id, from_id, into_id, actor_user_id=None, source="ow
         # to as well is theirs already.
         from_keys = (idx.keys_of(a) | {gone["name_key"]}) - idx.keys_of(b) - {keep["name_key"]}
         moved = _repoint_all(conn, restaurant_id, from_keys, a, keep["display_name"], b)
+        # What the identity tables looked like, for an undo (memory
+        # re-audit 9/29/26, INVENTORY-11): the aliases that move, the alias
+        # the merge adds, the questions it closes, re-points or drops.
+        undo = {"aliases": [r[0] for r in conn.execute(
+                    "SELECT id FROM person_aliases WHERE person_id=? AND restaurant_id=?", (a, restaurant_id))],
+                "gone_active": gone.get("active", 1), "from_keys": sorted(from_keys)}
+        had_alias = {r[0] for r in conn.execute("SELECT id FROM person_aliases WHERE person_id=? AND restaurant_id=?",
+                                                (b, restaurant_id))}
         # Their POS ids and spellings are the survivor's now.
         conn.execute("UPDATE person_aliases SET person_id=? WHERE person_id=? AND restaurant_id=?",
                      (b, a, restaurant_id))
         _alias(conn, idx, b, "merge", gone["display_name"])
+        undo["added_aliases"] = [r[0] for r in conn.execute(
+            "SELECT id FROM person_aliases WHERE person_id=? AND restaurant_id=?", (b, restaurant_id))
+            if r[0] not in had_alias and r[0] not in undo["aliases"]]
         conn.execute("UPDATE people SET merged_into=?, active=0, updated_at=datetime('now') WHERE id=?", (b, a))
+        undo["closed_questions"] = [r[0] for r in conn.execute(
+            "SELECT id FROM person_questions WHERE restaurant_id=? AND status='open' AND ((person_a=? AND person_b=?) "
+            "OR (person_a=? AND person_b=?))", (restaurant_id, a, b, b, a))]
         conn.execute("UPDATE person_questions SET status='merged', answered_at=datetime('now'), answered_by=? "
                      "WHERE restaurant_id=? AND status='open' AND ((person_a=? AND person_b=?) OR (person_a=? AND "
                      "person_b=?))", (actor_user_id, restaurant_id, a, b, b, a))
         # Anything else asked about the merged person is now about the survivor.
+        undo["repointed_a"] = [r[0] for r in conn.execute(
+            "SELECT id FROM person_questions WHERE restaurant_id=? AND person_a=? AND status='open'", (restaurant_id, a))]
+        undo["repointed_b"] = [r[0] for r in conn.execute(
+            "SELECT id FROM person_questions WHERE restaurant_id=? AND person_b=? AND status='open'", (restaurant_id, a))]
         conn.execute("UPDATE OR IGNORE person_questions SET person_a=? WHERE restaurant_id=? AND person_a=? AND status='open'",
                      (b, restaurant_id, a))
         conn.execute("UPDATE OR IGNORE person_questions SET person_b=? WHERE restaurant_id=? AND person_b=? AND status='open'",
                      (b, restaurant_id, a))
+        undo["dropped_questions"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM person_questions WHERE restaurant_id=? AND status='open' AND person_a=person_b",
+            (restaurant_id,))]
         conn.execute("DELETE FROM person_questions WHERE restaurant_id=? AND status='open' AND person_a=person_b",
                      (restaurant_id,))
-        conn.execute("INSERT INTO person_merges (restaurant_id, kind, from_person, into_person, from_name, into_name, "
-                     "moved_json, actor_user_id, source) VALUES (?,?,?,?,?,?,?,?,?)",
-                     (restaurant_id, "merge", a, b, gone["display_name"], keep["display_name"],
-                      _json.dumps(moved, default=str)[:20000], actor_user_id, source))
+        try:
+            import models as _m_sal
+            undo["salaried_before"] = _m_sal.salaried_staff(_m_sal.get_restaurant(
+                restaurant_id, *([db_path] if db_path else [])))
+        except Exception:
+            undo["salaried_before"] = None
+        record = dict(moved, _undo=undo)
+        merge_id = conn.execute(
+            "INSERT INTO person_merges (restaurant_id, kind, from_person, into_person, from_name, into_name, "
+            "moved_json, actor_user_id, source) VALUES (?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, "merge", a, b, gone["display_name"], keep["display_name"], _merge_record(record),
+             actor_user_id, source)).lastrowid
         conn.commit()
     except Exception:
         try:
@@ -1473,7 +1667,377 @@ def merge_people(restaurant_id, from_id, into_id, actor_user_id=None, source="ow
         for f in rec.get("folded") or []:
             kept.append({"table": table, "row": {k: v for k, v in f.items() if k not in ("person_id",)}})
     return {"ok": True, "into": keep["display_name"], "from": gone["display_name"], "into_id": b, "from_id": a,
-            "moved": {t: r["moved"] for t, r in moved.items()}, "folded": kept}
+            "moved": {t: r["moved"] for t, r in moved.items()}, "folded": kept, "merge_id": merge_id,
+            "undo_days": UNMERGE_DAYS}
+
+
+# ── undoing a merge (memory re-audit 9/29/26, INVENTORY-11) ─────────────────
+#
+# person_merges said "so either can be read back", and nothing read it: an
+# owner's wrong "same person" answer could not be taken back. A merge's
+# record now keeps every moved row's values before, every fold's surviving
+# row as it was and the folded row itself, the identity rows it touched,
+# and the shift-file rows it renamed; unmerge_people replays it, for
+# UNMERGE_DAYS, provided nothing has renamed or merged either person since.
+
+UNMERGE_DAYS = 30
+_MERGE_RECORD_MAX = 4_000_000          # characters; a larger record keeps counts only (not undoable)
+
+
+def _merge_record(moved) -> str:
+    text = _json.dumps(moved, default=str)
+    if len(text) <= _MERGE_RECORD_MAX:
+        return text
+    return _json.dumps({**{t: {"moved": r.get("moved", 0), "folded": len(r.get("folded") or [])}
+                           for t, r in moved.items() if not t.startswith("_") and isinstance(r, dict)},
+                        "_undo": None}, default=str)
+
+
+def _later_change(conn, restaurant_id, merge_row):
+    """A rename or merge of either person after this merge, still standing."""
+    a, b = merge_row["from_person"], merge_row["into_person"]
+    return conn.execute("SELECT id, kind, into_name FROM person_merges WHERE restaurant_id=? AND id>? AND "
+                        "kind IN ('merge', 'rename') AND undone_at IS NULL AND (from_person IN (?,?) OR "
+                        "into_person IN (?,?)) ORDER BY id LIMIT 1",
+                        (restaurant_id, merge_row["id"], a, b, a, b)).fetchone()
+
+
+def recent_merges(restaurant_id, db_path=None) -> list:
+    """The merges of the last UNMERGE_DAYS, newest first: [{merge_id, from,
+    into, merged_on, undo_until (M/D/YY), undoable, why_not, undone}]."""
+    from datetime import datetime as _dt, timedelta as _td
+    from time_utils import mdy
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM person_merges WHERE restaurant_id=? AND kind='merge' AND "
+                            "created_at >= datetime('now', ?) ORDER BY id DESC",
+                            (restaurant_id, f"-{UNMERGE_DAYS} days")).fetchall()
+        out = []
+        for m in rows:
+            try:
+                has_undo = bool((_json.loads(m["moved_json"] or "{}") or {}).get("_undo"))
+            except (TypeError, ValueError):
+                has_undo = False
+            later = _later_change(conn, restaurant_id, m) if not m["undone_at"] else None
+            why = None
+            if m["undone_at"]:
+                why = "Already undone."
+            elif not has_undo:
+                why = "This merge has no full record, so it can't be undone here."
+            elif later is not None:
+                why = f"{later['into_name']} changed again after this merge — undo that first."
+            try:
+                until = mdy((_dt.strptime(str(m["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
+                             + _td(days=UNMERGE_DAYS)).strftime("%Y-%m-%d"))
+            except ValueError:
+                until = None
+            out.append({"merge_id": m["id"], "from": m["from_name"], "into": m["into_name"],
+                        "merged_on": mdy(m["created_at"]), "undo_until": until, "undoable": why is None,
+                        "why_not": why, "undone": bool(m["undone_at"])})
+        return out
+    finally:
+        conn.close()
+
+
+def _reinsert(conn, table, row, tcols) -> bool:
+    cols = [c for c in row if c in tcols]
+    if not cols:
+        return False
+    cur = conn.execute(f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                       [row[c] for c in cols])
+    return bool(cur.rowcount)
+
+
+def unmerge_people(restaurant_id, merge_id, user=None, db_path=None) -> dict:
+    """The owner's "those were two people after all": the merge `merge_id`
+    replayed backwards — every row it moved back under the merged person's
+    name and id, every fold's surviving row as it was and the folded row
+    restored, their aliases and open questions back, the shift file's rows
+    renamed back, the merged person live again. For UNMERGE_DAYS, and only
+    while neither person has been renamed or merged since (undo that
+    first). The question that merged them is closed as "different
+    people". Returns {ok, from, into, restored: {table: rows}}."""
+    uid = (user or {}).get("id") if isinstance(user, dict) else None
+    conn = _conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        m = conn.execute("SELECT * FROM person_merges WHERE id=? AND restaurant_id=? AND kind='merge'",
+                         (int(merge_id), restaurant_id)).fetchone()
+        if not m:
+            raise PeopleError("That merge wasn't found.")
+        if m["undone_at"]:
+            raise PeopleError("That merge was already undone.")
+        young = conn.execute("SELECT created_at >= datetime('now', ?) FROM person_merges WHERE id=?",
+                             (f"-{UNMERGE_DAYS} days", m["id"])).fetchone()[0]
+        if not young:
+            raise PeopleError(f"A merge can be undone for {UNMERGE_DAYS} days; this one is older.")
+        try:
+            rec = _json.loads(m["moved_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            rec = {}
+        undo = rec.pop("_undo", None)
+        if not undo:
+            raise PeopleError("This merge has no full record, so it can't be undone here.")
+        later = _later_change(conn, restaurant_id, m)
+        if later is not None:
+            raise PeopleError(f"{later['into_name']} changed again after this merge — undo that first.")
+        a, b = m["from_person"], m["into_person"]
+        pa = conn.execute("SELECT merged_into FROM people WHERE id=? AND restaurant_id=?", (a, restaurant_id)).fetchone()
+        if not pa or pa["merged_into"] != b:
+            raise PeopleError("Those two aren't merged any more.")
+        into_key = _nk(m["into_name"])
+        have = _tables(conn)
+        restored = {}
+        for table, r in rec.items():
+            if table == "shifts_csv" or table not in have or not isinstance(r, dict):
+                continue
+            tcols = _cols(conn, table)
+            n = 0
+            for mv in r.get("rows") or []:
+                was = {k: v for k, v in (mv.get("was") or {}).items() if k in tcols}
+                col = mv.get("col")
+                if not was or col not in tcols:
+                    continue
+                cur = conn.execute(f"SELECT {col} FROM {table} WHERE rowid=? AND restaurant_id=?",
+                                   (mv["rowid"], restaurant_id)).fetchone()
+                if cur is None or _nk(cur[0]) != into_key:
+                    continue                   # gone or changed since: left as it is
+                conn.execute(f"UPDATE OR IGNORE {table} SET " + ", ".join(f"{k}=?" for k in was) + " WHERE rowid=?",
+                             (*was.values(), mv["rowid"]))
+                n += 1
+            for keep_rec, gone_row in zip(r.get("keeps") or [], r.get("folded") or []):
+                if keep_rec:
+                    before = {k: v for k, v in (keep_rec.get("before") or {}).items() if k in tcols}
+                    if before and conn.execute(f"SELECT 1 FROM {table} WHERE rowid=?", (keep_rec["rowid"],)).fetchone():
+                        conn.execute(f"UPDATE {table} SET " + ", ".join(f"{k}=?" for k in before) + " WHERE rowid=?",
+                                     (*before.values(), keep_rec["rowid"]))
+                n += 1 if _reinsert(conn, table, gone_row, tcols) else 0
+            for gone_row in r.get("deleted") or []:
+                n += 1 if _reinsert(conn, table, gone_row, tcols) else 0
+            if n:
+                restored[table] = n
+        # The shift file: the rows the merge renamed, by date, times and role.
+        sigs = {}
+        for sg in (rec.get("shifts_csv") or {}).get("rows") or []:
+            sigs.setdefault(tuple(sg[:4]), []).append(sg[4])
+        if sigs:
+            import csv as _csv
+            import io as _io
+            row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            rows = list(_csv.DictReader(_io.StringIO((row["shifts_csv"] if row else "") or "")))
+            n = 0
+            for r in rows:
+                k = tuple(_shift_sig(r))
+                if _nk(r.get("employee")) == into_key and sigs.get(k):
+                    r["employee"] = sigs[k].pop()
+                    n += 1
+            if n:
+                _write_shifts_csv(conn, restaurant_id, rows)
+                restored["shifts_csv"] = n
+        # Identity: their aliases back, the merge's own alias gone, them live.
+        for aid in undo.get("aliases") or []:
+            conn.execute("UPDATE person_aliases SET person_id=? WHERE id=? AND restaurant_id=?", (a, aid, restaurant_id))
+        for aid in undo.get("added_aliases") or []:
+            conn.execute("DELETE FROM person_aliases WHERE id=? AND restaurant_id=? AND person_id=?",
+                         (aid, restaurant_id, b))
+        try:
+            conn.execute("UPDATE people SET merged_into=NULL, active=?, updated_at=datetime('now') WHERE id=?",
+                         (int(undo.get("gone_active", 1) or 0), a))
+        except Exception as e:
+            raise PeopleError(f"{m['from_name']} can't be brought back: another record now uses that name ({e}).")
+        for qid in undo.get("closed_questions") or []:
+            conn.execute("UPDATE person_questions SET status='different', answered_at=datetime('now'), answered_by=?, "
+                         "answered_authority=? WHERE id=? AND restaurant_id=?",
+                         (uid, answer_authority(user), qid, restaurant_id))
+        for qid in undo.get("repointed_a") or []:
+            conn.execute("UPDATE OR IGNORE person_questions SET person_a=? WHERE id=? AND status='open'", (a, qid))
+        for qid in undo.get("repointed_b") or []:
+            conn.execute("UPDATE OR IGNORE person_questions SET person_b=? WHERE id=? AND status='open'", (a, qid))
+        qcols = _cols(conn, "person_questions")
+        for q in undo.get("dropped_questions") or []:
+            _reinsert(conn, "person_questions", q, qcols)
+        conn.execute("UPDATE person_merges SET undone_at=datetime('now'), undone_by=? WHERE id=?", (uid, m["id"]))
+        conn.execute("INSERT INTO person_merges (restaurant_id, kind, from_person, into_person, from_name, into_name, "
+                     "moved_json, actor_user_id, source) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (restaurant_id, "unmerge", b, a, m["into_name"], m["from_name"],
+                      _json.dumps({"undid": m["id"], "restored": restored}), uid,
+                      change_source(user) if isinstance(user, dict) else "owner"))
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+    # A salaried entry the merge renamed, back — only while the list is still
+    # exactly what the merge left.
+    before = undo.get("salaried_before")
+    if isinstance(before, list):
+        try:
+            import models
+            r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+            now_staff = models.salaried_staff(r)
+            keys = set(undo.get("from_keys") or [])
+            after = [dict(s_, name=m["into_name"]) if _nk(s_.get("name")) in keys else s_ for s_ in before]
+            if now_staff == after and now_staff != before:
+                models.update_restaurant(restaurant_id, {"salaried_staff_json": _json.dumps(before)},
+                                         **({"db_path": db_path} if db_path else {}))
+        except Exception as e:
+            _log.warning("[people] salaried unmerge failed rid=%s: %s", restaurant_id, e)
+    _after_change(restaurant_id, "unmerge", m["into_name"], m["from_name"], uid, change_source(user) if user else "owner",
+                  user=user if isinstance(user, dict) else None)
+    return {"ok": True, "from": m["from_name"], "into": m["into_name"], "restored": restored}
+
+
+# ── erasing one person (memory re-audit 9/29/26, FORGET-12) ────────────────
+
+def erase_person(restaurant_id, person_id, user=None, db_path=None) -> dict:
+    """A departed employee's request to be forgotten: every NAME_STORES row
+    about them deleted — ratings, settings, notes, availability, time off,
+    contacts, tenure, pairings, requests, every shift (shift_facts),
+    attendance, covers and guest mentions, their quarterly summaries and
+    what the draft learned about them — their rows removed from the shift
+    file, a salaried entry removed, their aliases, questions and merge
+    records gone, and their people row left as an anonymous tombstone
+    ("Erased #id", so ids elsewhere still resolve to nobody). Where another
+    person's row only mentions them (a shift request's replacement) the
+    mention is cleared, not the row.
+
+    Refused while they are on the active roster or hold a staff login —
+    take them off the roster and remove the login first. Not touched: the
+    published schedules archived as they were sent (schedule_history /
+    schedule_versions), the change log, and anything the POS sends again —
+    a re-sync of a window they worked brings those shifts back. Returns
+    {ok, erased: {table: rows}}."""
+    uid = (user or {}).get("id") if isinstance(user, dict) else None
+    conn = _conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        idx = _Index(conn, restaurant_id)
+        pid = idx.live(int(person_id))
+        if pid is None:
+            raise PeopleError("That person isn't on this restaurant's roster.")
+        person = idx.people[pid]
+        keys = sorted(idx.keys_of(pid) | {person["name_key"]})
+        have = _tables(conn)
+        # Off the roster means deactivated (staff_settings.active=0): anyone
+        # with a shift in the history is on it otherwise (staff_settings.roster).
+        st = conn.execute("SELECT active FROM staff_settings WHERE restaurant_id=? AND cav_name_key(employee_name) IN "
+                          f"({','.join('?' * len(keys))})", (restaurant_id, *keys)).fetchall() \
+            if "staff_settings" in have else []
+        if not st or any(r["active"] is None or int(r["active"]) for r in st):
+            raise PeopleError(f"{person['display_name']} is on the roster — take them off it first.")
+        m_pid = "person_id=? OR " if "memberships" in have and "person_id" in _cols(conn, "memberships") else ""
+        if "memberships" in have and conn.execute(
+                f"SELECT 1 FROM memberships WHERE restaurant_id=? AND is_active=1 AND ({m_pid}"
+                f"cav_name_key(employee_name) IN ({','.join('?' * len(keys))}))",
+                (restaurant_id, *([pid] if m_pid else []), *keys)).fetchone():
+            raise PeopleError(f"{person['display_name']} still has a staff login — remove it first.")
+        erased = {}
+        marks = ",".join("?" * len(keys))
+        for store in NAME_STORES:
+            table = store["table"]
+            if table not in have or table == "memberships":
+                continue
+            tcols = _cols(conn, table)
+            n = 0
+            if store.get("fold") == "patterns":
+                for r in conn.execute(f"SELECT rowid AS rowid, * FROM {table} WHERE restaurant_id=?",
+                                      (restaurant_id,)).fetchall():
+                    who = r["employee"] if "employee" in r.keys() and r["employee"] else \
+                        (str(r["key"]).split("|")[1] if table == "schedule_pattern_dismissals"
+                         and len(str(r["key"]).split("|")) > 1 else "")
+                    if (who and _nk(who) in keys) or ("person_id" in tcols and r["person_id"] == pid):
+                        conn.execute(f"DELETE FROM {table} WHERE rowid=?", (r["rowid"],))
+                        n += 1
+            else:
+                for i, col in enumerate(store["cols"]):
+                    if col not in tcols:
+                        continue
+                    where = f"restaurant_id=? AND (cav_name_key({col}) IN ({marks})"
+                    args = [restaurant_id, *keys]
+                    if i == 0 and "person_id" in tcols and not store.get("no_person_id"):
+                        where += " OR person_id=?"
+                        args.append(pid)
+                    where += ")"
+                    if store.get("where"):
+                        where += f" AND {store['where']}"
+                    if i == 0 or store.get("fold") == "pairs":
+                        cur = conn.execute(f"DELETE FROM {table} WHERE {where}", args)
+                    else:
+                        cur = conn.execute(f"UPDATE {table} SET {col}=NULL WHERE {where}", args)
+                    n += cur.rowcount or 0
+            if n:
+                erased[table] = n
+        # The shift file.
+        import csv as _csv
+        import io as _io
+        row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        text = (row["shifts_csv"] if row else "") or ""
+        if text.strip():
+            rows = list(_csv.DictReader(_io.StringIO(text)))
+            kept = [r for r in rows if _nk(r.get("employee")) not in keys]
+            if len(kept) != len(rows):
+                _write_shifts_csv(conn, restaurant_id, kept)
+                erased["shifts_csv"] = len(rows) - len(kept)
+        # Identity: their spellings and ids, the questions and merge records
+        # that name them; the row itself stays as a nameless tombstone.
+        merged_in = [r[0] for r in conn.execute("SELECT id FROM people WHERE restaurant_id=? AND merged_into=?",
+                                                (restaurant_id, pid))]
+        everyone = [pid, *merged_in]
+        pm = ",".join("?" * len(everyone))
+        erased["person_aliases"] = conn.execute(
+            f"DELETE FROM person_aliases WHERE restaurant_id=? AND person_id IN ({pm})",
+            (restaurant_id, *everyone)).rowcount or 0
+        erased["person_questions"] = conn.execute(
+            f"DELETE FROM person_questions WHERE restaurant_id=? AND (person_a IN ({pm}) OR person_b IN ({pm}))",
+            (restaurant_id, *everyone, *everyone)).rowcount or 0
+        erased["person_merges"] = conn.execute(
+            f"DELETE FROM person_merges WHERE restaurant_id=? AND (from_person IN ({pm}) OR into_person IN ({pm}))",
+            (restaurant_id, *everyone, *everyone)).rowcount or 0
+        for p_ in everyone:
+            conn.execute("UPDATE people SET display_name=?, name_key=?, active=0, updated_at=datetime('now') "
+                         "WHERE id=?", (f"Erased #{p_}", f"erased #{p_}", p_))
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+    # A salaried entry under any of their spellings.
+    try:
+        import models
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+        staff = models.salaried_staff(r)
+        left = [s_ for s_ in staff if _nk(s_.get("name")) not in keys]
+        if len(left) != len(staff):
+            models.update_restaurant(restaurant_id, {"salaried_staff_json": _json.dumps(left)},
+                                     **({"db_path": db_path} if db_path else {}))
+            erased["salaried_staff"] = len(staff) - len(left)
+    except Exception as e:
+        _log.warning("[people] salaried erase failed rid=%s: %s", restaurant_id, e)
+    # The change log records that a person was erased — never who.
+    try:
+        import change_log
+        if isinstance(user, dict) and user:
+            change_log.record(restaurant_id, "roster", "erase", None, {"erased": f"person #{pid}"},
+                              subject=f"person #{pid}", user=user)
+        else:
+            change_log.record(restaurant_id, "roster", "erase", None, {"erased": f"person #{pid}"},
+                              subject=f"person #{pid}", actor_user_id=uid, source="owner")
+    except Exception as e:
+        _log.warning("[people] change_log failed rid=%s: %s", restaurant_id, e)
+    try:
+        import client_api
+        client_api.invalidate_insight_cache(restaurant_id)
+    except Exception as e:
+        _log.warning("[people] cache invalidation failed rid=%s: %s", restaurant_id, e)
+    return {"ok": True, "person_id": pid, "erased": {k: v for k, v in erased.items() if v}}
 
 
 def _rename_salaried(restaurant_id, keys, into_name, db_path=None):
@@ -1626,7 +2190,7 @@ def stamp_person_ids(restaurant_id, db_path=None, create=True) -> dict:
                 cands = idx.for_key(key)
                 if len(cands) == 1:
                     pid = next(iter(cands))
-                elif not cands and create and _looks_like_name(name):
+                elif not cands and create and not store.get("no_create") and _looks_like_name(name):
                     pid = _create_person(conn, idx, name, f"store:{table}")
                     _question_similar(conn, idx, pid)
                 else:
@@ -2201,13 +2765,19 @@ def memory_lines(req) -> list:
     return [{k: v for k, v in l.items() if k != "unwatched"} for l in out]
 
 
-def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False):
+def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False, measured=None):
     """One people-memory line. `module` gates it by the viewer's view
     permission and `audience` "team" says any login with that module may
     read it (memory_context.visible) — facts about the staff, never a
-    principal's private note."""
-    return {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
+    principal's private note. `measured` is what Cavnar AI counted about
+    the person (attendance, covers, confirmed mentions), rendered trusted
+    under the fenced name so a count can be cited (memory re-audit
+    9/29/26, PROMPTS-3: fenced with the name, it never verified)."""
+    line = {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
             "trusted": trusted, "module": module, "audience": "team"}
+    if measured:
+        line["measured"] = measured
+    return line
 
 
 def _mem_attendance(rid, today, db):
@@ -2222,25 +2792,38 @@ def _mem_attendance(rid, today, db):
         return [dict(_mem_line("Attendance is not watched here yet: no published week has been checked against the "
                                "punches, so no one's reliability is known. Say nothing about who shows up.",
                                None, "labor", 1.0, trusted=True), unwatched=True)]
-    return [_mem_line(l["text"], l["date"],
-                      f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
-                      3.0 + min(int(l.get("misses") or 0), 6) * 0.5) for l in lines]
+    out = []
+    for l in lines:
+        name, _sep, counted = str(l["text"]).partition(": ")
+        if not (l.get("name") and _sep and counted):
+            name, counted = l["text"], None
+        out.append(_mem_line(name, l["date"],
+                             f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
+                             3.0 + min(int(l.get("misses") or 0), 6) * 0.5,
+                             measured=f"Measured: {counted}." if counted else None))
+    return out
 
 
 def _mem_standing(rid, today, db):
     import schedule_versions
     kw = {"db_path": db} if db else {}
+    # Active only: a retired pattern was reversed, a ruled one is the
+    # person's availability now, a dormant one is about someone with no
+    # shifts (memory re-audit 9/29/26, FORGET-5).
     rows = [r for r in schedule_versions.standing_patterns(rid, include_retired=False, **kw)
             if r.get("status") == "active"]
-    rows.sort(key=lambda r: -(int(r.get("times_applied") or 0)))
+    # Weighed by the weeks the MANAGER's own hand kept it (QUALITY-14): the
+    # weeks the draft merely carried it are not new evidence.
+    rows.sort(key=lambda r: -(int(r.get("times_confirmed") or 0)))
     out = []
     for r in rows[:6]:
         text = str(r.get("text") or "").split(" — ")[0].strip().rstrip(".")
         if not text:
             continue
-        kept = int(r.get("times_applied") or 0)
+        kept = int(r.get("times_confirmed") or 0)
         out.append(_mem_line(f"Standing preference (learned {r.get('first_learned')}"
-                             + (f", kept {kept} week{'s' if kept != 1 else ''}" if kept else "")
+                             + (f", confirmed by the manager's own edits in {kept} week{'s' if kept != 1 else ''}"
+                                if kept else "")
                              + f"): {text}.",
                              r.get("last_confirmed_iso"),
                              f"labor:day:{str(r['day']).lower()}" if r.get("day") else "schedule",
@@ -2321,8 +2904,8 @@ def _mem_covers(rid, today, db):
             bits.append(f"covered {a} shift{'s' if a != 1 else ''} for teammates")
         if d:
             bits.append(f"didn't take {d} cover{'s' if d != 1 else ''} they were asked to")
-        out.append(_mem_line(f"{names.get(key, key)} " + " and ".join(bits) + " in the last 6 months.", None,
-                             "schedule", 1.0 + min(a, 10) / 10.0))
+        out.append(_mem_line(f"{names.get(key, key)}", None, "schedule", 1.0 + min(a, 10) / 10.0,
+                             measured="Measured: " + " and ".join(bits) + " in the last 6 months."))
         if len(out) >= 4:
             break
     return out
@@ -2350,10 +2933,11 @@ def _mem_mentions(rid, today, db):
             tone.append(f"{e['pos']} positive")
         if e["neg"]:
             tone.append(f"{e['neg']} negative")
-        out.append(_mem_line(f"Guests named {name} in {e['n']} review{'s' if e['n'] != 1 else ''} since "
-                             f"{mdy(e['first'])}" + (f" ({', '.join(tone)})" if tone else "")
-                             + " — confirmed by the owner.", e["last"], "reviews", 1.5 + min(e["n"], 10) / 10.0,
-                             module="reviews"))
+        out.append(_mem_line(f"Guests named {name}", e["last"], "reviews", 1.5 + min(e["n"], 10) / 10.0,
+                             module="reviews",
+                             measured=(f"Measured: in {e['n']} review{'s' if e['n'] != 1 else ''} since "
+                                       f"{mdy(e['first'])}" + (f" ({', '.join(tone)})" if tone else "")
+                                       + " — each confirmed by the owner.")))
     return out
 
 

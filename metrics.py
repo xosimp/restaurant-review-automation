@@ -528,6 +528,26 @@ FAMILIES = {
     "response_hours": "reply_speed",
     "comp_rate": "comps", "void_rate": "voids",
 }
+# What a metric's figures need beyond the brief audience, as one rule every
+# gate reads (memory re-audit PEOPLE-2): the food-cost family (food cost %,
+# waste, one item's waste — food-cost dollars) is Food Cost's, needing
+# FOOD_COST_VIEW; comps and voids are a loss figure (LOSS_VIEW — a comp rate
+# can name the manager approving them). Read off FAMILIES, so a new metric in
+# either family is gated the day it is added; prime cost holds food cost.
+# Ask's metric_visible, outcomes.metric_visible_to, decisions._redact and the
+# memory goal lines (owner_memory) all ask metric_permission.
+_FAMILY_PERMISSION = {"food_cost": "food", "comps": "loss", "voids": "loss"}
+_EXTRA_PERMISSION = {"prime_cost_pct": "food"}
+
+
+def metric_permission(metric):
+    """"food" | "loss" | None — what a login needs to read `metric`
+    ("item_waste:Salmon" reads as item_waste). None: nothing beyond the
+    module the metric belongs to."""
+    base = str(metric or "").partition(":")[0].strip().lower()
+    return _EXTRA_PERMISSION.get(base) or _FAMILY_PERMISSION.get(FAMILIES.get(base))
+
+
 FAMILY_LABELS = {"labor_cost": "labor cost", "food_cost": "food cost", "sales": "sales",
                  "guest_rating": "guest rating", "reply_speed": "reply time",
                  "comps": "comps", "voids": "voids"}

@@ -328,7 +328,9 @@ def test_history_routes_round_trip(client, db_path, monkeypatch):
     from models import save_ask_message
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    save_ask_message(rid, "user", "hello", db_path=db_path)
+    # Written as the logged-in login (id 7): a chat with no login is no longer
+    # everyone's (memory re-audit PEOPLE-18) — the route reads this login's own.
+    save_ask_message(rid, "user", "hello", user_id=7, db_path=db_path)
     assert len(client.get("/api/ask-cavnar/history").get_json()["messages"]) == 1
     assert client.delete("/api/ask-cavnar/history").get_json()["ok"] is True
     assert client.get("/api/ask-cavnar/history").get_json()["messages"] == []
@@ -432,13 +434,15 @@ def test_a_chat_with_nothing_said_in_it_is_not_listed(client, db_path, monkeypat
     from models import create_ask_conversation, list_ask_conversations, save_ask_message
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    said = save_ask_message(rid, "user", "how were sales", db_path=db_path)
-    empty = create_ask_conversation(rid, db_path=db_path)
+    # Written as the logged-in login (id 7): a chat with no login is no longer
+    # everyone's (memory re-audit PEOPLE-18) — the route reads this login's own.
+    said = save_ask_message(rid, "user", "how were sales", user_id=7, db_path=db_path)
+    empty = create_ask_conversation(rid, user_id=7, db_path=db_path)
     assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [said]
     body = client.get("/api/ask-cavnar/conversations").get_json()
     assert [c["id"] for c in body["conversations"]] == [said]
     # Once the empty chat gets its first question it is listed, newest first.
-    save_ask_message(rid, "user", "and labor?", conversation_id=empty, db_path=db_path)
+    save_ask_message(rid, "user", "and labor?", conversation_id=empty, user_id=7, db_path=db_path)
     assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [empty, said]
     # The shared body the web and mobile routes both call.
     payload, status = client_api._do_list_ask_conversations(rid)
@@ -502,7 +506,9 @@ def test_conversation_routes_round_trip(client, db_path, monkeypatch):
     from models import save_ask_message
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    cid = save_ask_message(rid, "user", "hello there", db_path=db_path)
+    # Written as the logged-in login (id 7): a chat with no login is no longer
+    # everyone's (memory re-audit PEOPLE-18) — the route reads this login's own.
+    cid = save_ask_message(rid, "user", "hello there", user_id=7, db_path=db_path)
     listed = client.get("/api/ask-cavnar/conversations").get_json()
     assert listed["ok"] and listed["conversations"][0]["id"] == cid
     one = client.get(f"/api/ask-cavnar/conversations/{cid}").get_json()
@@ -519,10 +525,12 @@ def test_asking_in_a_named_chat_stays_in_that_chat(client, db_path, monkeypatch)
     from models import create_ask_conversation, get_ask_history
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
+    # Written as the logged-in login (id 7): a chat with no login is no longer
+    # everyone's (memory re-audit PEOPLE-18) — the route reads this login's own.
     monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("an answer", False, [], {}))
     monkeypatch.setattr(client_api, "ai_rate_limited", lambda *a, **kw: False, raising=False)
-    older = create_ask_conversation(rid, db_path=db_path)
-    newer = create_ask_conversation(rid, db_path=db_path)
+    older = create_ask_conversation(rid, user_id=7, db_path=db_path)
+    newer = create_ask_conversation(rid, user_id=7, db_path=db_path)
     resp = client.post("/api/ask-cavnar", json={"question": "in the older chat", "conversation_id": older})
     body = resp.get_json()
     assert body["ok"] and body["conversation_id"] == older
@@ -561,8 +569,10 @@ def test_a_confirm_lands_in_the_chat_the_proposal_came_from(client, db_path, mon
     from models import create_ask_conversation, get_ask_history
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)
-    older = create_ask_conversation(rid, db_path=db_path)
-    newer = create_ask_conversation(rid, db_path=db_path)
+    # Written as the logged-in login (id 7): a chat with no login is no longer
+    # everyone's (memory re-audit PEOPLE-18) — the route reads this login's own.
+    older = create_ask_conversation(rid, user_id=7, db_path=db_path)
+    newer = create_ask_conversation(rid, user_id=7, db_path=db_path)
     client.post("/api/ask-cavnar/action",
                 json={"action": "send_supplier_order", "outcome": "confirmed",
                       "summary": "Email Fresh Co", "conversation_id": older})

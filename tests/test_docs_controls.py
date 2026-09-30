@@ -140,7 +140,10 @@ _STEP_UP_TODAY = {
 # auth.reauth_refusal rather than the decorator (INT-2): the legacy settings
 # save (a billing, module or owner-email change), the offboarding steps that
 # act (integrations, Stripe, DocuSign), the review-account seed's rotation.
-_STEP_UP_IN_PART = ("save_client_settings", "admin_api_offboarding_step", "seed_review_account_route")
+_STEP_UP_IN_PART = ("save_client_settings", "admin_api_offboarding_step", "seed_review_account_route",
+                    # R10: an enrolled internal login switching its own
+                    # two-factor method (to or from the authenticator app).
+                    "admin_two_factor_send", "admin_two_factor_verify")
 
 
 def test_the_step_up_routes_are_the_ones_the_doc_lists():
@@ -173,7 +176,9 @@ def test_the_step_up_routes_are_the_ones_the_doc_lists():
     assert tuple(offboarding.ACTING_STEPS) == ("integrations", "stripe", "docusign")
     _says(SECURITY, "applied today", f"the decorator, on {len(_STEP_UP_TODAY)} routes",
           "`offboarding.acting_steps`: integrations, stripe, docusign",
-          "the billing status, a module switch or the owner email (`_settings_step_up_fields`)")
+          "the billing status, a module switch or the owner email (`_settings_step_up_fields`)",
+          "five routes ask for it only for the part", "(a method switch — `admin_two_factor_send`, "
+          "`admin_two_factor_verify`)")
 
 
 def test_an_expired_console_read_is_401_json_and_a_page_is_a_redirect():
@@ -411,13 +416,17 @@ def test_the_scrub_empties_the_tables_the_doc_names():
     assert set(offsite_backup.SCRUB_TABLES) == {"sessions", "two_fa_backup_codes", "trusted_devices",
                                                 "device_tokens", "login_reports", "staff_portal_tokens",
                                                 "app_secrets", "view_as_sessions", "user_backup_codes",
-                                                "async_jobs"}
+                                                "async_jobs",
+                                                # R10 (9/29/26): an internal login's authenticator-app
+                                                # secret — a live second factor.
+                                                "user_totp"}
     schema = _read("DATABASE_SCHEMA.md")
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
     # The backup email says what THIS run's scrub did, not a fixed sentence.
     import scheduler
     assert "offsite_backup.describe_scrub(scrubbed)" in inspect.getsource(scheduler._scrub_lines_html)
-    _says(SECURITY, "`user_backup_codes`", "`async_jobs`", "(`offsite_backup.describe_scrub`), not a fixed sentence")
+    _says(SECURITY, "`user_backup_codes`", "`user_totp`", "`async_jobs`",
+          "(`offsite_backup.describe_scrub`), not a fixed sentence")
 
 
 def test_the_documented_retention_table_is_the_registry():
@@ -831,3 +840,38 @@ def test_the_worker_boot_the_split_doc_describes():
     assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("init_db()")
     assert "basicConfig" not in src
     _says(SPLIT, "worker.py calls both at the top of main()")
+
+
+# ── whose answer, and view-as (memory re-audit 9/29/26, PEOPLE-19) ──────────
+
+def test_the_whose_answer_sentences_hold_in_code():
+    import goals
+    import permissions
+    import rec_ledger
+    import rec_learning
+    # A caller that forgets the kwarg: derived from the request's login.
+    assert "request_authority()" in inspect.getsource(rec_ledger.record)
+    # The restaurant's answers: never an admin's, never a delegate's decline.
+    assert rec_ledger.counts_for_restaurant("admin", "accepted") is False
+    assert rec_ledger.counts_for_restaurant("delegate", "dismissed") is False
+    assert rec_ledger.counts_for_restaurant("delegate", "completed") is True
+    assert rec_ledger.counts_for_restaurant(None, "dismissed") is True
+    # One manager's view is their own.
+    assert "viewer_id" in inspect.signature(rec_learning.effectiveness).parameters
+    # Only an account holder ends a goal.
+    assert goals.end_goal(0, 0, authority="delegate") is False
+    assert permissions.acting_login_id({"id": 5, "acting_admin_id": 9}) == 9
+    _says(SECURITY, "derives it from the request's signed-in login when a caller does not pass it",
+          "`rec_ledger.counts_for_restaurant`", "one manager's no never reshapes another's",
+          "only an account holder ends one", "`ask_cavnar_actions.authority`")
+
+
+def test_the_view_as_sentences_hold_in_code():
+    import auth
+    import models
+    assert auth._VIEW_AS_LOGGED_READS.search("/mobile/api/account/memory")
+    assert auth._VIEW_AS_LOGGED_READS.search("/api/ask-cavnar/conversations/12")
+    assert "authority" in inspect.getsource(models.get_operational_scores)
+    _says(SECURITY, "`view_as_read`", "`permissions.acting_login_id`",
+          "an admin's rating is shown and not counted in the operational score",
+          "the morning brief is built per login from what that login may see")

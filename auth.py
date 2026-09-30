@@ -6,6 +6,7 @@ Handles: user table, password hashing, session management, login/logout
 """
 import hashlib
 import os
+import re
 import sqlite3
 import secrets
 from datetime import datetime, timezone
@@ -273,6 +274,26 @@ CREATE TABLE IF NOT EXISTS user_backup_codes (
 );
 CREATE INDEX IF NOT EXISTS idx_user_backup_codes_user
     ON user_backup_codes(user_id, used_at);
+
+-- An internal login's authenticator-app (TOTP, RFC 6238) secret, when its
+-- two-factor method is 'app' (R10, 9/29/26). Its own table, not columns on
+-- users, so the secret never rides on the user dict every request loads
+-- (the session lookup reads u.*). Both secrets are Fernet ciphertext under
+-- CREDENTIAL_KEY (credentials.encrypt); enrolment is refused without a
+-- working key. pending_secret is the one a QR code was just shown for: it
+-- becomes secret only when a code from the app confirms it, and is dead
+-- after pending_expires_at (15 minutes). last_step is the last 30-second
+-- step a code was accepted for, so one code never signs in twice. One row
+-- per login at most; emptied from every off-site backup (SCRUB_TABLES).
+CREATE TABLE IF NOT EXISTS user_totp (
+    user_id             INTEGER PRIMARY KEY,
+    secret              TEXT,
+    last_step           INTEGER,
+    pending_secret      TEXT,
+    pending_expires_at  TEXT,
+    activated_at        TEXT,
+    updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -1449,6 +1470,13 @@ def two_fa_destination(user, restaurant, method=None, strict=False):
         return None
     if is_internal_login(user):
         method = method or (user.get("two_fa_method") or "email")
+        if method == TOTP_METHOD:
+            # Nothing is sent: the code comes from the login's authenticator
+            # app. Never falls back to email — a stolen password must not be
+            # able to ask for a code by another channel (backup codes are the
+            # way in without the phone).
+            return {"kind": TOTP_METHOD, "to": None, "masked": "your authenticator app",
+                    "name": user.get("name") or None}
         email = (user.get("email") or "").strip()
         email = email if "@" in email else ""
         phone = (user.get("phone") or "").strip()
@@ -1489,6 +1517,8 @@ def send_two_fa_code(dest, restaurant, code) -> bool:
     client's email history; an internal login's code (whose label names the
     admin console, not a restaurant) is logged against none."""
     rname = getattr(restaurant, "name", None) or "your restaurant"
+    if dest["kind"] == TOTP_METHOD or not dest.get("to"):
+        return False                # an authenticator app is never sent a code
     if dest["kind"] == "sms":
         from notify import send_2fa_sms
         return bool(send_2fa_sms(dest["to"], rname, code))
@@ -1526,6 +1556,10 @@ def deliver_two_fa_code(user, restaurant, dest, code) -> dict:
     out = {"sent": False, "kind": None, "masked": None, "fell_back": False, "reason": None}
     if not dest:
         out["reason"] = "no_destination"
+        return out
+    if dest["kind"] == TOTP_METHOD:
+        # The app makes the code; there is nothing to send and no fallback.
+        out.update(sent=True, kind=TOTP_METHOD, masked=dest["masked"])
         return out
     if dest["kind"] == "sms":
         stopped = False
@@ -1639,6 +1673,253 @@ def verify_backup_code_for(user, restaurant_id: int, code: str, db_path: str = D
         return verify_and_consume_user_backup_code(user["id"], code, db_path=db_path)
     from models import verify_and_consume_backup_code
     return verify_and_consume_backup_code(restaurant_id, code, db_path=db_path)
+
+
+# ── an internal login's authenticator app (TOTP, RFC 6238) ──────────────────
+#
+# A third method beside email and sms, for internal logins only: the code
+# comes from an authenticator app (Duo Mobile, Google Authenticator, 1Password
+# …) the login scanned a QR code into, so nothing is emailed or texted. SHA-1,
+# 6 digits, 30-second steps, one step either side accepted for clock drift,
+# and each step accepted once per login (user_totp.last_step). The secret is
+# a credential: encrypted under CREDENTIAL_KEY, never logged, never in an
+# audit payload, emptied from off-site backups.
+
+TOTP_METHOD = "app"
+TOTP_ISSUER = "Cavnar AI"
+TOTP_STEP_SECONDS = 30
+TOTP_DIGITS = 6
+TOTP_WINDOW = 1
+TOTP_SECRET_BYTES = 20          # 160 bits, RFC 4226's recommended length
+TOTP_PENDING_MINUTES = 15
+
+
+def totp_new_secret() -> str:
+    """A fresh random secret, base32 without padding (32 characters)."""
+    import base64
+    return base64.b32encode(secrets.token_bytes(TOTP_SECRET_BYTES)).decode("ascii").rstrip("=")
+
+
+def _totp_key(secret: str) -> bytes:
+    import base64
+    s = re.sub(r"[\s-]", "", secret or "").upper()
+    return base64.b32decode(s + "=" * (-len(s) % 8))
+
+
+def totp_code(secret: str, step: int, digits: int = TOTP_DIGITS, digest: str = "sha1") -> str:
+    """The code for one time step (HOTP, RFC 4226, over the step counter)."""
+    import hmac as _h
+    import struct
+    mac = _h.new(_totp_key(secret), struct.pack(">Q", int(step)), digest).digest()
+    off = mac[-1] & 0x0F
+    value = struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF
+    return str(value % (10 ** digits)).zfill(digits)
+
+
+def totp_step(now=None) -> int:
+    import time as _t
+    return int((_t.time() if now is None else float(now)) // TOTP_STEP_SECONDS)
+
+
+def totp_match(secret: str, code: str, now=None, last_step=None, window: int = TOTP_WINDOW):
+    """The step `code` is valid for — within `window` steps of now and later
+    than `last_step` — or None. Every candidate is compared in constant
+    time, and all of them are compared whatever matched."""
+    import hmac as _h
+    typed = re.sub(r"\s", "", code or "")
+    if not secret or not re.fullmatch(r"\d{%d}" % TOTP_DIGITS, typed):
+        return None
+    now_step = totp_step(now)
+    found = None
+    for step in range(now_step - window, now_step + window + 1):
+        if _h.compare_digest(totp_code(secret, step), typed) and found is None:
+            found = step
+    if found is None or (last_step is not None and found <= int(last_step)):
+        return None
+    return found
+
+
+def totp_uri(username: str, secret: str) -> str:
+    """The otpauth:// URI an authenticator app reads from the QR code. It
+    carries the secret: it is only ever rendered into the enrolment
+    response, never logged, stored or sent to a third party."""
+    from urllib.parse import quote
+    label = quote(TOTP_ISSUER, safe="") + ":" + quote(username or "admin", safe="")
+    return (f"otpauth://totp/{label}?secret={secret}&issuer={quote(TOTP_ISSUER, safe='')}"
+            f"&algorithm=SHA1&digits={TOTP_DIGITS}&period={TOTP_STEP_SECONDS}")
+
+
+def totp_qr_data_uri(uri: str) -> str:
+    """The QR code for `uri` as an SVG data URI, drawn here (the qrcode
+    package) — never by a third-party QR service, which would be handed the
+    secret."""
+    import base64
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathFillImage, box_size=10, border=4)
+    svg = img.to_string()
+    if isinstance(svg, str):
+        svg = svg.encode("utf-8")
+    return "data:image/svg+xml;base64," + base64.b64encode(svg).decode("ascii")
+
+
+def totp_secret_groups(secret: str) -> str:
+    """The secret in groups of four, for typing into an app by hand."""
+    return " ".join(secret[i:i + 4] for i in range(0, len(secret), 4))
+
+
+def totp_available() -> bool:
+    """Whether the app method can be offered: the secret must be stored
+    encrypted, so it needs a working CREDENTIAL_KEY."""
+    try:
+        import credentials
+        return credentials.key_state() == "ok"
+    except Exception:
+        return False
+
+
+def _totp_seal(secret: str) -> str:
+    import credentials
+    if credentials.key_state() != "ok":
+        raise RuntimeError("CREDENTIAL_KEY is not set, so an authenticator secret cannot be stored encrypted")
+    sealed = credentials.encrypt(secret)
+    if not sealed or not sealed.startswith(credentials.PREFIX) or credentials.decrypt(sealed) != secret:
+        raise RuntimeError("the authenticator secret could not be encrypted")
+    return sealed
+
+
+def _totp_open(sealed):
+    if not sealed:
+        return None
+    import credentials
+    if not str(sealed).startswith(credentials.PREFIX):
+        return None                 # never trust a secret that was not sealed
+    return credentials.decrypt(sealed)
+
+
+def start_totp_enrolment(user_id: int, db_path: str = DB_PATH) -> str:
+    """A new PENDING secret for this login (replacing any earlier pending
+    one), live for TOTP_PENDING_MINUTES. The active secret, if any, is
+    untouched: the login keeps signing in with its current method until a
+    code from the app confirms the new one. Returns the plaintext secret for
+    the enrolment response only. Raises without a working CREDENTIAL_KEY."""
+    secret = totp_new_secret()
+    sealed = _totp_seal(secret)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO user_totp (user_id, pending_secret, pending_expires_at, updated_at) "
+            "VALUES (?, ?, datetime('now', ?), datetime('now')) "
+            "ON CONFLICT(user_id) DO UPDATE SET pending_secret=excluded.pending_secret, "
+            "pending_expires_at=excluded.pending_expires_at, updated_at=datetime('now')",
+            (user_id, sealed, f"+{TOTP_PENDING_MINUTES} minutes"))
+        conn.commit()
+    finally:
+        conn.close()
+    return secret
+
+
+def confirm_totp_enrolment(user_id: int, code: str, now=None, db_path: str = DB_PATH) -> str:
+    """'ok' | 'wrong' | 'expired' | 'missing'. A correct code from the app
+    for the pending secret makes it this login's active secret and its
+    two-factor method 'app' (two_fa_enabled on) in one transaction; the step
+    it matched is spent. The method it replaces (email, sms or an older app
+    secret) stops working at that moment."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT pending_secret, pending_expires_at, datetime('now') > pending_expires_at AS dead "
+                           "FROM user_totp WHERE user_id=?", (user_id,)).fetchone()
+        if not row or not row["pending_secret"]:
+            return "missing"
+        if row["dead"]:
+            conn.execute("UPDATE user_totp SET pending_secret=NULL, pending_expires_at=NULL WHERE user_id=?",
+                         (user_id,))
+            conn.commit()
+            return "expired"
+        secret = _totp_open(row["pending_secret"])
+        step = totp_match(secret, code, now=now) if secret else None
+        if step is None:
+            return "wrong"
+        cur = conn.execute(
+            "UPDATE user_totp SET secret=pending_secret, last_step=?, pending_secret=NULL, "
+            "pending_expires_at=NULL, activated_at=datetime('now'), updated_at=datetime('now') "
+            "WHERE user_id=? AND pending_secret=?", (step, user_id, row["pending_secret"]))
+        if (cur.rowcount or 0) != 1:
+            conn.rollback()
+            return "missing"        # replaced by a newer QR code under us
+        conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method=? WHERE id=?", (TOTP_METHOD, user_id))
+        conn.commit()
+        return "ok"
+    finally:
+        conn.close()
+
+
+def verify_user_totp(user_id: int, code: str, now=None, db_path: str = DB_PATH) -> bool:
+    """A sign-in code from this login's authenticator app. True once per
+    30-second step: the step is claimed with a compare-and-set, so the same
+    code sent twice (or two requests racing) passes only once."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT secret, last_step FROM user_totp WHERE user_id=?", (user_id,)).fetchone()
+        if not row or not row["secret"]:
+            return False
+        secret = _totp_open(row["secret"])
+        step = totp_match(secret, code, now=now, last_step=row["last_step"]) if secret else None
+        if step is None:
+            return False
+        cur = conn.execute("UPDATE user_totp SET last_step=?, updated_at=datetime('now') "
+                           "WHERE user_id=? AND (last_step IS NULL OR last_step < ?)", (step, user_id, step))
+        conn.commit()
+        return (cur.rowcount or 0) == 1
+    finally:
+        conn.close()
+
+
+def totp_pending_live(user_id: int, db_path: str = DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT 1 FROM user_totp WHERE user_id=? AND pending_secret IS NOT NULL "
+                           "AND pending_expires_at > datetime('now')", (user_id,)).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
+def clear_user_totp(user_id: int, db_path: str = DB_PATH) -> None:
+    """Forget this login's authenticator secrets, active and pending."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM user_totp WHERE user_id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def uses_authenticator_app(user) -> bool:
+    """An internal login whose two-factor is on and comes from an app."""
+    return bool(user and is_internal_login(user) and user_two_factor_enrolled(user)
+                and (user.get("two_fa_method") or "") == TOTP_METHOD)
+
+
+def second_factor_throttle_key(user):
+    """A per-login throttle key for a sign-in code that is not single-use
+    per challenge. An emailed or texted code is new for every sign-in, so
+    the per-address budget ("2fa:<ip>") bounds guessing it; an app's secret
+    is fixed, so its guesses are also bounded per login, from any address."""
+    return f"2fa-app:{user['id']}" if uses_authenticator_app(user) else None
+
+
+def check_sign_in_code(user, restaurant_id: int, user_id: int, code: str, pending: str,
+                       db_path: str = DB_PATH) -> str:
+    """'ok' | 'wrong' | 'expired' | 'missing' for the code typed at a
+    sign-in's second step (not consumed — the caller ends the challenge).
+    A login on the app method is checked against its authenticator only: the
+    challenge's own random code was never sent anywhere and never passes.
+    Everyone else: the emailed or texted code (check_two_fa_code). A backup
+    code is the caller's next try on 'wrong', for both."""
+    if uses_authenticator_app(user) and user.get("id") == user_id:
+        return "ok" if verify_user_totp(user_id, code, db_path=db_path) else "wrong"
+    return check_two_fa_code(restaurant_id, user_id, code, pending=pending, consume=False, db_path=db_path)
 
 
 # ── 2FA challenges (SEC-20) ─────────────────────────────────────────────────
@@ -2541,11 +2822,13 @@ def create_user(restaurant_id: int, username: str, email: str,
 
 def clear_user_two_factor(user_id: int, db_path: str = DB_PATH) -> None:
     """An internal login's own second factor off: the flag and method, its
-    backup codes, and the devices it remembered."""
+    backup codes, its authenticator-app secrets, and the devices it
+    remembered."""
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE users SET two_fa_enabled=0, two_fa_method=NULL WHERE id=?", (user_id,))
         conn.execute("DELETE FROM user_backup_codes WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM user_totp WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (user_id,))
         conn.commit()
     finally:
@@ -2978,6 +3261,14 @@ def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
+    # Their private memory notes leave with them — archived for the owner to
+    # see and keep or let go, no longer steering prompts no one can read
+    # (memory re-audit 9/29/26, R3 revoked_login). Never blocks the revoke.
+    try:
+        import owner_memory
+        owner_memory.retire_departed(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[auth] departed login's memory not retired rid={restaurant_id}: {e}")
     return {"ok": True}
 
 
@@ -4313,6 +4604,36 @@ def record_view_as_write(ctx, status):
         pass
 
 
+# Reads through a view-as session that are recorded like its writes (memory
+# re-audit 9/29/26, PEOPLE-20): the owner's memory in Account and Ask's
+# history and chats. Support reading them is support's act, kept in the
+# fleet audit as "view_as_read" — web and mobile paths alike.
+_VIEW_AS_LOGGED_READS = re.compile(
+    r"/(account/memory|ask-cavnar/history|ask-cavnar/conversations(/\d+)?)/?$")
+
+
+def record_view_as_read(ctx):
+    """One admin_events row ("view_as_read") when a view-as session reads
+    one of _VIEW_AS_LOGGED_READS: the admin behind it, the login it was
+    viewing as and the path. Never raises."""
+    if not ctx:
+        return
+    try:
+        if request.method not in ("GET", "HEAD") or not _VIEW_AS_LOGGED_READS.search(request.path or ""):
+            return
+        import admin_events
+        who = ctx.get("acting_admin") or f"admin #{ctx.get('acting_admin_id')}"
+        admin_events.record_admin_action(
+            {"id": ctx.get("acting_admin_id"), "username": who}, "view_as_read",
+            restaurant_id=ctx.get("restaurant_id"), target=f"user:{ctx.get('as_user_id')}",
+            after={"actor_role": ctx.get("acting_admin_role"), "as_user_id": ctx.get("as_user_id"),
+                   "as_username": ctx.get("as_username"), "path": request.path, "endpoint": request.endpoint},
+            result="ok",
+            summary=f"{who} (viewing as {ctx.get('as_username')}) read {request.path}")
+    except Exception:
+        pass
+
+
 # Posts through a view-as session that change nothing and are not recorded
 # as the admin's writes: the web tab ping, which admin_routes skips for a
 # view-as session (it fires on every tab switch and would bury real writes).
@@ -4406,6 +4727,8 @@ def login_required(f):
             return moved
         if view_as and request.method not in _SAFE_METHODS:
             return _run_view_as_write(f, args, kwargs, user, view_as)
+        if view_as:
+            record_view_as_read(view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -4675,6 +4998,8 @@ def mobile_login_required(f):
             return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         if view_as and request.method not in _SAFE_METHODS:
             return _run_view_as_write(f, args, kwargs, user, view_as)
+        if view_as:
+            record_view_as_read(view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 

@@ -141,6 +141,12 @@ LOSS_VIEW = "loss.view"
 # models.reply_voice_sql reads the grant — and it never earns auto-approve
 # trust, which rests on the account holder's own approvals.
 REVIEWS_VOICE = "reviews.voice"
+# The same for marketing (memory re-audit 9/29/26, LOOPS-15): a login the
+# owner marks as writing posts, emails and texts in the restaurant's voice —
+# its sent pieces and edits teach the marketing generators as the account
+# holder's do (marketing_voice._principal_rows reads the grant). A GM who
+# writes every post used to teach nothing. It opens no route and no data.
+MARKETING_VOICE = "marketing.voice"
 
 # What an owner may grant an individual login on top of its role, per
 # location (permission_grants). A fixed list on purpose: administering logins,
@@ -149,6 +155,7 @@ GRANTABLE = {
     FOOD_COST_VIEW: "Food cost & margins",
     LOSS_VIEW: "Comps & voids",
     REVIEWS_VOICE: "Writes replies in our voice",
+    MARKETING_VOICE: "Writes posts in our voice",
 }
 # Roles a grant can be given to. Owners already hold everything; employees
 # are PIN identities with no console at all.
@@ -359,6 +366,30 @@ def acting_via(user=None):
         return None
     return {"admin_id": ctx.get("acting_admin_id"), "admin": ctx.get("acting_admin"),
             "role": ctx.get("acting_admin_role") or "admin"}
+
+
+def acting_login_id(user):
+    """The login a request's own history belongs to: the admin (or support
+    login) behind a view-as session — never the owner it views as — else
+    the login itself; None without one. Read from the login dict only.
+
+    What an admin does through view-as is support's, not the owner's
+    (memory re-audit 9/29/26, PEOPLE-7 / PEOPLE-20): Ask chats, summaries,
+    topics and ratings are stored and read under this id, so a view-as
+    chat is a separate support thread the owner never sees in their
+    history or "often asks", and support never reads the owner's past
+    chats or their author-only memory. Never raises."""
+    if not isinstance(user, dict):
+        return None
+    try:
+        if user.get("acting_admin_id") is not None:
+            return int(user["acting_admin_id"])
+        if user.get("acting_admin_role") or str(user.get("device_type") or "") == "admin-view-as":
+            # A view-as with no admin named reads and writes as nobody's.
+            return -1
+        return int(user["id"]) if user.get("id") is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def principal_only(user, what="this"):

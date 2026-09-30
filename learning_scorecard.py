@@ -46,6 +46,16 @@ log = logging.getLogger(__name__)
 SCORECARD_VERSION = 1
 FATIGUE_SHARE = 0.75
 FATIGUE_MIN_N = 20              # admin_ops.RAS_MIN_N: below it a rate is noise
+# The throttle's reading (memory re-audit 9/29/26, LOOPS-5 / QUALITY-8): the
+# episodes SETTLED in the last FATIGUE_WINDOW_DAYS (by when they settled —
+# an ignored card settles when it expires), or, when that is fewer than
+# FATIGUE_MIN_N, the newest FATIGUE_MIN_N settled in FATIGUE_HORIZON_DAYS.
+# It was the calendar month of first showing, so on the 1st every fatigued
+# restaurant's flag reset to the new month's empty row and the throttle
+# lifted whether or not the owner had recovered. The month's own fatigue
+# figure stays in the curve (compute_month); only the throttle reads this.
+FATIGUE_WINDOW_DAYS = 30
+FATIGUE_HORIZON_DAYS = 60
 FROZEN_AFTER_DAYS = 7           # a closed month is re-read this long for late data
 # name: (better direction, worsening step, flat band, good level)
 CURVES = {
@@ -87,6 +97,12 @@ def init_learning_scorecard(db_path: str = DB_PATH):
             computed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, month)
         )""")
+        # The throttle's own reading, written on the month in progress
+        # (rolling_fatigue): fatigue_now 0/1 and what it rests on.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(learning_scorecards)")}
+        for col, typ in (("fatigue_now", "INTEGER"), ("fatigue_now_json", "TEXT")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE learning_scorecards ADD COLUMN {col} {typ}")
         conn.commit()
     finally:
         conn.close()
@@ -129,7 +145,10 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
                      "AND approved_at >= ? AND approved_at <= ?", (restaurant_id, s, e_stamp))
         if r:
             out["metrics"]["reply_edit_rate"] = _rate(r[0]["edited"] or 0, r[0]["n"] or 0)
+        # Never an admin's rating (support, view-as) — excluded as every
+        # other ask_feedback reader does (memory re-audit 9/29/26, QUALITY-19).
         r = _q(conn, "SELECT SUM(helpful) AS k, COUNT(*) AS n FROM ask_feedback WHERE restaurant_id=? "
+                     "AND COALESCE(authority,'') != 'admin' "
                      "AND created_at >= ? AND created_at <= ?", (restaurant_id, s, e_stamp))
         if r:
             out["metrics"]["ask_helpful_rate"] = _rate(r[0]["k"] or 0, r[0]["n"] or 0)
@@ -189,6 +208,73 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
                                               "n": len(shares)}
     except Exception as ex:
         log.warning("learning_scorecard: draft acceptance unreadable for rid=%s: %s", restaurant_id, ex)
+    return out
+
+
+def _settled_on(ep):
+    """When an episode settled: an answer's close (or the answer itself), an
+    ignored card's expiry (created + rec_ledger.EXPIRE_AFTER_DAYS when the
+    nightly expiry has not closed it yet). None for one still unsettled."""
+    import rec_ledger
+    import rec_learning
+    if not rec_learning._settled(ep):
+        return None
+    if ep.get("state") == "ignored" and ep.get("status") != "expired":
+        start = rec_ledger.chain_start(ep)
+        try:
+            return (datetime.strptime(str(start)[:19], "%Y-%m-%d %H:%M:%S")
+                    + timedelta(days=rec_ledger.EXPIRE_AFTER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            return None
+    if ep.get("closed_at"):
+        return str(ep["closed_at"])[:19]
+    answers = [e["at"] for e in ep.get("events") or () if e.get("event") in rec_ledger.TERMINAL]
+    return str(answers[-1])[:19] if answers else str(ep.get("last_event_at") or ep.get("created_at") or "")[:19]
+
+
+def rolling_fatigue(restaurant_id, today=None, db_path=None) -> dict:
+    """The fatigue throttle's reading for `today`: {"fatigued", "share",
+    "n", "window_days", "since"} over the episodes that settled in the last
+    FATIGUE_WINDOW_DAYS — or, below FATIGUE_MIN_N, the newest FATIGUE_MIN_N
+    that settled in FATIGUE_HORIZON_DAYS — dismissed or ignored of settled
+    (rec_learning's states: a distrust, a timing answer, a decline taken
+    back and an unopened email are in no denominator). Never raises."""
+    import rec_ledger
+    import rec_learning
+    today = today or date.today()
+    # Stamps are UTC and `today` is a local day: a day's slack at the top
+    # keeps an evening's answers (already tomorrow in UTC) in the reading.
+    end = f"{(today + timedelta(days=1)).isoformat()} 23:59:59"
+    horizon = (today - timedelta(days=FATIGUE_HORIZON_DAYS)).isoformat() + " 00:00:00"
+    window = (today - timedelta(days=FATIGUE_WINDOW_DAYS)).isoformat() + " 00:00:00"
+    created_since = (today - timedelta(days=FATIGUE_HORIZON_DAYS + rec_ledger.EXPIRE_AFTER_DAYS + 1)).isoformat()
+    out = {"fatigued": False, "share": None, "n": 0, "window_days": FATIGUE_WINDOW_DAYS, "since": None}
+    try:
+        conn = get_conn(db_path)
+        try:
+            eps = rec_learning._load(conn, restaurant_id, since=f"{created_since} 00:00:00", lean=True)
+        finally:
+            conn.close()
+    except Exception as ex:
+        log.warning("learning_scorecard: rolling fatigue unreadable for rid=%s: %s", restaurant_id, ex)
+        return out
+    settled = []
+    for x in eps:
+        if not x.get("shown") or x.get("state") == "superseded":
+            continue
+        on = _settled_on(x)
+        if on and horizon <= on <= end:
+            settled.append((on, x))
+    settled.sort(key=lambda p: p[0], reverse=True)
+    recent = [p for p in settled if p[0] >= window]
+    if len(recent) < FATIGUE_MIN_N:
+        recent = settled[:FATIGUE_MIN_N]
+    if not recent:
+        return out
+    lost = sum(1 for _on, x in recent if x.get("state") in ("dismissed", "ignored"))
+    share = round(lost / len(recent), 3)
+    out.update({"share": share, "n": len(recent), "since": recent[-1][0][:10],
+                "fatigued": bool(len(recent) >= FATIGUE_MIN_N and share >= FATIGUE_SHARE)})
     return out
 
 
@@ -276,11 +362,14 @@ def snapshot(restaurant_id, today=None, db_path=None) -> dict:
         except Exception as e:
             log.warning("learning_scorecard: month not stored for rid=%s: %s", restaurant_id, e)
     fl = flags(scorecards(restaurant_id, months=6, db_path=db_path))
+    now = rolling_fatigue(restaurant_id, today=today, db_path=db_path)
     try:
         conn = get_conn(db_path)
         try:
-            conn.execute("UPDATE learning_scorecards SET flags_json=? WHERE restaurant_id=? AND month=?",
-                         (json.dumps(fl), restaurant_id, today.strftime("%Y-%m")))
+            conn.execute("UPDATE learning_scorecards SET flags_json=?, fatigue_now=?, fatigue_now_json=? "
+                         "WHERE restaurant_id=? AND month=?",
+                         (json.dumps(fl), 1 if now["fatigued"] else 0, json.dumps(now), restaurant_id,
+                          today.strftime("%Y-%m")))
             conn.commit()
         finally:
             conn.close()
@@ -290,22 +379,28 @@ def snapshot(restaurant_id, today=None, db_path=None) -> dict:
 
 
 def fatigued(restaurant_id, db_path=None) -> bool:
-    """Whether this restaurant is past the fatigue line: its latest stored
-    month (this month, else the last) says so. Never raises."""
+    """Whether this restaurant is past the fatigue line, as the nightly pass
+    last read it (rolling_fatigue, stored as fatigue_now on the latest row,
+    this month's or last month's): the episodes settled in the last 30 days,
+    never the calendar month — so the throttle no longer lifts itself on the
+    1st (LOOPS-5). A row written before fatigue_now existed falls back to its
+    month's flag. Never raises."""
     if not restaurant_id:
         return False
     try:
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT fatigued FROM learning_scorecards WHERE restaurant_id=? AND month >= ? "
-                               "ORDER BY month DESC LIMIT 1",
+            row = conn.execute("SELECT fatigued, fatigue_now FROM learning_scorecards WHERE restaurant_id=? "
+                               "AND month >= ? ORDER BY month DESC LIMIT 1",
                                (restaurant_id, (date.today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m"))
                                ).fetchone()
         finally:
             conn.close()
     except Exception:
         return False
-    return bool(row and row["fatigued"])
+    if not row:
+        return False
+    return bool(row["fatigue_now"] if row["fatigue_now"] is not None else row["fatigued"])
 
 
 def volume_limit(restaurant_id, surface, default) -> int:

@@ -41,6 +41,8 @@ _UNTRUSTED_CONTENT_TOOLS = {
     # Earlier chats and stored reads can quote guests; close-outs are the
     # closer's own words (memory audit 9/29/26, conversations / ask_reach).
     "read_past_conversations", "read_recent_reads", "read_closeouts",
+    # Competitor names are Google's listing text (re-audit 9/29/26, INVENTORY-6).
+    "read_market_history",
 }
 
 _UNTRUSTED_NOTE = (
@@ -65,7 +67,22 @@ _UNTRUSTED_NOTE = (
 # little: the payload's _UNTRUSTED_NOTE already names review authors
 # explicitly, and a name is not prose an instruction can hide inside the way
 # a paragraph is. The delimiters go where the sentences are.
-_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview")
+_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview",
+                     # A reviewer's display name is attacker-controlled and the
+                     # drafter already fences it (drafter.py); read_alerts
+                     # returned it bare (memory re-audit 9/29/26, PROMPTS-6).
+                     "author", "review_author")
+# Fenced in EVERY read tool's result, listed or not — the fields that are
+# someone's words wherever they appear (PROMPTS-6: taint by field, not by a
+# hand-kept list of tool names). "text" is not here: many results carry a
+# "text" this code wrote (a suggestion, a headline), and fencing those would
+# taint every turn that read them; it is fenced for the listed tools above.
+_UNTRUSTED_EVERYWHERE = tuple(f for f in _UNTRUSTED_FIELDS if f != "text")
+# Per tool, the row fields that are a person's (or a model's) words in THAT
+# result: a manager's decline reason, an issue note, a model-written card
+# title (read_decisions returned them bare — PROMPTS-6). Only inside rows;
+# a result's own top-level "note" / "reason" is this code's guidance.
+_TOOL_ROW_FIELDS = {"read_decisions": ("reason", "note", "title")}
 
 # Ceiling on rows any single read tool returns. The model pays for every
 # token of this, and 20 reviews is plenty to answer "what are people
@@ -350,19 +367,27 @@ def _viewer_user(viewer):
 
 
 def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
-              audience=None, _viewer=None):
+              audience=None, replaces=None, scope=None, _viewer=None):
     """Record something the owner (or a teammate) said that should survive
     this conversation — typed (owner_memory.remember: kind, modules,
     subject, dates, audience) and stamped with who said it, so every
     generator that reads owner memory reads it, and a manager's remark is
     never shown as the owner's (memory audit 9/29/26, owner_lanes /
     owner_reach). A measurable target is refused here and pointed at
-    set_goal, where it is measured and becomes the modules' target."""
+    set_goal, where it is measured and becomes the modules' target — in
+    any kind (memory re-audit 9/29/26, R3). The same words someone already
+    said are a confirmation of theirs; a note that looks like one already
+    kept comes back as `similar`, to ask whether it replaces it (`replaces`
+    archives the older one)."""
     import owner_memory
     try:
         saved = owner_memory.remember(restaurant_id, fact, kind=kind or "context", modules=modules,
                                       subject=subject, valid_until=valid_until, due_on=due_on, audience=audience,
-                                      user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask")
+                                      user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask",
+                                      replaces=replaces,
+                                      # Every location of the organisation, when a group
+                                      # owner says so (memory re-audit 9/29/26, PEOPLE-13).
+                                      scope="org" if scope == "org" else None)
     except ValueError as e:
         return {"error": str(e)}
     out = {"remembered": saved["fact"], "kind": saved["kind"], "audience": saved["audience"]}
@@ -370,9 +395,24 @@ def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, v
         out["until"] = saved["valid_until"]
     if saved.get("due_on"):
         out["due_on"] = saved["due_on"]
+    if saved.get("confirmed"):
+        out["note"] = "Already remembered — noted that they said it too."
+    if saved.get("replaced"):
+        out["replaced"] = saved["replaced"]
+    if saved.get("similar"):
+        out["similar"] = [s["fact"] for s in saved["similar"]]
+        out["ask"] = ("These notes look like the same thing. If the new one replaces one, ask them, then call "
+                      "remember again with replaces set to that note's text.")
     if saved.get("evicted"):
-        out["note"] = ("That lane was full, so the oldest note of this kind moved to the archive the owner "
-                       "can see in Account.")
+        gone = [e["fact"] for e in saved.get("evicted_facts") or []]
+        out["note"] = ("That lane was full, so its least-used note moved to the archive the owner can see in "
+                       "Account" + (f": “{gone[0]}”." if gone else "."))
+    if saved.get("private_default"):
+        # Personnel or money (owner_memory.is_private — memory re-audit
+        # PEOPLE-10): said, so the person knows who will read it.
+        out["audience_note"] = ("Kept for the account holders (and whoever said it) only, because it is about "
+                                "someone's job or pay. Tell them, and that 'Share with the team' beside it in "
+                                "Account changes that.")
     return out
 
 
@@ -808,7 +848,10 @@ def _read_business_snapshot(restaurant_id, _viewer=None):
     return {
         "has_data": True,
         "fix_first": brief.get("fix_first"),
+        # Only the links the owner has not answered (CROSSMODULE-2); the
+        # rest are in read_restaurant_memory's link history, labelled.
         "links": brief.get("links"),
+        "links_answered": brief.get("links_answered") or 0,
         "money": brief.get("money"),
         "reviews": brief.get("reviews"),
         "food_cost": brief.get("food_cost"),
@@ -1261,17 +1304,51 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
     if isinstance(feats, dict) and denied:
         feats = {k: v for k, v in feats.items() if intelligence.visible(k, denied)}
     slopes = {k: v for k, v in (mem["slopes"] or {}).items() if intelligence.visible(k, denied)}
+    # The advice record, projected by the recommendation rules too (memory
+    # re-audit PEOPLE-11): a kind — and the subjects declined under it — only
+    # when this login may see what it rests on (rec_learning.line_gate: its
+    # modules, a loss, owner-only figures). A manager was told "reprice:
+    # Salmon, Short rib" and a loss kind's subjects.
+    rec = mem["record"]
+    who = _viewer_user(_viewer)
+    if who is not None:
+        import rec_learning
+        gates = rec_learning.record_gates(restaurant_id)
+
+        def _ok(kind):
+            return rec_learning.viewer_sees_record(who, "kind", kind, gates)
+    else:
+        def _ok(kind):
+            return True
     return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
             # `declined`: advice said "not for us" 3+ times in 180 days, by
             # subject (memory audit 9/29/26, "one_hide") — `ignored` keeps
             # the kinds for older readers.
-            "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
-                       "declined": mem["record"].get("declined_detail") or [],
+            "record": {"worked": [k for k in rec["worked"] if _ok(k)],
+                       "ignored": [k for k in rec["ignored"] if _ok(k)],
+                       "declined": [d for d in rec.get("declined_detail") or [] if _ok(d.get("kind"))],
                        "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
-                                   for k, v in mem["record"]["by_kind"].items()}},
+                                   for k, v in rec["by_kind"].items() if _ok(k)}},
             "slopes": slopes, "features": feats,
-            "note": "This restaurant's own history only."}
+            # Every cross-module link kept, open or answered, labelled
+            # (re-audit 9/29/26, CROSSMODULE-15): "have we seen this Friday
+            # problem before, and did I pass on it?" — projected by the
+            # login's module views (link_memory.LINE_MODULE).
+            "links": _link_history(restaurant_id, denied),
+            "note": "This restaurant's own history only.",
+            "links_note": ("What two modules pointed at together, when it was found and how it ended — a link "
+                           "marked 'you said not for us' is never re-proposed as new; say it was declined and "
+                           "when.")}
+
+
+def _link_history(restaurant_id, denied):
+    try:
+        import link_memory
+        return link_memory.history_lines(restaurant_id, denied=denied)
+    except Exception as e:
+        log.warning("read_restaurant_memory: link history unavailable: %s", e)
+        return []
 
 
 def _read_platform_intelligence(restaurant_id, _viewer=None):
@@ -1360,8 +1437,11 @@ def _read_open_issues(restaurant_id, _viewer=None):
     # with LOSS_VIEW (viewer_restaurant stamps it), never the routed manager
     # who may be their subject (re-audit A-8).
     loss = getattr(_viewer, "_ask_sees_loss", True) if _viewer is not None else True
-    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20, sees_loss=loss)
-    return {"summary": issues.summary(restaurant_id, sees_loss=loss),
+    # ...and no issue built from a module this login may not open (a food
+    # cost plan item — memory re-audit PEOPLE-14).
+    hide = issues.hidden_modules(_viewer_user(_viewer)) if _viewer_user(_viewer) is not None else frozenset()
+    rows = issues.list_issues(restaurant_id, status="unresolved", limit=20, sees_loss=loss, hide_modules=hide)
+    return {"summary": issues.summary(restaurant_id, sees_loss=loss, hide_modules=hide),
             "issues": [{k: r.get(k) for k in ("id", "title", "severity", "status", "assignee_name",
                                               "created_at", "acknowledged_at", "escalated_at")}
                        for r in rows],
@@ -1383,12 +1463,22 @@ def _read_goals(restaurant_id, _viewer=None):
 
 
 def _read_outcomes(restaurant_id, _viewer=None):
+    """Results and trackers this login may see — the REST route's rule
+    (outcomes.visible_to: the metric, the module it is credited to, and the
+    recommendation behind it — owner-only, a loss, a module it lacks), not
+    only the metric (memory re-audit PEOPLE-2)."""
     import outcomes
+    who = _viewer_user(_viewer)
+    linked = outcomes.linked_episodes(restaurant_id) if who is not None else None
+
+    def _sees(r):
+        if not metric_visible(_viewer, r.get("metric")):
+            return False
+        return who is None or outcomes.visible_to(who, dict(r, restaurant_id=restaurant_id), linked=linked)
     closed = [dict(r, summary=outcomes.summarise(r))
               for r in outcomes.list_outcomes(restaurant_id, limit=20)
-              if r.get("status") != "tracking" and metric_visible(_viewer, r.get("metric"))]
-    return {"tracking": [r for r in outcomes.progress(restaurant_id)
-                         if metric_visible(_viewer, r.get("metric"))],
+              if r.get("status") != "tracking" and _sees(r)]
+    return {"tracking": [r for r in outcomes.progress(restaurant_id) if _sees(r)],
             "results": closed,
             "caveat": outcomes.CAUSATION_CAVEAT}
 
@@ -1401,7 +1491,7 @@ def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None,
     holder to confirm in Goals (memory audit 9/29/26, owner_goals)."""
     import goals
     if not metric_visible(_viewer, metric):
-        return {"error": "Food cost goals are for logins that can see food cost."}
+        return {"error": "That goal is for logins that can see its figures (food cost, or comps and voids)."}
     user = _viewer_user(_viewer)
     try:
         from permissions import answer_authority
@@ -1463,7 +1553,7 @@ def track_rec_key(restaurant_id, metric, source_key=None, db_path=None):
 def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _viewer=None):
     import outcomes
     if not metric_visible(_viewer, metric):
-        return {"error": "Food cost tracking is for logins that can see food cost."}
+        return {"error": "Tracking that is for logins that can see its figures (food cost, or comps and voids)."}
     if not title or not metric:
         return {"error": "title and metric are required"}
     # One tracker per metric, whoever started it. The model's title (and any
@@ -1770,7 +1860,12 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
             payload, at = insight_store.latest(restaurant_id, kind)
             text = _read_text(payload)
             if text.strip():
-                reads.append({"what": label, "date": mdy(str(at or "")[:10]), "text": text[:1500]})
+                # Past the age the page stops serving it at, the read is
+                # marked stale (memory re-audit 9/29/26, FORGET-18): a months-
+                # old "this week waste doubled" came over as the Food Cost read
+                # with only a date — as the competitor read beside it already is.
+                reads.append({"what": label, "date": mdy(str(at or "")[:10]), "text": text[:1500],
+                              "stale": insight_store.is_stale(at)})
     except Exception as e:
         log.debug("read_recent_reads: stored reads unavailable: %s", e)
     if "intel" not in denied and (not want or want in ("intel", "competitors", "competitor")):
@@ -1811,7 +1906,8 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
     return {"reads": reads[:20], "count": len(reads),
             "note": ("What Cavnar AI already told this owner, newest first, each with its date. These are "
                      "Cavnar AI's own earlier words — quote one as what it said then, with its date; check a "
-                     "figure again with the module's own read tool before calling it current."
+                     "figure again with the module's own read tool before calling it current. A read marked "
+                     "stale is over a week old: its \"this week\" and \"today\" mean then, never now."
                      if reads else "No stored read from Cavnar AI for that — say so.")}
 
 
@@ -1867,7 +1963,8 @@ def _read_upcoming(restaurant_id, days=14, _viewer=None):
         import demand_signals
         for s in demand_signals.upcoming(restaurant_id, today.isoformat(), end.isoformat()) or []:
             extra = {k: s[k] for k in ("covers", "lift_pct") if s.get(k) is not None}
-            add(s.get("date"), "reservations" if s.get("kind") == "reservations" else "event", s.get("label"),
+            # A scheduled post is a post, not an event (CROSSMODULE-7).
+            add(s.get("date"), s.get("kind") if s.get("kind") in ("reservations", "post") else "event", s.get("label"),
                 **extra)
     except Exception as e:
         log.debug("read_upcoming: demand signals unavailable: %s", e)
@@ -1984,6 +2081,38 @@ def _read_forecast_record(restaurant_id, _viewer=None):
     return out
 
 
+def _read_market_history(restaurant_id, days=180):
+    """The public history (re-audit 9/29/26, INVENTORY-6): competitors that
+    opened, closed or moved their Google rating nearby, and this
+    restaurant's own rating over the window — event_memory.market_summary,
+    the reading the competitor read and the weekly plan also say. Competitor
+    names are Google's listing text: data, fenced."""
+    import event_memory
+    window = _days(days, 180, 730)
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        today = None
+    s = event_memory.market_summary(restaurant_id, today=today, days=window)
+    from time_utils import mdy
+    events = [{"name": ev.get("name"), "kind": ev.get("kind"), "from_rating": ev.get("from_rating"),
+               "to_rating": ev.get("to_rating"), "review_count": ev.get("review_count"),
+               "seen": mdy(ev.get("observed_on")), "text": it["text"]}
+              for it in s["items"] for ev in (it["event"],)]
+    own = dict(s["own"]) if s["own"] else None
+    if own:
+        for k in ("from_week", "to_week"):
+            wk = event_memory._week_start(own.pop(k))
+            own[k.replace("_week", "_week_of")] = mdy(wk) if wk else None
+    return {"window_days": window, "since": mdy(s["since"]), "events": events, "n_events": s["n_events"],
+            "own_rating": own,
+            "note": ("What Google's public listings showed at each weekly competitor check — what happened, "
+                     "not why. A rating move is between two checks; an opening needs a new place with few "
+                     "reviews, a closure Google's own closed status." if events or own else
+                     "No market event or rating change on file in that window.")}
+
+
 def _read_closeouts(restaurant_id, days=7):
     """The last close-outs — the closer's own account of each night (what
     went well and wrong, what ran out, who didn't make it, equipment, the
@@ -2068,7 +2197,9 @@ def _read_past_conversations(restaurant_id, query=None, days=90, _viewer=None):
     import ask_conversations
     from ai_guard import wrap_untrusted
     user = _viewer_user(_viewer)
-    uid = (user or {}).get("id")
+    # Through view-as, support's own chats — never the owner's (PEOPLE-7/20).
+    from permissions import acting_login_id
+    uid = acting_login_id(user)
     current = getattr(_viewer, "_ask_conversation_id", None) if _viewer is not None else None
     rows = ask_conversations.past_conversations(restaurant_id, uid, query=query, days=_days(days, 90, 400),
                                                exclude_id=current)
@@ -2297,7 +2428,9 @@ TOOLS = [
                             "actually obeys.\n"
                             "audience: 'team' when managers should know it too (most operational facts), "
                             "'principals' for anything private to the owner (personnel changes, pay, money, "
-                            "selling), 'author' for a personal reminder."),
+                            "selling), 'author' for a personal reminder.\n"
+                            "If the result lists `similar` notes, ask whether the new one replaces one of them "
+                            "(e.g. 'closed Mondays' then 'open Mondays now'); if so, call again with replaces."),
             "input_schema": {"type": "object", "properties": {
                 "fact": {"type": "string", "description": "One short sentence, in their own terms."},
                 "kind": {"type": "string", "enum": ["constraint", "context", "preference", "goal", "followup"],
@@ -2314,6 +2447,13 @@ TOOLS = [
                                 "description": "YYYY-MM-DD for a fact that stops being true (a season, a hire)."},
                 "due_on": {"type": "string", "description": "YYYY-MM-DD, for a followup."},
                 "audience": {"type": "string", "enum": ["team", "principals", "author"]},
+                "replaces": {"type": "string",
+                             "description": ("The exact text of a note this one replaces (they said it changed) — "
+                                             "that note is archived. Only when they confirmed it.")},
+                "scope": {"type": "string", "enum": ["location", "org"],
+                          "description": ("'org' only when they say it holds for EVERY one of their locations "
+                                          "('we close every location on Thanksgiving'); only an owner of all "
+                                          "the locations may. Omit for this location.")},
             }, "required": ["fact"]},
         },
     },
@@ -2740,7 +2880,8 @@ TOOLS = [
             "description": (
                 "THIS RESTAURANT'S OWN LEARNED HISTORY: busiest and quietest weekdays, seasonal peak and trough "
                 "months, which recommendation kinds measurably worked here and which the owner keeps declining, "
-                "and how its key measures are trending week to week. Its own data only. Call this before "
+                "how its key measures are trending week to week, and the history of every cross-module link "
+                "(found when, still open, declined, done or ended). Its own data only. Call this before "
                 "recommending timing, staffing or a kind of action the owner may already have judged."
             ),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -2834,6 +2975,21 @@ TOOLS = [
                 "projection's, and the daily report's graded predictions. Call it for 'how accurate has your "
                 "forecast been', 'can I trust the projection', before leaning on any forecast."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_market_history,
+        "module": None,
+        "spec": {
+            "name": "read_market_history",
+            "description": (
+                "THE MARKET'S HISTORY: competitors that opened, closed or moved their Google rating nearby, with "
+                "the date each was seen, and this restaurant's own Google rating over the same window. Call it "
+                "for 'did anyone new open near us', 'when did our rating start slipping', 'has the competition "
+                "changed since spring'."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far back. Default 180."}}},
         },
     },
     {
@@ -3392,7 +3548,7 @@ _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 # tool_specs) then hides those modules with no second list to keep in step.
 
 # Tools with no module flag that still read a module, by permission key.
-_INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors"}
+_INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors", "read_market_history"}
 # Write tools whose route saves for an account holder only.
 _PRINCIPAL_TOOLS = {"add_closed_date"}
 # Metrics that are the Food Cost module's numbers wherever they appear.
@@ -3438,9 +3594,19 @@ def _denied(restaurant):
 
 
 def metric_visible(restaurant, metric):
-    """A goal/outcome metric this viewer may see or set."""
-    base = (metric or "").split(":", 1)[0]
-    return not (base in _FOOD_METRICS and "inventory" in _denied(restaurant))
+    """A goal/outcome metric this viewer may see or set — the one rule
+    (metrics.metric_permission): the food-cost family (item waste too)
+    needs the Food Cost module, comps and voids LOSS_VIEW (viewer_restaurant
+    stamps _ask_sees_loss; a plain restaurant is an internal caller). Ask
+    showed a manager the owner's comp goal the REST route hid (memory
+    re-audit PEOPLE-2)."""
+    import metrics
+    need = metrics.metric_permission(metric)
+    if need == "food":
+        return "inventory" not in _denied(restaurant)
+    if need == "loss":
+        return bool(getattr(restaurant, "_ask_sees_loss", True)) if restaurant is not None else True
+    return True
 
 
 def tool_allowed(name, restaurant):
@@ -3499,35 +3665,49 @@ def is_read_tool(name):
     return bool(tool and tool["kind"] == "read")
 
 
-def reads_public_text(name):
-    """Whether this tool's result carries text a member of the public wrote."""
-    return name in _UNTRUSTED_CONTENT_TOOLS
+def reads_public_text(name, payload=None):
+    """Whether this tool's result carries text a member of the public (or
+    a teammate) wrote: a tool known to (_UNTRUSTED_CONTENT_TOOLS), or any
+    result `payload` (the JSON run_read_tool returned) in which a field was
+    fenced — taint by field, not only by a hand-kept list of tool names
+    (memory re-audit 9/29/26, PROMPTS-6)."""
+    if name in _UNTRUSTED_CONTENT_TOOLS:
+        return True
+    if payload is None:
+        return False
+    from ai_guard import UNTRUSTED_OPEN
+    return UNTRUSTED_OPEN in str(payload)
 
 
-def _mark_untrusted(node):
+def _mark_untrusted(node, _top=True, fields=_UNTRUSTED_FIELDS, row_fields=()):
     """Wrap every public-written string in a payload with ai_guard's
-    delimiters, however deep it sits.
+    delimiters, however deep it sits: `fields` anywhere, `row_fields` below
+    the payload's top level.
 
     Recursive because the shapes differ: a review's text is one level down,
     a competitor's sample review text is three. Bounded by _MAX_ROWS upstream,
     so there is no unbounded structure to walk.
     """
-    from ai_guard import wrap_untrusted
+    from ai_guard import wrap_untrusted, UNTRUSTED_OPEN
 
     def _wrap(value):
         if isinstance(value, str) and value.strip():
-            return wrap_untrusted(value)
+            # Never twice: a tool that fenced its own field (read_past_
+            # conversations' titles) is already delimited.
+            return value if value.lstrip().startswith(UNTRUSTED_OPEN) else wrap_untrusted(value)
         # "complaints" is a list of guests' own phrasings, not one string —
         # wrapping the list would put the delimiters around a Python repr.
         if isinstance(value, list):
             return [_wrap(v) for v in value]
-        return _mark_untrusted(value)
+        return _mark_untrusted(value, _top=False, fields=fields, row_fields=row_fields)
 
     if isinstance(node, dict):
-        return {k: (_wrap(v) if k in _UNTRUSTED_FIELDS else _mark_untrusted(v))
+        fenced = tuple(fields) if _top else tuple(fields) + tuple(row_fields)
+        return {k: (_wrap(v) if k in fenced
+                    else _mark_untrusted(v, _top=False, fields=fields, row_fields=row_fields))
                 for k, v in node.items()}
     if isinstance(node, list):
-        return [_mark_untrusted(v) for v in node]
+        return [_mark_untrusted(v, _top=False, fields=fields, row_fields=row_fields) for v in node]
     return node
 
 
@@ -3559,9 +3739,17 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
         if tool["kind"] == "read" and isinstance(payload, dict) and not payload.get("error") \
                 and name != "read_data_health":
             payload = _with_data_as_of(name, restaurant_id, payload, restaurant=restaurant)
-        if name in _UNTRUSTED_CONTENT_TOOLS and isinstance(payload, dict):
-            payload = _mark_untrusted(dict(payload))
-            payload["_warning"] = _UNTRUSTED_NOTE
+        # Every read's people-written fields are fenced, not only the listed
+        # tools' (PROMPTS-6): a field is untrusted by what it is, wherever it
+        # appears. A result that carried any gets the note, and the turn is
+        # tainted by it (reads_public_text on the payload).
+        if isinstance(payload, dict):
+            before = json.dumps(payload, default=str)
+            payload = _mark_untrusted(
+                dict(payload), fields=_UNTRUSTED_FIELDS if name in _UNTRUSTED_CONTENT_TOOLS else _UNTRUSTED_EVERYWHERE,
+                row_fields=_TOOL_ROW_FIELDS.get(name, ()))
+            if name in _UNTRUSTED_CONTENT_TOOLS or json.dumps(payload, default=str) != before:
+                payload["_warning"] = _UNTRUSTED_NOTE
         return json.dumps(payload, default=str)
     except TypeError as e:
         log.warning("ask_cavnar tool %s bad args %r: %s", name, tool_input, e)

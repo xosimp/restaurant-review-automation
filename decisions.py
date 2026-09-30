@@ -62,6 +62,7 @@ def _redact(rows, viewer, conn, restaurant_id):
     read_decisions tool used to carry the owner's food-cost and owner-only
     DSR decisions verbatim."""
     import json as _json
+    import metrics
     import rec_learning
     from permissions import has_permission, is_principal, FOOD_COST_VIEW
     try:
@@ -106,10 +107,12 @@ def _redact(rows, viewer, conn, restaurant_id):
         if r.get("kind") == "proposal" and r.get("_uid") is not None and r["_uid"] != viewer.get("id") \
                 and not is_principal(viewer):
             continue
-        metric = str((r.get("outcome") or {}).get("metric") or "").split(":", 1)[0]
-        if metric in _FOOD_METRICS and not has_permission(viewer, FOOD_COST_VIEW):
+        # The one metric rule (metrics.metric_permission): item waste is
+        # food cost too (memory re-audit PEOPLE-2).
+        need = metrics.metric_permission((r.get("outcome") or {}).get("metric"))
+        if need == "food" and not has_permission(viewer, FOOD_COST_VIEW):
             continue
-        if metric in _LOSS_METRICS and not loss_ok:
+        if need == "loss" and not loss_ok:
             continue
         out.append(r)
     return out
@@ -129,6 +132,26 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
     internal caller or the owner's own view."""
     conn = _conn(db_path)
     recs = {}
+    # The restaurant's day for a stored UTC stamp: 8pm Central on 9/28 was
+    # "9/29/26" in every prompt that read a decision (memory re-audit
+    # 9/29/26, PROMPTS-15 / QUALITY-17). A bare date stays as it is.
+    _tz = []
+
+    def _day(value):
+        v = str(value or "")
+        if len(v) <= 10:
+            return v[:10]
+        try:
+            import time_utils
+            if not _tz:
+                try:
+                    from models import get_restaurant as _gr
+                    _tz.append(getattr(_gr(restaurant_id), "timezone", None))
+                except Exception:
+                    _tz.append(None)
+            return time_utils.local_iso(v, _tz[0]) or v[:10]
+        except Exception:
+            return v[:10]
 
     def rec(key, title=None, kind="recommendation", when=None):
         r = recs.get(key)
@@ -147,11 +170,11 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
         try:
             for row in conn.execute("SELECT key, kind, dismissed_at, expires_at, COALESCE(times,1) AS times "
                                     "FROM home_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall():
-                r = rec(row["key"], title=_humanize(row["key"]), when=str(row["dismissed_at"] or "")[:10])
+                r = rec(row["key"], title=_humanize(row["key"]), when=_day(row["dismissed_at"]))
                 r["times_hidden"] = int(row["times"] or 1)
                 r["answer"] = {"done": "done", "not_for_us": "not for us",
                                "snooze": "snoozed"}.get(row["kind"], "hidden")
-                r["answered_on"] = str(row["dismissed_at"] or "")[:10]
+                r["answered_on"] = _day(row["dismissed_at"])
         except Exception:
             pass
         # What the owner said everywhere else — the brief, Reviews, Food,
@@ -164,24 +187,33 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
             import rec_ledger as _rl
             seen = set()
             me = (viewer or {}).get("id") if isinstance(viewer, dict) else None
+            # The newest answer per key, chosen in SQL with whose-answer
+            # rules in the WHERE (memory re-audit 9/29/26, INVENTORY-13): a
+            # LIMIT over every answer event, filtered afterwards, dropped a
+            # reasoned "not for us" older than the newest 400 answers out of
+            # every prompt although rec_events are kept 800 days. Whose
+            # decision (memory audit 9/29/26): support's answer through
+            # view-as is never the restaurant's; a manager's decline (and
+            # their taking it back) held for that manager alone, so it is
+            # theirs to read back, not the owner's "do not re-propose". A
+            # `reopened` (QUALITY-1: "Use again", a restored quiet kind) is
+            # the owner taking the answer back: when it is the newest, the
+            # key reads "asked to see it again", never "not for us".
+            bookkeeping = " ".join(f"AND e.key NOT LIKE '{p}%'" for p in _rl.BOOKKEEPING_PREFIXES)
             for row in conn.execute(
+                    "SELECT key, event, meta, at, user_id, authority, title, model_written, signature FROM ("
                     "SELECT e.key, e.event, e.meta, e.at, e.user_id, e.authority, i.title, i.model_written, "
-                    "i.signature FROM rec_events e "
-                    "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? "
-                    "AND e.event IN ('accepted','completed','dismissed','implemented') "
-                    "ORDER BY e.at DESC, e.id DESC LIMIT 400",
-                    (restaurant_id,)).fetchall():
+                    "i.signature, ROW_NUMBER() OVER (PARTITION BY e.key ORDER BY e.at DESC, e.id DESC) AS rn "
+                    "FROM rec_events e JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? "
+                    "AND e.event IN ('accepted','completed','dismissed','implemented','reopened') "
+                    "AND COALESCE(e.authority, '') != 'admin' AND e.key NOT LIKE 'ask:%' "
+                    f"{bookkeeping} "
+                    "AND NOT (COALESCE(e.authority, '') = 'delegate' AND e.event IN ('dismissed','reopened') "
+                    "AND (? IS NULL OR COALESCE(e.user_id, -1) != ?))"
+                    ") WHERE rn = 1 ORDER BY at DESC LIMIT 400",
+                    (restaurant_id, me, me)).fetchall():
                 key = row["key"] or ""
                 if key in seen or key.startswith("ask:") or not _rl.counts_in_acceptance(key):
-                    continue
-                # Whose decision (memory audit 9/29/26): support's answer
-                # through view-as is never the restaurant's; a manager's
-                # decline held for that manager alone, so it is theirs to
-                # read back, not the owner's "do not re-propose".
-                if row["authority"] == "admin":
-                    continue
-                if row["authority"] == "delegate" and row["event"] == "dismissed" \
-                        and (me is None or row["user_id"] != me):
                     continue
                 try:
                     meta = _json.loads(row["meta"] or "{}") or {}
@@ -190,12 +222,15 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 seen.add(key)
                 effect = _rl.reason_effect(meta.get("reason_code"), meta.get("reason")) \
                     if row["event"] == "dismissed" else None
-                if row["event"] == "dismissed":
+                if row["event"] == "reopened":
+                    answer = "asked to see it again"
+                    meta = {}            # the decline's reason was taken back with it
+                elif row["event"] == "dismissed":
                     answer = ("done" if effect == "taken" else "put off" if effect == "defer" else
                               "not for us" if meta.get("kind") == "not_for_us" else "hidden")
                 else:
                     answer = {"completed": "done", "implemented": "implemented"}.get(row["event"], "accepted")
-                day = str(row["at"] or "")[:10]
+                day = _day(row["at"])
                 r = rec(key, title=row["title"] or _humanize(key), when=day)
                 r["model_written"] = bool(row["model_written"])
                 r["signature"] = row["signature"] or None
@@ -245,10 +280,10 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                                     (restaurant_id,)).fetchall():
                 key = _first(row, "source_key") or f"issue:{row['id']}"
                 r = rec(key, title=_first(row, "title"), kind=_first(row, "kind") or "issue",
-                        when=str(_first(row, "created_at") or "")[:10])
+                        when=_day(_first(row, "created_at")))
                 if _first(row, "kind"):
                     r["kind"] = _first(row, "kind")     # the issue's kind is the more specific one
-                r["issue"] = {"status": _first(row, "status"), "resolved_on": str(_first(row, "resolved_at") or "")[:10] or None,
+                r["issue"] = {"status": _first(row, "status"), "resolved_on": _day(_first(row, "resolved_at")) or None,
                               "note": _first(row, "resolution_note")}
                 if not r["answer"]:
                     r["answer"] = "resolved" if _first(row, "status") == "resolved" else "open"
@@ -261,7 +296,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 fact = row["fact"] or ""
                 if fact.startswith("Not doing “") and "”: " in fact:
                     title, reason = fact[len("Not doing “"):].split("”: ", 1)
-                    day = str(row["created_at"] or "")[:10]
+                    day = _day(row["created_at"])
                     target = None
                     for r in recs.values():
                         if title in (r["title"], r["key"], _humanize(r["key"])):
@@ -282,7 +317,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                         if target["title"] == _humanize(target["key"]):
                             target["title"] = title
                     else:
-                        r = rec("pref:" + title[:60], title=title, kind="preference", when=str(row["created_at"] or "")[:10])
+                        r = rec("pref:" + title[:60], title=title, kind="preference", when=_day(row["created_at"]))
                         r["answer"] = "not for us"; r["reason"] = reason
         except Exception:
             pass
@@ -296,7 +331,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 # share; an answer from an older client names no proposal.
                 key = (f"ask:{row['proposal_id']}" if row["proposal_id"] else
                        f"ask:{row['action']}:{(row['summary'] or '')[:40]}")
-                r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=str(row["created_at"] or "")[:10])
+                r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=_day(row["created_at"]))
                 r["answer"] = row["outcome"]
                 r["_uid"] = row["user_id"]         # who answered it (redaction only; never returned)
                 if row["reason"] and not r.get("reason"):
@@ -453,7 +488,7 @@ def pick_relevant(rows, subjects=(), modules=(), limit=MAX_CONTEXT_LINES):
     return keep
 
 
-_KIND_MODULES = {"trim_day": "labor", "labor_over": "labor", "overtime": "labor", "overtime_move": "labor",
+_KIND_MODULES = {"staff_add": "labor", "trim_day": "labor", "labor_over": "labor", "overtime": "labor", "overtime_move": "labor",
                  "schedule_to_target": "labor", "insight_labor": "labor", "diag_labor": "labor",
                  "cut_waste": "food", "reprice": "food", "stock_low": "food", "diag_food": "food",
                  "insight_food": "food", "food_cost_driver": "food", "price_spike": "food",
@@ -559,9 +594,17 @@ def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
         return []
     try:
         rows = conn.execute(
-            "SELECT e.key, e.meta, e.at, e.authority, i.kind, i.title, i.signature FROM rec_events e "
+            "SELECT e.id, e.key, e.meta, e.at, e.authority, i.kind, i.title, i.signature FROM rec_events e "
             "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? AND e.event='dismissed' "
             "AND e.at >= ?", (restaurant_id, since)).fetchall()
+        # A "not for us" the owner took back afterwards ("Use again", a
+        # restored kind — rec_ledger.unsilence's `reopened`, memory re-audit
+        # 9/29/26 QUALITY-1) is no longer a no: Ask kept being told "do not
+        # re-propose" the advice the owner had just asked for back.
+        reopened = {}
+        for r in conn.execute("SELECT key, at, id FROM rec_events WHERE restaurant_id=? AND event='reopened' "
+                              "AND COALESCE(authority, '') NOT IN ('delegate', 'admin')", (restaurant_id,)).fetchall():
+            reopened[r["key"]] = max(reopened.get(r["key"], ("", 0)), (str(r["at"] or ""), int(r["id"])))
     except Exception as e:
         print(f"[decisions] declined subjects unreadable: {e}")
         return []
@@ -571,6 +614,8 @@ def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
     by_kind = {}
     for r in rows:
         if r["authority"] in ("delegate", "admin"):
+            continue
+        if reopened.get(r["key"], ("", 0)) > (str(r["at"] or ""), int(r["id"])):
             continue
         try:
             meta = _json.loads(r["meta"] or "{}") or {}
@@ -592,7 +637,9 @@ def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
         b["first"] = min(b["first"], r["at"])
         subject = r["key"].split(":", 1)[1] if ":" in r["key"] else ""
         if r["signature"]:
-            label = r["signature"].split(":", 1)[1].split(":", 1)[-1]
+            import insight_store as _ist_ds
+            base, direction = _ist_ds.split_signature(r["signature"])
+            label = base.split(":", 1)[1].split(":", 1)[-1] + (f" ({direction})" if direction else "")
         elif subject and not re.fullmatch(r"[0-9a-f]{10}", subject):
             label = subject
         else:
@@ -722,9 +769,15 @@ def quiet_kinds_vote(restaurant_id, db_path=DB_PATH) -> set:
     except Exception:
         return out
     try:
+        import rec_ledger as _rl_seen
+        # An expiry votes only when someone could have seen the card
+        # (memory re-audit 9/29/26, LOOPS-10): a kind carried only by
+        # weekly emails nobody opened went quiet on Home, where it was
+        # never shown. The seen check runs only on expired rows.
         rows = conn.execute(
-            "SELECT kind, key, status, created_at FROM rec_instances WHERE restaurant_id=? "
-            "ORDER BY created_at DESC, rowid DESC LIMIT 2000", (restaurant_id,)).fetchall()
+            "SELECT i.kind, i.key, i.status, i.created_at, CASE WHEN i.status = 'expired' THEN "
+            f"{_rl_seen.seen_sql('i')} ELSE 1 END AS seen FROM rec_instances i WHERE i.restaurant_id=? "
+            "ORDER BY i.created_at DESC, i.rowid DESC LIMIT 2000", (restaurant_id,)).fetchall()
     except Exception:
         rows = []
     finally:
@@ -762,6 +815,8 @@ def quiet_kinds_vote(restaurant_id, db_path=DB_PATH) -> set:
         # daily was never quiet (re-audit B11).
         if r["status"] in ("open", "superseded"):
             continue
+        if r["status"] == "expired" and not r["seen"]:
+            continue                 # delivered, never seen: no vote either way
         by_kind.setdefault(kind, []).append(r["status"])
     for kind, statuses in by_kind.items():
         last = statuses[:QUIET_AFTER_EXPIRED]
@@ -868,11 +923,13 @@ def quiet_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
     return out
 
 
-def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_PATH) -> bool:
+def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_PATH, authority=None) -> bool:
     """The owner asked to see a quiet kind again. Recorded in the ledger as
     an accepted `restore_kind:<kind>@<stamp>` episode — a new key each time,
     so each restore starts its own count — and any answer still silencing a
-    key of that kind is lifted too."""
+    key of that kind is lifted too, each reversal kept in the trail as a
+    `reopened` with `authority` (permissions.answer_authority of the login;
+    None reads as the owner's) — rec_ledger.unsilence, QUALITY-1."""
     import rec_ledger
     from datetime import datetime as _dt
     kind = str(kind or "").strip()[:60]
@@ -880,7 +937,7 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
         return False
     key = f"{_RESTORE_PREFIX}{kind}@{_dt.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     ok = rec_ledger.record(restaurant_id, key, "accepted", surface=surface, user_id=user_id,
-                           meta={"module": "home"}, db_path=db_path)
+                           meta={"module": "home"}, db_path=db_path, authority=authority)
     # Held durably (memory audit, quiet_kinds): the quiet state goes and the
     # restore is remembered beyond the vote's 2,000-episode window.
     try:
@@ -912,7 +969,8 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
         finally:
             conn.close()
         for k in keys:
-            rec_ledger.unsilence(restaurant_id, k, db_path=db_path)
+            rec_ledger.unsilence(restaurant_id, k, db_path=db_path, user_id=user_id,
+                                 authority=authority or "principal", surface=surface)
         # Any remembered "Not doing X" about a key of the restored kind is
         # retracted with its silence (memory audit 9/29/26, owner_lanes).
         try:

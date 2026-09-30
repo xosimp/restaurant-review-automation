@@ -15,6 +15,10 @@ os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
+# The learning holdout (rec_learning.holdout_arm) is off in the suite, so a
+# ranking test never lands on a held-out day by the calendar; its own tests
+# turn it on with monkeypatch.setenv.
+os.environ.setdefault("LEARNING_HOLDOUT_PCT", "0")
 # Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.

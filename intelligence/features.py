@@ -345,6 +345,25 @@ def _stamped_by(stamp, end) -> bool:
     return not stamp or _d(stamp) <= end
 
 
+
+def _utc_end_ts(restaurant_id, end) -> str:
+    """The last moment of the restaurant's local day `end`, as the UTC stamp
+    the ledgers store ("YYYY-MM-DD HH:MM:SS"). Local "23:59:59" compared to
+    UTC stamps dropped every answer given after ~7pm Central from that day's
+    features (9/29/26)."""
+    from datetime import datetime as _dt, time as _time, timezone as _tz, date as _date
+    if isinstance(end, str):
+        end = _date.fromisoformat(end[:10])
+    try:
+        from time_utils import restaurant_now_by_id
+        tz = restaurant_now_by_id(restaurant_id).tzinfo
+        if tz is not None:
+            local = _dt.combine(end, _time(23, 59, 59)).replace(tzinfo=tz)
+            return local.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    return end.isoformat() + " 23:59:59"
+
 def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> dict:
     """The feature dict for this restaurant as of `today`. Pure read.
 
@@ -357,7 +376,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
     today = today or date.today()
     d30, d60, d90, d28 = (today - timedelta(days=n) for n in (30, 90, 90, 28))
     end = today.isoformat()
-    end_ts = end + " 23:59:59"
+    end_ts = _utc_end_ts(restaurant_id, today)
     f = {k: None for k in FEATURE_KEYS}
     f["features_version"] = FEATURES_VERSION
     conn = get_conn(db_path)
@@ -610,21 +629,28 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     import rec_ledger
     from . import provenance
     end = end or date.today()
-    end_ts = end.isoformat() + " 23:59:59"
+    end_ts = _utc_end_ts(restaurant_id, end)
     out = {"recs_answered_28d": None, "recs_done_28d": None, "recs_declined_28d": None,
            "outcomes_evaluated_90d": None, "outcomes_improved_rate_90d": None}
     out.update({v: None for v in provenance.REVIEW_FREE_VARIANT.values()})
     try:
         rows = conn.execute(
-            "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
+            "SELECT i.rec_id, i.key, i.evidence_sources, e.event FROM rec_events e "
+            "JOIN rec_instances i ON i.rec_id = e.rec_id "
             "WHERE i.restaurant_id=? AND e.at >= ? AND e.at <= ? "
             "AND e.event IN ('accepted','completed','implemented','dismissed') "
+            # Only the restaurant's own answers: never an admin's (support
+            # triage, view-as), never a delegate's decline that held for
+            # that login alone (rec_ledger.counts_for_restaurant — PLATFORM-2).
+            f"AND {rec_ledger.restaurant_answer_sql('e')} "
             "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown' AND s.at <= ?)",
             (restaurant_id, d28.isoformat(), end_ts, end_ts)).fetchall()
-        for suffix, keep in (("", lambda k: True), ("_ex_reviews", lambda k: not provenance.review_derived(k))):
+        for suffix, keep in (("", lambda r: True),
+                             ("_ex_reviews", lambda r: not provenance.review_derived(
+                                 r["key"], sources=r["evidence_sources"]))):
             answered, done, declined = set(), set(), set()
             for r in rows:
-                if not rec_ledger.counts_in_acceptance(r["key"]) or not keep(r["key"]):
+                if not rec_ledger.counts_in_acceptance(r["key"]) or not keep(r):
                     continue
                 answered.add(r["rec_id"])
                 (declined if r["event"] == "dismissed" else done).add(r["rec_id"])
@@ -640,9 +666,12 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     except Exception as e:
         print(f"[intelligence] results unreadable for {restaurant_id}: {e}")
         return out
+    sourced = provenance.sources_by_key(conn, restaurant_id)
     for suffix, keep in (("", lambda r: True),
-                         ("_ex_reviews", lambda r: not provenance.review_derived(r.get("source_key"),
-                                                                                 metric=r.get("metric")))):
+                         ("_ex_reviews", lambda r: not provenance.review_derived(
+                             r.get("source_key"), metric=r.get("metric"),
+                             sources=["reviews"] if sourced.get((int(restaurant_id), str(r.get("source_key") or "")))
+                             else None))):
         mine = [r for r in ev if keep(r)]
         out["outcomes_evaluated_90d" + suffix] = len(mine)
         eps = [{"rec_id": r["id"], "verdict": rec_learning.learned_verdict(r.get("verdict"), r), "tracker": r}
@@ -705,15 +734,34 @@ def latest(restaurant_id: int, db_path: str = DB_PATH) -> dict | None:
             "computed_at": row["computed_at"], "backfilled": bool(row["backfilled"])}
 
 
-def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH) -> list:
+def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH, own: bool = True) -> list:
     """This restaurant's last `weeks` rows of the current FEATURES_VERSION,
     oldest first — a row under an older definition never joins the series
-    (PLATFORM-5); the backfill re-derives it."""
+    (PLATFORM-5); the backfill re-derives it.
+
+    Every caller is an OWN reader (the restaurant against itself: Ask's
+    slopes, the engine's self series, a band's own figure, an
+    organisation's locations), so by default a converted demo's weeks
+    before its learning_since week are left out (memory re-audit 9/29/26,
+    PLATFORM-7: "moving up per week" was drawn from seeded rows while the
+    ranker and the confidence % read none). `own=False` reads every row."""
     conn = get_conn(db_path)
     try:
+        floor_week = None
+        if own:
+            try:
+                ls = conn.execute("SELECT learning_since FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+            except Exception:
+                ls = None
+            if ls and ls[0]:
+                try:
+                    y, w, _ = date.fromisoformat(str(ls[0])[:10]).isocalendar()
+                    floor_week = f"{y}-W{w:02d}"
+                except ValueError:
+                    floor_week = None
         rows = conn.execute("SELECT week, features_json, completeness, backfilled FROM intel_features "
-                            "WHERE restaurant_id=? AND version=? ORDER BY week DESC LIMIT ?",
-                            (restaurant_id, FEATURES_VERSION, int(weeks))).fetchall()
+                            "WHERE restaurant_id=? AND version=? AND week >= ? ORDER BY week DESC LIMIT ?",
+                            (restaurant_id, FEATURES_VERSION, floor_week or "", int(weeks))).fetchall()
     finally:
         conn.close()
     return [{"week": r["week"], "features": json.loads(r["features_json"]), "completeness": r["completeness"],
@@ -759,21 +807,20 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3, pooled:
 
 
 def _not_teaching(db_path) -> set:
-    try:
-        from .jobs import excluded_learning_ids
-        return set(excluded_learning_ids(db_path=db_path))
-    except Exception:
-        return set()
+    """Every restaurant that may not teach (jobs.excluded_learning_ids).
+    Raises when unreadable (memory re-audit 9/29/26, PLATFORM-11): an
+    unreadable set used to exclude none, so a test account's rows reached
+    that week's frozen bands. The pooled stage fails and is captured."""
+    from .jobs import excluded_learning_ids
+    return set(excluded_learning_ids(db_path=db_path))
 
 
 def _since_weeks(db_path) -> dict:
-    """{restaurant_id: ISO week of its learning_since} (jobs.learning_since_week)."""
-    try:
-        from .jobs import learning_since_by_id, learning_since_week
-        since = learning_since_by_id(db_path=db_path)
-        return {rid: learning_since_week(rid, since) for rid in since}
-    except Exception:
-        return {}
+    """{restaurant_id: ISO week of its learning_since} (jobs.learning_since_week).
+    Raises when unreadable, like _not_teaching."""
+    from .jobs import learning_since_by_id, learning_since_week
+    since = learning_since_by_id(db_path=db_path)
+    return {rid: learning_since_week(rid, since) for rid in since}
 
 
 def _demo_era(row, since_weeks) -> bool:

@@ -191,7 +191,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     try:
         import issues
         for i in issues.list_issues(restaurant_id, status="unresolved", limit=10, db_path=db_path,
-                                    sees_loss=issues.viewer_sees_loss(viewer)):   # A-8
+                                    sees_loss=issues.viewer_sees_loss(viewer),    # A-8
+                                    hide_modules=issues.hidden_modules(viewer)):  # PEOPLE-14
             waiting = i["status"] == "open"
             add(f"issue:{i['id']}", "issue", i["title"],
                 "critical" if (waiting and i["severity"] == "high") else
@@ -466,7 +467,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     # finished at source, so they are never silenced by a recommendation.
     try:
         import rec_ledger
-        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+        # ...and this login's own "not for us" (PEOPLE-4).
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
     except Exception:
         silenced = set()
     answered = [i for i in live if i["kind"] != "issue" and i["key"] in silenced]

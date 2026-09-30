@@ -305,8 +305,10 @@ DSR_LINK_CONCENTRATION = 2.0
 
 def _dsr_nights(restaurant_id, db_path=DB_PATH):
     """{"window_days", "start", "end", "nights", "by_weekday": {day:
-    {"nights", "no_show_nights"}}} from the daily report's measured
-    labor.no_shows over DSR_LINK_WINDOW_DAYS (a night the report could not
+    {"nights", "no_show_nights"}}, "covers": {day: {"nights", "guests",
+    "hours"}}} from the daily report's measured labor.no_shows, and its
+    measured guests (sales.guests) against labor hours (labor.hours) on the
+    same nights, over DSR_LINK_WINDOW_DAYS (a night the report could not
     measure is absent, never zero). None when nothing was measured."""
     since = (date.today() - timedelta(days=DSR_LINK_WINDOW_DAYS)).isoformat()
     conn = _conn(db_path)
@@ -314,6 +316,10 @@ def _dsr_nights(restaurant_id, db_path=DB_PATH):
         rows = conn.execute(
             "SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='labor.no_shows' "
             "AND business_date >= ? AND value IS NOT NULL ORDER BY business_date", (restaurant_id, since)).fetchall()
+        g_rows = conn.execute(
+            "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+            "AND metric IN ('sales.guests','labor.hours') AND business_date >= ? AND value IS NOT NULL "
+            "ORDER BY business_date", (restaurant_id, since)).fetchall()
     except Exception:
         return None
     finally:
@@ -328,11 +334,112 @@ def _dsr_nights(restaurant_id, db_path=DB_PATH):
         b = by.setdefault(day, {"nights": 0, "no_show_nights": 0})
         b["nights"] += 1
         b["no_show_nights"] += 1 if v > 0 else 0
-    if not by:
+    # Guests per labor hour, per weekday (re-audit 9/29/26, CROSSMODULE-18):
+    # the report measures the covers the links used to ask the owner to
+    # "check". A night counts only with both figures measured and hours > 0.
+    per_night = {}
+    for r in g_rows:
+        try:
+            per_night.setdefault(str(r["business_date"])[:10], {})[r["metric"]] = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+    covers = {}
+    for iso, m in per_night.items():
+        if m.get("sales.guests") is None or not m.get("labor.hours"):
+            continue
+        try:
+            day = date.fromisoformat(iso).strftime("%A")
+        except ValueError:
+            continue
+        c = covers.setdefault(day, {"nights": 0, "guests": 0.0, "hours": 0.0})
+        c["nights"] += 1
+        c["guests"] += m["sales.guests"]
+        c["hours"] += m["labor.hours"]
+    if not by and not covers:
         return None
-    return {"window_days": DSR_LINK_WINDOW_DAYS, "start": str(rows[0]["business_date"])[:10],
-            "end": str(rows[-1]["business_date"])[:10], "nights": sum(b["nights"] for b in by.values()),
-            "by_weekday": by}
+    dates = [str(r["business_date"])[:10] for r in rows] + list(per_night)
+    return {"window_days": DSR_LINK_WINDOW_DAYS, "start": min(dates), "end": max(dates),
+            "nights": sum(b["nights"] for b in by.values()), "by_weekday": by, "covers": covers}
+
+
+# Guests per labor hour is stated for a weekday only with this many measured
+# nights of it, and of the other nights (the DSR link's own night floor).
+COVERS_MIN_NIGHTS = DSR_LINK_MIN_NIGHTS
+
+
+def measured_guests(restaurant_id, weekdays=None, days=28, today=None, db_path=DB_PATH):
+    """The guests the daily reports MEASURED (dsr_metrics sales.guests, and
+    labor.hours on the same nights) over the last `days` days against the
+    `days` before — restricted to `weekdays` when given: {"nights",
+    "avg_guests", "gplh", "before_nights", "before_avg_guests",
+    "before_gplh", "days"}; gplh (guests per labor hour) is None where hours
+    were not measured. None below COVERS_MIN_NIGHTS measured nights now —
+    a night the report could not measure is absent, never zero. The one
+    reading both diagnoses' "Guests" line and the links rest on (re-audit
+    9/29/26, CROSSMODULE-18). Never raises."""
+    today = today or _local_today(restaurant_id)
+    start = today - timedelta(days=2 * days)
+    try:
+        conn = _conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+                "AND metric IN ('sales.guests','labor.hours') AND business_date >= ? AND business_date < ? "
+                "AND value IS NOT NULL", (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    nights = {}
+    for r in rows:
+        try:
+            nights.setdefault(str(r["business_date"])[:10], {})[r["metric"]] = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+    days_set = set(weekdays or ())
+    cut = (today - timedelta(days=days)).isoformat()
+    win = {"now": [], "before": []}
+    for iso, m in nights.items():
+        if m.get("sales.guests") is None:
+            continue
+        try:
+            if days_set and date.fromisoformat(iso).strftime("%A") not in days_set:
+                continue
+        except ValueError:
+            continue
+        win["now" if iso >= cut else "before"].append(m)
+
+    def _read(ms):
+        if not ms:
+            return None, None
+        g = sum(m["sales.guests"] for m in ms)
+        both = [m for m in ms if m.get("labor.hours")]
+        hrs = sum(m["labor.hours"] for m in both)
+        return round(g / len(ms), 1), (round(sum(m["sales.guests"] for m in both) / hrs, 1) if hrs else None)
+    if len(win["now"]) < COVERS_MIN_NIGHTS:
+        return None
+    avg, gplh = _read(win["now"])
+    b_avg, b_gplh = _read(win["before"]) if len(win["before"]) >= COVERS_MIN_NIGHTS else (None, None)
+    return {"nights": len(win["now"]), "avg_guests": avg, "gplh": gplh,
+            "before_nights": len(win["before"]) if b_avg is not None else 0,
+            "before_avg_guests": b_avg, "before_gplh": b_gplh, "days": days}
+
+
+def _covers_per_hour(dsr_nights, day):
+    """{"day", "nights", "gplh", "other_nights", "other_gplh"} — guests per
+    labor hour the daily reports measured on `day`s against the other
+    nights, or None below COVERS_MIN_NIGHTS on either side."""
+    cov = (dsr_nights or {}).get("covers") or {}
+    d = cov.get(day) or {}
+    if int(d.get("nights") or 0) < COVERS_MIN_NIGHTS or not d.get("hours"):
+        return None
+    on = sum(int(v.get("nights") or 0) for w, v in cov.items() if w != day)
+    og = sum(float(v.get("guests") or 0) for w, v in cov.items() if w != day)
+    oh = sum(float(v.get("hours") or 0) for w, v in cov.items() if w != day)
+    if on < COVERS_MIN_NIGHTS or not oh:
+        return None
+    return {"day": day, "nights": int(d["nights"]), "gplh": round(float(d["guests"]) / float(d["hours"]), 1),
+            "other_nights": on, "other_gplh": round(og / oh, 1)}
 
 
 def _dsr_no_show_day(dsr_nights, day):
@@ -520,6 +627,27 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     "alternative": ("The same day may simply be the busiest, which raises both "
                                     "complaint volume and sales-per-labor-hour independently."),
                 })
+                # The covers the daily report measured (re-audit 9/29/26,
+                # CROSSMODULE-18): where guests per labor hour is measured
+                # on this weekday and the others, the link states it and no
+                # longer asks the owner to check it by hand.
+                _cv = _covers_per_hour(data.get("dsr"), day)
+                if _cv:
+                    _lk = links[-1]
+                    _lk["evidence"].append(
+                        f"The daily reports measured {_cv['gplh']:g} guests per labor hour on {day}s "
+                        f"({_cv['nights']} nights) against {_cv['other_gplh']:g} on the other nights "
+                        f"({_cv['other_nights']})")
+                    _lk["evidence_inputs"].append(
+                        {"n": _cv["nights"], "kind": "count", "n_full": DSR_LINK_WINDOW_DAYS // 7,
+                         "basis": f"{_cv['nights']} {day}s with guests and labor hours measured"})
+                    _lk["covers"] = _cv
+                    _lk["not_a_cause"] = ("Running lean is not evidence of a service failure. The daily reports "
+                                          "measure guests per labor hour, but there is no service-time or wait-time "
+                                          "data, and a review does not say which night it was about — so the two "
+                                          "facts sharing a day is a question, not a finding.")
+                    _lk["confirm_by"] = (f"Read the {day} reviews against that shift's roster — {day}'s guests per "
+                                         f"labor hour is already measured above.")
                 break
 
         # ── complaints and waste land on the same weekday ──
@@ -560,9 +688,21 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                      ((food.get("brief") or {}).get("can_wait") or []):
                 haystack = [d.get("what") or ""] + [str(e) for e in (d.get("evidence") or [])]
                 if any(_same_thing(dish, h) for h in haystack):
+                    # The ONE menu row the complaint is about (re-audit
+                    # 9/29/26, CROSSMODULE-14): the driver's dish, else the
+                    # best-selling menu item the guests' words name.
+                    _dk, _di = _driver_parts(d)
+                    try:
+                        import link_memory as _lm_menu
+                        _mid, _mname = _lm_menu.resolve_menu_item(restaurant_id, dish, driver_item=_di,
+                                                                  driver_kind=_dk,
+                                                                  db_path=None if db_path == DB_PATH else db_path)
+                    except Exception:
+                        _mid, _mname = None, None
                     links.append({
                         "kind": "reviews_x_menu",
                         "dish": dish,
+                        "menu_item_id": _mid, "menu_item": _mname,
                         "category": c.get("category"), "mentions": c.get("mentions"),
                         "subject": _link_subject(c.get("category"), dish),
                         "modules": ["reviews", "food_cost"],
@@ -681,6 +821,16 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             continue
         _fill_seen.add(day)
         from time_utils import mdy as _mdy_fc
+        # The campaign's own night (re-audit 9/29/26, CROSSMODULE-12): once
+        # it has passed, "hold any cut until the window closes" is over and
+        # the link says what the night MEASURED (event_memory.campaign_night,
+        # the one campaign measurement) and ends — resolved "measured", or
+        # "window_closed" with nothing measured — instead of repeating
+        # "not measured yet" for thirty days.
+        night = _campaign_night_date(fc, restaurant_id)
+        if night is not None and night < _local_today(restaurant_id):
+            _end_campaign_link(restaurant_id, day, fc, night, heavy[day], db_path)
+            continue
         sent_line = (f"A text to fill {day} is queued for {fc['total']:,} guests" if fc.get("queued") else
                      f"A text to fill {day} went to {fc['sent']:,} guests on {_mdy_fc(fc.get('on'))}")
         links.append({
@@ -763,6 +913,60 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
     except Exception as e:
         log.warning("business_intelligence: links not remembered for rid=%s: %s", restaurant_id, e)
     return links
+
+
+def _local_today(restaurant_id):
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return date.today()
+
+
+def _campaign_night_date(fc, restaurant_id):
+    """The night a fill campaign aims at: the first `day` on or after the
+    day it went out (event_memory._campaign_nights' rule); for a queued one,
+    the next `day` from today. None when unreadable."""
+    try:
+        idx = _WEEKDAYS.index(fc.get("day"))
+    except ValueError:
+        return None
+    try:
+        start = _local_today(restaurant_id) if fc.get("queued") else date.fromisoformat(str(fc.get("on"))[:10])
+    except (TypeError, ValueError):
+        return None
+    return start + timedelta(days=(idx - start.weekday()) % 7)
+
+
+def _end_campaign_link(restaurant_id, day, fc, night, heavy_pts, db_path=DB_PATH):
+    """End the marketing x labor link for a campaign whose night has
+    passed (link_memory.end): "measured" with the night's own lift against
+    a typical same weekday when event_memory recorded it, else
+    "window_closed". The outcome sentence is kept on the link and is what
+    the schedule reads for that weekday (link_memory.link_lines). Never
+    raises."""
+    try:
+        import event_memory
+        import link_memory
+        from time_utils import mdy
+        key = link_key({"kind": "marketing_x_labor", "subject": _link_subject("fill", day)})
+        got = event_memory.campaign_night(restaurant_id, night, db_path=None if db_path == DB_PATH else db_path)
+        if got and got.get("lift_pct") is not None:
+            lift = float(got["lift_pct"])
+            outcome = (f"The {mdy(night)} {day} a text campaign aimed at filling measured {lift:+.0f}% sales against "
+                       f"a typical {day} here — before and after, not proof. {day} had run {heavy_pts} points "
+                       f"heavier on labor than the weekday average.")
+            by = "measured"
+        else:
+            outcome = (f"The {mdy(night)} {day} a text campaign aimed at filling has passed with no sales "
+                       f"measurement of the night, so what it did is not known.")
+            by = "window_closed"
+        link_memory.end(restaurant_id, key, by, headline=outcome,
+                        detail={"outcome": outcome, "night": night.isoformat(), "lift_pct": (got or {}).get("lift_pct"),
+                                "sent": fc.get("sent")},
+                        db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        log.warning("business_intelligence: campaign link not ended for rid=%s: %s", restaurant_id, e)
 
 
 def link_action(link):
@@ -915,13 +1119,20 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
     if not labor.get("is_live"):
         unavailable.append({"module": "labor", "reason": "no real shift data uploaded yet"})
     elif labor.get("potential_savings_monthly"):
+        # The heaviest day a trim would start from, guarded as the one
+        # thing's is (CROSSMODULE-5): a campaign aimed at filling that night
+        # is said beside the figure, never contradicted by it.
+        _day, _guarded = start_day(restaurant_id, {k: v for k, v in (labor.get("dow_summary") or {}).items() if v},
+                                   db_path=db_path)
         lines.append({"module": "labor", "label": "Scheduling against target",
                       "monthly": round(_f(labor["potential_savings_monthly"]), 2),
                       # A gap to target projected to a month: an
                       # opportunity, never money saved (NS3 R1).
                       "claim_kind": "opportunity",
                       "basis": (f"gap above the {labor.get('labor_target', 30)}% target over "
-                                f"{labor.get('period_days', 0)} days synced")})
+                                f"{labor.get('period_days', 0)} days synced"),
+                      "guard": ((_guarded[0]["why"] + (f" Start with {_day}." if _day else ""))
+                                if _guarded else None)})
     elif labor.get("period_too_short_to_project") or \
             _f(labor.get("period_days")) < _LABOR_MIN_DAYS_TO_PROJECT:
         unavailable.append({"module": "labor",
@@ -1150,7 +1361,14 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
     def _standing(l):
         m = l.get("memory") or {}
         return (not m.get("recurring"), -int(m.get("weeks_running") or 0))
-    for top in sorted(links or [], key=_standing)[:1]:
+    # Answered links go BEFORE the cap (re-audit 9/29/26, CROSSMODULE-3): a
+    # declined link that had stood four weeks ranked first, was cut to the
+    # one link candidate, then dropped as silenced — and blocked every other
+    # link from leading. executive_brief passes only unanswered links; the
+    # memory check here holds for any other caller.
+    live = [l for l in (links or []) if not ((l.get("memory") or {}).get("resolved")
+                                             or (l.get("memory") or {}).get("declined"))]
+    for top in sorted(live, key=_standing)[:1]:
         # "link:<kind>:<subject>" — a bare "link:<kind>" meant one "Not for
         # us" silenced every future link of that kind for ten years (H-13).
         mem = top.get("memory") or {}
@@ -1233,8 +1451,19 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
     if labor.get("is_live") and _f(labor.get("potential_savings_monthly")) > 0:
         dow = {k: v for k, v in (labor.get("dow_summary") or {}).items() if v}
         if dow:
-            day = max(dow.items(), key=lambda kv: kv[1])[0]
+            # Where to START is the heaviest day nothing else is aimed at
+            # filling on the next schedule (staffing_signals.trim_guard, the
+            # check every trim makes — re-audit 9/29/26, CROSSMODULE-5/21):
+            # "starting with Tuesday" beside a live campaign to fill that
+            # Tuesday was the hero and the Labor tab contradicting each other.
+            day, guarded = start_day(restaurant_id, dow, db_path=db_path)
             target = labor.get("labor_target", 30)
+            what = (f"Build the next schedule to your {target:g}% target, starting with {day}" if day else
+                    f"Build the next schedule to your {target:g}% target")
+            why = f"{day} runs the heaviest labor % the next schedule can trim" if day else \
+                "labor runs above your target"
+            if guarded:
+                why += " — " + guarded[0]["why"][:1].lower() + guarded[0]["why"][1:].rstrip(".")
             # Its own key: this is the WHOLE schedule's gap to target, not
             # Home's trim_day:<day> (that one day's excess, a different
             # figure) — under one key, one answer silenced both. It is the
@@ -1242,8 +1471,8 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             # (money:labor), which a brief says once (morning_brief).
             import rec_ledger as _rl_bi
             add(_rl_bi.rec_key("schedule_to_target", f"{target:g}%"),
-                f"Build the next schedule to your {target:g}% target, starting with {day}",
-                f"{day} runs the heaviest labor % of the week", ["labor"], urgency="important",
+                what, why, ["labor"], urgency="important", start_day=day,
+                trim_guards=[{"day": g["day"], "why": g["why"]} for g in guarded] or None,
                 dollars=labor.get("potential_savings_monthly"),
                 evidence=[f"gap above the {target:g}% target over {labor.get('period_days', 0)} days synced"],
                 claim_kind="computed", same_as="money:labor",
@@ -1261,6 +1490,31 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
             c["score"] = round(c["score"] * RECURRING_LINK_WEIGHT, 2)
     out.sort(key=lambda c: -c["score"])
     return out
+
+
+def start_day(restaurant_id, dow, db_path=DB_PATH) -> tuple:
+    """(day or None, guarded): the heaviest weekday of `dow` ({day: labor
+    %}) that no live campaign or post is aimed at filling on the NEXT
+    schedule — staffing_signals.trim_guard, on the date that weekday falls
+    in the week the next draft covers (next_draft_date; CROSSMODULE-21) —
+    and the heavier days it passed over, each {day, why}. None when every
+    day is guarded. Never raises: a guard that cannot be read guards
+    nothing, as on Home."""
+    guarded = []
+    for day, _pct in sorted(((k, v) for k, v in (dow or {}).items() if v), key=lambda kv: -kv[1]):
+        try:
+            import staffing_signals
+            g = staffing_signals.trim_guard(restaurant_id, day,
+                                            on_date=staffing_signals.next_draft_date(restaurant_id, day),
+                                            db_path=None if db_path == DB_PATH else db_path)
+        except Exception as e:
+            log.warning("business_intelligence: trim guard unavailable for rid=%s: %s", restaurant_id, e)
+            g = {}
+        if g.get("suppress"):
+            guarded.append({"day": day, "why": g.get("why") or f"a campaign is aimed at filling {day}"})
+            continue
+        return day, guarded
+    return None, guarded
 
 
 # A link whose two figures cover different periods is held here: the two
@@ -1448,6 +1702,8 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
         try:
             import rec_learning
             learned = rec_learning.effectiveness(restaurant_id, db_path=db_path)
+            # The day's holdout arm (LOOPS-3): neutral weights on held-out days.
+            learned = rec_learning.apply_holdout(learned, restaurant_id, "one_thing")
         except Exception as e:
             log.warning("one thing: effectiveness unavailable: %s", e)
     if learned is not None:
@@ -1535,6 +1791,13 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
         out["confidence"] = one_thing_confidence(restaurant_id, out, db_path=db_path, ctx=ctx)
         out["model_written"] = bool(out.get("model_written"))
         out["advice_signature"] = sig
+        # The owner's "not for us" to the OPPOSITE advice on the same night
+        # is evidence for this one, said beside it — never a silence of it
+        # (re-audit 9/29/26, CROSSMODULE-1): "we never cut Tuesday" agrees
+        # with "hold any cut to Tuesday".
+        agrees = _agrees_with_decline(restaurant_id, sig, db_path=db_path)
+        if agrees:
+            out["agrees_with"] = agrees
         # Its dollars beside the calibrated figure, the rule Home cards
         # follow (rec_learning.attach_dollar_calibration, F6).
         try:
@@ -1552,24 +1815,108 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
                 rec_ledger.log_rank_build(restaurant_id, "one_thing",
                                           shown=[dict(out.get("rank") or {}, key=out["key"])],
                                           not_shown=[dict(x.get("rank") or {}, key=x["key"]) for x in rest],
-                                          version=getattr(learned, "version", None), db_path=db_path)
+                                          version=getattr(learned, "version", None), db_path=db_path,
+                                          arm=getattr(learned, "arm", None))
             except Exception as e:
                 log.warning("one thing: rank log unavailable: %s", e)
         return out
     return None
 
 
+def _agrees_with_decline(restaurant_id, sig, db_path=DB_PATH):
+    """{"signature", "on", "title", "text"} when the owner declined the
+    opposite direction of the same staffing advice (a trim, against a hold
+    or an add; a hold or an add, against a trim), else None. Never
+    raises."""
+    try:
+        import insight_store
+        base, direction = insight_store.split_signature(sig)
+        if not sig or base.split(":", 1)[0] != "labor":
+            return None
+        opposite = [base] if direction else [f"{base}:{d}" for d in insight_store.DIRECTIONS]
+        declines = insight_store.declines_by_signature(restaurant_id, db_path=db_path)
+        hit = next(((o, declines[o]) for o in opposite if o in declines), None)
+        if not hit:
+            return None
+        from time_utils import mdy
+        on = mdy(str(hit[1].get("on") or "")[:10])
+        return {"signature": hit[0], "on": on, "title": hit[1].get("title"),
+                "text": f"You passed on the opposite advice ({hit[1].get('title') or 'the other way'}) on {on} — "
+                        f"this agrees with that."}
+    except Exception as e:
+        log.warning("one thing: opposite decline unreadable: %s", e)
+        return None
+
+
 # ── the one brief ──────────────────────────────────────────────────────────
 
-def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH, ctx=None) -> dict:
+def unanswered_links(restaurant_id, links, viewer=None, db_path=DB_PATH) -> tuple:
+    """(open, answered): `links` split by whether the owner has answered
+    them — resolved in link_memory (Done, the change made, "not for us",
+    measured), silenced by an answer on any surface (rec_ledger.
+    silenced_keys, and `viewer`'s own), or the same advice declined
+    elsewhere (insight_store.declined_signatures, direction and all).
+
+    The ONE filter every reader of the brief's links goes through (re-audit
+    9/29/26, CROSSMODULE-2): Ask's snapshot, read_business_snapshot and the
+    schedule draft used to re-raise a link the owner had declined, and the
+    draft was told to "reflect this". Declined links reach Ask only through
+    the link history (link_memory.history), labelled. Never raises."""
+    links = list(links or [])
+    if not links:
+        return [], []
+    try:
+        import rec_ledger
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
+    except Exception as e:
+        log.warning("business_intelligence: silences unavailable for rid=%s: %s", restaurant_id, e)
+        silenced = set()
+    declined = None
+    keep, answered = [], []
+    for l in links:
+        m = l.get("memory") or {}
+        key = link_key(l)
+        if m.get("resolved") or m.get("declined") or key in silenced:
+            answered.append(l)
+            continue
+        try:
+            import insight_store
+            sig = insight_store.advice_signature(key, l.get("confirm_by") or l.get("headline"))
+            if sig:
+                if declined is None:
+                    declined = insight_store.declined_signatures(restaurant_id, db_path=db_path)
+                if sig in declined:
+                    answered.append(l)
+                    continue
+        except Exception as e:
+            log.warning("business_intelligence: link signature unreadable: %s", e)
+        keep.append(l)
+    return keep, answered
+
+
+def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH, ctx=None, viewer=None,
+                    log_rank: bool = False) -> dict:
     """One cross-module read: where the money is, what connects, what to do
     first, and what could not be answered.
 
     Deterministic — no model runs here. Everything is either measured by a
     module or explicitly reported as unavailable.
+
+    `log_rank` logs the one thing's pick and the candidates it beat as the
+    day's "one_thing" rank build (pick_one_thing). Only the owner's Home
+    passes it (strategy_routes._do_cross_module): every other caller — Ask,
+    a manager's view, the schedule engine, the morning brief per recipient,
+    the weekly and monthly reviews — overwrote the day's row with a
+    candidate set the owner never saw (memory re-audit 9/29/26,
+    CROSSMODULE-13).
+
+    `links` are the links the owner has NOT answered (unanswered_links —
+    `viewer`'s own answers too, when a login is given); `links_answered`
+    counts the rest, which only the link history names.
     """
     data = gather(restaurant_id, restaurant=restaurant, db_path=db_path)
-    links = correlations(restaurant_id, data=data, db_path=db_path)
+    found = correlations(restaurant_id, data=data, db_path=db_path)
+    links, answered_links = unanswered_links(restaurant_id, found, viewer=viewer, db_path=db_path)
     money = money_at_stake(restaurant_id, data=data, db_path=db_path)
 
     reviews_brief = (data.get("reviews") or {}).get("brief") or {}
@@ -1578,7 +1925,7 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH,
     # What to do first, across modules rather than within one: a concrete
     # action, never a module label, ranked by urgency x dollars.
     candidates = one_thing_candidates(restaurant_id, data, links, db_path=db_path)
-    first = pick_one_thing(restaurant_id, candidates, db_path=db_path, ctx=ctx)
+    first = pick_one_thing(restaurant_id, candidates, db_path=db_path, ctx=ctx, log_rank=log_rank)
 
     unanswered = []
     for m in data.get("modules_off", []):
@@ -1591,6 +1938,7 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH,
     return {
         "fix_first": first,
         "links": links,
+        "links_answered": len(answered_links),
         "money": money,
         "reviews": _trim_reviews(reviews_brief),
         "food_cost": _trim_food(food_brief),
@@ -1686,11 +2034,21 @@ def snapshot_block(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) 
     elif brief.get("modules_consulted"):
         lines.append("- Nothing lines up across modules right now. Say that plainly rather "
                      "than connecting two findings yourself.")
+    if brief.get("links_answered"):
+        # Answered links are left out above (CROSSMODULE-2); the history
+        # names them, labelled (CROSSMODULE-15).
+        n = int(brief["links_answered"])
+        lines.append(f"- {n} other cross-module link{'s' if n != 1 else ''} the owner already answered (done, "
+                     f"declined or ended) {'are' if n != 1 else 'is'} left out. Do not raise "
+                     f"{'them' if n != 1 else 'it'} as new; read_restaurant_memory's link history says what "
+                     f"each was and how it was answered.")
 
     if brief.get("fix_first"):
         f = brief["fix_first"]
         lines.append(f"- If they only do one thing: {f.get('what')} "
-                     f"({', '.join(f.get('modules') or [])}) — {f.get('why')}")
+                     f"({', '.join(f.get('modules') or [])}) — {f.get('why')}"
+                     + (f" (the owner passed on the opposite advice on {f['agrees_with']['on']}; this agrees "
+                        f"with that)" if (f.get("agrees_with") or {}).get("on") else ""))
 
     vis = brief.get("visibility")
     if vis and vis.get("ai_score") is not None:

@@ -6,7 +6,9 @@ import Observation
 final class TwoFactorViewModel {
     let pendingToken: String
     var maskedEmail: String
-    /// Where the code went: "sms" or "email"; nil from an older server.
+    /// Where the code went: "sms" or "email"; "app" for an admin login whose
+    /// code comes from an authenticator app (nothing is sent, no Resend);
+    /// nil from an older server.
     var channel: String?
     var code = ""
     /// A saved backup code ("7F3A-92C1") instead of the 6-digit code. The
@@ -40,6 +42,7 @@ final class TwoFactorViewModel {
         switch channel {
         case "sms": return "Check your texts"
         case "email": return "Check your email"
+        case "app": return "Open your authenticator app"
         default: return "Enter your code"
         }
     }
@@ -52,6 +55,7 @@ final class TwoFactorViewModel {
         switch channel {
         case "sms": return "We texted a 6-digit code\(to)."
         case "email": return "We emailed a 6-digit code\(to)."
+        case "app": return "Enter the 6-digit code your authenticator app shows for Cavnar AI. Codes for this login are never emailed or texted — lost your phone? Use a backup code."
         default: return "We sent a 6-digit code\(to)."
         }
     }
@@ -72,7 +76,11 @@ final class TwoFactorViewModel {
         return code.trimmingCharacters(in: .whitespaces).count == 6
     }
 
-    var canResend: Bool { !isResending && resendCooldown == 0 && !isLoading }
+    /// An authenticator-app login: the app makes the code, so there is
+    /// nothing to resend (the server refuses it too).
+    var usesAuthenticatorApp: Bool { channel == "app" }
+
+    var canResend: Bool { !usesAuthenticatorApp && !isResending && resendCooldown == 0 && !isLoading }
 
     func toggleBackupCode() {
         useBackupCode.toggle()

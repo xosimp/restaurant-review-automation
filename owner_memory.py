@@ -50,6 +50,7 @@ SURFACE_MODULES = {
     "reply_drafter": {"reviews"},
     "marketing": {"marketing", "guests"},
     "competitor_read": {"intel", "marketing"},
+    "marketing_read": {"marketing", "guests"},
     "dsr_narrative": None, "brief": None, "digest": None, "weekly_plan": None,
 }
 # Follow-ups are for the surfaces an owner reads a to-do on.
@@ -63,17 +64,33 @@ SURFACE_METRICS = {
     "schedule": ("labor_pct", "overtime_hours", "weekday_sales", "sales"),
     "food_read": ("food_cost_pct", "weekly_waste"),
     "marketing": ("sales", "weekday_sales", "avg_rating"),
+    "marketing_read": ("sales", "weekday_sales", "avg_rating"),
     # The Reviews read lists goals (memory_context.SURFACE_SECTIONS) and the
     # owner's rating or response-time goal is what it judges against; it
     # read none (INT wiring audit, 9/29/26).
     "review_read": ("avg_rating", "complaints", "response_hours"),
 }
 # The module whose view permission a goal's metric needs (memory_context
-# viewer scoping reads it off the line).
+# viewer scoping reads it off the line). Comps and voids are "loss"
+# (LOSS_VIEW, memory_context's loss gate), not labor: a comp goal and its
+# measured reading reached a manager's Ask and the shared nightly report
+# (memory re-audit PEOPLE-2). _goal_module asks metrics.metric_permission
+# first, so a food-cost or loss metric this map misses is gated anyway.
 _METRIC_MODULE = {"labor_pct": "labor", "overtime_hours": "labor", "sales": "labor", "weekday_sales": "labor",
-                  "food_cost_pct": "food", "weekly_waste": "food", "avg_rating": "reviews",
-                  "complaints": "reviews", "response_hours": "reviews", "comp_rate": "labor",
-                  "void_rate": "labor"}
+                  "food_cost_pct": "food", "weekly_waste": "food", "item_waste": "food", "avg_rating": "reviews",
+                  "complaints": "reviews", "response_hours": "reviews", "comp_rate": "loss",
+                  "void_rate": "loss", "labor_pct_day": "labor", "labor_pct_part": "labor"}
+
+
+def _goal_module(metric):
+    """The module a goal line on `metric` is gated by."""
+    base = str(metric or "").split(":", 1)[0]
+    try:
+        import metrics
+        need = metrics.metric_permission(base)
+    except Exception:
+        need = None
+    return need or _METRIC_MODULE.get(base)
 
 # Words that make a principal's fact private to the account holders by
 # default, whatever audience the model asked for: personnel plans and money
@@ -85,6 +102,80 @@ _PRIVATE_RE = re.compile(
     r"lay(ing)?\s*off|laid\s+off|salar(y|ies)|raise\s+for|pay\s+cut|payroll\s+for|sell(ing)?\s+the\s+"
     r"(restaurant|business|place)|lawsuit|lawyer|attorney|divorce|loan|debt|investor|partner(ship)?\s+"
     r"(split|buyout)|buy\s*out)\b", re.I)
+
+# Money said about a person or the business that is private on its own —
+# a pay rate, a raise, a PIP, a sale of the business — whoever it names
+# (memory re-audit PEOPLE-10: "Marco makes $18 an hour", "Giving Marco a $2
+# raise", "Dana is on a PIP", "We are selling the bar", "Talking to a buyer
+# for the restaurant" all missed _PRIVATE_RE and were stored "team").
+_PRIVATE_ALONE_RE = re.compile(
+    r"(\$\s?\d+(\.\d+)?\s*(an?\s+hour|/\s*h(ou)?r\b|per\s+hour|hourly)|"
+    r"\b(makes|earns|paid|paying|pays)\s+\$\s?\d|"
+    r"\b(give|gives|giving|gave|get|gets|getting|got)\s+\w+\s+(a\s+)?(\$\s?\d+(\.\d+)?\s+)?raise\b|"
+    r"\bpay\s+raise\b|\bpip\b|\bperformance\s+improvement|\bbuyer\b|\bbuy(ing)?\s+us\s+out\b|"
+    r"\bsell(ing|s)?\s+(the|our|my)\s+(bar|restaurant|business|place|building|location|stake)\b)", re.I)
+# Personnel actions: private when they name a person (a roster name, a
+# person:* subject, or a capitalised name in the sentence) — "Fire Dana next
+# week", "Dana's last day is Friday", "Cutting Dana's hours after the
+# review", "Writing up Dana for no-shows".
+_PERSONNEL_RE = re.compile(
+    r"\b(fire[ds]?|firing|let(ting)?\s+\w+\s+go|terminat\w*|write\s+\w+\s+up|writ(e|es|ing)\s+up|"
+    r"written\s+up|warning|disciplin\w*|last\s+day|quit(s|ting)?|resign\w*|notice|probation|suspen\w*|"
+    r"demot\w*|promot(e|ed|ing|ion)\b|replac(e|ing)\s+(him|her|them)|cut(ting|s)?\s+\w+'?s?\s+hours|"
+    r"hours\s+cut|no[-\s]?shows?|performance\s+review|pay\b|wage\w*|bonus\w*|salar(y|ies))", re.I)
+_NAME_RE = re.compile(r"\b([A-Z][a-z]{1,20})\b")
+# Capitalised words that are not a person.
+_NOT_NAMES = {"I", "We", "Our", "The", "They", "He", "She", "It", "This", "That", "My", "Me", "Us", "A", "An",
+              "Fire", "Firing", "Writing", "Cutting", "Giving", "Talking", "Remind", "Remember", "Note", "Please",
+              "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "January", "February",
+              "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
+              "Cavnar", "AI", "Ask", "Toast", "Square", "Clover", "Google", "Yelp", "Instagram", "Facebook",
+              "Sysco", "Christmas", "Thanksgiving", "Easter", "Labor", "Memorial", "Day", "PIP", "GM", "Chef"}
+
+
+def _roster_names(restaurant_id, db_path=None) -> set:
+    """Lower-cased first and full names on the roster (people.list_people)."""
+    if not restaurant_id:
+        return set()
+    try:
+        import people
+        out = set()
+        for p in people.list_people(restaurant_id, db_path=db_path):
+            name = " ".join(str(p.get("name") or "").split()).lower()
+            if name:
+                out.add(name)
+                out.add(name.split(" ", 1)[0])
+        return {n for n in out if len(n) >= 2}
+    except Exception:
+        return set()
+
+
+def is_private(text, restaurant_id=None, subject=None, db_path=None) -> bool:
+    """Whether a fact is personnel or money that stays with the account
+    holders (and its author) by default: _PRIVATE_RE, money private on its
+    own (_PRIVATE_ALONE_RE), or a personnel action (_PERSONNEL_RE) about a
+    named person — a roster name (people.list_people), a "person:*"
+    subject, or a capitalised name in the sentence (memory re-audit
+    PEOPLE-10)."""
+    text = text or ""
+    if _PRIVATE_RE.search(text) or _PRIVATE_ALONE_RE.search(text):
+        return True
+    if not _PERSONNEL_RE.search(text):
+        return False
+    if str(subject or "").startswith("person:"):
+        return True
+    for m in _NAME_RE.finditer(text):
+        if m.group(1) in _NOT_NAMES:
+            continue
+        # A sentence's first word is capitalised anyway: a name only when
+        # it is possessive ("Dana's last day").
+        before = text[:m.start()].rstrip()
+        if (not before or before[-1] in ".!?:;\n") and not text[m.end():m.end() + 2] in ("'s", "’s"):
+            continue
+        return True
+    low = " " + " ".join(re.findall(r"[a-z0-9'-]+", text.lower())) + " "
+    return any(f" {n} " in low or f" {n}'s " in low for n in _roster_names(restaurant_id, db_path=db_path))
+
 
 # A measurable target said as a sentence ("labor under 26% by December"):
 # the remember tool refuses it as a goal and points at set_goal, where it is
@@ -158,7 +249,10 @@ def author_of(user) -> dict:
     except Exception:
         authority, role = "delegate", str(user.get("role") or "")
     if authority == "admin":
-        return {"user_id": user.get("id"), "label": "Cavnar AI support", "authority": "admin"}
+        # The admin behind a view-as, never the owner it views as: a fact
+        # support writes is never filed as the owner's own (PEOPLE-7).
+        from permissions import acting_login_id
+        return {"user_id": acting_login_id(user), "label": "Cavnar AI support", "authority": "admin"}
     name = str(user.get("name") or user.get("username") or "").strip()
     if "@" in name:
         name = name.split("@", 1)[0]
@@ -168,22 +262,81 @@ def author_of(user) -> dict:
             "authority": authority}
 
 
-def _default_audience(kind, authority, text):
+def _default_audience(kind, authority, text, restaurant_id=None, subject=None, db_path=None):
+    """A follow-up is its author's; personnel and money (is_private) are the
+    account holders' — whoever said it: a manager's "we're firing the
+    dishwasher" was stored "team" because the default ran for principals
+    only (memory re-audit PEOPLE-10). A delegate's private fact still reads
+    for its author (memory_context.visible)."""
     if kind == "followup":
         return "author"
-    if authority == "principal" and _PRIVATE_RE.search(text or ""):
+    if is_private(text, restaurant_id=restaurant_id, subject=subject, db_path=db_path):
         return "principals"
     return "team"
 
 
+_KIND_LABELS = {"constraint": "Constraint", "context": "Note", "preference": "Preference", "goal": "Aim",
+                "followup": "Follow-up"}
+_AUDIENCE_LABELS = {"team": "read by the team", "principals": "read by the account holders only",
+                    "author": "read by the person who added it only"}
+
+
+def activity_detail(kind, audience) -> str:
+    """What the Account activity log says about a memory change: its type
+    and who may read it — never the fact's words. Every console login reads
+    that log (/account/activity), so the text of an owner-only or a
+    teammate's own fact there undid the audience it was stored with
+    (memory re-audit PEOPLE-1)."""
+    return (f"{_KIND_LABELS.get(kind or 'context', 'Note')} · "
+            f"{_AUDIENCE_LABELS.get(audience or 'team', _AUDIENCE_LABELS['team'])}")
+
+
+# A per-restaurant memory version, bumped by every memory write (remember,
+# forget, retract, expire, restore, goals through goals._targets_changed):
+# a front cache keyed on the data alone — labor.labor_note's — adds it to its
+# key, so a constraint told at 10am is in the 10:01 read, not tomorrow's
+# (memory re-audit 9/29/26, R3 labor_cache). Process-local, like the caches
+# that read it.
+_MEMORY_VERSION = {}
+
+
+def memory_version(restaurant_id) -> int:
+    try:
+        return _MEMORY_VERSION.get(int(restaurant_id), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+# The route caches of the reads whose prompt carries owner memory
+# (client_api._insight_cache): dropped with the memory, like on an upload.
+_MEMORY_READ_CACHES = ("labor-insight:", "mobile-labor-insight:", "inv-insight:", "mobile-inv-insight:",
+                       "review-insight:")
+
+
 def invalidate(restaurant_id):
     """A memory write reaches Ask's next answer, not one a minute later
-    (ask_cavnar caches its snapshot for 60 s)."""
+    (ask_cavnar caches its snapshot for 60 s) — and the labor, food and
+    review reads' next load, whose prompts carry the memory too (their
+    front caches key on memory_version; their route caches are dropped)."""
+    import sys
+    try:
+        rid = int(restaurant_id)
+        _MEMORY_VERSION[rid] = _MEMORY_VERSION.get(rid, 0) + 1
+    except (TypeError, ValueError):
+        pass
     try:
         import ask_cavnar
         ask_cavnar.invalidate_context(restaurant_id)
     except Exception as e:
         log.debug("owner_memory: ask context not invalidated for %s: %s", restaurant_id, e)
+    # Only where the web app is loaded (never imported for it: a scheduler
+    # or a test has no route cache to drop).
+    capi = sys.modules.get("client_api")
+    if capi is not None:
+        try:
+            capi.invalidate_insight_cache(restaurant_id, prefixes=_MEMORY_READ_CACHES)
+        except Exception as e:
+            log.debug("owner_memory: read caches not dropped for %s: %s", restaurant_id, e)
 
 
 # ── the write path ──────────────────────────────────────────────────────────
@@ -193,28 +346,132 @@ class MemoryRefused(ValueError):
     instead (set a goal, give a future date)."""
 
 
-def looks_like_target(text) -> bool:
+# A target said as a rule ("keep labor under 26%", "never let food cost pass
+# 31%"): a figure, a metric word AND a direction. Without the direction a
+# sentence with a number is background ("sales were $40k last week").
+_DIRECTION_RE = re.compile(r"\b(under|below|over|above|at\s+most|at\s+least|no\s+more\s+than|less\s+than|"
+                           r"more\s+than|keep|get|hit|reach|target|goal|aim|cap|max(imum)?|min(imum)?|pass|"
+                           r"exceed|stay|by)\b", re.I)
+
+
+def looks_like_target(text, kind="goal") -> bool:
     """"Labor under 26% by December" — a figure and a metric word: a goal
-    set_goal can measure, not a sentence to keep."""
-    return bool(_TARGET_RE.search(text or "") and _METRIC_WORD_RE.search(text or ""))
+    set_goal can measure, not a sentence to keep. For any kind but "goal" a
+    direction word is needed too, so a measured figure said as background is
+    not refused (memory re-audit 9/29/26, R3 fact_conflicts: the check ran on
+    "goal" only, so "keep labor under 26%" filed as a constraint was stored,
+    and prompts said 26% while every module judged 28%)."""
+    t = text or ""
+    if not (_TARGET_RE.search(t) and _METRIC_WORD_RE.search(t)):
+        return False
+    return kind == "goal" or bool(_DIRECTION_RE.search(t))
+
+
+# ── the same thing said twice, or a newer version of it ─────────────────────
+#
+# The only dedupe was exact text, so paraphrases took two slots and a
+# contradiction ("we're closed Mondays" / "we're open Mondays now") reached
+# the same prompt twice. A new fact is compared with what the writer can see
+# of the same kind (or the same subject); the close ones are handed back
+# ("this replaces …?"), and `replaces` archives the older one as 'replaced'.
+_STOP_WORDS = frozenset(
+    "a an the and or but to of in on at for with from by is are was were be been being it its this that "
+    "these those we our us you your they their them he she his her him i me my shes hes theyre were weve "
+    "im ive youre ill wed as so if then than there here about into up out just also very really please "
+    "has have had will would should could can may might".split())
+_POLARITY_WORDS = frozenset(
+    "open opens opened opening closed close closes closing never always not no dont doesnt didnt isnt arent "
+    "wasnt werent cant cannot wont do does now anymore again stop stops stopped start starts started keep "
+    "only yes".split())
+
+
+def _tokens(text):
+    out = set()
+    for w in re.findall(r"[a-z0-9]+", str(text or "").lower().replace("'", "").replace("’", "")):
+        if w in _STOP_WORDS:
+            continue
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        out.add(w)
+    return out
+
+
+def _is_similar(a_text, b_text, a_subject=None, b_subject=None) -> bool:
+    if a_subject and b_subject and str(a_subject).strip().lower() == str(b_subject).strip().lower():
+        return True
+    a, b = _tokens(a_text), _tokens(b_text)
+    if not a or not b:
+        return False
+    if len(a & b) / len(a | b) >= 0.5:
+        return True
+    ca, cb = a - _POLARITY_WORDS, b - _POLARITY_WORDS
+    if ca and ca == cb:
+        return True                    # the same thing with its polarity flipped
+    small = min(len(ca), len(cb))
+    return small >= 2 and len(ca & cb) * 3 >= small * 2
+
+
+def similar_facts(restaurant_id, text, kind=None, subject=None, user=None, exclude_ids=(), db_path=None,
+                  limit=3) -> list:
+    """The live facts `user` may read that look like `text` — the same
+    kind with most of the same words, the same subject, or the same words
+    with the polarity flipped. [{"id", "fact", "kind"}], closest first."""
+    out = []
+    skip = {int(i) for i in exclude_ids or () if i is not None}
+    for r in facts_for(restaurant_id, viewer=user, db_path=db_path, include_expired=True):
+        if r["id"] in skip or r["fact"] == text:
+            continue
+        same_subject = subject and r.get("subject") and str(r["subject"]).lower() == str(subject).lower()
+        if kind and (r.get("kind") or "context") != kind and not same_subject:
+            continue
+        if _is_similar(text, r["fact"], subject, r.get("subject")):
+            out.append({"id": r["id"], "fact": r["fact"], "kind": r.get("kind") or "context"})
+    return out[:limit]
+
+
+_AUDIENCE_RANK = {"author": 0, "principals": 1, "team": 2}
+
+
+def _narrower(a, b):
+    """The more restrictive of two audiences (author < principals < team)."""
+    a = a if a in _AUDIENCE_RANK else "team"
+    b = b if b in _AUDIENCE_RANK else "team"
+    return a if _AUDIENCE_RANK[a] <= _AUDIENCE_RANK[b] else b
 
 
 def remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
              audience=None, user=None, source=None, origin="ask", author_label=None, db_path=None,
-             today=None) -> dict:
-    """Keep one fact. Returns {"fact", "kind", "evicted", "audience",
-    "valid_until", "due_on"}; raises MemoryRefused (a ValueError) for an
-    empty fact, a past date, or a measurable target filed as a goal.
+             today=None, audience_chosen=False, replaces=None, scope=None) -> dict:
+    """Keep one fact. Returns {"fact", "kind", "evicted", "evicted_facts",
+    "audience", "private_default", "valid_until", "due_on", "id", "similar",
+    "replaced", "confirmed"}; raises MemoryRefused (a ValueError) for an
+    empty fact, a past date, or a measurable target (any kind — memory
+    re-audit R3). `scope` "org": every location of the organisation reads it
+    — a group owner only (may_set_org; memory re-audit R6, PEOPLE-13).
+    `private_default`: the fact went to the account holders because it is
+    personnel or money (is_private — memory re-audit PEOPLE-10); only an
+    explicit `audience_chosen` keeps such a fact "team".
 
     `user` is the login saying it — its id, label and authority are stored
     on the fact, so a manager's remark is never shown as the owner's; None
-    is a seeded fact, labelled by `author_label` ("Sales audit 9/8/26")."""
+    is a seeded fact, labelled by `author_label` ("Sales audit 9/8/26").
+
+    The same words another login already said (memory re-audit 9/29/26, R3
+    fact_text_key): when this login can read that fact, saying it again is a
+    CONFIRMATION — stamped on it (confirmed_by), its author, audience and
+    dates untouched; when it cannot (the owner's own), this login's words
+    are its own row, never wider than the one already there.
+
+    `replaces` (a fact's id or exact text this login may drop) archives that
+    fact as 'replaced' once this one is kept; `similar` hands back the close
+    ones so the caller can ask "does this replace …?"."""
     import models
+    import memory_context
     text = " ".join(str(fact or "").split())[:models.ASK_MEMORY_MAX_LENGTH]
     if not text:
         raise MemoryRefused("a fact needs some text")
     kind = kind if kind in KINDS else "context"
-    if kind == "goal" and looks_like_target(text):
+    if origin not in ("audit", "ratings") and looks_like_target(text, kind):
         raise MemoryRefused("That's a measurable target — set it as a goal (set_goal, or Goals) so it is "
                             "measured and every module judges against it.")
     today = today or _local_today(restaurant_id)
@@ -229,23 +486,86 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
     if kind == "followup" and due is None:
         due = today + timedelta(days=7)
     who = author_of(user)
+    private_default = False
     if audience not in ("team", "principals", "author"):
-        audience = _default_audience(kind, who["authority"], text)
-    elif who["authority"] == "principal" and audience == "team" and _PRIVATE_RE.search(text):
-        # The backstop: personnel and money said by an account holder stay
-        # theirs, whatever the model asked for.
+        audience = _default_audience(kind, who["authority"], text, restaurant_id=restaurant_id, subject=subject,
+                                     db_path=db_path)
+        private_default = audience == "principals"
+    elif audience == "team" and not audience_chosen and is_private(text, restaurant_id=restaurant_id,
+                                                                   subject=subject, db_path=db_path):
+        # The backstop: personnel and money stay with the account holders
+        # (and the author), whatever the model asked for and whoever said it.
+        # Only a person's own explicit choice in Account ("Share with the
+        # team" — audience_chosen) makes such a fact the team's.
+        audience = "principals"
+        private_default = True
+    if who["authority"] == "admin" and audience == "team":
+        # Said by Cavnar AI support through view-as: for the account
+        # holders only (memory re-audit 9/29/26, PROMPTS-12) — support's
+        # words never reach the whole team as the restaurant's.
         audience = "principals"
     if isinstance(modules, str):
         modules = [m.strip() for m in modules.split(",")]
+    if scope == "org" and not may_set_org(restaurant_id, user, db_path=db_path):
+        raise MemoryRefused("Only the owner of every location can keep a fact for all of them.")
+    viewer = memory_context.viewer_user(user)
+    same = [r for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
+            if r["fact"] == text and r.get("user_id") != who["user_id"]]
+    if user is not None:
+        seen = [r for r in same if memory_context.visible(_gate(r), viewer)]
+        if seen:
+            row = seen[0]
+            models.confirm_ask_fact(restaurant_id, row["id"], confirmed_by=author_label or who["label"],
+                                    db_path=db_path or models.DB_PATH)
+            if scope == "org":
+                models.set_ask_fact_scope(restaurant_id, row["id"], "org", db_path=db_path or models.DB_PATH)
+            invalidate(restaurant_id)
+            return {"fact": row["fact"], "kind": row.get("kind") or "context", "evicted": 0, "evicted_facts": [],
+                    "audience": row.get("audience") or "team", "valid_until": row.get("valid_until"),
+                    "due_on": row.get("due_on"), "id": row["id"], "similar": [], "replaced": None,
+                    "confirmed": True, "private_default": False}
+    for r in same:
+        audience = _narrower(audience, r.get("audience") or "team")
     saved = models.remember_ask_fact(
         restaurant_id, text, kind=kind, source=source, user_id=who["user_id"], db_path=db_path or models.DB_PATH,
         modules=list(modules or ()), subject=subject, audience=audience,
         author_label=author_label or who["label"], authority=who["authority"] or ("system" if user is None else None),
-        valid_until=until.isoformat() if until else None, due_on=due.isoformat() if due else None, origin=origin)
+        valid_until=until.isoformat() if until else None, due_on=due.isoformat() if due else None, origin=origin,
+        scope="org" if scope == "org" else None)
+    replaced = None
+    if replaces not in (None, "", 0):
+        replaced = _replace(restaurant_id, replaces, user, keep_id=saved.get("id"), db_path=db_path)
+    similar = []
+    if user is not None and replaced is None:
+        similar = similar_facts(restaurant_id, text, kind=kind, subject=subject, user=user,
+                                exclude_ids=[saved.get("id")], db_path=db_path)
+    evicted_seen = [{"fact": e["fact"]} for e in saved.get("evicted_facts") or []
+                    if memory_context.visible(_gate(e), viewer)]
     expire(restaurant_id, today=today, db_path=db_path)
     invalidate(restaurant_id)
-    return {"fact": saved["fact"], "kind": saved["kind"], "evicted": saved.get("evicted", 0), "audience": audience,
-            "valid_until": until.isoformat() if until else None, "due_on": due.isoformat() if due else None}
+    return {"fact": saved["fact"], "kind": saved["kind"], "evicted": saved.get("evicted", 0),
+            "evicted_facts": evicted_seen, "audience": saved.get("audience") or audience,
+            "private_default": private_default,
+            "valid_until": until.isoformat() if until else None, "due_on": due.isoformat() if due else None,
+            "id": saved.get("id"), "similar": similar, "replaced": replaced, "confirmed": False}
+
+
+def _replace(restaurant_id, target, user, keep_id=None, db_path=None):
+    """Archive the fact `target` (an id or its exact text) as 'replaced' —
+    one `user` may read and drop. Returns its text, or None."""
+    import models
+    rows = facts_for(restaurant_id, viewer=user, db_path=db_path, include_expired=True)
+    try:
+        tid = int(target)
+        row = next((r for r in rows if r["id"] == tid), None)
+    except (TypeError, ValueError):
+        t = " ".join(str(target or "").split())
+        row = next((r for r in rows if r["fact"] == t), None)
+    if row is None or row["id"] == keep_id or not _may_edit(row, user):
+        return None
+    models.archive_ask_facts(restaurant_id, [row["id"]], "replaced", archived_by=(user or {}).get("id"),
+                             db_path=db_path or models.DB_PATH)
+    return row["fact"]
 
 
 def _may_edit(fact_row, user) -> bool:
@@ -279,7 +599,11 @@ def forget(restaurant_id, fact, user=None, db_path=None) -> dict:
             return {"error": "more than one note matches — say which", "candidates": [r["fact"] for r in exact][:6]}
     if not exact:
         return {"error": "no note like that", "remembered": [r["fact"] for r in rows][:30]}
+    # This login's own row first: the same words from someone else are theirs.
+    exact.sort(key=lambda r: r.get("user_id") != (user or {}).get("id"))
     row = exact[0]
+    if row.get("from_location") is not None:
+        return {"error": "that note is kept for every location at another of your locations; forget it there"}
     if not _may_edit(row, user):
         return {"error": "that note was added by someone else; only its author or the owner can drop it"}
     if row.get("origin") == "ratings":
@@ -289,9 +613,39 @@ def forget(restaurant_id, fact, user=None, db_path=None) -> dict:
         models.archive_ask_facts(restaurant_id, [row["id"]], "forgotten",
                                  archived_by=(user or {}).get("id"), db_path=db_path or models.DB_PATH)
     else:
-        models.forget_ask_fact(restaurant_id, row["fact"], db_path=db_path or models.DB_PATH)
+        # By id: the same words from another login are their own fact.
+        models.delete_ask_facts(restaurant_id, [row["id"]], db_path=db_path or models.DB_PATH)
     invalidate(restaurant_id)
     return {"forgotten": row["fact"]}
+
+
+def set_audience(restaurant_id, fact_id, audience, user=None, db_path=None) -> dict:
+    """The one-tap change beside a fact in Account (memory re-audit
+    PEOPLE-10): personnel and money default to the account holders, and the
+    person who may edit the fact (its author or an account holder — _may_edit)
+    can share it with the team, or keep it to the owners or themselves. A
+    delegate cannot hand a fact to "principals" it did not write, and an
+    "author" fact stays its author's. {"ok": True, "audience"} | {"error"}."""
+    import models
+    if audience not in ("team", "principals", "author"):
+        return {"error": "Pick who reads it: team, principals or author."}
+    try:
+        fid = int(fact_id)
+    except (TypeError, ValueError):
+        return {"error": "Which fact?"}
+    rows = facts_for(restaurant_id, viewer=user, db_path=db_path, include_expired=True)
+    row = next((r for r in rows if r.get("id") == fid), None)
+    if row is None:
+        return {"error": "No fact like that.", "status": 404}
+    if not _may_edit(row, user):
+        return {"error": "Only the person who added it or an owner can change who reads it.", "status": 403}
+    if audience == "author" and row.get("user_id") is not None and user is not None \
+            and row.get("user_id") != user.get("id"):
+        return {"error": "Only the person who added it can keep it to themselves.", "status": 403}
+    if not models.set_ask_fact_audience(restaurant_id, fid, audience, db_path=db_path or models.DB_PATH):
+        return {"error": "No fact like that.", "status": 404}
+    invalidate(restaurant_id)
+    return {"ok": True, "audience": audience, "kind": row.get("kind") or "context"}
 
 
 # ── preferences read off the owner's own ratings (ask_feedback) ─────────────
@@ -316,64 +670,159 @@ def _rating_pref_rows(restaurant_id, user_id, db_path=None):
             and f.get("origin") == "ratings"]
 
 
+def _org_others(restaurant_id, db_path=None) -> list:
+    """The organisation's other locations (preferences.org_location_ids)."""
+    try:
+        import preferences
+        return preferences.org_location_ids(restaurant_id, db_path=db_path)
+    except Exception:
+        return []
+
+
 def rating_preference(restaurant_id, user_id, db_path=None):
     """"short" | "full" | None — the answer length this login's ratings ask
-    for (the live derived fact; a forgotten one is gone)."""
+    for (the live derived fact; a forgotten one is gone). A person, not a
+    location (memory re-audit 9/29/26, PEOPLE-13): with none derived here,
+    the one their ratings set at another of the organisation's locations
+    applies — a three-location owner said "shorter" once, not three times."""
     if user_id is None:
         return None
-    for f in _rating_pref_rows(restaurant_id, user_id, db_path=db_path):
-        return str(f["subject"]).rsplit(":", 1)[-1] if str(f["subject"]).count(":") >= 2 else None
+    for rid in [restaurant_id] + _org_others(restaurant_id, db_path=db_path):
+        for f in _rating_pref_rows(rid, user_id, db_path=db_path):
+            return str(f["subject"]).rsplit(":", 1)[-1] if str(f["subject"]).count(":") >= 2 else None
     return None
+
+
+def _rating_signals(rows):
+    """What a set of ratings says about length: the notes asking for
+    shorter, the long answers rated not helpful, the notes asking for more
+    on a short answer, and the helpful ratings of long and of short answers."""
+    bad = [r for r in rows if not r.get("helpful")]
+    long_rated = [r for r in rows if r.get("depth") == "executive"]
+    long_bad = [r for r in long_rated if not r.get("helpful")]
+    return {
+        "wants_short": [r for r in bad if _WANTS_SHORT_RE.search(str(r.get("note") or ""))],
+        "long_rated": long_rated, "long_bad": long_bad,
+        "wants_more": [r for r in bad if r.get("depth") in ("brief", "standard")
+                       and _WANTS_MORE_RE.search(str(r.get("note") or ""))],
+        "long_good": [r for r in long_rated if r.get("helpful")],
+        "short_good": [r for r in rows if r.get("helpful") and r.get("depth") in ("brief", "standard")],
+    }
+
+
+def _short_support(sig) -> int:
+    """How many ratings ask for shorter: the notes, or the long answers
+    rated not helpful when they are most of the long ones rated."""
+    n = len(sig["wants_short"])
+    if len(sig["long_bad"]) >= RATING_PREF_MIN and 2 * len(sig["long_bad"]) > len(sig["long_rated"]):
+        n = max(n, len(sig["long_bad"]))
+    return n
+
+
+def _pref_text(pref, sig):
+    if pref == "short":
+        basis = (f"{len(sig['wants_short'])} answers rated not helpful as too long"
+                 if len(sig["wants_short"]) >= RATING_PREF_MIN
+                 else f"{len(sig['long_bad'])} of {len(sig['long_rated'])} long answers rated not helpful")
+        return f"Prefers short, direct answers — lead with the number ({basis})"
+    return (f"Prefers fuller answers with the reasoning ({len(sig['wants_more'])} short answers rated not helpful "
+            f"as too thin)")
 
 
 def derive_rating_preferences(restaurant_id, user, db_path=None):
     """Read this login's ratings for a length preference and keep it as a
-    fact (kind preference, origin "ratings", visible to them alone), or
-    retire one the ratings no longer support. Returns {"preference",
-    "fact"} or None. A preference they forgot is not re-derived until
-    RATING_PREF_MIN new ratings since the forget say it again."""
+    fact (kind preference, origin "ratings", visible to them alone). Returns
+    {"preference", "fact"} or None.
+
+    Memory re-audit 9/29/26 (R3 rating_pref): a preference used to be
+    re-read from the last 180 days on every rating — so once the "too long"
+    notes aged out, the next rating (even a helpful one on a short answer:
+    the preference WORKING) deleted it, unarchived; and "short" was tested
+    first, so newer "explain more" notes could never reverse it. Now:
+      - with no preference, the side with RATING_PREF_MIN ratings and more
+        of them than the other side is kept;
+      - a kept preference is judged only on the ratings SINCE it was derived
+        (its created_at): the opposite side reaching RATING_PREF_MIN and
+        outnumbering its own support REPLACES it (archived 'replaced'); the
+        answers it avoids rated helpful that often RETIRES it (archived
+        'contradicted', shown in Account); its own side again stamps it
+        confirmed (last supported) — and nothing else ever removes it;
+      - one they forgot is not re-derived until RATING_PREF_MIN ratings
+        since the forget say it again (the forget marker is looked up by
+        this login and subject, not within the newest 200 archive rows)."""
     import models
     uid = (user or {}).get("id") if isinstance(user, dict) else user
     if uid is None:
         return None
-    rows = models.ask_feedback_rows(restaurant_id, user_id=uid, db_path=db_path or models.DB_PATH)
-    forgotten = [a for a in models.get_ask_memory_archive(restaurant_id, limit=200, db_path=db_path or models.DB_PATH)
-                 if a.get("reason") == "forgotten" and a.get("user_id") == uid
-                 and str(a.get("subject") or "").startswith(RATING_PREF_SUBJECT)]
-    if forgotten:
-        since = max(str(a.get("archived_at") or "") for a in forgotten)
+    dbp = db_path or models.DB_PATH
+    # Their ratings at every location of the organisation: the person's own
+    # habit, read once, not relearned per location (R6, PEOPLE-13).
+    rows = models.ask_feedback_rows(restaurant_id, user_id=uid, db_path=dbp)
+    for other in _org_others(restaurant_id, db_path=db_path):
+        rows += models.ask_feedback_rows(other, user_id=uid, db_path=dbp)
+    rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    forgot = models.get_ask_memory_archive(restaurant_id, limit=1, db_path=dbp, user_id=uid, reason="forgotten",
+                                           subject_prefix=RATING_PREF_SUBJECT)
+    if forgot:
+        since = str(forgot[0].get("archived_at") or "")
         rows = [r for r in rows if str(r.get("updated_at") or "") > since]
-    bad = [r for r in rows if not r.get("helpful")]
-    long_rated = [r for r in rows if r.get("depth") == "executive"]
-    long_bad = [r for r in long_rated if not r.get("helpful")]
-    wants_short = [r for r in bad if _WANTS_SHORT_RE.search(str(r.get("note") or ""))]
-    wants_more = [r for r in bad if r.get("depth") in ("brief", "standard")
-                  and _WANTS_MORE_RE.search(str(r.get("note") or ""))]
-    pref, text = None, None
-    if len(wants_short) >= RATING_PREF_MIN or (len(long_bad) >= RATING_PREF_MIN and 2 * len(long_bad) > len(long_rated)):
-        pref = "short"
-        basis = (f"{len(wants_short)} answers rated not helpful as too long" if len(wants_short) >= RATING_PREF_MIN
-                 else f"{len(long_bad)} of {len(long_rated)} long answers rated not helpful")
-        text = f"Prefers short, direct answers — lead with the number ({basis})"
-    elif len(wants_more) >= RATING_PREF_MIN:
-        pref = "full"
-        text = f"Prefers fuller answers with the reasoning ({len(wants_more)} short answers rated not helpful as too thin)"
     old = _rating_pref_rows(restaurant_id, uid, db_path=db_path)
-    if pref is None:
-        if old:
-            models.delete_ask_facts(restaurant_id, [f["id"] for f in old], db_path=db_path or models.DB_PATH)
+    current = old[0] if old else None
+    if current is not None:
+        cur_pref = str(current.get("subject") or "").rsplit(":", 1)[-1]
+        derived_at = str(current.get("created_at") or "")
+        after = [r for r in rows if str(r.get("updated_at") or "") >= derived_at]
+        sig = _rating_signals(after)
+        support = _short_support(sig) if cur_pref == "short" else len(sig["wants_more"])
+        opposite = len(sig["wants_more"]) if cur_pref == "short" else _short_support(sig)
+        against = len(sig["long_good"]) if cur_pref == "short" else len(sig["short_good"])
+        if opposite >= RATING_PREF_MIN and opposite > support:
+            new_pref = "full" if cur_pref == "short" else "short"
+            models.archive_ask_facts(restaurant_id, [f["id"] for f in old], "replaced", db_path=dbp)
+            text = _pref_text(new_pref, sig)
+            _store_rating_pref(restaurant_id, uid, new_pref, text, dbp)
             invalidate(restaurant_id)
+            return {"preference": new_pref, "fact": text}
+        if against >= RATING_PREF_MIN and against > support:
+            models.archive_ask_facts(restaurant_id, [f["id"] for f in old], "contradicted", db_path=dbp)
+            invalidate(restaurant_id)
+            return None
+        consistent = len(sig["short_good"]) if cur_pref == "short" else len(sig["long_good"])
+        if support or consistent:
+            # Still supported (its own notes again, or the answers it shapes
+            # rated helpful): stamp when (last supported), and let the
+            # wording carry the newest count — its date and author unchanged.
+            full = _rating_signals(rows)
+            if (_short_support(full) if cur_pref == "short" else len(full["wants_more"])) >= RATING_PREF_MIN:
+                text = _pref_text(cur_pref, full)
+            else:
+                text = current["fact"]
+            models.confirm_ask_fact(restaurant_id, current["id"], confirmed_by="Their ratings",
+                                    fact=text if text != current["fact"] else None, db_path=dbp)
+            invalidate(restaurant_id)
+            return {"preference": cur_pref, "fact": text}
+        return {"preference": cur_pref, "fact": current["fact"]}
+    sig = _rating_signals(rows)
+    short_n, full_n = _short_support(sig), len(sig["wants_more"])
+    pref = None
+    if short_n >= RATING_PREF_MIN and short_n > full_n:
+        pref = "short"
+    elif full_n >= RATING_PREF_MIN and full_n > short_n:
+        pref = "full"
+    if pref is None:
         return None
-    if old and old[0]["fact"] == text:
-        return {"preference": pref, "fact": text}
-    if old:
-        models.delete_ask_facts(restaurant_id, [f["id"] for f in old], db_path=db_path or models.DB_PATH)
-    models.remember_ask_fact(restaurant_id, text, kind="preference", source="Your ratings", user_id=uid,
-                             db_path=db_path or models.DB_PATH, modules=None,
-                             subject=f"{RATING_PREF_SUBJECT}:{pref}", audience="author",
-                             author_label="From their own ratings", authority="system", origin="ratings")
+    text = _pref_text(pref, sig)
+    _store_rating_pref(restaurant_id, uid, pref, text, dbp)
     invalidate(restaurant_id)
     return {"preference": pref, "fact": text}
+
+
+def _store_rating_pref(restaurant_id, uid, pref, text, db_path):
+    import models
+    models.remember_ask_fact(restaurant_id, text, kind="preference", source="Your ratings", user_id=uid,
+                             db_path=db_path, modules=None, subject=f"{RATING_PREF_SUBJECT}:{pref}",
+                             audience="author", author_label="From their own ratings", authority="system",
+                             origin="ratings")
 
 
 def retract_for_keys(restaurant_id, keys, titles=(), archived_by=None, db_path=None) -> int:
@@ -418,11 +867,75 @@ def retract_for_keys(restaurant_id, keys, titles=(), archived_by=None, db_path=N
     return n
 
 
+def departed_author_ids(restaurant_id, db_path=None) -> set:
+    """The logins behind this restaurant's facts who no longer have access
+    to it: switched off (users.is_active=0 — a revoke, an admin's
+    deactivation), or whose membership of this restaurant was ended
+    (memberships.is_active=0, and it is not their own login's restaurant).
+    Deliberately NOT inferred from a missing membership: a group owner
+    reaches a sibling location through the location group, with no
+    membership row (auth._still_in_group). Support's login is never
+    "departed", and an id with no users row is not judged."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            ids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT user_id FROM ask_memory WHERE restaurant_id=? AND user_id IS NOT NULL",
+                (restaurant_id,)).fetchall()]
+            if not ids:
+                return set()
+            marks = ",".join("?" for _ in ids)
+            try:
+                gone = {r[0] for r in conn.execute(
+                    f"SELECT u.id FROM users u WHERE u.id IN ({marks}) AND COALESCE(u.is_admin, 0)=0 AND "
+                    "(COALESCE(u.is_active, 1)=0 OR (COALESCE(u.restaurant_id, -1)!=? AND EXISTS "
+                    "(SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.restaurant_id=? AND m.is_active=0)))",
+                    (*ids, restaurant_id, restaurant_id)).fetchall()}
+            except Exception:
+                gone = {r[0] for r in conn.execute(
+                    f"SELECT u.id FROM users u WHERE u.id IN ({marks}) AND COALESCE(u.is_admin, 0)=0 AND "
+                    "COALESCE(u.is_active, 1)=0", ids).fetchall()}
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("owner_memory: departed logins unreadable for %s: %s", restaurant_id, e)
+        return set()
+    return gone
+
+
+def retire_departed(restaurant_id, db_path=None) -> int:
+    """A login that left takes its private notes with it (memory re-audit
+    9/29/26, R3 revoked_login): its "author" facts — which no one else could
+    read, and which still steered every internal prompt — move to the
+    archive as 'author_left', where the account holders see them and may put
+    one back as their own. Its shared facts stay (they were said to the
+    team) and Account marks them as from someone who left, for the owner to
+    keep or forget. Called by auth.revoke_team_member, and by every expiry
+    pass for a login switched off any other way. Returns how many moved."""
+    import models
+    gone = departed_author_ids(restaurant_id, db_path=db_path)
+    if not gone:
+        return 0
+    ids = [f["id"] for f in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
+           if f.get("user_id") in gone and (f.get("audience") or "team") == "author"]
+    if not ids:
+        return 0
+    n = models.archive_ask_facts(restaurant_id, ids, "author_left", db_path=db_path or models.DB_PATH)
+    invalidate(restaurant_id)
+    return n
+
+
 def expire(restaurant_id, today=None, db_path=None) -> int:
     """Archive what has run out: a time-bound fact past its valid_until, a
-    follow-up FOLLOWUP_GRACE_DAYS past its due date. Returns how many."""
+    follow-up FOLLOWUP_GRACE_DAYS past its due date — and a departed login's
+    private notes (retire_departed). Returns how many."""
     import models
     today = today or _local_today(restaurant_id)
+    left = 0
+    try:
+        left = retire_departed(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.debug("owner_memory: departed notes not retired for %s: %s", restaurant_id, e)
     ids = []
     for f in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH):
         until = _parse_day(f.get("valid_until"))
@@ -433,16 +946,48 @@ def expire(restaurant_id, today=None, db_path=None) -> int:
               and due + timedelta(days=FOLLOWUP_GRACE_DAYS) < today):
             ids.append(f["id"])
     if not ids:
-        return 0
+        return left
     n = models.archive_ask_facts(restaurant_id, ids, "expired", db_path=db_path or models.DB_PATH)
     invalidate(restaurant_id)
-    return n
+    return n + left
+
+
+def mark_used(restaurant_id, fact_ids, db_path=None) -> int:
+    """memory_context: these facts were just carried into a model prompt.
+    Lane eviction reads it — least used goes first, not oldest written
+    (memory re-audit 9/29/26, R3 lane_eviction). Never raises."""
+    try:
+        import models
+        n = models.mark_ask_facts_used(restaurant_id, fact_ids, db_path=db_path or models.DB_PATH)
+        # An organisation-wide fact kept at another location (R6, PEOPLE-13)
+        # was used too: stamped where it lives, so that location's lane
+        # budget does not evict it as unused while every sibling reads it.
+        # Fact ids are unique across locations, so only those rows match.
+        for other in _org_others(restaurant_id, db_path=db_path) if fact_ids else ():
+            n += models.mark_ask_facts_used(other, fact_ids, db_path=db_path or models.DB_PATH)
+        return n
+    except Exception as e:
+        log.debug("owner_memory: use not stamped for %s: %s", restaurant_id, e)
+        return 0
 
 
 # ── the read path ───────────────────────────────────────────────────────────
 
 def _modules_of(row):
-    return {m for m in str(row.get("modules") or "").split(",") if m}
+    return {m.strip() for m in str(row.get("modules") or "").split(",") if m.strip()}
+
+
+def _module_gate(row) -> dict:
+    """_gate's module half only: for a read whose audience rule is applied
+    elsewhere (the archive's SQL filter)."""
+    return dict(_gate(row), audience="team")
+
+
+def _gate(row) -> dict:
+    """The fields memory_context.visible reads off a stored fact (live or
+    archived): who may read it, who wrote it, and every module it is about."""
+    return {"audience": row.get("audience") or "team", "author_id": row.get("user_id"),
+            "modules": sorted(_modules_of(row))}
 
 
 def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, db_path=None,
@@ -459,19 +1004,84 @@ def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, 
         except Exception as e:
             log.debug("owner_memory: expiry skipped for %s: %s", restaurant_id, e)
     rows = models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH, kinds=kinds)
+    rows += _org_facts(restaurant_id, rows, kinds=kinds, today=today, db_path=db_path)
     user = memory_context.viewer_user(viewer)
     authority = memory_context._authority(user)
     want = SURFACE_MODULES.get(surface, None) if surface else None
     out = []
+    cache = {}
     for r in rows:
-        line = {"audience": r.get("audience") or "team", "author_id": r.get("user_id")}
-        if not memory_context.visible(line, user, authority):
+        # The same gate the prompt path applies (_line): audience, author and
+        # EVERY module the fact is about — Account's list and forget's
+        # "remembered" showed a food note to a login without Food Cost
+        # (memory re-audit INVENTORY-4 / PROMPTS-7).
+        if not memory_context.visible(_gate(r), user, authority, cache):
             continue
         mods = _modules_of(r)
         if want is not None and mods and not (mods & want):
             continue
         out.append(r)
     return out
+
+
+def _org_facts(restaurant_id, have, kinds=None, today=None, db_path=None) -> list:
+    """The organisation-wide facts the group's other locations keep (scope
+    'org', memory re-audit 9/29/26, PEOPLE-13): "we close every location on
+    Thanksgiving", told at one location, reaches the others' schedules and
+    nightly reports. Each carries `from_location` (its id); a date that has
+    passed is left out (its own location's expiry archives it); a text this
+    location already keeps is not repeated. They pass the same visibility
+    rule as this location's own facts (facts_for)."""
+    import models
+    others = _org_others(restaurant_id, db_path=db_path)
+    if not others:
+        return []
+    today = today or _local_today(restaurant_id)
+    mine = {str(r.get("fact") or "").strip().lower() for r in have or []}
+    out = []
+    for r in models.org_ask_memory(others, db_path=db_path or models.DB_PATH, kinds=kinds):
+        until = _parse_day(r.get("valid_until"))
+        if until is not None and until < today:
+            continue
+        key = str(r.get("fact") or "").strip().lower()
+        if key in mine:
+            continue
+        mine.add(key)
+        out.append(dict(r, from_location=r.get("restaurant_id")))
+    return out
+
+
+def may_set_org(restaurant_id, user, db_path=None) -> bool:
+    """Whether `user` may keep a fact for every location: a group owner —
+    an account holder who may switch between the organisation's locations
+    (preferences.may_apply_to_all, the rule every organisation-wide setting
+    uses)."""
+    if not isinstance(user, dict) or not user:
+        return False
+    try:
+        import models
+        import preferences
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+        return preferences.may_apply_to_all(user, r)
+    except Exception:
+        return False
+
+
+def set_scope(restaurant_id, fact_id, scope, user, db_path=None) -> dict:
+    """"For every location" / "this location only" on one of this
+    location's facts. Only a group owner (may_set_org). Raises
+    MemoryRefused."""
+    import models
+    if scope not in ("org", "location"):
+        raise MemoryRefused("scope is org or location")
+    if not may_set_org(restaurant_id, user, db_path=db_path):
+        raise MemoryRefused("Only the owner of every location can keep a fact for all of them.")
+    if not models.set_ask_fact_scope(restaurant_id, int(fact_id), scope, db_path=db_path or models.DB_PATH):
+        raise MemoryRefused("That fact isn't kept at this location.")
+    invalidate(restaurant_id)
+    for other in _org_others(restaurant_id, db_path=db_path):
+        invalidate(other)
+    return {"id": int(fact_id), "scope": scope}
 
 
 def _who(row):
@@ -495,20 +1105,66 @@ def _line(row, weight_bonus=0.0):
         text = f"Constraint: {text}"
     elif kind == "preference":
         text = f"Preference: {text}"
-    return {"text": text, "date": str(row.get("created_at") or "")[:10] or None, "source": "owner",
+    who = _who(row)
+    if row.get("from_location") is not None:
+        who = f"{who or 'the owner'}, for every location"
+    # The whole stamp, not its first ten characters: created_at is UTC, and
+    # memory_context dates it by the restaurant's day (PROMPTS-15).
+    return {"text": text, "date": str(row.get("created_at") or "") or None, "source": "owner",
             "subject": row.get("subject") or (mods[0] if len(mods) == 1 else None),
             "weight": _KIND_WEIGHT.get(kind, 1.0) + weight_bonus, "trusted": False,
-            "who": _who(row), "until": row.get("valid_until"), "audience": row.get("audience") or "team",
+            "who": who, "until": row.get("valid_until"), "audience": row.get("audience") or "team",
             "author_id": row.get("user_id"), "module": mods[0] if len(mods) == 1 else None,
-            "kind": kind, "fact_id": row.get("id")}
+            # Every module, so a fact about two of them keeps both gates
+            # (memory_context.visible needs the view of each — PROMPTS-7).
+            "modules": mods, "kind": kind, "fact_id": row.get("id")}
+
+
+# The kinds an account holder states as a rule the model must follow
+# (memory re-audit 9/29/26, PROMPTS-1). Context and follow-ups are
+# information; goals are measured (goal_lines).
+RULE_KINDS = ("constraint", "preference")
+
+
+def is_owner_rule(row) -> bool:
+    """A fact the model obeys: a constraint or preference stated by an
+    account holder (authority 'principal' at write time). A manager's, a
+    support login's (view-as: 'admin'), a seeded or an audit fact is
+    information, however it is worded."""
+    return (row.get("kind") in RULE_KINDS
+            and str(row.get("authority") or "").strip().lower() == "principal")
+
+
+def rule_lines(req):
+    """memory_context provider ("owner_rules"): the account holders' own
+    constraints and preferences for req.surface, as rules — rendered in
+    OWNER_RULE markers the prompt obeys, not the guest fence it discounts
+    (PROMPTS-1), dated and with who set each. Every one of them for the
+    surface's modules is a candidate for the assembler's count floor
+    (PROMPTS-2). A rule about this surface's modules outranks a general
+    one; a constraint outranks a preference."""
+    surface = getattr(req, "surface", None)
+    rows = facts_for(req.restaurant_id, viewer=None, surface=surface, kinds=list(RULE_KINDS), db_path=req.db_path)
+    want = SURFACE_MODULES.get(surface) if surface else None
+    out = []
+    for r in rows:
+        if not is_owner_rule(r):
+            continue
+        bonus = 0.5 if (want and (_modules_of(r) & want)) else 0.0
+        line = _line(r, bonus)
+        line["rule"] = True
+        out.append(line)
+    return out
 
 
 def constraint_lines(req):
-    """memory_context provider: the owner's and the team's facts for
-    req.surface — constraints, context, preferences, and on the owner's
-    own reading surfaces the follow-ups coming due — fenced, dated, with
-    who said each. A fact about this surface's modules outranks a general
-    one. Goal-kind facts (aims no metric reads) go with the goals."""
+    """memory_context provider: the team's facts for req.surface —
+    constraints, context, preferences, and on the owner's own reading
+    surfaces the follow-ups coming due — fenced, dated, with who said each;
+    and the account holders' context facts (information, not rules). An
+    account holder's constraints and preferences are rule_lines', not
+    here. A fact about this surface's modules outranks a general one.
+    Goal-kind facts (aims no metric reads) go with the goals."""
     surface = getattr(req, "surface", None)
     kinds = ["constraint", "context", "preference"]
     if surface in FOLLOWUP_SURFACES or surface is None:
@@ -518,6 +1174,12 @@ def constraint_lines(req):
     today = _local_today(req.restaurant_id)
     out = []
     for r in rows:
+        if r.get("origin") == "ratings" and surface not in (None, "ask"):
+            # A preference read off one login's own ratings steers that
+            # login's Ask answers and nothing else (memory re-audit QUALITY-9).
+            continue
+        if is_owner_rule(r):
+            continue                     # the owner's own rule: rule_lines
         if r.get("kind") == "followup":
             due = _parse_day(r.get("due_on"))
             # A follow-up is said from a week before it is due.
@@ -558,10 +1220,10 @@ def goal_lines(req):
         base = str(g.get("metric") or "").split(":", 1)[0]
         state = g.get("state")
         who = labels.get(g.get("created_by"))
-        out.append({"text": "Goal — " + goals.summarise(g), "date": str(g.get("created_at") or "")[:10] or None,
+        out.append({"text": "Goal — " + goals.summarise(g), "date": str(g.get("created_at") or "") or None,
                     "source": "system", "trusted": True, "subject": base,
                     "weight": 3.0 if state in ("moving_wrong_way", "missed", "flat") else 2.0,
-                    "who": f"set by {who}" if who else None, "module": _METRIC_MODULE.get(base)})
+                    "who": f"set by {who}" if who else None, "module": _goal_module(base)})
     for g in proposed:
         if not _wanted(g.get("metric")):
             continue
@@ -569,8 +1231,8 @@ def goal_lines(req):
         who = ("the sales audit" if g.get("source") == "audit"
                else labels.get(g.get("created_by")) or "a teammate")
         out.append({"text": f"Proposed goal, waiting for the owner to confirm — {goals.describe_target(g)}",
-                    "date": str(g.get("created_at") or "")[:10] or None, "source": "system", "trusted": True,
-                    "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _METRIC_MODULE.get(base),
+                    "date": str(g.get("created_at") or "") or None, "source": "system", "trusted": True,
+                    "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _goal_module(base),
                     "audience": "principals", "author_id": g.get("created_by")})
     if surface in (None, "ask", "brief", "weekly_plan", "dsr_narrative", "digest"):
         for r in facts_for(req.restaurant_id, viewer=None, surface=surface, kinds=["goal"], db_path=req.db_path):
@@ -686,9 +1348,13 @@ def target_for(restaurant_id, metric, db_path=None):
     try:
         conn = get_conn(db_path)
         try:
+            # The newest active goal still in date (memory re-audit R3,
+            # QUALITY-10): a missed newest goal no longer hides an older one
+            # on the same metric whose date has not passed.
             row = conn.execute("SELECT id, metric, target, deadline, created_by FROM owner_goals "
-                               "WHERE restaurant_id=? AND metric=? AND status='active' ORDER BY id DESC LIMIT 1",
-                               (int(restaurant_id), key)).fetchone()
+                               "WHERE restaurant_id=? AND metric=? AND status='active' "
+                               "AND (deadline IS NULL OR deadline='' OR deadline >= ?) ORDER BY id DESC LIMIT 1",
+                               (int(restaurant_id), key, _local_today(restaurant_id).isoformat())).fetchone()
         finally:
             conn.close()
         if row is not None and row["target"] is not None:
@@ -743,6 +1409,13 @@ AUDIT_FACT_QUESTIONS = (
 )
 # The audit's stated targets -> the goal each proposes.
 AUDIT_TARGETS = (("lab_target_pct", "labor_pct"), ("food_target_pct", "food_cost_pct"))
+# What the owner saw on the day of the audit (complaints, wait times, waste)
+# is a point-in-time observation: it holds until a review date, then leaves
+# for the archive with "its review date passed — put it back if it still
+# holds" (memory re-audit 9/29/26, R3 audit_memory). Their stated aims
+# (pri_*) are kept without one.
+AUDIT_REVIEW_DAYS = 180
+AUDIT_REVIEW_MIN_DAYS = 30
 _AUDIT_CATEGORY_MODULES = {"labor": ("labor",), "food": ("food",), "bar": ("food",), "reviews": ("reviews",),
                            "marketing": ("marketing",), "waitlist": ("labor",), "operations": (),
                            "technology": ()}
@@ -756,9 +1429,14 @@ def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
     if not audit_id or not restaurant_id:
         out["skipped"] = "no audit or account"
         return out
+    marker = f"{int(audit_id)}:{int(restaurant_id)}"
+    # Checked here, CLAIMED only once the audit was read and seeded (memory
+    # re-audit R3, QUALITY-20): claiming first meant an unreadable audit, or
+    # a crash midway, skipped the founding memory forever. A second seed is
+    # harmless anyway — every write is idempotent on its text and author.
     try:
         import ops
-        if not ops.claim_marker("audit_memory", f"{int(audit_id)}:{int(restaurant_id)}"):
+        if ops.marker_created_at("audit_memory", marker):
             out["skipped"] = "already seeded from this audit"
             return out
     except Exception as e:
@@ -775,6 +1453,9 @@ def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
     when = _mdy(audit.get("audit_date"))
     label = f"Sales audit {when}" if when else "Sales audit"
     answers = audit.get("answers") or {}
+    today = _local_today(restaurant_id)
+    audited = _parse_day(audit.get("audit_date")) or today
+    review_on = max(audited + timedelta(days=AUDIT_REVIEW_DAYS), today + timedelta(days=AUDIT_REVIEW_MIN_DAYS))
     for qid, what, mods in AUDIT_FACT_QUESTIONS:
         val = answers.get(qid)
         if not isinstance(val, str) or not val.strip():
@@ -783,7 +1464,8 @@ def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
         kind = "goal" if qid == "pri_improve_year" and not looks_like_target(val) else "context"
         try:
             remember(restaurant_id, text, kind=kind, modules=list(mods), audience="principals", user=None,
-                     source=label, origin="audit", author_label=label, db_path=db_path)
+                     source=label, origin="audit", author_label=label, db_path=db_path, today=today,
+                     valid_until=None if qid.startswith("pri_") else review_on.isoformat())
             out["facts"] += 1
         except ValueError:
             continue
@@ -798,7 +1480,8 @@ def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
             mods = _AUDIT_CATEGORY_MODULES.get(str(ins.get("category") or ""), ())
             try:
                 remember(restaurant_id, text, kind="context", modules=list(mods), audience="principals", user=None,
-                         source=label, origin="audit", author_label=label, db_path=db_path)
+                         source=label, origin="audit", author_label=label, db_path=db_path, today=today,
+                         valid_until=review_on.isoformat())
                 out["facts"] += 1
             except ValueError:
                 continue
@@ -821,19 +1504,162 @@ def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
             out["goals"].append(metric)
     except Exception as e:
         log.debug("owner_memory: audit goals not proposed: %s", e)
+    try:
+        import ops
+        ops.claim_marker("audit_memory", marker)
+    except Exception as e:
+        log.debug("owner_memory: audit seed marker not claimed: %s", e)
     invalidate(restaurant_id)
     return out
 
 
 # ── Account's view of the memory ────────────────────────────────────────────
 
-def account_view(restaurant_id, user, db_path=None) -> dict:
+_REASON_LABELS = {"evicted": "its lane was full", "expired": "its date passed",
+                  "retracted": "you used that recommendation again",
+                  "forgotten": "you asked Cavnar AI to forget it",
+                  "replaced": "a newer note replaced it",
+                  "contradicted": "your newer ratings no longer asked for it",
+                  "author_left": "the person who added it no longer has access"}
+
+
+def _principal(user) -> bool:
+    try:
+        from permissions import answer_authority
+        return user is None or answer_authority(user) in ("principal", "admin")
+    except Exception:
+        return False
+
+
+def _archive_row_for(restaurant_id, archive_id, user, db_path=None):
+    """One archived fact `user` may read (the account view's own rule), or
+    None — read against the table by id, not the rendered list."""
+    import models
+    rows = models.get_ask_memory_archive(restaurant_id, limit=1, db_path=db_path or models.DB_PATH,
+                                         archive_id=archive_id, viewer_id=(user or {}).get("id"),
+                                         principal=None if user is None else _principal(user))
+    if not rows:
+        return None
+    # ...and every module it names, as Account's list gates it (INVENTORY-4).
+    import memory_context
+    if user is not None and not memory_context.visible(_module_gate(rows[0]), memory_context.viewer_user(user)):
+        return None
+    return rows[0]
+
+
+def _may_restore(row, user) -> bool:
+    if _principal(user):
+        return True
+    return row.get("user_id") is not None and user is not None and row.get("user_id") == user.get("id")
+
+
+def restore(restaurant_id, archive_id, user=None, valid_until=None, due_on=None, today=None, db_path=None) -> dict:
+    """Put an archived fact back (Account's "Put it back"). {"fact",
+    "valid_until", "due_on"} | {"error", "status"}.
+
+    By id against the archive with the viewer's own filter (memory re-audit
+    9/29/26, R3 archive_restore — it only accepted an id in the 30 newest
+    rendered rows). A date that has passed is never put back as it was — the
+    next read archived it again: a new `valid_until`/`due_on` is taken
+    (and must be in the future), otherwise a passed validity is cleared and
+    a follow-up is due in a week. A departed login's note comes back as the
+    restoring account holder's own, owner-only."""
+    import models
+    row = _archive_row_for(restaurant_id, archive_id, user, db_path=db_path)
+    if row is None:
+        return {"error": "No fact like that.", "status": 404}
+    if not _may_restore(row, user):
+        return {"error": "Only the owner or the person who added it can put it back.", "status": 403}
+    today = today or _local_today(restaurant_id)
+    over = {}
+    new_until, new_due = _parse_day(valid_until), _parse_day(due_on)
+    if (valid_until and new_until is None) or (due_on and new_due is None):
+        return {"error": "Give the date as YYYY-MM-DD.", "status": 400}
+    if (new_until and new_until < today) or (new_due and new_due < today):
+        return {"error": "That date has already passed.", "status": 400}
+    old_until = _parse_day(row.get("valid_until"))
+    if new_until:
+        over["valid_until"] = new_until.isoformat()
+    elif old_until is not None and old_until < today:
+        over["valid_until"] = None
+    old_due = _parse_day(row.get("due_on"))
+    if new_due:
+        over["due_on"] = new_due.isoformat()
+    elif (row.get("kind") == "followup" and old_due is not None
+          and old_due + timedelta(days=FOLLOWUP_GRACE_DAYS) < today):
+        over["due_on"] = (today + timedelta(days=7)).isoformat()
+    if row.get("reason") == "author_left" and user is not None:
+        who = author_of(user)
+        was = row.get("author_label") or "a teammate"
+        over.update({"user_id": who["user_id"], "author_label": who["label"], "authority": who["authority"],
+                     "audience": "principals", "source": f"Kept from {was}"[:160]})
+    fact = models.restore_ask_fact(restaurant_id, archive_id, db_path=db_path or models.DB_PATH, overrides=over)
+    if not fact:
+        return {"error": "No fact like that.", "status": 404}
+    invalidate(restaurant_id)
+    merged = dict(row, **over)
+    return {"fact": fact, "valid_until": merged.get("valid_until"), "due_on": merged.get("due_on"),
+            "kind": merged.get("kind") or "context", "audience": merged.get("audience") or "team"}
+
+
+def dismiss(restaurant_id, archive_id, user=None, db_path=None) -> dict:
+    """Let an archived fact go for good (Account's "Dismiss") — an owner's
+    evicted rule is otherwise kept until someone does (ops._RETENTION_ONLY)."""
+    import models
+    row = _archive_row_for(restaurant_id, archive_id, user, db_path=db_path)
+    if row is None:
+        return {"error": "No fact like that.", "status": 404}
+    if not _may_restore(row, user):
+        return {"error": "Only the owner or the person who added it can dismiss it.", "status": 403}
+    models.delete_ask_archive_rows(restaurant_id, [row["id"]], db_path=db_path or models.DB_PATH)
+    return {"dismissed": row["fact"], "kind": row.get("kind") or "context", "audience": row.get("audience") or "team"}
+
+
+def pin(restaurant_id, fact_id, user=None, pinned=True, db_path=None) -> dict:
+    """An account holder pins a fact out of lane eviction (or unpins it) —
+    at most ASK_MEMORY_PIN_MAX of one kind. {"pinned": bool} | {"error",
+    "status"}."""
+    import models
+    if not _principal(user):
+        return {"error": "Only the owner can pin a note.", "status": 403}
+    rows = facts_for(restaurant_id, viewer=user, db_path=db_path, include_expired=True)
+    try:
+        row = next((r for r in rows if r["id"] == int(fact_id)), None)
+    except (TypeError, ValueError):
+        row = None
+    if row is None:
+        return {"error": "No fact like that.", "status": 404}
+    if pinned and not row.get("pinned"):
+        kind = row.get("kind") or "context"
+        n = sum(1 for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH, kinds=[kind])
+                if r.get("pinned"))
+        if n >= models.ASK_MEMORY_PIN_MAX:
+            return {"error": f"Up to {models.ASK_MEMORY_PIN_MAX} pinned notes of one kind — unpin one first.",
+                    "status": 400}
+    models.set_ask_fact_pinned(restaurant_id, row["id"], bool(pinned), db_path=db_path or models.DB_PATH)
+    invalidate(restaurant_id)
+    return {"pinned": bool(pinned), "fact": row["fact"]}
+
+
+ARCHIVE_PAGE = 30
+
+
+def account_view(restaurant_id, user, db_path=None, archive_before=None, archive_limit=ARCHIVE_PAGE) -> dict:
     """What Account shows (GET /account/memory): the facts this login may
     read, each with who added it, its type, its dates and whether this login
-    may forget it; the lanes and how full each is; and what left without
-    anyone asking (the archive), so forgetting is visible and reversible."""
+    may forget (or, an account holder, pin) it; the lanes — counted over the
+    facts THIS login may read (memory re-audit R3, PEOPLE-17: they counted
+    every row, so a manager learned how many facts were kept from them) —
+    and, for an account holder, how many private notes other people keep
+    (a count, never the text); and what left without anyone asking (the
+    archive), filtered for this login BEFORE its page is cut, paged by
+    `archive_before` (`archive_more` says there is an older page), so
+    forgetting is visible and reversible for as long as the archive keeps it."""
     import models
+    principal = _principal(user)
     rows = facts_for(restaurant_id, viewer=user, db_path=db_path)
+    org_ok = may_set_org(restaurant_id, user, db_path=db_path)
+    departed = departed_author_ids(restaurant_id, db_path=db_path) if principal else set()
     facts = []
     for r in rows:
         facts.append({"id": r["id"], "fact": r["fact"], "kind": r.get("kind") or "context",
@@ -843,30 +1669,57 @@ def account_view(restaurant_id, user, db_path=None) -> dict:
                       "modules": sorted(_modules_of(r)), "subject": r.get("subject"),
                       "valid_until": r.get("valid_until"), "valid_until_label": _mdy(r.get("valid_until")),
                       "due_on": r.get("due_on"), "due_label": _mdy(r.get("due_on")),
-                      "origin": r.get("origin"), "can_forget": _may_edit(r, user)})
+                      "origin": r.get("origin"),
+                      # Another location's organisation-wide fact is forgotten
+                      # where it was kept (R6, PEOPLE-13).
+                      "can_forget": _may_edit(r, user) and r.get("from_location") is None,
+                      "scope": "org" if r.get("scope") == "org" else "location",
+                      "from_location": r.get("from_location"),
+                      "can_set_scope": r.get("from_location") is None and org_ok,
+                      # Ask's remember tool writes the model's summary of what
+                      # was said — shown as such (re-audit R3, QUALITY-11).
+                      "worded_by": "Cavnar AI" if r.get("origin") == "ask" else None,
+                      "confirmed_by": r.get("confirmed_by"),
+                      "confirmed_on": _mdy(str(r.get("confirmed_at") or "")[:10]) if r.get("confirmed_by") else "",
+                      "pinned": bool(r.get("pinned")), "can_pin": principal and r.get("from_location") is None,
+                      "author_left": r.get("user_id") in departed})
     counts = {}
-    for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH):
+    for r in rows:
         k = r.get("kind") or "context"
         counts[k] = counts.get(k, 0) + 1
     lanes = [{"kind": k, "count": counts.get(k, 0), "cap": models.ASK_MEMORY_CAPS[k]} for k in KINDS]
+    others_private = 0
+    if principal and user is not None:
+        seen = {r["id"] for r in rows}
+        others_private = sum(1 for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
+                             if r["id"] not in seen and (r.get("audience") or "team") == "author")
     archived = []
     try:
-        from permissions import answer_authority
-        principal = user is None or answer_authority(user) in ("principal", "admin")
-    except Exception:
-        principal = False
-    for a in models.get_ask_memory_archive(restaurant_id, db_path=db_path or models.DB_PATH):
-        line = {"audience": a.get("audience") or "team", "author_id": a.get("user_id")}
-        import memory_context
-        if not memory_context.visible(line, memory_context.viewer_user(user)):
+        limit = max(1, min(int(archive_limit or ARCHIVE_PAGE), 100))
+    except (TypeError, ValueError):
+        limit = ARCHIVE_PAGE
+    page = models.get_ask_memory_archive(restaurant_id, limit=limit + 1, db_path=db_path or models.DB_PATH,
+                                         viewer_id=(user or {}).get("id"),
+                                         principal=None if user is None else principal, before_id=archive_before)
+    more = len(page) > limit
+    # The audience is filtered in SQL (before the page is cut, with the
+    # archive's own rules — a departed author's note reaches the account
+    # holders); every module a fact names is gated here, as the prompt path
+    # gates it (_module_gate — memory re-audit INVENTORY-4 / PROMPTS-7).
+    import memory_context
+    _viewer = memory_context.viewer_user(user)
+    _cache = {}
+    for a in page[:limit]:
+        if not memory_context.visible(_module_gate(a), _viewer, None, _cache):
             continue
+        label = _REASON_LABELS.get(a.get("reason"), a.get("reason"))
+        if a.get("reason") == "expired" and a.get("origin") == "audit":
+            label = "its review date passed — put it back if it still holds"
         archived.append({"id": a["id"], "fact": a["fact"], "kind": a.get("kind") or "context",
+                         "audience": a.get("audience") or "team",
                          "author": a.get("author_label") or a.get("source"), "reason": a.get("reason"),
-                         "reason_label": {"evicted": "its lane was full", "expired": "its date passed",
-                                          "retracted": "you used that recommendation again",
-                                          "forgotten": "you asked Cavnar AI to forget it"}.get(a.get("reason"),
-                                                                                               a.get("reason")),
+                         "reason_label": label,
                          "archived_on": _mdy(str(a.get("archived_at") or "")[:10]),
-                         "can_restore": principal or (a.get("user_id") is not None and user is not None
-                                                      and a.get("user_id") == user.get("id"))})
-    return {"facts": facts, "lanes": lanes, "archived": archived}
+                         "can_restore": _may_restore(a, user)})
+    return {"facts": facts, "lanes": lanes, "others_private": others_private, "archived": archived,
+            "archive_more": more, "can_set_org": org_ok}

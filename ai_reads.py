@@ -890,12 +890,36 @@ def score_due(restaurant_id, today=None, db_path=None) -> dict:
                 out["unmeasurable"] += 1
                 continue
             verdict = source = None
-            if tracker and tracker.get("status") == "evaluated" and state == "taken":
+            discounted = None
+            if tracker and state == "taken":
+                # A tracker measures this advice: its reading decides, and a
+                # result it discounts is never re-read from the raw window
+                # (memory re-audit 9/29/26, LOOPS-9). "I didn't make the
+                # change" is untested; a result tied to other changes (or
+                # read against the trigger's own bad stretch) is not
+                # measurable. The window scored both HELD or NOT_HELD, and
+                # fed that back to the next read and the confidence check.
                 import rec_learning
-                lv = rec_learning.learned_verdict(tracker.get("verdict"), tracker)
-                if lv in ("improved", "worsened", "no_clear_change"):
-                    verdict, source = (HELD if lv == "improved" else NOT_HELD), "tracker"
+                import rec_ledger as _rl_ck
+                ck = _rl_ck.latest_checkin(restaurant_id, tracker_id=tracker.get("id"), db_path=db_path) \
+                    if tracker.get("id") else None
+                if isinstance(ck, dict) and ck.get("did_it") == "no":
+                    discounted = (UNTESTED, "the owner said the change wasn't made")
+                elif isinstance(ck, dict) and ck.get("conditions_changed"):
+                    discounted = (UNMEASURABLE, "the owner said something else changed in those weeks")
+                elif tracker.get("status") == "evaluated":
+                    lv = rec_learning.learned_verdict(tracker.get("verdict"), tracker, ck)
+                    if lv in ("improved", "worsened", "no_clear_change"):
+                        verdict, source = (HELD if lv == "improved" else NOT_HELD), "tracker"
+                    else:
+                        discounted = (UNMEASURABLE, "the measured result couldn't be separated from other "
+                                                    "changes in those weeks")
             before, after, cmp = _window_reading(restaurant_id, r, db_path=db_path)
+            if discounted is not None:
+                updates.append((discounted[0], before, after, f"{discounted[1]} ({CAVEAT})", "tracker", state,
+                                tracker.get("id"), r["id"]))
+                out["scored" if discounted[0] == UNTESTED else "unmeasurable"] += 1
+                continue
             if verdict is None and cmp is None:
                 if (today - _day(r["horizon_date"])).days > UNSCORABLE_AFTER_DAYS:
                     updates.append((UNMEASURABLE, before, after,
@@ -1073,6 +1097,16 @@ def confidence_calibration(restaurant_id=None, days=365, db_path=None) -> dict:
 # claims of every surface, not only their own.
 CROSS_SURFACES = ("weekly_plan", "digest", "brief", "ask", "monthly_review")
 
+# Surfaces whose own subjects no claim is ever filed under, so a subject
+# match alone can never find a claim for them: the nightly report asks by
+# "date:<d>" / "dsr:<d>", and every claim is filed under a category, a
+# driver or an advice key. They read the latest claims of every OTHER
+# surface too (memory re-audit 9/29/26, QUALITY-13 — the report's
+# "last_claim" section could never return a line).
+CLAIM_CROSS_READERS = ("dsr_narrative",)
+# Subject prefixes no claim is filed under (dropped before the match).
+_NON_CLAIM_SUBJECTS = ("date:", "dsr:")
+
 _STATE_WORDS = {"taken": "the advice was taken", "taken_late": "the advice was taken after the check window",
                 "declined": "the owner said not for us", "hidden": "the owner hid it",
                 "ignored": "it was left unanswered", "open": "not answered yet", "replaced": "it was replaced",
@@ -1143,22 +1177,28 @@ def _interim(restaurant_id, row, db_path=None):
 
 def claim_lines(req):
     """memory_context provider: the last claim on req.subjects for
-    req.surface and its verdict ("LAST READ (9/2/26): ... Answered Done;
-    complaints 9 -> 4 since (before and after, not proof)").
+    req.surface and its verdict — ONE line per claim: the model's own
+    words (fenced — memory_context fences every line not marked trusted),
+    and, as the line's trusted `measured` suffix, what happened since,
+    which Cavnar AI measured, naming the read it follows ("Since the
+    9/27/26 labor read: answered Done; labor % 34.0% → 29.5% …"). They
+    were two lines ranked apart, and one read's outcome landed under
+    another (memory re-audit 9/29/26, PROMPTS-4); now they are one budget
+    unit, kept or cut together.
 
-    Two lines per claim: the model's own words (fenced — memory_context
-    fences every line not marked trusted) and what happened since, which
-    Cavnar AI measured (trusted): the answer the advice got and the number
-    at the horizon, or so far. A subject is matched on the claim's subject
-    ("category:service"), its recommendation key ("diag_review:service") or
-    its advice signature ("labor:day:friday"); with no subjects, the
-    surface's own latest claims. The nightly report's own actions are
-    served by its YESTERDAY'S PRIORITIES block (dsr.narrative), not here."""
+    A subject is matched on the claim's subject ("category:service"), its
+    recommendation key ("diag_review:service") or its advice signature
+    ("labor:day:friday"); with no subjects, the surface's own latest claims
+    (every surface's, for a cross-module reader). The nightly report reads
+    every other surface's latest claims (CLAIM_CROSS_READERS); its own
+    actions are served by its YESTERDAY'S PRIORITIES block
+    (dsr.narrative), not here."""
     rid = getattr(req, "restaurant_id", None)
     if not rid:
         return []
     surface = getattr(req, "surface", None)
-    subjects = [str(s) for s in (getattr(req, "subjects", None) or ()) if s]
+    subjects = [str(s) for s in (getattr(req, "subjects", None) or ()) if s
+                and not str(s).startswith(_NON_CLAIM_SUBJECTS)]
     db_path = getattr(req, "db_path", None)
     try:
         conn = get_conn(db_path)
@@ -1166,49 +1206,71 @@ def claim_lines(req):
         return []
     lines = []
     try:
-        where = ["restaurant_id=?", "created_at >= datetime('now', ?)"]
-        args = [rid, f"-{CLAIM_LOOKBACK_DAYS} days"]
+        base = ["restaurant_id=?", "created_at >= datetime('now', ?)"]
+        base_args = [rid, f"-{CLAIM_LOOKBACK_DAYS} days"]
+        if surface in CLAIM_CROSS_READERS:
+            base.append("surface != ?")
+            base_args.append(surface)
+        queries = []
         if subjects:
             marks = ",".join("?" for _ in subjects)
-            where.append(f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))")
-            args += subjects * 3
-        elif surface in CROSS_SURFACES:
-            pass                    # a read over the whole restaurant: every surface's latest claims
-        elif surface:
-            where.append("surface=?")
-            args.append(surface)
-        else:
-            return []
-        if surface == "dsr_narrative":
-            where.append("surface != 'dsr_narrative'")
-        rows = [dict(r) for r in conn.execute(
-            f"SELECT * FROM ai_claims WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 40", args).fetchall()]
-        latest = {}
-        for r in rows:
-            latest.setdefault((r["surface"], r["subject"]), r)
+            queries.append((base + [f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))"],
+                            base_args + subjects * 3))
+        if surface in CLAIM_CROSS_READERS or (not subjects and surface in CROSS_SURFACES):
+            queries.append((base, base_args))  # a read over the whole restaurant: every surface's latest claims
+        elif not subjects:
+            if not surface:
+                return []
+            queries.append((base + ["surface=?"], base_args + [surface]))
         # The newest four the viewer may read (memory_context.visible on the
         # claim's surface scope): an owner-level claim is dropped BEFORE the
         # cut, so a manager (or a shared output, memory_context.TEAM) is not
         # left with nothing because the four newest were the owner's (INT).
+        # Both the viewer's surfaces and the latest claim per subject are
+        # chosen in SQL, before each LIMIT (memory re-audit 9/29/26,
+        # INVENTORY-13): the LIMIT was a cut too, so 40 newest owner-level
+        # claims left a manager's Ask with no LAST READ at all.
         viewer = getattr(req, "viewer", None)
-        pool = sorted(latest.values(), key=lambda r: -r["id"])
         if viewer is not None:
             import memory_context as _mc
             user = _mc.viewer_user(viewer)
             if user is not None:
-                pool = [r for r in pool if _mc.visible(dict(line_scope(r["surface"]), text="x"), user)]
+                known = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT surface FROM ai_claims WHERE restaurant_id=?", (rid,)).fetchall()]
+                mine = [sf for sf in known if _mc.visible(dict(line_scope(sf), text="x"), user)]
+                if not mine:
+                    return []
+                vis = f"surface IN ({','.join('?' for _ in mine)})"
+                queries = [(w + [vis], a + mine) for w, a in queries]
+        rows, seen_ids = [], set()
+        for where, args in queries:
+            for r in conn.execute(
+                    f"SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY surface, subject ORDER BY id DESC) "
+                    f"AS _rn FROM ai_claims WHERE {' AND '.join(where)}) WHERE _rn = 1 ORDER BY id DESC LIMIT 40",
+                    args).fetchall():
+                r = dict(r)
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    rows.append(r)
+        rows.sort(key=lambda r: -r["id"])
+        latest = {}
+        for r in rows:
+            latest.setdefault((r["surface"], r["subject"]), r)
+        pool = sorted(latest.values(), key=lambda r: -r["id"])
         picked = pool[:4]
         for i, r in enumerate(picked):
             weight = 10.0 - i
-            said = f"LAST READ on {r['subject'].replace('_', ' ')} ({SURFACE_LABELS.get(r['surface'], r['surface'])})"
+            label = SURFACE_LABELS.get(r["surface"], r["surface"])
+            said = f"LAST READ on {r['subject'].replace('_', ' ')} ({label})"
             said += f": {'cause' if r['claim_type'] == 'cause' else r['claim_type']} — {r.get('last_text') or r['text']}"
             if r.get("action") and r["claim_type"] == "cause":
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
-                said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
+                # Never a count (memory re-audit 9/29/26, QUALITY-14): the
+                # number was the model re-saying its own claim, and read back
+                # as "restated N times" it looked like evidence piling up.
+                said += " (the model's own read, repeated since — not new evidence)"
             scope = line_scope(r["surface"])
-            lines.append({"text": said, "date": str(r.get("after_start") or r["created_at"])[:10], "source": "model",
-                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False, **scope})
             since = []
             state = _live_state(conn, rid, r.get("rec_key"))
             if state:
@@ -1220,15 +1282,31 @@ def claim_lines(req):
             else:
                 so_far = _interim(rid, r, db_path=db_path)
                 since.append(so_far or f"to be checked {_mdy(r['horizon_date'])}")
-            lines.append({"text": "Since that read: " + "; ".join(s for s in since if s) + ".",
-                          "date": None, "source": "system", "subject": r.get("rec_key") or r["subject"],
-                          "weight": weight - 0.5, "trusted": True, **scope})
+            # The read the outcome follows, named — never "that read".
+            when = r.get("after_start") or r["created_at"]
+            try:
+                import time_utils as _tu
+                read_day = _mdy(_tu.local_iso(when, _restaurant_tz_name(rid))) if len(str(when)) > 10 else _mdy(when)
+            except Exception:
+                read_day = _mdy(str(when)[:10])
+            measured = (f"Since {label} on {read_day}: " + "; ".join(s for s in since if s) + ".")
+            lines.append({"text": said, "date": str(when), "source": "model",
+                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False,
+                          "measured": measured, **scope})
     except Exception as e:
         log.warning("ai_reads: claim lines unavailable rid=%s: %s", rid, e)
         return []
     finally:
         conn.close()
     return lines
+
+
+def _restaurant_tz_name(restaurant_id):
+    try:
+        from models import get_restaurant
+        return getattr(get_restaurant(restaurant_id), "timezone", None)
+    except Exception:
+        return None
 
 
 # ── the quarterly "what we said, what was done, what happened" ──────────────
@@ -1250,17 +1328,22 @@ def _quarter_bounds(q):
 RESUMMARISE_DAYS = HORIZON_MAX_DAYS + UNSCORABLE_AFTER_DAYS + 30
 
 
-def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
+def summarise_quarters(restaurant_id, today=None, db_path=None, strict=False) -> int:
     """Write (or refresh) one ai_read_summaries row per closed quarter,
     surface and subject that has reads — the row that outlives the raw
     reads (kept 13 months). said: the last words of the quarter; done: what
     the advice those reads carried got (taken / declined / ignored); what
-    happened: the claims' verdicts. Returns rows written. Never raises."""
+    happened: the claims' verdicts. Returns rows written. Never raises —
+    unless `strict` (the retention rollup, memory re-audit 9/29/26
+    FORGET-11: a swallowed failure let the raw reads be pruned with no
+    quarter row)."""
     today = _day(today) if today else _local_today(restaurant_id)
     this_q_start = _quarter_bounds(_quarter(today))[0]
     try:
         conn = get_conn(db_path)
     except Exception:
+        if strict:
+            raise
         return 0
     n = 0
     try:
@@ -1297,11 +1380,18 @@ def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
                           else "ignored" if st in ("ignored", "replaced") else "open" if st == "open" else None)
                 if bucket:
                     done[bucket] += 1
+            # The group's claims are the ones ITS reads made (read_id), not
+            # every claim of the surface: an unscoped group matched '1=1' and
+            # counted the subject groups' claims again (memory re-audit
+            # 9/29/26, FORGET-19). A claim with no read id falls back to its
+            # subject, which only a scoped group has.
             claims = conn.execute(
                 f"SELECT verdict, verdict_basis FROM ai_claims WHERE restaurant_id=? AND surface=? "
-                f"AND {'subject=?' if g['subject'] else '1=1'} AND created_at BETWEEN ? AND ? ORDER BY id",
-                (restaurant_id, g["surface"], *sub_args, q_start.isoformat(),
-                 f"{q_end.isoformat()} 23:59:59")).fetchall()
+                f"AND (read_id IN (SELECT id FROM ai_reads WHERE restaurant_id=? AND surface=? AND {sub_sql})"
+                f"{' OR (read_id IS NULL AND subject=?)' if g['subject'] else ''}) "
+                f"AND created_at BETWEEN ? AND ? ORDER BY id",
+                (restaurant_id, g["surface"], restaurant_id, g["surface"], *sub_args, *sub_args,
+                 q_start.isoformat(), f"{q_end.isoformat()} 23:59:59")).fetchall()
             counts = {v: sum(1 for c in claims if c["verdict"] == v) for v in VERDICTS}
             happened = next((c["verdict_basis"] for c in reversed(claims) if c["verdict_basis"]), None)
             conn.execute(
@@ -1323,6 +1413,8 @@ def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
         except Exception:
             pass
         log.warning("ai_reads: quarterly summaries failed rid=%s: %s", restaurant_id, e)
+        if strict:
+            raise
     finally:
         conn.close()
     return n
@@ -1335,22 +1427,31 @@ def rollup_quarters(db_path=None) -> int:
     quarters summarised (summarise_quarters, idempotent), so no raw read is
     deleted before the row that outlives it exists — whether or not the
     restaurant is one the nightly learning pass walks. Returns rows
-    written. Never raises."""
-    try:
-        conn = get_conn(db_path)
-    except Exception:
-        return 0
+    written. RAISES when any restaurant's summary failed (memory re-audit
+    9/29/26, FORGET-11): it "never raised", so ops' registry recorded a
+    clean rollup and pruned ai_reads / ai_claims whatever happened; now a
+    failed one keeps tonight's rows. Every restaurant is still tried."""
+    conn = get_conn(db_path)
     try:
         start = _quarter_bounds(_quarter(date.today()))[0].isoformat()
         rids = [r[0] for r in conn.execute(
             "SELECT DISTINCT restaurant_id FROM ai_reads WHERE created_at < ?", (start,)).fetchall()]
-    except Exception:
-        rids = []
+    except Exception as e:
+        if "no such table" in str(e).lower():
+            rids = []          # nothing written yet on this database, so nothing to summarise
+        else:
+            raise
     finally:
         conn.close()
-    n = 0
+    n, failed = 0, []
     for rid in rids:
-        n += summarise_quarters(rid, db_path=db_path) or 0
+        try:
+            n += summarise_quarters(rid, db_path=db_path, strict=True) or 0
+        except Exception as e:
+            failed.append(f"{rid}: {e}")
+    if failed:
+        raise RuntimeError(f"ai_reads quarterly summaries failed for {len(failed)} restaurant(s): "
+                           + "; ".join(failed)[:400])
     return n
 
 

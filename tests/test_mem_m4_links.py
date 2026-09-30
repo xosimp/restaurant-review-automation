@@ -200,12 +200,18 @@ def _labor():
 
 def test_a_fill_campaign_on_the_heaviest_labor_day_is_a_marketing_x_labor_link():
     rid = _rid()
+    # Sent today, so its Tuesday is still ahead (re-audit 9/29/26,
+    # CROSSMODULE-12: once the campaign's night has passed the link ends
+    # and says what the night measured — tests/test_refix_r8_links.py). This
+    # test sent it on 9/20/26, a night now past.
+    from time_utils import mdy
+    sent_on = bi._local_today(rid)
     mk = {"posts_published": 0, "fill_campaigns": [{"day": "Tuesday", "sent": 412, "total": 412, "queued": False,
-                                                     "on": "2026-09-20"}]}
+                                                     "on": sent_on.isoformat()}]}
     links = bi.correlations(rid, data={"labor": _labor(), "marketing": mk})
     link = next(l for l in links if l["kind"] == "marketing_x_labor")
-    assert link["headline"].startswith("A text to fill Tuesday went to 412 guests on 9/20/26, and Tuesday runs 7.1 "
-                                       "points heavier on labor")
+    assert link["headline"].startswith(f"A text to fill Tuesday went to 412 guests on {mdy(sent_on)}, and Tuesday "
+                                       f"runs 7.1 points heavier on labor")
     assert "Hold any cut to Tuesday" in link["confirm_by"] and link["modules"] == ["marketing", "labor"]
     lean = dict(mk, fill_campaigns=[dict(mk["fill_campaigns"][0], day="Saturday")])
     assert not [l for l in bi.correlations(rid, data={"labor": _labor(), "marketing": lean})
@@ -291,7 +297,8 @@ def test_the_food_diagnosis_and_marketing_read_their_links_fenced():
     assert ai_guard.UNTRUSTED_OPEN in food.text, "guest-derived words are fenced"
     assert "6 posts went out" not in food.text, "each surface reads its own kinds"
     mkt = memory_context.memory_context(rid, "marketing")
-    assert "DO NOT PROMOTE the brisket" in mkt.text and "6 posts went out" in mkt.text
+    # The dish is fenced, the instruction is trusted (memory re-audit 9/29/26, PROMPTS-1).
+    assert "the brisket" in mkt.text and "DO NOT PROMOTE that dish" in mkt.text and "6 posts went out" in mkt.text
     assert "Friday carries" not in mkt.text
 
 

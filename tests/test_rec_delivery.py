@@ -715,7 +715,11 @@ def test_ask_feedback_is_recorded_replaced_and_summarised(http, db_path):
     assert r.status_code == 200 and r.get_json()["summary"]["rated"] == 1
     assert r.get_json()["summary"]["helpful"] == 1
     import ask_cavnar
-    assert "1 of 1 answers rated helpful" in ask_cavnar._feedback_context(http.rid)
+    # The rater's own snapshot says it; an unattended run (no login) reads no
+    # one's ratings (memory re-audit PROMPTS-18 — it read every login's as
+    # "the owner's").
+    assert "1 of 1 answers rated helpful" in ask_cavnar._feedback_context(http.rid, viewer={"id": 7})
+    assert ask_cavnar._feedback_context(http.rid) == ""
 
 
 def test_ask_feedback_refuses_another_restaurants_or_another_logins_answer(http, db_path):

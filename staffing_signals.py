@@ -75,6 +75,29 @@ def _next_date(weekday, today=None):
     return today + timedelta(days=(WEEKDAYS.index(weekday) - today.weekday()) % 7)
 
 
+def next_draft_date(restaurant_id, weekday, today=None):
+    """The date of `weekday` in the week the NEXT schedule draft covers
+    (schedule_engine._week_monday: the week starting next Monday, in the
+    restaurant's own time) — what advice "on the next schedule" is about
+    (re-audit 9/29/26, CROSSMODULE-21). None for a name that is not a
+    weekday."""
+    if weekday not in WEEKDAYS:
+        return None
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            today = date.today()
+    try:
+        from schedule_engine import _week_monday
+        monday = _week_monday(today)
+        monday = monday.date() if isinstance(monday, datetime) else monday
+    except Exception:
+        monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    return monday + timedelta(days=WEEKDAYS.index(weekday))
+
+
 # ── reviews ─────────────────────────────────────────────────────────────────
 
 def service_clusters(restaurant_id, db_path=None) -> list:
@@ -113,11 +136,14 @@ def service_clusters(restaurant_id, db_path=None) -> list:
 
 
 def live_fill_signals(restaurant_id, start, end, db_path=None) -> list:
-    """Marketing's fill-a-night signals dated inside [start, end]."""
+    """Marketing's fill-a-night signals dated inside [start, end]: a guest
+    text sent to fill the night (source 'campaign'). A scheduled post is not
+    one (memory re-audit 9/29/26, CROSSMODULE-7) — a dish post three days a
+    week suppressed every trim on those nights, even after it was cancelled."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM demand_signals WHERE restaurant_id=? AND date BETWEEN ? AND ? AND "
-                            "source IN ('campaign','post') ORDER BY date",
+                            "source='campaign' ORDER BY date",
                             (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
     except Exception:
         return []
@@ -131,7 +157,7 @@ def trim_guard(restaurant_id, weekday, daypart=None, on_date=None, db_path=None)
     read's trims, the DSR's control_hours, the pre-dinner cut.
 
     {suppress, why, caution, rank_penalty, campaign, cluster}:
-      suppress/why  a live campaign or post aimed at filling that night
+      suppress/why  a live campaign (a guest text) aimed at filling that night
                     (the next `weekday`, or `on_date`): no trim is suggested,
                     and the reason says so;
       caution       a service, wait or floor-staff complaint cluster on that
@@ -185,6 +211,14 @@ def review_requirements(restaurant_id, week_dates, db_path=None) -> list:
                           r"(?:server|bartender|host|busser|runner|staff)s?)\b", re.I)
     out = []
     by_day = {date.fromisoformat(d).strftime("%A"): d for d in (week_dates or [])}
+    # A "+1" the owner answered (Not for us on the week's review, or one a
+    # published week already carried — CROSSMODULE-10) is not asked again
+    # while that answer holds.
+    try:
+        import rec_ledger
+        silenced = set(rec_ledger.silenced_keys(restaurant_id, db_path=db_path or _models_mod.DB_PATH))
+    except Exception:
+        silenced = set()
     for c in service_clusters(restaurant_id, db_path=db_path):
         d = diags.get(c["category"])
         if not d:
@@ -193,17 +227,71 @@ def review_requirements(restaurant_id, week_dates, db_path=None) -> list:
         if not staffing.search(said):
             continue
         role = (c.get("role") or "server").replace("_", " ")
-        part = c.get("daypart") or "night"
         for day in c["days"]:
             if day not in by_day:
                 continue
+            # The complaints' own daypart; when they name none, the day's
+            # busiest daypart in the shifts actually worked here, else the
+            # whole day — never a dinner a lunch-only restaurant does not
+            # run (re-audit 9/29/26, CROSSMODULE-17).
+            part = c.get("daypart") or busiest_daypart(restaurant_id, day, db_path=db_path)
+            when = _PRETTY_PART.get(part, part) if part else "(all day)"
+            if staff_add_key(day, part, role) in silenced:
+                continue
             out.append({"source": "reviews", "day": day, "date": by_day[day], "daypart": part, "role": role,
-                        "delta": 1,
-                        "text": f"+1 {role} {day} {_PRETTY_PART.get(part, part)} — the reviews diagnosis: "
-                                f"{c['text']}",
+                        "delta": 1, "category": c.get("category"),
+                        "key": staff_add_key(day, part, role),
+                        "text": f"+1 {role} {day} {when} — the reviews diagnosis: {c['text']}",
                         "confirm": d.get("what_would_confirm") or None,
                         "as_of": d.get("as_of")})
     return out
+
+
+# The shifts actually worked that say which daypart a weekday runs heaviest.
+BUSIEST_DAYPART_WEEKS = 8
+
+
+def busiest_daypart(restaurant_id, weekday, today=None, db_path=None):
+    """"morning" / "night": the daypart that carried the most worked hours
+    on `weekday` over the last BUSIEST_DAYPART_WEEKS weeks of shift_facts
+    (scheduled hours where no actual was recorded), or None when the
+    record has none — the requirement is then for the whole day. Never
+    raises."""
+    today = today or date.today()
+    since = (today - timedelta(weeks=BUSIEST_DAYPART_WEEKS)).isoformat()
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT business_date, shift_start, COALESCE(actual_hours, scheduled_hours) AS h "
+                                "FROM shift_facts WHERE restaurant_id=? AND business_date >= ? AND business_date < ?",
+                                (restaurant_id, since, today.isoformat())).fetchall()
+        finally:
+            conn.close()
+        from schedule_rules import daypart_of
+    except Exception:
+        return None
+    hours = {}
+    for r in rows:
+        try:
+            if date.fromisoformat(str(r["business_date"])[:10]).strftime("%A") != weekday:
+                continue
+        except ValueError:
+            continue
+        part = daypart_of(r["shift_start"] or "")
+        if part in ("morning", "night"):
+            hours[part] = hours.get(part, 0.0) + float(r["h"] or 0)
+    if not hours or not any(hours.values()):
+        return None
+    return max(hours.items(), key=lambda kv: kv[1])[0]
+
+
+def staff_add_key(day, daypart, role) -> str:
+    """The recommendation key of one soft "+1": staff_add:<day>:<daypart>:<role>
+    (daypart "day" for the whole day) — what the ledger records when a
+    published week applied it (CROSSMODULE-10)."""
+    import rec_ledger
+    return rec_ledger.rec_key("staff_add", f"{str(day).lower()}:{daypart or 'day'}:"
+                                           f"{str(role or 'person').strip().lower().replace(' ', '_')}")
 
 
 # ── the DSR ─────────────────────────────────────────────────────────────────
@@ -259,7 +347,7 @@ def dsr_requirements(restaurant_id, week_dates, today=None, db_path=None) -> lis
     except Exception:
         silenced = set()
     by_day = {date.fromisoformat(d).strftime("%A"): d for d in (week_dates or [])}
-    out, seen = [], set()
+    out, by_ask = [], {}
     for r in rows:
         try:
             n = json.loads(r["narrative_json"] or "null") or {}
@@ -276,18 +364,34 @@ def dsr_requirements(restaurant_id, week_dates, today=None, db_path=None) -> lis
             # An action about a night expires after the week it concerns.
             if concerns is None or concerns + timedelta(days=7) < today or day not in by_day:
                 continue
-            if (day, (a.get("text") or "").lower()) in seen:
-                continue
-            seen.add((day, (a.get("text") or "").lower()))
             part = "morning" if re.search(r"\b(lunch|brunch|breakfast|morning|am)\b", a.get("text") or "", re.I) \
                 else "night"
             role = next((w for w in ("dishwasher", "server", "bartender", "cook", "host", "busser", "runner",
                                      "expo", "prep") if re.search(rf"\b{w}s?\b", a.get("text") or "", re.I)), None)
-            out.append({"source": "dsr", "day": day, "date": by_day[day], "daypart": part, "role": role, "delta": 1,
-                        "text": f"{a.get('text')} (the {_mdy(r['business_date'])} report)",
-                        "action_text": a.get("text"),
-                        "report_date": r["business_date"],
-                        "expires": (concerns + timedelta(days=7)).isoformat(), "key": a.get("key")})
+            # One ask per night, daypart, role and action (re-audit 9/29/26,
+            # CROSSMODULE-6): the report's key is wording-independent — the
+            # same action on another night is the same key — and the model
+            # rewords it every night, so three reports asking for one more
+            # dishwasher Friday are ONE +1, asked in three reports, never
+            # three. The newest report's words are kept (rows run newest
+            # first).
+            ask = (day, part, role, a.get("key") or (a.get("text") or "").strip().lower())
+            if ask in by_ask:
+                prev = by_ask[ask]
+                prev["reports"] += 1
+                prev["report_dates"].append(r["business_date"])
+                continue
+            req = {"source": "dsr", "day": day, "date": by_day[day], "daypart": part, "role": role, "delta": 1,
+                   "text": f"{a.get('text')} (the {_mdy(r['business_date'])} report)",
+                   "action_text": a.get("text"),
+                   "report_date": r["business_date"], "reports": 1, "report_dates": [r["business_date"]],
+                   "expires": (concerns + timedelta(days=7)).isoformat(), "key": a.get("key")}
+            by_ask[ask] = req
+            out.append(req)
+    for req in out:
+        if req["reports"] > 1:
+            req["text"] = (f"{req['action_text']} (asked in {req['reports']} nightly reports, the latest "
+                           f"{_mdy(req['report_date'])})")
     return out
 
 
@@ -432,10 +536,13 @@ def soft_block(reqs) -> str:
         return ""
     lines = []
     for r in reqs:
-        line = f"  {r['day']} {_mdy(r['date'])} {_PRETTY_PART.get(r['daypart'], r['daypart'])}: "
+        when = _PRETTY_PART.get(r['daypart'], r['daypart']) if r.get("daypart") else "all day"
+        line = f"  {r['day']} {_mdy(r['date'])} {when}: "
         if r.get("source") == "dsr" and r.get("action_text"):
-            line += (f"+1 {r['role'] or 'person'} — the {_mdy(r.get('report_date'))} report asked, in its words: "
-                     + _fence(r["action_text"]))
+            asked = (f"asked in {r['reports']} nightly reports (one ask, one person — the latest, "
+                     f"{_mdy(r.get('report_date'))}, in its words): " if (r.get("reports") or 1) > 1 else
+                     f"the {_mdy(r.get('report_date'))} report asked, in its words: ")
+            line += f"+1 {r['role'] or 'person'} — " + asked + _fence(r["action_text"])
         else:
             line += r["text"]
         if r.get("confirm"):
@@ -455,14 +562,118 @@ def applied(reqs, rows, typical=None) -> list:
     out = []
     for r in reqs or []:
         role = (r.get("role") or "").lower()
+        part = r.get("daypart")
+        # A whole-day requirement (no daypart known, CROSSMODULE-17) reads
+        # every row that day, against the day's busiest daypart's typical.
         on = [x for x in rows or [] if (x.get("date") or "")[:10] == r["date"]
-              and r["daypart"] in present_dayparts(x)
+              and (not part or part in present_dayparts(x))
               and (not role or role in (x.get("role") or "").lower())]
         base = None
         if typical:
-            slot = typical.get((r["day"], r["daypart"])) or {}
-            base = next((v for k, v in slot.items() if role and role in str(k).lower()), None)
+            slots = [typical.get((r["day"], part)) or {}] if part else \
+                [v for (d, _p), v in typical.items() if d == r["day"]]
+            vals = [v for slot in slots for k, v in (slot or {}).items() if role and role in str(k).lower()]
+            base = max(vals) if vals else None
         got = len({(x.get("employee") or "").strip().lower() for x in on})
         out.append(dict(r, scheduled=got, typical=base,
                         applied=(got > base) if base is not None else (got > 0)))
     return out
+
+
+# ── closing the loop: what a published week did with the asks ──────────────
+#
+# Reviews to Labor was open-loop (re-audit 9/29/26, CROSSMODULE-10): the
+# draft said which "+1 server Friday dinner" it applied, and nothing kept it
+# — whether the published week carried the extra person, or whether Friday's
+# service complaints fell afterwards. Each review "+1" is now a
+# recommendation in the ledger (staff_add:<day>:<daypart>:<role>, shown on
+# the schedule review when the draft is written, carrying the complaint
+# theme's share as its number), and a DSR "+1" keeps its report's own key.
+# When a week is PUBLISHED, every ask its rows honoured is recorded as
+# implemented under the published week (source_ref "schedule:<id>"); the
+# ledger then starts the tracker on complaints:<category> (outcomes.
+# autostart_implemented, under the slice gate), and the verdict reaches
+# what_worked on the schedule and the review diagnosis (rec_learning,
+# kept forever in its monthly summaries). Before and after, never proof.
+
+def present_requirements(restaurant_id, reqs, db_path=None) -> dict:
+    """Show the draft's review "+1"s on the schedule review
+    (rec_ledger.present_many, surface schedule_review): {key: rec_id or
+    None}. Never raises."""
+    items = []
+    for r in reqs or []:
+        if r.get("source") != "reviews" or not r.get("key"):
+            continue
+        metric = None
+        if r.get("category"):
+            try:
+                import metrics
+                m = metrics.normalize(f"complaints:{r['category']}")
+                metric = m if metrics.known(m) else None
+            except Exception:
+                metric = None
+        items.append({"key": r["key"], "module": "schedule", "title": str(r.get("text") or "")[:200],
+                      "evidence_sources": ["reviews", "labor"], "cross_module": True,
+                      "expected_metric": metric})
+    if not items:
+        return {}
+    try:
+        import rec_ledger
+        return rec_ledger.present_many(restaurant_id, items, "schedule_review",
+                                       db_path=db_path or _models_mod.DB_PATH) or {}
+    except Exception as e:
+        log.warning("staffing_signals: requirements not presented for %s: %s", restaurant_id, e)
+        return {}
+
+
+def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None, db_path=None) -> list:
+    """A week was published: every soft "+1" its draft was asked for
+    (schedule_history.review_json) that the PUBLISHED rows honour is
+    recorded as implemented under the week (source_ref "schedule:<id>",
+    idempotent) — the review ones under staff_add:…, a DSR one under its
+    report's key. Returns the keys recorded. Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT review_json, schedule_csv, week_start FROM schedule_history WHERE id=? "
+                               "AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("staffing_signals: published week unreadable for %s: %s", restaurant_id, e)
+        return []
+    if row is None:
+        return []
+    try:
+        review = json.loads(row["review_json"] or "null") or {}
+    except (TypeError, ValueError):
+        review = {}
+    reqs = [r for r in (review.get("soft_requirements") or []) if isinstance(r, dict) and r.get("key")]
+    if not reqs:
+        return []
+    try:
+        from schedule_versions import rows_from_csv
+        rows = rows_from_csv(schedule_csv if schedule_csv is not None else row["schedule_csv"])
+    except Exception as e:
+        log.warning("staffing_signals: published rows unreadable for %s: %s", restaurant_id, e)
+        return []
+    typical = {}
+    for r in reqs:
+        if r.get("typical") is not None:
+            typical.setdefault((r["day"], r.get("daypart")), {})[r.get("role") or ""] = r["typical"]
+    done = []
+    try:
+        import rec_ledger
+        for r in applied(reqs, rows, typical or None):
+            if not r.get("applied"):
+                continue
+            meta = {"module": "schedule", "via": "published_week", "source": r.get("source"),
+                    "day": r.get("day"), "date": r.get("date"), "daypart": r.get("daypart"),
+                    "role": r.get("role"), "category": r.get("category"), "week_start": row["week_start"]}
+            if rec_ledger.implemented(restaurant_id, r["key"], "schedule_review", user_id=user_id,
+                                      source_ref=f"schedule:{history_id}", meta=meta,
+                                      db_path=db_path or _models_mod.DB_PATH):
+                done.append(r["key"])
+    except Exception as e:
+        log.warning("staffing_signals: published asks not recorded for %s: %s", restaurant_id, e)
+    return done

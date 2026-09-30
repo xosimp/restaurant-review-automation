@@ -205,23 +205,30 @@ def overlay(restaurant_id, review_id, result, db_path=None) -> dict:
     return result
 
 
-def retag_examples(restaurant_id, db_path=None) -> list:
+def retag_examples(restaurant_id, db_path=None, rating=None) -> list:
     """The restaurant's recent re-tagged reviews as analyser examples:
-    [{"text", "rating", "fields": {field: value}}], newest first. Never an
-    admin's or a view-as correction, never a removed review, and nothing
-    for a restaurant that may not teach a learner (models.learning_eligible).
-    Never raises."""
+    [{"text", "rating", "fields": {field: value}, "by": "owner" | "manager"}].
+    Never an admin's or a view-as correction, never a removed review, and
+    nothing for a restaurant that does not learn for itself
+    (models.learns_for_itself). With `rating` (the review being analysed),
+    the corrections of reviews in its star band come first, then the rest,
+    newest first within each (memory re-audit 9/29/26, PROMPTS-12: the four
+    newest, whatever they were about). `by` names whose correction it is — a
+    manager's re-tag is never labelled the owner's. Never raises."""
     try:
         import models
-        if not models.learning_eligible(restaurant_id):
+        if not models.learns_for_itself(restaurant_id):
             return []
         conn = get_conn(db_path)
         try:
+            band = models.reply_band(rating) if rating is not None else None
+            band_first = (f"CASE WHEN r.rating IN ({','.join(str(int(x)) for x in band)}) THEN 0 ELSE 1 END, "
+                          if band else "")
             rows = conn.execute(
-                "SELECT t.review_id, t.field, t.after_json, r.text, r.rating FROM review_retags t "
+                "SELECT t.review_id, t.field, t.after_json, t.authority, r.text, r.rating FROM review_retags t "
                 "JOIN reviews r ON r.id=t.review_id AND r.restaurant_id=t.restaurant_id "
                 "WHERE t.restaurant_id=? AND COALESCE(t.authority, '') != 'admin' AND r.deleted_at IS NULL "
-                "ORDER BY t.id DESC LIMIT 40", (restaurant_id,)).fetchall()
+                f"ORDER BY {band_first}t.id DESC LIMIT 40", (restaurant_id,)).fetchall()
         finally:
             conn.close()
     except Exception:
@@ -232,7 +239,7 @@ def retag_examples(restaurant_id, db_path=None) -> list:
             if len(by) >= RETAG_EXAMPLES:
                 continue
             by[r["review_id"]] = {"text": str(r["text"] or "")[:RETAG_EXAMPLE_CHARS], "rating": r["rating"],
-                                  "fields": {}}
+                                  "fields": {}, "by": "manager" if r["authority"] == "delegate" else "owner"}
             out.append(by[r["review_id"]])
         fields = by[r["review_id"]]["fields"]
         if r["field"] not in fields:                 # the newest correction of each field
@@ -243,20 +250,22 @@ def retag_examples(restaurant_id, db_path=None) -> list:
     return out
 
 
-def analyser_block(restaurant_id, db_path=None) -> str:
-    """The analyser prompt's restaurant block: the owner's corrections as
-    examples (the review text fenced) and the menu as the dish vocabulary.
-    "" when there is neither."""
+def analyser_block(restaurant_id, db_path=None, rating=None) -> str:
+    """The analyser prompt's restaurant block: the restaurant's corrections
+    as examples (the review text fenced; those in the analysed review's star
+    band first — `rating`), each labelled by whose it is, and the menu as the
+    dish vocabulary. "" when there is neither."""
     from ai_guard import wrap_untrusted
     parts = []
-    ex = retag_examples(restaurant_id, db_path=db_path)
+    ex = retag_examples(restaurant_id, db_path=db_path, rating=rating)
     if ex:
         lines = []
         for e in ex:
             tags = "; ".join(f"{k}: {', '.join(v) if isinstance(v, list) else v}" for k, v in e["fields"].items())
-            lines.append(f"{e['rating']}-star review:\n{wrap_untrusted(e['text'])}\nThe owner's tags: {tags}")
-        parts.append("THIS RESTAURANT'S CORRECTIONS — the owner re-tagged these reviews by hand. Tag a review like "
-                     "one of them the way the owner did:\n" + "\n".join(lines))
+            whose = "A manager's tags" if e.get("by") == "manager" else "The owner's tags"
+            lines.append(f"{e['rating']}-star review:\n{wrap_untrusted(e['text'])}\n{whose}: {tags}")
+        parts.append("THIS RESTAURANT'S CORRECTIONS — the owner (or a manager, where it says so) re-tagged these "
+                     "reviews by hand. Tag a review like one of them the way they did:\n" + "\n".join(lines))
     menu = menu_dishes(restaurant_id, db_path=db_path)
     if menu:
         parts.append("This restaurant's menu (a dish a guest names is often one of these — still write `dishes` "

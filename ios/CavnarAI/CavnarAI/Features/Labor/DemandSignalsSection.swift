@@ -130,7 +130,7 @@ struct DemandSignalsSection: View {
 
     private func signalRow(_ signal: DemandSignal) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: signal.kind == "reservations" ? "book.closed.fill" : "party.popper.fill")
+            Image(systemName: signal.kind == "reservations" ? "book.closed.fill" : signal.kind == "post" ? "megaphone.fill" : "party.popper.fill")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber)
                 .frame(width: 20)

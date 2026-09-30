@@ -204,8 +204,12 @@ def test_memory_shows_who_what_about_whom_until_when_and_what_left():
     assert "a === 'principals' ? 'Only owners' : (a === 'author' ? 'Just you'" in _fn("memAudience")
     lm = _fn("loadMemory")
     assert "memLanes(d.lanes);" in lm and "f.can_forget === false" in lm
-    for field in ("d.archived", "x.reason_label", "x.archived_on", "x.can_restore", "data-restore-fact"):
-        assert field in lm, field
+    assert "d.archived" in lm
+    # The archive row moved into memArchRow when the archive became paged
+    # (memory re-audit 9/29/26, R3 archive_restore).
+    row = _fn("memArchRow")
+    for field in ("x.reason_label", "x.archived_on", "x.can_restore", "data-restore-fact"):
+        assert field in row, field
     lanes = _fn("memLanes")
     assert "l.cap" in lanes and "l.count" in lanes
     assert "fetch('/api/account/memory/restore'" in SRC and "JSON.stringify({id: +b.getAttribute('data-restore-fact')})" in SRC
@@ -277,7 +281,9 @@ def test_trust_says_when_a_band_earned_it_what_lapsed_and_what_was_undone():
 
 
 def test_a_teammates_voice_option_says_what_it_does():
-    assert "var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.'};" in SRC
+    # marketing.voice joined it in the memory re-audit fix round (LOOPS-15).
+    assert ("var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.',"
+            "'marketing.voice':'Their posts, emails and texts teach Cavnar AI your voice.'};") in SRC
 
 
 # ── Data Health, the undo question, the Why? panel ──────────────────────────

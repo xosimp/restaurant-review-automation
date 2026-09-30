@@ -154,11 +154,14 @@ def _do_issues_list(u):
     # A loss issue names the manager who approved the comps; only a login
     # with LOSS_VIEW reads it (re-audit A-8). Web and mobile share this body.
     loss = issues.viewer_sees_loss(u)
-    rows = issues.list_issues(_rid(u), status=status, sees_loss=loss)
+    # ...and an issue built from a module this login may not open (a plan
+    # item on food cost) is not theirs either (memory re-audit PEOPLE-14).
+    hide = issues.hidden_modules(u)
+    rows = issues.list_issues(_rid(u), status=status, sees_loss=loss, hide_modules=hide)
     if status == "unresolved":
         # What Home renders from this list: its covers are shown there.
         present_covers(_rid(u), rows[:HOME_ISSUES_SHOWN], "home", user_id=u.get("id"))
-    return {"ok": True, "issues": rows, "summary": issues.summary(_rid(u), sees_loss=loss)}, 200
+    return {"ok": True, "issues": rows, "summary": issues.summary(_rid(u), sees_loss=loss, hide_modules=hide)}, 200
 
 
 def _do_issue_create(u):
@@ -188,7 +191,9 @@ def _issue_hidden(u, issue_id) -> bool:
     the id does not confirm one exists (the list's rule, re-audit A-8)."""
     import issues
     row = issues.get_issue(_rid(u), issue_id)
-    return bool(row) and row.get("kind") == "loss" and not issues.viewer_sees_loss(u)
+    # The list's rules, by id: loss, and a module this login may not open
+    # (issues.viewer_sees_issue — memory re-audit PEOPLE-14).
+    return bool(row) and not issues.viewer_sees_issue(u, row)
 
 
 def _do_issue_resolve(u, issue_id):
@@ -318,9 +323,40 @@ def _do_goals_list(u):
     labels = owner_memory._user_labels([g.get("created_by") for g in props])
     for g in props:
         g["proposed_by"] = "Your sales audit" if g.get("source") == "audit" else labels.get(g.get("created_by"))
+    # A goal missed past its grace is out of every prompt and waits here,
+    # once, to be renewed or closed (memory re-audit 9/29/26, R3).
+    missed = [g for g in goals.missed(_rid(u)) if _metric_visible(u, g.get("metric"))]
     return {"ok": True, "goals": [g for g in goals.progress(_rid(u))
                                   if _metric_visible(u, g.get("metric"))],
-            "proposed": props, "can_confirm": bool(is_principal(u))}, 200
+            "proposed": props, "missed": missed, "can_confirm": bool(is_principal(u))}, 200
+
+
+def _do_goal_renew(u, goal_id):
+    """An account holder renews a missed goal: the same target, a new
+    deadline (`days`, default 30) — the target again from now."""
+    import goals
+    from permissions import is_principal, answer_authority
+    if not is_principal(u):
+        return _forbidden("Only the owner can renew a goal.")
+    try:
+        days = int(_body().get("days") or 30)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "days must be a number"}, 400
+    g = goals.renew_missed(_rid(u), goal_id, days=days, user_id=u.get("id"), authority=answer_authority(u))
+    if g is None:
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True, "goal": g}, 200
+
+
+def _do_goal_close(u, goal_id):
+    """An account holder closes a missed goal for good."""
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can close a goal.")
+    if not goals.close_missed(_rid(u), goal_id, user_id=u.get("id")):
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True}, 200
 
 
 def _do_goal_set(u):
@@ -379,8 +415,13 @@ def _do_goal_end(u, goal_id):
         conn.close()
     if row is not None and not _metric_visible(u, row["metric"]):
         return {"ok": False, "error": "Goal not found."}, 404
+    # Only the owner ends a goal (PEOPLE-6): a manager's goal is only a
+    # proposal, and support through view-as is not the owner deciding.
     from permissions import answer_authority
-    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=answer_authority(u))
+    authority = answer_authority(u)
+    if authority != "principal":
+        return _forbidden("Only the owner can end a goal.")
+    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=authority)
     return {"ok": True}, 200
 
 
@@ -1416,16 +1457,54 @@ def _do_memory_add(u):
         kind = "context"
     modules = b.get("modules") if isinstance(b.get("modules"), list) else None
     try:
+        # scope "org": every location of the organisation reads it — a group
+        # owner only (owner_memory.may_set_org; memory re-audit 9/29/26,
+        # PEOPLE-13).
         saved = owner_memory.remember(_rid(u), fact, kind=kind, modules=modules,
                                       valid_until=b.get("valid_until") or None, due_on=b.get("due_on") or None,
                                       audience=b.get("audience") or None, user=u, source="Account",
-                                      origin="account")
+                                      origin="account", replaces=b.get("replaces") or None,
+                                      scope="org" if b.get("scope") == "org" else None)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
-    log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
+    # The log every console login reads carries the fact's type and who may
+    # read it, never its words (memory re-audit PEOPLE-1).
+    _kind = saved.get("kind") if isinstance(saved, dict) else kind
+    _aud = saved.get("audience") if isinstance(saved, dict) else None
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail=owner_memory.activity_detail(_kind, _aud),
+                      extra={"memory": {"kind": _kind, "audience": _aud or "team"}})
+    # `similar`: the notes this one may replace ("does this replace …?" —
+    # post again with `replaces`); `replaced`: the one it did; `confirmed`:
+    # someone had already said it, and this login's words were stamped on
+    # theirs (memory re-audit 9/29/26, R3).
     return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
             "kind": saved.get("kind"), "audience": saved.get("audience"),
-            "evicted": saved.get("evicted", 0)}, 200
+            "evicted": saved.get("evicted", 0), "evicted_facts": saved.get("evicted_facts") or [],
+            "similar": saved.get("similar") or [], "replaced": saved.get("replaced"),
+            "confirmed": bool(saved.get("confirmed")),
+            # Owners only because it is about someone's job or pay (said on
+            # save, with the one-tap "Share with the team" beside the fact).
+            "private_default": bool(saved.get("private_default"))}, 200
+
+
+def _do_memory_scope(u):
+    """{id, scope: "org" | "location"} — one of this location's facts kept
+    for every location of the organisation, or for this one only. A group
+    owner only (memory re-audit 9/29/26, PEOPLE-13)."""
+    import owner_memory
+    from client_api import log_account_event
+    b = _body()
+    if not isinstance(b.get("id"), int) or b.get("scope") not in ("org", "location"):
+        return {"ok": False, "error": "Send the fact's id and a scope (org or location)."}, 400
+    if not owner_memory.may_set_org(_rid(u), u):
+        return _forbidden("Only the owner of every location can keep a fact for all of them.")
+    try:
+        out = owner_memory.set_scope(_rid(u), b["id"], b["scope"], u)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 404
+    log_account_event(_rid(u), "memory_scope", current_user=u, detail=f"fact {out['id']} → {out['scope']}")
+    return {"ok": True, **out}, 200
 
 
 def _do_decisions(u):
@@ -2932,6 +3011,61 @@ def _do_people_merge(u):
     return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
 
 
+def _do_people_merges(u):
+    """The merges of the last people.UNMERGE_DAYS days, each with whether
+    it can still be undone (memory re-audit 9/29/26, INVENTORY-11)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "merges": _people.recent_merges(_rid(u)), "can_undo": _principal(u),
+            "undo_days": _people.UNMERGE_DAYS}, 200
+
+
+def _do_people_merge_undo(u, merge_id):
+    """Undo a merge: the two people are two again, every record back where
+    it was (people.unmerge_people). The account owner's decision, like the
+    merge itself."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can undo a merge.")
+    import people as _people
+    try:
+        out = _people.unmerge_people(_rid(u), int(merge_id), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_unmerged", current_user=u, detail=f"{out['into']} → {out['from']}")
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_erase(u, key):
+    """{confirm: their name} — a departed employee's request to be
+    forgotten: every record about them erased (people.erase_person). The
+    account owner's decision; the name typed back guards a wrong tap.
+    Refused while they are on the roster or hold a staff login."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can erase someone's record.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    typed = " ".join(str(_body().get("confirm") or "").split()).casefold()
+    if typed != " ".join(str(p["name"]).split()).casefold():
+        return {"ok": False, "error": f"Type {p['name']} to confirm."}, 400
+    pid = _people.person_id_for(_rid(u), p["name"], create=False)
+    if not pid:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    try:
+        out = _people.erase_person(_rid(u), pid, user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "person_erased", current_user=u, detail=f"person #{out['person_id']}")
+    return {"ok": True, "erased": out["erased"]}, 200
+
+
 def _do_person_roles(u, key):
     """{role, since?, primary?, remove?} — a role this person holds beyond
     the shifts they have worked: "trained on bar from 9/1" (a candidate for
@@ -2998,6 +3132,21 @@ def _do_issue_cover_answer(u, issue_id):
         return {"ok": False, "error": "That coverage issue wasn't found."}, 404
     day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
         else _local_today(u).isoformat()
+    # Answered already — on the web, another phone, by someone else: a
+    # stale screen's later tap does not overwrite it (memory re-audit
+    # 9/29/26, INVENTORY-10). The same answer again is fine.
+    import json as _json
+    import staff_settings as _ss_cover
+    try:
+        _asked = (_json.loads(issue.get("meta_json") or "null") or {}).get("asked") or []
+    except (TypeError, ValueError):
+        _asked = []
+    _prior = next((a.get("answer") for a in _asked if isinstance(a, dict) and a.get("answer")
+                   and _ss_cover.name_key(a.get("name")) == _ss_cover.name_key(b["name"])), None)
+    if _prior and _prior != ("took" if b["accepted"] else "declined"):
+        first = str(b["name"]).split(" ")[0]
+        return {"ok": False, "answer": _prior,
+                "error": f"Already answered: {first} {'took it' if _prior == 'took' else 'didn’t take it'}."}, 409
     _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
     # Kept on the issue's own ask too, so Home stops asking (UI wave).
     import intraday as _intraday
@@ -3201,7 +3350,13 @@ def _do_memory_list(u):
     lanes and how full each is, and what left without anyone asking (a full
     lane, a date passed, a retracted answer), which can be put back."""
     import owner_memory
-    return {"ok": True, **owner_memory.account_view(_rid(u), u)}, 200
+    from flask import has_request_context
+    raw = request.args.get("archive_before") if has_request_context() else None
+    try:
+        before = int(raw) if raw else None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "archive_before must be a number"}, 400
+    return {"ok": True, **owner_memory.account_view(_rid(u), u, archive_before=before)}, 200
 
 
 def _do_memory_forget(u):
@@ -3219,8 +3374,27 @@ def _do_memory_forget(u):
     out = owner_memory.forget(_rid(u), fact, user=u)
     if out.get("error"):
         return {"ok": False, "error": out["error"]}, 403
-    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
+    log_account_event(_rid(u), "memory_forgotten", current_user=u,
+                      detail=owner_memory.activity_detail(row.get("kind"), row.get("audience")),
+                      extra={"memory": {"kind": row.get("kind") or "context", "audience": row.get("audience") or "team",
+                                        "fact_id": row.get("id")}})
     return {"ok": True}, 200
+
+
+def _do_memory_audience(u):
+    """Who reads one fact — the one-tap change Account shows beside it
+    (owner_memory.set_audience; memory re-audit PEOPLE-10). Logged like any
+    memory change: its type and audience, never its words."""
+    import owner_memory
+    from client_api import log_account_event
+    b = _body()
+    out = owner_memory.set_audience(_rid(u), b.get("id"), (b.get("audience") or "").strip(), user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, int(out.get("status") or 400)
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail="Now " + owner_memory.activity_detail(out.get("kind"), out["audience"]),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out["audience"], "changed": True}})
+    return {"ok": True, "audience": out["audience"]}, 200
 
 
 # ── preferences: the login's own, the location's, the organisation's ─────────
@@ -3328,26 +3502,58 @@ def _do_preferences_apply_to_all(u):
 
 def _do_memory_restore(u):
     """Put back a fact that left without anyone asking (a full lane, a date
-    passed, a retracted answer) — ask_memory_archive by id."""
+    passed, a retracted answer, a login that left) — ask_memory_archive by
+    id, checked against the table with this login's own filter, not the page
+    Account last rendered (owner_memory.restore; memory re-audit R3). A
+    passed date comes back cleared, or as the new `valid_until`/`due_on`."""
     import owner_memory
-    from models import restore_ask_fact
+    from client_api import log_account_event
+    b = _body()
+    try:
+        aid = int(b.get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    out = owner_memory.restore(_rid(u), aid, user=u, valid_until=b.get("valid_until") or None,
+                               due_on=b.get("due_on") or None)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    fact = out["fact"]
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail="Put back: " + owner_memory.activity_detail(out.get("kind"), out.get("audience")),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out.get("audience"), "restored": True}})
+    return {"ok": True, "fact": fact, "valid_until": out.get("valid_until"), "due_on": out.get("due_on")}, 200
+
+
+def _do_memory_dismiss(u):
+    """Let an archived fact go for good (an owner's evicted rule is kept
+    until someone does)."""
+    import owner_memory
     from client_api import log_account_event
     try:
         aid = int(_body().get("id"))
     except (TypeError, ValueError):
         return {"ok": False, "error": "Which fact?"}, 400
-    view = owner_memory.account_view(_rid(u), u)
-    item = next((a for a in view["archived"] if a["id"] == aid), None)
-    if item is None:
-        return {"ok": False, "error": "No fact like that."}, 404
-    if not item.get("can_restore"):
-        return {"ok": False, "error": "Only the owner or the person who added it can put it back."}, 403
-    fact = restore_ask_fact(_rid(u), aid)
-    if not fact:
-        return {"ok": False, "error": "No fact like that."}, 404
-    owner_memory.invalidate(_rid(u))
-    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
-    return {"ok": True, "fact": fact}, 200
+    out = owner_memory.dismiss(_rid(u), aid, user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    log_account_event(_rid(u), "memory_forgotten", current_user=u,
+                      detail="Let go: " + owner_memory.activity_detail(out.get("kind"), out.get("audience")),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out.get("audience"), "dismissed": True}})
+    return {"ok": True}, 200
+
+
+def _do_memory_pin(u):
+    """An account holder pins a fact out of lane eviction, or unpins it."""
+    import owner_memory
+    b = _body()
+    try:
+        fid = int(b.get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    out = owner_memory.pin(_rid(u), fid, user=u, pinned=b.get("pinned", True) not in (False, 0, "0", "false"))
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    return {"ok": True, "pinned": out["pinned"]}, 200
 
 
 def _do_delayed_pending(u):
@@ -3487,7 +3693,15 @@ def _do_cross_module(u):
         _ctx = rec_trust.Context(_rid(u))
     except Exception as e:
         print(f"[cross-module] trust context unavailable rid={_rid(u)}: {e}")
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx)
+    # The day's one-thing rank log is the OWNER's Home hero (CROSSMODULE-13):
+    # a manager's view, without Food Cost, picks from another candidate set.
+    try:
+        from permissions import answer_authority as _aa_rank
+        _log_rank = _aa_rank(u) == "principal"
+    except Exception:
+        _log_rank = False
+    # The login's own answers leave its links too (CROSSMODULE-2).
+    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
@@ -3587,7 +3801,12 @@ def _do_ask_feedback(u):
     from models import record_ask_feedback, ask_feedback_summary
     from permissions import answer_authority
     authority = answer_authority(u)
-    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"), authority=authority)
+    # Filed under whoever rated: the admin behind a view-as, never the owner
+    # it views as, so support's rating never replaces the owner's own
+    # (one row per answer and rater — PEOPLE-7).
+    from permissions import acting_login_id
+    rater = acting_login_id(u)
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=rater, authority=authority)
     if row is None:
         return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
     try:
@@ -3605,7 +3824,7 @@ def _do_ask_feedback(u):
             preference = owner_memory.derive_rating_preferences(_rid(u), u)
         except Exception as e:
             print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
-    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=rater),
             "preference": preference}, 200
 
 
@@ -4147,7 +4366,8 @@ def _dsr_present_view(u, day, payload):
         silenced = set()
         if not recent:
             import rec_ledger
-            silenced = rec_ledger.silenced_keys(_rid(u))
+            # ...and this login's own "not for us" (PEOPLE-4).
+            silenced = rec_ledger.silenced_keys(_rid(u), viewer=u)
         import rec_learning
         for a in acts:
             if not isinstance(a, dict) or not a.get("key"):
@@ -5009,6 +5229,8 @@ _ROUTES = [
     ("/goals/<int:goal_id>/end", ["POST"], _do_goal_end, "goal_end"),
     ("/goals/<int:goal_id>/confirm", ["POST"], _do_goal_confirm, "goal_confirm"),
     ("/goals/<int:goal_id>/decline", ["POST"], _do_goal_decline, "goal_decline"),
+    ("/goals/<int:goal_id>/renew", ["POST"], _do_goal_renew, "goal_renew"),
+    ("/goals/<int:goal_id>/close", ["POST"], _do_goal_close, "goal_close"),
     ("/outcomes", ["GET"], _do_outcomes_list, "outcomes_list"),
     ("/outcomes", ["POST"], _do_outcome_record, "outcome_record"),
     ("/outcomes/<int:outcome_id>/abandon", ["POST"], _do_outcome_abandon, "outcome_abandon"),
@@ -5058,6 +5280,7 @@ _ROUTES = [
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
     ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/account/memory/scope", ["POST"], _do_memory_scope, "memory_scope"),
     ("/marketing/posts/<int:post_id>/tags", ["POST"], _do_post_tags, "post_tags"),
     ("/intel/ai-visibility/queries", ["GET"], _do_ai_visibility_queries, "ai_visibility_queries"),
     ("/marketing/diagnosis", ["GET"], _do_marketing_diagnosis, "marketing_diagnosis"),
@@ -5102,6 +5325,9 @@ _ROUTES = [
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/memory/audience", ["POST"], _do_memory_audience, "memory_audience"),
+    ("/account/memory/dismiss", ["POST"], _do_memory_dismiss, "memory_dismiss"),
+    ("/account/memory/pin", ["POST"], _do_memory_pin, "memory_pin"),
     ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),
     ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
     ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
@@ -5133,9 +5359,12 @@ _ROUTES = [
     ("/people/identity", ["GET"], _do_people_identity, "people_identity"),
     ("/people/identity/<int:question_id>", ["POST"], _do_people_identity_answer, "people_identity_answer"),
     ("/people/merge", ["POST"], _do_people_merge, "people_merge"),
+    ("/people/merges", ["GET"], _do_people_merges, "people_merges"),
+    ("/people/merges/<int:merge_id>/undo", ["POST"], _do_people_merge_undo, "people_merge_undo"),
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
     ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
+    ("/people/<key>/erase", ["POST"], _do_person_erase, "person_erase"),
     ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
     ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
     ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),

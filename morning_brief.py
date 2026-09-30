@@ -279,18 +279,32 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
             return str(v)[:10] == today.isoformat() or (hasattr(v, "isoformat") and v.isoformat()[:10] == today.isoformat())
         except Exception:
             return False
-    for ln in (block.sections or {}).get("constraints") or []:
+    uid = (viewer or {}).get("id") if isinstance(viewer, dict) else None
+    # The owner's own rules (memory_context "owner_rules", PROMPTS-1) and the
+    # team's notes — both are "your note for today" when dated today.
+    for ln in (((block.sections or {}).get("owner_rules") or [])
+               + ((block.sections or {}).get("constraints") or [])):
         if _is_today(ln.get("date")) and ln.get("text"):
+            # "Your note" only when it is: an owner's or a teammate's note
+            # says whose it is (memory re-audit PEOPLE-9).
+            mine = uid is not None and ln.get("author_id") is not None and int(ln["author_id"]) == int(uid)
+            who = " ".join(str(ln.get("who") or "").split())[:60]
+            lead = "Your note for today" if mine else (f"Note for today from {who}" if who else "Note for today")
             out.append({"key": "memory:constraint", "tone": "action", "source": "memory", "claim_kind": "owner",
-                        "text": f"Your note for today: {' '.join(str(ln['text']).split())}",
+                        "text": f"{lead}: {' '.join(str(ln['text']).split())}",
                         "ask": "What should I keep in mind today?"})
             break
     has_effects = any(l.get("key") == "today" and "measured" in (l.get("text") or "") for l in lines)
     if not has_effects:
         for ln in (block.sections or {}).get("events") or []:
             if _is_today(ln.get("date")) and ln.get("text"):
+                # The measured half rides on the line's trusted suffix
+                # (memory_context "measured", PROMPTS-3), not in its words.
+                said = " ".join(str(ln["text"]).split())
+                if ln.get("measured"):
+                    said += " — " + " ".join(str(ln["measured"]).split())
                 out.append({"key": "memory:event", "tone": "neutral", "source": "memory", "claim_kind": "measured",
-                            "text": "Remembered: " + " ".join(str(ln["text"]).split()),
+                            "text": "Remembered: " + said,
                             "ask": "How have nights like today gone here?"})
                 break
     return out[:BRIEF_MEMORY_LINES]
@@ -522,11 +536,15 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "money": {"low": lo_m, "high": hi_m, "per": "month",
                                 "label": f"{t['label']} — opportunity, {amount}/month",
                                 "claim_kind": t.get("claim_kind"), "basis": t.get("basis")},
-                      "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month.",
+                      # A trim the figure implies on a night a campaign is
+                      # filling is said, not contradicted (CROSSMODULE-5).
+                      "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month."
+                              + (f" {t['guard']}" if t.get("guard") else ""),
                       "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
     # ── accountability ──
-    s = _safe(issues.summary, restaurant_id, db_path=db_path)
+    s = _safe(issues.summary, restaurant_id, db_path=db_path, sees_loss=sees_loss,
+              hide_modules=issues.hidden_modules(viewer))
     if s and (s["open"] or s["acknowledged"]):
         age = (f" — oldest waiting {s['oldest_open_hours']:.0f}h unacknowledged"
                if s.get("oldest_open_hours") else "")
@@ -625,7 +643,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             # the first item alone, answering the salmon alert hid
             # "Salmon, Chicken" entirely.
             import rec_ledger
-            quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path) or set()
+            quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path, viewer=viewer) or set()
             low = [i for i in low if rec_ledger.rec_key("stock_low", i) not in quiet]
         if low:
             named = ", ".join(low[:STOCK_NAMED]) + (f" and {len(low) - STOCK_NAMED} more"
@@ -747,7 +765,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # A line whose recommendation the owner already answered — hidden,
     # "not for us", done, snoozed — on Home, in the queue or anywhere else
     # is not said again here (rec_ledger.silenced_keys).
-    lines = _drop_answered(restaurant_id, lines, db_path)
+    lines = _drop_answered(restaurant_id, lines, db_path, viewer=viewer)
     lines = _one_line_per_news(lines)
     # Advice pulling against other advice (memory audit 9/29/26,
     # "conflicts"): a line the owner settled against is left out; the weaker
@@ -763,6 +781,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                  for l in lines if not l.get("rec") or l.get("rec") in _kept]
     except Exception as e:
         print(f"[morning_brief] lever conflicts unavailable for {restaurant_id}: {e}")
+    lines = _rank_learned(restaurant_id, restaurant, lines, db_path, viewer)
     _attach_confidence(restaurant_id, lines, db_path)
 
     # ── what another module would let me say ──
@@ -907,13 +926,55 @@ def _one_line_per_news(lines):
     return out
 
 
-def _drop_answered(restaurant_id, lines, db_path=DB_PATH):
-    """Lines whose ledger key an answer is silencing, removed."""
+def _rank_learned(restaurant_id, restaurant, lines, db_path=DB_PATH, viewer=None):
+    """The brief's lines weighed by the same effectiveness model Home ranks
+    with (rec_learning.effectiveness, from the reader's side — memory
+    re-audit 9/29/26, LOOPS-12: the brief learned only silences). The weight
+    only reorders the lines BETWEEN critical ones, stably, so with nothing
+    learned the order is exactly as built and nothing learned moves a
+    critical line. Each weighed line carries `learned_weight`. Never raises."""
+    if not any(l.get("rec") for l in lines):
+        return lines
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path, restaurant=restaurant,
+                                             perspective=rec_learning.perspective_of(viewer) if viewer
+                                             else "principal",
+                                             viewer_id=rec_learning.viewer_of(viewer) if viewer else None)
+    except Exception as e:
+        print(f"[morning_brief] effectiveness unavailable for {restaurant_id}: {e}")
+        return lines
+    weighed = []
+    for l in lines:
+        w = 1.0
+        if l.get("rec") and not l.get("critical"):
+            try:
+                w = float(rec_learning.weigh(learned, l["rec"], title=l.get("text"))["weight"] or 1.0)
+            except Exception:
+                w = 1.0
+            l = dict(l, learned_weight=round(w, 3)) if w != 1.0 else l
+        weighed.append((l, w))
+    out, run = [], []
+    for l, w in weighed:
+        if l.get("critical"):
+            out.extend(x for x, _w in sorted(run, key=lambda p: -p[1]))
+            run = []
+            out.append(l)
+        else:
+            run.append((l, w))
+    out.extend(x for x, _w in sorted(run, key=lambda p: -p[1]))
+    return out
+
+
+def _drop_answered(restaurant_id, lines, db_path=DB_PATH, viewer=None):
+    """Lines whose ledger key an answer is silencing, removed — the
+    restaurant's answers, and the `viewer` login's own (a manager's "not for
+    us" holds in their brief too — PEOPLE-4)."""
     keyed = [l.get("rec") for l in lines if l.get("rec")]
     if not keyed:
         return lines
     import rec_ledger
-    silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
     return [l for l in lines if not (l.get("rec") and l["rec"] in silenced)]
 
 
@@ -1408,6 +1469,11 @@ def recipients(restaurant_id, db_path=DB_PATH, include_opted_out=False):
     return out
 
 
+def _own_silences(restaurant_id, user, db_path=DB_PATH):
+    import rec_ledger
+    return rec_ledger.own_silences(restaurant_id, user, db_path=db_path)
+
+
 def _view_key(user):
     """Two logins with the same view get the same brief — built once."""
     from permissions import has_permission, LOSS_VIEW, MODULE_VIEW_PERMISSIONS
@@ -1415,6 +1481,28 @@ def _view_key(user):
     # The DSR view too: last night's line reads the report through it.
     return (frozenset(k for k, p in MODULE_VIEW_PERMISSIONS.items() if has_permission(user, p)),
             has_permission(user, LOSS_VIEW), access.view_for(user))
+
+
+def _personal(restaurant_id, user, db_path=DB_PATH) -> bool:
+    """Whether this login's brief may differ from another's with the same
+    view key and silences (the build key): the restaurant keeps memory some
+    logins may not read (an owner-only or one login's own fact). Then its
+    brief is built for it alone — a co-owner received the first recipient's
+    own notes (memory re-audit PEOPLE-9). Fails toward per-login."""
+    uid = (user or {}).get("id")
+    if uid is None:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            if conn.execute("SELECT 1 FROM ask_memory WHERE restaurant_id=? AND COALESCE(audience, 'team') != 'team' "
+                            "LIMIT 1", (restaurant_id,)).fetchone():
+                return True
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    return False
 
 
 def _only_all_clear(brief):
@@ -1572,7 +1660,14 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
         if done and done["status"] in ("sent", "queued"):
             continue                      # already reached (or on its way) today
-        key = _view_key(u)
+        # Built once per view AND per login's own silences (PEOPLE-4): two
+        # logins with one view share a brief only while neither has said
+        # "not for us" to something the other has not — and per login
+        # whenever the restaurant keeps memory some logins may not read
+        # (PEOPLE-9, _personal).
+        key = (_view_key(u), _safe(_own_silences, restaurant_id, u, db_path) or frozenset())
+        if _personal(restaurant_id, u, db_path):
+            key = key + (("login", u["id"]),)
         if key not in built:
             # Deduped against the other surfaces BEFORE anything here is
             # presented: the brief's own showings never count against it.
@@ -1667,7 +1762,10 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     if folded:
         _notify_h.mark_holds_folded([h["id"] for h in holds], db_path)
     for k in sent_views:
-        _record_read(restaurant_id, built[k], view=k[2], db_path=db_path)
+        # k is (view key, own silences[, login]): the DSR view is the view
+        # key's third part. k[2] was an IndexError once the key grew
+        # (refix merge) — raised after every send, so the reads were lost.
+        _record_read(restaurant_id, built[k], view=k[0][2], db_path=db_path)
     return {"sent": pushed + emailed, "push": pushed, "email": emailed, "failed": failed, "empty": empty,
             "retry": retry, "recipients": len(people)}
 

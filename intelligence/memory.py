@@ -118,11 +118,22 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
     since = (now - timedelta(days=rec_learning.DECAY_HORIZON_DAYS)).strftime("%Y-%m-%d")
     conn = get_conn(db_path)
     try:
+        # The learning floor the ranker and Historical Accuracy apply
+        # (rec_learning._learning_floor; memory re-audit 9/29/26, PLATFORM-7):
+        # a converted demo's Ask quoted "trim_day (4 of 5 …)" from seeded
+        # results while Home and the card said there was no record.
+        try:
+            ls = conn.execute("SELECT learning_since FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        except Exception:
+            ls = None
+        since = rec_learning._learning_floor({"learning_since": ls[0] if ls else None}, since)
+        since = str(since).replace("T", " ")
         kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=? "
-                                                       "AND event_at >= ?", (restaurant_id, since)).fetchall()]
+                                                       "AND replace(event_at, 'T', ' ') >= ?",
+                                                       (restaurant_id, since)).fetchall()]
         results = conn.execute("SELECT rec_kind, source_key, outcome, event_at FROM intel_rec_events WHERE restaurant_id=? "
                                "AND action='measured' AND outcome IN ('improved','worsened','no_clear_change') "
-                               "AND event_at >= ?", (restaurant_id, since)).fetchall()
+                               "AND replace(event_at, 'T', ' ') >= ?", (restaurant_id, since)).fetchall()
     finally:
         conn.close()
     weighted = {}
@@ -133,7 +144,7 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
     out = {}
     for k in kinds:
         s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path,
-                                    window_days=rec_learning.DECAY_HORIZON_DAYS))
+                                    window_days=rec_learning.DECAY_HORIZON_DAYS, since=since))
         if (s.get("measured") or 0) < rec_learning.MIN_MEASURED_FOR_RATE:
             s["success_rate"] = None
         out[k] = s
@@ -206,8 +217,13 @@ def restaurant_memory(restaurant_id, db_path=DB_PATH) -> dict:
     }
 
 
-def lines(mem: dict) -> list:
-    """Short, dated, own-data-only lines for a prompt."""
+def lines(mem: dict, record=True) -> list:
+    """Short, dated, own-data-only lines for a prompt. `record=False` leaves
+    out the advice record (what worked, what was declined): Ask reads that
+    from memory_context's "what_worked" section instead, gated by the
+    viewer's modules, loss view and owner-only rules — this copy named food
+    kinds and declined subjects to every login (memory re-audit PEOPLE-11 /
+    QUALITY-16). own_record stays the engine's."""
     out = []
     bd = mem.get("busiest_days") or {}
     if bd.get("available"):
@@ -217,7 +233,7 @@ def lines(mem: dict) -> list:
         src = f"; from {se['sources']}" if se.get("sources") else ""
         out.append(f"Seasonal peak months: {', '.join(se['peak'])}; trough: {', '.join(se['trough'])} "
                    f"(index vs own annual mean{src}).")
-    rec = mem.get("record") or {}
+    rec = (mem.get("record") or {}) if record else {}
     detail = rec.get("worked_detail")
     if detail:
         out.append("Recommendation kinds most often followed by a measured improvement here (before and after, "

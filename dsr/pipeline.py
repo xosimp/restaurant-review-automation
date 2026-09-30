@@ -697,10 +697,11 @@ def _remember(restaurant, day, db):
     weather. Never holds or fails the report."""
     try:
         import event_memory
-        from models import learning_eligible
-        # A demo, test or internal account teaches nothing (memory audit
-        # 9/29/26, eligibility) — the nightly job applies the same rule.
-        if learning_eligible(restaurant):
+        from models import learns_for_itself
+        # A demo (or an admin-excluded account) teaches nothing, its own
+        # event memory included (models.learns_for_itself, memory re-audit
+        # 9/29/26) — the nightly job applies the same rule.
+        if learns_for_itself(restaurant):
             event_memory.record_night(restaurant.id, day, db_path=db)
     except Exception as e:
         log.warning("dsr: event memory not recorded rid=%s day=%s: %s", getattr(restaurant, "id", None), day, e)

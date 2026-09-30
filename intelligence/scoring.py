@@ -102,6 +102,16 @@ MIN_MEASURED_FOR_RATE = 5
 # (capped_counts); `measured_capped` / `improved_capped` are the figure a
 # prior may use, the raw counts stay beside them.
 MAX_RESTAURANT_SHARE = 1.0 / 3.0
+# The pooled ACCEPTANCE prior (memory re-audit 9/29/26, PLATFORM-9 / -10):
+# capped per organisation like success (one 12-location group set every
+# partition's acceptance prior), and counted only over episodes shown in the
+# first POOLED_ACCEPT_MAX_POSITION places (rec_instances.first_position) —
+# rank decides exposure and exposure drives acceptance, so a kind ranked
+# high everywhere was accepted more, which raised its pooled prior, which
+# ranked it higher everywhere. An episode whose position is unknown (older,
+# or a deleted restaurant's) still counts. `acceptance_*_capped` carry it;
+# the raw figures stay beside them.
+POOLED_ACCEPT_MAX_POSITION = 3
 
 
 def capped_counts(per_restaurant, max_share=MAX_RESTAURANT_SHARE):
@@ -298,7 +308,7 @@ def _eligible_rows(rows, db_path):
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
                exclude_restaurant_id: int = None, window_days: int = None, half_life_days: float = None,
-               now=None, partition: str = None, decay: bool = False) -> dict:
+               now=None, partition: str = None, decay: bool = False, since: str = None) -> dict:
     """Rates for one kind. With `restaurant_id` it is that restaurant's own
     record (Level 1); with `cohort` the concept's (a confirmed type); with
     `partition` the confirmed peer partition's (partition_rows_sql — the
@@ -323,6 +333,10 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
     where, args = ["rec_kind=?"], [rec_kind]
     if window_days:
         where.append("event_at >= ?"); args.append((now - timedelta(days=int(window_days))).strftime("%Y-%m-%d"))
+    if since:
+        # An own reader's learning floor (memory re-audit 9/29/26,
+        # PLATFORM-7): a converted demo's rows before learning_since.
+        where.append("replace(event_at, 'T', ' ') >= ?"); args.append(str(since).replace("T", " ")[:19])
     cross = restaurant_id is None
     if not cross:
         where.append("restaurant_id=?"); args.append(restaurant_id)
@@ -339,12 +353,14 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
     finally:
         conn.close()
     orgs = {}
+    positions = None
     if cross:
         rows = _eligible_rows(rows, db_path)
         orgs = org_map([r["restaurant_id"] for r in rows] + [exclude_restaurant_id], db_path=db_path)
         # The asking restaurant's whole organisation is out of its prior.
         rows = _without_org(rows, orgs, exclude_restaurant_id)
-    out = _summarise(rows, cross=cross, orgs=orgs)
+        positions = _positions(rows, db_path)
+    out = _summarise(rows, cross=cross, orgs=orgs, positions=positions)
     if half_life_days and cross:
         per = {}
         for r in rows:
@@ -360,15 +376,69 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
         out["success_rate_recent"] = round(ic / mc, 3) if mc else None
         out["half_life_days"] = half_life_days
     if decay and cross:
-        out.update(_decayed(rec_kind, rows, orgs, now))
+        out.update(_decayed(rec_kind, rows, orgs, now, positions=positions))
     if window_days:
         out["window_days"] = int(window_days)
     return out
 
 
-def _decayed(rec_kind, rows, orgs, now) -> dict:
+_EPISODE_RE = None
+
+
+def _episode_id(source_key):
+    """The rec_id of an episode row ("<key>#e<rec_id>"), or None."""
+    global _EPISODE_RE
+    if _EPISODE_RE is None:
+        import re as _re
+        _EPISODE_RE = _re.compile(r"#e([0-9a-f]{32})$")
+    m = _EPISODE_RE.search(str(source_key or ""))
+    return m.group(1) if m else None
+
+
+def _positions(rows, db_path) -> dict:
+    """{rec_id: first_position} for the episodes behind `rows` (rec_instances),
+    in one read; {} when unreadable (every position unknown — counted)."""
+    ids = sorted({e for e in (_episode_id(r["source_key"]) for r in rows) if e})
+    if not ids:
+        return {}
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for r in conn.execute(f"SELECT rec_id, first_position FROM rec_instances WHERE rec_id IN "
+                                  f"({','.join('?' for _ in part)})", part).fetchall():
+                if r["first_position"] is not None:
+                    out[r["rec_id"]] = int(r["first_position"])
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    return out
+
+
+def _exposed(rec, positions) -> bool:
+    """Whether an episode counts toward the pooled acceptance prior: shown
+    in the first POOLED_ACCEPT_MAX_POSITION places, or at an unknown one."""
+    if not positions:
+        return True
+    pos = positions.get(_episode_id(rec[1]))
+    return pos is None or pos <= POOLED_ACCEPT_MAX_POSITION
+
+
+def _capped_acceptance(per) -> tuple:
+    """(n, rate, rate shrunk) over {org: (episodes, taken)} after the share
+    cap (capped_counts)."""
+    n, k = capped_counts(per)
+    rate = round(k / n, 3) if n else None
+    return n, rate, (shrink(rate, n) if rate is not None else None)
+
+
+def _decayed(rec_kind, rows, orgs, now, positions=None) -> dict:
     """The `*_decayed` figures (kind_stats' `decay`): every episode and
-    result weighted by rec_learning.decay_weight for the kind."""
+    result weighted by rec_learning.decay_weight for the kind — and
+    `acceptance_*_decayed_capped`, the same capped per organisation over the
+    exposed episodes (PLATFORM-9 / -10), which the prior reads."""
     import rec_learning
     acts, last = {}, {}
     per = {}
@@ -384,6 +454,7 @@ def _decayed(rec_kind, rows, orgs, now) -> dict:
         acts.setdefault(rec, set()).add(r["action"])
         last[rec] = max(last.get(rec, ""), str(r["event_at"] or ""))
     num = den = 0.0
+    per_acc = {}
     for rec, a in acts.items():
         b = _bucket(a)
         if b not in BUCKETS:
@@ -391,10 +462,17 @@ def _decayed(rec_kind, rows, orgs, now) -> dict:
         w = rec_learning.decay_weight(rec_kind, last[rec], now)
         den += w
         num += w if b == "taken" else 0.0
+        if _exposed(rec, positions):
+            o = orgs.get(rec[0], f"r{rec[0]}")
+            n, k = per_acc.get(o, (0.0, 0.0))
+            per_acc[o] = (n + w, k + (w if b == "taken" else 0.0))
     mc, ic = capped_counts(per)
     rate = round(num / den, 3) if den else None
+    an, ar, ars = _capped_acceptance(per_acc)
     return {"acceptance_n_decayed": round(den, 3), "acceptance_rate_decayed": rate,
             "acceptance_rate_decayed_shrunk": shrink(rate, den) if rate is not None else None,
+            "acceptance_n_decayed_capped": an, "acceptance_rate_decayed_capped": ar,
+            "acceptance_rate_decayed_capped_shrunk": ars,
             "measured_decayed": mc, "improved_decayed": ic,
             "success_rate_decayed": round(ic / mc, 3) if mc else None}
 
@@ -502,7 +580,7 @@ def _bucket(actions):
     return None
 
 
-def _summarise(rows, cross=True, orgs=None) -> dict:
+def _summarise(rows, cross=True, orgs=None, positions=None) -> dict:
     restaurants = {r["restaurant_id"] for r in rows}
     acts = {}
     for r in rows:
@@ -549,6 +627,18 @@ def _summarise(rows, cross=True, orgs=None) -> dict:
         out["measured_capped"], out["improved_capped"] = mc, ic
         out["success_rate_capped"] = round(ic / mc, 3) if mc else None
         out["max_restaurant_share"] = round(MAX_RESTAURANT_SHARE, 3)
+        # Acceptance, capped per organisation over the exposed episodes
+        # (PLATFORM-9 / -10): what a prior and the admin view may lean on.
+        per_acc = {}
+        for rec, b in buckets.items():
+            if b not in BUCKETS or not _exposed(rec, positions):
+                continue
+            o = _o(rec[0])
+            n, k = per_acc.get(o, (0, 0))
+            per_acc[o] = (n + 1, k + (1 if b == "taken" else 0))
+        an, ar, ars = _capped_acceptance(per_acc)
+        out["acceptance_n_capped"], out["acceptance_rate_capped"] = an, ar
+        out["acceptance_rate_capped_shrunk"] = ars
         # Below the floor the rates are still computed for the engine's own
         # weighting, but nothing here may be shown as a cohort fact — and
         # each figure has its own population.
@@ -587,7 +677,8 @@ def public(s) -> dict:
             out["success_rate_capped"] = None
     if not s.get("acceptance_available"):
         for k in ("answered", "accepted", "declined", "hidden", "ignored", "snoozed", "auto", "acceptance_rate",
-                  "acceptance_rate_shrunk"):
+                  "acceptance_rate_shrunk", "acceptance_n_capped", "acceptance_rate_capped",
+                  "acceptance_rate_capped_shrunk"):
             out[k] = None
     return out
 

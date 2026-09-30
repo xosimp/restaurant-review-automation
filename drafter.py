@@ -73,16 +73,31 @@ def _format_examples(rows) -> str:
 
 
 def _learns(restaurant_id) -> bool:
-    """models.learning_eligible for the drafter's learned inputs; fails closed."""
+    """models.learns_for_itself for the drafter's learned inputs (its OWN
+    learning: a test-named or internal account learns its own voice — memory
+    re-audit 9/29/26, INVENTORY-1); fails closed."""
     if not restaurant_id:
         return False
     try:
-        return bool(_models_mod.learning_eligible(restaurant_id))
+        return bool(_models_mod.learns_for_itself(restaurant_id))
     except Exception:
         return False
 
 
-def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
+def reply_note_arm(restaurant_id, review_id) -> str:
+    """The reply style note's holdout arm for one review's draft
+    (rec_learning.holdout_arm, memory re-audit 9/29/26 LOOPS-3): on the
+    "holdout" share the OWNER'S EDITS note is left out, so the owner's edit
+    rate with and without it can be compared (admin_ops.learning_holdouts).
+    Reproducible from the review id — nothing is stored."""
+    try:
+        import rec_learning
+        return rec_learning.holdout_arm(restaurant_id, review_id, "reply_note")
+    except Exception:
+        return "learned"
+
+
+def get_owner_edit_note(restaurant_id: int, rating: int = None, review_id: int = None) -> str:
     """reply_edits.style_note over this owner's recent approvals, or "".
 
     `rating` is the review being answered (memory audit 9/29/26,
@@ -95,13 +110,25 @@ def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
     try:
         import reply_edits
         from models import get_reply_edit_summaries, get_reply_rejection_signals, reply_band, band_label
+        from models import REPLY_NOTE_DAYS
         band = reply_band(rating)
+        # The owner's EDITED approvals over the last year, never the newest
+        # approvals of any kind (memory re-audit 9/29/26, LOOPS-4): the note
+        # stays while the drafter follows it, and only newer edits change it.
+        edits = dict(edited_only=True, days=REPLY_NOTE_DAYS, limit=reply_edits.NOTE_WINDOW)
+        held_out = review_id is not None and reply_note_arm(restaurant_id, review_id) == "holdout"
+        if held_out:
+            # The style note alone is held out; what the regenerated drafts
+            # had in common is another learner and stays.
+            seen = get_reply_rejection_signals(restaurant_id, rating=rating)
+            return reply_edits.rejection_note(seen["rejected"], seen["approved"],
+                                              scope=f"for {band_label(band)} reviews") if band else ""
         if band is None:
-            return reply_edits.style_note(get_reply_edit_summaries(restaurant_id))
-        note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, rating=rating),
+            return reply_edits.style_note(get_reply_edit_summaries(restaurant_id, **edits))
+        note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, rating=rating, **edits),
                                       scope=f"replies to {band_label(band)} reviews")
         if not note:
-            note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id),
+            note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, **edits),
                                           only=reply_edits.BAND_FREE_SIGNALS, with_length=False,
                                           scope="replies to reviews of any rating")
         # What the drafts this owner regenerated had in common, against the
@@ -166,8 +193,14 @@ def _memory_block(restaurant_id, categories=()) -> str:
         return ""
     if not text:
         return ""
-    return ("\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context for how to answer, never something to "
-            "state, quote or promise in the public reply:\n" + text + "\n")
+    from ai_guard import MEMORY_FENCE_NOTE
+    # The owner's rules are followed ("sign replies 'The Gia Mia family'");
+    # everyone else's words are context, never something to say in public
+    # (memory re-audit 9/29/26, PROMPTS-1). A rule never licenses a claim
+    # the FACTS line below forbids.
+    return ("\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — the owner's rules are how to answer; everything "
+            "else is context, never something to state, quote or promise in the public reply, and no rule "
+            "licenses a claim the FACTS line forbids. " + MEMORY_FENCE_NOTE + "\n" + text + "\n")
 
 
 RECURRING_WINDOW_DAYS = 90
@@ -646,7 +679,8 @@ def draft_response(review_id: int, rating: int, text: str,
     # original_draft against the approved reply (reply_edits; audit #40):
     # a short, deterministic note, or "" until they have edited enough —
     # measured on replies to reviews of this one's star band.
-    edit_note = get_owner_edit_note(restaurant_id, rating=rating) if (restaurant_id and learns) else ""
+    edit_note = get_owner_edit_note(restaurant_id, rating=rating, review_id=review_id) \
+        if (restaurant_id and learns) else ""
     memory_note = _memory_block(restaurant_id, categories) if restaurant_id else ""
 
     # The owner's confirmed changes on this review's complaint categories

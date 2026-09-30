@@ -754,12 +754,12 @@ def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:
     "What worked" is measured on sales, not only likes (memory audit
     9/29/26, mkt_results): the attribution verdicts by post kind, occasion
     and dish (measured_lines) lead, for a restaurant that may teach a
-    learner (models.learning_eligible); the most-engaged posts follow.
+    learner of its own (models.learns_for_itself); the most-engaged posts follow.
     """
     parts = []
     try:
         import models as _models_ms
-        eligible = _models_ms.learning_eligible(restaurant_id)
+        eligible = _models_ms.learns_for_itself(restaurant_id)
     except Exception:
         eligible = False
     measured = measured_lines(restaurant_id, db_path=db_path) if eligible else []

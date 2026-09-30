@@ -96,6 +96,10 @@ def _seed(monkeypatch):
                                        module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1))
     # constraints: the owner's standing note, about the whole business.
     owner_memory.remember(rid, "The patio stays closed on weekdays", kind="constraint", user=OWNER)
+    # The owner's constraint is an owner rule (memory re-audit 9/29/26,
+    # PROMPTS-1: section "owner_rules"); the team's note is the
+    # "constraints" section's.
+    owner_memory.remember(rid, "The walk-in door sticks on humid days", kind="context", user=MANAGER)
     # goals: the owner's labor goal.
     goals.set_goal(rid, "labor_pct", 27, user_id=11, authority="principal")
     goals.set_goal(rid, "food_cost_pct", 29, user_id=11, authority="principal")
@@ -126,7 +130,17 @@ def _seed(monkeypatch):
          "modules": ["reviews", "food_cost"], "headline": "Friday carries the service complaints and 40% of waste",
          "category": "service", "mentions": 6},
         {"kind": "marketing_x_reviews", "subject": "reviews_up", "modules": ["marketing", "reviews"],
-         "headline": "6 posts went out and reviews rose 40%"}])
+         "headline": "6 posts went out and reviews rose 40%"},
+        # The review diagnosis reads its staffing links, and the schedule what
+        # an ended fill campaign's night measured (re-audit 9/29/26,
+        # CROSSMODULE-9 / -12).
+        {"kind": "dsr_x_reviews", "day": "Friday", "subject": bi._link_subject("service", "Friday"),
+         "modules": ["reviews", "dsr"], "headline": "6 service complaints on Friday, no-shows on 3 of 6 Fridays"},
+        {"kind": "marketing_x_labor", "day": "Tuesday", "subject": bi._link_subject("fill", "Tuesday"),
+         "modules": ["marketing", "labor"], "headline": "A text to fill Tuesday went out"}])
+    link_memory.end(rid, bi.link_key({"kind": "marketing_x_labor", "subject": bi._link_subject("fill", "Tuesday")}),
+                    "measured", headline="The Tuesday campaign night measured +4% sales against a typical Tuesday",
+                    detail={"outcome": "The Tuesday campaign night measured +4% sales against a typical Tuesday"})
     # events: a recurring measured effect, and one on a date in every window.
     for k, lift in enumerate((22.0, 20.0, 25.0)):
         d = TODAY - timedelta(weeks=k + 2)
@@ -135,6 +149,13 @@ def _seed(monkeypatch):
     event_memory.refresh_effects(rid, {"cubs"})
     _x("INSERT INTO demand_signals (restaurant_id, date, kind, label, source) VALUES (?,?,?,?,?)",
        (rid, TODAY.isoformat(), "event", "Cubs home game", "owner"))
+    # market (re-audit fix round R7, INVENTORY-6): a competitor that opened
+    # nearby this month, and the restaurant's own rating over two weeks.
+    _x("INSERT INTO market_events (restaurant_id, place_id, name, kind, to_rating, review_count, observed_on) "
+       "VALUES (?,?,?,?,?,?,?)", (rid, "p-new", "Bella's", "arrived", 4.6, 12,
+                                  (date.today() - timedelta(days=10)).isoformat()))
+    event_memory.record_own_rating(rid, 4.5, 200, at=date.today() - timedelta(days=30))
+    event_memory.record_own_rating(rid, 4.3, 220, at=date.today())
     # people: a server trained on bar, with shifts on file.
     rows = [{"date": (TODAY - timedelta(days=d)).isoformat(), "day": "x", "employee": n, "role": role,
              "shift_start": "16:00", "shift_end": "22:00", "scheduled_hours": "6", "actual_hours": "6",
@@ -164,12 +185,10 @@ SUBJECTS = {"schedule": ["labor", "schedule", "labor:day:friday"],
             "ask_conversation": ["conversation:0"]}
 
 # A section a surface lists whose provider says nothing there, on purpose.
-SILENT = {
-    # The nightly report's own last actions and how they held are its
-    # YESTERDAY'S PRIORITIES block (dsr.narrative.own_record); other
-    # surfaces' claims reach it only by subject, and it asks by date.
-    ("dsr_narrative", "last_claim"),
-}
+# ("dsr_narrative", "last_claim") was here: the report asked by date and no
+# claim is filed by date, so the section could never fill. It now reads the
+# latest claims of every other surface (memory re-audit 9/29/26, QUALITY-13).
+SILENT = set()
 
 
 def _sections(rid, viewer):
@@ -209,7 +228,10 @@ def test_the_silent_pairs_are_silent_by_the_providers_own_rule(monkeypatch):
         assert "marketing" not in memory_context.SURFACE_SECTIONS[surface]
         assert marketing.memory_lines(memory_context.MemoryRequest(rid, surface)) == []
     assert marketing.memory_lines(memory_context.MemoryRequest(rid, "ask")), "Ask still hears marketing"
-    assert "surface != 'dsr_narrative'" in inspect.getsource(ai_reads.claim_lines)
+    # The report never reads its own claims back (its YESTERDAY'S PRIORITIES
+    # block does); it reads every other surface's (QUALITY-13).
+    assert "dsr_narrative" in ai_reads.CLAIM_CROSS_READERS
+    assert "surface != ?" in inspect.getsource(ai_reads.claim_lines)
 
 
 def test_a_manager_is_not_left_without_claims_by_the_owners_newest():

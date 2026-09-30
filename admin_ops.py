@@ -43,7 +43,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
 from models import get_restaurant
@@ -839,6 +839,24 @@ def _load_with(conn):
                                  AND COALESCE(l.device_type,'') NOT IN ('staff_pin','admin-view-as')
                                  AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
                                GROUP BY l.restaurant_id""", label="login_history")
+    # Before login_history's 90 days (memory re-audit 9/29/26, INVENTORY-12):
+    # engagement_monthly (history_rollups.roll_engagement) keeps each login's
+    # sign-ins per month, so an owner who has not signed in for three months
+    # still shows the month of their last console sign-in — the last day of
+    # it, flagged `from_month` — instead of none. Raw rows win when present.
+    for r in _rows_dict(conn, f"""SELECT e.restaurant_id AS restaurant_id, MAX(e.month) AS month
+                                  FROM engagement_monthly e JOIN users u ON u.id = e.user_id
+                                  WHERE COALESCE(e.logins, 0) > 0 AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
+                                  GROUP BY e.restaurant_id""", label="engagement_monthly", optional=True):
+        if r["restaurant_id"] in owner_logins or not r.get("month"):
+            continue
+        try:
+            y, m = int(r["month"][:4]), int(r["month"][5:7])
+            last_day = (date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)).isoformat()
+        except (TypeError, ValueError):
+            continue
+        owner_logins[r["restaurant_id"]] = {"restaurant_id": r["restaurant_id"], "last_at": f"{last_day} 23:59:59",
+                                            "n": None, "from_month": r["month"]}
     team_seen = per_rid("SELECT restaurant_id, datetime(MAX(julianday(created_at))) AS last_at FROM login_history "
                         "WHERE event='staff_login' GROUP BY restaurant_id", label="login_history")
     s_cols = _columns(conn, "sessions")
@@ -958,7 +976,9 @@ def _load_with(conn):
     # The learning scorecard's latest month (learning_scorecard, memory audit
     # 9/29/26): a curve worsening or flat, and fatigue — admin rows that are
     # now issues on the client, never only numbers on a page.
-    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, s.fatigued, s.computed_at "
+    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, "
+                       # the throttle's own reading (learning_scorecard.rolling_fatigue)
+                       "COALESCE(s.fatigue_now, s.fatigued) AS fatigued, s.computed_at "
                        "FROM learning_scorecards s WHERE s.month = (SELECT MAX(s2.month) FROM learning_scorecards s2 "
                        "WHERE s2.restaurant_id = s.restaurant_id)", label="learning_scorecards", optional=True)
 
@@ -1847,6 +1867,9 @@ def _storm_cap_view(row):
 
 
 DELETION_DUE_DAYS = 30
+# A cancelled account's operational data is deleted within this many days of
+# the cancellation (public/privacy.html section 07; FORGET-9).
+CANCELLED_DATA_DAYS = 30
 
 
 def _deletion_for(r):
@@ -2060,6 +2083,27 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         at = _newest(ev.get("customer.subscription.deleted"), hist.get("churned"), hist.get("canceled"))
         add("canceled", "Subscription canceled", "warning", at, "Open billing", None, zone="UTC",
             action_kind="link", action_href=billing_tab)
+        # The privacy policy (section 07) promises a cancelled account's
+        # operational data is deleted within 30 days (memory re-audit 9/29/26,
+        # FORGET-9): only an admin's delete ever ran, and a cancellation in
+        # Stripe set no deletion request, so an account cancelled for
+        # non-payment kept its whole history. Raised here, never auto-deleted:
+        # the admin works the offboarding checklist, or resolves the issue
+        # with why the data is kept (the owner is returning, a legal hold).
+        # An open deletion request is its own issue above.
+        ended = _parse_utc(at, "UTC") if at else None
+        if ended and not deletion and not r.get("is_demo"):
+            due = ended + timedelta(days=CANCELLED_DATA_DAYS)
+            left = (due - _utcnow()).days
+            due_label = _mdy(due.strftime(_ZFMT), "UTC")
+            add("cancelled_data",
+                (f"Cancelled account's data overdue for deletion by {-left} days (due {due_label})" if left < 0
+                 else f"Cancelled account's data due for deletion by {due_label}"),
+                "critical" if left < 0 else "warning", at, "Open offboarding", None,
+                f"Cancelled {_mdy(ended.strftime(_ZFMT), 'UTC')}. The privacy policy promises operational data is "
+                f"deleted within {CANCELLED_DATA_DAYS} days of cancellation: finish the offboarding and delete the "
+                "account, or resolve this with why the data is kept.",
+                zone="UTC", action_kind="link", action_href=f"{client}?tab=offboarding")
     # A hold only an admin lifts (H, #114): a chargeback, a full refund, or
     # an admin's own. The action is H's lift-hold (a note is required).
     hold = billing.get("pause_reason") if billing.get("pause_reason") in ("dispute", "refund") else None
@@ -2349,9 +2393,27 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         if lrow.get("fatigued"):
             add("learning:fatigue", "Owner fatigue: most recommendations dismissed or ignored", "warning",
                 lrow.get("computed_at"), "Open AI quality", None,
-                "Three quarters or more of what this owner settled in the month went dismissed or ignored; "
+                "Three quarters or more of what this owner settled in the last 30 days went dismissed or "
+                "ignored; "
                 "Home, the nightly report and the feed now show fewer until it recovers.", zone="UTC",
                 action_kind="link", action_href=f"{client}?tab=ai")
+    # A paying account whose NAME the automatic rule reads as a test
+    # ("Nashville Test Kitchen", "The Sample Room") is kept out of pooled
+    # learning only — it still learns for itself (models.learns_for_itself)
+    # — and the admin is asked to confirm, never left to find a console
+    # label weeks later (memory re-audit 9/29/26, INVENTORY-1 / PLATFORM-8).
+    try:
+        import models as _m_tn
+        if (bs in ("active", "past_due") and not r.get("is_demo") and not r.get("exclude_from_learning")
+                and not str(r.get("learning_override") or "").strip()
+                and _m_tn.learning_test_name(r.get("name"))):
+            add("learning:test_name", "Named like a test account — left out of platform learning", "warning",
+                None, "Open settings", None,
+                "A paying account whose name reads as a test (the automatic rule). It still learns for "
+                "itself; include it (Branding & peer profile → Learning) if it is a real restaurant, or mark "
+                "it a test account.", zone="UTC", action_kind="link", action_href=client)
+    except Exception as e:
+        log.warning("learning name check failed for %s: %s", rid, e)
     return out
 
 
@@ -3442,6 +3504,15 @@ def ai_ops(days=30):
         health = _ai.ai_health()
     except Exception:
         health = {}
+    # Memory in prompts (memory re-audit 9/29/26, PROMPTS-2/-10/-16): how big
+    # each surface's memory sections run, what the budget or the viewer cut,
+    # how many calls had to cut a section, and provider errors — persisted by
+    # memory_context across processes (ai_memory_sizes). No memory text.
+    try:
+        import memory_context as _mc
+        memory = _mc.persisted_sizes(days=days)
+    except Exception:
+        memory = []
     # Every UTC day of the window, zero where nothing ran — a gap was a
     # missing bar the chart joined across (UI-2 request 5).
     by_day = {r["day"]: r for r in daily}
@@ -3455,7 +3526,7 @@ def ai_ops(days=30):
             "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
             "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
             "failures": failures, "recent": recent, "anomalies": anomalies,
-            "budget": budget, "budget_watch": watch, "health": health, "quality": quality,
+            "budget": budget, "budget_watch": watch, "health": health, "quality": quality, "memory": memory,
             "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0},
             "recent_failed": recent_failed}
 
@@ -4738,6 +4809,15 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # denominator (memory audit 9/29/26, "reasons").
         if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") == "bad_timing":
             continue
+        # The same states rec_learning keeps out of every rate (memory
+        # re-audit 9/29/26): "don't trust the data" (LOOPS-11), a decline
+        # the owner took back (QUALITY-1) and — below, once `answered` is
+        # known — an episode only an unopened email carried (LOOPS-10).
+        if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") in ("distrust", "verified"):
+            continue
+        import rec_learning as _rl_states
+        if i["status"] == "dismissed" and _rl_states.reopened_after(es):
+            continue
         # "Already doing it" is taken: the owner's answer closed it completed.
         if i["status"] == "completed" and "completed" not in names and "dismissed" in names:
             names = (names - {"dismissed"}) | {"completed"}
@@ -4747,6 +4827,8 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # owner disowned or that reversed at its re-check counted as a win.
         verdict = learned_episode_verdict(es, trackers.get(i.get("tracker_id")))
         answered = names & {"accepted", "completed", "dismissed", "implemented"}
+        if not answered and not rec_ledger.episode_seen(es):
+            continue
         first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed",
                                                                  "implemented")), None)
         hours = None
@@ -5019,8 +5101,23 @@ def rank_learning(days=90, restaurant_id=None, include_internal=False):
         finally:
             conn.close()
     groups = {}
+    arms = {}
     for e in eps:
         rk = ranks.get(e["rec_id"]) or {}
+        # The holdout arms (rec_learning.apply_holdout, memory re-audit
+        # 9/29/26 LOOPS-3): the one comparison here that is not confounded by
+        # construction — the same restaurants, days assigned by a hash.
+        if rk.get("arm") in ("learned", "holdout"):
+            a = arms.setdefault(rk["arm"], {"shown": 0, "taken": 0, "settled": 0, "measured": 0, "improved": 0})
+            a["shown"] += 1
+            took_a = e["accepted"] or e["completed"] or e.get("implemented")
+            if took_a or e["dismissed"] or e["ignored"]:
+                a["settled"] += 1
+            if took_a:
+                a["taken"] += 1
+                if e.get("measured"):
+                    a["measured"] += 1
+                    a["improved"] += 1 if e.get("improved") else 0
         g = groups.setdefault((rk.get("version"), _weight_bucket(rk.get("weight")) if rk else "no weight logged"),
                               {"shown": 0, "taken": 0, "settled": 0, "measured": 0, "improved": 0})
         g["shown"] += 1
@@ -5048,9 +5145,95 @@ def rank_learning(days=90, restaurant_id=None, include_internal=False):
         u = unshown.setdefault(b["surface"], {"builds": 0, "unshown": 0})
         u["builds"] += 1
         u["unshown"] += n
+    arm_rows = [{"arm": arm, **g,
+                 "accept_rate": round(g["taken"] / g["settled"], 3) if g["settled"] else None,
+                 "accept_ci90": _wilson(g["taken"], g["settled"]) if g["settled"] else None,
+                 "outcome_rate": round(g["improved"] / g["measured"], 3) if g["measured"] else None,
+                 "enough": g["settled"] >= RAS_MIN_N} for arm, g in sorted(arms.items())]
     return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": RAS_MIN_N, "groups": rows,
-            "unshown_by_surface": unshown,
-            "note": "Before and after, not proof: a bucket's rates compare what the model lifted with what it sank."}
+            "unshown_by_surface": unshown, "arms": arm_rows,
+            "holdouts": learning_holdouts(days=days, restaurant_id=restaurant_id),
+            "note": "Before and after, not proof: a bucket's rates compare what the model lifted with what it sank. "
+                    "The arms compare learned ranking with the neutral one on hashed days — the causal read."}
+
+
+def learning_holdouts(days=90, restaurant_id=None) -> dict:
+    """The holdout readouts beyond ranking (memory re-audit 9/29/26, LOOPS-3,
+    LOOPS-15). Internal only — no owner ever sees an arm. Each rate carries
+    its n; below RAS_MIN_N it is None ("—").
+
+      reply_note   replies a person approved since rec_learning.HOLDOUT_SINCE,
+                   by the draft's arm (drafter.reply_note_arm — the style note
+                   left out on the holdout share): the share the owner edited.
+      orders       lines of drafts the owner sent that a correction touched:
+                   applied (owner_adjusted) or held out (correction_held_out);
+                   the mean distance between what was sent and what was drafted.
+      reply_outcomes  replied reviews whose guest changed the rating after the
+                   reply was posted, by whether the owner edited the reply:
+                   raised and lowered counts. Before and after, not proof."""
+    import drafter
+    import models
+    import rec_learning
+    since = max(rec_learning.HOLDOUT_SINCE, (datetime.utcnow() - timedelta(days=max(1, int(days or 90))))
+                .strftime("%Y-%m-%d"))
+    rid_sql, rid_args = ("AND restaurant_id=? ", (int(restaurant_id),)) if restaurant_id else ("", ())
+    out = {"since": since, "min_n": RAS_MIN_N}
+    conn = models.get_conn()
+    try:
+        reviews = _rows_dict(conn, "SELECT id, restaurant_id, edit_category FROM reviews WHERE edit_category IS NOT NULL "
+                                   "AND response_status IN ('approved','posted') AND COALESCE(response_action, '') NOT IN "
+                                   "('auto_approved','bulk_approved','support_approved') AND approved_at >= ? "
+                                   + rid_sql, (since, *rid_args), optional=True) or []
+        orders = _rows_dict(conn, "SELECT items_json, draft_items_json FROM purchase_orders WHERE draft_items_json IS NOT "
+                                  "NULL AND COALESCE(source, 'owner')='owner' AND COALESCE(authority, '') != 'admin' "
+                                  "AND sent_at >= ? " + rid_sql, (since, *rid_args), optional=True) or []
+        replied = _rows_dict(conn, "SELECT rating, original_rating, edit_category FROM reviews WHERE posted_at IS NOT NULL "
+                                   "AND edited_at IS NOT NULL AND edited_at > posted_at AND original_rating IS NOT NULL "
+                                   "AND rating != original_rating AND edit_category IS NOT NULL AND deleted_at IS NULL "
+                                   + rid_sql, rid_args, optional=True) or []
+    finally:
+        conn.close()
+    note = {}
+    for r in reviews:
+        arm = drafter.reply_note_arm(r["restaurant_id"], r["id"])
+        g = note.setdefault(arm, {"approved": 0, "edited": 0})
+        g["approved"] += 1
+        g["edited"] += 1 if r["edit_category"] in models.EDITED_CATEGORIES else 0
+    out["reply_note"] = [{"arm": a, **g, "edit_rate": (round(g["edited"] / g["approved"], 3)
+                                                       if g["approved"] >= RAS_MIN_N else None)}
+                         for a, g in sorted(note.items())]
+    dist = {"applied": [], "held_out": []}
+    for o in orders:
+        try:
+            drafted = [i for i in (json.loads(o["draft_items_json"] or "[]") or []) if isinstance(i, dict)]
+            sent = {i.get("ingredient_id"): i for i in (json.loads(o["items_json"] or "[]") or [])
+                    if isinstance(i, dict) and i.get("ingredient_id")}
+        except (TypeError, ValueError):
+            continue
+        for d in drafted:
+            which = "applied" if d.get("owner_adjusted") else "held_out" if d.get("correction_held_out") else None
+            try:
+                q = float(d.get("qty") or 0)
+            except (TypeError, ValueError):
+                q = 0.0
+            if not which or q <= 0:
+                continue
+            s = sent.get(d.get("ingredient_id"))
+            try:
+                got = float((s or {}).get("qty") or 0)
+            except (TypeError, ValueError):
+                got = 0.0
+            dist[which].append(abs(got / q - 1.0))
+    out["orders"] = [{"arm": k, "lines": len(v),
+                      "mean_move": round(sum(v) / len(v), 3) if len(v) >= RAS_MIN_N else None}
+                     for k, v in dist.items()]
+    ro = {}
+    for r in replied:
+        k = "edited reply" if r["edit_category"] in models.EDITED_CATEGORIES else "reply as drafted"
+        g = ro.setdefault(k, {"guest_raised": 0, "guest_lowered": 0})
+        g["guest_raised" if int(r["rating"] or 0) > int(r["original_rating"] or 0) else "guest_lowered"] += 1
+    out["reply_outcomes"] = [{"reply": k, **g} for k, g in sorted(ro.items())]
+    return out
 
 
 # ── schedule generation experiments (internal only) ─────────────────────────

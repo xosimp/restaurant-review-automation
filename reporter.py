@@ -940,7 +940,11 @@ Every module NOT in that list is either switched off for this client or reported
         _mem_dig = ""
         try:
             import memory_context as _mc_dig
-            _mem_block = _mc_dig.memory_context(_rid_dg, "digest")
+            # Assembled as the account holders' view (PRINCIPALS): the digest
+            # is emailed to every owner login, so no one login's own
+            # ("author") note or preference steers it as the owner's (memory
+            # re-audit PEOPLE-8 / QUALITY-9).
+            _mem_block = _mc_dig.memory_context(_rid_dg, "digest", viewer=_mc_dig.PRINCIPALS)
             _mem_dig = _mem_block.text or ""
             for _sec in (_mem_block.sections or {}).values():
                 for _ln in _sec:
@@ -949,9 +953,11 @@ Every module NOT in that list is either switched off for this client or reported
         except Exception as _me:
             print(f"[digest] memory unavailable for {_rid_dg}: {_me}")
             _mem_dig = ""
-        _mem_section = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (the owner's own constraints and goals, "
-                        "their decisions and what has worked here — context for the ACTION line; never propose what "
-                        "the owner declined, and state no figure from it):\n" + _mem_dig) if _mem_dig else ""
+        from ai_guard import MEMORY_FENCE_NOTE as _MFN_DG
+        _mem_section = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (the owner's rules and goals, the team's "
+                        "notes, their decisions and what has worked here — context for the ACTION line; never "
+                        "propose what the owner declined, and state no figure from people's words. " + _MFN_DG
+                        + "):\n" + _mem_dig) if _mem_dig else ""
 
         from ai_guard import UNTRUSTED_NOTE as _UN_RPT
         # A missing measurement is said as missing, never "0.0/5" (NS4 C2).

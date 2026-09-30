@@ -166,8 +166,23 @@ REASON_STEP, REASON_CAP = 0.05, 0.15
 REASON_HALF_LIFE_DAYS = 90
 # The states an episode can be in that count in no rate: replaced, still
 # live, snoozed, put off for timing ("bad timing"), or answered only by a
-# delegate the owner has not answered (from the owner's side).
-UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated")
+# delegate the owner has not answered (from the owner's side). And (memory
+# re-audit 9/29/26):
+#   distrusted  "don't trust the data" (silence_rule distrust / verified) —
+#               a question about the feed, not a "no" to the advice; every
+#               other reader (insight_store, decisions.declined_subjects)
+#               already treated it so, while the ranker and the fatigue
+#               throttle counted it a rejection (LOOPS-11).
+#   reopened    a decline the owner took back ("Use again", restoring a
+#               quiet kind — rec_ledger.unsilence's `reopened` event): the
+#               owner asked for the advice back, so the decline no longer
+#               teaches (QUALITY-1).
+#   unseen      went unanswered, but only ever DELIVERED where nobody may
+#               have looked — an email that was never opened
+#               (rec_ledger.DELIVERY_ONLY_SURFACES) — never on a screen, a
+#               push, a text or a click: not "ignored", in no denominator
+#               (LOOPS-10).
+UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated", "distrusted", "reopened", "unseen")
 
 
 def _stamp(d):
@@ -324,7 +339,7 @@ def viewer_sees(viewer, row) -> bool:
 
 # rec_events columns the readers fold in; `authority` (memory audit
 # 9/29/26) says whose answer each is.
-_EVENT_COLS = "rec_id, event, surface, meta, at, authority"
+_EVENT_COLS = "rec_id, event, surface, meta, at, authority, user_id"
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
 # outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
@@ -360,7 +375,7 @@ def _tracker_rows(conn, rid, tids):
 
 
 def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False,
-          perspective="principal"):
+          perspective="principal", viewer_id=None):
     """Episodes of this restaurant (bookkeeping keys excluded) with their
     events folded in. `before` is a (created_at, rec_id) cursor.
 
@@ -371,7 +386,10 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
 
     `perspective` is whose answers decide each episode's state (_state):
     "principal" (the owner's view — the default) or "delegate" (a manager's
-    own view). An admin's view-as answer decides nothing either way."""
+    own view). An admin's view-as answer decides nothing either way.
+    `viewer_id` names the delegate whose view it is: their own declines
+    only, never another manager's (memory re-audit 9/29/26, LOOPS-14 /
+    PEOPLE-16); None reads every delegate's (the owner's "delegated")."""
     where, args = ["restaurant_id=?"], [rid]
     if since:
         where.append("created_at >= ?")
@@ -394,7 +412,9 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         return []
     evs = {}
     shown = set()
+    seen_shown = set()
     ids = [r["rec_id"] for r in rows]
+    only = ",".join(f"'{x}'" for x in rec_ledger.DELIVERY_ONLY_SURFACES)
     for i in range(0, len(ids), 400):
         chunk = ids[i:i + 400]
         marks = ",".join("?" for _ in chunk)
@@ -402,9 +422,12 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
-            for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
-                                  f"AND event = 'shown'", chunk).fetchall():
+            for e in conn.execute(f"SELECT rec_id, MAX(CASE WHEN COALESCE(surface, '') NOT IN ({only}) "
+                                  f"THEN 1 ELSE 0 END) AS on_screen FROM rec_events WHERE rec_id IN ({marks}) "
+                                  f"AND event = 'shown' GROUP BY rec_id", chunk).fetchall():
                 shown.add(e["rec_id"])
+                if e["on_screen"]:
+                    seen_shown.add(e["rec_id"])
         else:
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN "
                                   f"({marks}) ORDER BY at, id", chunk).fetchall():
@@ -421,9 +444,16 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         es = evs.get(r["rec_id"], [])
         r["events"] = es
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
+        # Whether anyone could have seen it (LOOPS-10): an episode only an
+        # unopened email carried is `unseen`, not ignored (_state).
+        if lean:
+            emailed_only = r["rec_id"] in shown and r["rec_id"] not in seen_shown
+            r["seen"] = not emailed_only or any(e["event"] in rec_ledger.SEEN_EVENTS for e in es)
+        else:
+            r["seen"] = rec_ledger.episode_seen(es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
-        r["state"] = _state(r, now, perspective)
+        r["state"] = _state(r, now, perspective, viewer_id=viewer_id)
         r["verdict"], r["verdict_at"] = _verdict(r, es, trackers.get(r.get("tracker_id")))
         r["tracker"] = trackers.get(r.get("tracker_id"))
     return rows
@@ -444,11 +474,46 @@ def _authority(e) -> str:
     return a if a in ("delegate", "admin") else "principal"
 
 
-def _delegate_declined(r) -> bool:
-    return any(e["event"] in ("dismissed", "snoozed") and _authority(e) == "delegate" for e in r.get("events") or ())
+def reopened_after(events, perspective="principal", viewer_id=None) -> bool:
+    """Whether the latest decline in `events` (an episode's, oldest first)
+    was taken back afterwards (rec_ledger.unsilence's `reopened`) by the
+    same side — the owner's reversal for the owner's decline, a delegate's
+    for their own (with `viewer_id`, that login's own only). An admin's
+    view-as reversal takes nothing back."""
+    last_decline = last_reopen = None
+    for i, e in enumerate(events or ()):
+        if perspective == "delegate":
+            if not _own_delegate_event(e, viewer_id):
+                continue
+        elif _authority(e) != "principal":
+            continue
+        if e["event"] == "dismissed":
+            last_decline = (str(e.get("at") or ""), i)
+        elif e["event"] == "reopened":
+            last_reopen = (str(e.get("at") or ""), i)
+    return bool(last_decline and last_reopen and last_reopen > last_decline)
 
 
-def _state(r, now, perspective="principal"):
+def _own_delegate_event(e, viewer_id=None) -> bool:
+    """A delegate's event that belongs to this view: any delegate's when no
+    viewer is named (the owner's side), else only that login's own — one
+    manager's "no" never reshapes another's advice (LOOPS-14 / PEOPLE-16)."""
+    if _authority(e) != "delegate":
+        return False
+    if viewer_id is None:
+        return True
+    try:
+        return e.get("user_id") is not None and int(e["user_id"]) == int(viewer_id)
+    except (TypeError, ValueError):
+        return False
+
+
+def _delegate_declined(r, viewer_id=None) -> bool:
+    return any(e["event"] in ("dismissed", "snoozed") and _own_delegate_event(e, viewer_id)
+               for e in r.get("events") or ())
+
+
+def _state(r, now, perspective="principal", viewer_id=None):
     """accepted | completed | implemented | dismissed | ignored | superseded |
     snoozed | deferred | delegated | open — what the episode amounts to now.
     A taken episode whose change was actually made reads implemented
@@ -467,6 +532,12 @@ def _state(r, now, perspective="principal"):
         return "implemented"
     if st == "dismissed" and str(r.get("silence_rule") or "") == "bad_timing":
         return "deferred"
+    if st == "dismissed" and str(r.get("silence_rule") or "") in ("distrust", "verified"):
+        return "distrusted"
+    # The closing decline is the owner's, so the owner's reversal decides —
+    # whichever side is reading.
+    if st == "dismissed" and reopened_after(r.get("events") or ()):
+        return "reopened"
     if st in ("accepted", "completed", "implemented", "dismissed", "superseded"):
         return st
     if st == "expired":
@@ -477,10 +548,17 @@ def _state(r, now, perspective="principal"):
         base = "ignored"
     else:
         base = "open"
-    if base in ("ignored", "open") and _delegate_declined(r):
+    if base in ("ignored", "open"):
         if perspective == "delegate":
-            return "dismissed"
-        return "delegated" if base == "ignored" else base
+            # The delegate's own view: their own decline, never a
+            # teammate's — and their own taking it back (QUALITY-1).
+            if _delegate_declined(r, viewer_id):
+                return ("reopened" if reopened_after(r.get("events") or (), "delegate", viewer_id)
+                        else "dismissed")
+        elif _delegate_declined(r):
+            return "delegated" if base == "ignored" else base
+    if base == "ignored" and r.get("seen") is False:
+        return "unseen"
     return base
 
 
@@ -842,6 +920,76 @@ def timeline(restaurant_id, limit=30, before=None, viewer=None, db_path=DB_PATH)
 
 # ── the effectiveness model the rankers read ────────────────────────────────
 
+# ── the holdout (memory re-audit 9/29/26, LOOPS-3) ──────────────────────────
+#
+# Nothing measured whether learning helps: rank_learning compared weight
+# buckets, and a kind accepted before is accepted again whatever its rank,
+# so "raised beat lowered" held for a ranker with no effect at all. A small
+# deterministic holdout is the counterfactual: on HOLDOUT_PCT of
+# (restaurant, day) builds of a surface, Home and the one thing rank on the
+# neutral model (every weight 1.0 — what the owner is ASKED, a kind held
+# back, and every figure are unchanged); on the same share of reply drafts
+# (by review) the style note is left out; on the same share of order days
+# the owner's order corrections are not applied. Each arm is logged (the
+# shown rank meta, rec_rank_builds.arm) or reproducible from its unit, and
+# the admin readouts compare arms (admin_ops.rank_learning,
+# learning_holdouts) — never an owner-facing figure. LEARNING_HOLDOUT_PCT
+# overrides the share (0 turns it off; the test suite runs with 0).
+HOLDOUT_DEFAULT_PCT = 10
+HOLDOUT_MAX_PCT = 50
+# The day arms began: a readout counts only units from here on.
+HOLDOUT_SINCE = "2026-09-30"
+ARMS = ("learned", "holdout")
+
+
+def holdout_pct() -> int:
+    """The holdout share in percent (LEARNING_HOLDOUT_PCT, else
+    HOLDOUT_DEFAULT_PCT), bounded to 0–HOLDOUT_MAX_PCT."""
+    import os
+    try:
+        pct = int(os.getenv("LEARNING_HOLDOUT_PCT", str(HOLDOUT_DEFAULT_PCT)))
+    except (TypeError, ValueError):
+        pct = HOLDOUT_DEFAULT_PCT
+    return max(0, min(HOLDOUT_MAX_PCT, pct))
+
+
+def holdout_arm(restaurant_id, unit, surface) -> str:
+    """"holdout" or "learned" for one unit of a surface — a (restaurant,
+    day) build, a review's draft, an order day — by a stable hash, so the
+    same unit is always in the same arm and a readout can recompute it."""
+    pct = holdout_pct()
+    if pct <= 0 or not restaurant_id or unit in (None, ""):
+        return "learned"
+    import hashlib
+    h = int(hashlib.sha256(f"{int(restaurant_id)}:{surface}:{unit}".encode()).hexdigest()[:8], 16) % 100
+    return "holdout" if h < pct else "learned"
+
+
+def apply_holdout(learned, restaurant_id, surface, day=None):
+    """Put a ranking model in its arm for today's (or `day`'s) build of
+    `surface`: in the holdout arm its weights read neutral (Effectiveness.
+    weight / explain) and say so in the rank meta. Returns `learned`."""
+    if learned is None:
+        return None
+    if not day:
+        # The restaurant's own day — the same one its rank build is logged
+        # under (rec_ledger.log_rank_build).
+        try:
+            conn = get_conn(getattr(learned, "db_path", None) or DB_PATH)
+            try:
+                day = rec_ledger.local_day(conn, restaurant_id)
+            finally:
+                conn.close()
+        except Exception:
+            day = datetime.utcnow().date().isoformat()
+    day = str(day)[:10]
+    try:
+        learned.arm = holdout_arm(restaurant_id, day, surface)
+    except Exception as e:
+        print(f"[rec_learning] holdout arm unavailable for {restaurant_id}: {e}")
+    return learned
+
+
 class Effectiveness:
     """This restaurant's learned weight for a recommendation — see the
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
@@ -861,17 +1009,20 @@ class Effectiveness:
     never the owner's rejection — or "delegate", a manager's view where the
     principal's answer still outranks theirs. The owner's reasons move it
     too: "too costly" and "doesn't fit us" are bounded, decaying penalties
-    (reason_penalties)."""
+    (reason_penalties). `viewer_id` names whose delegate view it is: that
+    manager's own reasons only (LOOPS-14 / PEOPLE-16)."""
 
     def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None,
-                 profile=None, perspective="principal"):
+                 profile=None, perspective="principal", viewer_id=None):
         self.rid = restaurant_id
         self.cohort = cohort
         self.profile = profile
         self.db_path = db_path
         self.now = now or datetime.utcnow()
         self.perspective = perspective
+        self.viewer_id = viewer_id
         self.version = EFFECTIVENESS_VERSION
+        self.arm = "learned"           # apply_holdout: "holdout" ranks on neutral weights
         self._priors = {}
         self._cold = {}
         self._rungs = {}
@@ -883,11 +1034,15 @@ class Effectiveness:
         # The owner's reasons (REASON_*): ages of "too costly" answers by
         # kind, of "doesn't fit us" answers by topic / focus tag.
         self.costly_kinds, self.unfit_tags = {}, {}
-        sides = ("principal", "delegate") if perspective == "delegate" else ("principal",)
         clear_eps = {}
         for e in episodes:
             for ev in e.get("events") or ():
-                if ev["event"] != "dismissed" or _authority(ev) not in sides:
+                if ev["event"] != "dismissed":
+                    continue
+                # The principal's reasons always; a delegate's only in that
+                # delegate's own view (never another manager's).
+                if _authority(ev) != "principal" and not (
+                        perspective == "delegate" and _own_delegate_event(ev, viewer_id)):
                     continue
                 code = _meta(ev).get("reason_code")
                 age = self._age_days(ev.get("at"))
@@ -1026,7 +1181,12 @@ class Effectiveness:
                 print(f"[rec_learning] {rung} prior unavailable for {kind}: {e}")
                 continue
             if used["acceptance"] is None and s.get("answered") and s.get("acceptance_available"):
-                a = s.get("acceptance_rate_decayed_shrunk")
+                # Capped per organisation over the episodes shown near the top
+                # (memory re-audit 9/29/26, PLATFORM-9 / -10); the raw decayed
+                # figure only when the capped one cannot be formed.
+                a = s.get("acceptance_rate_decayed_capped_shrunk")
+                if a is None:
+                    a = s.get("acceptance_rate_decayed_shrunk")
                 acc = float(a if a is not None else (s.get("acceptance_rate_shrunk") or 0.5))
                 used["acceptance"] = rung
                 used["label"] = used["label"] or label
@@ -1098,6 +1258,8 @@ class Effectiveness:
         return W_ACCEPT * (acc - acc_p) + W_SUCCESS * (suc - suc_p)
 
     def weight(self, key, kind=None, tags=None):
+        if getattr(self, "arm", "learned") == "holdout":
+            return 1.0, []
         key = str(key or "")
         kind = kind or rec_ledger.kind_of(key)
         tags = rec_ledger.tags_for(key, kind=kind) if tags is None else tags
@@ -1175,6 +1337,9 @@ class Effectiveness:
         "cold/<rung>" when similar restaurants' results ranked it, else
         "none". `title` lets a model line's words name its advice signature
         (its sig: tag), which its hash key cannot."""
+        if getattr(self, "arm", "learned") == "holdout":
+            return {"weight": 1.0, "why": [], "prior_rung": None, "rung": "holdout", "version": self.version,
+                    "arm": "holdout"}
         kind = kind or rec_ledger.kind_of(str(key or ""))
         if tags is None:
             tags = rec_ledger.tags_for(str(key or ""), kind=kind)
@@ -1189,7 +1354,7 @@ class Effectiveness:
         else:
             rung = "none"
         return {"weight": d["weight"], "why": list((d.get("why") or [])[:3]), "prior_rung": pr, "rung": rung,
-                "version": d.get("version")}
+                "version": d.get("version"), "arm": getattr(self, "arm", "learned")}
 
     def ceiling(self, learned, kind=None):
         """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
@@ -1268,8 +1433,10 @@ class Effectiveness:
 # The owner's answer to "keep suggesting this kind?" (kind_hold:<kind>): a
 # yes (Done / Track) keeps the kind proposed for this long; a "not for us"
 # leaves it stopped.
-KIND_HOLD_PREFIX = "kind_hold"
-KIND_HOLD_KEEP_DAYS = 180
+KIND_HOLD_PREFIX = rec_ledger.KIND_HOLD_KIND
+# The keep's length lives in rec_ledger, which silences the question for
+# exactly as long (answer_silence; memory re-audit 9/29/26, LOOPS-6).
+KIND_HOLD_KEEP_DAYS = rec_ledger.KIND_HOLD_KEEP_DAYS
 
 
 def kept_hold_kinds(restaurant_id, db_path=DB_PATH, now=None) -> set:
@@ -1405,7 +1572,8 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
     return item
 
 
-def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal") -> Effectiveness:
+def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal",
+                  viewer_id=None) -> Effectiveness:
     """The model for one restaurant from its episodes inside
     DECAY_HORIZON_DAYS, each weighed by decay_weight. Never raises: with the
     ledger unreadable it is the neutral model (every weight 1.0).
@@ -1413,20 +1581,24 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     the owner's own (a manager's decline never counts as the owner's
     rejection) — or "delegate", a manager's view, where the principal's
     answer still outranks theirs. An admin's view-as answer teaches neither
-    (memory audit 9/29/26, who_answered / view_as). A demo, test or internal
-    account (models.learning_eligible) ranks on the neutral model."""
+    (memory audit 9/29/26, who_answered / view_as). `viewer_id` (a
+    delegate's login) keeps a manager's view to their own declines
+    (LOOPS-14 / PEOPLE-16). A demo, or an account an admin excluded
+    (models.learns_for_itself), ranks on the neutral model; a test-named or
+    internal account learns for itself (memory re-audit 9/29/26,
+    INVENTORY-1) and stays out of pooled learning."""
     now = now or datetime.utcnow()
     cohort, profile = None, None
     try:
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
-            # No demo, test or internal account teaches a learner, its own
-            # included (models.learning_eligible, memory audit 9/29/26):
-            # its ranking is the neutral model.
-            if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
+            # A demo, or an account an admin excluded, learns nothing — its
+            # own ranking included (models.learns_for_itself, memory
+            # re-audit 9/29/26 INVENTORY-1): its ranking is the neutral model.
+            if hasattr(_models_mod, "learns_for_itself") and not _models_mod.learns_for_itself(restaurant):
                 return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
-                                     perspective=perspective)
+                                     perspective=perspective, viewer_id=viewer_id)
             # Only a type and a partition the owner SET: a guess reads no
             # group's record (Benchmarking re-audit R2-7, #14, #20).
             from intelligence import categories as _cats
@@ -1439,14 +1611,14 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
         try:
             eps = _load(conn, restaurant_id,
                         since=_learning_floor(restaurant, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))),
-                        lean=True, perspective=perspective)
+                        lean=True, perspective=perspective, viewer_id=viewer_id)
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
     model = Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now, profile=profile,
-                          perspective=perspective)
+                          perspective=perspective, viewer_id=viewer_id)
     # The kinds the owner said to keep proposing despite their record
     # (kind_hold:<kind> answered Done / Track — memory audit 9/29/26,
     # "thresholds"): held() never stops those.
@@ -1462,8 +1634,8 @@ def _learning_floor(restaurant, since):
     floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
     if floor is None and isinstance(restaurant, dict):
         floor = restaurant.get("learning_since")
-    if floor and str(floor)[:19] > str(since or "")[:19]:
-        return str(floor)[:19]
+    if floor and str(floor).replace("T", " ")[:19] > str(since or "").replace("T", " ")[:19]:
+        return str(floor).replace("T", " ")[:19]
     return since
 
 
@@ -1513,7 +1685,16 @@ def rank_meta(item, base_score, learned_info) -> dict:
                                                                            or item.get("score") or 0), 2),
             "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2],
             "prior_rung": ({k: pr.get(k) for k in ("acceptance", "success", "cold")} if pr else None),
-            "rung": li.get("rung"), "version": li.get("version")}
+            "rung": li.get("rung"), "version": li.get("version"), "arm": li.get("arm")}
+
+
+def viewer_of(user):
+    """The login a delegate's effectiveness view belongs to (their id), or
+    None for a principal or admin view (LOOPS-14 / PEOPLE-16)."""
+    try:
+        return int(user["id"]) if perspective_of(user) == "delegate" and user.get("id") is not None else None
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
 
 
 def perspective_of(user) -> str:
@@ -1958,6 +2139,11 @@ WORKED_TAG_PREFIXES = ("topic:", "focus:", "category:", "dish:", "item:", "daypa
 IGNORED_LINE_MIN = 3            # left unanswered this often, never taken → said
 WORKED_LINES_MAX = 6
 # The modules whose kinds and the lever topics whose tags each surface reads.
+# Kinds a surface reads beyond its own modules: what the schedule did with
+# the reviews diagnosis's "+1" is the review diagnosis's own result too
+# (re-audit 9/29/26, CROSSMODULE-10).
+SURFACE_EXTRA_KINDS = {"review_diagnosis": ("staff_add",)}
+
 SURFACE_SCOPE = {
     "labor_read": (("labor", "schedule"), ("staffing", "hours", "overtime")),
     "schedule": (("labor", "schedule"), ("staffing", "hours", "overtime")),
@@ -2112,6 +2298,8 @@ def _stored_what_worked(restaurant_id, db_path=DB_PATH):
 
 def _kind_label(kind) -> str:
     k = str(kind or "")
+    if k == "staff_add":
+        return "adding a person where guests complained"
     if k.startswith("insight_"):
         return f"the {k[len('insight_'):]} read's suggestions"
     if k.startswith("diag_"):
@@ -2136,6 +2324,82 @@ def _worked_sentence(label, b) -> str:
     return f"{label}: " + "; ".join(bits) if bits else ""
 
 
+def record_gates(restaurant_id, db_path=DB_PATH, now=None) -> tuple:
+    """({kind: gate}, {tag: gate}) over the what-worked window — each gate
+    {"modules": set, "owner_only": bool, "loss": bool}, the union over every
+    episode of that kind (or carrying that tag): the modules its content
+    comes from (modules_of), whether any rests on owner-only figures, and
+    whether any is a loss. What the what-worked record is gated by for a
+    viewer (line_gate / viewer_sees_record): its bucket's single most
+    frequent module let a food kind filed under Home, a loss kind or an
+    owner-only DSR action reach a manager's and the shared outputs' prompts
+    (memory re-audit QUALITY-15). Never raises (fails closed per line)."""
+    now = now or datetime.utcnow()
+    kinds, tags = {}, {}
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT key, kind, module, evidence_sources, owner_only, tags FROM rec_instances "
+                                "WHERE restaurant_id=? AND created_at >= ?",
+                                (restaurant_id, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)))).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_learning] record gates unavailable for {restaurant_id}: {e}")
+        return None, None
+    for r in rows:
+        row = dict(r)
+        kind = row.get("kind") or rec_ledger.kind_of(row["key"])
+        mods = modules_of(dict(row, kind=kind))
+        loss = _is_loss(dict(row, kind=kind))
+        owner_only = bool(row.get("owner_only"))
+        try:
+            tag_list = [t for t in rec_ledger.episode_tags(r) if str(t).startswith(WORKED_TAG_PREFIXES)]
+        except Exception:
+            tag_list = []
+        for bucket, name in [(kinds, kind)] + [(tags, t) for t in tag_list]:
+            g = bucket.setdefault(name, {"modules": set(), "owner_only": False, "loss": False})
+            g["modules"] |= mods
+            g["owner_only"] = g["owner_only"] or owner_only
+            g["loss"] = g["loss"] or loss
+    return kinds, tags
+
+
+def line_gate(scope, name, bucket_module=None, gates=None) -> dict:
+    """The memory_context gate fields for one what-worked line: "modules"
+    (every module its record draws on — "loss" for comps and voids) and
+    "audience" "principals" when any of it rests on owner-only figures.
+    `gates` is record_gates()'s (kinds, tags); None — unreadable — fails
+    closed to the account holders."""
+    kinds, tags = gates if gates else (None, None)
+    if kinds is None:
+        return {"modules": ["loss"], "audience": "principals"}
+    g = (kinds if scope == "kind" else tags).get(name) or {"modules": set(), "owner_only": False, "loss": False}
+    mods = set(g["modules"])
+    if scope == "kind":
+        mods |= modules_of({"key": name, "kind": name})
+        if _is_loss({"key": name, "kind": name}):
+            mods.add("loss")
+    if bucket_module:
+        mods.add(_module_name(bucket_module))
+    if g["loss"]:
+        mods.add("loss")
+    mods -= {"home", ""}
+    out = {"modules": sorted(mods)}
+    if g["owner_only"]:
+        out["audience"] = "principals"
+    return out
+
+
+def viewer_sees_record(viewer, scope, name, gates=None) -> bool:
+    """Whether a login may read the record of one kind or tag (line_gate,
+    through memory_context.visible). No viewer: an internal caller."""
+    if viewer is None:
+        return True
+    import memory_context
+    return memory_context.visible(dict(line_gate(scope, name, None, gates), text="x"), viewer)
+
+
 def what_worked_lines(req):
     """memory_context provider: "WHAT HAS WORKED HERE" — per kind and per
     subject tag of this restaurant's advice: how often it was taken, how
@@ -2150,6 +2414,7 @@ def what_worked_lines(req):
         return []
     db_path = getattr(req, "db_path", None) or DB_PATH
     rec = _stored_what_worked(rid, db_path=db_path) or what_worked(rid, db_path=db_path)
+    gates = record_gates(rid, db_path=db_path)
     modules, topics = SURFACE_SCOPE.get(getattr(req, "surface", None), (None, None))
     subjects = [str(s).lower() for s in (getattr(req, "subjects", None) or ()) if s]
     wanted_tags = set()
@@ -2158,8 +2423,9 @@ def what_worked_lines(req):
         for i in range(len(parts) - 1):
             wanted_tags.add(f"{parts[i]}:{parts[i + 1]}")
     cand = []
+    extra = SURFACE_EXTRA_KINDS.get(getattr(req, "surface", None), ())
     for kind, b in (rec.get("kinds") or {}).items():
-        if modules and (b.get("module") or "home") not in modules:
+        if modules and (b.get("module") or "home") not in modules and kind not in extra:
             continue
         cand.append(("kind", kind, b))
     for tag, b in (rec.get("tags") or {}).items():
@@ -2188,10 +2454,14 @@ def what_worked_lines(req):
                                                           else 0.5) + min(1.0, b.get("measured", 0) / 20.0)
         line = {"text": text, "date": None, "source": "system", "subject": name, "weight": weight,
                 "trusted": True}
+        # Scoped to the logins who may see what it rests on (the assembler's
+        # viewer check): every module its episodes draw on — a food kind
+        # filed under Home is food — "loss" for comps and voids, and the
+        # account holders only when any of it rests on owner-only figures
+        # (memory re-audit QUALITY-15). A manager without Food Cost never
+        # reads what food advice did here.
+        line.update(line_gate(scope, name, b.get("module"), gates))
         if b.get("module") and b["module"] != "home":
-            # Scoped to the logins who may see that module (the assembler's
-            # viewer check): a manager without Food Cost never reads what
-            # food advice did here.
             line["module"] = b["module"]
         lines.append(line)
     lines.sort(key=lambda ln: -ln["weight"])
