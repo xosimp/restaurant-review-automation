@@ -327,6 +327,26 @@ def is_principal(user) -> bool:
     return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
 
 
+def counts_as_owner(user=None) -> bool:
+    """A view-as session on a restaurant whose owner gave the admin full
+    control (restaurants.admin_control_until, set from the console with an
+    audit row — Erik, 9/30/26: "he's giving me full control as we knock out
+    stuff together"): what the admin changes counts as the owner's — a
+    rating is counted, an answer trains, an edit is the owner's voice. The
+    admin behind it is still the one recorded. Read from the login dict
+    (auth sets view_as_full_control) or the request (g.view_as). Never raises."""
+    try:
+        if isinstance(user, dict) and user.get("view_as_full_control"):
+            return True
+        if user is None or (isinstance(user, dict) and (user.get("acting_admin_id") or user.get("acting_admin_role"))):
+            from flask import g, has_request_context
+            if has_request_context():
+                return bool((getattr(g, "view_as", None) or {}).get("full_control"))
+    except Exception:
+        return False
+    return False
+
+
 def answer_authority(user) -> str:
     """Whose answer this is, for recommendation memory (memory audit 9/29/26,
     "who_answered" and "view_as"): 'admin' for an admin or support login, or
@@ -337,6 +357,8 @@ def answer_authority(user) -> str:
     trains the owner's preferences."""
     if not user:
         return "delegate"
+    if counts_as_owner(user):
+        return "principal"
     if user.get("acting_admin_id") or user.get("acting_admin_role") or user.get("is_admin") \
             or str(user.get("role") or "").strip().lower() == "support":
         return "admin"
@@ -362,8 +384,8 @@ def acting_via(user=None):
                 ctx = getattr(g, "view_as", None)
         except Exception:
             ctx = None
-    if not ctx:
-        return None
+    if not ctx or ctx.get("full_control") or (isinstance(user, dict) and user.get("view_as_full_control")):
+        return None                      # the owner's grant: the write is the owner's (counts_as_owner)
     return {"admin_id": ctx.get("acting_admin_id"), "admin": ctx.get("acting_admin"),
             "role": ctx.get("acting_admin_role") or "admin"}
 

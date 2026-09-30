@@ -372,6 +372,10 @@ class Restaurant:
     # Salaried people (owner, 9/28/26): [{"name": "Erik Baylis", "annual": 150000}]. Costed by
     # salary (labor.salaried_summary), never by the hour: their punches leave hourly labor.
     salaried_staff_json: Optional[str]   = None
+    # The owner gave the admin full control (9/30/26): until this UTC time an
+    # admin's view-as changes count as the owner's (permissions.counts_as_owner).
+    admin_control_until: Optional[str]   = None
+    admin_control_note: Optional[str]    = None
     close_times_json: Optional[str]      = None   # e.g. {"Monday":"9:00pm","Friday":"10:00pm"} — per-day close time, used to hard-cap generated shift_end
     role_close_buffer_json: Optional[str] = None  # e.g. {"Bartender":60} — minutes a role may run past close; any role not listed defaults to 0 (must end at or before close)
     section_count: Optional[int]         = None
@@ -897,6 +901,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
         ("restaurants", "salaried_staff_json", "TEXT"),
+        ("restaurants", "admin_control_until", "TEXT"),
+        ("restaurants", "admin_control_note", "TEXT"),
         ("restaurants", "close_times_json", "TEXT"),
         ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
@@ -4303,7 +4309,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "neighborhood","vibe","known_for","sign_off_name","never_say",
         "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
-        "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
+        "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
         "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis",
@@ -4951,6 +4957,8 @@ def _restaurant_from_row(row) -> Restaurant:
         email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
         salaried_staff_json=row["salaried_staff_json"] if "salaried_staff_json" in row.keys() else None,
+        admin_control_until=row["admin_control_until"] if "admin_control_until" in row.keys() else None,
+        admin_control_note=row["admin_control_note"] if "admin_control_note" in row.keys() else None,
         close_times_json=row["close_times_json"] if "close_times_json" in row.keys() else None,
         role_close_buffer_json=row["role_close_buffer_json"] if "role_close_buffer_json" in row.keys() else None,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
@@ -5762,13 +5770,18 @@ def reply_approver(user=None, auto=False) -> dict:
         except Exception:
             va = None
         if va:
+            if va.get("full_control"):
+                return {"user_id": va.get("acting_admin_id"), "role": "principal", "via": "normal"}
             return {"user_id": va.get("acting_admin_id"), "role": "admin", "via": "view_as"}
         return {"user_id": None, "role": None, "via": None}
-    from permissions import answer_authority
+    from permissions import answer_authority, counts_as_owner
     view_as = bool(user.get("acting_admin_id") or user.get("acting_admin_role")
                    or (user.get("device_type") or "") == "admin-view-as")
     uid = user.get("acting_admin_id") if (view_as and user.get("acting_admin_id")) else user.get("id")
-    return {"user_id": uid, "role": answer_authority(user), "via": "view_as" if view_as else "normal"}
+    # Full control (the owner's grant): the admin behind it is still named,
+    # and the approval counts as the owner's.
+    return {"user_id": uid, "role": answer_authority(user),
+            "via": "view_as" if (view_as and not counts_as_owner(user)) else "normal"}
 
 
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
@@ -6937,7 +6950,9 @@ def _write_attribution(user=None) -> dict:
     try:
         from permissions import acting_login_id, acting_via, answer_authority
         if isinstance(user, dict):
-            via = "view_as" if (user.get("acting_admin_id") or user.get("acting_admin_role")) else None
+            from permissions import counts_as_owner
+            via = "view_as" if ((user.get("acting_admin_id") or user.get("acting_admin_role"))
+                                and not counts_as_owner(user)) else None
             return {"user_id": acting_login_id(user), "authority": answer_authority(user), "via": via}
         import change_log
         ctx = change_log.actor_context()

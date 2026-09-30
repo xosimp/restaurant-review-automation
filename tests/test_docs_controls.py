@@ -118,6 +118,7 @@ _STEP_UP_TODAY = {
     "/admin/resend-welcome/<int:restaurant_id>",
     "/admin/freeze/<int:restaurant_id>",
     "/admin/api/client/<int:restaurant_id>/demo",
+    "/admin/api/client/<int:restaurant_id>/full-control",
     "/admin/api/client/<int:restaurant_id>/delete-demo",
     "/admin/api/client/<int:restaurant_id>/delete",
     "/admin/api/brand/add-location",

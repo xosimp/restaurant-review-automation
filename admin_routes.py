@@ -3850,6 +3850,45 @@ def admin_api_alert_cap(restaurant_id, current_user):
     return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "Not found" else 400))
 
 
+FULL_CONTROL_MAX_DAYS = 90
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/full-control", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_full_control(restaurant_id, current_user):
+    """The owner gave the admin full control (Erik, 9/30/26): until the
+    date, an admin's view-as changes on this account count as the owner's
+    (permissions.counts_as_owner) — a rating counts, an answer trains, an
+    edit is the owner's voice — while the admin behind each is still the one
+    recorded. {days: 1-90, note: who agreed and how} grants; {days: 0} ends
+    it. Support logins never get it. One typed audit row either way."""
+    from models import get_restaurant, update_restaurant
+    from datetime import datetime as _dt_fc, timedelta as _td_fc
+    import admin_events
+    data = request.get_json(silent=True) or {}
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Not found"), 404
+    try:
+        days = int(data.get("days"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Say how many days (1-90), or 0 to end it."), 400
+    if not 0 <= days <= FULL_CONTROL_MAX_DAYS:
+        return jsonify(ok=False, error=f"Full control lasts 1 to {FULL_CONTROL_MAX_DAYS} days."), 400
+    note = " ".join(str(data.get("note") or "").split())[:300]
+    if days and not note:
+        return jsonify(ok=False, error="Say who gave it and how (\"Erik, in person, 9/30/26\")."), 400
+    before = {"until": getattr(r, "admin_control_until", None), "note": getattr(r, "admin_control_note", None)}
+    until = (_dt_fc.utcnow() + _td_fc(days=days)).strftime("%Y-%m-%d %H:%M:%S") if days else None
+    after = {"until": until, "note": note or None}
+    update_restaurant(restaurant_id, {"admin_control_until": until, "admin_control_note": note or None})
+    admin_events.record_admin_action(current_user, "full_control.set" if days else "full_control.end",
+                                     restaurant_id=restaurant_id, target=f"restaurant:{restaurant_id}",
+                                     before=before, after=after)
+    return jsonify(ok=True, until=until), 200
+
+
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/demo", methods=["POST"])
 @admin_required
 @recent_auth_required()

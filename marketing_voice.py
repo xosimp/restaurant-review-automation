@@ -203,10 +203,10 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
     if not restaurant_id or channel not in CHANNELS or not final_body:
         return None
     try:
-        from permissions import answer_authority
+        from permissions import answer_authority, counts_as_owner
         u = user or {}
         view_as = bool(u.get("acting_admin_id") or u.get("acting_admin_role")
-                       or (u.get("device_type") or "") == "admin-view-as")
+                       or (u.get("device_type") or "") == "admin-view-as") and not counts_as_owner(u)
         authority = answer_authority(u) if u else None
         uid = u.get("acting_admin_id") if (view_as and u.get("acting_admin_id")) else u.get("id")
         conn = get_conn(db_path)

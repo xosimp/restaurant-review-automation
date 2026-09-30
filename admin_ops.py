@@ -56,6 +56,11 @@ log = logging.getLogger(__name__)
 _db_override = threading.local()
 
 
+def _now_sql():
+    from datetime import datetime as _dt_ns
+    return _dt_ns.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def get_conn(db_path=None):
     """models.get_conn, resolved at call time — CLAUDE.md's bound-import
     hazard. `from models import get_conn` bound the function object at
@@ -1788,6 +1793,9 @@ def location_record(r, d):
         "location_name": r.get("location_name"),
         "city": r.get("neighborhood"),
         "is_demo": bool(r.get("is_demo")),
+        # The owner's grant of full control through view-as (admin_control_until, UTC).
+        "full_control_until": _iso_z(r.get("admin_control_until")) if (r.get("admin_control_until") or "") > _now_sql() else None,
+        "full_control_note": r.get("admin_control_note"),
         "created_at": _iso_z(r.get("created_at")),
         "timezone": r.get("timezone"),
         "owner": ({"id": owner["id"], "username": owner["username"], "email": owner["email"], "role": owner.get("role"),

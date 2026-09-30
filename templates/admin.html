@@ -1585,6 +1585,7 @@ function actionsMenu(c, d){
     ${b('Branding &amp; peer profile…', `brandOpen(${c.id},'${n}')`)}${aw('Full settings', '/admin/client-settings/'+c.id)}${aw('Manage data (CSV)', '/admin/client-data/'+c.id)}${a('Recommendations for this client', '#analytics/recommendations/'+c.id)}
     ${b('Add a location to this brand…', `addLocationOpen(${c.id},'${jsq(c.brand||c.name)}')`)}
     <span class="lbl">Access</span>${a('View dashboard as this client', '/admin/view-as/'+c.id)}${b('Send a password-reset link…', `sendResetLink(${login.id||0}, '${jsq(login.username||'')}', '${jsq(login.email||'')}')`)}
+    ${b(c.full_control_until ? 'End full control' : 'Owner gave full control…', `setFullControl(${c.id},${c.full_control_until?0:1},'${n}')`)}
     ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
     <hr><span class="lbl" style="color:var(--red-t)">Danger zone</span>${b('Freeze account (takeover response)…', `freezeAccount(${c.id},'${n}')`, 'dz')}${a('Close this account (offboarding)…', '#client/'+c.id+'?tab=offboarding')}${c.is_demo?`<button data-a class="dz w" data-name="${esc(c.name)}" onclick="menusClose();deleteDemo(${c.id},this.dataset.name)">Delete this demo account</button>`:''}
     <span class="dim" style="padding:8px 10px 4px;white-space:normal;line-height:1.4">Plan, holds and contract changes are on the Billing tab. A real restaurant is deleted only through the offboarding checklist on Access. Each action confirms first.</span></div>`;
@@ -1619,7 +1620,7 @@ async function clientView(id, qs){
       <span class="mono-tile" style="width:64px;height:64px;border-radius:18px;font-size:20px;${HEALTH_TILE[c.health]||HEALTH_TILE.inactive}">${esc(monoTile(c.name, c.health).replace(/<[^>]+>/g,''))}</span>
       <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px">
         <h1>${esc(c.name)}${c.location_name?` <span style="font-family:var(--sans);font-size:16px;font-weight:400;color:var(--ink4)">${esc(c.location_name)}</span>`:''}</h1>
-        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${c.is_demo?pill('emb', 'demo', false):pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'&&!c.is_demo?pill('neu', 'internal', false):''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${c.is_demo?pill('emb', 'demo', false):pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'&&!c.is_demo?pill('neu', 'internal', false):''}${c.full_control_until?`<span title="${esc(c.full_control_note||'')}">${pill('emb', 'full control until '+fmtD(c.full_control_until), false)}</span>`:''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
         <span class="muted" style="font-size:13px">${esc(login?login.username:'no login')}${c.owner_name?' ('+esc(c.owner_name)+')':''}${c.owner_email?' · '+esc(c.owner_email):''}${c.owner_phone?' · '+esc(fmtPhone(c.owner_phone)):''} · joined <span class="n">${fmtD(c.created_at)}</span> · <span title="${esc(actTitle || 'No owner activity on record')}">active <span class="n">${c.last_active?ago(c.last_active)+' ago':'never'}</span></span>${c.on_ios?' <span class="chip" title="The owner uses the iOS app">iOS</span>':''}${c.team_last_seen?' · team '+ago(c.team_last_seen)+' ago':''} · #${c.id}</span>
         ${bits.length ? `<span class="muted" style="font-size:13px">${bits.join(' · ')}</span>` : ''}
       </div>
@@ -3944,6 +3945,21 @@ async function act(path, label, dangerous, body){
 // The demo flag (#118): turning it ON wipes reseedable history, so it needs
 // the restaurant's typed name, and the server refuses a paying or signed
 // account whatever the console asks.
+// The owner's grant (9/30/26): until the date, an admin's view-as changes
+// count as the owner's (permissions.counts_as_owner). Support never gets it.
+async function setFullControl(rid, on, name){
+  let body = {days: 0};
+  if(on){
+    const note = prompt('Did the owner of ' + (name || 'this restaurant') + ' give you full control? For the days you set, your changes in View as client count as theirs: ratings count, answers train Cavnar AI, edits are their voice. You are still recorded as the one who made each change.\n\nWho gave it, and how (e.g. "Erik, in person, 9/30/26"):');
+    if(note === null) return;
+    if(!note.trim()){ toast('Say who gave it — nothing changed', 'bad'); return; }
+    const days = prompt('For how many days? (1-90)', '30');
+    if(days === null) return;
+    body = {days: parseInt(days, 10), note: note.trim()};
+  } else if(!confirm('End full control for ' + (name || 'this restaurant') + '? Your View as client changes go back to counting as support\'s.')) return;
+  const d = await post('/admin/api/client/'+rid+'/full-control', body);
+  if(say(d, on ? 'Full control until ' + fmtD(d.until) : 'Full control ended')){ _clients = null; route(); }
+}
 async function setDemo(rid, on, name){
   let body = {is_demo: on};
   if(on){

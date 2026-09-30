@@ -3908,6 +3908,16 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
         user["view_as_read_only"] = bool(session_read_only) or _view_as_read_only(conn, token)
         user["acting_admin"] = acting_admin["username"] if acting_admin else None
         user["acting_admin_role"] = "admin" if (acting_admin and acting_admin["is_admin"]) else "support"
+        # The owner's grant of full control (restaurants.admin_control_until):
+        # an admin (never support), in a writable view-as, before it runs out.
+        user["view_as_full_control"] = False
+        if user["acting_admin_role"] == "admin" and not user["view_as_read_only"]:
+            try:
+                fc = conn.execute("SELECT 1 FROM restaurants WHERE id=? AND admin_control_until > ?",
+                                  (user.get("restaurant_id"), sql_utc())).fetchone()
+                user["view_as_full_control"] = bool(fc)
+            except Exception:
+                user["view_as_full_control"] = False
 
     # SEC-1: fail closed. An identity that HAS memberships but none active
     # where this session acts is not authorised there — it used to fall back
@@ -4580,7 +4590,8 @@ def _view_as_context(user):
     ctx = {"acting_admin_id": user.get("acting_admin_id"), "acting_admin": user.get("acting_admin"),
            "acting_admin_role": user.get("acting_admin_role"),
            "as_user_id": user.get("id"), "as_username": user.get("username"),
-           "restaurant_id": user.get("restaurant_id"), "read_only": bool(user.get("view_as_read_only"))}
+           "restaurant_id": user.get("restaurant_id"), "read_only": bool(user.get("view_as_read_only")),
+           "full_control": bool(user.get("view_as_full_control"))}
     try:
         from flask import g as _g_va
         _g_va.view_as = ctx
