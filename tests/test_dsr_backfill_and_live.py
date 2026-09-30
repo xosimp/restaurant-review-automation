@@ -211,3 +211,23 @@ def test_a_manager_made_salaried_leaves_hourly_labor_everywhere_retroactively(db
 def test_a_restaurant_on_sample_shifts_is_never_recosted(db):
     r = _ejs(db)
     assert models.recost_labor_history(r.id, db_path=db) == 0
+
+
+def test_a_salaried_managers_rpower_overtime_note_is_not_the_nights_overtime(db):
+    """Will, 9/30/26: salaried people are never overtime — the report's
+    overtime left their punches out as Labor's analysis does."""
+    import json as _json
+    from dsr import block_labor
+    r = _ejs(db)
+    models.update_restaurant(r.id, {"salaried_staff_json": _json.dumps([{"name": "Andrew Marola", "annual": 55000}])},
+                             db_path=db)
+    r = models.get_restaurant(r.id, db_path=db)
+
+    class _Ctx:
+        restaurant = r
+        restaurant_id = r.id
+        day = SUN.isoformat()
+    rows = [{"employee": "Andrew Marola", "notes": "OT 2.5h"}, {"employee": "Dana Reyes", "notes": "OT 1.0h"}]
+    ot, src = block_labor._overtime(_Ctx(), "rpower", rows, rows)
+    ot_all, _ = block_labor._overtime(_Ctx(), "rpower", rows[1:], rows[1:])
+    assert src == "rpower" and ot == ot_all

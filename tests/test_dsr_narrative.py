@@ -578,7 +578,7 @@ def test_a_lead_that_fails_verification_refuses_the_whole_narrative(monkeypatch,
     r["executive_summary"] = lead
     out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
     assert out == {"ok": False, "narrative": None,
-                   "reason": "The summary was held back — its opening stated something tonight's figures don't support."}
+                   "reason": "The summary was held back — its opening stated a figure the night's numbers don't back up."}
     # Nothing from a refused narrative reached the ledger.
     assert rec_ledger.silenced_keys(rest.id, db_path=db_path) == set()
     conn = __import__("models").get_conn(db_path)
@@ -825,7 +825,7 @@ def test_a_timeout_is_retried_once_and_then_refused(monkeypatch, rest, db_path):
     monkeypatch.setattr(ops, "capture", lambda *a, **k: None)
     out, client = _run(monkeypatch, rest, db_path, strong_night(), exc=_timeout())
     assert out == {"ok": False, "narrative": None,
-                   "reason": "The summary couldn't be written tonight — the AI service didn't answer."}
+                   "reason": "The summary couldn't be written for this night — the AI service didn't answer."}
     assert len(client.calls) == 1 + narrative.AI_RETRIES
 
 
@@ -1165,3 +1165,20 @@ def test_a_week_total_compares_the_same_days():
     assert t["net"] - t["budget_net"] == t["vs_budget_net"] == 1500.0
     assert t["net"] - t["last_year_net"] == t["vs_last_year_net"]
     assert t["budget_gross"] == 30000.0 and t["budget_net_full_range"] == 66500.0
+
+
+def test_a_forecast_the_words_name_completes_its_cite_and_the_lead_stands():
+    """9/29/26 at Simple EJ's: "11.2% above the $5,532 forecast" — the true
+    sales.forecast_net (5,531.81), uncited, held the whole summary back. A
+    projection is completed when the words name a forecast beside it, and
+    only then; it stays a projection."""
+    f = weak_night()
+    f["blocks"]["sales"]["metrics"].update({"forecast_net": 5531.81})
+    F = narrative.Facts(f)
+    net = f["blocks"]["sales"]["metrics"]["net"]
+    text = f"Net sales came in at ${net:,.0f}, against the $5,532 forecast."
+    cites = F.complete_cites(text, ["sales.net"])
+    assert "sales.forecast_net" in cites and not F.untraced(text, cites)
+    assert "sales.forecast_net" not in F.complete_cites(f"Net sales came in at ${net:,.0f}; $5,532 was the call.",
+                                                        ["sales.net"])
+    assert narrative.kind_of("sales.forecast_net") == "projection"

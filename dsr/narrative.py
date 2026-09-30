@@ -570,6 +570,11 @@ class Facts:
         # when the words name it as one ("below the $7,300 budget").
         kinds = {kind_of(c) for c in cites}
         names_plan = bool(_PLAN_WORDS_RE.search(str(text or "")))
+        # ...and a forecast only when the words name one ("11.2% above the
+        # $5,532 forecast", 9/29/26: the true forecast_net was left uncited
+        # and the whole summary was held back for it). It stays a projection
+        # — named as one, never counted as measured.
+        names_forecast = bool(_FORECAST_WORDS_RE.search(str(text or "")))
         t = _normalise(text)
         for key in self.metrics:
             if not missing:
@@ -577,7 +582,8 @@ class Facts:
             if key in cites or key.startswith("closeout."):
                 continue
             k = kind_of(key)
-            if k not in kinds and not (k == "measured" or (k == "plan" and names_plan)):
+            if k not in kinds and not (k == "measured" or (k == "plan" and names_plan)
+                                       or (k == "projection" and names_forecast)):
                 continue
             alone = self.untraced(text, [key])
             # The fact must be the one the words NAME beside the figure
@@ -882,6 +888,7 @@ _SUM_RE = re.compile(r"\b(together|add(?:s|ed)?\s+up|combined|in\s+total|total\s
 _OPPORTUNITY_WORDS = re.compile(r"\b(could|would|might|potential\w*|opportunit\w*|at\s+stake|on\s+the\s+table|"
                                 r"available|recover\w*|if\b)", re.I)
 _PLAN_WORDS_RE = re.compile(r"\b(budget\w*|target\w*|goal\w*|plan(?:ned)?)\b", re.I)
+_FORECAST_WORDS_RE = re.compile(r"\b(forecast\w*|projected|projection|predicted)\b", re.I)
 # NS2 C2: a cause between facts of different blocks — "Net sales fell short
 # because labor ran 34.8%" (backwards: labor % is high BECAUSE sales were
 # low). The DSR stores no cross-block cause, so the line is dropped.
@@ -2189,7 +2196,7 @@ def write(ctx, facts):
         return _write(ctx, facts)
     except Exception as e:
         _capture(e, getattr(ctx, "restaurant_id", None), "write")
-        return _refused("The summary couldn't be written tonight — the report is complete without it.")
+        return _refused("The summary couldn't be written for this night — the report is complete without it.")
 
 
 def _write(ctx, facts):
@@ -2256,30 +2263,30 @@ def _write(ctx, facts):
             output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
             readiness=_ready)
     except DataNotReady as e:
-        return _refused(f"The summary wasn't written tonight — {e.readiness.get('reason') or 'the data is not ready'}.")
+        return _refused(f"The summary wasn't written for this night — {e.readiness.get('reason') or 'the data is not ready'}.")
     except (AIBudgetExceeded, AIProviderDown) as e:
         return _refused(str(e))
     except Exception as e:
         _capture(e, rid, "model call")
-        return _refused("The summary couldn't be written tonight — the AI service didn't answer.")
+        return _refused("The summary couldn't be written for this night — the AI service didn't answer.")
     if is_refusal(msg):
         # Was returned with no trace at all (AIOPS-13).
         _quality("model_refused", rid, "the model declined to write tonight's narrative")
-        return _refused("The summary couldn't be written tonight.")
+        return _refused("The summary couldn't be written for this night.")
     if getattr(msg, "stop_reason", None) == "max_tokens":
         _quality("truncated", rid, "dsr narrative truncated at max_tokens")
-        return _refused("The summary couldn't be written tonight — it came back incomplete.")
+        return _refused("The summary couldn't be written for this night — it came back incomplete.")
     try:
         raw = parse_json_reply(extract_text(msg), expect=dict, message=msg)
     except ValueError as e:
         _quality("unparseable", rid, f"dsr narrative did not parse: {e}")
-        return _refused("The summary couldn't be written tonight — it came back in the wrong shape.")
+        return _refused("The summary couldn't be written for this night — it came back in the wrong shape.")
     clean, err = validate(raw)
     if err:
         from ai_utils import mark_outcome
         mark_outcome(msg, "unparseable", reason="failed the narrative's shape check")
         _quality("output_rejected", rid, f"dsr narrative failed validation: {err}")
-        return _refused("The summary couldn't be written tonight — it came back in the wrong shape.")
+        return _refused("The summary couldn't be written for this night — it came back in the wrong shape.")
 
     # Only the stale sources: tonight's figures are the night's own, so the
     # POS's present-tense state says nothing about "tonight".
@@ -2289,7 +2296,7 @@ def _write(ctx, facts):
     if lead_why:
         _quality("validation_refused", rid,
                  f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:160]}")
-        return _refused("The summary was held back — its opening stated something tonight's figures don't support.")
+        return _refused("The summary was held back — its opening stated a figure the night's numbers don't back up.")
     n_failed_check = len(dropped)          # verify's drops: a line that failed its check
     body["actions_tomorrow"] = settle_actions(body["actions_tomorrow"], F, ctx, declined, dropped)
     if dropped:

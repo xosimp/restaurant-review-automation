@@ -111,9 +111,9 @@ REQUIRED_BLOCKS = ("sales",)
 NEVER_HOLDS = ("closeout",)
 
 # Owner-facing words for the narrative's outcome.
-NO_SUMMARY_SALES_PENDING = "Not enough data tonight for a summary — sales are still syncing"
-NO_SUMMARY_NO_SALES = "No summary without tonight's sales"
-NO_SUMMARY_FAILED = "The summary couldn't be written tonight"
+NO_SUMMARY_SALES_PENDING = "Not enough data yet for a summary — sales are still syncing"
+NO_SUMMARY_NO_SALES = "No summary without the night's sales"
+NO_SUMMARY_FAILED = "The summary couldn't be written for this night"
 
 
 def _db(db_path):

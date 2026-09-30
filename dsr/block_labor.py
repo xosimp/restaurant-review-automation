@@ -137,8 +137,24 @@ def _hours_after(rows, hour=EVENING_HOUR):
     return round(total, 2), round(after, 2)
 
 
+def _salaried_keys(ctx):
+    try:
+        from models import salaried_staff, salaried_name_key
+        return {salaried_name_key(s["name"]) for s in salaried_staff(ctx.restaurant)}
+    except Exception:
+        return set()
+
+
 def _overtime(ctx, provider, rows, all_rows):
-    """(overtime hours for the day, source) — or (None, None)."""
+    """(overtime hours for the day, source) — or (None, None). A salaried
+    person's hours are never overtime (Will, 9/30/26: the managers and Gabe
+    are salaried) — their punches are left out, as Labor's own analysis
+    leaves them out (labor._without_salaried)."""
+    sal = _salaried_keys(ctx)
+    if sal:
+        from models import salaried_name_key
+        rows = [r for r in rows or [] if salaried_name_key(r.get("employee")) not in sal]
+        all_rows = [r for r in all_rows or [] if salaried_name_key(r.get("employee")) not in sal]
     day_rows = rows
     if provider == "rpower":
         ot = 0.0
