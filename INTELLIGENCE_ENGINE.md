@@ -831,7 +831,14 @@ on the AI-read lines, Shift Quality items, Ask suggestions, the digest's
 move and the quiet-night push, as it already was on Home, the one thing,
 the DSR and Reviews' Do today. A whole-schedule recommendation
 (`schedule_to_target`, `optimizer`) has the subject `schedule:whole`, so
-declining one weekday's trim no longer silences it (B4 L4).
+declining one weekday's trim no longer silences it (B4 L4). A staffing
+signature that keeps or adds people carries its direction —
+`labor:day:tuesday:hold` (the marketing x labor link), `labor:day:friday:add`
+(a review or DSR "+1") — so a "not for us" to a trim never silences the
+advice that agrees with it, nor the reverse; the owner's answer to one side
+is shown beside the other as agreeing (`agrees_with` on the one thing) and
+read by decisions memory, never as a silence (re-audit 9/29/26,
+CROSSMODULE-1).
 
 ## What a measured result is allowed to say (confidence audit, 9/24/26)
 
