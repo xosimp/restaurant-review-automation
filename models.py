@@ -1148,6 +1148,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # model draft. reply_voice_sql leaves a 'view_as' edit out of the
         # style examples, the OWNER'S EDITS note and auto-approve trust.
         ("reviews", "draft_edited_via", "TEXT"),
+        # When a removed review's words were erased (memory re-audit 9/29/26,
+        # FORGET-1): a soft-deleted review keeps its row — the unique key
+        # stops a re-fetch re-adding it — but past ops' "reviews_erase"
+        # window its guest text and replies are blanked for good
+        # (history_rollups.erase_removed_reviews). NULL while restorable.
+        ("reviews", "erased_at", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -5046,10 +5052,15 @@ def _apply_review_edit(conn, r: "Review") -> tuple:
     published against it.
     """
     row = conn.execute(
-        "SELECT id, rating, text, original_rating FROM reviews "
+        "SELECT id, rating, text, original_rating, deleted_at FROM reviews "
         "WHERE restaurant_id=? AND platform=? AND external_id=?",
         (r.restaurant_id, r.platform, r.external_id)).fetchone()
     if not row:
+        return (False, False)
+    if row["deleted_at"]:
+        # A removed review stays removed (memory re-audit 9/29/26, FORGET-1):
+        # a later guest edit used to rewrite the hidden row's text, so words
+        # the owner's retention had removed — or erased — came back.
         return (False, False)
     old_rating = int(row["rating"] or 0)
     new_rating = int(r.rating or 0)

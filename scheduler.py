@@ -1976,6 +1976,8 @@ def _scrub_lines_html(scrubbed):
     if d["precaution"]:
         lines.append(f"<b>Also blanked, not yet classified</b>: {esc(d['precaution'])} — add each to "
                      "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
+    if d.get("removed_rows"):
+        lines.append(f"<b>Guest text of removed rows</b>: {esc(d['removed_rows'])}.")
     lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
     return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
 

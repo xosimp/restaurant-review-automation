@@ -246,6 +246,39 @@ SCRUB_COLUMNS = {
     ("sales_audit_shares", "token_enc"),
 }
 
+# Rows whose words never leave the server (memory re-audit 9/29/26,
+# FORGET-1): {table: (which rows, "module:CONSTANT" naming the columns)}.
+# A review the owner's retention, the owner or Google removed is hidden from
+# every screen, and its guest text is erased on the server a month later
+# (history_rollups.erase_removed_reviews) — but every off-site copy carried
+# it in full, forever. The off-site copy blanks it at once.
+SCRUB_ROWS = {
+    "reviews": ("deleted_at IS NOT NULL", "history_rollups:REVIEW_GUEST_TEXT"),
+}
+
+
+def _scrub_rows(conn):
+    """Blank SCRUB_ROWS' columns on their rows in a copy. Returns
+    ["table.column", ...] blanked (only columns this database has)."""
+    import importlib
+    done = []
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for t, (where, ref) in SCRUB_ROWS.items():
+        if t not in tables:
+            continue
+        mod, const = ref.split(":", 1)
+        info = list(conn.execute(f'PRAGMA table_info("{t}")'))
+        have = {r[1] for r in info}
+        notnull = {r[1] for r in info if r[3]}
+        cols = [c for c in getattr(importlib.import_module(mod), const) if c in have]
+        if not cols:
+            continue
+        sets = ", ".join(f'"{c}"=' + ("''" if c in notnull else "NULL") for c in cols)
+        conn.execute(f'UPDATE "{t}" SET {sets} WHERE {where}')
+        done += [f"{t}.{c} (removed rows)" for c in cols]
+    return done
+
+
 # Credential-LOOKING columns that are deliberately kept, and why. A new one
 # that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
 # tests/test_fix_d_backup.py fails until it is.
@@ -351,9 +384,11 @@ def redact(path):
             # A NOT NULL column (webhooks.secret) is blanked rather than nulled.
             blank = "''" if c in notnull[t] else "NULL"
             conn.execute(f'UPDATE "{t}" SET "{c}"={blank} WHERE "{c}" IS NOT NULL AND "{c}" != \'\'')
+        rows = _scrub_rows(conn)
         conn.commit()
         conn.execute("VACUUM")
-        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified}
+        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified,
+                "rows": rows}
     finally:
         conn.close()
 
@@ -370,6 +405,7 @@ def describe_scrub(scrubbed) -> dict:
         "emptied": sorted(scrubbed.get("tables") or []),
         "blanked": sorted(scrubbed.get("columns") or []),
         "precaution": sorted(f"{t}.{c}" for t, c in (scrubbed.get("unclassified") or [])),
+        "removed_rows": sorted(scrubbed.get("rows") or []),
         "kept": "password hashes, hashed link tokens, public link ids guests and staff already hold, and "
                 "model token counts (offsite_backup.KEEP_COLUMNS)",
     }

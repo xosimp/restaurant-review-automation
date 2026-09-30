@@ -380,6 +380,56 @@ def purge_reviews(conn, restaurant_id, months) -> int:
     return cur.rowcount or 0
 
 
+# The words on a review row that are the guest's, or a model's or the
+# owner's about the guest: blanked once a removed review is past its undo
+# window (erase_removed_reviews) and in every off-site copy for any removed
+# review (offsite_backup.SCRUB_ROWS). The rating, dates, status and the
+# platform key stay — the key is what stops a re-fetch re-adding the review.
+REVIEW_GUEST_TEXT = ("author", "text", "summary", "draft_response", "original_draft", "entities",
+                     "specific_complaint", "edit_signals", "draft_review_reason")
+REVIEW_REMOVED_SQL = "deleted_at IS NOT NULL"
+
+
+def _review_text_columns(conn) -> list:
+    have = {r[1] for r in conn.execute("PRAGMA table_info(reviews)")}
+    return [c for c in REVIEW_GUEST_TEXT if c in have]
+
+
+def review_erase_assignments(conn) -> str:
+    """The SET clause that blanks a review's guest text: '' for a NOT NULL
+    column (text), NULL for the rest."""
+    notnull = {r[1] for r in conn.execute("PRAGMA table_info(reviews)") if r[3]}
+    return ", ".join(f"{c}={chr(39) * 2 if c in notnull else 'NULL'}" for c in _review_text_columns(conn))
+
+
+def erase_removed_reviews(conn, days, deadline=None, max_rows=200000, chunk=5000) -> int:
+    """Erase the words of reviews removed more than `days` ago (memory
+    re-audit 9/29/26, FORGET-1). "Removed" was only hidden: the guest's name,
+    text and every drafted reply stayed in the database and in every backup
+    for good. The soft delete is the undo window; past it the guest text
+    columns (REVIEW_GUEST_TEXT) are blanked and `erased_at` stamped. The row
+    stays so the platform key keeps a re-fetch from re-adding it, and its
+    month is already in review_monthly_stats (purge_reviews). Chunked, a
+    commit per chunk, at most `max_rows` a pass. Returns rows erased."""
+    import time as _time
+    sets = review_erase_assignments(conn)
+    total = 0
+    while total < max_rows:
+        if deadline is not None and _time.monotonic() > deadline:
+            break
+        ids = [r[0] for r in conn.execute(
+            f"SELECT id FROM reviews WHERE {REVIEW_REMOVED_SQL} AND erased_at IS NULL "
+            f"AND deleted_at < datetime('now', ?) LIMIT ?",
+            (f"-{int(days)} days", min(chunk, max_rows - total))).fetchall()]
+        if not ids:
+            break
+        marks = ",".join("?" * len(ids))
+        conn.execute(f"UPDATE reviews SET {sets}, erased_at=datetime('now') WHERE id IN ({marks})", ids)
+        conn.commit()
+        total += len(ids)
+    return total
+
+
 def purged_review_totals(restaurant_id, conn=None, db_path=None) -> dict:
     """{reviews, drafted, posted} the retention purge removed — added to the
     live counts by the lifetime ledger, so "replies drafted since you

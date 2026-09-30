@@ -2440,6 +2440,8 @@ SUPERSEDED_DRAFTS_KEEP_DAYS = int(os.getenv("RETAIN_SUPERSEDED_DRAFTS_DAYS", "36
 # thinned the same way; the generated, published and final ones never are.
 DRAFT_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_DRAFT_DETAIL_DAYS", "30"))
 VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
+# Removed reviews keep their words this long, then they are erased.
+REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
 # The prunes that are not one table's rows by one stamp, with the same
 # floor rule: {name: (current days, floor)}. The schedule learner reads the
@@ -2455,6 +2457,10 @@ def _special_retention():
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
         "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),
+        # A removed review's words (memory re-audit 9/29/26, FORGET-1): the
+        # soft delete is a month's undo window, then the guest text is
+        # erased (history_rollups.erase_removed_reviews). Floor 7 days.
+        "reviews_erase": (REVIEW_ERASE_DAYS, 7),
     }
 
 
@@ -2778,6 +2784,24 @@ def _prune_schedules(conn, deadline, refused=None):
     return out
 
 
+def _erase_removed_reviews(conn, deadline=None, refused=None):
+    """Blank the guest text of reviews removed past REVIEW_ERASE_DAYS
+    (memory re-audit 9/29/26, FORGET-1) — the soft delete alone kept every
+    removed review's words in the database and every backup for good. Under
+    the same floor rule as every prune: a window under its floor erases
+    nothing and is refused."""
+    st = retention_state("reviews_erase")
+    if st["state"] == "disabled":
+        return 0
+    if st["state"] == "below_floor":
+        if refused is not None:
+            refused.append(st)
+        return 0
+    import history_rollups
+    return history_rollups.erase_removed_reviews(conn, st["days"], deadline=deadline,
+                                                 max_rows=RETENTION_PASS_MAX_ROWS, chunk=RETENTION_CHUNK_ROWS)
+
+
 def _optimize(conn):
     """Planner statistics after the nightly prune (#72): no ANALYZE ran
     anywhere, and on a large copy it cut one admin query from 1,364 ms to
@@ -2911,6 +2935,22 @@ def prune_ledgers(db_path=None):
             except Exception:
                 pass
             log.debug(f"prune_ledgers skipped schedules: {e}")
+        try:
+            n = _erase_removed_reviews(conn, deadline, refused=refused)
+            if n:
+                deleted["reviews_erased"] = n
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if _missing(e):
+                log.debug(f"prune_ledgers skipped the review erase: {e}")
+            else:
+                counts["attempted"] += 1
+                counts["failed"] += 1
+                log.error(f"prune_ledgers could not erase removed reviews: {e}")
+                capture(e, job="prune_ledgers", context="reviews_erase", db_path=db_path)
         _optimize(conn)
     finally:
         conn.close()
