@@ -3487,7 +3487,8 @@ def _do_cross_module(u):
         _ctx = rec_trust.Context(_rid(u))
     except Exception as e:
         print(f"[cross-module] trust context unavailable rid={_rid(u)}: {e}")
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx)
+    # The login's own answers leave its links too (CROSSMODULE-2).
+    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.

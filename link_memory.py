@@ -55,12 +55,26 @@ GONE_DAYS = 14              # not found in a read this long after it was last fo
 RECUR_AFTER_DAYS = 28       # after Done, still found this much later: reopened
 DECLINED = "not_for_us"
 ANSWERED = ("done", "implemented")
+# A link that ended on its own terms (re-audit 9/29/26, CROSSMODULE-12): a
+# fill campaign's night has passed and was measured, or passed with nothing
+# measured. Found again (a new campaign for the same night) it reopens.
+ENDED = ("measured", "window_closed")
 
 # Which link kinds each memory_context surface reads.
 SURFACE_KINDS = {
     "food_diagnosis": ("reviews_x_food_cost", "reviews_x_menu"),
     "marketing": ("reviews_x_menu", "marketing_x_reviews", "marketing_x_labor"),
+    # The review diagnosis reads the links that join its complaints to a
+    # staffing fact or the rating (re-audit 9/29/26, CROSSMODULE-9).
+    "review_diagnosis": ("reviews_x_labor", "dsr_x_reviews", "intel_x_reviews"),
+    # The schedule reads what a fill campaign's night measured, once the
+    # link has ended (CROSSMODULE-12): the verdict for labor:day:<day>.
+    "schedule": ("marketing_x_labor",),
 }
+# Surfaces that read a kind's ENDED rows (measured / window closed) as well
+# as its live ones, and for how long after the end.
+ENDED_SURFACE_KINDS = {"schedule": ("marketing_x_labor",)}
+ENDED_READ_DAYS = 120
 
 # The view a link's line needs (memory_context's viewer check): the most
 # guarded module it quotes — a food cost driver, a labor percentage.
@@ -106,8 +120,14 @@ def init_link_memory(db_path: str = DB_PATH):
             recurred_after    TEXT,
             recurred_after_by TEXT,
             times_recurred    INTEGER NOT NULL DEFAULT 0,
+            menu_item_id      INTEGER,
             PRIMARY KEY (restaurant_id, link_key)
         )""")
+        # The one menu row a reviews_x_menu link is about (re-audit 9/29/26,
+        # CROSSMODULE-14): "the chicken" blocked every chicken dish.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(bi_links)").fetchall()}
+        if "menu_item_id" not in have:
+            conn.execute("ALTER TABLE bi_links ADD COLUMN menu_item_id INTEGER")
         conn.commit()
     finally:
         conn.close()
@@ -154,13 +174,24 @@ def _detail(link):
 
 def consulted_modules(data) -> set:
     """The link modules a cross-module read consulted: a module's data was
-    read (business_intelligence.gather). A link whose modules were not all
-    consulted — a manager's view without Food Cost — was not looked for, so
-    its absence says nothing."""
+    read (business_intelligence.gather) AND is current by the module's own
+    flag. A link whose modules were not all consulted — a manager's view
+    without Food Cost, a restaurant whose waste logging lapsed — was not
+    looked for, so its absence says nothing: a measurement that stopped is
+    never recorded as a finding that resolved (re-audit 9/29/26,
+    CROSSMODULE-8)."""
     data = data or {}
     out = {m for m, k in _MODULE_DATA.items() if data.get(k)}
     if not (data.get("labor") or {}).get("is_live"):
         out.discard("labor")          # sample shifts are not this restaurant's labor
+    food = data.get("food_cost") or {}
+    if not (food.get("weekday_waste") or {}).get("has_data"):
+        out.discard("food_cost")      # no waste logged in the window: nothing current to find
+    rev = data.get("reviews") or {}
+    if not int((((rev.get("brief") or {}).get("coverage") or {}).get("total")) or 0) and not rev.get("clusters"):
+        out.discard("reviews")        # no reviews on file
+    if (data.get("visibility") or {}).get("stale"):
+        out.discard("intel")          # an out-of-date visibility run looked for nothing
     return out
 
 
@@ -179,6 +210,8 @@ def memory_of(row, today=None) -> dict:
         label = (f"Still found after you marked it done on {_mdy(came_back['resolved_on'])}"
                  if came_back["after"] == "done" else
                  f"Still found after the change was made on {_mdy(came_back['resolved_on'])}")
+    elif came_back and came_back["after"] in ENDED:
+        label = f"Back on {_mdy(came_back['on'])} with a new campaign"
     elif came_back:
         label = f"Back on {_mdy(came_back['on'])} after it went away"
     elif streak >= 2:
@@ -225,30 +258,46 @@ def observe(restaurant_id, links, consulted=None, today=None, db_path=None) -> l
                        "subject": link.get("subject"), "headline": link.get("headline"),
                        "modules": json.dumps(link.get("modules") or []), "day": link.get("day"),
                        "dish": link.get("dish"), "detail": _detail(link), "first_seen": iso, "last_seen": iso,
-                       "times_seen": 1, "week_streak": 1, "last_week": wk}
+                       "times_seen": 1, "week_streak": 1, "last_week": wk,
+                       "menu_item_id": link.get("menu_item_id")}
                 conn.execute(
                     "INSERT OR IGNORE INTO bi_links (restaurant_id, link_key, kind, subject, headline, modules, day, "
-                    "dish, detail, first_seen, last_seen, times_seen, week_streak, last_week) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "dish, detail, first_seen, last_seen, times_seen, week_streak, last_week, menu_item_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (restaurant_id, key, row["kind"], row["subject"], row["headline"], row["modules"], row["day"],
-                     row["dish"], row["detail"], iso, iso, 1, 1, wk))
+                     row["dish"], row["detail"], iso, iso, 1, 1, wk, row["menu_item_id"]))
                 rows[key] = row
-            elif str(row.get("last_seen") or "")[:10] < iso:
+            elif str(row.get("last_seen") or "")[:10] < iso or row.get("resolved_by") in ENDED:
+                # (an ENDED link found again — a new campaign for the same
+                # night — reopens the same day it ended)
                 last_week = row.get("last_week")
                 streak = int(row.get("week_streak") or 1)
                 streak = streak if last_week == wk else (streak + 1 if last_week == prev else 1)
+                by, at = row.get("resolved_by"), _day(row.get("resolved_at"))
+                if by == DECLINED:
+                    # A declined link's weeks do not run on (CROSSMODULE-3):
+                    # its streak stays where the owner answered it.
+                    streak = int(row.get("week_streak") or 1)
                 upd = {"headline": link.get("headline") or row.get("headline"), "detail": _detail(link),
                        "last_seen": iso, "times_seen": int(row.get("times_seen") or 0) + 1,
                        "week_streak": streak, "last_week": wk}
-                by, at = row.get("resolved_by"), _day(row.get("resolved_at"))
-                reopen = (by == "gone") or (by in ANSWERED and at is not None
-                                            and (today - at).days >= RECUR_AFTER_DAYS)
+                if link.get("menu_item_id") is not None:
+                    upd["menu_item_id"] = link["menu_item_id"]
+                reopen = (by == "gone") or (by in ENDED) or (by in ANSWERED and at is not None
+                                                            and (today - at).days >= RECUR_AFTER_DAYS)
                 if reopen:
-                    if by == "gone":
+                    if by == "gone" or by in ENDED:
                         upd["week_streak"] = 1
                     upd.update({"resolved_at": None, "resolved_by": None, "recurred_at": iso,
                                 "recurred_after": row.get("resolved_at"), "recurred_after_by": by,
                                 "times_recurred": int(row.get("times_recurred") or 0) + 1})
+                    if by in ANSWERED:
+                        # "Still found after you marked it done" reaches the
+                        # surfaces only if the ledger's Done lets it
+                        # (CROSSMODULE-4): a Done on a link held its key
+                        # silent for DONE_DAYS, so the reopening was never
+                        # seen. A decline is never lifted.
+                        _lift_answer(conn, restaurant_id, key)
                 sets = ", ".join(f"{k}=?" for k in upd)
                 conn.execute(f"UPDATE bi_links SET {sets} WHERE restaurant_id=? AND link_key=?",
                              (*upd.values(), restaurant_id, key))
@@ -274,6 +323,60 @@ def observe(restaurant_id, links, consulted=None, today=None, db_path=None) -> l
     return links
 
 
+def _lift_answer(conn, restaurant_id, key):
+    """End the ledger silence a Done (or the change made) put on a link's
+    key, on the caller's connection — never a decline's. Never raises."""
+    try:
+        import rec_ledger
+        from datetime import datetime as _dt
+        now = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        for r in conn.execute("SELECT rec_id FROM rec_instances WHERE restaurant_id=? AND key=? "
+                              "AND status IN ('completed','implemented','accepted') AND silenced_until IS NOT NULL "
+                              "AND silenced_until > ?", (restaurant_id, key, now)).fetchall():
+            rec_ledger.lift_silence(conn, r["rec_id"], "link_recurred")
+    except Exception as e:
+        log.warning("link_memory: done silence not lifted for rid=%s %s: %s", restaurant_id, key, e)
+
+
+def end(restaurant_id, key, by, headline=None, detail=None, today=None, db_path=None) -> bool:
+    """End an unresolved link on its own terms (ENDED: "measured" — its
+    night was measured — or "window_closed"), keeping what it ended with:
+    the measured sentence becomes its headline and joins its detail
+    (CROSSMODULE-12). A link never observed is not written. Never
+    raises."""
+    if by not in ENDED or not restaurant_id or not key:
+        return False
+    today = today or _today(restaurant_id)
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        row = conn.execute("SELECT detail FROM bi_links WHERE restaurant_id=? AND link_key=? AND resolved_at IS NULL",
+                           (restaurant_id, key)).fetchone()
+        if row is None:
+            return False
+        try:
+            d = json.loads(row["detail"] or "{}") or {}
+        except (TypeError, ValueError):
+            d = {}
+        d.update(detail or {})
+        sets, args = ["resolved_at=?", "resolved_by=?", "detail=?"], [today.isoformat(), by,
+                                                                      json.dumps(d, default=str)[:4000]]
+        if headline:
+            sets.append("headline=?")
+            args.append(str(headline)[:400])
+        conn.execute(f"UPDATE bi_links SET {', '.join(sets)} WHERE restaurant_id=? AND link_key=?",
+                     (*args, restaurant_id, key))
+        conn.commit()
+        return True
+    except Exception as e:
+        log.warning("link_memory: not ended for rid=%s %s: %s", restaurant_id, key, e)
+        return False
+    finally:
+        conn.close()
+
+
 def _answer(conn, restaurant_id, key, since):
     """The owner's answer to a link's recommendation since `since`:
     'done', 'implemented', 'not_for_us', or None, with its date."""
@@ -283,6 +386,16 @@ def _answer(conn, restaurant_id, key, since):
         (restaurant_id, key, since)).fetchone()
     if ev is None:
         return None, None
+    # The restaurant's own day of the answer (time_utils.local_iso): the
+    # ledger stamps UTC, and every date this table compares against is the
+    # restaurant's — an evening Done read as tomorrow's, so "still found 28
+    # days after you marked it done" came a day late.
+    try:
+        from time_utils import local_iso
+        tzr = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        on = local_iso(ev["at"], tz=(tzr[0] if tzr else None) or None)
+    except Exception:
+        on = str(ev["at"])[:10]
     if ev["event"] == "dismissed":
         try:
             meta = json.loads(ev["meta"] or "{}") or {}
@@ -290,8 +403,8 @@ def _answer(conn, restaurant_id, key, since):
             meta = {}
         if meta.get("kind") != "not_for_us":
             return None, None
-        return DECLINED, str(ev["at"])[:10]
-    return ("done" if ev["event"] == "completed" else "implemented"), str(ev["at"])[:10]
+        return DECLINED, on
+    return ("done" if ev["event"] == "completed" else "implemented"), on
 
 
 def settle(restaurant_id, today=None, db_path=None) -> dict:
@@ -361,6 +474,40 @@ def active(restaurant_id, kinds=None, within_days=ACTIVE_DAYS, today=None, db_pa
     return rows
 
 
+def ended(restaurant_id, kinds=None, within_days=ENDED_READ_DAYS, today=None, db_path=None) -> list:
+    """Links that ENDED on their own terms (ENDED) within `within_days`,
+    newest first, each with its `memory` and parsed `detail`. Never
+    raises."""
+    if not restaurant_id:
+        return []
+    today = today or _today(restaurant_id)
+    since = (today - timedelta(days=within_days)).isoformat()
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return []
+    try:
+        args = [restaurant_id, since, *ENDED]
+        extra = ""
+        if kinds:
+            extra = f" AND kind IN ({','.join('?' for _ in kinds)})"
+            args += list(kinds)
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM bi_links WHERE restaurant_id=? AND resolved_at>=? AND resolved_by IN (?,?)" + extra
+            + " ORDER BY resolved_at DESC", args).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            r["detail"] = json.loads(r.get("detail") or "{}") or {}
+        except (TypeError, ValueError):
+            r["detail"] = {}
+        r["memory"] = memory_of(r, today)
+    return rows
+
+
 def history(restaurant_id, db_path=None) -> list:
     """Every link kept for this restaurant, resolved ones included, newest
     first (Ask, the admin console). Never raises."""
@@ -378,6 +525,38 @@ def history(restaurant_id, db_path=None) -> list:
     for r in rows:
         r["memory"] = memory_of(r)
     return rows
+
+
+_STATUS_WORDS = {DECLINED: "you said not for us", "done": "you marked it done", "implemented": "the change was made",
+                 "gone": "no longer found", "measured": "its night was measured",
+                 "window_closed": "its night passed with nothing measured"}
+
+
+def history_lines(restaurant_id, denied=(), limit=12, db_path=None) -> list:
+    """The link history Ask reads (read_restaurant_memory, re-audit 9/29/26
+    CROSSMODULE-15): every kept link, open or resolved, newest first —
+    {kind, headline, status, resolved_on, first_found, last_found, label,
+    times_came_back} — so "have we seen this Friday problem before, and did
+    I pass on it?" has an answer. `denied`: the login's denied module views
+    (ask_cavnar_tools._denied — "inventory", "labor", …); a link whose line
+    needs one of them (LINE_MODULE) is left out. Dates M/D/YY. Never
+    raises."""
+    denied = set(denied or ())
+    out = []
+    for r in history(restaurant_id, db_path=db_path):
+        module = LINE_MODULE.get(r.get("kind"), "food")
+        if {"food": "inventory"}.get(module, module) in denied:
+            continue
+        by = r.get("resolved_by")
+        out.append({"kind": r.get("kind"), "headline": r.get("headline"),
+                    "status": _STATUS_WORDS.get(by, "open") if by else "open",
+                    "resolved_on": _mdy(r.get("resolved_at")) if r.get("resolved_at") else None,
+                    "first_found": _mdy(r.get("first_seen")), "last_found": _mdy(r.get("last_seen")),
+                    "label": (r.get("memory") or {}).get("label"),
+                    "times_came_back": int(r.get("times_recurred") or 0)})
+        if len(out) >= limit:
+            break
+    return out
 
 
 # ── the consumers ────────────────────────────────────────────────────────────
@@ -406,34 +585,133 @@ def do_not_promote(restaurant_id, db_path=None) -> dict:
         if not dish:
             continue
         complaints = _complaints_phrase(r)
+        mid, menu_name = r.get("menu_item_id"), None
+        if mid is None:
+            # A link stored before its dish was resolved to one menu row.
+            mid, menu_name = resolve_menu_item(restaurant_id, dish, db_path=db_path)
+        else:
+            menu_name = _menu_name(restaurant_id, mid, db_path=db_path)
         out[dish] = {"dish": dish, "link_key": r["link_key"], "since": r.get("first_seen"), "complaints": complaints,
+                     "menu_item_id": mid, "menu_item": menu_name,
                      "reason": f"guests name it in {complaints} and it is a food cost driver"}
     return out
 
 
-def names_dish(listed, name) -> dict | None:
-    """The do_not_promote / guard entry that plainly refers to the menu's
-    `name` (business_intelligence._same_thing: a shared significant word),
-    or None."""
-    if not listed or not name:
+# ── the one menu row a complaint is about (re-audit 9/29/26, CROSSMODULE-14) ─
+#
+# The link's dish is the review analyser's entity — "the chicken" — and
+# matching it on any shared word blocked Chicken Parm, the Chicken Caesar
+# and the Buffalo Chicken Wings from marketing and put a reprice guard on
+# each. The link now names ONE menu row: the driver's own dish when Food
+# Cost's driver is a menu item, else among the menu items the guests' words
+# name (a shared significant word, business_intelligence._same_thing) the
+# one that uses the driver's ingredient, then the best seller over the last
+# MENU_SALES_DAYS. The guard and the do-not-promote list match on that id.
+MENU_SALES_DAYS = 28
+
+
+def _norm_name(v):
+    import re
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", str(v or "").lower()).split())
+
+
+def _menu_name(restaurant_id, menu_item_id, db_path=None):
+    try:
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT name FROM menu_items WHERE id=? AND restaurant_id=?",
+                             (menu_item_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        return r["name"] if r else None
+    except Exception:
+        return None
+
+
+def resolve_menu_item(restaurant_id, dish, driver_item=None, driver_kind=None, today=None, db_path=None) -> tuple:
+    """(menu_item_id, name) of the ONE active menu row a complaint's `dish`
+    is about, or (None, None). `driver_item` / `driver_kind`: Food Cost's
+    driver the link joined (a "menu" driver names the dish itself; any other
+    names an ingredient the dish should use). Never raises."""
+    try:
+        from business_intelligence import _same_thing
+        today = today or _today(restaurant_id)
+        conn = get_conn(db_path)
+        try:
+            menu = [dict(r) for r in conn.execute(
+                "SELECT id, name FROM menu_items WHERE restaurant_id=? AND COALESCE(is_active,1)=1",
+                (restaurant_id,)).fetchall()]
+            if driver_item and driver_kind == "menu":
+                hit = next((m for m in menu if _norm_name(m["name"]) == _norm_name(driver_item)), None)
+                if hit:
+                    return hit["id"], hit["name"]
+            cands = [m for m in menu if _same_thing(dish, m["name"])]
+            if not cands:
+                return None, None
+            ids = [m["id"] for m in cands]
+            marks = ",".join("?" for _ in ids)
+            sold = {}
+            try:
+                sold = {r["menu_item_id"]: float(r["q"] or 0) for r in conn.execute(
+                    f"SELECT menu_item_id, SUM(qty_sold) AS q FROM menu_item_sales WHERE restaurant_id=? "
+                    f"AND business_date >= ? AND menu_item_id IN ({marks}) GROUP BY menu_item_id",
+                    (restaurant_id, (today - timedelta(days=MENU_SALES_DAYS)).isoformat(), *ids)).fetchall()}
+            except Exception:
+                sold = {}
+            uses = set()
+            if driver_item and driver_kind != "menu":
+                try:
+                    uses = {r["menu_item_id"] for r in conn.execute(
+                        f"SELECT ri.menu_item_id FROM recipe_ingredients ri JOIN ingredients g ON g.id=ri.ingredient_id "
+                        f"WHERE ri.menu_item_id IN ({marks}) AND lower(g.name)=?",
+                        (*ids, str(driver_item).strip().lower())).fetchall()}
+                except Exception:
+                    uses = set()
+        finally:
+            conn.close()
+        best = sorted(cands, key=lambda m: (m["id"] not in uses, -sold.get(m["id"], 0.0),
+                                            len(_norm_name(m["name"]).split()), m["id"]))[0]
+        return best["id"], best["name"]
+    except Exception as e:
+        log.warning("link_memory: dish not resolved for rid=%s: %s", restaurant_id, e)
+        return None, None
+
+
+def names_dish(listed, name, menu_item_id=None) -> dict | None:
+    """The do_not_promote / guard entry about the menu dish `name` (its
+    menu_items id when the caller has it), or None. An entry resolved to
+    one menu row matches that row only — by id, else by its exact name
+    (CROSSMODULE-14); an entry no menu row matched falls back to a shared
+    significant word (business_intelligence._same_thing)."""
+    if not listed or not (name or menu_item_id is not None):
         return None
     try:
         from business_intelligence import _same_thing
     except Exception:
         return None
     for dish, entry in listed.items():
-        if _same_thing(dish, name):
+        mid = entry.get("menu_item_id")
+        if mid is not None:
+            if menu_item_id is not None:
+                if int(menu_item_id) == int(mid):
+                    return entry
+                continue
+            if entry.get("menu_item") and _norm_name(entry["menu_item"]) == _norm_name(name):
+                return entry
+            continue
+        if name and _same_thing(dish, name):
             return entry
     return None
 
 
-def dish_guard(restaurant_id, dish, listed=None, db_path=None) -> dict | None:
+def dish_guard(restaurant_id, dish, listed=None, db_path=None, menu_item_id=None) -> dict | None:
     """The reprice guard for one dish: {"kind", "text", "link_key", "since"}
     when guests are naming it in complaints (a live reviews_x_menu link), so
     the price is not raised by one tap before the plate is looked at
     (menu_intelligence._verdict's own rule: fix the plate before repricing
     it). `listed`: do_not_promote's result, read once for many dishes."""
-    entry = names_dish(listed if listed is not None else do_not_promote(restaurant_id, db_path=db_path), dish)
+    entry = names_dish(listed if listed is not None else do_not_promote(restaurant_id, db_path=db_path), dish,
+                       menu_item_id=menu_item_id)
     if not entry:
         return None
     return {"kind": "guest_complaints", "link_key": entry["link_key"], "since": entry.get("since"),
@@ -448,11 +726,25 @@ def link_lines(req) -> list:
     a cause; marketing reads the do-not-promote list and its own links.
     Lines carry guest-derived words (a dish as guests named it), so none is
     trusted: the assembler fences them."""
-    kinds = SURFACE_KINDS.get(getattr(req, "surface", None))
+    surface = getattr(req, "surface", None)
+    kinds = SURFACE_KINDS.get(surface)
     if not kinds:
         return []
-    rows = active(req.restaurant_id, kinds=kinds, db_path=getattr(req, "db_path", None))
+    live_kinds = tuple(k for k in kinds if k not in ENDED_SURFACE_KINDS.get(surface, ()))
+    rows = active(req.restaurant_id, kinds=live_kinds, db_path=getattr(req, "db_path", None)) if live_kinds else []
     lines = []
+    # What a campaign's night measured, once its link ended (CROSSMODULE-12):
+    # the verdict the schedule reads for that weekday — measured here, before
+    # and after, never proof.
+    for r in ended(req.restaurant_id, kinds=ENDED_SURFACE_KINDS.get(surface), db_path=getattr(req, "db_path", None)
+                   )[:4] if ENDED_SURFACE_KINDS.get(surface) else []:
+        d = r.get("detail") or {}
+        text = d.get("outcome") or r.get("headline")
+        if not text:
+            continue
+        lines.append({"text": text, "date": r.get("resolved_at"), "source": "link",
+                      "subject": f"labor:day:{str(r.get('day') or '').lower()}" if r.get("day") else r["link_key"],
+                      "weight": 8.0, "trusted": True, "module": LINE_MODULE.get(r["kind"], "labor")})
     for i, r in enumerate(rows[:6]):
         m = r["memory"]
         when = m["label"][:1].lower() + m["label"][1:]

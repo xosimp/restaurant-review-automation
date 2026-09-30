@@ -808,7 +808,10 @@ def _read_business_snapshot(restaurant_id, _viewer=None):
     return {
         "has_data": True,
         "fix_first": brief.get("fix_first"),
+        # Only the links the owner has not answered (CROSSMODULE-2); the
+        # rest are in read_restaurant_memory's link history, labelled.
         "links": brief.get("links"),
+        "links_answered": brief.get("links_answered") or 0,
         "money": brief.get("money"),
         "reviews": brief.get("reviews"),
         "food_cost": brief.get("food_cost"),
@@ -1271,7 +1274,23 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
                                    for k, v in mem["record"]["by_kind"].items()}},
             "slopes": slopes, "features": feats,
-            "note": "This restaurant's own history only."}
+            # Every cross-module link kept, open or answered, labelled
+            # (re-audit 9/29/26, CROSSMODULE-15): "have we seen this Friday
+            # problem before, and did I pass on it?" — projected by the
+            # login's module views (link_memory.LINE_MODULE).
+            "links": _link_history(restaurant_id, denied),
+            "note": ("This restaurant's own history only. `links`: what two modules pointed at together, when "
+                     "it was found and how it ended — a link marked 'you said not for us' is never re-proposed "
+                     "as new; say it was declined and when.")}
+
+
+def _link_history(restaurant_id, denied):
+    try:
+        import link_memory
+        return link_memory.history_lines(restaurant_id, denied=denied)
+    except Exception as e:
+        log.warning("read_restaurant_memory: link history unavailable: %s", e)
+        return []
 
 
 def _read_platform_intelligence(restaurant_id, _viewer=None):
@@ -2740,7 +2759,8 @@ TOOLS = [
             "description": (
                 "THIS RESTAURANT'S OWN LEARNED HISTORY: busiest and quietest weekdays, seasonal peak and trough "
                 "months, which recommendation kinds measurably worked here and which the owner keeps declining, "
-                "and how its key measures are trending week to week. Its own data only. Call this before "
+                "how its key measures are trending week to week, and the history of every cross-module link "
+                "(found when, still open, declined, done or ended). Its own data only. Call this before "
                 "recommending timing, staffing or a kind of action the owner may already have judged."
             ),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
