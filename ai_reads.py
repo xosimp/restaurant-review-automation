@@ -1073,6 +1073,16 @@ def confidence_calibration(restaurant_id=None, days=365, db_path=None) -> dict:
 # claims of every surface, not only their own.
 CROSS_SURFACES = ("weekly_plan", "digest", "brief", "ask", "monthly_review")
 
+# Surfaces whose own subjects no claim is ever filed under, so a subject
+# match alone can never find a claim for them: the nightly report asks by
+# "date:<d>" / "dsr:<d>", and every claim is filed under a category, a
+# driver or an advice key. They read the latest claims of every OTHER
+# surface too (memory re-audit 9/29/26, QUALITY-13 — the report's
+# "last_claim" section could never return a line).
+CLAIM_CROSS_READERS = ("dsr_narrative",)
+# Subject prefixes no claim is filed under (dropped before the match).
+_NON_CLAIM_SUBJECTS = ("date:", "dsr:")
+
 _STATE_WORDS = {"taken": "the advice was taken", "taken_late": "the advice was taken after the check window",
                 "declined": "the owner said not for us", "hidden": "the owner hid it",
                 "ignored": "it was left unanswered", "open": "not answered yet", "replaced": "it was replaced",
@@ -1143,22 +1153,28 @@ def _interim(restaurant_id, row, db_path=None):
 
 def claim_lines(req):
     """memory_context provider: the last claim on req.subjects for
-    req.surface and its verdict ("LAST READ (9/2/26): ... Answered Done;
-    complaints 9 -> 4 since (before and after, not proof)").
+    req.surface and its verdict — ONE line per claim: the model's own
+    words (fenced — memory_context fences every line not marked trusted),
+    and, as the line's trusted `measured` suffix, what happened since,
+    which Cavnar AI measured, naming the read it follows ("Since the
+    9/27/26 labor read: answered Done; labor % 34.0% → 29.5% …"). They
+    were two lines ranked apart, and one read's outcome landed under
+    another (memory re-audit 9/29/26, PROMPTS-4); now they are one budget
+    unit, kept or cut together.
 
-    Two lines per claim: the model's own words (fenced — memory_context
-    fences every line not marked trusted) and what happened since, which
-    Cavnar AI measured (trusted): the answer the advice got and the number
-    at the horizon, or so far. A subject is matched on the claim's subject
-    ("category:service"), its recommendation key ("diag_review:service") or
-    its advice signature ("labor:day:friday"); with no subjects, the
-    surface's own latest claims. The nightly report's own actions are
-    served by its YESTERDAY'S PRIORITIES block (dsr.narrative), not here."""
+    A subject is matched on the claim's subject ("category:service"), its
+    recommendation key ("diag_review:service") or its advice signature
+    ("labor:day:friday"); with no subjects, the surface's own latest claims
+    (every surface's, for a cross-module reader). The nightly report reads
+    every other surface's latest claims (CLAIM_CROSS_READERS); its own
+    actions are served by its YESTERDAY'S PRIORITIES block
+    (dsr.narrative), not here."""
     rid = getattr(req, "restaurant_id", None)
     if not rid:
         return []
     surface = getattr(req, "surface", None)
-    subjects = [str(s) for s in (getattr(req, "subjects", None) or ()) if s]
+    subjects = [str(s) for s in (getattr(req, "subjects", None) or ()) if s
+                and not str(s).startswith(_NON_CLAIM_SUBJECTS)]
     db_path = getattr(req, "db_path", None)
     try:
         conn = get_conn(db_path)
@@ -1166,23 +1182,31 @@ def claim_lines(req):
         return []
     lines = []
     try:
-        where = ["restaurant_id=?", "created_at >= datetime('now', ?)"]
-        args = [rid, f"-{CLAIM_LOOKBACK_DAYS} days"]
+        base = ["restaurant_id=?", "created_at >= datetime('now', ?)"]
+        base_args = [rid, f"-{CLAIM_LOOKBACK_DAYS} days"]
+        if surface in CLAIM_CROSS_READERS:
+            base.append("surface != ?")
+            base_args.append(surface)
+        queries = []
         if subjects:
             marks = ",".join("?" for _ in subjects)
-            where.append(f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))")
-            args += subjects * 3
-        elif surface in CROSS_SURFACES:
-            pass                    # a read over the whole restaurant: every surface's latest claims
-        elif surface:
-            where.append("surface=?")
-            args.append(surface)
-        else:
-            return []
-        if surface == "dsr_narrative":
-            where.append("surface != 'dsr_narrative'")
-        rows = [dict(r) for r in conn.execute(
-            f"SELECT * FROM ai_claims WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 40", args).fetchall()]
+            queries.append((base + [f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))"],
+                            base_args + subjects * 3))
+        if surface in CLAIM_CROSS_READERS or (not subjects and surface in CROSS_SURFACES):
+            queries.append((base, base_args))  # a read over the whole restaurant: every surface's latest claims
+        elif not subjects:
+            if not surface:
+                return []
+            queries.append((base + ["surface=?"], base_args + [surface]))
+        rows, seen_ids = [], set()
+        for where, args in queries:
+            for r in conn.execute(f"SELECT * FROM ai_claims WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 40",
+                                  args).fetchall():
+                r = dict(r)
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    rows.append(r)
+        rows.sort(key=lambda r: -r["id"])
         latest = {}
         for r in rows:
             latest.setdefault((r["surface"], r["subject"]), r)
@@ -1200,15 +1224,14 @@ def claim_lines(req):
         picked = pool[:4]
         for i, r in enumerate(picked):
             weight = 10.0 - i
-            said = f"LAST READ on {r['subject'].replace('_', ' ')} ({SURFACE_LABELS.get(r['surface'], r['surface'])})"
+            label = SURFACE_LABELS.get(r["surface"], r["surface"])
+            said = f"LAST READ on {r['subject'].replace('_', ' ')} ({label})"
             said += f": {'cause' if r['claim_type'] == 'cause' else r['claim_type']} — {r.get('last_text') or r['text']}"
             if r.get("action") and r["claim_type"] == "cause":
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
                 said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
             scope = line_scope(r["surface"])
-            lines.append({"text": said, "date": str(r.get("after_start") or r["created_at"])[:10], "source": "model",
-                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False, **scope})
             since = []
             state = _live_state(conn, rid, r.get("rec_key"))
             if state:
@@ -1220,15 +1243,31 @@ def claim_lines(req):
             else:
                 so_far = _interim(rid, r, db_path=db_path)
                 since.append(so_far or f"to be checked {_mdy(r['horizon_date'])}")
-            lines.append({"text": "Since that read: " + "; ".join(s for s in since if s) + ".",
-                          "date": None, "source": "system", "subject": r.get("rec_key") or r["subject"],
-                          "weight": weight - 0.5, "trusted": True, **scope})
+            # The read the outcome follows, named — never "that read".
+            when = r.get("after_start") or r["created_at"]
+            try:
+                import time_utils as _tu
+                read_day = _mdy(_tu.local_iso(when, _restaurant_tz_name(rid))) if len(str(when)) > 10 else _mdy(when)
+            except Exception:
+                read_day = _mdy(str(when)[:10])
+            measured = (f"Since {label} on {read_day}: " + "; ".join(s for s in since if s) + ".")
+            lines.append({"text": said, "date": str(when), "source": "model",
+                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False,
+                          "measured": measured, **scope})
     except Exception as e:
         log.warning("ai_reads: claim lines unavailable rid=%s: %s", rid, e)
         return []
     finally:
         conn.close()
     return lines
+
+
+def _restaurant_tz_name(restaurant_id):
+    try:
+        from models import get_restaurant
+        return getattr(get_restaurant(restaurant_id), "timezone", None)
+    except Exception:
+        return None
 
 
 # ── the quarterly "what we said, what was done, what happened" ──────────────

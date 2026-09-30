@@ -188,7 +188,11 @@ def test_the_next_diagnosis_of_the_subject_reads_the_last_claim_and_what_followe
     assert memory_context.SECTION_TITLES["last_claim"] + ":" in text
     assert "LAST READ on category:service" in text and "Friday dinner runs a server short." in text
     assert ai_guard.UNTRUSTED_OPEN in text, "the model's own words are fenced"
-    assert "Since that read: Answered Done" in text and "the expected change held" in text
+    # Memory re-audit 9/29/26 (PROMPTS-4): the outcome rides on the claim's
+    # own line as a trusted suffix naming the read, not a separate "Since
+    # that read" line the ranker could put under another claim.
+    assert "Since the review diagnosis on" in text and "Answered Done" in text
+    assert "the expected change held" in text
     assert f"({made.month}/{made.day}/{made.year % 100:02d})" in text and made.isoformat() not in text
 
 
@@ -200,7 +204,9 @@ def test_an_open_claim_reads_so_far_and_when_it_is_checked():
     _answer(rid, "diag_review:service", None, made)        # shown on the card, not answered
     lines = ai_reads.claim_lines(type("R", (), {"restaurant_id": rid, "surface": "review_diagnosis",
                                                 "subjects": ("diag_review:service",), "db_path": None})())
-    since = [ln for ln in lines if ln["trusted"]][0]["text"]
+    # One line per claim now; what happened since is its trusted `measured`
+    # suffix (memory re-audit 9/29/26, PROMPTS-4).
+    since = lines[0]["measured"]
     assert "Not answered yet" in since or "not answered yet" in since
     assert "so far" in since or "to be checked" in since
 
