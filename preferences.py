@@ -155,6 +155,36 @@ def group_locations(restaurant, db_path=None) -> list:
         return []
 
 
+def org_location_ids(restaurant_id, db_path=None) -> list:
+    """The ids of the OTHER locations in this location's organisation (same
+    org_key: its organization_id, else its group under its owner) — where a
+    person's own learning and an owner's organisation-wide facts are read
+    from (memory re-audit 9/29/26, PEOPLE-13). [] for a location in no
+    organisation."""
+    import models
+    try:
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+    except Exception:
+        return []
+    ok = org_key(r)
+    if not ok:
+        return []
+    ids = set()
+    org = _get(r, "organization_id")
+    if org:
+        conn = get_conn(db_path)
+        try:
+            ids = {row[0] for row in conn.execute("SELECT id FROM restaurants WHERE organization_id=?",
+                                                  (int(org),)).fetchall()}
+        except Exception:
+            ids = set()
+        finally:
+            conn.close()
+    else:
+        ids = {loc["id"] for loc in group_locations(r, db_path=db_path) if loc.get("id") is not None}
+    return sorted(i for i in ids if i != restaurant_id)
+
+
 def may_apply_to_all(user, restaurant) -> bool:
     """A group owner: an account holder who may switch between the group's
     locations (LOCATION_SWITCH), on a location that is in a group."""

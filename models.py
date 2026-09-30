@@ -7233,6 +7233,10 @@ _ASK_MEMORY_COLUMNS = (
     ("due_on", "TEXT"),           # YYYY-MM-DD: a follow-up's due date (expires 7 days after)
     ("origin", "TEXT"),           # ask | account | audit | ratings | home (legacy)
     ("updated_at", "TEXT"),
+    # 'org': every location in the organisation reads it (owner_memory.
+    # facts_for); NULL / 'location': this location only. Written only by a
+    # login who may act for every location (memory re-audit 9/29/26, PEOPLE-13).
+    ("scope", "TEXT"),
 )
 
 
@@ -7330,9 +7334,11 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
                       source: str = None, user_id: int = None,
                       db_path: str = DB_PATH, modules=None, subject: str = None,
                       audience: str = None, author_label: str = None, authority: str = None,
-                      valid_until: str = None, due_on: str = None, origin: str = None) -> dict:
+                      valid_until: str = None, due_on: str = None, origin: str = None, scope: str = None) -> dict:
     """Record one durable fact. Idempotent on the text (a repeat updates the
-    fact's type and stamps it again).
+    fact's type and stamps it again). `scope` "org" makes it every
+    location's (owner_memory.remember checks who may); a repeat without a
+    scope keeps the one it has.
 
     The owner-facing path is owner_memory.remember, which types the fact and
     stamps its author; this is the storage write and its one invariant: each
@@ -7357,13 +7363,14 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
     try:
         conn.execute(
             "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id, modules, subject, audience, "
-            "author_label, authority, valid_until, due_on, origin, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
+            "author_label, authority, valid_until, due_on, origin, scope, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
             "kind=excluded.kind, source=excluded.source, user_id=COALESCE(excluded.user_id, ask_memory.user_id), "
             "modules=excluded.modules, subject=excluded.subject, audience=excluded.audience, "
             "author_label=COALESCE(excluded.author_label, ask_memory.author_label), "
             "authority=COALESCE(excluded.authority, ask_memory.authority), valid_until=excluded.valid_until, "
             "due_on=excluded.due_on, origin=COALESCE(excluded.origin, ask_memory.origin), "
+            "scope=COALESCE(excluded.scope, ask_memory.scope), "
             "created_at=datetime('now'), updated_at=datetime('now')",
             (restaurant_id, text, kind, (source or "")[:160] or None, user_id, modules,
              (str(subject).strip()[:120] or None) if subject else None, audience,
@@ -7371,7 +7378,8 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
              (str(authority)[:20] or None) if authority else None,
              (str(valid_until)[:10] or None) if valid_until else None,
              (str(due_on)[:10] or None) if due_on else None,
-             (str(origin)[:20] or None) if origin else None))
+             (str(origin)[:20] or None) if origin else None,
+             scope if scope in ("org", "location") else None))
         cap = ASK_MEMORY_CAPS.get(kind, ASK_MEMORY_LIMIT)
         over = [r["id"] for r in conn.execute(
             "SELECT id FROM ask_memory WHERE restaurant_id=? AND COALESCE(kind, 'context')=? "
@@ -7398,13 +7406,57 @@ def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH, kinds=None) -> li
                 args += kinds
             rows = conn.execute(
                 "SELECT id, fact, kind, source, user_id, created_at, modules, subject, audience, author_label, "
-                "authority, valid_until, due_on, origin, updated_at FROM ask_memory WHERE restaurant_id=?"
+                "authority, valid_until, due_on, origin, updated_at, scope FROM ask_memory WHERE restaurant_id=?"
                 + where + " ORDER BY created_at DESC, id DESC", args).fetchall()
         finally:
             conn.close()
         return [dict(r) for r in rows]
     except Exception:
         return []
+
+
+def org_ask_memory(restaurant_ids, db_path: str = DB_PATH, kinds=None) -> list:
+    """The organisation-wide facts (scope 'org') kept at `restaurant_ids` —
+    the other locations of one organisation (preferences.org_location_ids)
+    — newest first, each with its `restaurant_id` (memory re-audit 9/29/26,
+    PEOPLE-13). A read; [] on any failure."""
+    ids = [int(i) for i in restaurant_ids or () if i is not None]
+    if not ids:
+        return []
+    try:
+        conn = get_conn(db_path)
+        try:
+            args = list(ids)
+            where = ""
+            if kinds:
+                kinds = [k for k in kinds if k in ASK_MEMORY_KINDS]
+                where = f" AND COALESCE(kind, 'context') IN ({','.join('?' for _ in kinds)})"
+                args += kinds
+            rows = conn.execute(
+                "SELECT id, restaurant_id, fact, kind, source, user_id, created_at, modules, subject, audience, "
+                "author_label, authority, valid_until, due_on, origin, updated_at, scope FROM ask_memory "
+                f"WHERE restaurant_id IN ({','.join('?' for _ in ids)}) AND scope='org'" + where
+                + " ORDER BY created_at DESC, id DESC LIMIT 200", args).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def set_ask_fact_scope(restaurant_id: int, fact_id: int, scope: str, db_path: str = DB_PATH) -> bool:
+    """Make one of this location's facts every location's ('org') or this
+    location's only ('location'). The caller checks who may."""
+    if scope not in ("org", "location"):
+        raise ValueError("scope is org or location")
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE ask_memory SET scope=?, updated_at=datetime('now') WHERE id=? AND restaurant_id=?",
+                         (None if scope == "location" else "org", int(fact_id), restaurant_id)).rowcount
+        conn.commit()
+        return bool(n)
+    finally:
+        conn.close()
 
 
 def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
