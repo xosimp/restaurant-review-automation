@@ -246,10 +246,13 @@ def test_the_labor_tab_has_the_task_sheets_section_in_place_of_daily_tasks():
     the owner reads the day and edits the sheets; nobody ticks on this page."""
     html = _dashboard_html()
     assert 'id="tasks-panel"' not in html and "toggleTasksPanel" not in html
-    sec = html[html.index('<section class="hb-card ts-sec" id="ts-sec" data-nav="labor/tasks"'):]
-    sec = sec[:sec.index("</section>")]
+    # A Team & rules row like the others (owner, 9/30/26), opened on demand.
+    team = html[html.index('<details class="hb-results lb2-team" id="lb2-team">'):]
+    team = team[:team.index("</details>")]
+    row = team[team.index('<div class="lb2-srow s3" data-nav="labor/tasks">'):]
+    assert 'onclick="lb2RowClick(event,toggleTsPanel)"' in row and 'id="ts-panel" style="display:none"' in row
     for view in ("day", "report", "edit"):
-        assert f'data-ts-view="{view}"' in sec
+        assert f'data-ts-view="{view}"' in row
 
 
 def test_the_section_talks_to_the_task_sheet_endpoints_and_never_ticks():
@@ -259,4 +262,5 @@ def test_the_section_talks_to_the_task_sheet_endpoints_and_never_ticks():
                 "'/api/task-sheets/lines/'", "'/order'", "'/starter'"):
         assert url in js, url
     assert "/api/tasks/complete" not in js and 'type="checkbox" data-task' not in js
-    assert "if(n==='labor'&&window.tsOpen){tsOpen();}" in html
+    assert "window.tsOpen" not in html[html.index("if(n==='labor'&&!laborLoaded)"):][:200]   # loads when opened
+    assert "if (_tsPanelOpen) tsOpen();" in html

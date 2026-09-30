@@ -9519,9 +9519,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
 /* Task sheets (task_sheets.py, 9/30/26; DESIGN_SYSTEM.md "Task sheets").
    The owner reads - no tick boxes on this page. */
-.ts-sec{margin-top:22px;--hb-inner:var(--sf-recess);--hb-amber:var(--amber);--hb-good2:var(--green)}   /* the stat tiles' tone tokens (Home defines them; Labor did not) */
-.ts-hd{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
-.ts-hd h2{margin:6px 0 0;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26px;letter-spacing:-.01em;color:var(--ink)}
+.ts-sec{--hb-inner:var(--sf-recess);--hb-amber:var(--amber);--hb-good2:var(--green)}   /* the stat tiles' tone tokens (Home defines them; Labor did not) */
+.ts-hd{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
 .ts-daynav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .ts-daynav .d{font-size:16.5px;font-weight:600;color:var(--ink);min-width:110px;text-align:center}
 .ts-note{font-size:15px;line-height:1.5;color:var(--ink2);padding:12px 14px;border-radius:10px;background:var(--sf-recess);border:1px solid var(--hb-line2);margin:12px 0}
@@ -10484,29 +10483,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {# Team & rules and History sat inside the old schedule card; they keep a
      wrapper of their own at the column width, closed where that card was. #}
   <div class="lb2-sched-rest">
-  {# Task sheets (task_sheets.py, 9/30/26): opening and closing sheets by
-     job code, owed by whoever the published schedule puts on that shift.
-     The owner READS the day - every sheet, every line, who ticked it and
-     when - and edits the sheets; staff tick them in the staff portal. #}
-  <section class="hb-card ts-sec" id="ts-sec" data-nav="labor/tasks" aria-labelledby="ts-h">
-    <div class="ts-hd">
-      <div><div class="hb-kicker">Opening &amp; closing</div><h2 id="ts-h">Task sheets</h2></div>
-      <div class="dr-views" role="group" aria-label="Task sheets view">
-        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="day" aria-pressed="true">The day</button>
-        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="report" aria-pressed="false">Consistency</button>
-        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="edit" aria-pressed="false">Edit sheets</button>
-      </div>
-    </div>
-    <div id="ts-body" aria-live="polite"><div class="dr-pulse wide" role="status" aria-label="Loading task sheets"><i></i></div></div>
-  </section>
-
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
   <details class="hb-results lb2-team" id="lb2-team">
-    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says</span></summary>
+    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says, task sheets</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
        nights per day, under 18. Each change is one POST and one toast. -->
@@ -10761,6 +10744,31 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="lb2-avail">
         <div class="lb2-intro">What your published weeks did, read from the record.</div>
         <div id="intel-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  {# Task sheets (task_sheets.py, 9/30/26): opening and closing sheets by job
+     code, owed by whoever the published schedule puts on that shift. A row
+     like the others here (owner, 9/30/26); the owner READS the day - every
+     sheet, every line, who ticked it and when - and edits the sheets; staff
+     tick them in the staff portal. Loads when opened. #}
+  <div class="lb2-srow s3" data-nav="labor/tasks">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleTsPanel)">
+      <div class="lb2-subsection-title">Task sheets <span id="ts-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleTsPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="ts-toggle-btn">Open ↓</button>
+    </div>
+    <div id="ts-panel" style="display:none">
+      <div class="lb2-avail ts-sec" id="ts-sec" aria-label="Task sheets">
+        <div class="ts-hd">
+          <div class="lb2-intro" style="margin:0">Opening and closing sheets by job code. Staff tick them in the staff portal; you see every sheet for the day here.</div>
+          <div class="dr-views" role="group" aria-label="Task sheets view">
+            <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="day" aria-pressed="true">The day</button>
+            <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="report" aria-pressed="false">Consistency</button>
+            <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="edit" aria-pressed="false">Edit sheets</button>
+          </div>
+        </div>
+        <div id="ts-body" aria-live="polite"><div class="dr-pulse wide" role="status" aria-label="Loading task sheets"><i></i></div></div>
       </div>
     </div>
   </div>
@@ -16890,7 +16898,6 @@ function switchTab(n,btn){
   if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
   if(n==='reviews'){var _rvA=document.getElementById('rv-panel-analytics');if(!_rvA||_rvA.open)_rvLoadAnalytics();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-  if(n==='labor'&&window.tsOpen){tsOpen();}
   if(n==='inventory'){switchFcTab('analytics');}
   if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();if(typeof in2LoadMoves==='function'&&cavStale('intel-moves'))in2LoadMoves();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
@@ -21786,6 +21793,16 @@ var _ts = {view: 'day', day: null, loaded: false, sheets: null, codes: [], kinds
            sel: null, editLine: null, reportDays: 14, sugg: null, note: ''};
 var TS_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 var TS_PROOF = {none: 'No proof', photo: 'A photo', number: 'A number', note: 'A note'};
+
+var _tsPanelOpen = false;
+function toggleTsPanel() {
+  _tsPanelOpen = !_tsPanelOpen;
+  var p = document.getElementById('ts-panel'), b = document.getElementById('ts-toggle-btn');
+  if (p) p.style.display = _tsPanelOpen ? '' : 'none';
+  if (b) b.textContent = _tsPanelOpen ? 'Close \u2191' : 'Open \u2193';
+  if (_tsPanelOpen) tsOpen();
+}
+window.toggleTsPanel = toggleTsPanel;
 
 window.tsOpen = function () {
   if (_ts.loaded) return;
