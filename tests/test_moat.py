@@ -88,13 +88,15 @@ def test_the_context_section_is_empty_for_an_empty_restaurant_and_dated_otherwis
     # audit 9/29/26, "unfenced"); the answer and the date stay plain.
     from ai_guard import wrap_untrusted
     assert "Add brunch: not for us" in text and "because: " + wrap_untrusted("no Sunday staff") in text
-    # home_dismissals.dismissed_at defaults to datetime('now'), which is UTC;
-    # comparing against the local date failed every evening after 7pm Chicago.
-    # Dated M/D/YY like every other date an owner (or Ask quoting one) reads.
-    from datetime import datetime, timezone
-    from time_utils import mdy
-    assert f"({mdy(datetime.now(timezone.utc).date())})" in text
-    assert datetime.now(timezone.utc).date().isoformat() not in text
+    # home_dismissals.dismissed_at defaults to datetime('now'), which is UTC.
+    # This test used to expect the UTC day — the bug itself: after 7pm
+    # Chicago the owner read tomorrow's date. It is dated by the restaurant's
+    # own day now (memory re-audit 9/29/26, PROMPTS-15), M/D/YY like every
+    # other date an owner (or Ask quoting one) reads.
+    from time_utils import mdy, restaurant_now_by_id
+    local = restaurant_now_by_id(rid).date()
+    assert f"({mdy(local)})" in text
+    assert local.isoformat() not in text
     assert "Do not re-propose something marked 'not for us'" in text
 
 
