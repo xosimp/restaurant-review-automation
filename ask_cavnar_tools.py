@@ -350,19 +350,24 @@ def _viewer_user(viewer):
 
 
 def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
-              audience=None, scope=None, _viewer=None):
+              audience=None, replaces=None, scope=None, _viewer=None):
     """Record something the owner (or a teammate) said that should survive
     this conversation — typed (owner_memory.remember: kind, modules,
     subject, dates, audience) and stamped with who said it, so every
     generator that reads owner memory reads it, and a manager's remark is
     never shown as the owner's (memory audit 9/29/26, owner_lanes /
     owner_reach). A measurable target is refused here and pointed at
-    set_goal, where it is measured and becomes the modules' target."""
+    set_goal, where it is measured and becomes the modules' target — in
+    any kind (memory re-audit 9/29/26, R3). The same words someone already
+    said are a confirmation of theirs; a note that looks like one already
+    kept comes back as `similar`, to ask whether it replaces it (`replaces`
+    archives the older one)."""
     import owner_memory
     try:
         saved = owner_memory.remember(restaurant_id, fact, kind=kind or "context", modules=modules,
                                       subject=subject, valid_until=valid_until, due_on=due_on, audience=audience,
                                       user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask",
+                                      replaces=replaces,
                                       # Every location of the organisation, when a group
                                       # owner says so (memory re-audit 9/29/26, PEOPLE-13).
                                       scope="org" if scope == "org" else None)
@@ -373,9 +378,18 @@ def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, v
         out["until"] = saved["valid_until"]
     if saved.get("due_on"):
         out["due_on"] = saved["due_on"]
+    if saved.get("confirmed"):
+        out["note"] = "Already remembered — noted that they said it too."
+    if saved.get("replaced"):
+        out["replaced"] = saved["replaced"]
+    if saved.get("similar"):
+        out["similar"] = [s["fact"] for s in saved["similar"]]
+        out["ask"] = ("These notes look like the same thing. If the new one replaces one, ask them, then call "
+                      "remember again with replaces set to that note's text.")
     if saved.get("evicted"):
-        out["note"] = ("That lane was full, so the oldest note of this kind moved to the archive the owner "
-                       "can see in Account.")
+        gone = [e["fact"] for e in saved.get("evicted_facts") or []]
+        out["note"] = ("That lane was full, so its least-used note moved to the archive the owner can see in "
+                       "Account" + (f": “{gone[0]}”." if gone else "."))
     return out
 
 
@@ -2300,7 +2314,9 @@ TOOLS = [
                             "actually obeys.\n"
                             "audience: 'team' when managers should know it too (most operational facts), "
                             "'principals' for anything private to the owner (personnel changes, pay, money, "
-                            "selling), 'author' for a personal reminder."),
+                            "selling), 'author' for a personal reminder.\n"
+                            "If the result lists `similar` notes, ask whether the new one replaces one of them "
+                            "(e.g. 'closed Mondays' then 'open Mondays now'); if so, call again with replaces."),
             "input_schema": {"type": "object", "properties": {
                 "fact": {"type": "string", "description": "One short sentence, in their own terms."},
                 "kind": {"type": "string", "enum": ["constraint", "context", "preference", "goal", "followup"],
@@ -2317,6 +2333,9 @@ TOOLS = [
                                 "description": "YYYY-MM-DD for a fact that stops being true (a season, a hire)."},
                 "due_on": {"type": "string", "description": "YYYY-MM-DD, for a followup."},
                 "audience": {"type": "string", "enum": ["team", "principals", "author"]},
+                "replaces": {"type": "string",
+                             "description": ("The exact text of a note this one replaces (they said it changed) — "
+                                             "that note is archived. Only when they confirmed it.")},
                 "scope": {"type": "string", "enum": ["location", "org"],
                           "description": ("'org' only when they say it holds for EVERY one of their locations "
                                           "('we close every location on Thanksgiving'); only an owner of all "

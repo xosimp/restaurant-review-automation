@@ -2978,6 +2978,14 @@ def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
+    # Their private memory notes leave with them — archived for the owner to
+    # see and keep or let go, no longer steering prompts no one can read
+    # (memory re-audit 9/29/26, R3 revoked_login). Never blocks the revoke.
+    try:
+        import owner_memory
+        owner_memory.retire_departed(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[auth] departed login's memory not retired rid={restaurant_id}: {e}")
     return {"ok": True}
 
 

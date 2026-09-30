@@ -589,6 +589,16 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
             block.sections[n] = kept
             block.sizes[n] = sum(len(_line_text(l)) + 1 for l in kept)
         block.text = "\n\n".join(parts)
+        # The owner's facts this prompt carried: lane eviction goes least
+        # used first (owner_memory.mark_used; memory re-audit R3).
+        used = [l.get("fact_id") for ls in block.sections.values() for l in ls
+                if l.get("fact_id") and l.get("source") == "owner"]
+        if used:
+            try:
+                import owner_memory
+                owner_memory.mark_used(restaurant_id, used, db_path=db_path)
+            except Exception as e:
+                log.debug("memory_context: use not stamped for rid=%s: %s", restaurant_id, e)
 
     _note_sizes(surface, block.sizes, block.dropped)
     if block.sizes or block.dropped or block.errors:

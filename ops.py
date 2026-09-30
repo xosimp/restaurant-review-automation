@@ -2243,6 +2243,12 @@ _RETENTION_COLUMN = {
 # rec_events' showings, opens and lifecycle rows go at their age.
 _RETENTION_ONLY = {
     "rec_events": "event IN ('shown', 'opened', 'evidence_viewed', 'superseded', 'expired')",
+    # An account holder's rule that a full lane pushed out is kept until
+    # someone dismisses it in Account (owner_memory.dismiss) — never deleted
+    # for age alone (memory re-audit 9/29/26, R3 lane_eviction).
+    "ask_memory_archive": "NOT (reason='evicted' AND kind='constraint' "
+                          "AND COALESCE(authority, '') NOT IN ('delegate', 'admin') "
+                          "AND COALESCE(audience, 'team')!='author')",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run

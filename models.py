@@ -7205,9 +7205,10 @@ def init_shift_profiles(db_path: str = DB_PATH):
 # FIFO shared by every kind and every login, and Home's "Not doing X: reason"
 # answers were copied into it — so a busy week of Home passes evicted "we want
 # labor under 26%" and "football season starts next month", unattributed and
-# without trace. Now each kind has its own budget (ASK_MEMORY_CAPS): a write
-# past one evicts the oldest fact OF THAT KIND, into ask_memory_archive with
-# its reason, where Account shows it. Constraints, context and preferences
+# without trace. Now each kind has its own budget (ASK_MEMORY_CAPS), split by
+# whose it is (_ask_bucket, re-audit R3): a write past one evicts that
+# bucket's least-used fact OF THAT KIND, into ask_memory_archive with its
+# reason, where Account shows it. Constraints, context and preferences
 # stay until someone retracts them; a time-bound fact ends at valid_until; a
 # follow-up expires 7 days after its due date (owner_memory.expire). Home's
 # decline reasons are not copied here any more — they live on the answer in
@@ -7215,6 +7216,21 @@ def init_shift_profiles(db_path: str = DB_PATH):
 # owner_goals (goals.set_goal); the "goal" kind is for aims no metric reads.
 ASK_MEMORY_KINDS = ("constraint", "context", "preference", "goal", "followup")
 ASK_MEMORY_CAPS = {"constraint": 30, "context": 30, "preference": 30, "goal": 10, "followup": 20}
+# Who a lane's budget belongs to (memory re-audit 9/29/26, R3 lane_eviction:
+# one shared FIFO per kind let a manager's 30 notes push out the owner's
+# founding facts). A write evicts only within its own bucket, and least-used
+# first (last_used_at, else when it was written); a pinned fact never goes:
+#   - an account holder's (or a seeded, system) shared fact: the kind's cap;
+#   - a teammate's or support's shared fact: half the kind's cap, together —
+#     so the owner's facts are never displaced by anyone else's;
+#   - a login's own "author" notes: that login's own budget, the kind's cap,
+#     outside the restaurant's lanes;
+#   - the sales audit's founding facts: their own lane (ASK_MEMORY_AUDIT_CAP),
+#     so seeding never evicts the owner's facts, nor its own on the day.
+ASK_MEMORY_DELEGATE_SHARE = 0.5
+ASK_MEMORY_AUDIT_CAP = 40
+# At most this many pinned facts of one kind (pinning is an account holder's).
+ASK_MEMORY_PIN_MAX = 10
 # The most facts of ONE kind (the context lane) — kept as a name older
 # readers and tests use; the budget is per kind (ASK_MEMORY_CAPS).
 ASK_MEMORY_LIMIT = ASK_MEMORY_CAPS["context"]
@@ -7233,11 +7249,23 @@ _ASK_MEMORY_COLUMNS = (
     ("due_on", "TEXT"),           # YYYY-MM-DD: a follow-up's due date (expires 7 days after)
     ("origin", "TEXT"),           # ask | account | audit | ratings | home (legacy)
     ("updated_at", "TEXT"),
+    # Memory re-audit 9/29/26 (R3): eviction reads use, not write order; the
+    # owner can pin a fact out of eviction; a restatement by another login is
+    # recorded as a confirmation, never a takeover.
+    ("last_used_at", "TEXT"),     # the last time a model prompt carried it (owner_memory.mark_used)
+    ("pinned", "INTEGER"),        # 1: never evicted (an account holder pinned it)
+    ("confirmed_by", "TEXT"),     # "Dana, manager" / "Their ratings" — who last said it again
+    ("confirmed_at", "TEXT"),     # when (a derived preference: its last supporting rating)
     # 'org': every location in the organisation reads it (owner_memory.
     # facts_for); NULL / 'location': this location only. Written only by a
     # login who may act for every location (memory re-audit 9/29/26, PEOPLE-13).
     ("scope", "TEXT"),
 )
+# The archive keeps who said it with what authority, so a restore puts it
+# back as theirs (re-audit PEOPLE-5) and retention can keep an owner's
+# evicted rule (ops._RETENTION_ONLY).
+# `scope` (R6, PEOPLE-13): an organisation-wide fact that left comes back as one.
+_ASK_ARCHIVE_EXTRA_COLUMNS = (("authority", "TEXT"), ("pinned", "INTEGER"), ("scope", "TEXT"))
 
 
 def init_ask_memory(db_path: str = DB_PATH):
@@ -7250,12 +7278,18 @@ def init_ask_memory(db_path: str = DB_PATH):
             kind          TEXT,             -- constraint | context | preference | goal | followup
             source        TEXT,             -- where it came from, for the owner to judge
             user_id       INTEGER,          -- who said it (the login), NULL for a seeded fact
-            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(restaurant_id, fact)
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
+    # One row per (restaurant, text, AUTHOR) — it was UNIQUE(restaurant_id,
+    # fact), so the same sentence from another login took the fact over:
+    # its author, audience and dates, and a rating-derived preference
+    # flipped between logins (memory re-audit 9/29/26, R3 fact_text_key).
+    _migrate_ask_memory_key(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
+                 "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
     have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
     for col, decl in _ASK_MEMORY_COLUMNS:
         if col not in have:
@@ -7286,11 +7320,20 @@ def init_ask_memory(db_path: str = DB_PATH):
             created_at    TEXT,
             archived_at   TEXT    NOT NULL DEFAULT (datetime('now')),
             reason        TEXT    NOT NULL,     -- evicted | expired | retracted | forgotten (a derived fact)
+                                                -- | replaced | contradicted | author_left (re-audit R3)
             archived_by   INTEGER
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_rest "
                  "ON ask_memory_archive(restaurant_id, archived_at)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory_archive)").fetchall()}
+    for col, decl in _ASK_ARCHIVE_EXTRA_COLUMNS:
+        if col not in have:
+            try:
+                conn.execute(f"ALTER TABLE ask_memory_archive ADD COLUMN {col} {decl}")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     # The retention delete's own index (ops prune_ledgers ranges on it).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_at ON ask_memory_archive(archived_at)")
     conn.commit()
@@ -7298,7 +7341,56 @@ def init_ask_memory(db_path: str = DB_PATH):
 
 
 _ASK_ARCHIVE_COLS = ("restaurant_id", "fact", "kind", "source", "user_id", "author_label", "modules", "subject",
-                     "audience", "valid_until", "due_on", "origin", "created_at")
+                     "audience", "valid_until", "due_on", "origin", "created_at", "authority", "pinned", "scope")
+
+
+def _ask_memory_has_text_key(conn) -> bool:
+    """True while ask_memory still carries the old table-level
+    UNIQUE(restaurant_id, fact)."""
+    import re
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ask_memory'").fetchone()
+    sql = re.sub(r"\s+", "", str(row[0] if row else "")).lower()
+    return "unique(restaurant_id,fact)" in sql
+
+
+def _migrate_ask_memory_key(conn):
+    """Drop the table-level UNIQUE(restaurant_id, fact): SQLite cannot, so
+    rebuild — new table, copy, swap, in one transaction — the reviews
+    re-key's pattern. Every row satisfies the new, weaker key (text AND
+    author), so the copy cannot fail on data. A no-op once done."""
+    import re
+    if not _ask_memory_has_text_key(conn):
+        return
+    conn.commit()
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()]
+    col_list = ", ".join(cols)
+    create = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ask_memory'").fetchone()[0]
+    new_create = re.sub(r",\s*UNIQUE\s*\(\s*restaurant_id\s*,\s*fact\s*\)", "", create, count=1, flags=re.I)
+    new_create = re.sub(r"CREATE TABLE\s+(IF NOT EXISTS\s+)?\"?ask_memory\"?", "CREATE TABLE ask_memory_rekeyed",
+                        new_create, count=1, flags=re.I)
+    if "ask_memory_rekeyed" not in new_create or re.search(r"unique\s*\(\s*restaurant_id\s*,\s*fact\s*\)",
+                                                            new_create, re.I):
+        print("[migrate] ask_memory: could not rewrite CREATE statement, leaving as is")
+        return
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP TABLE IF EXISTS ask_memory_rekeyed")
+        conn.execute(new_create)
+        conn.execute(f"INSERT INTO ask_memory_rekeyed ({col_list}) SELECT {col_list} FROM ask_memory")
+        moved = conn.execute("SELECT COUNT(*) FROM ask_memory_rekeyed").fetchone()[0]
+        conn.execute("DROP TABLE ask_memory")
+        conn.execute("ALTER TABLE ask_memory_rekeyed RENAME TO ask_memory")
+        conn.execute("COMMIT")
+        print(f"[migrate] ask_memory re-keyed to (restaurant_id, fact, author) — {moved} rows")
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        print(f"[migrate] ask_memory re-key failed, left as is: {e}")
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 def _archive_ask_rows(conn, restaurant_id, ids, reason, archived_by=None) -> int:
@@ -7330,21 +7422,49 @@ def archive_ask_facts(restaurant_id: int, ids, reason: str, archived_by: int = N
         conn.close()
 
 
+def _ask_bucket(row) -> tuple:
+    """(where-clause, args, cap-for-kind) of the lane budget `row` counts
+    against (ASK_MEMORY_CAPS and the notes above them)."""
+    kind = row.get("kind") or "context"
+    cap = ASK_MEMORY_CAPS.get(kind, ASK_MEMORY_LIMIT)
+    own = "(COALESCE(audience, 'team')='author' AND user_id IS NOT NULL)"
+    if (row.get("audience") or "team") == "author" and row.get("user_id") is not None:
+        return "COALESCE(audience, 'team')='author' AND user_id=?", [row["user_id"]], cap
+    if row.get("origin") == "audit":
+        return f"NOT {own} AND origin='audit'", [], ASK_MEMORY_AUDIT_CAP
+    if row.get("authority") in ("delegate", "admin"):
+        return (f"NOT {own} AND COALESCE(origin, '')!='audit' AND authority IN ('delegate', 'admin')", [],
+                max(1, int(cap * ASK_MEMORY_DELEGATE_SHARE)))
+    return (f"NOT {own} AND COALESCE(origin, '')!='audit' AND COALESCE(authority, '') NOT IN ('delegate', 'admin')",
+            [], cap)
+
+
+# Least used first: the last time a prompt carried it, else the last time
+# someone said it again, else when it was first said.
+_ASK_RECENCY = "MAX(COALESCE(last_used_at, ''), COALESCE(confirmed_at, ''), created_at)"
+
+
 def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
                       source: str = None, user_id: int = None,
                       db_path: str = DB_PATH, modules=None, subject: str = None,
                       audience: str = None, author_label: str = None, authority: str = None,
                       valid_until: str = None, due_on: str = None, origin: str = None, scope: str = None) -> dict:
-    """Record one durable fact. Idempotent on the text (a repeat updates the
-    fact's type and stamps it again). `scope` "org" makes it every
-    location's (owner_memory.remember checks who may); a repeat without a
-    scope keeps the one it has.
+    """Record one durable fact. Idempotent on (text, author): the same login
+    saying it again updates its type and dates and stamps it confirmed;
+    another login saying the same words is ANOTHER row — theirs — never a
+    takeover of the first one's author, audience or dates (memory re-audit
+    9/29/26, R3 fact_text_key). A restatement never widens who may read it:
+    the narrower audience holds (author < principals < team).
+    `scope` "org" makes it every location's (owner_memory.remember checks
+    who may); a repeat without a scope keeps the one it has (R6, PEOPLE-13).
 
     The owner-facing path is owner_memory.remember, which types the fact and
-    stamps its author; this is the storage write and its one invariant: each
-    kind keeps at most ASK_MEMORY_CAPS[kind] facts, and one past that evicts
-    the OLDEST fact OF THAT KIND into ask_memory_archive — never a fact of
-    another kind, and never silently."""
+    stamps its author; this is the storage write and its one invariant: a
+    fact counts against its own bucket's budget (_ask_bucket), and one past
+    it evicts that bucket's least-used, unpinned fact of the same kind into
+    ask_memory_archive — never another kind's or another bucket's, and never
+    silently. Returns {"fact", "kind", "id", "audience", "evicted",
+    "evicted_facts": [{"id", "fact", "user_id", "audience"}]}."""
     text = (fact or "").strip()[:ASK_MEMORY_MAX_LENGTH]
     if not text:
         raise ValueError("a fact needs some text")
@@ -7359,19 +7479,23 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
         modules = None
     audience = audience if audience in ASK_MEMORY_AUDIENCES else "team"
     conn = get_conn(db_path)
-    evicted = 0
+    evicted, gone, row = 0, [], None
     try:
         conn.execute(
             "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id, modules, subject, audience, "
             "author_label, authority, valid_until, due_on, origin, scope, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
-            "kind=excluded.kind, source=excluded.source, user_id=COALESCE(excluded.user_id, ask_memory.user_id), "
-            "modules=excluded.modules, subject=excluded.subject, audience=excluded.audience, "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) "
+            "ON CONFLICT(restaurant_id, fact, COALESCE(user_id, 0)) DO UPDATE SET "
+            "kind=excluded.kind, source=excluded.source, "
+            "modules=excluded.modules, subject=excluded.subject, "
+            "audience=CASE WHEN COALESCE(ask_memory.audience, 'team')='author' OR excluded.audience='author' "
+            "THEN 'author' WHEN COALESCE(ask_memory.audience, 'team')='principals' "
+            "OR excluded.audience='principals' THEN 'principals' ELSE 'team' END, "
             "author_label=COALESCE(excluded.author_label, ask_memory.author_label), "
             "authority=COALESCE(excluded.authority, ask_memory.authority), valid_until=excluded.valid_until, "
             "due_on=excluded.due_on, origin=COALESCE(excluded.origin, ask_memory.origin), "
             "scope=COALESCE(excluded.scope, ask_memory.scope), "
-            "created_at=datetime('now'), updated_at=datetime('now')",
+            "confirmed_at=datetime('now'), updated_at=datetime('now')",
             (restaurant_id, text, kind, (source or "")[:160] or None, user_id, modules,
              (str(subject).strip()[:120] or None) if subject else None, audience,
              (str(author_label).strip()[:80] or None) if author_label else None,
@@ -7380,15 +7504,27 @@ def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
              (str(due_on)[:10] or None) if due_on else None,
              (str(origin)[:20] or None) if origin else None,
              scope if scope in ("org", "location") else None))
-        cap = ASK_MEMORY_CAPS.get(kind, ASK_MEMORY_LIMIT)
-        over = [r["id"] for r in conn.execute(
-            "SELECT id FROM ask_memory WHERE restaurant_id=? AND COALESCE(kind, 'context')=? "
-            "ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?", (restaurant_id, kind, cap)).fetchall()]
-        evicted = _archive_ask_rows(conn, restaurant_id, over, "evicted")
+        row = conn.execute("SELECT id, kind, audience, authority, origin, user_id FROM ask_memory "
+                           "WHERE restaurant_id=? AND fact=? AND COALESCE(user_id, 0)=COALESCE(?, 0)",
+                           (restaurant_id, text, user_id)).fetchone()
+        row = dict(row) if row else {"kind": kind, "audience": audience, "authority": authority,
+                                     "origin": origin, "user_id": user_id}
+        where, args, cap = _ask_bucket(row)
+        pinned = conn.execute(
+            f"SELECT COUNT(*) FROM ask_memory WHERE restaurant_id=? AND COALESCE(kind, 'context')=? AND {where} "
+            "AND COALESCE(pinned, 0)=1", (restaurant_id, kind, *args)).fetchone()[0]
+        over = [dict(r) for r in conn.execute(
+            f"SELECT id, fact, user_id, audience FROM ask_memory WHERE restaurant_id=? "
+            f"AND COALESCE(kind, 'context')=? AND {where} AND COALESCE(pinned, 0)=0 "
+            f"ORDER BY {_ASK_RECENCY} DESC, id DESC LIMIT -1 OFFSET ?",
+            (restaurant_id, kind, *args, max(1, cap - pinned))).fetchall()]
+        gone = [o for o in over if o["id"] != row.get("id")]
+        evicted = _archive_ask_rows(conn, restaurant_id, [o["id"] for o in gone], "evicted")
         conn.commit()
     finally:
         conn.close()
-    return {"fact": text, "kind": kind, "evicted": evicted}
+    return {"fact": text, "kind": kind, "id": row.get("id"), "audience": row.get("audience") or audience,
+            "evicted": evicted, "evicted_facts": gone}
 
 
 def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH, kinds=None) -> list:
@@ -7406,7 +7542,8 @@ def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH, kinds=None) -> li
                 args += kinds
             rows = conn.execute(
                 "SELECT id, fact, kind, source, user_id, created_at, modules, subject, audience, author_label, "
-                "authority, valid_until, due_on, origin, updated_at, scope FROM ask_memory WHERE restaurant_id=?"
+                "authority, valid_until, due_on, origin, updated_at, last_used_at, pinned, confirmed_by, "
+                "confirmed_at, scope FROM ask_memory WHERE restaurant_id=?"
                 + where + " ORDER BY created_at DESC, id DESC", args).fetchall()
         finally:
             conn.close()
@@ -7459,15 +7596,51 @@ def set_ask_fact_scope(restaurant_id: int, fact_id: int, scope: str, db_path: st
         conn.close()
 
 
-def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
-    """What left the memory without the owner asking, newest first."""
+def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH, viewer_id=None,
+                           principal=None, before_id=None, archive_id=None, user_id=None, reason=None,
+                           subject_prefix=None) -> list:
+    """What left the memory without the owner asking, newest first.
+
+    Filtered in SQL BEFORE the limit (memory re-audit 9/29/26, R3
+    archive_restore — the 30 newest rows were read, then the viewer's
+    filter, so a manager could see an empty archive): `principal` True
+    reads team and principals rows, the viewer's own author rows and the
+    notes of a login that left (reason 'author_left'); False reads team rows
+    and the viewer's own; None (internal) reads everything. `before_id`
+    pages; `archive_id` reads one row; `user_id`/`reason`/`subject_prefix`
+    narrow it (a derived preference's forget marker)."""
+    where, args = ["restaurant_id=?"], [restaurant_id]
+    if principal is True:
+        where.append("(COALESCE(audience, 'team') IN ('team', 'principals') OR reason='author_left' "
+                     "OR (user_id IS NOT NULL AND user_id=?))")
+        args.append(viewer_id)
+    elif principal is False:
+        where.append("(COALESCE(audience, 'team')='team' OR (user_id IS NOT NULL AND user_id=? "
+                     "AND audience IN ('principals', 'author')))")
+        args.append(viewer_id)
+    if before_id is not None:
+        where.append("id < ?")
+        args.append(int(before_id))
+    if archive_id is not None:
+        where.append("id = ?")
+        args.append(int(archive_id))
+    if user_id is not None:
+        where.append("user_id = ?")
+        args.append(user_id)
+    if reason:
+        where.append("reason = ?")
+        args.append(str(reason))
+    if subject_prefix:
+        where.append("subject LIKE ?")
+        args.append(str(subject_prefix).replace("%", "") + "%")
     try:
         conn = get_conn(db_path)
         try:
             rows = conn.execute(
                 "SELECT id, fact, kind, source, user_id, author_label, modules, subject, audience, valid_until, "
-                "due_on, origin, created_at, archived_at, reason FROM ask_memory_archive WHERE restaurant_id=? "
-                "ORDER BY archived_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+                "due_on, origin, created_at, archived_at, reason, authority, pinned FROM ask_memory_archive WHERE "
+                + " AND ".join(where) + " ORDER BY archived_at DESC, id DESC LIMIT ?",
+                (*args, int(limit))).fetchall()
         finally:
             conn.close()
         return [dict(r) for r in rows]
@@ -7475,9 +7648,12 @@ def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = D
         return []
 
 
-def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH):
-    """Put an archived fact back (it keeps its author and type). Returns the
-    fact, or None when there is no such archived row for this restaurant."""
+def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH, overrides: dict = None):
+    """Put an archived fact back: its author, authority and type kept, with
+    `overrides` (owner_memory.restore: a new or cleared date, a departed
+    login's note re-homed) applied. Returns the fact, or None when there is
+    no such archived row for this restaurant. The owner-facing path is
+    owner_memory.restore, which checks who may and what date holds."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM ask_memory_archive WHERE id=? AND restaurant_id=?",
@@ -7487,12 +7663,17 @@ def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH
     if not row:
         return None
     r = dict(row)
+    r.update(overrides or {})
     remember_ask_fact(restaurant_id, r["fact"], kind=r.get("kind") or "context", source=r.get("source"),
                       user_id=r.get("user_id"), db_path=db_path, modules=r.get("modules"),
                       subject=r.get("subject"), audience=r.get("audience"), author_label=r.get("author_label"),
-                      valid_until=r.get("valid_until"), due_on=r.get("due_on"), origin=r.get("origin"))
+                      authority=r.get("authority"), valid_until=r.get("valid_until"), due_on=r.get("due_on"),
+                      origin=r.get("origin"), scope=r.get("scope"))
     conn = get_conn(db_path)
     try:
+        if r.get("pinned"):
+            conn.execute("UPDATE ask_memory SET pinned=1 WHERE restaurant_id=? AND fact=? "
+                         "AND COALESCE(user_id, 0)=COALESCE(?, 0)", (restaurant_id, r["fact"], r.get("user_id")))
         conn.execute("DELETE FROM ask_memory_archive WHERE id=? AND restaurant_id=?", (int(archive_id), restaurant_id))
         conn.commit()
     finally:
@@ -7500,9 +7681,82 @@ def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH
     return r["fact"]
 
 
+def delete_ask_archive_rows(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
+    """Dismiss archived facts for good (Account's "Dismiss"): an owner's
+    evicted rule is otherwise kept past the archive's retention
+    (ops._RETENTION_ONLY) until someone says so."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(f"DELETE FROM ask_memory_archive WHERE restaurant_id=? AND id IN "
+                         f"({','.join('?' for _ in ids)})", (restaurant_id, *ids)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def mark_ask_facts_used(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
+    """Stamp last_used_at on the facts a model prompt just carried
+    (memory_context), at most once an hour each — what lane eviction reads
+    as "least used". Returns how many were stamped."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            f"UPDATE ask_memory SET last_used_at=datetime('now') WHERE restaurant_id=? AND id IN "
+            f"({','.join('?' for _ in ids)}) AND (last_used_at IS NULL OR last_used_at < datetime('now', '-1 hour'))",
+            (restaurant_id, *ids)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def set_ask_fact_pinned(restaurant_id: int, fact_id: int, pinned: bool, db_path: str = DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE ask_memory SET pinned=?, updated_at=datetime('now') WHERE restaurant_id=? AND id=?",
+                         (1 if pinned else None, restaurant_id, int(fact_id))).rowcount
+        conn.commit()
+        return n > 0
+    finally:
+        conn.close()
+
+
+def confirm_ask_fact(restaurant_id: int, fact_id: int, confirmed_by: str = None, fact: str = None,
+                     db_path: str = DB_PATH) -> bool:
+    """Someone said this fact again (another login, or new ratings behind a
+    derived preference): stamp who and when, and — for a derived fact whose
+    basis moved — its new wording. Never changes its author or audience."""
+    sets, args = ["confirmed_at=datetime('now')", "updated_at=datetime('now')"], []
+    if confirmed_by:
+        sets.append("confirmed_by=?")
+        args.append(str(confirmed_by)[:80])
+    if fact:
+        sets.append("fact=?")
+        args.append(str(fact).strip()[:ASK_MEMORY_MAX_LENGTH])
+    conn = get_conn(db_path)
+    try:
+        try:
+            n = conn.execute(f"UPDATE ask_memory SET {', '.join(sets)} WHERE restaurant_id=? AND id=?",
+                             (*args, restaurant_id, int(fact_id))).rowcount
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return False
+        conn.commit()
+        return n > 0
+    finally:
+        conn.close()
+
+
 def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
-    """Delete facts by id — a derived fact being replaced by its newer
-    reading (owner_memory.derive_rating_preferences). Not archived."""
+    """Delete facts by id — an owner's "forget that" (owner_memory.forget),
+    which deletes rather than archives. Not archived."""
     ids = [int(i) for i in ids or () if i is not None]
     if not ids:
         return 0
@@ -7517,8 +7771,11 @@ def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
 
 
 def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
-    """Delete one fact by its exact text. An owner's "forget that" is a
-    deletion — not archived, unlike what the lanes and dates remove."""
+    """Delete one fact by its exact text — every author's row with that
+    text. The owner-facing path (owner_memory.forget) deletes by id, one
+    author's row; this is kept for the storage-level callers and tests. An
+    owner's "forget that" is a deletion — not archived, unlike what the
+    lanes and dates remove."""
     conn = get_conn(db_path)
     try:
         cur = conn.execute("DELETE FROM ask_memory WHERE restaurant_id=? AND fact=?",

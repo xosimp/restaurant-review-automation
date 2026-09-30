@@ -109,3 +109,28 @@ def test_the_questions_a_person_asks_are_theirs_across_locations():
     assert other and all(p["still_open"] is False for p in other) and other[0]["location"] == "Downtown"
     # Another login's chats never cross.
     assert not [p for p in past if "#2" in p["title"] and p.get("location")]
+
+
+def test_scope_survives_r3s_key_rebuild_and_the_archive():
+    """R3 rebuilt ask_memory onto (restaurant_id, fact, author) at boot: the
+    rebuild copies every column, so an organisation-wide fact stays one; an
+    evicted or forgotten org fact that is put back comes back org-wide."""
+    a, b = _group()
+    conn = models.get_conn()
+    conn.execute("DROP TABLE ask_memory")
+    conn.execute("CREATE TABLE ask_memory (id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL, "
+                 "fact TEXT NOT NULL, kind TEXT, source TEXT, user_id INTEGER, "
+                 "created_at TEXT NOT NULL DEFAULT (datetime('now')), scope TEXT, UNIQUE(restaurant_id, fact))")
+    conn.execute("INSERT INTO ask_memory (restaurant_id, fact, kind, user_id, scope) VALUES (?,?,?,?,?)",
+                 (a, "We close every location on Thanksgiving", "constraint", OWNER["id"], "org"))
+    conn.commit()
+    conn.close()
+    models.init_ask_memory()
+    row = next(f for f in models.get_ask_memory(a) if "Thanksgiving" in f["fact"])
+    assert row["scope"] == "org"
+    assert any("Thanksgiving" in l["text"] for l in owner_memory.constraint_lines(_req(b)))
+    models.archive_ask_facts(a, [row["id"]], "evicted")
+    arch = models.get_ask_memory_archive(a)
+    assert arch and arch[0].get("scope", "org") == "org"
+    models.restore_ask_fact(a, arch[0]["id"])
+    assert next(f for f in models.get_ask_memory(a) if "Thanksgiving" in f["fact"])["scope"] == "org"

@@ -290,7 +290,10 @@ def test_86s_from_before_the_par_was_raised_never_raise_it_again(db_path):
     rec_ledger.present(rid, key, "food", "food", title="Raise salmon par", db_path=db_path)
     rec_ledger.implemented(rid, key, "food", user_id=1, meta={"module": "food"}, db_path=db_path)
     c = _conn(db_path)
-    c.execute("UPDATE rec_instances SET implemented_at=date('now', '-3 days'), silenced_until=NULL WHERE key=?", (key,))
+    # Three LOCAL days ago, at noon — SQLite's date('now') is the UTC date,
+    # which is already tomorrow on a Central evening.
+    raised_at = (date.today() - timedelta(days=3)).isoformat() + " 17:00:00"
+    c.execute("UPDATE rec_instances SET implemented_at=?, silenced_until=NULL WHERE key=?", (raised_at, key))
     c.commit()
     c.close()
     assert ordering.par_suggestions(rid, today=date.today()) == []

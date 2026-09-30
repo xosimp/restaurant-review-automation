@@ -318,9 +318,40 @@ def _do_goals_list(u):
     labels = owner_memory._user_labels([g.get("created_by") for g in props])
     for g in props:
         g["proposed_by"] = "Your sales audit" if g.get("source") == "audit" else labels.get(g.get("created_by"))
+    # A goal missed past its grace is out of every prompt and waits here,
+    # once, to be renewed or closed (memory re-audit 9/29/26, R3).
+    missed = [g for g in goals.missed(_rid(u)) if _metric_visible(u, g.get("metric"))]
     return {"ok": True, "goals": [g for g in goals.progress(_rid(u))
                                   if _metric_visible(u, g.get("metric"))],
-            "proposed": props, "can_confirm": bool(is_principal(u))}, 200
+            "proposed": props, "missed": missed, "can_confirm": bool(is_principal(u))}, 200
+
+
+def _do_goal_renew(u, goal_id):
+    """An account holder renews a missed goal: the same target, a new
+    deadline (`days`, default 30) — the target again from now."""
+    import goals
+    from permissions import is_principal, answer_authority
+    if not is_principal(u):
+        return _forbidden("Only the owner can renew a goal.")
+    try:
+        days = int(_body().get("days") or 30)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "days must be a number"}, 400
+    g = goals.renew_missed(_rid(u), goal_id, days=days, user_id=u.get("id"), authority=answer_authority(u))
+    if g is None:
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True, "goal": g}, 200
+
+
+def _do_goal_close(u, goal_id):
+    """An account holder closes a missed goal for good."""
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can close a goal.")
+    if not goals.close_missed(_rid(u), goal_id, user_id=u.get("id")):
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True}, 200
 
 
 def _do_goal_set(u):
@@ -1422,13 +1453,20 @@ def _do_memory_add(u):
         saved = owner_memory.remember(_rid(u), fact, kind=kind, modules=modules,
                                       valid_until=b.get("valid_until") or None, due_on=b.get("due_on") or None,
                                       audience=b.get("audience") or None, user=u, source="Account",
-                                      origin="account", scope="org" if b.get("scope") == "org" else None)
+                                      origin="account", replaces=b.get("replaces") or None,
+                                      scope="org" if b.get("scope") == "org" else None)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
     log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
+    # `similar`: the notes this one may replace ("does this replace …?" —
+    # post again with `replaces`); `replaced`: the one it did; `confirmed`:
+    # someone had already said it, and this login's words were stamped on
+    # theirs (memory re-audit 9/29/26, R3).
     return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
             "kind": saved.get("kind"), "audience": saved.get("audience"),
-            "evicted": saved.get("evicted", 0)}, 200
+            "evicted": saved.get("evicted", 0), "evicted_facts": saved.get("evicted_facts") or [],
+            "similar": saved.get("similar") or [], "replaced": saved.get("replaced"),
+            "confirmed": bool(saved.get("confirmed"))}, 200
 
 
 def _do_memory_scope(u):
@@ -3293,7 +3331,13 @@ def _do_memory_list(u):
     lanes and how full each is, and what left without anyone asking (a full
     lane, a date passed, a retracted answer), which can be put back."""
     import owner_memory
-    return {"ok": True, **owner_memory.account_view(_rid(u), u)}, 200
+    from flask import has_request_context
+    raw = request.args.get("archive_before") if has_request_context() else None
+    try:
+        before = int(raw) if raw else None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "archive_before must be a number"}, 400
+    return {"ok": True, **owner_memory.account_view(_rid(u), u, archive_before=before)}, 200
 
 
 def _do_memory_forget(u):
@@ -3420,26 +3464,54 @@ def _do_preferences_apply_to_all(u):
 
 def _do_memory_restore(u):
     """Put back a fact that left without anyone asking (a full lane, a date
-    passed, a retracted answer) — ask_memory_archive by id."""
+    passed, a retracted answer, a login that left) — ask_memory_archive by
+    id, checked against the table with this login's own filter, not the page
+    Account last rendered (owner_memory.restore; memory re-audit R3). A
+    passed date comes back cleared, or as the new `valid_until`/`due_on`."""
     import owner_memory
-    from models import restore_ask_fact
+    from client_api import log_account_event
+    b = _body()
+    try:
+        aid = int(b.get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    out = owner_memory.restore(_rid(u), aid, user=u, valid_until=b.get("valid_until") or None,
+                               due_on=b.get("due_on") or None)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    fact = out["fact"]
+    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
+    return {"ok": True, "fact": fact, "valid_until": out.get("valid_until"), "due_on": out.get("due_on")}, 200
+
+
+def _do_memory_dismiss(u):
+    """Let an archived fact go for good (an owner's evicted rule is kept
+    until someone does)."""
+    import owner_memory
     from client_api import log_account_event
     try:
         aid = int(_body().get("id"))
     except (TypeError, ValueError):
         return {"ok": False, "error": "Which fact?"}, 400
-    view = owner_memory.account_view(_rid(u), u)
-    item = next((a for a in view["archived"] if a["id"] == aid), None)
-    if item is None:
-        return {"ok": False, "error": "No fact like that."}, 404
-    if not item.get("can_restore"):
-        return {"ok": False, "error": "Only the owner or the person who added it can put it back."}, 403
-    fact = restore_ask_fact(_rid(u), aid)
-    if not fact:
-        return {"ok": False, "error": "No fact like that."}, 404
-    owner_memory.invalidate(_rid(u))
-    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
-    return {"ok": True, "fact": fact}, 200
+    out = owner_memory.dismiss(_rid(u), aid, user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=f"dismissed: {out['dismissed'][:108]}")
+    return {"ok": True}, 200
+
+
+def _do_memory_pin(u):
+    """An account holder pins a fact out of lane eviction, or unpins it."""
+    import owner_memory
+    b = _body()
+    try:
+        fid = int(b.get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    out = owner_memory.pin(_rid(u), fid, user=u, pinned=b.get("pinned", True) not in (False, 0, "0", "false"))
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, out.get("status", 400)
+    return {"ok": True, "pinned": out["pinned"]}, 200
 
 
 def _do_delayed_pending(u):
@@ -5101,6 +5173,8 @@ _ROUTES = [
     ("/goals/<int:goal_id>/end", ["POST"], _do_goal_end, "goal_end"),
     ("/goals/<int:goal_id>/confirm", ["POST"], _do_goal_confirm, "goal_confirm"),
     ("/goals/<int:goal_id>/decline", ["POST"], _do_goal_decline, "goal_decline"),
+    ("/goals/<int:goal_id>/renew", ["POST"], _do_goal_renew, "goal_renew"),
+    ("/goals/<int:goal_id>/close", ["POST"], _do_goal_close, "goal_close"),
     ("/outcomes", ["GET"], _do_outcomes_list, "outcomes_list"),
     ("/outcomes", ["POST"], _do_outcome_record, "outcome_record"),
     ("/outcomes/<int:outcome_id>/abandon", ["POST"], _do_outcome_abandon, "outcome_abandon"),
@@ -5195,6 +5269,8 @@ _ROUTES = [
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/memory/dismiss", ["POST"], _do_memory_dismiss, "memory_dismiss"),
+    ("/account/memory/pin", ["POST"], _do_memory_pin, "memory_pin"),
     ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),
     ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
     ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
