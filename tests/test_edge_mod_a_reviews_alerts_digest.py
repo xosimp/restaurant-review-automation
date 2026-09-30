@@ -94,7 +94,7 @@ def _first_connect(db_path, monkeypatch, reviews):
     hooks = []
     monkeypatch.setattr(webhooks, "fire_webhook", lambda rid, event, payload: hooks.append((event, payload)))
     monkeypatch.setattr(gmb, "get_valid_token", lambda rid: "tok")
-    monkeypatch.setattr(gmb, "fetch_reviews_via_gmb", lambda tok, loc, rid: list(reviews))
+    monkeypatch.setattr(gmb, "fetch_reviews_via_gmb", lambda tok, loc, rid, **k: list(reviews))
     monkeypatch.setattr(gmb, "fetch_gmb_logo_url", lambda *a, **k: None)
     monkeypatch.setattr(analyser, "analyse_review", lambda *a, **k: None)
     monkeypatch.setattr(drafter, "draft_response", lambda *a, **k: None)

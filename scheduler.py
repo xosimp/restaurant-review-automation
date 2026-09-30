@@ -535,7 +535,7 @@ def run_daily_fetch(restaurant_ids=None):
                         if not loc_id:
                             gmb_failed_reason = gmb_failed_reason or "Google Business location could not be resolved"
                         else:
-                            _gbp = fetch_reviews_via_gmb(token, loc_id, rid)
+                            _gbp = fetch_reviews_via_gmb(token, loc_id, rid, account_id=acct_id)
                             reviews += _gbp
                             gbp_listing = (loc_id, _gbp)
                             fetched_ok = True

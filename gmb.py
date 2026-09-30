@@ -439,10 +439,17 @@ def _local_review_time(stamp, restaurant_id):
         return stamp
 
 
-def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: int) -> list:
+# Reviews live only in the v4 Google My Business API. There is no
+# "mybusinessreviews" v1 service — calls to it came back 404 from Google's
+# front door (checked 9/30/26), so every fetch and reply through it failed.
+GMB_V4 = "https://mybusiness.googleapis.com/v4"
+
+
+def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: int, account_id: str = None) -> list:
     """
-    Fetch reviews using the current Business Profile Reviews API.
-    location_id format: "locations/456"
+    Fetch reviews through the v4 API (accounts/{a}/locations/{l}/reviews).
+    location_id format: "locations/456"; account_id "accounts/123", read
+    from the restaurant when not passed.
 
     Raises on API/transport failure rather than returning []. It used to
     swallow every exception and return an empty list, which the caller
@@ -461,13 +468,23 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         nothing past the newest 1,000 was ever fetched.
     """
     from models import Review
+    parent = location_id
+    if not str(location_id).startswith("accounts/"):
+        if not account_id:
+            try:
+                from models import get_restaurant
+                account_id = getattr(get_restaurant(restaurant_id), "gmb_account_id", None)
+            except Exception:
+                account_id = None
+        if account_id:
+            parent = f"{account_id}/{location_id}"
 
     def _page(token):
         params = {"pageSize": GMB_REVIEW_PAGE_SIZE}
         if token:
             params["pageToken"] = token
         resp = requests.get(
-            f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
+            f"{GMB_V4}/{parent}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
             params=params,
             timeout=10,
@@ -602,7 +619,7 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
                 "error": "Couldn't sign in to Google just now. Nothing was lost — use Retry posting in a few minutes."}
 
     try:
-        url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"
+        url  = f"{GMB_V4}/{review_name}/reply"
         resp = requests.put(
             url,
             headers={
@@ -662,7 +679,7 @@ def delete_reply(restaurant_id: int, review_name: str) -> dict:
                 "error": "Couldn't sign in to Google just now. Nothing was lost — use Retry posting in a few minutes."}
 
     try:
-        url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"
+        url  = f"{GMB_V4}/{review_name}/reply"
         resp = requests.delete(
             url,
             headers={"Authorization": f"Bearer {access_token}"},

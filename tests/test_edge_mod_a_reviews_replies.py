@@ -232,7 +232,7 @@ def test_a_network_failure_on_publish_is_not_shown_as_an_exception_string(real_p
 
     def _boom(*a, **k):
         raise requests.exceptions.ConnectionError(
-            "HTTPSConnectionPool(host='mybusinessreviews.googleapis.com', port=443): Max retries exceeded")
+            "HTTPSConnectionPool(host='mybusiness.googleapis.com', port=443): Max retries exceeded")
     monkeypatch.setattr(requests, "put", _boom)
     payload, _ = client_api._do_approve(rid, 1)
     err = payload.get("post_error") or ""

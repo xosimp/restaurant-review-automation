@@ -781,3 +781,31 @@ def test_a_google_quota_refusal_is_not_reported_as_an_account_with_no_locations(
     monkeypatch.setattr(gmb.requests, "get", lambda *a, **k: type("R", (), {
         "raise_for_status": lambda self: None, "json": lambda self: {"accounts": []}})())
     assert "manages no Business Profile" in gmb.find_gmb_location("tok", "P1")["error"]
+
+
+def test_reviews_are_read_and_answered_through_the_v4_api_that_exists(monkeypatch):
+    """There is no mybusinessreviews v1 service (Google's front door 404s
+    it, 9/30/26); reviews and replies live under mybusiness.googleapis.com/v4
+    with the account in the path."""
+    import gmb
+    seen = []
+
+    class _R:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"reviews": []}
+
+    monkeypatch.setattr(gmb.requests, "get", lambda url, **k: seen.append(url) or _R())
+    monkeypatch.setattr(gmb.requests, "put", lambda url, **k: seen.append(url) or _R())
+    monkeypatch.setattr(gmb, "get_valid_token", lambda rid: "tok")
+    gmb.fetch_reviews_via_gmb("tok", "locations/9", 1, account_id="accounts/7")
+    gmb.post_reply(1, "accounts/7/locations/9/reviews/abc", "Thanks")
+    assert seen == ["https://mybusiness.googleapis.com/v4/accounts/7/locations/9/reviews",
+                    "https://mybusiness.googleapis.com/v4/accounts/7/locations/9/reviews/abc/reply"]
+    src = open(gmb.__file__, encoding="utf-8").read()
+    assert "mybusinessreviews.googleapis.com" not in src

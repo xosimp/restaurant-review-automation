@@ -853,7 +853,7 @@ def test_the_google_rating_refreshes_with_the_scheduled_gbp_fetch():
     assert not scheduler._rating_refresh_due(fresh, now)
     assert scheduler._rating_refresh_due(old, now) and scheduler._rating_refresh_due(never, now)
     src = open(scheduler.__file__, encoding="utf-8").read()
-    gbp = src[src.index("_gbp = fetch_reviews_via_gmb(token, loc_id, rid)"):]
+    gbp = src[src.index("_gbp = fetch_reviews_via_gmb(token, loc_id, rid"):]
     assert "fetch_location_rating(rid, token, loc_id)" in gbp[:1200]
 
 
