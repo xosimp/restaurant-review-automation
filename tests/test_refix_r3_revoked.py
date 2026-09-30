@@ -82,3 +82,21 @@ def test_a_login_switched_off_any_other_way_is_retired_on_the_next_read(db_path)
     conn.close()
     assert owner_memory.facts_for(rid) == []
     assert models.get_ask_memory_archive(rid)[0]["reason"] == "author_left"
+
+
+def test_a_group_owner_reaching_a_sibling_location_is_not_departed(db_path):
+    """No membership row is not 'left': a group owner reaches a sibling
+    location through the location group (auth._still_in_group)."""
+    home = create_restaurant(Restaurant(name="Home Co", owner_email="grp@x.test", location_group="Grp"))
+    sib = create_restaurant(Restaurant(name="Sibling Co", owner_email="grp@x.test", location_group="Grp"))
+    owner = _login(db_path, home, "erik", "client")
+    owner_memory.remember(sib, "My note about the sibling", audience="author", user=dict(owner, restaurant_id=sib))
+    assert owner_memory.departed_author_ids(sib) == set()
+    assert [f["fact"] for f in owner_memory.facts_for(sib)] == ["My note about the sibling"]
+    # ...but an ended membership is
+    conn = models.get_conn()
+    conn.execute("INSERT INTO memberships (user_id, restaurant_id, role, is_active) VALUES (?, ?, 'manager', 0)",
+                 (owner["id"], sib))
+    conn.commit()
+    conn.close()
+    assert owner_memory.departed_author_ids(sib) == {owner["id"]}

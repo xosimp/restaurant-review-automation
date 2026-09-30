@@ -684,9 +684,13 @@ def retract_for_keys(restaurant_id, keys, titles=(), archived_by=None, db_path=N
 
 def departed_author_ids(restaurant_id, db_path=None) -> set:
     """The logins behind this restaurant's facts who no longer have access
-    to it: switched off (users.is_active=0), or neither its own login nor an
-    active member of it. Support's login is never "departed", and an id with
-    no users row is not judged (nothing here deletes a login)."""
+    to it: switched off (users.is_active=0 — a revoke, an admin's
+    deactivation), or whose membership of this restaurant was ended
+    (memberships.is_active=0, and it is not their own login's restaurant).
+    Deliberately NOT inferred from a missing membership: a group owner
+    reaches a sibling location through the location group, with no
+    membership row (auth._still_in_group). Support's login is never
+    "departed", and an id with no users row is not judged."""
     try:
         conn = get_conn(db_path)
         try:
@@ -699,14 +703,13 @@ def departed_author_ids(restaurant_id, db_path=None) -> set:
             try:
                 gone = {r[0] for r in conn.execute(
                     f"SELECT u.id FROM users u WHERE u.id IN ({marks}) AND COALESCE(u.is_admin, 0)=0 AND "
-                    "(COALESCE(u.is_active, 1)=0 OR (COALESCE(u.restaurant_id, -1)!=? AND NOT EXISTS "
-                    "(SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.restaurant_id=? AND m.is_active=1)))",
+                    "(COALESCE(u.is_active, 1)=0 OR (COALESCE(u.restaurant_id, -1)!=? AND EXISTS "
+                    "(SELECT 1 FROM memberships m WHERE m.user_id=u.id AND m.restaurant_id=? AND m.is_active=0)))",
                     (*ids, restaurant_id, restaurant_id)).fetchall()}
             except Exception:
                 gone = {r[0] for r in conn.execute(
                     f"SELECT u.id FROM users u WHERE u.id IN ({marks}) AND COALESCE(u.is_admin, 0)=0 AND "
-                    "(COALESCE(u.is_active, 1)=0 OR COALESCE(u.restaurant_id, -1)!=?)",
-                    (*ids, restaurant_id)).fetchall()}
+                    "COALESCE(u.is_active, 1)=0", ids).fetchall()}
         finally:
             conn.close()
     except Exception as e:
