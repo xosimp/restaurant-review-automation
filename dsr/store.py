@@ -369,6 +369,13 @@ def sync_metrics(report_id, db_path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
+    # The night's POS guest count is its covers unless someone entered one
+    # (covers.sync_from_pos, owner 9/30/26).
+    try:
+        import covers as _cov
+        _cov.sync_from_pos(r["restaurant_id"], dates=[r["business_date"]], db_path=db_path)
+    except Exception:
+        pass
 
 
 def save_block(report_id, name, blk, db_path=DB_PATH, stamped_at=None):

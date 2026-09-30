@@ -19195,7 +19195,11 @@ function lb2LoadCovers(){
     var off=d.pos_offers||[],oh='';
     for(i=0;i<off.length&&i<3;i++)oh+='<div class="lb2-cov-offer">POS counted <b class="hb-num">'+esc(off[i].guests)+'</b> guests on '+esc(mdy(off[i].date))+' — <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cov-pos="'+esc(off[i].date)+'" data-cov-n="'+esc(off[i].guests)+'">save as covers</button></div>';
     if(!days.length){el.innerHTML=esc('No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.')+oh;return;}
-    var h='<div class="lb2-cov">';
+    // Filled nightly from the POS guest count (covers.sync_from_pos, owner
+    // 9/30/26); a count typed here always wins over it.
+    var fromPos=0;for(i=0;i<days.length;i++)if(days[i].source==='pos')fromPos++;
+    var h=fromPos?'<div class="lb2-intro" style="margin-bottom:8px">Filled each night from your POS guest count. A number you enter below replaces that night\u2019s.</div>':'';
+    h+='<div class="lb2-cov">';
     for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';
     el.innerHTML=h+'</div>'+oh;
   }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});

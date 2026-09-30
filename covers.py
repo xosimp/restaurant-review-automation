@@ -7,9 +7,15 @@ Covers are the figure that tells them apart — sales per cover on a lean
 day that matches the period's average is a good day; a lean day whose
 sales per cover collapsed is a floor that could not serve what walked in.
 
-Entered by hand or pasted as CSV (date,covers). The POS integrations do
-not carry a guest count reliably enough to write here, so this table is
-only ever what someone typed — and the analysis says when it is absent.
+Entered by hand or pasted as CSV (date,covers), and — since 9/30/26 —
+filled from the POS's own guest count (source 'pos', sync_from_pos) for
+each night the nightly report measured one (the DSR's sales.guests). RPOWER
+carries a guest count on every ticket and the report only totals a night
+when every sale ticket has one; at Simple EJ's it ran $28-47 a guest night
+to night, a real count (owner, 9/30/26: "can't we just automate this from
+the rpower api?"). A count someone typed or confirmed ('manual',
+'pos_confirmed') is never overwritten; a POS row is refreshed when a later
+version of the night's report moves the count.
 """
 from datetime import date, timedelta
 
@@ -87,6 +93,48 @@ def by_date(restaurant_id, start=None, end=None, db_path=DB_PATH):
     return {r["date"]: int(r["covers"]) for r in rows}
 
 
+# Sources a person chose; the POS never writes over them.
+_PERSON_SOURCES = ("manual", "pos_confirmed")
+POS_SYNC_DAYS = 35
+
+
+def sync_from_pos(restaurant_id, dates=None, days=POS_SYNC_DAYS, db_path=DB_PATH) -> int:
+    """Write the POS guest count (dsr_metrics sales.guests) as the night's
+    covers (source 'pos') for each night in `dates`, or the last `days`,
+    that has no person-entered count. Returns rows written. Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            if dates:
+                qs = ",".join("?" * len(dates))
+                rows = conn.execute(f"SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? "
+                                    f"AND metric='sales.guests' AND value > 0 AND business_date IN ({qs})",
+                                    (restaurant_id, *[_d(x) for x in dates])).fetchall()
+            else:
+                start = (date.today() - timedelta(days=days - 1)).isoformat()
+                rows = conn.execute("SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? "
+                                    "AND metric='sales.guests' AND value > 0 AND business_date >= ?",
+                                    (restaurant_id, start)).fetchall()
+            n = 0
+            for r in rows:
+                guests = int(round(float(r["value"])))
+                if guests <= 0 or guests > 100000:
+                    continue
+                cur = conn.execute(
+                    "INSERT INTO covers_daily (restaurant_id, date, covers, source) VALUES (?,?,?,'pos') "
+                    "ON CONFLICT(restaurant_id, date) DO UPDATE SET covers=excluded.covers, saved_at=datetime('now') "
+                    f"WHERE covers_daily.source NOT IN ({','.join('?' * len(_PERSON_SOURCES))}) "
+                    "AND covers_daily.covers != excluded.covers",
+                    (restaurant_id, r["business_date"], guests, *_PERSON_SOURCES))
+                n += cur.rowcount or 0
+            conn.commit()
+            return n
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
 def pos_offers(restaurant_id, days=14, db_path=DB_PATH):
     """Nights the POS counted guests (the DSR's sales.guests) that have no
     cover count yet, newest first: [{"date", "guests"}] (friction audit
@@ -112,5 +160,11 @@ def pos_offers(restaurant_id, days=14, db_path=DB_PATH):
 
 def recent(restaurant_id, days=28, db_path=DB_PATH):
     end = date.today()
-    m = by_date(restaurant_id, (end - timedelta(days=days - 1)).isoformat(), end.isoformat(), db_path=db_path)
-    return [{"date": k, "covers": v} for k, v in sorted(m.items(), reverse=True)]
+    start = (end - timedelta(days=days - 1)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT date, covers, source FROM covers_daily WHERE restaurant_id=? AND date BETWEEN ? AND ? "
+                            "ORDER BY date DESC", (restaurant_id, start, end.isoformat())).fetchall()
+    finally:
+        conn.close()
+    return [{"date": r["date"], "covers": int(r["covers"]), "source": r["source"]} for r in rows]

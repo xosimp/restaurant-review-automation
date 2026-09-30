@@ -422,3 +422,32 @@ def test_cross_module_findings_and_cost_drivers_name_where_to_act():
     assert "data-cav-go=\"'+esc(x.act.nav)+'\"" in s and "data-cav-go=\"'+wtEsc(x.act.nav)+'\"" in s
     assert "data-cav-go=\"'+esc(fAct.nav)+'\"" in s
     assert "closest('[data-cav-go]')" in s
+
+
+def test_the_pos_guest_count_is_the_nights_covers_unless_someone_entered_one(db_path):
+    """Owner, 9/30/26: "instead of making this covers section manual, can't we
+    just automate this from the rpower api?" RPOWER's guest counts ran
+    $28-47 a guest at Simple EJ's night to night - a real count. The
+    nightly sync writes them as covers (source 'pos'); a typed or confirmed
+    count is never overwritten, and a POS row follows a corrected report."""
+    import covers
+    rid = _rid(db_path, module_labor=1)
+    y, d2, d3 = [(date.today() - timedelta(days=k)).isoformat() for k in (1, 2, 3)]
+    c = _conn(db_path)
+    for d, g in ((y, 212), (d2, 180), (d3, 90)):
+        c.execute("INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status) "
+                  "VALUES (?,?,?,?, 'ready')", (rid, d, "sales.guests", g))
+    c.commit(); c.close()
+    covers.save(rid, [{"date": d2, "covers": 175}], db_path=db_path)                       # typed
+    covers.save(rid, [{"date": d3, "covers": 95}], source="pos_confirmed", db_path=db_path)  # confirmed
+    assert covers.sync_from_pos(rid, db_path=db_path) == 1
+    assert covers.by_date(rid, db_path=db_path) == {y: 212, d2: 175, d3: 95}
+    assert covers.pos_offers(rid, db_path=db_path) == []
+    c = _conn(db_path)
+    c.execute("UPDATE dsr_metrics SET value=220 WHERE restaurant_id=? AND business_date=?", (rid, y))
+    c.commit(); c.close()
+    assert covers.sync_from_pos(rid, dates=[y], db_path=db_path) == 1
+    assert covers.by_date(rid, db_path=db_path)[y] == 220
+    assert covers.sync_from_pos(rid, db_path=db_path) == 0                                # nothing moved
+    assert {r["date"]: r["source"] for r in covers.recent(rid, db_path=db_path)} == \
+        {y: "pos", d2: "manual", d3: "pos_confirmed"}

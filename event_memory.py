@@ -1336,6 +1336,14 @@ def remember_restaurant(restaurant, today=None, db_path=None) -> dict:
     rid = restaurant.id
     today = today or restaurant_now(restaurant).date()
     yesterday = today - timedelta(days=1)
+    # Covers from the POS guest count first, so the nights recorded below
+    # carry them (covers.sync_from_pos: the last 35 nights, never over a
+    # count someone entered).
+    try:
+        import covers as _cov
+        _cov.sync_from_pos(rid, db_path=db_path)
+    except Exception:
+        pass
     w = record_weather(restaurant, [yesterday - timedelta(days=k) for k in range(WEATHER_DAYS)], db_path=db_path)
     recorded = 0
     for k in range(RECENT_NIGHTS):
