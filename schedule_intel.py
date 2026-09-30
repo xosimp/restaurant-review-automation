@@ -958,7 +958,9 @@ def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db
     """chemistry_suggestions as an owner sees them: without the pairs they
     said "Ignore" to (rec_ledger, on any device), and logged as shown."""
     import rec_ledger as _rl
-    quiet = _rl.silenced_keys(restaurant_id, db_path=db_path)
+    # ...and this login's own "Ignore" (PEOPLE-4).
+    quiet = _rl.silenced_keys(restaurant_id, db_path=db_path,
+                              viewer=user_id if isinstance(user_id, int) else None)
     out = [x for x in chemistry_suggestions(restaurant_id, db_path=db_path) if x["rec_key"] not in quiet]
     _rl.present_many(restaurant_id, [dict(key=x["rec_key"], module="schedule", kind="suggested_pair",
                                           title=f"Pair {x['a']} with {x['b']}", evidence_sources=["schedule"])

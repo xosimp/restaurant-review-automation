@@ -2061,6 +2061,14 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     import rec_delivery
     if rec and not rec_delivery.presentable(rec.get("key")):
         rec = None
+    if rec and rec.get("key") and not notify.never_silenced(alert_type):
+        # Not to a login whose own "not for us" already answers it
+        # (rec_ledger.own_silences — memory re-audit 9/29/26, PEOPLE-4).
+        import rec_ledger
+        people = [u for u in people
+                  if rec["key"] not in rec_ledger.own_silences(restaurant_id, u, db_path=db_path)]
+        if not people:
+            return 0
     alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path,
                                           **_notification_ref(data))
     pushed = {u["id"] for u in people if devices.get(u["id"])}
