@@ -953,9 +953,11 @@ Every module NOT in that list is either switched off for this client or reported
         except Exception as _me:
             print(f"[digest] memory unavailable for {_rid_dg}: {_me}")
             _mem_dig = ""
-        _mem_section = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (the owner's own constraints and goals, "
-                        "their decisions and what has worked here — context for the ACTION line; never propose what "
-                        "the owner declined, and state no figure from it):\n" + _mem_dig) if _mem_dig else ""
+        from ai_guard import MEMORY_FENCE_NOTE as _MFN_DG
+        _mem_section = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (the owner's rules and goals, the team's "
+                        "notes, their decisions and what has worked here — context for the ACTION line; never "
+                        "propose what the owner declined, and state no figure from people's words. " + _MFN_DG
+                        + "):\n" + _mem_dig) if _mem_dig else ""
 
         from ai_guard import UNTRUSTED_NOTE as _UN_RPT
         # A missing measurement is said as missing, never "0.0/5" (NS4 C2).

@@ -280,7 +280,10 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
         except Exception:
             return False
     uid = (viewer or {}).get("id") if isinstance(viewer, dict) else None
-    for ln in (block.sections or {}).get("constraints") or []:
+    # The owner's own rules (memory_context "owner_rules", PROMPTS-1) and the
+    # team's notes — both are "your note for today" when dated today.
+    for ln in (((block.sections or {}).get("owner_rules") or [])
+               + ((block.sections or {}).get("constraints") or [])):
         if _is_today(ln.get("date")) and ln.get("text"):
             # "Your note" only when it is: an owner's or a teammate's note
             # says whose it is (memory re-audit PEOPLE-9).
@@ -295,8 +298,13 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
     if not has_effects:
         for ln in (block.sections or {}).get("events") or []:
             if _is_today(ln.get("date")) and ln.get("text"):
+                # The measured half rides on the line's trusted suffix
+                # (memory_context "measured", PROMPTS-3), not in its words.
+                said = " ".join(str(ln["text"]).split())
+                if ln.get("measured"):
+                    said += " — " + " ".join(str(ln["measured"]).split())
                 out.append({"key": "memory:event", "tone": "neutral", "source": "memory", "claim_kind": "measured",
-                            "text": "Remembered: " + " ".join(str(ln["text"]).split()),
+                            "text": "Remembered: " + said,
                             "ask": "How have nights like today gone here?"})
                 break
     return out[:BRIEF_MEMORY_LINES]

@@ -2765,13 +2765,19 @@ def memory_lines(req) -> list:
     return [{k: v for k, v in l.items() if k != "unwatched"} for l in out]
 
 
-def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False):
+def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False, measured=None):
     """One people-memory line. `module` gates it by the viewer's view
     permission and `audience` "team" says any login with that module may
     read it (memory_context.visible) — facts about the staff, never a
-    principal's private note."""
-    return {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
+    principal's private note. `measured` is what Cavnar AI counted about
+    the person (attendance, covers, confirmed mentions), rendered trusted
+    under the fenced name so a count can be cited (memory re-audit
+    9/29/26, PROMPTS-3: fenced with the name, it never verified)."""
+    line = {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
             "trusted": trusted, "module": module, "audience": "team"}
+    if measured:
+        line["measured"] = measured
+    return line
 
 
 def _mem_attendance(rid, today, db):
@@ -2786,9 +2792,16 @@ def _mem_attendance(rid, today, db):
         return [dict(_mem_line("Attendance is not watched here yet: no published week has been checked against the "
                                "punches, so no one's reliability is known. Say nothing about who shows up.",
                                None, "labor", 1.0, trusted=True), unwatched=True)]
-    return [_mem_line(l["text"], l["date"],
-                      f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
-                      3.0 + min(int(l.get("misses") or 0), 6) * 0.5) for l in lines]
+    out = []
+    for l in lines:
+        name, _sep, counted = str(l["text"]).partition(": ")
+        if not (l.get("name") and _sep and counted):
+            name, counted = l["text"], None
+        out.append(_mem_line(name, l["date"],
+                             f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
+                             3.0 + min(int(l.get("misses") or 0), 6) * 0.5,
+                             measured=f"Measured: {counted}." if counted else None))
+    return out
 
 
 def _mem_standing(rid, today, db):
@@ -2891,8 +2904,8 @@ def _mem_covers(rid, today, db):
             bits.append(f"covered {a} shift{'s' if a != 1 else ''} for teammates")
         if d:
             bits.append(f"didn't take {d} cover{'s' if d != 1 else ''} they were asked to")
-        out.append(_mem_line(f"{names.get(key, key)} " + " and ".join(bits) + " in the last 6 months.", None,
-                             "schedule", 1.0 + min(a, 10) / 10.0))
+        out.append(_mem_line(f"{names.get(key, key)}", None, "schedule", 1.0 + min(a, 10) / 10.0,
+                             measured="Measured: " + " and ".join(bits) + " in the last 6 months."))
         if len(out) >= 4:
             break
     return out
@@ -2920,10 +2933,11 @@ def _mem_mentions(rid, today, db):
             tone.append(f"{e['pos']} positive")
         if e["neg"]:
             tone.append(f"{e['neg']} negative")
-        out.append(_mem_line(f"Guests named {name} in {e['n']} review{'s' if e['n'] != 1 else ''} since "
-                             f"{mdy(e['first'])}" + (f" ({', '.join(tone)})" if tone else "")
-                             + " — confirmed by the owner.", e["last"], "reviews", 1.5 + min(e["n"], 10) / 10.0,
-                             module="reviews"))
+        out.append(_mem_line(f"Guests named {name}", e["last"], "reviews", 1.5 + min(e["n"], 10) / 10.0,
+                             module="reviews",
+                             measured=(f"Measured: in {e['n']} review{'s' if e['n'] != 1 else ''} since "
+                                       f"{mdy(e['first'])}" + (f" ({', '.join(tone)})" if tone else "")
+                                       + " — each confirmed by the owner.")))
     return out
 
 

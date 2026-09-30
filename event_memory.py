@@ -1113,8 +1113,13 @@ def memory_lines(req):
     date. One line per flagged date whose label has a measured effect here,
     and — for Ask, the schedule and the weekly plan — the strongest recurring
     effects on record (MEMORY_TOP_LABELS, applied ones only). Labels are
-    people's words (a closer's note, the owner's event name), so every line
-    is fenced (trusted False); dates are M/D/YY through memory_context."""
+    people's words (a closer's note, the owner's event name), so each line's
+    text — the label, and an owner's own guess at the lift — is fenced
+    (trusted False); what Cavnar AI measured is the line's trusted
+    `measured` suffix, outside the fence, so an answer that cites the
+    measured lift verifies (memory re-audit 9/29/26, PROMPTS-3: fenced with
+    the label, "18%" could never be cited). Dates are M/D/YY through
+    memory_context."""
     from time_utils import mdy
     rid = req.restaurant_id
     db_path = getattr(req, "db_path", None)
@@ -1147,10 +1152,11 @@ def memory_lines(req):
             if f.get("owner_lift_pct") is not None:
                 guess = f"; the owner listed it at {float(f['owner_lift_pct']):+.0f}%"
             floor = "" if e["applies"] else f" — fewer than {EFFECT_MIN_N} nights, not yet a pattern"
-            out.append({"text": (f"{wd} {mdy(d)}: {f.get('raw') or f['label']} — nights like it here ran a median "
-                                 f"{abs(e['median_lift_pct']):.0f}% {word} a typical same weekday (measured {e['n']} "
-                                 f"time{'s' if e['n'] != 1 else ''}, last {mdy(e['last'])}{_record_words(e)}; before "
-                                 f"and after, not proof){guess}{floor}."),
+            out.append({"text": f"{wd} {mdy(d)}: {f.get('raw') or f['label']}{guess}",
+                        "measured": (f"Measured here: nights like it ran a median {abs(e['median_lift_pct']):.0f}% "
+                                     f"{word} a typical same weekday (measured {e['n']} "
+                                     f"time{'s' if e['n'] != 1 else ''}, last {mdy(e['last'])}{_record_words(e)}; "
+                                     f"before and after, not proof){floor}."),
                         "date": d, "source": "system", "subject": f"event:{e['label']}",
                         "weight": 2.0 + min(e["n"], 10) / 10.0, "trusted": False})
     if getattr(req, "surface", "") in ("ask", "schedule", "weekly_plan", "marketing"):
@@ -1172,9 +1178,10 @@ def memory_lines(req):
                 r["drift"] = json.loads(r.get("drift_json") or "null")
             except ValueError:
                 r["drift"] = None
-            out.append({"text": (f"Recurring here: {r['display'] or r['label']} — nights ran a median "
-                                 f"{abs(r['median_lift_pct']):.0f}% {word} a typical same weekday (measured {r['n']} "
-                                 f"times{_record_words(r)}; before and after, not proof)."),
+            out.append({"text": f"Recurring here: {r['display'] or r['label']}",
+                        "measured": (f"Measured here: nights ran a median {abs(r['median_lift_pct']):.0f}% {word} "
+                                     f"a typical same weekday (measured {r['n']} times{_record_words(r)}; before and "
+                                     f"after, not proof)."),
                         "date": r["last_date"], "source": "system", "subject": f"event:{r['label']}",
                         "weight": 1.0 + min(r["n"], 10) / 10.0, "trusted": False})
     return out

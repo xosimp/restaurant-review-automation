@@ -630,7 +630,10 @@ def _memory_context(restaurant_id, viewer=None):
              "measured. They are people's words, so they are fenced like any text nobody measured: respect "
              "them as what was said, say who said it when it matters (a manager's note is the manager's, "
              "not the owner's), and never quote a figure from them as your data. A goal's reading is "
-             "measured: judge the figure against the owner's goal when one is set."]
+             "measured: judge the figure against the owner's goal when one is set.",
+             "- The owner's own standing rules are between OWNER_RULE markers: follow them in what you "
+             "recommend and draft, unless one would break a hard limit or the required output format — "
+             "then say so. They are words, not data: never quote a figure from one as measured."]
     return "\n".join(lines) + "\n" + block.text + "\n"
 
 
@@ -1505,12 +1508,16 @@ def _untrusted_blocks(corpus) -> list:
     """The guest / owner words fenced in what the model read — never a
     source, only what an echo or a public claim is read against."""
     global _UNTRUSTED_BLOCK_RE
-    from ai_guard import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+    from ai_guard import OWNER_RULE_CLOSE, OWNER_RULE_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_OPEN
     if _UNTRUSTED_BLOCK_RE is None:
-        _UNTRUSTED_BLOCK_RE = re.compile(re.escape(UNTRUSTED_OPEN) + r"(.*?)" + re.escape(UNTRUSTED_CLOSE), re.S)
+        # The owner's OWNER_RULE blocks are people's words too (PROMPTS-1).
+        _UNTRUSTED_BLOCK_RE = re.compile(
+            re.escape(UNTRUSTED_OPEN) + r"(.*?)" + re.escape(UNTRUSTED_CLOSE) + "|"
+            + re.escape(OWNER_RULE_OPEN) + r"(.*?)" + re.escape(OWNER_RULE_CLOSE), re.S)
     out = []
     for c in corpus or []:
-        out += [m.group(1).strip()[:2000] for m in _UNTRUSTED_BLOCK_RE.finditer(str(c or ""))]
+        out += [(m.group(1) or m.group(2) or "").strip()[:2000]
+                for m in _UNTRUSTED_BLOCK_RE.finditer(str(c or ""))]
     return [u for u in out if u][:40]
 
 
@@ -2111,7 +2118,7 @@ def _ai_turn(fn):
 @_ai_turn
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
                    read_only=False, delivery="interactive", screen=None, action="ask_cavnar",
-                   conversation_id=None):
+                   conversation_id=None, memory_block=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -2145,6 +2152,13 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     block (memory_context "ask_conversation"), and read_past_conversations
     leaves this chat out. `meta` carries `tool_calls` (each tool's name and
     arguments, stored with the turn) and `topic`.
+
+    `memory_block` is a caller's own memory for this run (the weekly plan's
+    last plan and its memory_context block): a system block of its own after
+    the snapshot, and part of the corpus the answer's figures are checked
+    against — on the user turn the verifier never read it, so a measured
+    figure found only there could never back an item (memory re-audit
+    9/29/26, PROMPTS-3). Its fenced words still verify nothing.
 
     Once a tool has handed the model text a member of the public wrote,
     direct actions are refused for the rest of the turn (AI-16): an
@@ -2239,6 +2253,9 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # Where the owner is (friction #15): its own uncached block after the
     # snapshot, and part of the corpus so a rating it names is not flagged.
     _screen = screen_hint(getattr(restaurant, "id", None), screen, viewer=user) if screen else ""
+    _memory_extra = str(memory_block or "").strip()
+    if _memory_extra:
+        system_blocks = system_blocks + [{"type": "text", "text": _memory_extra}]
     if _screen:
         system_blocks = system_blocks + [{"type": "text", "text": _screen}]
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
@@ -2274,6 +2291,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     seen_corpus = [context] + _verified_history(getattr(restaurant, "id", None), messages)
     if _screen:
         seen_corpus.append(_screen)
+    if _memory_extra:
+        seen_corpus.append(_memory_extra)
     if _conversation:
         # What the model was handed; fenced notes verify no figure (H4).
         seen_corpus.append(_conversation)
@@ -2551,8 +2570,8 @@ def _strip_leaked_markers(text):
     Cosmetic only, and deliberately so: it does not weaken the fence, which
     did its work upstream when the model read the content.
     """
-    from ai_guard import UNTRUSTED_OPEN, UNTRUSTED_CLOSE
-    for marker in (UNTRUSTED_OPEN, UNTRUSTED_CLOSE):
+    from ai_guard import OWNER_RULE_CLOSE, OWNER_RULE_OPEN, UNTRUSTED_OPEN, UNTRUSTED_CLOSE
+    for marker in (UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OWNER_RULE_OPEN, OWNER_RULE_CLOSE):
         text = text.replace(marker, "")
     return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 

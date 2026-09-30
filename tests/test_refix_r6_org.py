@@ -52,11 +52,15 @@ def test_an_owners_fact_for_every_location_reaches_the_others_and_only_they_may_
     lone = create_restaurant(Restaurant(name="Elsewhere", owner_email="z@x.test"))
     owner_memory.remember(a, "We close every location on Thanksgiving", kind="constraint", user=OWNER, scope="org")
     owner_memory.remember(a, "The Downtown patio closes at 9", kind="context", user=OWNER)
-    at_b = [l["text"] for l in owner_memory.constraint_lines(_req(b))]
+    # An owner's constraint is an owner rule since the R4 refix (PROMPTS-1):
+    # rule_lines serves it, constraint_lines the rest — read both.
+    def _lines(rid):
+        return owner_memory.rule_lines(_req(rid)) + owner_memory.constraint_lines(_req(rid))
+    at_b = [l["text"] for l in _lines(b)]
     assert "Constraint: We close every location on Thanksgiving" in at_b
     assert not any("patio" in t for t in at_b), "a location's own fact leaked to its sibling"
-    assert not [l for l in owner_memory.constraint_lines(_req(lone)) if "Thanksgiving" in l["text"]]
-    line = next(l for l in owner_memory.constraint_lines(_req(b)) if "Thanksgiving" in l["text"])
+    assert not [l for l in _lines(lone) if "Thanksgiving" in l["text"]]
+    line = next(l for l in _lines(b) if "Thanksgiving" in l["text"])
     assert line["who"].endswith("for every location")
     # A manager may neither keep one nor move one to every location.
     with pytest.raises(owner_memory.MemoryRefused):

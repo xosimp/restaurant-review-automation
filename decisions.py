@@ -132,6 +132,26 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
     internal caller or the owner's own view."""
     conn = _conn(db_path)
     recs = {}
+    # The restaurant's day for a stored UTC stamp: 8pm Central on 9/28 was
+    # "9/29/26" in every prompt that read a decision (memory re-audit
+    # 9/29/26, PROMPTS-15 / QUALITY-17). A bare date stays as it is.
+    _tz = []
+
+    def _day(value):
+        v = str(value or "")
+        if len(v) <= 10:
+            return v[:10]
+        try:
+            import time_utils
+            if not _tz:
+                try:
+                    from models import get_restaurant as _gr
+                    _tz.append(getattr(_gr(restaurant_id), "timezone", None))
+                except Exception:
+                    _tz.append(None)
+            return time_utils.local_iso(v, _tz[0]) or v[:10]
+        except Exception:
+            return v[:10]
 
     def rec(key, title=None, kind="recommendation", when=None):
         r = recs.get(key)
@@ -150,11 +170,11 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
         try:
             for row in conn.execute("SELECT key, kind, dismissed_at, expires_at, COALESCE(times,1) AS times "
                                     "FROM home_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall():
-                r = rec(row["key"], title=_humanize(row["key"]), when=str(row["dismissed_at"] or "")[:10])
+                r = rec(row["key"], title=_humanize(row["key"]), when=_day(row["dismissed_at"]))
                 r["times_hidden"] = int(row["times"] or 1)
                 r["answer"] = {"done": "done", "not_for_us": "not for us",
                                "snooze": "snoozed"}.get(row["kind"], "hidden")
-                r["answered_on"] = str(row["dismissed_at"] or "")[:10]
+                r["answered_on"] = _day(row["dismissed_at"])
         except Exception:
             pass
         # What the owner said everywhere else — the brief, Reviews, Food,
@@ -198,7 +218,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                               "not for us" if meta.get("kind") == "not_for_us" else "hidden")
                 else:
                     answer = {"completed": "done", "implemented": "implemented"}.get(row["event"], "accepted")
-                day = str(row["at"] or "")[:10]
+                day = _day(row["at"])
                 r = rec(key, title=row["title"] or _humanize(key), when=day)
                 r["model_written"] = bool(row["model_written"])
                 r["signature"] = row["signature"] or None
@@ -248,10 +268,10 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                                     (restaurant_id,)).fetchall():
                 key = _first(row, "source_key") or f"issue:{row['id']}"
                 r = rec(key, title=_first(row, "title"), kind=_first(row, "kind") or "issue",
-                        when=str(_first(row, "created_at") or "")[:10])
+                        when=_day(_first(row, "created_at")))
                 if _first(row, "kind"):
                     r["kind"] = _first(row, "kind")     # the issue's kind is the more specific one
-                r["issue"] = {"status": _first(row, "status"), "resolved_on": str(_first(row, "resolved_at") or "")[:10] or None,
+                r["issue"] = {"status": _first(row, "status"), "resolved_on": _day(_first(row, "resolved_at")) or None,
                               "note": _first(row, "resolution_note")}
                 if not r["answer"]:
                     r["answer"] = "resolved" if _first(row, "status") == "resolved" else "open"
@@ -264,7 +284,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 fact = row["fact"] or ""
                 if fact.startswith("Not doing “") and "”: " in fact:
                     title, reason = fact[len("Not doing “"):].split("”: ", 1)
-                    day = str(row["created_at"] or "")[:10]
+                    day = _day(row["created_at"])
                     target = None
                     for r in recs.values():
                         if title in (r["title"], r["key"], _humanize(r["key"])):
@@ -285,7 +305,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                         if target["title"] == _humanize(target["key"]):
                             target["title"] = title
                     else:
-                        r = rec("pref:" + title[:60], title=title, kind="preference", when=str(row["created_at"] or "")[:10])
+                        r = rec("pref:" + title[:60], title=title, kind="preference", when=_day(row["created_at"]))
                         r["answer"] = "not for us"; r["reason"] = reason
         except Exception:
             pass
@@ -299,7 +319,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                 # share; an answer from an older client names no proposal.
                 key = (f"ask:{row['proposal_id']}" if row["proposal_id"] else
                        f"ask:{row['action']}:{(row['summary'] or '')[:40]}")
-                r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=str(row["created_at"] or "")[:10])
+                r = rec(key, title=row["summary"] or row["action"], kind="proposal", when=_day(row["created_at"]))
                 r["answer"] = row["outcome"]
                 r["_uid"] = row["user_id"]         # who answered it (redaction only; never returned)
                 if row["reason"] and not r.get("reason"):
