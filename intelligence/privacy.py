@@ -360,12 +360,38 @@ def org_members(restaurant_id, db_path=None) -> tuple:
     return _union_rows(rows, links).get(rid) or f"r{rid}", rows
 
 
+# The install's own key for org_hash (memory re-audit 9/29/26, FORGET-8):
+# a plain sha256 of "cavnar-org:r5" (or of "e<owner email>") could be
+# recomputed by anyone holding a copy of intel_benchmarks, so a deleted
+# restaurant's weekly band values were recoverable from every backup. The key
+# lives in app_secrets (models.kept_secret), which the off-site copies empty.
+ORG_HASH_SECRET = "intel_org_hash"
+_org_secret_cache = {"key": None, "value": None}
+
+
+def _org_secret() -> bytes:
+    """This database's org-hash key, minted once and cached per database.
+    Raises when it cannot be read: a band builder fails closed rather than
+    store a hash anyone can reverse."""
+    import models as _m
+    ident = (getattr(_m, "DB_PATH", None), id(getattr(_m, "get_conn", None)))
+    if _org_secret_cache["key"] == ident and _org_secret_cache["value"]:
+        return _org_secret_cache["value"]
+    value = _m.kept_secret(ORG_HASH_SECRET)
+    if not value:
+        raise RuntimeError("the organisation-hash key is unreadable")
+    _org_secret_cache.update(key=ident, value=value)
+    return value
+
+
 def org_hash(key) -> str:
     """A one-way stand-in for an organisation key, stored beside each member
     value server-side (never selected into a payload): enough to take a
-    viewer's organisation out of a band and to count organisations."""
+    viewer's organisation out of a band and to count organisations. An HMAC
+    under this install's own key (_org_secret), never a bare hash."""
     import hashlib
-    return hashlib.sha256(("cavnar-org:" + str(key)).encode()).hexdigest()[:16]
+    import hmac
+    return hmac.new(_org_secret(), ("cavnar-org:" + str(key)).encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def org_counts(orgs) -> tuple[int, float]:

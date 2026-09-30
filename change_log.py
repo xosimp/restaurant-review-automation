@@ -31,8 +31,13 @@ Writers: models.update_restaurant writes its rows inside its own
 transaction (record(..., conn=conn)); the roster (M3), menu and price (M6)
 and goal (M2) writers call record() with `subject=` naming the thing.
 Readers: rec_trust.owner_changes and outcomes.find_concurrent (the
-"changed since" caution and the concurrent-change check), value_as_of
-(the target in force on a date), history() for the Account change list.
+"changed since" caution and the concurrent-change check), history() for
+the Account change list. value_as_of (the target in force on a date) is
+the record's own query and has NO production caller yet (memory re-audit
+9/29/26, INVENTORY-12): no result or claim is judged against a target
+today, so nothing reads it; it is kept as an intentional record for the
+first reader that does (an Ask "which target applied then" tool, or a
+target-based verdict).
 """
 import contextlib
 import contextvars

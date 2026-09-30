@@ -605,8 +605,17 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     ask_cavnar's precedent: answering from the bundled placeholder pantry as
     if it were this restaurant's numbers is worse than saying nothing.
     """
-    ctx = {"labor": None, "food_cost": None, "waste": None, "marketing": None,
+    ctx = {"labor": None, "food_cost": None, "waste": None, "marketing": None, "guests": None,
            "notes": []}
+
+    # The guests the nightly reports measured (re-audit 9/29/26,
+    # CROSSMODULE-18): "busier" and "worse" are told apart by a count, not
+    # left for the owner to check by hand.
+    try:
+        import business_intelligence as _bi_g
+        ctx["guests"] = _bi_g.measured_guests(restaurant_id, db_path=db_path)
+    except Exception:
+        pass
 
     try:
         from labor import analyse_shifts_for_restaurant
@@ -1172,7 +1181,7 @@ Guest review excerpts (review id -> text):
 WHAT THE OTHER SYSTEMS RECORDED OVER THE SAME PERIOD
 {operational_block}
 
-WHAT CHANGED ON THOSE SHIFTS — {slice_label} (the published schedules, the owner's events and guest texts, and the closers' notes, cut to where these complaints concentrate):
+WHAT CHANGED ON THOSE SHIFTS — {slice_label} (the published schedules, the shifts staff actually worked, the nightly reports, the owner's events and guest texts, and the closers' notes, cut to where these complaints concentrate):
 {slice_block}
 
 WHAT WAS ALREADY TRIED ON THIS THEME (the owner's answers and what was measured after):
@@ -1190,7 +1199,7 @@ EVIDENCE RULES — these bound what you may claim:
 - `evidence_review_ids` MUST be ids listed above. Never write an id that is not on this page. An id you did not see is a fabricated citation.
 - State no figure — a dollar amount, a percentage, a count, a rating — that does not appear above.
 - Name a person, a dish, a role, a shift or a weekday ONLY if it appears above. If no dish is listed, your cause may not turn on a dish.
-- You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED" or to the "Shifts" line under "WHAT CHANGED ON THOSE SHIFTS" (module "shifts") only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
+- You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED" (the "Guests" line is module "guests") or to the "Shifts" (module "shifts"), "Worked" (module "worked") or "Nightly reports" (module "nightly") lines under "WHAT CHANGED ON THOSE SHIFTS" only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
 - A schedule edit, an event, a guest text or a close-out note on the same shifts is something that moved WITH the complaints: say they coincide, never that one caused the other. Quote no figure from a close-out note.
 - Correlation in a 90-day window is not proof. If the reviews and a figure moved together, say they moved together; do not say one caused the other.
 - `confidence` is "high" only when the complaints are specific AND concentrated AND a figure from another system points the same way. It is "low" when you are reasoning mostly from the theme name.
@@ -1202,7 +1211,7 @@ Return this exact shape:
   "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
   "what_would_confirm": "one concrete thing the owner could check or observe this week that would tell the two apart, 1 sentence",
   "evidence_review_ids": [ids from above that this cause rests on, 2-6 of them],
-  "operational_evidence": [{{"module": "labor|food_cost|waste|marketing|shifts", "metric": "what it is", "value": "the figure exactly as given above"}}],
+  "operational_evidence": [{{"module": "labor|food_cost|waste|marketing|guests|shifts|worked|nightly", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
   "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
@@ -1310,7 +1319,35 @@ def _operational_lines(ctx) -> dict:
             fields["best_reach"] = op_field("best post's reach", mk["best_reach"], "count",
                                             display=f"{mk['best_reach']}")
         lines["marketing"] = OperationalLine(text, fields)
+    g = ctx.get("guests")
+    if g:
+        lines["guests"] = guests_line(g)
     return lines
+
+
+def guests_line(g, label=None):
+    """The "Guests" OperationalLine from business_intelligence.
+    measured_guests: guests a night the nightly reports measured, and per
+    labor hour, now against the window before (CROSSMODULE-18). Shared by
+    the review and the food diagnosis."""
+    from ai_guard import OperationalLine, op_field
+    where = f" on {label}" if label else ""
+    text = (f"- Guests (the nightly reports){where}: {g['avg_guests']:g} guests a night over the last {g['days']} "
+            f"days ({g['nights']} nights measured)")
+    fields = {"avg_guests": op_field(f"guests a night{where}", g["avg_guests"], "count", display=f"{g['avg_guests']:g}"),
+              "nights": op_field("nights measured", g["nights"], "count", evidence=False)}
+    if g.get("gplh") is not None:
+        text += f", {g['gplh']:g} guests per labor hour"
+        fields["gplh"] = op_field(f"guests per labor hour{where}", g["gplh"], "count", display=f"{g['gplh']:g}")
+    if g.get("before_avg_guests") is not None:
+        text += f", against {g['before_avg_guests']:g} a night in the {g['days']} days before"
+        fields["before_avg_guests"] = op_field(f"guests a night before{where}", g["before_avg_guests"], "count",
+                                               display=f"{g['before_avg_guests']:g}")
+        if g.get("before_gplh") is not None:
+            text += f" ({g['before_gplh']:g} per labor hour)"
+            fields["before_gplh"] = op_field(f"guests per labor hour before{where}", g["before_gplh"], "count",
+                                             display=f"{g['before_gplh']:g}")
+    return OperationalLine(text, fields)
 
 
 def _operational_block(ctx) -> str:
@@ -1329,7 +1366,11 @@ def _operational_block(ctx) -> str:
     return "\n".join(lines)
 
 
-OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing", "shifts")
+# "guests": the nightly reports' measured guests (CROSSMODULE-18);
+# "worked": the shifts staff actually worked on the complaint's slice
+# (shift_facts), "nightly": the nightly reports' no-shows, late arrivals and
+# guests on the slice's nights (dsr_metrics) — CROSSMODULE-9.
+OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing", "shifts", "guests", "worked", "nightly")
 
 
 # ── The complaint's own slice (memory audit 9/29/26, "diagnosis_slice") ────
@@ -1408,7 +1449,7 @@ def slice_context(restaurant_id, cluster, db_path=DB_PATH, today=None) -> dict:
     "block" (the prompt section), "untrusted" (the closers' words and event
     labels, for the validation layer)}. Empty when the cluster concentrates
     on no weekday, daypart or role. Never raises."""
-    out = {"label": None, "line": None, "block": "", "untrusted": []}
+    out = {"label": None, "line": None, "lines": {}, "block": "", "untrusted": []}
     days, part, shift_part, role = _slice_of(cluster)
     if not days and not shift_part and not role:
         return out
@@ -1462,6 +1503,20 @@ def slice_context(restaurant_id, cluster, db_path=DB_PATH, today=None) -> dict:
                                                    display=f"{p_b:g}")
             line = OperationalLine(text, fields)
             lines.append(str(line))
+        # 1b. What staff actually WORKED on the slice (re-audit 9/29/26,
+        # CROSSMODULE-9): shift_facts holds every worked shift — the real
+        # record where no schedule is published in the app — as actual
+        # hours and headcount per slice night, now against before.
+        worked = _worked_slice(conn, restaurant_id, days, shift_part, role, now_start, before_start, today)
+        if worked is not None:
+            out["lines"]["worked"] = worked
+            lines.append(str(worked))
+        # 1c. What the nightly reports measured on the slice's nights: no-
+        # shows, late arrivals and guests (dsr_metrics, CROSSMODULE-9/18).
+        nightly = _nightly_slice(restaurant_id, days, label, today, db_path)
+        if nightly is not None:
+            out["lines"]["nightly"] = nightly
+            lines.append(str(nightly))
         # 2. Schedule edits that touched the slice: the generated draft
         # against what was published, per published week in the lookback.
         try:
@@ -1540,6 +1595,114 @@ def _row_hours(r):
         return float(r.get("scheduled_hours") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# A slice's worked shifts or nightly figures are stated over at least this
+# many nights of the slice in the last SLICE_WINDOW_DAYS.
+SLICE_MIN_NIGHTS = 2
+
+
+def _worked_slice(conn, restaurant_id, days, shift_part, role, now_start, before_start, today):
+    """The "Worked" OperationalLine: actual hours and people per slice night
+    from shift_facts, the last SLICE_WINDOW_DAYS against the window before,
+    or None under SLICE_MIN_NIGHTS nights."""
+    from ai_guard import OperationalLine, op_field
+    rows = _rows_raw(conn, "SELECT business_date, employee_key, role, shift_start, actual_hours FROM shift_facts "
+                           "WHERE restaurant_id=? AND business_date >= ? AND business_date < ? "
+                           "AND actual_hours IS NOT NULL", (restaurant_id, before_start.isoformat(), today.isoformat()))
+    per = {}
+    for r in rows:
+        if not _row_in_slice({"date": r["business_date"], "shift_start": r["shift_start"] or "",
+                              "role": r["role"]}, days, shift_part, role):
+            continue
+        n = per.setdefault(str(r["business_date"])[:10], {"hours": 0.0, "people": set()})
+        n["hours"] += float(r["actual_hours"] or 0)
+        n["people"].add(r["employee_key"])
+    win = {"now": [], "before": []}
+    for d, n in per.items():
+        win["now" if d >= now_start.isoformat() else "before"].append(n)
+    if len(win["now"]) < SLICE_MIN_NIGHTS:
+        return None
+
+    def _avg(ns):
+        return (round(sum(n["hours"] for n in ns) / len(ns), 1), round(sum(len(n["people"]) for n in ns) / len(ns), 1))
+    label = slice_label(days, None if not shift_part else {"morning": "lunch", "night": "dinner"}[shift_part], role)
+    h, p = _avg(win["now"])
+    text = (f"- Worked: {label} averaged {h:g} actual hours and {p:g} people over the last {SLICE_WINDOW_DAYS} days "
+            f"({len(win['now'])} nights, the shifts staff clocked)")
+    fields = {"worked_hours_now": op_field(f"actual hours worked, {label}", h, "count", display=f"{h:g}"),
+              "worked_people_now": op_field(f"people who worked, {label}", p, "count", display=f"{p:g}"),
+              "worked_nights_now": op_field("nights read", len(win["now"]), "count", evidence=False)}
+    if len(win["before"]) >= SLICE_MIN_NIGHTS:
+        hb, pb = _avg(win["before"])
+        text += f", against {hb:g} hours and {pb:g} people in the {SLICE_WINDOW_DAYS} days before"
+        fields["worked_hours_before"] = op_field(f"actual hours worked before, {label}", hb, "count",
+                                                 display=f"{hb:g}")
+        fields["worked_people_before"] = op_field(f"people who worked before, {label}", pb, "count",
+                                                  display=f"{pb:g}")
+    return OperationalLine(text, fields)
+
+
+def _nightly_slice(restaurant_id, days, label, today, db_path):
+    """The "Nightly reports" OperationalLine: on the slice's weekdays over
+    the last SLICE_WINDOW_DAYS, the no-shows and late arrivals the nightly
+    reports measured (dsr_metrics labor.no_shows / labor.late_arrivals) and
+    their measured guests (business_intelligence.measured_guests). None
+    when the cluster names no weekday or nothing was measured on
+    SLICE_MIN_NIGHTS of its nights."""
+    if not days:
+        return None
+    from ai_guard import OperationalLine, op_field
+    from datetime import timedelta as _td
+    since = (today - _td(days=SLICE_WINDOW_DAYS)).isoformat()
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = _rows_raw(conn, "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+                                   "AND metric IN ('labor.no_shows','labor.late_arrivals') AND business_date >= ? "
+                                   "AND business_date < ? AND value IS NOT NULL",
+                             (restaurant_id, since, today.isoformat()))
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+    by = {"labor.no_shows": {}, "labor.late_arrivals": {}}
+    for r in rows:
+        if _weekday_of(r["business_date"]) not in days:
+            continue
+        try:
+            by[r["metric"]][str(r["business_date"])[:10]] = float(r["value"])
+        except (TypeError, ValueError, KeyError):
+            continue
+    try:
+        import business_intelligence as _bi_n
+        g = _bi_n.measured_guests(restaurant_id, weekdays=days, days=SLICE_WINDOW_DAYS, today=today,
+                                  db_path=db_path)
+    except Exception:
+        g = None
+    bits, fields = [], {}
+    ns, la = by["labor.no_shows"], by["labor.late_arrivals"]
+    if len(ns) >= SLICE_MIN_NIGHTS:
+        n = int(round(sum(ns.values())))
+        bits.append(f"{n} no-show{'s' if n != 1 else ''} over {len(ns)} of those nights")
+        fields["no_shows"] = op_field(f"no-shows on {label}", n, "count", display=str(n))
+        fields["no_show_nights"] = op_field("nights with attendance measured", len(ns), "count", evidence=False)
+    if len(la) >= SLICE_MIN_NIGHTS:
+        n = int(round(sum(la.values())))
+        bits.append(f"{n} late arrival{'s' if n != 1 else ''} over {len(la)} nights")
+        fields["late_arrivals"] = op_field(f"late arrivals on {label}", n, "count", display=str(n))
+    if g:
+        bits.append(f"{g['avg_guests']:g} guests a night ({g['nights']} nights)"
+                    + (f", {g['gplh']:g} per labor hour" if g.get("gplh") is not None else ""))
+        fields["slice_guests"] = op_field(f"guests a night on {label}", g["avg_guests"], "count",
+                                          display=f"{g['avg_guests']:g}")
+        if g.get("gplh") is not None:
+            fields["slice_gplh"] = op_field(f"guests per labor hour on {label}", g["gplh"], "count",
+                                            display=f"{g['gplh']:g}")
+    if not bits:
+        return None
+    return OperationalLine(f"- Nightly reports: on {' and '.join(days)} over the last {SLICE_WINDOW_DAYS} days, "
+                           + "; ".join(bits), fields)
 
 
 def tried_on_theme(restaurant_id, category, db_path=DB_PATH) -> str:
@@ -1881,6 +2044,9 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             cl_lines = dict(op_lines)
             if sl.get("line") is not None:
                 cl_lines["shifts"] = sl["line"]
+            # What was worked and what the nightly reports measured on the
+            # slice (CROSSMODULE-9), each checkable by its own fields.
+            cl_lines.update({k: v for k, v in (sl.get("lines") or {}).items() if v is not None})
             prompt = DIAGNOSE_PROMPT.format(
                 untrusted_note=UNTRUSTED_NOTE,
                 restaurant_name=restaurant.name,

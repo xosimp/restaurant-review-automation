@@ -111,11 +111,16 @@ SURFACE_SECTIONS = {
     # Ask, per turn: the chat's rolling summary, what its last answer read,
     # and the questions this login keeps asking — the first context block.
     "ask_conversation": ("conversation",),
-    "schedule": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
+    # "links" (re-audit 9/29/26): what a fill campaign's night measured,
+    # once its link ended — the schedule's verdict for that weekday
+    # (link_memory, CROSSMODULE-12).
+    "schedule": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people", "links"),
     "labor_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "food_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "market"),
-    "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people"),
+    # "links" (re-audit 9/29/26, CROSSMODULE-9): the links joining these
+    # complaints to a lean or no-show weekday, or to the visibility drop.
+    "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people", "links"),
     "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "links"),
     # Not "decisions" on the nightly report or the Monday plan: each prompt
     # carries decisions.context itself, read as the same team viewer — a

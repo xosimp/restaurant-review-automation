@@ -202,7 +202,12 @@ def _summarize(restaurant_id, cid, user_id, db_path, force):
     scrolled = [r for r in rows[:-REPLAY_WINDOW] if int(r["id"]) > through] if len(rows) > REPLAY_WINDOW else []
     if len(scrolled) < (1 if force else SUMMARY_TRIGGER):
         return None
-    scrolled = scrolled[-SUMMARY_MAX_TURNS:]
+    # The OLDEST turns first, and the notes run through the last one folded
+    # (memory re-audit 9/29/26, INVENTORY-14): the newest 30 were taken and
+    # summary_through_id jumped past the rest, so a backlog over 30 turns
+    # (rate-limited or failed summaries) was never summarised. The next
+    # pass continues where this one stopped.
+    scrolled = scrolled[:SUMMARY_MAX_TURNS]
     try:
         from ai_utils import ai_rate_limited
         if ai_rate_limited(f"ask_summary:{restaurant_id}", max_calls=SUMMARY_RATE_PER_HOUR, window_secs=3600):
@@ -363,19 +368,44 @@ def memory_lines(req):
 
 # ── what this person keeps asking ───────────────────────────────────────────
 
+def _reads_legacy(restaurant_id, user_id, db_path=None) -> bool:
+    """Whether this login may read the ownerless chats from before chats had
+    owners (user_id NULL): only an account holder of THIS restaurant (memory
+    re-audit 9/29/26, INVENTORY-7) — they were read by every login, so a
+    manager's "Recent questions" quoted the owner's. Fails closed."""
+    if user_id is None:
+        return False
+    try:
+        import permissions
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT * FROM users WHERE id=?", (int(user_id),)).fetchone()
+        finally:
+            conn.close()
+        u = dict(row) if row else None
+        if not u:
+            return False
+        if not u.get("is_admin") and u.get("restaurant_id") not in (None, restaurant_id):
+            return False
+        return permissions.is_principal(u)
+    except Exception:
+        return False
+
+
 def _topics_rows(restaurant_id, user_id, days, db_path=None):
     since = (datetime.utcnow() - timedelta(days=int(days))).strftime("%Y-%m-%d %H:%M:%S")
+    who = "(user_id=? OR user_id IS NULL)" if _reads_legacy(restaurant_id, user_id, db_path) else "user_id=?"
     conn = get_conn(db_path)
     try:
         live = [dict(r) for r in conn.execute(
             "SELECT id AS conversation_id, title, topics, summary_json, updated_at AS at, 'live' AS kind "
-            "FROM ask_cavnar_conversations c WHERE restaurant_id=? AND user_id=? "
+            f"FROM ask_cavnar_conversations c WHERE restaurant_id=? AND {who} "
             "AND updated_at >= ? AND EXISTS (SELECT 1 FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) "
             "ORDER BY updated_at DESC LIMIT 200", (restaurant_id, user_id, since)).fetchall()]
         try:
             kept = [dict(r) for r in conn.execute(
                 "SELECT conversation_id, title, topics, summary_json, ended_at AS at, 'kept' AS kind, message_count "
-                "FROM ask_topics WHERE restaurant_id=? AND user_id=? "
+                f"FROM ask_topics WHERE restaurant_id=? AND {who} "
                 "AND COALESCE(ended_at, created_at) >= ? ORDER BY id DESC LIMIT 400",
                 (restaurant_id, user_id, since)).fetchall()]
         except Exception:

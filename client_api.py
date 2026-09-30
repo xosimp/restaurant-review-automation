@@ -10632,6 +10632,15 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                    saved_authority=_sv.authority_of(actor))
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # The reviews' and the nightly reports' "+1" asks this week carries,
+    # recorded as implemented under it — the loop from a complaint to the
+    # person added and what the complaints did next (re-audit CROSSMODULE-10).
+    try:
+        import staffing_signals as _stsig_pub
+        _stsig_pub.record_published(rid, schedule_id, row["schedule_csv"],
+                                    user_id=actor.get("id") if isinstance(actor, dict) else None)
+    except Exception as _spx:
+        print(f"[publish] staffing asks not recorded for {rid}: {_spx}")
     # The week's sales projection the schedule was built against, frozen
     # now so it can be scored when the week closes (forecast_log kind
     # revenue_week, insert-once; CA2 #6). Never blocks the publish.

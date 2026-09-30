@@ -47,6 +47,8 @@ log = logging.getLogger("offsite_backup")
 # Connect / read timeouts for the object store (scripts/check_timeouts.py):
 # a snapshot upload is one long body, so the read allowance is generous.
 S3_TIMEOUT = (10, 600)
+# The bucket's lifecycle rule is one small XML document.
+S3_LIFECYCLE_TIMEOUT = (10, 30)
 # A single PUT carries at most this much (S3's and R2's single-part limit).
 S3_MAX_SINGLE_PUT = 5 * 1024 ** 3
 
@@ -208,6 +210,71 @@ def download_file(key, dest, cfg=None, full_key=False):
     return {"sha256": h.hexdigest(), "meta_sha256": meta, "bytes": n}
 
 
+def lifecycle_days(cfg=None) -> dict:
+    """{"days", "rule", "error"} — how many days the object store keeps a
+    backup copy before its own lifecycle rule deletes it: the shortest
+    Expiration of any ENABLED rule whose prefix covers BACKUP_S3_PREFIX, or
+    days None (no rule; the store keeps every copy forever) with why.
+    Memory re-audit 9/29/26 (FORGET-9): the expiry the recovery runbook
+    relies on was a manual bucket setting nothing in code ever read. One
+    signed GET ?lifecycle, with a timeout. Never raises."""
+    import requests
+    import xml.etree.ElementTree as ET
+    cfg = cfg or s3_config()
+    if not cfg:
+        return {"days": None, "rule": None, "error": "object storage is not configured (BACKUP_S3_*)"}
+    now = _dt.datetime.now(_dt.timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    empty = hashlib.sha256(b"").hexdigest()
+    path = f"/{cfg['bucket']}"
+    host = urllib.parse.urlparse(cfg["endpoint"]).netloc
+    headers = {"host": host, "x-amz-date": amz_date, "x-amz-content-sha256": empty}
+    auth = sign("GET", path, headers, empty, cfg["access_key"], cfg["secret_key"], cfg["region"], amz_date,
+                query={"lifecycle": ""})
+    send = {k: v for k, v in headers.items() if k != "host"}
+    send["Authorization"] = auth
+    try:
+        resp = requests.get(cfg["endpoint"] + _uri_encode(path, True) + "?lifecycle=", headers=send,
+                            timeout=S3_LIFECYCLE_TIMEOUT)
+    except Exception as e:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: {e}"}
+    if resp.status_code == 404:
+        return {"days": None, "rule": None, "error": "no lifecycle rule on the bucket"}
+    if resp.status_code != 200:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: HTTP {resp.status_code}"}
+    try:
+        root = ET.fromstring(resp.content or b"")
+    except ET.ParseError as e:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: {e}"}
+
+    def _local(tag):
+        return tag.rsplit("}", 1)[-1]
+    prefix = cfg.get("prefix") or ""
+    best = None
+    for rule in (el for el in root.iter() if _local(el.tag) == "Rule"):
+        fields = {}
+        for el in rule.iter():
+            name = _local(el.tag)
+            if name in ("ID", "Status", "Prefix", "Days") and name not in fields:
+                fields[name] = (el.text or "").strip()
+        if fields.get("Status", "").lower() != "enabled":
+            continue
+        if not any(_local(el.tag) == "Expiration" for el in rule.iter()):
+            continue
+        rule_prefix = fields.get("Prefix", "")
+        if rule_prefix and not prefix.startswith(rule_prefix):
+            continue
+        try:
+            days = int(fields.get("Days") or "")
+        except ValueError:
+            continue
+        if best is None or days < best[0]:
+            best = (days, fields.get("ID") or None)
+    if best is None:
+        return {"days": None, "rule": None, "error": "no enabled expiration rule covers the backup prefix"}
+    return {"days": best[0], "rule": best[1], "error": None}
+
+
 # ── the credential scrub registry (#102) ────────────────────────────────────
 
 # Column names that look like a credential. Anything matching is scrubbed
@@ -245,6 +312,39 @@ SCRUB_COLUMNS = {
     # copy it again (fix round B2): a working public link once decrypted.
     ("sales_audit_shares", "token_enc"),
 }
+
+# Rows whose words never leave the server (memory re-audit 9/29/26,
+# FORGET-1): {table: (which rows, "module:CONSTANT" naming the columns)}.
+# A review the owner's retention, the owner or Google removed is hidden from
+# every screen, and its guest text is erased on the server a month later
+# (history_rollups.erase_removed_reviews) — but every off-site copy carried
+# it in full, forever. The off-site copy blanks it at once.
+SCRUB_ROWS = {
+    "reviews": ("deleted_at IS NOT NULL", "history_rollups:REVIEW_GUEST_TEXT"),
+}
+
+
+def _scrub_rows(conn):
+    """Blank SCRUB_ROWS' columns on their rows in a copy. Returns
+    ["table.column", ...] blanked (only columns this database has)."""
+    import importlib
+    done = []
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for t, (where, ref) in SCRUB_ROWS.items():
+        if t not in tables:
+            continue
+        mod, const = ref.split(":", 1)
+        info = list(conn.execute(f'PRAGMA table_info("{t}")'))
+        have = {r[1] for r in info}
+        notnull = {r[1] for r in info if r[3]}
+        cols = [c for c in getattr(importlib.import_module(mod), const) if c in have]
+        if not cols:
+            continue
+        sets = ", ".join(f'"{c}"=' + ("''" if c in notnull else "NULL") for c in cols)
+        conn.execute(f'UPDATE "{t}" SET {sets} WHERE {where}')
+        done += [f"{t}.{c} (removed rows)" for c in cols]
+    return done
+
 
 # Credential-LOOKING columns that are deliberately kept, and why. A new one
 # that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
@@ -351,9 +451,11 @@ def redact(path):
             # A NOT NULL column (webhooks.secret) is blanked rather than nulled.
             blank = "''" if c in notnull[t] else "NULL"
             conn.execute(f'UPDATE "{t}" SET "{c}"={blank} WHERE "{c}" IS NOT NULL AND "{c}" != \'\'')
+        rows = _scrub_rows(conn)
         conn.commit()
         conn.execute("VACUUM")
-        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified}
+        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified,
+                "rows": rows}
     finally:
         conn.close()
 
@@ -370,6 +472,7 @@ def describe_scrub(scrubbed) -> dict:
         "emptied": sorted(scrubbed.get("tables") or []),
         "blanked": sorted(scrubbed.get("columns") or []),
         "precaution": sorted(f"{t}.{c}" for t, c in (scrubbed.get("unclassified") or [])),
+        "removed_rows": sorted(scrubbed.get("rows") or []),
         "kept": "password hashes, hashed link tokens, public link ids guests and staff already hold, and "
                 "model token counts (offsite_backup.KEEP_COLUMNS)",
     }
