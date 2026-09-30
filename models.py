@@ -9844,7 +9844,7 @@ def learning_eligible(restaurant, since=None, db_path=None) -> bool:
         return False
     if since is not None:
         floor = _learning_get(r, "learning_since")
-        if floor and str(since).replace("T", " ")[:19] < str(floor)[:19]:
+        if floor and str(since).replace("T", " ")[:19] < str(floor).replace("T", " ")[:19]:
             return False
     return True
 
@@ -9892,8 +9892,12 @@ def learning_rows_sql(rid_column, time_column) -> str:
     """A WHERE fragment dropping rows recorded before their restaurant's
     learning_since (its demo era): correlated on `rid_column`, compared on
     `time_column` (an ISO date or SQLite stamp)."""
+    # Both sides normalised to a space stamp (memory re-audit 9/29/26,
+    # PLATFORM-17): 'T' sorts after ' ', so an ISO row stamped the morning
+    # of a conversion compared as later and taught.
     return (f"NOT EXISTS (SELECT 1 FROM restaurants _ls WHERE _ls.id = {rid_column} "
-            f"AND _ls.learning_since IS NOT NULL AND {time_column} < _ls.learning_since)")
+            f"AND _ls.learning_since IS NOT NULL "
+            f"AND replace({time_column}, 'T', ' ') < replace(_ls.learning_since, 'T', ' '))")
 
 
 def learning_since_map(conn=None, db_path=None) -> dict:

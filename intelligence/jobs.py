@@ -182,7 +182,15 @@ def before_learning(restaurant_id, when, since=None) -> bool:
     ls = (since or {}).get(int(restaurant_id)) if restaurant_id is not None else None
     if not ls or not when:
         return False
-    return str(when)[:19] < str(ls)[:19]
+    # Both sides as "YYYY-MM-DD HH:MM:SS" (memory re-audit 9/29/26,
+    # PLATFORM-17): an ISO "T" stamp compared later than the same morning's
+    # space-separated learning_since ('T' > ' '), so that morning's demo-era
+    # rows taught.
+    return _stamp19(when) < _stamp19(ls)
+
+
+def _stamp19(v) -> str:
+    return str(v).replace("T", " ")[:19]
 
 
 def learning_since_week(restaurant_id, since=None):

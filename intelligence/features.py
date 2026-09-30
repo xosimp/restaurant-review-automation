@@ -705,15 +705,34 @@ def latest(restaurant_id: int, db_path: str = DB_PATH) -> dict | None:
             "computed_at": row["computed_at"], "backfilled": bool(row["backfilled"])}
 
 
-def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH) -> list:
+def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH, own: bool = True) -> list:
     """This restaurant's last `weeks` rows of the current FEATURES_VERSION,
     oldest first — a row under an older definition never joins the series
-    (PLATFORM-5); the backfill re-derives it."""
+    (PLATFORM-5); the backfill re-derives it.
+
+    Every caller is an OWN reader (the restaurant against itself: Ask's
+    slopes, the engine's self series, a band's own figure, an
+    organisation's locations), so by default a converted demo's weeks
+    before its learning_since week are left out (memory re-audit 9/29/26,
+    PLATFORM-7: "moving up per week" was drawn from seeded rows while the
+    ranker and the confidence % read none). `own=False` reads every row."""
     conn = get_conn(db_path)
     try:
+        floor_week = None
+        if own:
+            try:
+                ls = conn.execute("SELECT learning_since FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+            except Exception:
+                ls = None
+            if ls and ls[0]:
+                try:
+                    y, w, _ = date.fromisoformat(str(ls[0])[:10]).isocalendar()
+                    floor_week = f"{y}-W{w:02d}"
+                except ValueError:
+                    floor_week = None
         rows = conn.execute("SELECT week, features_json, completeness, backfilled FROM intel_features "
-                            "WHERE restaurant_id=? AND version=? ORDER BY week DESC LIMIT ?",
-                            (restaurant_id, FEATURES_VERSION, int(weeks))).fetchall()
+                            "WHERE restaurant_id=? AND version=? AND week >= ? ORDER BY week DESC LIMIT ?",
+                            (restaurant_id, FEATURES_VERSION, floor_week or "", int(weeks))).fetchall()
     finally:
         conn.close()
     return [{"week": r["week"], "features": json.loads(r["features_json"]), "completeness": r["completeness"],

@@ -1462,8 +1462,8 @@ def _learning_floor(restaurant, since):
     floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
     if floor is None and isinstance(restaurant, dict):
         floor = restaurant.get("learning_since")
-    if floor and str(floor)[:19] > str(since or "")[:19]:
-        return str(floor)[:19]
+    if floor and str(floor).replace("T", " ")[:19] > str(since or "").replace("T", " ")[:19]:
+        return str(floor).replace("T", " ")[:19]
     return since
 
 

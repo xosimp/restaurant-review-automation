@@ -1221,13 +1221,23 @@ the history it had been teaching from. The row filters:
   `excluded_learning_ids`), `before_learning(rid, when)` on a row's stamp,
   `learning_since_week` for a week-keyed row — in `scoring._eligible_rows`
   (every `kind_stats`, `similar_prior`, `rank_kinds`, `platform_totals`),
-  `jobs.log_confidence`, `predict._taken`,
+  `jobs.log_confidence`, `predict._taken` and its control arm
+  `predict._untaken` (on the untaken result's `started_on`; memory re-audit
+  9/29/26),
   `features.latest_by_restaurant` / `weekly_by_restaurant` (which also drop
   every account `learning_eligible` refuses, not only demos) and the
   schedule A/B readout (`schedule_experiments.readout`: eligible
   restaurants only, no week before `learning_since`);
 - the restaurant's own model: `rec_learning._learning_floor` in
-  `effectiveness` and `kind_record`;
+  `effectiveness` and `kind_record`, and — since the memory re-audit
+  (9/29/26) — in what Ask is told: `memory.own_record` (its own kinds and
+  what "worked", through `scoring.kind_stats(..., since=)`) and every own
+  feature series (`features.series`, own by default: no week before the
+  `learning_since` week — Ask's slopes, the engine's self series, a band's
+  own figure);
+- every comparison normalises both stamps to `YYYY-MM-DD HH:MM:SS` (an ISO
+  "T" sorted after the same morning's space stamp): `before_learning`,
+  `learning_rows_sql`, `learning_eligible`, `_learning_floor`;
 - SQL readers: `models.learning_rows_sql(rid_col, time_col)` (the admin
   calibrations) and `learning_since_map`;
 - its own daily history: a converted demo's seeded days (`source='seed'`)

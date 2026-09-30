@@ -298,7 +298,7 @@ def _eligible_rows(rows, db_path):
 
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
                exclude_restaurant_id: int = None, window_days: int = None, half_life_days: float = None,
-               now=None, partition: str = None, decay: bool = False) -> dict:
+               now=None, partition: str = None, decay: bool = False, since: str = None) -> dict:
     """Rates for one kind. With `restaurant_id` it is that restaurant's own
     record (Level 1); with `cohort` the concept's (a confirmed type); with
     `partition` the confirmed peer partition's (partition_rows_sql — the
@@ -323,6 +323,10 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
     where, args = ["rec_kind=?"], [rec_kind]
     if window_days:
         where.append("event_at >= ?"); args.append((now - timedelta(days=int(window_days))).strftime("%Y-%m-%d"))
+    if since:
+        # An own reader's learning floor (memory re-audit 9/29/26,
+        # PLATFORM-7): a converted demo's rows before learning_since.
+        where.append("replace(event_at, 'T', ' ') >= ?"); args.append(str(since).replace("T", " ")[:19])
     cross = restaurant_id is None
     if not cross:
         where.append("restaurant_id=?"); args.append(restaurant_id)
