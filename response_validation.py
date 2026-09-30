@@ -656,6 +656,15 @@ _HEDGE_BEFORE_RE = re.compile(
     r"\b(?:may|might|could|possibly|probably|likely|perhaps|partly|in\s+part|appears?\s+to|seems?\s+to|"
     r"suggests?|consistent\s+with|one\s+possible|may\s+well|part\s+of)\b[^.;]{0,30}$", re.I)
 _NEGATED_BEFORE_RE = re.compile(r"\b(?:not|n['’]t|no|never|nothing)\b[\w\s,'’-]{0,14}$", re.I)
+# An indirect question names no cause: "see what drove it (low sales,
+# overstaffing, or both)" points the owner at where to look (Ask, 9/30/26,
+# read as an "Unsupported cause" on a recommendation to open the DSR).
+# Only a question word after a verb of looking - "see what", "find out why" -
+# is a question: "which caused the delay" and "what drove it was X" still
+# claim a cause.
+_QUESTION_BEFORE_RE = re.compile(
+    r"\b(?:see|check|find\s+out|figure\s+out|know|understand|learn|ask|look\s+(?:at|into)|dig\s+into|"
+    r"explore|confirm|tell|show)\s+(?:\w+\s+){0,2}?(?:what|which|whether|why|how|if)\s+(?:\w+\s+){0,2}$", re.I)
 _MOVE_PAST = (r"(?:rose|fell|dropped|climbed|slipped|declined|jumped|increased|decreased|improved|worsened|eased|"
               r"spiked|dipped|sank|grew|shrank|soared|plunged|tumbled|surged|went\s+(?:up|down)|took\s+a\s+hit|"
               r"complained|got\s+worse|came\s+in|fell\s+short|ran\s+(?:high|over|heavy|hot)|slowed|picked\s+up|"
@@ -2634,6 +2643,8 @@ class _Run:
             pre = scan[max(0, start - 40):start]
             if _NEGATED_BEFORE_RE.search(pre):
                 continue
+            if _QUESTION_BEFORE_RE.search(pre):
+                continue          # "see what drove it" asks; it claims nothing
             if re.match(r"(?:came|comes)\s", scan[start:end], re.I) and re.search(
                     r"\b(?:most|much|all|half|share|bulk|\d+\s?%)\s+of\b", scan[max(0, start - 60):start], re.I):
                 continue          # composition of a measured total, not a cause

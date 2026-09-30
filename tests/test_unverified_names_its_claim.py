@@ -36,3 +36,15 @@ def test_the_box_shows_a_caveat_sentence_as_written_and_a_figure_list_inside_its
     assert "A cause here isn&#39;t shown by your numbers: “that day alone drives the gap”." in html
     old = client_api.format_insight_html("Labor ran 56.4%.\n\nUNVERIFIED: $145, 38%")
     assert "Couldn’t confirm $145, 38% against your actual numbers." in old
+
+
+def test_a_question_about_what_drove_a_night_is_not_a_claimed_cause():
+    """Ask, 9/30/26: pointing Erik at the DSR to "see what drove it (low
+    sales, overstaffing, or both)" read as an Unsupported cause. The claim
+    it guards against still reads as one."""
+    ctx = Ctx(restaurant_id=5, surface="ask", facts=[Fact("labor.pct", 69.5, "%"), Fact("labor.target_pct", 35, "%")],
+              policy={"action": "ask"})
+    ask = ("On 9/15/26 labor came in at 69.5% of sales. Worth pulling up that night's DSR if you want to see "
+           "what drove it (low sales, overstaffing, or both).")
+    assert "K1" not in validate(ask, ctx).codes
+    assert "K1" in validate("Labor came in at 69.5% of sales — overstaffing drove it.", ctx).codes

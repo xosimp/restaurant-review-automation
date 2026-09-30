@@ -402,6 +402,19 @@ measurement is drawn as a gap, never as zero.
 On/off is `.ac-switch` (44×26 track, ember when checked, 18px thumb travel,
 visible focus outline).
 
+**A form row is one height (owner, 9/30/26).** In a row of fields
+(`.lb2-form`, `.ts-form`, `.rul-grid` on Labor) every control — input,
+select, button — is 44px tall, radius 10, 15px text, so the labels and
+boxes line up across the row. A select is always the branded one:
+`appearance:none`, the 12×8 chevron at right 13px, never Safari's native
+control. A set of days to pick is `.lb2-days`: 44px toggles, ember outline
+and tint when checked, never bare checkboxes.
+
+**An open section shows it is open.** A Team & rules row that is expanded
+becomes a card — `--sf-recess` fill, `--hb-line` outline, a 3px ember inner
+edge, its header ruled off from the content — and a section opened inside
+it is its own outlined `--surface` box.
+
 **iOS**: `AccountField` / `CavnarFloatingField` for text,
 `CavnarDropdown` for choices. For a setting that hits the network, use a
 tappable `AccountPill` or `AccountActionChip` row — **not** a native `Toggle`,

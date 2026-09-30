@@ -4750,7 +4750,9 @@ svg:hover .hb-xh{opacity:1}
       if(window.recPrevHtml)h+=recPrevHtml(lo);
       if(lo.conflict&&window.recConflictHtml)h+=recConflictHtml(lo.conflict,'home');}
     var basis='';
-    if(ev.length){basis+='<div style="margin-bottom:10px"><strong>What it rests on:</strong><ul style="margin:6px 0 0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
+    // The panel's kicker already says "What it rests on"; the list is not
+    // titled twice (owner, 9/30/26).
+    if(ev.length){basis+='<div style="margin-bottom:10px"><ul style="margin:0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
     if(confirm)basis+='<div style="margin-bottom:10px"><strong>To confirm:</strong> '+num(confirm)+'</div>';
     if(ftag&&!clear)basis+='<div style="margin-bottom:10px">'+ftag+'</div>';
     alt=basis+alt;
@@ -9372,6 +9374,15 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-sig-2{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px;border-top:none;padding-top:6px}
 .lb2-bn .row{flex-wrap:wrap}
 .lb2-srow>[id$="-panel"]{padding:0 18px 18px}
+/* Which Team & rules row is open (owner, 9/30/26: "it's hard to see what is
+   opened"): an open row is a card - recessed, outlined, an ember edge - and
+   its header is ruled off from what it opened. An open section inside it
+   (Employee Availability) is its own outlined box. */
+.lb2-srow:has(>[id$="-panel"]:not([style*="none"])){background:var(--sf-recess);border:1px solid var(--hb-line);border-radius:14px;box-shadow:inset 3px 0 0 var(--ember);margin:10px 0}
+.lb2-srow:has(>[id$="-panel"]:not([style*="none"]))+.lb2-srow{border-top:none}
+.lb2-srow:has(>[id$="-panel"]:not([style*="none"]))>.lb2-subsection{padding:15px 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:12px}
+.lb2-av-in:has(#avail-panel:not([style*="none"])){border:1px solid var(--hb-line);border-radius:12px;padding:2px 16px 12px;margin:14px 0;background:var(--surface)}
+.lb2-av-in:has(#avail-panel:not([style*="none"]))>.lb2-sub{border-top:none}
 /* An opened schedule section has no box around it (owner, 9/26/26): its
    content sits flush under its title, aligned with it. */
 .lb2-srow .lb2-avail{margin-top:0;background:none;border:none;border-radius:0;padding:4px 6px 16px}
@@ -9577,7 +9588,23 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-form .ac-field{min-width:120px}
 .lb2-form .ac-field.w{min-width:200px;flex:1}
 .lb2-form .ac-field.n{min-width:88px;max-width:110px}
-.lb2-form .ac-input,.lb2-form .ac-select{padding:8px 10px;font-size:14px}
+/* One field on the Labor page (owner, 9/30/26: "the drop downs and their
+   headings need to be the exact same size as the Note and its text box - all
+   branded"): every form control here is one height, one radius, one type
+   size, and a select is the branded one (chevron, no native chrome), so
+   labels and boxes line up across a row. */
+#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select,#panel-labor .lb2-form .cbtn,
+#panel-labor .ts-form .ac-input,#panel-labor .ts-form .ac-select,
+#panel-labor .rul-grid .ac-input,#panel-labor .rul-grid .ac-select{height:44px;min-height:44px;box-sizing:border-box;padding-top:0;padding-bottom:0;font-size:15px;border-radius:10px;margin:0}
+#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select{padding-left:13px}
+#panel-labor .lb2-form .ac-field>label,#panel-labor .ts-form .ac-field>label{font-size:13.5px;font-weight:600;color:var(--ink2);line-height:1.2}
+#panel-labor .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
+/* The availability days: a row of toggles at the field height. */
+.lb2-days{display:flex;gap:6px;flex-wrap:wrap}
+.lb2-days label{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:44px;box-sizing:border-box;padding:0 12px;border:1px solid var(--ac-line,var(--hb-line));border-radius:10px;font-size:14.5px;font-weight:600;color:var(--ink2);cursor:pointer;user-select:none;-webkit-user-select:none;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
+.lb2-days input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.lb2-days label:has(input:checked){border-color:var(--ember);color:var(--ember);background:var(--hb-tint2,rgba(212,88,58,.16))}
+.lb2-days label:has(input:focus-visible){box-shadow:0 0 0 3px var(--hb-tint2,rgba(212,88,58,.22))}
 .lb2-sub{font-family:'Clash Display',sans-serif;font-size:16px;font-weight:500;color:var(--ink);margin:18px 0 6px;padding-top:14px;border-top:1px solid var(--hb-line2)}
 .lb2-sub small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);margin-left:8px;font-weight:400}
 .lb2-ro{font-size:13px;color:var(--ink3);margin:14px 0 10px}
@@ -10515,27 +10542,18 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div id="avail-panel" style="display:none">
       <div class="lb2-avail-in">
         <div class="lb2-intro">The draft never puts someone on a day they can't work.</div>
-        <!-- Add new entry -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
-          <div>
-            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Employee name</div>
-            <input id="av-name" type="text" placeholder="Pick from the roster" list="lb2-people-names" data-people-picker autocomplete="off" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
-          </div>
-          <div>
-            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Available days</div>
-            <div style="display:flex;gap:4px;flex-wrap:wrap" id="av-days-available">
-              {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
-              <label style="display:flex;align-items:center;gap:3px;font-size:13.5px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
-                <input type="checkbox" value="{{day}}" style="margin:0"> {{day}}
-              </label>
-              {% endfor %}
-            </div>
-          </div>
-          <div>
-            <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Notes (optional)</div>
-            <input id="av-notes" type="text" placeholder="e.g. student, no mornings" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:200px;background:var(--surface);color:var(--ink);font-family:inherit">
-          </div>
-          <button onclick="saveAvailability()" class="cbtn cbtn-primary" style="flex-shrink:0">Save</button>
+        <!-- Add new entry: the page's one form shape (.lb2-form fields,
+             one height, owner 9/30/26). -->
+        <div class="lb2-form" style="margin:0 0 14px">
+          <div class="ac-field"><label for="av-name">Employee</label>
+            <input class="ac-input" id="av-name" type="text" placeholder="Pick from the roster" list="lb2-people-names" data-people-picker autocomplete="off"></div>
+          <div class="ac-field"><label>Available days</label>
+            <div class="lb2-days" id="av-days-available" role="group" aria-label="Available days">
+              {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<label><input type="checkbox" value="{{day}}"><span>{{day}}</span></label>{% endfor %}
+            </div></div>
+          <div class="ac-field w"><label for="av-notes">Note</label>
+            <input class="ac-input" id="av-notes" type="text" placeholder="e.g. student, no mornings"></div>
+          <button type="button" onclick="saveAvailability()" class="cbtn cbtn-primary">Save</button>
         </div>
         <!-- Saved entries -->
         <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
@@ -26422,7 +26440,7 @@ function loadLaborTrend(force){
   fetch('/api/labor-trend',{cache:'no-store'}).then(apiJson).then(function(data){
     // Each payroll week with whether it has ended and its costing basis
     // (M3 labor_periods): a running week or a recosted one says so.
-    _perfTrendData=(data.weeks||[]).map(function(w){return {pct:+w.pct||0,label:(w.start&&window.mdy)?mdy(w.start):w.label,complete:w.complete,basis:w.basis};});
+    _perfTrendData=(data.weeks||[]).map(function(w){return {pct:+w.pct||0,label:(w.start&&window.mdy)?mdy(w.start):w.label,complete:w.complete,basis:w.basis,start:w.start,end:w.end};});
     var pEl=document.getElementById('perf-period-label');if(pEl&&_perfTrendData.length)pEl.textContent=_perfTrendData[0].label+' – '+_perfTrendData[_perfTrendData.length-1].label;
     renderLaborHero();
   }).catch(function(){_perfTrendData=[];renderLaborHero();});
@@ -26523,7 +26541,14 @@ function renderLaborHero(){
   el.setAttribute('data-own-tip','1');
   var C=window.CavnarCharts,target=+window.laborTargetPct||30;
   var trend=_perfTab==='trend',pts=trend?_perfTrendData:_laborDaily();
-  var kick=document.getElementById('lb2-hero-kicker');if(kick)kick.textContent=trend?('Labor % by week · last 8 weeks'+(pts.length&&pts[pts.length-1].complete===false?' · the last is still running':'')):'Labor % by day';
+  // The weeks the chart has, said as that: Simple EJ's had 5 weekly
+  // periods under a "last 8 weeks" label (owner, 9/30/26). The date line
+  // follows the chart, not the 28-day window above it.
+  var kick=document.getElementById('lb2-hero-kicker');if(kick)kick.textContent=trend?('Labor % by week · '+(pts.length>=8?'last 8 weeks':(pts.length>1?'all '+pts.length+' weeks so far':'weekly'))+(pts.length&&pts[pts.length-1].complete===false?' · the last is still running':'')):'Labor % by day';
+  var when=document.querySelector('.lb2-hero-when');
+  if(when){if(when.getAttribute('data-window')===null)when.setAttribute('data-window',when.innerHTML);
+    var w0=trend&&pts.length?pts[0]:null,w1=trend&&pts.length?pts[pts.length-1]:null;
+    when.innerHTML=(w0&&w0.start&&w1&&w1.end)?'<span class="hb-num">'+C.esc(C.mdy(w0.start))+'</span> – <span class="hb-num">'+C.esc(C.mdy(w1.end))+'</span>':when.getAttribute('data-window');}
   if(pts.length<2){el.innerHTML='<div class="hb-empty" style="height:190px;display:flex;align-items:center">'+(trend?'The weekly trend appears after a couple of periods.':'Daily labor % appears once shifts and sales are in.')+'</div>';return;}
   var vals=pts.map(function(p){return p.pct;});
   var lo=Math.min(Math.min.apply(null,vals),target)-3,hi=Math.max(Math.max.apply(null,vals),target)+3,rng=(hi-lo)||1;
