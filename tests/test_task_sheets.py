@@ -380,3 +380,17 @@ def test_ask_reads_the_day_and_the_brief_and_person_record_carry_misses(db_path,
     rec = ts.person_record(rid, "Jordan", db_path=db_path)
     assert rec["recent_misses"][0]["label"] == "Count the safe"
     del people
+
+
+def test_an_untouched_unassigned_sheet_closes_without_a_nightly_issue(db_path):
+    """No schedule published: the sheet goes out unassigned and nobody owned
+    it. Left untouched it closes as missed on the day view, not as an issue
+    on Home every night."""
+    rid = _rid(db_path)
+    _sheet(rid, db_path, "Server AM", "any", ["Roll silverware", "Wipe menus"])
+    ts.ensure_day(rid, TODAY, db_path=db_path)
+    (a,) = ts.day_view(rid, TODAY, db_path=db_path)["sheets"]
+    assert a["unassigned"] and a["shift_start"] is None        # no hours set either
+    assert ts.evaluate(rid, now_local=_at("23:59") + timedelta(minutes=45), db_path=db_path)["closed"] == 1
+    assert [i for i in issues.list_issues(rid, db_path=db_path) if i["kind"] == "task_sheet"] == []
+    assert ts.day_view(rid, TODAY, db_path=db_path)["sheets"][0]["status"] == "missed"

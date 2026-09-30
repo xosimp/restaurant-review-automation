@@ -961,7 +961,11 @@ def evaluate(restaurant_id, now_local=None, db_path=DB_PATH) -> dict:
         finally:
             conn.close()
         closed += 1
-        if status != "done":
+        # An unassigned sheet nobody touched (no schedule published — Simple
+        # EJ's has none yet) is not a nightly issue about work no one owned:
+        # the owner's day view says "no schedule published". One someone
+        # started, or one with a name on it, is.
+        if status != "done" and not (a["unassigned"] and done == 0):
             closed_rows.append(a)
             try:
                 issues.create_issue(restaurant_id, "task_sheet", _describe(a, done, total)[:200],
