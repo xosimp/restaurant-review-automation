@@ -619,6 +619,10 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
             "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
             "WHERE i.restaurant_id=? AND e.at >= ? AND e.at <= ? "
             "AND e.event IN ('accepted','completed','implemented','dismissed') "
+            # Only the restaurant's own answers: never an admin's (support
+            # triage, view-as), never a delegate's decline that held for
+            # that login alone (rec_ledger.counts_for_restaurant — PLATFORM-2).
+            f"AND {rec_ledger.restaurant_answer_sql('e')} "
             "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown' AND s.at <= ?)",
             (restaurant_id, d28.isoformat(), end_ts, end_ts)).fetchall()
         for suffix, keep in (("", lambda k: True), ("_ex_reviews", lambda k: not provenance.review_derived(k))):

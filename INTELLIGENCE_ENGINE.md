@@ -753,7 +753,8 @@ modules) equal the horizon.
   M1 who_answered): the owner's ranking learns from the account holders'
   answers only — a manager's decline is not the owner's rejection, and an
   admin's view-as answer is nobody's; a delegate's view weighs the
-  principal's answer above its own. The owner's reasons move it too: each
+  principal's answer above its own, and reads that delegate's own
+  declines only (`viewer_id`, LOOPS-14 / PEOPLE-16). The owner's reasons move it too: each
   "too costly" takes a bounded, decaying step off the kind, each "doesn't
   fit us" off the subject's topic and focus tags (0.05 each, at most 0.15,
   halving every 90 days — `Effectiveness.reason_penalties`); a "bad timing"
@@ -1249,12 +1250,22 @@ The 90-day quarantine it replaces (`jobs.SEEDED_HISTORY_DAYS`, from
 
 **Whose answer.** `permissions.answer_authority(user)` is `admin` (an admin
 or support login, or anyone acting through a view-as), `principal` (an
-account holder) or `delegate` (a manager or employee). Only a principal's
-answer is the restaurant's preference; a delegate's silences its own login
-and trains only the delegate's view; an admin's trains nothing — the
-feedback sync skips it (`rec_events.authority`), and so does every
-restaurant-level learner (`docs/ops/SECURITY.md` → *Who teaches the
-learners* lists them).
+account holder) or `delegate` (a manager or employee); `rec_ledger.record`
+derives it from the request's login when a caller does not pass it, so NULL
+is only a system answer. Only a principal's answer is the restaurant's
+preference; a delegate's decline silences its own login and trains only
+that delegate's view (`rec_learning.effectiveness(viewer_id=)` — never
+another manager's); an admin's trains nothing. What pooled learning counts
+is one rule, `rec_ledger.counts_for_restaurant` (memory re-audit 9/29/26,
+PLATFORM-2/-3/-4): never an admin's answer, never a delegate's decline or
+snooze (it held for that login alone); a delegate's accept, Done or
+implemented closed the restaurant's episode and counts. The feedback sync
+applies it to the ledger and to `ask_cavnar_actions` (`authority`, stamped
+at the Ask action route) and carries the answer's authority onto
+`intel_rec_events.authority`; the feature rows' recommendation loop
+(`features._rec_loop`, `rec_ledger.restaurant_answer_sql`) reads the same
+rule, and so does every restaurant-level learner (`docs/ops/SECURITY.md` →
+*Who teaches the learners* lists them).
 
 ## Google user data (memory audit, 9/29/26)
 

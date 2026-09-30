@@ -292,6 +292,7 @@ Every prompt builder used to pick its own memory by hand, with fixed caps and no
 | `what_worked` (50) | `rec_learning.what_worked_lines` | measured results for the kind of advice in play |
 | `links` (55) | `link_memory.link_lines` | the cross-module links a surface acts on (`link_memory.SURFACE_KINDS`: the food diagnosis and marketing), with how long each has stood — co-occurrences, never a cause |
 | `events` (60) | `event_memory.memory_lines` | how events, weather, holidays, paydays and campaigns moved sales here |
+| `market` (65) | `event_memory.market_lines` | competitors that opened, closed or moved nearby in the last 180 days, and the restaurant's own Google rating change (Intel-gated; re-audit 9/29/26, INVENTORY-6) |
 | `people` (70) | `people.memory_lines` | attendance, standing patterns, notes |
 | `marketing` (80) | `marketing.memory_lines` | marketing memory; says nothing on the marketing generators and the reply drafter, which build richer blocks of their own |
 | `conversation` (90) | `owner_memory.conversation_lines` → `ask_conversations.memory_lines` | Ask only: the chat's rolling summary, the tools its last answer ran, what this login often asks |
@@ -300,21 +301,21 @@ Every prompt builder used to pick its own memory by hand, with fixed caps and no
 
 | Surface | Sections | Built by | Assembled for |
 |---|---|---|---|
-| `ask` | constraints, goals, last_claim, what_worked, events, people, marketing (not decisions: the snapshot carries `decisions.context`; what worked comes from here, viewer-gated, and no longer from the intelligence section's own record — re-audit QUALITY-16) | `ask_cavnar._memory_context`, in the cached snapshot, budget `ASK_MEMORY_BUDGET_CHARS` (4,000) | the login asking |
+| `ask` | constraints, goals, last_claim, what_worked, events, market, people, marketing (not decisions: the snapshot carries `decisions.context`; what worked comes from here, viewer-gated, and no longer from the intelligence section's own record — re-audit QUALITY-16) | `ask_cavnar._memory_context`, in the cached snapshot, budget `ASK_MEMORY_BUDGET_CHARS` (4,000) | the login asking |
 | `ask_conversation` | conversation | `ask_cavnar.ask_with_tools`, per turn, outside the snapshot | the login asking |
 | `schedule` | constraints, goals, last_claim, decisions, what_worked, events, people | `schedule_engine` (the draft's extra blocks) | team |
 | `labor_read` | the same as `schedule` | `labor.labor_memory_block` | team |
 | `food_read` | constraints, goals, last_claim, decisions, what_worked | `inventory.food_read_memory` | team, with food-cost view |
-| `review_read` | constraints, goals, last_claim, decisions, what_worked | `client_api.review_read_memory` | team |
+| `review_read` | constraints, goals, last_claim, decisions, what_worked, market | `client_api.review_read_memory` | team |
 | `review_diagnosis` | constraints, last_claim, decisions, what_worked, people | `review_intelligence.diagnosis_memory` | team |
 | `food_diagnosis` | constraints, last_claim, decisions, what_worked, links | `food_cost_intelligence._diagnosis_memory` | team, with food-cost view |
 | `dsr_narrative` | constraints, goals, last_claim, what_worked, events (decisions come once, from `decisions.context` read as the same team viewer — PROMPTS-14) | `dsr.narrative._memory` | team |
 | `brief` | constraints, goals, decisions, events | `morning_brief._memory_lines` — deterministic, no model: at most two lines, a constraint dated today and today's measured event effect | the recipient |
 | `digest` | constraints, goals, decisions, what_worked | `reporter` (the digest narrative) | the account holders (`PRINCIPALS`) |
-| `marketing` | constraints, goals, decisions, what_worked, events, links | `marketing.marketing_memory_block` (post, calendar, newsletter, guest text) | team |
+| `marketing` | constraints, goals, decisions, what_worked, events, market, links | `marketing.marketing_memory_block` (post, calendar, newsletter, guest text) | team |
 | `reply_drafter` | constraints, decisions | `drafter._memory_block` | team |
-| `competitor_read` | constraints, last_claim, decisions | `competitor.generate_competitor_insight` | team |
-| `weekly_plan` | constraints, goals, last_claim, what_worked, events (decisions from the snapshot's `decisions.context`; the snapshot's own `ask` memory is skipped — one block per call, PROMPTS-14) | `strategy_jobs.plan_memory` | team, with food-cost view |
+| `competitor_read` | constraints, last_claim, decisions, market | `competitor.generate_competitor_insight` | team |
+| `weekly_plan` | constraints, goals, last_claim, what_worked, events, market (decisions from the snapshot's `decisions.context`; the snapshot's own `ask` memory is skipped — one block per call, PROMPTS-14) | `strategy_jobs.plan_memory` | team, with food-cost view |
 
 **Viewer scoping.** `visible(line, user)` decides every line before it is ranked: `audience` "principals" only for an account holder or admin (or the line's own author), "author" only for the login that wrote it, "team" for anyone; a line with a `module` — or `modules`, every module it is about — only for a login holding the view of EVERY one of them (`_MODULE_PERMISSION` → `permissions.MODULE_VIEW_PERMISSIONS`; a fact tagged "food,labor" keeps its food gate — re-audit PROMPTS-7); module `loss` (a comp or void goal, a loss kind's record) needs the loss rule (`issues.viewer_sees_loss`); an unknown audience or a failed permission read fails closed. An assembly with no viewer (the digest, an unattended Ask) is read as `memory_context.PRINCIPALS` — the account holders' view: team and principals lines, never one login's own "author" line (re-audit PEOPLE-8 / QUALITY-9). `visible(line, None)` itself stays the internal "everything" the data paths (`owner_memory.facts_for`) filter later.
 

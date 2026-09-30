@@ -14,7 +14,7 @@ import io
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
@@ -44,6 +44,41 @@ def rows_from_csv(text) -> list:
 
 def _key(r):
     return (r.get("date", ""), (r.get("employee") or "").strip().lower(), r.get("shift_start", ""))
+
+
+def canonical_rows(restaurant_id, row_lists, db_path=None, mapping=None, mapping_only=False):
+    """Schedule rows with each employee spelled as the one live person the
+    name means today (people.canonical_names): a week saved before "Bob S."
+    was renamed "Bob Smith" reads as Bob Smith, so a learned pattern keys on
+    the person, not a spelling (memory re-audit 9/29/26, INVENTORY-2).
+    Copies — the stored CSVs are never rewritten here. With `mapping_only`
+    returns the {name: canonical name} map instead; pass it back as
+    `mapping` to apply it without another lookup. A name that means nobody
+    or two people stays as written; a failed lookup changes nothing."""
+    if mapping is None:
+        names = sorted({(r.get("employee") or "").strip() for rows in row_lists or [] for r in rows or []
+                        if (r.get("employee") or "").strip()})
+        mapping = {}
+        if names:
+            try:
+                import people as _people
+                kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+                mapping = _people.canonical_names(restaurant_id, names, **kw) or {}
+            except Exception as e:
+                log.warning("canonical names unavailable for restaurant %s: %s", restaurant_id, e)
+                mapping = {}
+    if mapping_only:
+        return mapping
+    out = []
+    for rows in row_lists or []:
+        cur = []
+        for r in rows or []:
+            name = (r.get("employee") or "").strip()
+            if name and mapping.get(name) and mapping[name] != name:
+                r = dict(r, employee=mapping[name])
+            cur.append(r)
+        out.append(cur)
+    return out
 
 
 def _hours(r):
@@ -580,10 +615,11 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
     # manager's final version: counted per save, taking Bob off, putting him
     # back and taking him off again in one week read as "2 times recently",
     # and an undone edit taught the opposite of what the manager kept.
-    counts = {}
-    for w in week_edits:
+    counts, last = {}, {}
+    # Oldest week first, so a reversal clears only the evidence before it.
+    for w in sorted(week_edits, key=lambda w_: int(w_.get("history_id") or 0)):
         d = w.get("diff") or {}
-        seen = set()
+        seen, undone = set(), set()
 
         def _key(kind, name, date, start, end, day_hint):
             try:
@@ -595,20 +631,43 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
         for m in d.get("moved") or []:
             seen.add(_key("moved_off", m.get("from"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
             seen.add(_key("moved_on", m.get("to"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
+            # The same move read backwards: putting Cy on reverses "Cy off".
+            undone.add(_key("moved_on", m.get("from"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
+            undone.add(_key("moved_off", m.get("to"), m.get("date"), m.get("shift_start"), m.get("shift_end"), m.get("day")))
         for rm in d.get("removed") or []:
             seen.add(_key("moved_off", rm.get("employee"), rm.get("date"), rm.get("shift_start"), rm.get("shift_end"), rm.get("day")))
-        for k in seen:
-            counts[k] = counts.get(k, 0) + 1
+            undone.add(_key("moved_on", rm.get("employee"), rm.get("date"), rm.get("shift_start"), rm.get("shift_end"),
+                            rm.get("day")))
+        # A manager putting someone back on a slot the draft left them off is
+        # a reversal of "taken off" (memory re-audit 9/29/26, LOOPS-2): it
+        # used to be ignored, so the original edits kept teaching the move
+        # the manager was now undoing, until they aged out of the window.
+        for ad in d.get("added") or []:
+            undone.add(_key("moved_off", ad.get("employee"), ad.get("date"), ad.get("shift_start"), ad.get("shift_end"),
+                            ad.get("day")))
+        # A reversal clears the same editor's earlier evidence only: two
+        # editors pulling opposite ways are a conflict for the owner
+        # (patterns_for_draft), not one editor changing their mind.
+        ed = w.get("editor") or ""
+        for k in undone:
+            if k in counts:
+                counts[k] = [e for e in counts[k] if e[1] != ed]
+        for k in seen - undone:
+            counts.setdefault(k, []).append((int(w.get("history_id") or 0), ed))
+    for k in list(counts):
+        last[k] = max((e[0] for e in counts[k]), default=0)
+        counts[k] = len(counts[k])
     out = []
     for (kind, name, day, part), n in sorted(counts.items(), key=lambda kv: -kv[1]):
         if n < min_repeats or not name:
             continue
         pretty = {"morning": "lunch/day", "night": "dinner/night"}.get(part, part)
+        lw = last.get((kind, name, day, part))
         if kind == "moved_off":
-            out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n,
+            out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n, "last_week": lw,
                         "text": f"The manager has taken {name} off {day} {pretty} in {n} recent weeks — avoid scheduling them there."})
         else:
-            out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n,
+            out.append({"kind": kind, "employee": name, "day": day, "daypart": part, "times": n, "last_week": lw,
                         "text": f"The manager has put {name} on {day} {pretty} in {n} recent weeks — a good default for them."})
     out = out[:12]
     # What else the manager keeps settling on — retimes, headcount per role,
@@ -637,7 +696,15 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
 # it into the person's own availability (staff_settings) with its author.
 
 STANDING_RETIRE_AFTER = 2
+# Two reversals retire a pattern only when they fall inside this many days
+# of each other (memory re-audit 9/29/26, FORGET-5): a pattern kept 40
+# weeks used to retire on one exception in March and another in November.
+STANDING_OVERRIDE_WINDOW_DAYS = 56
 _PERSON_KINDS = ("moved_off", "moved_on")
+# The kinds that are about one named person (a rename re-keys them, and
+# they go dormant while that person has no shifts).
+_NAMED_KINDS = _PERSON_KINDS + ("role_change",)
+_HEADCOUNT_KINDS = ("headcount_add", "headcount_cut")
 
 
 def _standing_rows(conn, restaurant_id):
@@ -648,42 +715,253 @@ def _standing_rows(conn, restaurant_id):
         return []
 
 
-def _respects(p, rows) -> bool:
-    """Whether a week's rows keep the pattern (person kinds and retimes)."""
-    from shift_quality import present_dayparts
-    kind = p["kind"]
+def _detail(row) -> dict:
+    """The kind-specific fields a standing row keeps beside its key."""
+    try:
+        return json.loads((row or {}).get("detail") or "{}") or {}
+    except (TypeError, ValueError):
+        return {}
 
-    def _on(r):
-        try:
-            day = datetime.strptime(r.get("date") or "", "%Y-%m-%d").strftime("%A")
-        except ValueError:
-            day = r.get("day") or ""
-        return day == p.get("day") and p.get("daypart") in present_dayparts(r)
+
+def _nk(name) -> str:
+    import staff_settings
+    return staff_settings.name_key(name)
+
+
+def _on_slot(p, r) -> bool:
+    from shift_quality import present_dayparts
+    try:
+        day = datetime.strptime(r.get("date") or "", "%Y-%m-%d").strftime("%A")
+    except ValueError:
+        day = r.get("day") or ""
+    return day == p.get("day") and p.get("daypart") in present_dayparts(r)
+
+
+def _respects(p, rows, need_presence=True):
+    """Whether a week's rows keep the pattern: True, False, or None when the
+    week says nothing about it. A person pattern is tested only in a week
+    the person worked at all (memory re-audit 9/29/26, INVENTORY-2 /
+    QUALITY-14): "Bob off Tuesday dinner" used to count as kept every week
+    Bob — gone, or renamed — was simply not on the schedule, so a pattern
+    about someone who left read as ever more confirmed. `need_presence`
+    False reads only the slot (the draft side of a reversal: a draft that
+    left Bob off the week entirely did leave him off Tuesday dinner)."""
+    kind = p["kind"]
     if kind in _PERSON_KINDS:
-        who = (p.get("employee") or "").strip().lower()
-        there = any(_on(r) and (r.get("employee") or "").strip().lower() == who for r in rows)
+        who = _nk(p.get("employee"))
+        if need_presence and not any(_nk(r.get("employee")) == who for r in rows):
+            return None
+        there = any(_on_slot(p, r) and _nk(r.get("employee")) == who for r in rows)
         return (not there) if kind == "moved_off" else there
     if kind == "retime_start":
         want = (p.get("time") or "").replace(" ", "").lower()
-        mine = [r for r in rows if _on(r) and (r.get("role") or "").strip().lower() == (p.get("role") or "").strip().lower()]
+        mine = [r for r in rows if _on_slot(p, r) and _nk(r.get("role")) == _nk(p.get("role"))]
         if not mine or not want:
             return None
         from schedule_learning import _clock
         return all(_clock(r.get("shift_start")).replace(" ", "").lower() == want for r in mine)
-    return None                          # headcount, role changes, leader swaps: read by the live window only
+    if kind == "role_change":
+        who = _nk(p.get("employee"))
+        mine = [r for r in rows if _on_slot(p, r) and _nk(r.get("employee")) == who]
+        if not mine:
+            return None
+        return any(_nk(r.get("role")) == _nk(p.get("role")) for r in mine)
+    if kind == "leader_swap":
+        names = {_nk(n) for n in (p.get("names") or _detail(p).get("names") or []) if n}
+        mine = [r for r in rows if _on_slot(p, r) and (not p.get("role") or _nk(r.get("role")) == _nk(p.get("role")))]
+        if not mine or not names:
+            return None
+        return any(_nk(r.get("employee")) in names for r in mine)
+    return None                          # headcount is read against the draft (_week_verdict)
+
+
+def _heads(p, rows) -> dict:
+    """{date: people of the pattern's role on its weekday and daypart}."""
+    out = {}
+    for r in rows:
+        try:
+            day = datetime.strptime(r.get("date") or "", "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        if day != p.get("day"):
+            continue
+        out.setdefault(r["date"], set())
+        if _on_slot(p, r) and _nk(r.get("role")) == _nk(p.get("role")):
+            out[r["date"]].add(_nk(r.get("employee")))
+    return {d: len(v) for d, v in out.items()}
+
+
+def _slot_rows(p, rows) -> list:
+    return sorted((r.get("date") or "", _nk(r.get("employee")), _nk(r.get("role")), r.get("shift_start") or "",
+                   r.get("shift_end") or "") for r in rows if _on_slot(p, r))
+
+
+def _week_verdict(p, draft, final, edited):
+    """What one published week says about a standing pattern:
+      "confirmed"  the manager's own hand kept it — the draft had not already
+                   carried it, or they edited that slot and kept it
+      "kept"       it held because the draft carried it and nobody touched
+                   the slot: it was used, but that is not new evidence
+      "over"       the draft kept it and a manager's edit undid it
+      None         the week does not test it
+    (memory re-audit 9/29/26, QUALITY-14: every week the draft carried a
+    pattern used to count as the manager confirming it, so a pattern
+    confirmed itself.) Headcount (QUALITY-3) is read against the draft:
+    the manager cutting back a person the draft added reverses an add."""
+    kind = p["kind"]
+    if kind in _HEADCOUNT_KINDS:
+        if draft is None:
+            return None
+        hd, hf = _heads(p, draft), _heads(p, final)
+        dates = set(hd) | set(hf)
+        if not dates:
+            return None
+        sign = 1 if kind == "headcount_add" else -1
+        moves = [sign * (hf.get(d, 0) - hd.get(d, 0)) for d in dates]
+        if any(m < 0 for m in moves):
+            return "over" if edited else None
+        if any(m > 0 for m in moves):
+            return "confirmed"             # the manager added (cut) still more themself
+        return "confirmed" if edited and _slot_rows(p, draft) != _slot_rows(p, final) else "kept"
+    kept = _respects(p, final)
+    if kept is None:
+        return None
+    drafted = _respects(p, draft, need_presence=False) if draft is not None else None
+    if kept:
+        if draft is None or drafted is False:
+            return "confirmed"
+        if edited and _slot_rows(p, draft) != _slot_rows(p, final):
+            return "confirmed"
+        return "kept"
+    if edited and drafted:
+        return "over"
+    return None
+
+
+def _person_id(restaurant_id, name, db_path=DB_PATH):
+    if not (name or "").strip():
+        return None
+    try:
+        import people as _people
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        return _people.person_id_for(restaurant_id, name, create=False, **kw)
+    except Exception:
+        return None
+
+
+def _when(value):
+    """A stored timestamp or date as a datetime, or None."""
+    s = str(value or "").strip().replace("T", " ")
+    for fmt, n in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(s[:n], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _presence(conn, restaurant_id, db_path=DB_PATH):
+    """({name_key: newest date they worked or are scheduled}, the
+    restaurant's own newest such date, {name_key of an inactive person}) —
+    from shift_facts and the published weeks of the last 120 days."""
+    last = {}
+    try:
+        for r in conn.execute("SELECT employee_key, MAX(business_date) AS d FROM shift_facts WHERE restaurant_id=? "
+                              "GROUP BY employee_key", (restaurant_id,)).fetchall():
+            if r["d"]:
+                last[r["employee_key"]] = str(r["d"])[:10]
+    except sqlite3.OperationalError:
+        pass
+    try:
+        pubs = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+                            "AND COALESCE(week_start, '') >= date('now', '-120 days')", (restaurant_id,)).fetchall()
+    except sqlite3.OperationalError:
+        pubs = []
+    rows = [r for p in pubs for r in rows_from_csv(p["schedule_csv"] or "")]
+    for r in canonical_rows(restaurant_id, [rows], db_path=db_path)[0]:
+        k, d = _nk(r.get("employee")), (r.get("date") or "")[:10]
+        if k and len(d) == 10 and d > last.get(k, ""):
+            last[k] = d
+    inactive = set()
+    try:
+        for r in conn.execute("SELECT employee_name FROM staff_settings WHERE restaurant_id=? AND active=0",
+                              (restaurant_id,)).fetchall():
+            inactive.add(_nk(r["employee_name"]))
+    except sqlite3.OperationalError:
+        pass
+    return last, (max(last.values()) if last else None), inactive
+
+
+def _live(restaurant_id, db_path=DB_PATH) -> list:
+    """The live window's patterns, less the owner's dismissals."""
+    import schedule_intel as _si
+    gone = _si.dismissed_patterns(restaurant_id, db_path)
+    return [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
+
+
+_OPPOSITE = {"headcount_add": "headcount_cut", "headcount_cut": "headcount_add",
+             "moved_off": "moved_on", "moved_on": "moved_off"}
+
+
+def _is_reversal(p, standing) -> bool:
+    """A live pattern that is only the reversal of a retired standing one:
+    the manager cutting back the server the draft had learned to add, in
+    the very weeks that retired the add, is not a new "cut one" habit —
+    read as one, it cut below the old figure (headcount is applied on top
+    of the typical count)."""
+    opp = _OPPOSITE.get(p.get("kind"))
+    if not opp or not standing:
+        return False
+    for s_ in (standing.values() if isinstance(standing, dict) else standing):
+        if s_.get("kind") != opp or s_.get("status") != "retired":
+            continue
+        if (s_.get("day"), s_.get("daypart")) != (p.get("day"), p.get("daypart")):
+            continue
+        if _nk(s_.get("role")) != _nk(p.get("role")) or _nk(s_.get("employee")) != _nk(p.get("employee")):
+            continue
+        if int(p.get("last_week") or 0) <= int(s_.get("retired_week") or 0):
+            return True
+    return False
+
+
+def suppressed(p, row, standing=None) -> bool:
+    """Whether a live pattern is held back by its standing row (memory
+    re-audit 9/29/26, LOOPS-2 / QUALITY-2): a RETIRED row keeps the live
+    copy out of the draft until the manager makes the move again in a week
+    newer than the one that retired it (the window still holds the original
+    edits for up to eight weeks, and used to put them straight back); a
+    RULED row is the person's availability now; a DORMANT row is about
+    someone with no shifts."""
+    if _is_reversal(p, standing):
+        return True
+    if not row:
+        return False
+    if row.get("status") in ("ruled", "dormant"):
+        return True
+    if row.get("status") == "retired":
+        return int(p.get("last_week") or 0) <= int(row.get("retired_week") or 0)
+    return False
 
 
 def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
-    """Keep the standing patterns current: every pattern the live window
-    learned (not dismissed) becomes, or re-confirms, a standing row; then
-    each published week since a row was last checked confirms it (the
-    week kept it — times_applied, last_confirmed) or, when a manager's own
-    edit put back what it took away, counts an override
-    (STANDING_RETIRE_AFTER retire it). Returns {learned, confirmed,
-    overridden, retired}."""
+    """Keep the standing patterns current, in this order:
+
+      1. each published week since a row was last checked is read
+         (_week_verdict): kept (times_applied), confirmed by the manager's
+         own hand (times_confirmed, last_confirmed) or reversed —
+         STANDING_RETIRE_AFTER reversals inside STANDING_OVERRIDE_WINDOW_DAYS
+         retire it (retired_at, retired_week);
+      2. every pattern the live window learned (not dismissed) becomes, or
+         refreshes, a standing row — a retired one comes back only on
+         evidence newer than its retirement, and a live pattern that is only
+         the undoing of a retired one is not stored as a habit of its own;
+      3. a person pattern goes dormant while its person has no shifts (or is
+         inactive) and wakes when they return.
+    Reading the weeks first means a pattern retired tonight is not revived,
+    nor its reversal learned, by tonight's own live window. Returns
+    {learned, confirmed, overridden, retired, dormant, woke}."""
     import schedule_intel as _si
-    from schedule_learning import edited_weeks
-    stats = {"learned": 0, "confirmed": 0, "overridden": 0, "retired": 0}
+    stats = {"learned": 0, "confirmed": 0, "overridden": 0, "retired": 0, "dormant": 0, "woke": 0}
     # A learner: a demo, test or internal restaurant teaches nothing, not
     # even its own draft (models.learning_eligible, SHARED_MEM).
     try:
@@ -692,8 +970,15 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
             return dict(stats, skipped="not_eligible")
     except Exception:
         return dict(stats, skipped="not_eligible")
-    gone = _si.dismissed_patterns(restaurant_id, db_path)
-    live = [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
+    _read_weeks(restaurant_id, stats, db_path)
+    live = _live(restaurant_id, db_path)
+    pids = {p.get("employee"): _person_id(restaurant_id, p.get("employee"), db_path)
+            for p in live if p.get("kind") in _NAMED_KINDS}
+    try:
+        import people as _people
+        gone_days = int(_people.MEMORY_GONE_DAYS)
+    except Exception:
+        gone_days = 21
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -701,30 +986,73 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         for p in live:
             k = _si.pattern_key(p)
+            if _is_reversal(p, have):
+                continue                   # the undoing of a retired pattern, not a habit of its own
             editors = json.dumps(p.get("editors") or {})
+            detail = json.dumps({f: p[f] for f in ("was_role", "delta", "names") if p.get(f) not in (None, "", [])})
+            lw = int(p.get("last_week") or 0)
             row = have.get(k)
             if row is None:
+                # The weeks that taught it are its evidence, not its
+                # confirmations: reading starts after the newest of them.
                 conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, "
-                             "day, daypart, time, text, editors, first_learned, last_confirmed) "
-                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                             "day, daypart, time, text, editors, first_learned, last_confirmed, person_id, detail, "
+                             "checked_through) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (restaurant_id, k, p["kind"], p.get("employee") or None, p.get("role") or None,
-                              p.get("day"), p.get("daypart"), p.get("time") or None, p.get("text"), editors, now, now))
+                              p.get("day"), p.get("daypart"), p.get("time") or None, p.get("text"), editors, now, now,
+                              pids.get(p.get("employee")), detail, lw))
                 stats["learned"] += 1
             elif row["status"] == "retired":
-                # Made again after it was retired: the manager wants it back.
-                conn.execute("UPDATE schedule_standing_patterns SET status='active', times_overridden=0, text=?, "
-                             "editors=?, last_confirmed=?, updated_at=datetime('now') WHERE id=?",
-                             (p.get("text"), editors, now, row["id"]))
+                if lw <= int(row.get("retired_week") or 0):
+                    continue               # the edits that retired it are newer than this evidence
+                # Made again after it was retired, in a newer week: the
+                # manager wants it back.
+                conn.execute("UPDATE schedule_standing_patterns SET status='active', times_overridden=0, "
+                             "last_overridden=NULL, retired_at=NULL, retired_week=NULL, text=?, editors=?, detail=?, "
+                             "last_confirmed=?, checked_through=MAX(checked_through, ?), updated_at=datetime('now') "
+                             "WHERE id=?", (p.get("text"), editors, detail, now, lw, row["id"]))
                 stats["learned"] += 1
             elif row["status"] == "active":
-                conn.execute("UPDATE schedule_standing_patterns SET text=?, editors=?, last_confirmed=?, "
-                             "updated_at=datetime('now') WHERE id=?", (p.get("text"), editors, now, row["id"]))
+                conn.execute("UPDATE schedule_standing_patterns SET text=?, editors=?, detail=?, "
+                             "person_id=COALESCE(person_id, ?), updated_at=datetime('now') WHERE id=?",
+                             (p.get("text"), editors, detail, pids.get(p.get("employee")), row["id"]))
+        # Dormant while their person has no shifts (FORGET-5 / INVENTORY-2 /
+        # QUALITY-14): measured against the restaurant's OWN newest shift, so
+        # a sync that stopped is not everyone leaving; an inactive person is
+        # dormant at once. They wake when the person is back.
+        last, newest, inactive = _presence(conn, restaurant_id, db_path)
+        if newest:
+            edge = (datetime.strptime(newest, "%Y-%m-%d") - timedelta(days=gone_days)).strftime("%Y-%m-%d")
+            for r in _standing_rows(conn, restaurant_id):
+                if r["kind"] not in _NAMED_KINDS or not (r["employee"] or "").strip() \
+                        or r["status"] not in ("active", "dormant"):
+                    continue
+                k_ = _nk(r["employee"])
+                away = k_ in inactive or last.get(k_, "") < edge
+                if away and r["status"] == "active":
+                    conn.execute("UPDATE schedule_standing_patterns SET status='dormant', dormant_at=?, "
+                                 "updated_at=datetime('now') WHERE id=?", (now, r["id"]))
+                    stats["dormant"] += 1
+                elif not away and r["status"] == "dormant":
+                    conn.execute("UPDATE schedule_standing_patterns SET status='active', dormant_at=NULL, "
+                                 "updated_at=datetime('now') WHERE id=?", (r["id"],))
+                    stats["woke"] += 1
         conn.commit()
+    finally:
+        conn.close()
+    return stats
+
+
+def _read_weeks(restaurant_id, stats, db_path=DB_PATH):
+    """refresh_standing_patterns' step 1: every active row against the
+    published weeks it has not been checked against yet."""
+    conn = get_conn(db_path)
+    try:
         rows = [r for r in _standing_rows(conn, restaurant_id) if r["status"] == "active"]
     finally:
         conn.close()
     if not rows:
-        return stats
+        return
     # The published weeks each row has not yet been checked against, with
     # their generated draft and the manager's final.
     oldest = min(int(r["checked_through"] or 0) for r in rows)
@@ -742,7 +1070,12 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
                 vers.setdefault(v["history_id"], []).append(v)
     finally:
         conn.close()
-    updates = {}
+    names = canonical_rows(restaurant_id, [rows_from_csv(v["schedule_csv"]) for vs in vers.values() for v in vs],
+                           db_path=db_path, mapping_only=True)
+    state = {r["id"]: {"applied": 0, "confirmed": 0, "over": int(r["times_overridden"] or 0),
+                       "last_over": _when(r.get("last_overridden")), "new_over": 0,
+                       "through": int(r["checked_through"] or 0), "last": None, "retired": None, "row": r}
+             for r in rows}
     for w in weeks:
         vs = vers.get(w["id"]) or []
         # A week an admin's hand saved or published (view-as) is not the
@@ -753,49 +1086,62 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
         pub = next((v for v in reversed(vs) if v["reason"] == "published"), None) or (vs[-1] if vs else None)
         if pub is None:
             continue
-        final = rows_from_csv(pub["schedule_csv"])
+        final = canonical_rows(restaurant_id, [rows_from_csv(pub["schedule_csv"])], mapping=names)[0]
         edited = any(v["reason"] == "edited" for v in vs)
-        draft = rows_from_csv(gen["schedule_csv"]) if gen else None
-        for r in rows:
-            if int(r["checked_through"] or 0) >= w["id"]:
+        draft = canonical_rows(restaurant_id, [rows_from_csv(gen["schedule_csv"])], mapping=names)[0] if gen else None
+        when = _when(w["published_at"])
+        for u in state.values():
+            r = u["row"]
+            if u["retired"] or u["through"] >= w["id"]:
                 continue
-            u = updates.setdefault(r["id"], {"applied": 0, "over": 0, "through": int(r["checked_through"] or 0),
-                                             "confirmed": None})
-            u["through"] = max(u["through"], w["id"])
+            u["through"] = w["id"]
             if admin_hand:
                 continue
-            kept = _respects(r, final)
-            if kept is None:
-                continue
-            if kept:
+            p = dict(r, names=_detail(r).get("names"))
+            verdict = _week_verdict(p, draft, final, edited)
+            if verdict in ("kept", "confirmed"):
                 u["applied"] += 1
-                u["confirmed"] = str(w["published_at"])[:19]
-            elif edited and draft is not None and _respects(r, draft):
-                # The draft kept it and a manager's edit undid it.
-                u["over"] += 1
+                u["last"] = str(w["published_at"])[:19]
+                if verdict == "confirmed":
+                    u["confirmed"] += 1
+            elif verdict == "over":
+                u["new_over"] += 1
+                inside = (u["last_over"] is not None and when is not None
+                          and (when - u["last_over"]).days <= STANDING_OVERRIDE_WINDOW_DAYS)
+                u["over"] = u["over"] + 1 if inside else 1
+                u["last_over"] = when or u["last_over"]
+                if u["over"] >= STANDING_RETIRE_AFTER:
+                    u["retired"] = w["id"]
     conn = get_conn(db_path)
     try:
-        for rid_, u in updates.items():
-            cur = conn.execute("SELECT times_overridden FROM schedule_standing_patterns WHERE id=?", (rid_,)).fetchone()
-            over = int(cur["times_overridden"] or 0) + u["over"] if cur else u["over"]
-            retire = over >= STANDING_RETIRE_AFTER
-            conn.execute("UPDATE schedule_standing_patterns SET times_applied=times_applied+?, times_overridden=?, "
-                         "last_confirmed=COALESCE(?, last_confirmed), checked_through=?, status=CASE WHEN ? THEN "
-                         "'retired' ELSE status END, updated_at=datetime('now') WHERE id=?",
-                         (u["applied"], over, u["confirmed"], u["through"], 1 if retire else 0, rid_))
-            stats["confirmed"] += u["applied"]
-            stats["overridden"] += u["over"]
+        for rid_, u in state.items():
+            retire = u["retired"] is not None
+            conn.execute("UPDATE schedule_standing_patterns SET times_applied=times_applied+?, "
+                         "times_confirmed=COALESCE(times_confirmed, 0)+?, times_overridden=?, last_overridden=?, "
+                         "last_confirmed=COALESCE(?, last_confirmed), checked_through=?, "
+                         "status=CASE WHEN ? THEN 'retired' ELSE status END, "
+                         "retired_at=CASE WHEN ? THEN datetime('now') ELSE retired_at END, "
+                         "retired_week=CASE WHEN ? THEN ? ELSE retired_week END, updated_at=datetime('now') "
+                         "WHERE id=? AND status='active'",
+                         (u["applied"], u["confirmed"], u["over"],
+                          u["last_over"].strftime("%Y-%m-%d %H:%M:%S") if u["last_over"] else None,
+                          u["last"], u["through"], 1 if retire else 0, 1 if retire else 0, 1 if retire else 0,
+                          u["retired"], rid_))
+            stats["confirmed"] += u["confirmed"]
+            stats["overridden"] += u["new_over"]
             stats["retired"] += 1 if retire else 0
         conn.commit()
     finally:
         conn.close()
-    return stats
 
 
 def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> list:
     """The standing patterns for the owner's screen: [{key, kind, employee,
     role, day, daypart, text, editors, first_learned, last_confirmed (M/D/YY
-    and ISO), times_applied, times_overridden, status, can_be_rule, rule}]."""
+    and ISO), times_applied, times_confirmed, times_overridden, status
+    (active / retired / ruled / dormant), retired_at, retired_week,
+    dormant_since, can_be_rule, rule}]. `include_retired` False leaves the
+    retired ones out."""
     from time_utils import mdy
     conn = get_conn(db_path)
     try:
@@ -810,12 +1156,25 @@ def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> l
             editors = json.loads(r["editors"] or "{}") or {}
         except (TypeError, ValueError):
             editors = {}
+        det = _detail(r)
+        if r["kind"] in _HEADCOUNT_KINDS and det.get("delta") in (None, ""):
+            # A row stored before `detail` existed: its size is in its words
+            # ("The manager has added 1 Server to …" / "has cut 2 …").
+            import re as _re
+            m_ = _re.search(r"has (added|cut) (\d+) ", r["text"] or "")
+            if m_:
+                det["delta"] = int(m_.group(2)) * (1 if m_.group(1) == "added" else -1)
         out.append({"key": r["pattern_key"], "kind": r["kind"], "employee": r["employee"], "role": r["role"],
                     "day": r["day"], "daypart": r["daypart"], "time": r["time"], "text": r["text"], "editors": editors,
+                    "was_role": det.get("was_role"), "delta": det.get("delta"), "names": det.get("names"),
                     "first_learned": mdy(r["first_learned"]), "first_learned_iso": str(r["first_learned"])[:10],
                     "last_confirmed": mdy(r["last_confirmed"]), "last_confirmed_iso": str(r["last_confirmed"])[:10],
-                    "times_applied": r["times_applied"], "times_overridden": r["times_overridden"],
-                    "status": r["status"], "can_be_rule": r["kind"] in _PERSON_KINDS and r["status"] == "active",
+                    "times_applied": r["times_applied"], "times_confirmed": int(r.get("times_confirmed") or 0),
+                    "times_overridden": r["times_overridden"],
+                    "status": r["status"], "retired_week": r.get("retired_week"),
+                    "retired_at": mdy(r["retired_at"]) if r.get("retired_at") else None,
+                    "dormant_since": mdy(r["dormant_at"]) if r.get("dormant_at") else None,
+                    "can_be_rule": r["kind"] in _PERSON_KINDS and r["status"] == "active",
                     "rule": ({"note": r["rule_note"], "by": r["ruled_by"]} if r["status"] == "ruled" else None)})
     return out
 
@@ -824,17 +1183,21 @@ def patterns_for_draft(restaurant_id, db_path=DB_PATH) -> tuple:
     """(patterns, conflicts) the next draft reads: the live window's
     patterns plus every active standing one it no longer shows (worded as
     standing, with when it was learned and last kept), less what the owner
-    dismissed and less any pair two editors pull opposite ways — those are
-    `conflicts`, for the owner to settle, never the model to guess."""
+    dismissed, less what a standing row holds back (`suppressed`: retired
+    without newer evidence, ruled, dormant) and less any pair two editors
+    pull opposite ways — those are `conflicts`, for the owner to settle,
+    never the model to guess."""
     import schedule_intel as _si
     gone = _si.dismissed_patterns(restaurant_id, db_path)
-    live = [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
+    standing = {s_["key"]: s_ for s_ in standing_patterns(restaurant_id, db_path=db_path)}
+    live = [p for p in learned_patterns(restaurant_id, db_path=db_path)
+            if _si.pattern_key(p) not in gone and not suppressed(p, standing.get(_si.pattern_key(p)), standing)]
     keys = {_si.pattern_key(p) for p in live}
     out = list(live)
-    for s_ in standing_patterns(restaurant_id, db_path=db_path, include_retired=False):
+    for s_ in standing.values():
         if s_["key"] in keys or s_["key"] in gone or s_["status"] != "active":
             continue
-        p = {k: s_[k] for k in ("kind", "employee", "role", "day", "daypart", "time", "editors")}
+        p = {k: s_[k] for k in ("kind", "employee", "role", "day", "daypart", "time", "editors", "was_role", "delta")}
         p["times"] = s_["times_applied"]
         p["standing"] = True
         p["text"] = (f"Standing preference (learned {s_['first_learned']}, last kept {s_['last_confirmed']}): "

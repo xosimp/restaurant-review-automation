@@ -831,3 +831,38 @@ def test_the_worker_boot_the_split_doc_describes():
     assert src.index("logging_setup.configure()") < src.index("models.require_volume()") < src.index("init_db()")
     assert "basicConfig" not in src
     _says(SPLIT, "worker.py calls both at the top of main()")
+
+
+# ── whose answer, and view-as (memory re-audit 9/29/26, PEOPLE-19) ──────────
+
+def test_the_whose_answer_sentences_hold_in_code():
+    import goals
+    import permissions
+    import rec_ledger
+    import rec_learning
+    # A caller that forgets the kwarg: derived from the request's login.
+    assert "request_authority()" in inspect.getsource(rec_ledger.record)
+    # The restaurant's answers: never an admin's, never a delegate's decline.
+    assert rec_ledger.counts_for_restaurant("admin", "accepted") is False
+    assert rec_ledger.counts_for_restaurant("delegate", "dismissed") is False
+    assert rec_ledger.counts_for_restaurant("delegate", "completed") is True
+    assert rec_ledger.counts_for_restaurant(None, "dismissed") is True
+    # One manager's view is their own.
+    assert "viewer_id" in inspect.signature(rec_learning.effectiveness).parameters
+    # Only an account holder ends a goal.
+    assert goals.end_goal(0, 0, authority="delegate") is False
+    assert permissions.acting_login_id({"id": 5, "acting_admin_id": 9}) == 9
+    _says(SECURITY, "derives it from the request's signed-in login when a caller does not pass it",
+          "`rec_ledger.counts_for_restaurant`", "one manager's no never reshapes another's",
+          "only an account holder ends one", "`ask_cavnar_actions.authority`")
+
+
+def test_the_view_as_sentences_hold_in_code():
+    import auth
+    import models
+    assert auth._VIEW_AS_LOGGED_READS.search("/mobile/api/account/memory")
+    assert auth._VIEW_AS_LOGGED_READS.search("/api/ask-cavnar/conversations/12")
+    assert "authority" in inspect.getsource(models.get_operational_scores)
+    _says(SECURITY, "`view_as_read`", "`permissions.acting_login_id`",
+          "an admin's rating is shown and not counted in the operational score",
+          "the morning brief is built per login from what that login may see")

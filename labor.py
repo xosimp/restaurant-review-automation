@@ -1838,14 +1838,24 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     # shift is, so when a POS stops syncing — the analysis, and so its
     # fingerprint, frozen — Monday's "labor is running 34% this week" was
     # served on Friday, with no staleness caveat, until the next deploy.
-    key = (restaurant_id, _analysis_fingerprint(analysis)
-           + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else "")
-           + ":" + _note_local_day(restaurant_id))
+    # ...and the owner's memory (memory re-audit 9/29/26, R3 labor_cache):
+    # the prompt carries it, so "never cut the Friday closer" told at 10am
+    # was missing from the read until the data, the day or the process
+    # changed. owner_memory.invalidate bumps the version on every write.
+    try:
+        import owner_memory as _om_note
+        mem_v = _om_note.memory_version(restaurant_id)
+    except Exception:
+        mem_v = 0
+    fingerprint = (_analysis_fingerprint(analysis)
+                   + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else "")
+                   + ":" + _note_local_day(restaurant_id))
+    key = (restaurant_id, fingerprint + f":m{mem_v}")
     hit = _NOTE_CACHE.get(key)
     if hit is not None:
         return hit[0]
     note = get_claude_insights(analysis, restaurant_id=restaurant_id, **kwargs)
-    _keep_note(restaurant_id, note, key[1])
+    _keep_note(restaurant_id, note, fingerprint)
     if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
         _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
     for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:

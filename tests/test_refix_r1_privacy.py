@@ -463,3 +463,22 @@ def test_the_plans_commitments_carry_no_logins_own_proposals(monkeypatch):
     owner = type("V", (), {"_ask_dsr_user": dict(OWNER)})()
     assert "Fresh Co" not in ask_cavnar._commitments_context(1, viewer=team)
     assert "Fresh Co" in ask_cavnar._commitments_context(1, viewer=owner)
+
+
+def test_a_delivered_brief_keeps_its_read_under_the_dsr_view(monkeypatch):
+    """The build key grew (the login's own silences, R2; the login, R1):
+    the kept read's view is the view key's DSR view, not key[2] — which
+    raised after every send once the key was (view key, silences)."""
+    from types import SimpleNamespace
+    import emails, morning_brief
+    rid = _rid()
+    me = dict(OWNER, email="erik@x.test", restaurant_id=rid)
+    monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [me])
+    monkeypatch.setattr(morning_brief, "build", lambda *a, **k: {"restaurant_id": rid, "date": "2026-09-29",
+                                                                 "lines": [{"key": "x", "tone": "action",
+                                                                            "text": "Do the thing.", "ask": "a"}]})
+    monkeypatch.setattr(morning_brief, "_email_brief", lambda *a, **k: SimpleNamespace(ok=True))
+    kept = []
+    monkeypatch.setattr(morning_brief, "_record_read", lambda rid_, brief, view=None, db_path=None: kept.append(view))
+    out = morning_brief.deliver(rid)
+    assert out["email"] == 1 and kept == [morning_brief._view_key(me)[2]]

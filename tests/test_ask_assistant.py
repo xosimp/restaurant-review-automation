@@ -287,10 +287,14 @@ def test_no_recorded_sales_produces_no_lines_at_all(db_path):
 # ── 6. memory ────────────────────────────────────────────────────────────
 
 def test_a_fact_survives_the_conversation_it_was_said_in(db_path):
+    # Memory re-audit 9/29/26 (R3, QUALITY-11): "Wants labor under 26% by
+    # December" is a measurable target, refused in any kind and pointed at
+    # set_goal — so this test keeps a plain fact instead.
     rid = _restaurant(db_path)
-    tools._remember(rid, "Wants labor under 26% by December")
+    tools._remember(rid, "Football Sundays start next week")
     facts = [f["fact"] for f in models.get_ask_memory(rid, db_path=db_path)]
-    assert "Wants labor under 26% by December" in facts
+    assert "Football Sundays start next week" in facts
+    assert "set_goal" in tools._remember(rid, "Wants labor under 26% by December")["error"]
 
 
 def test_saying_the_same_thing_twice_does_not_store_it_twice(db_path):

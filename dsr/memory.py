@@ -332,7 +332,8 @@ def morning_carry(restaurant_id, today, viewer=None, db_path=None):
     silenced = set()
     try:
         import rec_ledger
-        silenced = set(rec_ledger.silenced_keys(restaurant_id, db_path=db_path))
+        # This login's own "not for us" too (CROSSMODULE-20).
+        silenced = set(rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=user))
     except Exception:
         silenced = set()
     actions = []

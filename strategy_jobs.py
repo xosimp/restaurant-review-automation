@@ -57,7 +57,7 @@ def run_outcome_evaluations(db_path=DB_PATH):
     evaluate_due over every restaurant at once read UTC's date for all of
     them and had no bound at all."""
     import outcomes, goals, ops
-    counts = {"outcomes_closed": 0, "goals_achieved": 0}
+    counts = {"outcomes_closed": 0, "goals_achieved": 0, "goals_missed": 0}
 
     def _one(r):
         try:
@@ -69,6 +69,13 @@ def run_outcome_evaluations(db_path=DB_PATH):
             counts["goals_achieved"] += len(goals.mark_achieved(r.id, db_path=db_path) or [])
         except Exception as e:
             ops.capture(e, job="goals_mark_achieved", context=f"restaurant_id={r.id}")
+        # A goal missed past its grace leaves the prompts and waits in Goals
+        # to be renewed or closed (memory re-audit 9/29/26, R3).
+        try:
+            counts["goals_missed"] += len(goals.retire_missed(
+                r.id, db_path=db_path, today=outcomes.local_today(r.id, db_path)) or [])
+        except Exception as e:
+            ops.capture(e, job="goals_retire_missed", context=f"restaurant_id={r.id}")
 
     attempted, failed, hit = _bounded_each("outcome_evaluations", _one, db_path)
     counts.update(_counts(attempted, attempted - failed, failed, hit_bound=hit))
@@ -2089,6 +2096,14 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     import rec_delivery
     if rec and not rec_delivery.presentable(rec.get("key")):
         rec = None
+    if rec and rec.get("key") and not notify.never_silenced(alert_type):
+        # Not to a login whose own "not for us" already answers it
+        # (rec_ledger.own_silences — memory re-audit 9/29/26, PEOPLE-4).
+        import rec_ledger
+        people = [u for u in people
+                  if rec["key"] not in rec_ledger.own_silences(restaurant_id, u, db_path=db_path)]
+        if not people:
+            return 0
     alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path,
                                           **_notification_ref(data))
     pushed = {u["id"] for u in people if devices.get(u["id"])}

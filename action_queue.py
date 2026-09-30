@@ -467,7 +467,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     # finished at source, so they are never silenced by a recommendation.
     try:
         import rec_ledger
-        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+        # ...and this login's own "not for us" (PEOPLE-4).
+        silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
     except Exception:
         silenced = set()
     answered = [i for i in live if i["kind"] != "issue" and i["key"] in silenced]

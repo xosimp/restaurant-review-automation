@@ -218,7 +218,7 @@ _PLAN_TOKENS = {"budget", "target", "goal", "plan"}
 
 # Stored for the record, never a figure to write about: whether the night's
 # forecast rested on the report's own basis (demand.demand_accuracy reads it).
-BOOKKEEPING_FACTS = frozenset({"sales.forecast_same_basis"})
+BOOKKEEPING_FACTS = frozenset({"sales.forecast_same_basis", "sales.forecast_raw_net"})
 
 # The Intel block's figures that are not measurements of the night (memory
 # audit 9/29/26, QUALITY-17): the National Weather Service FORECAST for the
