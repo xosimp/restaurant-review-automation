@@ -20,8 +20,11 @@ def test_the_plan_reads_ask_memory_as_the_team(monkeypatch):
 
     r = R()
     r._ask_memory_viewer = "team"
-    ask_cavnar._memory_context(7, viewer=r)
-    assert seen[-1] is memory_context.TEAM
+    # Updated (memory re-audit PROMPTS-14): the plan's snapshot carries no
+    # memory block of its own — strategy_jobs.plan_memory (surface
+    # "weekly_plan", read as the team) is the plan's one block, instead of
+    # the same constraints, goals and claims paid for twice.
+    assert ask_cavnar._memory_context(7, viewer=r) == "" and seen == []
     ask_cavnar._memory_context(7, viewer=R())
     assert seen[-1] is None                              # an ordinary owner call is unchanged
 
