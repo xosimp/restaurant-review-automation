@@ -217,8 +217,8 @@ ROLE_SOURCE = "sync"
 def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
     """Mirror the POS's job list into people.person_roles, the table every
     who-can-work-what reader uses (the replacement picker, the roster, the
-    schedule engine). Only for people Cavnar AI already knows by their POS id
-    (person_aliases); roles an owner added are never touched; a POS role
+    schedule engine). Only for people Cavnar AI already knows — by their POS
+    id (person_aliases), else by one exact name match; roles an owner added are never touched; a POS role
     never overrides a primary role the owner set. A job the POS no longer
     lists is removed only if the POS put it there. No change_log rows."""
     import people
@@ -233,11 +233,21 @@ def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
             "SELECT a.external_id, p.display_name FROM person_aliases a JOIN people p ON p.id = a.person_id "
             "WHERE a.restaurant_id=? AND a.source=? AND a.external_id IS NOT NULL AND p.merged_into IS NULL",
             (restaurant_id, name)).fetchall()}
+        # A store whose people carry no POS id yet (Simple EJ's, 9/29/26: no
+        # alias rows) is matched on the exact name instead, one live person
+        # per name — never a guess between two.
+        by_key = {}
+        for r in conn.execute("SELECT display_name, name_key FROM people WHERE restaurant_id=? AND merged_into IS NULL",
+                              (restaurant_id,)).fetchall():
+            by_key.setdefault(r["name_key"], []).append(r["display_name"])
     finally:
         conn.close()
     want = {}
     for r in rows:
         person = known.get(str(r["external_id"]))
+        if not person and r.get("employee_name"):
+            hits = by_key.get(people._nk(r["employee_name"])) or []
+            person = hits[0] if len(hits) == 1 else None
         if person:
             want.setdefault(person, {})[r["role"]] = bool(r.get("primary"))
     held = people.held_roles(restaurant_id, db_path=db_path)

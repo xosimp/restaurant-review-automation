@@ -263,3 +263,21 @@ def test_a_day_stored_under_an_older_layout_is_stored_again(db_path, monkeypatch
     monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
     pos_archive.run_for(rid, today=date(2026, 9, 30), now_utc=datetime(2026, 9, 30, 9, tzinfo=timezone.utc))
     assert "2026-09-28" in fake.calls and "2026-09-28" in pos_archive.archived_dates(rid, "rpower")
+
+
+def test_without_pos_ids_a_person_is_matched_on_one_exact_name(db_path, monkeypatch):
+    import people
+    rid = _rid(db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO people (restaurant_id, display_name, name_key) VALUES (?,?,?)",
+                 (rid, "Dana Reyes", people._nk("Dana Reyes")))
+    conn.commit()
+    conn.close()
+    jobs = [{"external_id": "E9", "employee_name": "Dana Reyes", "role": "Host PM", "primary": True},
+            {"external_id": "E8", "employee_name": "Stranger Danger", "role": "Server AM", "primary": True}]
+    fake = type("P", (), {"fetch_employee_jobs": staticmethod(lambda r: jobs),
+                          "archive_rows": staticmethod(lambda r, d: None)})
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    out = pos_archive.sync_roles(rid, db_path=db_path)
+    assert (out["people"], out["added"]) == (1, 1)
+    assert [(h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)] == [("Dana Reyes", "Host PM")]

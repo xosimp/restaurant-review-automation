@@ -206,6 +206,8 @@ def pay_and_tips(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     return {"available": True, "window": [start.isoformat(), end.isoformat()], "house": _agg(punches),
             "roles": sorted(({"role": k, **_agg(v)} for k, v in by_role.items()), key=lambda r: -r["hours"]),
             "people": people, "min_shifts": MIN_SHIFTS,
+            "tips_note": ("Tips are those the POS recorded on each punch; tips shared another way (a pool, "
+                          "cash handed out) are not included, so a role can read low."),
             "breaks": ({"recorded": breaks} if breaks else
                        {"recorded": 0, "note": "the POS recorded no meal or rest breaks on these punches"}),
             "edited_punches": ({"count": edits} if edits else

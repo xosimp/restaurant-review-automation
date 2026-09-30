@@ -1740,13 +1740,15 @@ def fetch_employee_jobs(restaurant_id: int) -> list:
     more. RPOWER keeps job rows active for people long gone (429 employees
     held jobs, 105 were current), so the caller keeps only people it knows."""
     token, base = _ctx(restaurant_id)
-    jobs = (_people_cached(restaurant_id).get("jobs") or {})
+    ppl = _people_cached(restaurant_id)
+    jobs, emps = ppl.get("jobs") or {}, ppl.get("employees") or {}
     out = []
     for r in _paged(token, "employeejob/getbystore", {**base, "isinactive": 0, "sortorder": "mid"}):
         emp, job = _id(r.get("emp_mid")), _id(r.get("job_mid"))
         if not emp or not job or r.get("is_inactive") or not jobs.get(job):
             continue
-        out.append({"external_id": emp, "role": jobs[job], "rate": round(_num(r.get("reg_rate")), 2),
+        out.append({"external_id": emp, "employee_name": emps.get(emp), "role": jobs[job],
+                    "rate": round(_num(r.get("reg_rate")), 2),
                     "primary": bool(r.get("is_primary")), "salaried": bool(r.get("is_salary"))})
     return out
 
@@ -1759,14 +1761,20 @@ def fetch_menu_prices(restaurant_id: int) -> list:
     (Simple EJ's: 10,476 rows, 546 menu items, levels "Level 1".."Level 9")."""
     token, base = _ctx(restaurant_id)
     menu = menu_lookup(restaurant_id)
-    levels = {k: _tidy_name(v.get("name")) for k, v in _catalog(restaurant_id, "pricelevel/getbycg").items()}
+    # A sale line names its level by number (prclvl_mid "1"); the price list
+    # by the level's record id. The level's seq_id is that number (checked on
+    # Simple EJ's, 9/29/26: Level 1..9 = seq_id 1..9), so levels are keyed on
+    # it and match the archived lines' price_level_id.
+    levels = {k: (str(v.get("seq_id")) if v.get("seq_id") not in (None, "") else k, _tidy_name(v.get("name")))
+              for k, v in _catalog(restaurant_id, "pricelevel/getbycg").items()}
     out = []
     for r in _paged(token, "menuitemprice/getbystore", {**base, "sortorder": "mid"}):
         item, level, price = _id(r.get("menuitem_mid")), _id(r.get("prclvl_mid")), round(_num(r.get("price")), 2)
         if not item or not level or price <= 0 or item not in menu:
             continue
-        out.append({"item_id": item, "item_name": menu[item].get("name"), "level_id": level,
-                    "level": levels.get(level), "price": price})
+        key, lname = levels.get(level, (level, None))
+        out.append({"item_id": item, "item_name": menu[item].get("name"), "level_id": key,
+                    "level": lname, "price": price})
     return out
 
 
