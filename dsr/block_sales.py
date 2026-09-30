@@ -284,7 +284,13 @@ def _ready(ctx, data, provider, closed_by):
                     # demand.demand_accuracy can report how often nights land
                     # inside it (contract K8, CA2 #6).
                     "forecast_low": (fc or {}).get("low"), "forecast_high": (fc or {}).get("high"),
-                    "forecast_same_basis": 1.0 if fc else None})
+                    "forecast_same_basis": 1.0 if fc else None,
+                    # The forecast BEFORE demand's correction by its own
+                    # misses (demand.forecast_calibration, LOOPS-13): the
+                    # figure the next correction is measured against, so it
+                    # never feeds on itself.
+                    "forecast_raw_net": ((fc.get("raw_sales") if fc.get("raw_sales") is not None else fc_net)
+                                         if fc else None)})
     if fc:
         basis = f"median of the last {fc.get('samples')} {fc.get('weekday')}s"
         if fc.get("effects"):
@@ -295,6 +301,8 @@ def _ready(ctx, data, provider, closed_by):
                                  "basis": basis, "forecast_basis": fc.get("basis") or "dsr_net", "same_basis": True,
                                  "base_net": fc.get("base_sales"), "effect_pct": fc.get("effect_pct"),
                                  "effects": fc.get("effects"), "effect_basis": fc.get("effect_basis"),
+                                 "raw_net": fc.get("raw_sales"), "calibration": fc.get("calibration"),
+                                 "calibration_note": fc.get("calibration_note"),
                                  "basis_note": None}
     else:
         baselines["forecast"] = {"net": None, "source": None,
