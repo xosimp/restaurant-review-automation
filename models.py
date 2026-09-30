@@ -3531,6 +3531,20 @@ def init_db(db_path: str = DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_pos_lines_bdate ON pos_ticket_lines(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_bdate ON pos_punches(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_archive_days_bdate ON pos_archive_days(business_date)",
+        # The POS's own menu prices, one row per item and price level, as of
+        # the last nightly read (pos_archive.sync_prices, High ROI #7): the
+        # baseline a change is found against. Replaced in place; no growth.
+        """CREATE TABLE IF NOT EXISTS pos_menu_prices (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            item_id         TEXT NOT NULL,
+            level_id        TEXT NOT NULL,
+            item_name       TEXT,
+            level           TEXT,
+            price           REAL NOT NULL,
+            seen_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, provider, item_id, level_id)
+        )""",
         # How far the "what changed since" read has looked (UTC), per store.
         """CREATE TABLE IF NOT EXISTS pos_archive_state (
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),

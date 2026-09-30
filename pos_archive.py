@@ -181,13 +181,18 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
             failed.append(d.isoformat())
     if callable(changed) and not failed:
         _set_changes_checked_to(restaurant_id, name, now_utc, db_path)
-    roles = None
+    roles = prices = None
     try:
         roles = sync_roles(restaurant_id, db_path=db_path)
     except Exception as e:                           # the archive stands; roles try again tomorrow
         log.warning("pos_archive: role sync failed for %s: %s", restaurant_id, e)
+    try:
+        prices = sync_prices(restaurant_id, db_path=db_path, today=today)
+    except Exception as e:
+        log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
-            "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles}
+            "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles,
+            "prices": prices}
 
 
 # ── who can work which job (RPower endpoint audit, High ROI #5) ─────────────
@@ -240,3 +245,85 @@ def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
         if role not in (want.get(person) or {}):
             removed += 1 if people.remove_role(restaurant_id, person, role, db_path=db_path, record=False) else 0
     return {"ok": True, "people": len(want), "added": added, "removed": removed}
+
+
+# ── menu prices (RPower endpoint audit, High ROI #7) ────────────────────────
+
+PRICE_LEVEL_LOOKBACK_DAYS = 60
+# More price changes than this in one night is a remap or a glitch, not a
+# repricing: stored, not logged, and flagged for an operator.
+MAX_PRICE_CHANGES_LOGGED = 50
+
+
+def _levels_in_use(restaurant_id, provider, db_path, today=None):
+    since = ((today or date.today()) - timedelta(days=PRICE_LEVEL_LOOKBACK_DAYS)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT DISTINCT price_level_id FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? "
+            "AND business_date>=? AND kind='sale' AND price_level_id IS NOT NULL", (restaurant_id, provider, since))}
+    finally:
+        conn.close()
+
+
+def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
+    """Read the POS's menu prices; each price that moved since last night
+    becomes a change_log "price" row (source "sync"), the same record a
+    typed or Back Office price makes — so outcomes knows a price moved inside
+    a tracked window, and every repricing is on file to learn from. Only
+    levels rung in the last PRICE_LEVEL_LOOKBACK_DAYS of archived sales are
+    tracked. The first read is the baseline and logs nothing."""
+    name, mod = provider_for(restaurant_id)
+    fn = getattr(mod, "fetch_menu_prices", None) if mod else None
+    if not callable(fn):
+        return {"ok": False, "reason": "the POS does not share menu prices"}
+    used = _levels_in_use(restaurant_id, name, db_path, today)
+    if not used:
+        return {"ok": False, "reason": "no archived sales yet to say which price levels are rung"}
+    rows = [r for r in fn(restaurant_id) if r["level_id"] in used]
+    main = None
+    conn = get_conn(db_path)
+    try:
+        main = conn.execute(
+            "SELECT price_level_id FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? AND kind='sale' "
+            "AND price_level_id IS NOT NULL GROUP BY price_level_id ORDER BY COUNT(*) DESC LIMIT 1",
+            (restaurant_id, name)).fetchone()
+        main = main[0] if main else None
+        have = {(r["item_id"], r["level_id"]): r["price"] for r in conn.execute(
+            "SELECT item_id, level_id, price FROM pos_menu_prices WHERE restaurant_id=? AND provider=?",
+            (restaurant_id, name)).fetchall()}
+        baseline = not have
+        changes = [(r, have[(r["item_id"], r["level_id"])]) for r in rows
+                   if (r["item_id"], r["level_id"]) in have and abs(have[(r["item_id"], r["level_id"])] - r["price"]) >= 0.005]
+        conn.executemany(
+            "INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price, seen_at) "
+            "VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, provider, item_id, level_id) DO UPDATE "
+            "SET item_name=excluded.item_name, level=excluded.level, price=excluded.price, seen_at=excluded.seen_at",
+            [(restaurant_id, name, r["item_id"], r["level_id"], r["item_name"], r["level"], r["price"]) for r in rows])
+        conn.commit()
+    finally:
+        conn.close()
+    if baseline:
+        return {"ok": True, "baseline": True, "tracked": len(rows), "changes": 0}
+    if len(changes) > MAX_PRICE_CHANGES_LOGGED:
+        try:
+            import ops
+            ops.capture(RuntimeError(f"pos_archive: {len(changes)} POS prices changed in one night; stored, "
+                                     f"not logged (over {MAX_PRICE_CHANGES_LOGGED})"),
+                        job="pos_archive", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return {"ok": True, "tracked": len(rows), "changes": len(changes), "logged": 0}
+    import change_log
+    logged = 0
+    for r, before in changes:
+        subject = r["item_name"] or f"POS item {r['item_id']}"
+        if r["level_id"] != main and r["level"]:
+            subject = f"{subject} ({r['level']})"
+        try:
+            change_log.record(restaurant_id, "price", "sell_price", before, r["price"], subject=subject,
+                              source="sync", db_path=db_path, via="pos_archive.sync_prices")
+            logged += 1
+        except Exception as e:
+            log.warning("pos_archive: price change not logged rid=%s: %s", restaurant_id, e)
+    return {"ok": True, "tracked": len(rows), "changes": len(changes), "logged": logged}

@@ -188,3 +188,51 @@ def test_pos_jobs_become_roles_for_known_people_only_and_never_override_the_owne
     out = pos_archive.sync_roles(rid, db_path=db_path)
     assert out["removed"] == 1 and ("Dana Reyes", "Bartender PM") not in {
         (h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)}
+
+
+# ── menu prices (High ROI #7) ────────────────────────────────────────────────
+
+def _sold_at(db_path, rid, level, n=1):
+    conn = models.get_conn(db_path)
+    for i in range(n):
+        conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, business_date, kind, price_level_id) "
+                     "VALUES (?,?,?,?,?,?)", (rid, "rpower", f"s-{level}-{i}", date.today().isoformat(), "sale", level))
+    conn.commit()
+    conn.close()
+
+
+def test_a_pos_price_change_is_logged_as_a_price_change_after_the_baseline(db_path, monkeypatch):
+    import change_log
+    rid = _rid(db_path)
+    _sold_at(db_path, rid, "L1", 5)
+    _sold_at(db_path, rid, "L2", 1)
+    prices = [{"item_id": "M1", "item_name": "Brisket", "level_id": "L1", "level": "Level 1", "price": 18.0},
+              {"item_id": "M1", "item_name": "Brisket", "level_id": "L2", "level": "Level 2", "price": 15.0},
+              {"item_id": "M2", "item_name": "Wings", "level_id": "L9", "level": "Level 9", "price": 9.0}]  # never rung
+    fake = type("P", (), {"fetch_menu_prices": staticmethod(lambda r: [dict(p) for p in prices]),
+                          "archive_rows": staticmethod(lambda r, d: None)})
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    first = pos_archive.sync_prices(rid, db_path=db_path)
+    assert first == {"ok": True, "baseline": True, "tracked": 2, "changes": 0}
+    prices[0]["price"], prices[1]["price"] = 19.0, 16.0
+    out = pos_archive.sync_prices(rid, db_path=db_path)
+    assert (out["changes"], out["logged"]) == (2, 2)
+    rows = change_log.history(rid, kinds="price", db_path=db_path)
+    assert {(r["subject"], r["new_value"], r["source"]) for r in rows} == {
+        ("Brisket", 19.0, "sync"), ("Brisket (Level 2)", 16.0, "sync")}
+
+
+def test_a_mass_change_is_stored_but_not_logged(db_path, monkeypatch):
+    import change_log
+    rid = _rid(db_path)
+    _sold_at(db_path, rid, "L1")
+    prices = [{"item_id": f"M{i}", "item_name": f"Dish {i}", "level_id": "L1", "level": "Level 1", "price": 10.0}
+              for i in range(pos_archive.MAX_PRICE_CHANGES_LOGGED + 5)]
+    fake = type("P", (), {"fetch_menu_prices": staticmethod(lambda r: [dict(p) for p in prices]),
+                          "archive_rows": staticmethod(lambda r, d: None)})
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    pos_archive.sync_prices(rid, db_path=db_path)
+    for p in prices:
+        p["price"] = 11.0
+    out = pos_archive.sync_prices(rid, db_path=db_path)
+    assert out["logged"] == 0 and change_log.history(rid, kinds="price", db_path=db_path) == []

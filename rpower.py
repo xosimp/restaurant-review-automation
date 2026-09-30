@@ -1722,3 +1722,22 @@ def fetch_employee_jobs(restaurant_id: int) -> list:
         out.append({"external_id": emp, "role": jobs[job], "rate": round(_num(r.get("reg_rate")), 2),
                     "primary": bool(r.get("is_primary")), "salaried": bool(r.get("is_salary"))})
     return out
+
+
+def fetch_menu_prices(restaurant_id: int) -> list:
+    """The store's price for each menu item at each price level:
+    [{"item_id", "item_name", "level_id", "level", "price"}] —
+    menuitemprice/getbystore with pricelevel/getbycg names (RPower endpoint
+    audit, High ROI #7). Only items on the menu and prices above zero
+    (Simple EJ's: 10,476 rows, 546 menu items, levels "Level 1".."Level 9")."""
+    token, base = _ctx(restaurant_id)
+    menu = menu_lookup(restaurant_id)
+    levels = {k: _tidy_name(v.get("name")) for k, v in _catalog(restaurant_id, "pricelevel/getbycg").items()}
+    out = []
+    for r in _paged(token, "menuitemprice/getbystore", {**base, "sortorder": "mid"}):
+        item, level, price = _id(r.get("menuitem_mid")), _id(r.get("prclvl_mid")), round(_num(r.get("price")), 2)
+        if not item or not level or price <= 0 or item not in menu:
+            continue
+        out.append({"item_id": item, "item_name": menu[item].get("name"), "level_id": level,
+                    "level": levels.get(level), "price": price})
+    return out
