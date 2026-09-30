@@ -5597,6 +5597,10 @@ def mobile_update_email(current_user):
     return jsonify(ok=True)
 
 
+# Profile fields only an account holder may change (PROMPTS-9).
+_BRAND_VOICE_FIELDS = ("voice_notes", "never_say", "menu_notes", "sign_off_name", "owner_name")
+
+
 @mobile_bp.route("/account/update-profile", methods=["POST"])
 @mobile_login_required
 def mobile_update_profile(current_user):
@@ -5617,14 +5621,32 @@ def mobile_update_profile(current_user):
         return value[:max_len].strip() or None
 
     data = request.get_json() or {}
-    updates = {
+    # Only the fields sent: the web profile form sends no menu_notes, and
+    # every save of it cleared the menu the drafters name dishes from.
+    updates = {k: v for k, v in {
         "owner_name":  _clean(data.get("owner_name"), 200),
         "owner_phone": (data.get("owner_phone") or "").strip()[:30] or None,
         "voice_notes": _clean(data.get("voice_notes"), 1000),
         "never_say":   _clean(data.get("never_say"), 1000),
         "menu_notes":  _clean(data.get("menu_notes"), 2000),
         "sign_off_name": _clean(data.get("sign_off_name"), 80),
-    }
+    }.items() if k in data}
+    # The brand voice and the owner's name are trusted instruction to every
+    # drafter and the offer source public copy is checked against: an
+    # account holder's to change (memory re-audit PROMPTS-9; the web twin is
+    # client_api._do_brand_voice). The same form carries them for everyone,
+    # so a teammate's save leaves them as they are — and a change to one is
+    # refused, not silently dropped.
+    from permissions import is_principal as _is_principal_up
+    if not _is_principal_up(current_user):
+        current = get_restaurant(current_user["restaurant_id"])
+        for key in _BRAND_VOICE_FIELDS:
+            if key not in updates:
+                continue
+            if (updates[key] or None) != ((getattr(current, key, None) or "").strip() or None):
+                return jsonify(ok=False, owner_only=True,
+                               error="Only the account owner can change the brand voice or the owner's name."), 403
+            updates.pop(key)
     # Fixed sets — these are dropped straight into the drafting prompt.
     lang = (data.get("response_language") or "").strip().lower()
     updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None

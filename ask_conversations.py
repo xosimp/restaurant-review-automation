@@ -262,7 +262,7 @@ def last_answer_tools(restaurant_id, conversation_id, viewer_id=None, db_path=No
         try:
             row = conn.execute(
                 "SELECT tools_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
-                "AND role='assistant' AND (? IS NULL OR user_id IS NULL OR user_id=?) "
+                "AND role='assistant' AND (? IS NULL OR user_id=?) "
                 "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
         finally:
             conn.close()
@@ -329,13 +329,13 @@ def _topics_rows(restaurant_id, user_id, days, db_path=None):
     try:
         live = [dict(r) for r in conn.execute(
             "SELECT id AS conversation_id, title, topics, summary_json, updated_at AS at, 'live' AS kind "
-            "FROM ask_cavnar_conversations c WHERE restaurant_id=? AND (user_id=? OR user_id IS NULL) "
+            "FROM ask_cavnar_conversations c WHERE restaurant_id=? AND user_id=? "
             "AND updated_at >= ? AND EXISTS (SELECT 1 FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) "
             "ORDER BY updated_at DESC LIMIT 200", (restaurant_id, user_id, since)).fetchall()]
         try:
             kept = [dict(r) for r in conn.execute(
                 "SELECT conversation_id, title, topics, summary_json, ended_at AS at, 'kept' AS kind, message_count "
-                "FROM ask_topics WHERE restaurant_id=? AND (user_id=? OR user_id IS NULL) "
+                "FROM ask_topics WHERE restaurant_id=? AND user_id=? "
                 "AND COALESCE(ended_at, created_at) >= ? ORDER BY id DESC LIMIT 400",
                 (restaurant_id, user_id, since)).fetchall()]
         except Exception:

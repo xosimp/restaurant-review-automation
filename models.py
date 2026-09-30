@@ -3601,6 +3601,13 @@ def init_db(db_path: str = DB_PATH):
         _adopt_legacy_ask_messages(conn)
     except Exception as e:
         print(f"ask_cavnar legacy adoption skipped: {e}")
+    # ...and any chat still stored with no login is the owner's, once — the
+    # readers no longer serve a NULL-login chat to every login (memory
+    # re-audit PEOPLE-18 / PROMPTS-17).
+    try:
+        _attribute_ownerless_ask_chats(conn)
+    except Exception as e:
+        print(f"ask_cavnar ownerless chats not attributed: {e}")
     conn.close()
     # Ensure any columns managed by ensure_columns() are present before seeding.
     # On THIS database: a bare ensure_columns() migrated the default
@@ -7446,6 +7453,22 @@ def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH
     finally:
         conn.close()
     return r["fact"]
+
+
+def set_ask_fact_audience(restaurant_id: int, fact_id: int, audience: str, db_path: str = DB_PATH) -> bool:
+    """Change who may read one live fact (team | principals | author) — the
+    Account "Share with the team" / "Only owners" choice (owner_memory.
+    set_audience checks who may). True when a row changed."""
+    if audience not in ("team", "principals", "author"):
+        return False
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE ask_memory SET audience=? WHERE restaurant_id=? AND id=?",
+                         (audience, restaurant_id, int(fact_id))).rowcount
+        conn.commit()
+        return bool(n)
+    finally:
+        conn.close()
 
 
 def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
@@ -11540,6 +11563,11 @@ ACCOUNT_EVENT_LABELS = {
 }
 
 
+# Memory changes: logged with the fact's type and audience (event_data
+# "memory"), never its words — see get_account_activity.
+MEMORY_EVENT_TYPES = ("memory_added", "memory_forgotten")
+
+
 def get_account_activity(restaurant_id: int, limit: int = 100, db_path: str = DB_PATH) -> list:
     """Account-level events only (see ACCOUNT_EVENT_TYPES), newest first."""
     import json as _json
@@ -11557,10 +11585,17 @@ def get_account_activity(restaurant_id: int, limit: int = 100, db_path: str = DB
             data = _json.loads(r["event_data"] or "{}")
         except Exception:
             data = {}
+        detail = data.get("detail")
+        if r["event_type"] in MEMORY_EVENT_TYPES and not isinstance(data.get("memory"), dict):
+            # Written before the log stopped carrying the fact's words: every
+            # console login reads this log, and the text of an owner-only or
+            # a teammate's own fact must not reach them here (memory
+            # re-audit PEOPLE-1). The event stays; its words do not.
+            detail = None
         out.append({
             "type": r["event_type"],
             "label": ACCOUNT_EVENT_LABELS.get(r["event_type"], r["event_type"].replace("_", " ").capitalize()),
-            "detail": data.get("detail"),
+            "detail": detail,
             "actor": data.get("actor"),
             "created_at": r["created_at"],
         })
@@ -13645,6 +13680,45 @@ def _adopt_legacy_ask_messages(conn):
     conn.commit()
 
 
+def _attribute_ownerless_ask_chats(conn) -> int:
+    """Boot, idempotent: an Ask chat, message or kept topic stored with no
+    login (before per-login attribution) becomes the restaurant's account
+    holder's — its primary login (the lowest-id non-admin owner/client
+    login). Every chat reader used to read user_id NULL as "anyone's", so a
+    manager's past conversations, "often asks" line and Ask memory carried
+    the owner's legacy chat ("should I let Dana go?"; memory re-audit
+    PEOPLE-18 / PROMPTS-17). A restaurant with no such login keeps its NULL
+    rows, which no login-scoped reader serves any more. Returns rows moved."""
+    try:
+        conn.execute("SELECT 1 FROM users LIMIT 1")
+    except sqlite3.OperationalError:
+        return 0                          # a fresh file: users is created later in boot
+    owner = ("(SELECT MIN(u.id) FROM users u WHERE u.restaurant_id={t}.restaurant_id "
+             "AND COALESCE(u.is_admin, 0)=0 AND COALESCE(NULLIF(LOWER(TRIM(u.role)), ''), 'client') "
+             "IN ('client', 'owner'))")
+    moved = 0
+    moved += conn.execute(
+        f"UPDATE ask_cavnar_conversations SET user_id={owner.format(t='ask_cavnar_conversations')} "
+        f"WHERE user_id IS NULL AND {owner.format(t='ask_cavnar_conversations')} IS NOT NULL").rowcount
+    # A message follows its chat; one with no chat, the owner.
+    moved += conn.execute(
+        "UPDATE ask_cavnar_messages SET user_id=(SELECT c.user_id FROM ask_cavnar_conversations c "
+        "WHERE c.id=ask_cavnar_messages.conversation_id) WHERE user_id IS NULL AND conversation_id IS NOT NULL "
+        "AND (SELECT c.user_id FROM ask_cavnar_conversations c WHERE c.id=ask_cavnar_messages.conversation_id) "
+        "IS NOT NULL").rowcount
+    moved += conn.execute(
+        f"UPDATE ask_cavnar_messages SET user_id={owner.format(t='ask_cavnar_messages')} "
+        f"WHERE user_id IS NULL AND {owner.format(t='ask_cavnar_messages')} IS NOT NULL").rowcount
+    try:
+        moved += conn.execute(
+            f"UPDATE ask_topics SET user_id={owner.format(t='ask_topics')} "
+            f"WHERE user_id IS NULL AND {owner.format(t='ask_topics')} IS NOT NULL").rowcount
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    return moved
+
+
 def _ask_title(question: str) -> str:
     """A chat is named by its first question — one line, trimmed. A
     "[Confirmed: …]" audit line is never a title."""
@@ -13733,10 +13807,13 @@ def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH)
 # revenue in plain text. Omitted (None) means no viewer filter: that is what
 # the data layer's own tests and any restaurant-wide maintenance use.
 def _viewer_clause(viewer_id, alias=""):
+    """A login reads its own chats only. A chat with no login is no longer
+    everyone's (memory re-audit PEOPLE-18): boot gives it to the owner
+    (_attribute_ownerless_ask_chats)."""
     if viewer_id is None:
         return "", []
     col = f"{alias}user_id" if alias else "user_id"
-    return f" AND ({col}=? OR {col} IS NULL)", [viewer_id]
+    return f" AND {col}=?", [viewer_id]
 
 
 def get_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PATH, viewer_id=None):
@@ -13842,7 +13919,7 @@ def latest_ask_answer_id(restaurant_id, conversation_id, user_id=None, db_path: 
     try:
         row = conn.execute(
             "SELECT MAX(id) FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? AND role='assistant' "
-            "AND (user_id IS NULL OR ? IS NULL OR user_id=?)", (restaurant_id, conversation_id, user_id, user_id)).fetchone()
+            "AND (? IS NULL OR user_id=?)", (restaurant_id, conversation_id, user_id, user_id)).fetchone()
     finally:
         conn.close()
     return int(row[0]) if row and row[0] else None
@@ -13852,7 +13929,7 @@ def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=N
                         authority=None):
     """Rate one Ask answer: `helpful` true/false, an optional note. The
     message must be an ASSISTANT turn of THIS restaurant, given to this
-    login (or to nobody in particular) — a rating of another restaurant's,
+    login — a rating of another restaurant's,
     or another login's, answer is refused (None), never written. Rating the
     same answer again replaces the rating. Returns the stored row."""
     import json as _json
@@ -13861,7 +13938,9 @@ def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=N
         msg = conn.execute(
             "SELECT id, conversation_id, user_id, meta_json FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
             "AND role='assistant'", (int(message_id), restaurant_id)).fetchone()
-        if not msg or (msg["user_id"] is not None and user_id is not None and msg["user_id"] != user_id):
+        # A login rates its own answers: a turn with no login is no longer
+        # anyone's (boot attributes it, _attribute_ownerless_ask_chats).
+        if not msg or (user_id is not None and msg["user_id"] != user_id):
             return None
         note = (str(note).strip()[:500] or None) if note else None
         # What the rated answer was (its meta, stored with the turn): the

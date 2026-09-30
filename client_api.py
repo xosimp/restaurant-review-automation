@@ -9028,16 +9028,19 @@ def staff_availability_submit(token):
 # import direction is mobile_api -> client_api) so both surfaces run the
 # same code and can't drift apart again.
 
-def log_account_event(restaurant_id, event_type, current_user=None, detail=None):
+def log_account_event(restaurant_id, event_type, current_user=None, detail=None, extra=None):
     """Account activity log (Account -> Security -> Account activity).
     Shared so a change made on the web is recorded identically to one made
     in the app — mobile_api._log_account_event delegates here. A change made
     through an admin's view-as session is recorded as the admin's: the
     actor becomes "will (Cavnar AI, viewing as …)" (models.log_event reads
-    flask.g.view_as), with acting_admin / acting_admin_id beside it."""
+    flask.g.view_as), with acting_admin / acting_admin_id beside it.
+    `extra`: structured keys stored beside the detail (a memory change's
+    kind and audience — models.get_account_activity reads them)."""
     try:
         from models import log_event
-        data = {"detail": detail}
+        data = dict(extra or {})
+        data["detail"] = detail
         if current_user:
             data["actor"] = current_user.get("username")
         log_event(restaurant_id, event_type, data)
@@ -9331,6 +9334,15 @@ def _do_brand_voice(rid, data, current_user=None):
     admin-set (see that route's docstring)."""
     import re as _re_bv
 
+    # The brand voice is trusted instruction to every drafter and the offer
+    # source public copy is checked against (marketing._owner_source,
+    # guest_marketing's offer_source): an account holder's to write, on
+    # both twins (memory re-audit PROMPTS-9). A manager's "half-price wings
+    # every Tuesday" in menu_notes became an offer the guards accepted.
+    refused = _owner_only_setting(current_user, "the brand voice")
+    if refused:
+        return refused
+
     def _clean(value, max_len):
         if value is None:
             return None
@@ -9338,14 +9350,13 @@ def _do_brand_voice(rid, data, current_user=None):
         value = _re_bv.sub(r"(?i)javascript\s*:", "", value)
         return value[:max_len].strip() or None
 
-    update_restaurant(rid, {
-        "voice_notes": _clean((data or {}).get("voice_notes"), 1000),
-        "never_say": _clean((data or {}).get("never_say"), 1000),
-        "menu_notes": _clean((data or {}).get("menu_notes"), 2000),
-        # The phone's profile sheet has these two as well; one brand voice,
-        # same fields on both.
-        "sign_off_name": _clean((data or {}).get("sign_off_name"), 80),
-    })
+    data = data or {}
+    caps = {"voice_notes": 1000, "never_say": 1000, "menu_notes": 2000,
+            # The phone's profile sheet has these two as well; one brand
+            # voice, same fields on both.
+            "sign_off_name": 80}
+    # Only the fields sent: an absent one is left as it is, never cleared.
+    update_restaurant(rid, {k: _clean(data.get(k), n) for k, n in caps.items() if k in data})
     log_account_event(rid, "brand_voice_changed", current_user)
     return {"ok": True}, 200
 
@@ -9439,11 +9450,14 @@ def brand_voice(current_user):
     rid = current_user["restaurant_id"]
     if request.method == "GET":
         r = get_restaurant(rid)
+        from permissions import is_principal as _is_principal_bv
         return jsonify(ok=True,
                        voice_notes=getattr(r, "voice_notes", "") or "",
                        never_say=getattr(r, "never_say", "") or "",
                        menu_notes=getattr(r, "menu_notes", "") or "",
-                       sign_off_name=getattr(r, "sign_off_name", "") or "")
+                       sign_off_name=getattr(r, "sign_off_name", "") or "",
+                       # Read-only for anyone but an account holder (PROMPTS-9).
+                       can_edit=_is_principal_bv(current_user))
     payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
