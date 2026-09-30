@@ -1712,6 +1712,16 @@ neighbours (`predict._orgs`) — so two emails behind one owner login, or
 one Stripe customer, are one organisation (memory audit PLATFORM-19; a
 restaurant with no row, a deleted one's kept rows, is its own). `rec_learning.kind_record` returns only the capped
 counts — `prior_measured_raw` / `prior_improved_raw` are gone.
+Since the memory re-audit (9/29/26, PLATFORM-9 / -10) the ACCEPTANCE prior
+is capped the same way — `acceptance_*_capped` (and
+`acceptance_*_decayed_capped`, which `rec_learning.Effectiveness.prior`
+reads first): each organisation held to `MAX_RESTAURANT_SHARE` of the
+denominator (`capped_counts`), over only the episodes shown in the first
+`scoring.POOLED_ACCEPT_MAX_POSITION` (3) places (`rec_instances.
+first_position`; an unknown position still counts) — a card nobody scrolled
+to is not a rejection, and without it a kind ranked high everywhere was
+accepted more, which raised its pooled prior, which ranked it higher
+everywhere. The raw figures stay beside them for the admin view.
 
 **Peer freshness** (#24): Data Health's "Peer benchmarks" source is dated
 by the restaurant's confirmed partition bands (the oldest family's newest
