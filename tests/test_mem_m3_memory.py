@@ -86,8 +86,10 @@ def test_the_labor_read_hears_attendance_roles_and_who_is_new_each_dated_and_fen
     people.add_role(rid, "Ana B.", "Bartender", since=(TODAY - timedelta(days=20)).isoformat())
     lines = people.memory_lines(_req(rid, "labor_read"))
     texts = [l["text"] for l in lines]
-    maria = next(l for l in lines if l["text"].startswith("Maria G.: missed 3"))
-    assert "3 of them Saturdays" in maria["text"] and maria["subject"] == "labor:day:saturday"
+    # Memory re-audit 9/29/26 (PROMPTS-3): the person's name is fenced, what
+    # Cavnar AI counted is the line's trusted `measured` suffix.
+    maria = next(l for l in lines if l["text"] == "Maria G." and "missed 3" in (l.get("measured") or ""))
+    assert "3 of them Saturdays" in maria["measured"] and maria["subject"] == "labor:day:saturday"
     assert any("Ana B. is trained for Bartender" in t and "as well as Server" in t for t in texts)
     new = next(t for t in texts if t.startswith("New on the staff"))
     assert "Cy D." in new and "Maria G." not in new
@@ -97,7 +99,7 @@ def test_the_labor_read_hears_attendance_roles_and_who_is_new_each_dated_and_fen
     assert all(not l["trusted"] for l in lines)
     assert not any(str(TODAY.year) + "-" in t for t in texts)
     block = memory_context.memory_context(rid, "labor_read")
-    assert "Maria G.: missed 3" in block.text and "<<" in block.text
+    assert "Maria G." in block.text and "Measured: missed 3" in block.text and "<<" in block.text
 
 
 def test_the_schedule_hears_only_what_its_own_blocks_do_not_say():
@@ -135,7 +137,8 @@ def test_an_uploads_own_schedule_is_watched_and_its_no_shows_are_said():
     shift_facts.ingest(rid, [{"date": d.isoformat(), "day": "Saturday", "employee": "Ana B.", "role": "Server",
                               "shift_start": "10:00", "shift_end": "15:00", "scheduled_hours": "5",
                               "actual_hours": "0", "sales": "1000"} for d in sats], "upload")
-    ana = next(l for l in people.memory_lines(_req(rid, "labor_read")) if l["text"].startswith("Ana B.: missed 2"))
+    ana = next(l for l in people.memory_lines(_req(rid, "labor_read"))
+               if l["text"] == "Ana B." and "missed 2" in (l.get("measured") or ""))   # PROMPTS-3 split
     assert ana["subject"] == "labor:day:saturday"
 
 
@@ -176,7 +179,8 @@ def test_a_standing_preference_and_a_cover_taker_reach_the_labor_read():
     pat = next(l for l in lines if l["text"].startswith("Standing preference"))
     assert "learned 7/6/26, kept 8 weeks" in pat["text"] and "taken Bob off Tuesday dinner" in pat["text"]
     assert pat["subject"] == "labor:day:tuesday" and pat["date"] == "2026-09-22"
-    assert any(l["text"].startswith("Ana B. covered 3 shifts for teammates") for l in lines)
+    assert any(l["text"] == "Ana B." and "covered 3 shifts for teammates" in (l.get("measured") or "")
+               for l in lines)   # PROMPTS-3: the count is the trusted suffix
 
 
 def test_only_mentions_the_owner_confirmed_reach_the_review_diagnosis():
@@ -188,7 +192,9 @@ def test_only_mentions_the_owner_confirmed_reach_the_review_diagnosis():
     sid = people.mentions(rid)[0]["id"]
     people.answer_mention(rid, sid, True)
     got = [l for l in people.memory_lines(_req(rid, "review_diagnosis")) if "Guests named" in l["text"]]
-    assert got and "Maria G. in 1 review" in got[0]["text"] and "(1 positive)" in got[0]["text"]
+    # PROMPTS-3: the name is fenced, the confirmed count is the trusted suffix.
+    assert got and "Guests named Maria G." == got[0]["text"]
+    assert "in 1 review" in got[0]["measured"] and "(1 positive)" in got[0]["measured"]
     assert got[0]["module"] == "reviews"
 
 
@@ -233,7 +239,7 @@ def test_the_labor_read_prompt_carries_the_memory_as_the_team_reads_it(monkeypat
     seen = _stub(monkeypatch)
     labor.labor_note(rid, _analysis(), restaurant_name="R", owner_name="Sam")
     prompt = seen["prompts"][0]
-    assert "WHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT" in prompt and "Maria G.: missed 3" in prompt
+    assert "WHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT" in prompt and "Measured: missed 3" in prompt
     assert prompt.index("WHAT CAVNAR AI REMEMBERS") < prompt.index("EVIDENCE RULES")
     assert asked["surface"] == "labor_read" and "labor:day:saturday" in asked["subjects"]
     # The stored read serves every login with the labor view: memory is
@@ -251,9 +257,10 @@ def test_the_fenced_memory_words_join_the_untrusted_text_the_read_is_checked_und
     for d in _saturdays(3):
         attendance.record(rid, "Maria G.", d.isoformat(), "no_show", "coverage_check")
     block, words = labor.labor_memory_block(rid, _analysis())
-    assert block.startswith("\n\nWHAT CAVNAR AI REMEMBERS") and any(w.startswith("Maria G.: missed 3") for w in words)
+    # PROMPTS-3: the fenced words are the name; the count is trusted.
+    assert block.startswith("\n\nWHAT CAVNAR AI REMEMBERS") and any(w == "Maria G." for w in words)
     ctx = labor.labor_read_context(_analysis(), "prompt" + block, restaurant_id=rid, memory_untrusted=words)
-    assert any(u.startswith("Maria G.: missed 3") for u in ctx.untrusted)
+    assert any(u == "Maria G." for u in ctx.untrusted)
 
 
 def test_the_labor_read_names_whose_target_it_judges_against(monkeypatch):
