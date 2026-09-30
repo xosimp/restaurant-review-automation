@@ -1941,6 +1941,19 @@ _MODULE_OF_SURFACE = {"reviews": "reviews", "review_diagnosis": "reviews", "revi
                       "intel": "intel"}
 
 
+def _read_service_performance(restaurant_id, days=28, _viewer=None):
+    """Each server's measured record, rooms, dayparts and kitchen speed from
+    the POS archive (service_performance). Account holders only — offered
+    through _PRINCIPAL_TOOLS, since a person's sales, tips and comps are
+    personnel data."""
+    import service_performance
+    from time_utils import mdy
+    out = service_performance.summary(restaurant_id, days=days)
+    if out.get("window"):
+        out["window"] = [mdy(d) for d in out["window"]]
+    return out
+
+
 def _read_target_history(restaurant_id, as_of=None, _viewer=None):
     """Which targets applied on a date, and every change to them (Will,
     9/29/26): "what was my food cost target in August?", "when did we
@@ -2982,6 +2995,24 @@ TOOLS = [
     },
     {
         "kind": "read",
+        "fn": _read_service_performance,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_service_performance",
+            "description": (
+                "HOW EACH SERVER, ROOM AND DAYPART PERFORMED, measured from the POS's own tickets: per server "
+                "the tickets, covers, sales per cover, check average, drinks per entree, card tip rate, "
+                "median table turn and comps on their checks (figures only past 20 tickets); by room and by "
+                "daypart; kitchen speed where the POS records it. Call it for 'who are my best servers', "
+                "'who upsells drinks', 'how fast do we turn tables', 'lunch vs dinner'. Personnel data: the "
+                "account holder's. days: the window, default 28, at most 90."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far back. Default 28, at most 90."}}},
+        },
+    },
+    {
+        "kind": "read",
         "fn": _read_target_history,
         "module": None,
         "wants_viewer": True,
@@ -3603,7 +3634,10 @@ _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 # Tools with no module flag that still read a module, by permission key.
 _INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors", "read_market_history"}
 # Write tools whose route saves for an account holder only.
-_PRINCIPAL_TOOLS = {"add_closed_date"}
+_PRINCIPAL_TOOLS = {"add_closed_date",
+                    # Each server's sales, tips and comps: personnel data
+                    # (service_performance, 9/29/26).
+                    "read_service_performance"}
 # Metrics that are the Food Cost module's numbers wherever they appear.
 _FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
 _MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
