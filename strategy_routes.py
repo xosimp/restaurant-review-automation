@@ -410,8 +410,13 @@ def _do_goal_end(u, goal_id):
         conn.close()
     if row is not None and not _metric_visible(u, row["metric"]):
         return {"ok": False, "error": "Goal not found."}, 404
+    # Only the owner ends a goal (PEOPLE-6): a manager's goal is only a
+    # proposal, and support through view-as is not the owner deciding.
     from permissions import answer_authority
-    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=answer_authority(u))
+    authority = answer_authority(u)
+    if authority != "principal":
+        return _forbidden("Only the owner can end a goal.")
+    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=authority)
     return {"ok": True}, 200
 
 
@@ -3658,7 +3663,12 @@ def _do_ask_feedback(u):
     from models import record_ask_feedback, ask_feedback_summary
     from permissions import answer_authority
     authority = answer_authority(u)
-    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"), authority=authority)
+    # Filed under whoever rated: the admin behind a view-as, never the owner
+    # it views as, so support's rating never replaces the owner's own
+    # (one row per answer and rater — PEOPLE-7).
+    from permissions import acting_login_id
+    rater = acting_login_id(u)
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=rater, authority=authority)
     if row is None:
         return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
     try:
@@ -3676,7 +3686,7 @@ def _do_ask_feedback(u):
             preference = owner_memory.derive_rating_preferences(_rid(u), u)
         except Exception as e:
             print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
-    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=rater),
             "preference": preference}, 200
 
 
@@ -4218,7 +4228,8 @@ def _dsr_present_view(u, day, payload):
         silenced = set()
         if not recent:
             import rec_ledger
-            silenced = rec_ledger.silenced_keys(_rid(u))
+            # ...and this login's own "not for us" (PEOPLE-4).
+            silenced = rec_ledger.silenced_keys(_rid(u), viewer=u)
         import rec_learning
         for a in acts:
             if not isinstance(a, dict) or not a.get("key"):

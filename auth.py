@@ -6,6 +6,7 @@ Handles: user table, password hashing, session management, login/logout
 """
 import hashlib
 import os
+import re
 import sqlite3
 import secrets
 from datetime import datetime, timezone
@@ -4321,6 +4322,36 @@ def record_view_as_write(ctx, status):
         pass
 
 
+# Reads through a view-as session that are recorded like its writes (memory
+# re-audit 9/29/26, PEOPLE-20): the owner's memory in Account and Ask's
+# history and chats. Support reading them is support's act, kept in the
+# fleet audit as "view_as_read" — web and mobile paths alike.
+_VIEW_AS_LOGGED_READS = re.compile(
+    r"/(account/memory|ask-cavnar/history|ask-cavnar/conversations(/\d+)?)/?$")
+
+
+def record_view_as_read(ctx):
+    """One admin_events row ("view_as_read") when a view-as session reads
+    one of _VIEW_AS_LOGGED_READS: the admin behind it, the login it was
+    viewing as and the path. Never raises."""
+    if not ctx:
+        return
+    try:
+        if request.method not in ("GET", "HEAD") or not _VIEW_AS_LOGGED_READS.search(request.path or ""):
+            return
+        import admin_events
+        who = ctx.get("acting_admin") or f"admin #{ctx.get('acting_admin_id')}"
+        admin_events.record_admin_action(
+            {"id": ctx.get("acting_admin_id"), "username": who}, "view_as_read",
+            restaurant_id=ctx.get("restaurant_id"), target=f"user:{ctx.get('as_user_id')}",
+            after={"actor_role": ctx.get("acting_admin_role"), "as_user_id": ctx.get("as_user_id"),
+                   "as_username": ctx.get("as_username"), "path": request.path, "endpoint": request.endpoint},
+            result="ok",
+            summary=f"{who} (viewing as {ctx.get('as_username')}) read {request.path}")
+    except Exception:
+        pass
+
+
 # Posts through a view-as session that change nothing and are not recorded
 # as the admin's writes: the web tab ping, which admin_routes skips for a
 # view-as session (it fires on every tab switch and would bury real writes).
@@ -4414,6 +4445,8 @@ def login_required(f):
             return moved
         if view_as and request.method not in _SAFE_METHODS:
             return _run_view_as_write(f, args, kwargs, user, view_as)
+        if view_as:
+            record_view_as_read(view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -4683,6 +4716,8 @@ def mobile_login_required(f):
             return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
         if view_as and request.method not in _SAFE_METHODS:
             return _run_view_as_write(f, args, kwargs, user, view_as)
+        if view_as:
+            record_view_as_read(view_as)
         return f(*args, **kwargs, current_user=user)
     return decorated
 

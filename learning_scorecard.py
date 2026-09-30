@@ -129,7 +129,10 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
                      "AND approved_at >= ? AND approved_at <= ?", (restaurant_id, s, e_stamp))
         if r:
             out["metrics"]["reply_edit_rate"] = _rate(r[0]["edited"] or 0, r[0]["n"] or 0)
+        # Never an admin's rating (support, view-as) — excluded as every
+        # other ask_feedback reader does (memory re-audit 9/29/26, QUALITY-19).
         r = _q(conn, "SELECT SUM(helpful) AS k, COUNT(*) AS n FROM ask_feedback WHERE restaurant_id=? "
+                     "AND COALESCE(authority,'') != 'admin' "
                      "AND created_at >= ? AND created_at <= ?", (restaurant_id, s, e_stamp))
         if r:
             out["metrics"]["ask_helpful_rate"] = _rate(r[0]["k"] or 0, r[0]["n"] or 0)

@@ -65,7 +65,22 @@ _UNTRUSTED_NOTE = (
 # little: the payload's _UNTRUSTED_NOTE already names review authors
 # explicitly, and a name is not prose an instruction can hide inside the way
 # a paragraph is. The delimiters go where the sentences are.
-_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview")
+_UNTRUSTED_FIELDS = ("text", "message", "complaints", "complaint", "notes", "preview",
+                     # A reviewer's display name is attacker-controlled and the
+                     # drafter already fences it (drafter.py); read_alerts
+                     # returned it bare (memory re-audit 9/29/26, PROMPTS-6).
+                     "author", "review_author")
+# Fenced in EVERY read tool's result, listed or not — the fields that are
+# someone's words wherever they appear (PROMPTS-6: taint by field, not by a
+# hand-kept list of tool names). "text" is not here: many results carry a
+# "text" this code wrote (a suggestion, a headline), and fencing those would
+# taint every turn that read them; it is fenced for the listed tools above.
+_UNTRUSTED_EVERYWHERE = tuple(f for f in _UNTRUSTED_FIELDS if f != "text")
+# Per tool, the row fields that are a person's (or a model's) words in THAT
+# result: a manager's decline reason, an issue note, a model-written card
+# title (read_decisions returned them bare — PROMPTS-6). Only inside rows;
+# a result's own top-level "note" / "reason" is this code's guidance.
+_TOOL_ROW_FIELDS = {"read_decisions": ("reason", "note", "title")}
 
 # Ceiling on rows any single read tool returns. The model pays for every
 # token of this, and 20 reviews is plenty to answer "what are people
@@ -2082,7 +2097,9 @@ def _read_past_conversations(restaurant_id, query=None, days=90, _viewer=None):
     import ask_conversations
     from ai_guard import wrap_untrusted
     user = _viewer_user(_viewer)
-    uid = (user or {}).get("id")
+    # Through view-as, support's own chats — never the owner's (PEOPLE-7/20).
+    from permissions import acting_login_id
+    uid = acting_login_id(user)
     current = getattr(_viewer, "_ask_conversation_id", None) if _viewer is not None else None
     rows = ask_conversations.past_conversations(restaurant_id, uid, query=query, days=_days(days, 90, 400),
                                                exclude_id=current)
@@ -3518,35 +3535,49 @@ def is_read_tool(name):
     return bool(tool and tool["kind"] == "read")
 
 
-def reads_public_text(name):
-    """Whether this tool's result carries text a member of the public wrote."""
-    return name in _UNTRUSTED_CONTENT_TOOLS
+def reads_public_text(name, payload=None):
+    """Whether this tool's result carries text a member of the public (or
+    a teammate) wrote: a tool known to (_UNTRUSTED_CONTENT_TOOLS), or any
+    result `payload` (the JSON run_read_tool returned) in which a field was
+    fenced — taint by field, not only by a hand-kept list of tool names
+    (memory re-audit 9/29/26, PROMPTS-6)."""
+    if name in _UNTRUSTED_CONTENT_TOOLS:
+        return True
+    if payload is None:
+        return False
+    from ai_guard import UNTRUSTED_OPEN
+    return UNTRUSTED_OPEN in str(payload)
 
 
-def _mark_untrusted(node):
+def _mark_untrusted(node, _top=True, fields=_UNTRUSTED_FIELDS, row_fields=()):
     """Wrap every public-written string in a payload with ai_guard's
-    delimiters, however deep it sits.
+    delimiters, however deep it sits: `fields` anywhere, `row_fields` below
+    the payload's top level.
 
     Recursive because the shapes differ: a review's text is one level down,
     a competitor's sample review text is three. Bounded by _MAX_ROWS upstream,
     so there is no unbounded structure to walk.
     """
-    from ai_guard import wrap_untrusted
+    from ai_guard import wrap_untrusted, UNTRUSTED_OPEN
 
     def _wrap(value):
         if isinstance(value, str) and value.strip():
-            return wrap_untrusted(value)
+            # Never twice: a tool that fenced its own field (read_past_
+            # conversations' titles) is already delimited.
+            return value if value.lstrip().startswith(UNTRUSTED_OPEN) else wrap_untrusted(value)
         # "complaints" is a list of guests' own phrasings, not one string —
         # wrapping the list would put the delimiters around a Python repr.
         if isinstance(value, list):
             return [_wrap(v) for v in value]
-        return _mark_untrusted(value)
+        return _mark_untrusted(value, _top=False, fields=fields, row_fields=row_fields)
 
     if isinstance(node, dict):
-        return {k: (_wrap(v) if k in _UNTRUSTED_FIELDS else _mark_untrusted(v))
+        fenced = tuple(fields) if _top else tuple(fields) + tuple(row_fields)
+        return {k: (_wrap(v) if k in fenced
+                    else _mark_untrusted(v, _top=False, fields=fields, row_fields=row_fields))
                 for k, v in node.items()}
     if isinstance(node, list):
-        return [_mark_untrusted(v) for v in node]
+        return [_mark_untrusted(v, _top=False, fields=fields, row_fields=row_fields) for v in node]
     return node
 
 
@@ -3578,9 +3609,17 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
         if tool["kind"] == "read" and isinstance(payload, dict) and not payload.get("error") \
                 and name != "read_data_health":
             payload = _with_data_as_of(name, restaurant_id, payload, restaurant=restaurant)
-        if name in _UNTRUSTED_CONTENT_TOOLS and isinstance(payload, dict):
-            payload = _mark_untrusted(dict(payload))
-            payload["_warning"] = _UNTRUSTED_NOTE
+        # Every read's people-written fields are fenced, not only the listed
+        # tools' (PROMPTS-6): a field is untrusted by what it is, wherever it
+        # appears. A result that carried any gets the note, and the turn is
+        # tainted by it (reads_public_text on the payload).
+        if isinstance(payload, dict):
+            before = json.dumps(payload, default=str)
+            payload = _mark_untrusted(
+                dict(payload), fields=_UNTRUSTED_FIELDS if name in _UNTRUSTED_CONTENT_TOOLS else _UNTRUSTED_EVERYWHERE,
+                row_fields=_TOOL_ROW_FIELDS.get(name, ()))
+            if name in _UNTRUSTED_CONTENT_TOOLS or json.dumps(payload, default=str) != before:
+                payload["_warning"] = _UNTRUSTED_NOTE
         return json.dumps(payload, default=str)
     except TypeError as e:
         log.warning("ask_cavnar tool %s bad args %r: %s", name, tool_input, e)

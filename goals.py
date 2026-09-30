@@ -222,6 +222,13 @@ def describe_target(g) -> str:
 
 
 def end_goal(restaurant_id, goal_id, db_path=DB_PATH, user_id=None, authority=None):
+    """End the ACTIVE goal `goal_id`: its metric falls back to the module
+    setting. Only an account holder (or an internal caller, None) may: a
+    goal is the target every module judges against, and a teammate's or an
+    admin's attempt to SET one is only a proposal, so their END is refused
+    here too (memory re-audit 9/29/26, PEOPLE-6) — False, nothing changed."""
+    if authority in ("delegate", "admin"):
+        return False
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT metric, target, deadline FROM owner_goals WHERE id=? AND restaurant_id=? "

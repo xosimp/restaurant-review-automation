@@ -266,9 +266,44 @@ def last_answer_tools(restaurant_id, conversation_id, viewer_id=None, db_path=No
                 "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
         finally:
             conn.close()
-        return json.loads(row["tools_json"] or "[]") if row and row["tools_json"] else []
+        calls = json.loads(row["tools_json"] or "[]") if row and row["tools_json"] else []
     except Exception:
         return []
+    # Reads only (PROMPTS-5): a turn stored before only reads were kept may
+    # carry an action or a refused call, which is never replayed.
+    try:
+        import ask_cavnar_tools
+        return [t for t in calls if isinstance(t, dict) and ask_cavnar_tools.is_read_tool(t.get("name"))]
+    except Exception:
+        return []
+
+
+def last_answer_read_public(restaurant_id, conversation_id, viewer_id=None, db_path=None) -> bool:
+    """Whether the newest assistant turn in this chat read text a member of
+    the public wrote (its stored meta's `read_public_text`) — the turn whose
+    reads the next one is told about, so the next turn starts tainted
+    (memory re-audit 9/29/26, PROMPTS-5). False with no answer yet (or one
+    stored before the flag); True when the chat cannot be read (fail
+    closed)."""
+    if not conversation_id:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
+                "AND role='assistant' AND (? IS NULL OR user_id IS NULL OR user_id=?) "
+                "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    if not row or not row["meta_json"]:
+        return False
+    try:
+        return bool((json.loads(row["meta_json"]) or {}).get("read_public_text"))
+    except (TypeError, ValueError):
+        return True
 
 
 def _call_text(t):
@@ -289,7 +324,10 @@ def memory_lines(req):
     import models
     import memory_context
     user = memory_context.viewer_user(getattr(req, "viewer", None))
-    uid = user.get("id") if user else None
+    # Through view-as the chat is support's own thread: never the owner's
+    # summaries or "often asks" (permissions.acting_login_id — PEOPLE-7/20).
+    from permissions import acting_login_id
+    uid = acting_login_id(user) if user and not memory_context.is_team(user) else None
     rid = req.restaurant_id
     out = []
     cid = _conversation_id(getattr(req, "subjects", ()))
@@ -311,8 +349,10 @@ def memory_lines(req):
                                 "weight": weight.get(key, 3.0), "subject": f"conversation:{cid}"})
             calls = last_answer_tools(rid, cid, viewer_id=uid, db_path=req.db_path)
             if calls:
+                # Only the reads that ran are stored (PROMPTS-5): this names
+                # what was read, never an action to repeat.
                 out.append({"text": ("Your last answer in this chat read: " + "; ".join(_call_text(t) for t in calls[:8])
-                                     + ". Call the same tools again to re-read that data rather than guessing."),
+                                     + ". Re-read with the read tools if you need that data — never guess it."),
                             "source": "system", "trusted": False, "weight": 7.0, "subject": f"conversation:{cid}"})
     if uid is not None:
         line = often_asks_line(rid, uid, db_path=req.db_path)

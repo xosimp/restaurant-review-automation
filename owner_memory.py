@@ -158,7 +158,10 @@ def author_of(user) -> dict:
     except Exception:
         authority, role = "delegate", str(user.get("role") or "")
     if authority == "admin":
-        return {"user_id": user.get("id"), "label": "Cavnar AI support", "authority": "admin"}
+        # The admin behind a view-as, never the owner it views as: a fact
+        # support writes is never filed as the owner's own (PEOPLE-7).
+        from permissions import acting_login_id
+        return {"user_id": acting_login_id(user), "label": "Cavnar AI support", "authority": "admin"}
     name = str(user.get("name") or user.get("username") or "").strip()
     if "@" in name:
         name = name.split("@", 1)[0]
