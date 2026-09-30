@@ -1158,6 +1158,9 @@ def ensure_columns(db_path: str = DB_PATH):
         # ({reason: {amount, events}}; RPower endpoint audit 9/29/26 — the
         # reason on every line was kept as an id and never read).
         ("pos_loss_daily", "by_reason", "TEXT"),
+        # Which archive layout stored the day (pos_archive.ARCHIVE_VERSION): a
+        # day stored before a table joined the archive is stored again.
+        ("pos_archive_days", "version", "INTEGER NOT NULL DEFAULT 1"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.

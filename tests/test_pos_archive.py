@@ -249,3 +249,17 @@ def test_a_mass_change_is_stored_but_not_logged(db_path, monkeypatch):
         p["price"] = 11.0
     out = pos_archive.sync_prices(rid, db_path=db_path)
     assert out["logged"] == 0 and change_log.history(rid, kinds="price", db_path=db_path) == []
+
+
+def test_a_day_stored_under_an_older_layout_is_stored_again(db_path, monkeypatch):
+    rid = _rid(db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO pos_archive_days (restaurant_id, provider, business_date, version) VALUES (?,?,?,1)",
+                 (rid, "rpower", "2026-09-28"))
+    conn.commit()
+    conn.close()
+    assert "2026-09-28" not in pos_archive.archived_dates(rid, "rpower")
+    fake = _Fake({})
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    pos_archive.run_for(rid, today=date(2026, 9, 30), now_utc=datetime(2026, 9, 30, 9, tzinfo=timezone.utc))
+    assert "2026-09-28" in fake.calls and "2026-09-28" in pos_archive.archived_dates(rid, "rpower")

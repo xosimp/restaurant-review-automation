@@ -32,6 +32,11 @@ from models import get_conn, DB_PATH
 
 log = logging.getLogger("pos_archive")
 
+# The archive's layout. Raise it when a table joins the archive: every day
+# stored under an older layout counts as not archived and the backfill stores
+# it again (2: payments and payouts, 9/29/26).
+ARCHIVE_VERSION = 2
+
 BACKFILL_DAYS = 90
 BACKFILL_DAYS_PER_NIGHT = 7
 # The change read looks back this far the first time (no state yet).
@@ -93,12 +98,13 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
                         and rows["max_stamp"] != prev["max_stamp"])
         conn.execute(
             "INSERT INTO pos_archive_days (restaurant_id, provider, business_date, tickets, lines, punches, "
-            "net_sales, max_stamp, restated, archived_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now')) "
+            "net_sales, max_stamp, restated, version, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now')) "
             "ON CONFLICT(restaurant_id, provider, business_date) DO UPDATE SET tickets=excluded.tickets, "
             "lines=excluded.lines, punches=excluded.punches, net_sales=excluded.net_sales, "
-            "max_stamp=excluded.max_stamp, restated=pos_archive_days.restated + ?, archived_at=datetime('now')",
+            "max_stamp=excluded.max_stamp, restated=pos_archive_days.restated + ?, version=excluded.version, "
+            "archived_at=datetime('now')",
             (restaurant_id, name, iso, len(rows["tickets"]), len(rows["lines"]), len(rows["punches"]), net,
-             rows.get("max_stamp"), 1 if restated else 0, 1 if restated else 0))
+             rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, 1 if restated else 0))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -110,10 +116,13 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
 
 
 def archived_dates(restaurant_id, provider, db_path=DB_PATH) -> set:
+    """Dates stored under the current layout (ARCHIVE_VERSION); an older
+    day reads as missing, so the backfill stores it again."""
     conn = get_conn(db_path)
     try:
         return {r[0] for r in conn.execute("SELECT business_date FROM pos_archive_days WHERE restaurant_id=? "
-                                           "AND provider=?", (restaurant_id, provider)).fetchall()}
+                                           "AND provider=? AND COALESCE(version, 1) >= ?",
+                                           (restaurant_id, provider, ARCHIVE_VERSION)).fetchall()}
     finally:
         conn.close()
 
