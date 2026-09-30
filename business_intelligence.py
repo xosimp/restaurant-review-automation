@@ -1307,22 +1307,51 @@ def driver_action(driver) -> str:
     return label
 
 
-def _low_star_waiting(restaurant_id, db_path=DB_PATH) -> int:
-    """1-2 star reviews from the last REPLY_OWED_MAX_AGE_DAYS with no reply —
-    the ones Home marks critical. Imported history is not owed a reply."""
+def _low_star_counts(restaurant_id, db_path=DB_PATH) -> dict:
+    """{1: n, 2: n} — 1- and 2-star reviews from the last
+    REPLY_OWED_MAX_AGE_DAYS with no reply, the ones Home marks critical, by
+    rating. Imported history is not owed a reply."""
     from thresholds import REPLY_OWED_MAX_AGE_DAYS
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating <= 2 "
+        rows = conn.execute(
+            "SELECT rating, COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating <= 2 "
             "AND response_status IN ('pending','drafted') "
-            "AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)",
-            (restaurant_id, f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days")).fetchone()
+            "AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?) GROUP BY rating",
+            (restaurant_id, f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days")).fetchall()
     except Exception:
-        row = None
+        rows = []
     finally:
         conn.close()
-    return int((row[0] if row else 0) or 0)
+    out = {1: 0, 2: 0}
+    for rating, n in rows:
+        if rating in out:
+            out[rating] = int(n or 0)
+    return out
+
+
+def _low_star_waiting(restaurant_id, db_path=DB_PATH) -> int:
+    """How many 1-2 star reviews are owed a reply (_low_star_counts)."""
+    return sum(_low_star_counts(restaurant_id, db_path=db_path).values())
+
+
+def low_star_headline(counts) -> tuple:
+    """(headline, evidence) naming only the ratings actually waiting: two
+    2-star reviews are "your 2 unanswered 2-star reviews", never "1- and
+    2-star" (Will, 9/30/26: it read as if a 1-star had come in)."""
+    ones, twos = int(counts.get(1) or 0), int(counts.get(2) or 0)
+    n = ones + twos
+    if not n:
+        return None, None
+    if ones and twos:
+        head = f"Reply to your {n} unanswered low-star reviews ({ones} one-star, {twos} two-star)"
+        ev = f"{ones} at 1 star and {twos} at 2 stars from the last 30 days with no reply"
+    else:
+        stars = 1 if ones else 2
+        head = (f"Reply to your unanswered {stars}-star review" if n == 1
+                else f"Reply to your {n} unanswered {stars}-star reviews")
+        ev = f"{n} review{'' if n == 1 else 's'} at {stars} star{'' if stars == 1 else 's'} from the last 30 days with no reply"
+    return head, ev
 
 
 def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> list:
@@ -1343,14 +1372,12 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                     "evidence": [e for e in (evidence or []) if e], "claim_kind": claim_kind, **extra})
 
     if data.get("reviews") is not None:
-        n = _low_star_waiting(restaurant_id, db_path=db_path)
-        if n:
-            add("urgent_reviews",
-                ("Reply to your unanswered 1- or 2-star review" if n == 1
-                 else f"Reply to your {n} unanswered 1- and 2-star reviews"),
+        head, ev = low_star_headline(_low_star_counts(restaurant_id, db_path=db_path))
+        if head:
+            add("urgent_reviews", head,
                 "a guest who complained is waiting, and every later reader sees the silence",
                 ["reviews"], urgency="critical",
-                evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"],
+                evidence=[ev],
                 # A fact — replies owed — carries no confidence (B4 H5):
                 # Home's urgent_reviews item carries none either.
                 fact=True)

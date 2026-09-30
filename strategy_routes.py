@@ -5192,6 +5192,15 @@ def _do_targets_set(u):
     if changed:
         log_account_event(_rid(u), "targets_changed", current_user=u,
                           detail=", ".join(k.replace("_json", "").replace("_", " ") for k in changed))
+    # Pay changed (a rate, a salary): every stored labor day and payroll
+    # week is re-costed now, not at the next POS sync (models.recost_labor_history).
+    from models import PAY_FIELDS, recost_labor_history
+    if any(k in PAY_FIELDS for k in changed):
+        try:
+            recost_labor_history(_rid(u))
+        except Exception as e:
+            import ops
+            ops.capture(e, job="labor_recost", context=f"restaurant_id={_rid(u)}")
     return {"ok": True, "targets": _targets_payload(_rid(u))}, 200
 
 

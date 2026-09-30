@@ -220,6 +220,24 @@ def _day_categories(rid, m, facts, db_path):
     return out
 
 
+def _recosted_labor(rid, start, end, db_path):
+    """{date: labor_cost} from labor_daily_history's final days, for the
+    nights whose report already carries a labor figure (a report that
+    withheld its dollars stays withheld here)."""
+    conn = store.get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT h.date, h.labor_cost FROM labor_daily_history h JOIN dsr_metrics m "
+                            "ON m.restaurant_id=h.restaurant_id AND m.business_date=h.date AND m.metric='labor.cost' "
+                            "AND m.value IS NOT NULL WHERE h.restaurant_id=? AND h.date BETWEEN ? AND ? "
+                            "AND COALESCE(h.final, 1)=1 AND h.labor_cost IS NOT NULL",
+                            (rid, start.isoformat(), end.isoformat())).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    return {str(r[0])[:10]: round(float(r[1]), 2) for r in rows}
+
+
 def _rows(restaurant, start, end, db_path):
     rid = restaurant.id
     days = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
@@ -227,6 +245,10 @@ def _rows(restaurant, start, end, db_path):
     reports = _reports(rid, start, end, db_path)
     budgets = store.budgets_for(rid, start, end, db_path=db_path)
     last_year = _last_year(restaurant, days, db_path)
+    # A night's hourly labor as the daily history holds it NOW: re-costed
+    # when pay changes (models.recost_labor_history — a manager made
+    # salaried leaves hourly labor), where the night's report froze it.
+    recost = _recosted_labor(rid, start, end, db_path)
     from time_utils import mdy
     rows = []
     for d in days:
@@ -253,7 +275,8 @@ def _rows(restaurant, start, end, db_path):
             "transactions": m.get("sales.transactions"), "guests": m.get("sales.guests"),
             "budget_gross": b.get("gross"), "budget_net": b.get("net"),
             "last_year_net": ly, "last_year_source": ly_src,
-            "labor_cost": m.get("labor.cost"), "labor_pct": m.get("labor.pct"),
+            "labor_cost": recost.get(d, m.get("labor.cost")),
+            "labor_pct": (round(recost[d] / float(net) * 100, 1) if d in recost and net else m.get("labor.pct")),
             "weather": weather, "event": event, "influence": influence,
         }
         row["vs_budget_net"] = _diff(net, row["budget_net"])

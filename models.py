@@ -9223,6 +9223,35 @@ def _week_start_of(day, week_start_day):
     return day - _td_w(days=(day.weekday() - int(week_start_day or 0)) % 7)
 
 
+PAY_FIELDS = ("hourly_rate", "role_rates_json", "salaried_staff_json")
+
+
+def recost_labor_history(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    """Every stored labor day re-costed on the restaurant's CURRENT pay —
+    rates by role, the hourly rate and the salaried set (a salaried person's
+    punches leave hourly labor; their salary is added when read) — and the
+    payroll weeks re-derived. Called when pay changes, so the history the
+    owner reads is never costed on the old pay until the next POS sync
+    (Simple EJ's, 9/30/26: three managers made salaried, "retroactive").
+    Only a restaurant with real shift data: sample shifts are never written
+    into the history. Returns the days re-costed."""
+    cd = get_client_data(restaurant_id, db_path=db_path)
+    if not (cd and cd.get("shifts_csv")):
+        return 0
+    from labor import full_history_by_day
+    by_day = full_history_by_day(restaurant_id) or {}
+    if not by_day:
+        return 0
+    save_labor_daily_history(restaurant_id, by_day, db_path=db_path)
+    refresh_labor_periods(restaurant_id, db_path=db_path)
+    try:
+        from client_api import invalidate_insight_cache
+        invalidate_insight_cache(restaurant_id)
+    except Exception as e:
+        print(f"[labor] insight cache not cleared after recost rid={restaurant_id}: {e!r}")
+    return len(by_day)
+
+
 def refresh_labor_periods(restaurant_id: int, db_path: str = DB_PATH, today=None) -> int:
     """The restaurant's labor period history as calendar-aligned payroll
     weeks (restaurants.week_start_day), derived from labor_daily_history's

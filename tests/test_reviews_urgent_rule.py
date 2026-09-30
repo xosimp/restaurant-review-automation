@@ -36,3 +36,13 @@ def test_a_two_star_review_owed_a_reply_is_urgent_and_an_answered_or_old_one_is_
     conn = models.get_conn(db_path)
     assert conn.execute("SELECT urgency FROM reviews WHERE external_id='g1'").fetchone()[0] == "normal"
     conn.close()
+
+
+def test_the_home_headline_names_only_the_ratings_actually_waiting():
+    """Two 2-star reviews read "your 2 unanswered 2-star reviews" — the
+    old "1- and 2-star" wording read as if a 1-star had arrived (9/30/26)."""
+    from business_intelligence import low_star_headline
+    assert low_star_headline({1: 0, 2: 2})[0] == "Reply to your 2 unanswered 2-star reviews"
+    assert low_star_headline({1: 1, 2: 0})[0] == "Reply to your unanswered 1-star review"
+    assert low_star_headline({1: 1, 2: 2})[0] == "Reply to your 3 unanswered low-star reviews (1 one-star, 2 two-star)"
+    assert low_star_headline({1: 0, 2: 0}) == (None, None)

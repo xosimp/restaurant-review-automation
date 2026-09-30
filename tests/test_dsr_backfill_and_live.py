@@ -165,3 +165,49 @@ def test_the_labor_target_is_the_one_set_now(db):
     lb = access._live_target(facts, r)["blocks"]["labor"]
     assert (lb["metrics"]["target_pct"], lb["metrics"]["vs_target_pts"]) == (35.0, 0.7)
     assert lb["detail"]["target_source"] == "set"
+
+
+# ── a pay change re-costs the history, the report and the week (9/30/26) ──
+
+def test_a_manager_made_salaried_leaves_hourly_labor_everywhere_retroactively(db, monkeypatch):
+    """Simple EJ's, 9/30/26: three managers made salaried "retroactive".
+    Their punches leave every stored day's hourly labor (their salary is
+    added when read), the night's report shows the re-costed figure with
+    the one it replaced, and the week reads it too."""
+    import json as _json
+    import labor
+    r = _ejs(db)
+    day = SUN.isoformat()
+    rows = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes,pay_rate",
+            f"{day},Sunday,Andrew Marola,Manager FOH,10:00,20:00,10,10,,,20.0",
+            f"{day},Sunday,Dana Reyes,Server,10:00,18:00,8,8,,,10.0"]
+    models.save_client_data(r.id, "shifts", "\n".join(rows) + "\n", source="rpower", db_path=db)
+    monkeypatch.setattr(models, "get_client_data", lambda rid, db_path=None: {"shifts_csv": "\n".join(rows) + "\n"})
+    rep = store.create_report(r.id, SUN, trigger="sweep", db_path=db)
+    store.save_block(rep["id"], "sales", dsr.block(dsr.READY, source="rpower", metrics={"net": 1000.0}), db_path=db)
+    store.save_block(rep["id"], "labor", dsr.block(dsr.READY, source="rpower",
+                                                   metrics={"cost": 280.0, "pct": 28.0, "hours": 18.0, "target_pct": 30.0},
+                                                   detail={"cost_basis": "pos_wages"}), db_path=db)
+    store.set_stage(rep["id"], "collecting", db_path=db)
+    store.set_stage(rep["id"], "final", db_path=db)
+    by_day = labor.full_history_by_day(r.id)
+    models.save_labor_daily_history(r.id, by_day, db_path=db)
+    before = models.get_conn(db).execute("SELECT labor_cost FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                                         (r.id, day)).fetchone()[0]
+    models.update_restaurant(r.id, {"salaried_staff_json": _json.dumps([{"name": "Andrew Marola", "annual": 55000}])},
+                             db_path=db)
+    assert models.recost_labor_history(r.id, db_path=db) == 1
+    after = models.get_conn(db).execute("SELECT labor_cost FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                                        (r.id, day)).fetchone()[0]
+    assert after < before and round(before - after) == 200          # his 10 hours at $20 left hourly labor
+    rep = store.get_report_by_id(rep["id"], restaurant_id=r.id, db_path=db)
+    lb = access._live_recost(rep["facts"], rep)["blocks"]["labor"]
+    assert lb["metrics"]["cost"] == round(after, 2) and lb["detail"]["recosted_from"] == 280.0
+    assert lb["detail"]["recosted_after_report"] is True
+    week = next(d for d in rollup.week(r, SUN)["days"] if d["date"] == day)
+    assert week["labor_cost"] == round(after, 2)
+
+
+def test_a_restaurant_on_sample_shifts_is_never_recosted(db):
+    r = _ejs(db)
+    assert models.recost_labor_history(r.id, db_path=db) == 0

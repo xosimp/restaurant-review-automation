@@ -343,8 +343,8 @@ def render(report, user, restaurant=None, versions=None):
     from the one stored snapshot."""
     from time_utils import mdy
     view = view_for(user)
-    stored = _live_weather(_live_target(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
-                                                    report, restaurant), restaurant), report)
+    stored = _live_weather(_live_target(_live_recost(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
+                                                                 report, restaurant), report), restaurant), report)
     if view == OWNER:
         stored = _live_salaries(_live_budget(stored, report, restaurant), restaurant)
     facts, hidden = redact(stored, user)
@@ -535,6 +535,48 @@ def _live_categories(facts, report, restaurant):
         m[f"cat:{c['category']}"] = c["net"]
     if unmapped:
         m[f"cat:{dsr.UNMAPPED}"] = round(sum(float(u.get("net") or 0) for u in unmapped), 2)
+    return out
+
+
+RECOST_MIN_DOLLARS = 1.0
+
+
+def _live_recost(facts, report):
+    """A night's hourly labor as the daily history holds it now, where pay
+    changed after the report (models.recost_labor_history — Simple EJ's,
+    9/30/26: three managers made salaried, their punches leave hourly labor
+    and their salaries are added by _live_salaries). The report's own figure
+    is kept as detail.recosted_from; detail.recosted_after_report says so.
+    A report that withheld its dollars is _live_labor's."""
+    labor = ((facts or {}).get("blocks") or {}).get("labor") or {}
+    lm = labor.get("metrics") or {}
+    if labor.get("status") != dsr.READY or lm.get("cost") is None:
+        return facts
+    try:
+        from dsr import store
+        rid = report.get("restaurant_id")
+        day = str(report.get("business_date"))[:10]
+        conn = store.get_conn()
+        try:
+            h = conn.execute("SELECT labor_cost FROM labor_daily_history WHERE restaurant_id=? AND date=? "
+                             "AND COALESCE(final, 1)=1", (rid, day)).fetchone()
+        finally:
+            conn.close()
+        cost = float(h["labor_cost"]) if h and h["labor_cost"] is not None else None
+    except Exception:
+        return facts
+    if cost is None or abs(cost - float(lm["cost"])) < RECOST_MIN_DOLLARS:
+        return facts
+    out = copy.deepcopy(facts)
+    lb = out["blocks"]["labor"]
+    m = lb.setdefault("metrics", {})
+    net = ((((out.get("blocks") or {}).get("sales") or {}).get("metrics")) or {}).get("net")
+    lb.setdefault("detail", {}).update({"recosted_after_report": True, "recosted_from": m.get("cost")})
+    m["cost"] = round(cost, 2)
+    if net:
+        m["pct"] = round(cost / float(net) * 100.0, 1)
+        if m.get("target_pct") is not None:
+            m["vs_target_pts"] = round(m["pct"] - float(m["target_pct"]), 1)
     return out
 
 
