@@ -278,7 +278,9 @@ def test_turning_demo_off_tags_the_restaurant_and_keeps_it_out(db_path, monkeypa
     from flask import Flask
     import admin_routes
     from intelligence import jobs
-    rid = _rid(db_path, name="Was demo", is_demo=1)
+    # Not a demo-looking name: since PLATFORM-14 (9/29/26) the one "may teach"
+    # rule also keeps a test-named account ("... demo") out of pooled learning.
+    rid = _rid(db_path, name="Riverside Grill", is_demo=1)
     app = Flask(__name__)
     app.secret_key = "x"
     # The route body itself, under admin_required and the step-up.

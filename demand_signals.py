@@ -256,13 +256,13 @@ def migrate_post_signals(conn) -> dict:
     out = {"rekinded": 0, "removed": 0}
     out["rekinded"] = conn.execute("UPDATE OR IGNORE demand_signals SET kind=? WHERE source='post' AND kind='event'",
                                    (POST_KIND,)).rowcount or 0
-    try:
+    # The posts table is created later at boot on a new database: nothing to
+    # remove yet. Any other failure raises.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='marketing_scheduled_posts'").fetchone():
         out["removed"] = conn.execute(
             "DELETE FROM demand_signals WHERE source='post' AND ref LIKE 'post:%' AND EXISTS ("
             "SELECT 1 FROM marketing_scheduled_posts p WHERE p.restaurant_id = demand_signals.restaurant_id "
             "AND 'post:' || p.id = demand_signals.ref AND p.status IN ('cancelled','failed'))").rowcount or 0
-    except Exception:
-        pass                                  # the posts table is created later at boot on a new database
     return out
 
 
