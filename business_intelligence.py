@@ -1448,6 +1448,8 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
         try:
             import rec_learning
             learned = rec_learning.effectiveness(restaurant_id, db_path=db_path)
+            # The day's holdout arm (LOOPS-3): neutral weights on held-out days.
+            learned = rec_learning.apply_holdout(learned, restaurant_id, "one_thing")
         except Exception as e:
             log.warning("one thing: effectiveness unavailable: %s", e)
     if learned is not None:
@@ -1552,7 +1554,8 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
                 rec_ledger.log_rank_build(restaurant_id, "one_thing",
                                           shown=[dict(out.get("rank") or {}, key=out["key"])],
                                           not_shown=[dict(x.get("rank") or {}, key=x["key"]) for x in rest],
-                                          version=getattr(learned, "version", None), db_path=db_path)
+                                          version=getattr(learned, "version", None), db_path=db_path,
+                                          arm=getattr(learned, "arm", None))
             except Exception as e:
                 log.warning("one thing: rank log unavailable: %s", e)
         return out

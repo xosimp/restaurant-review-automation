@@ -892,6 +892,76 @@ def timeline(restaurant_id, limit=30, before=None, viewer=None, db_path=DB_PATH)
 
 # ── the effectiveness model the rankers read ────────────────────────────────
 
+# ── the holdout (memory re-audit 9/29/26, LOOPS-3) ──────────────────────────
+#
+# Nothing measured whether learning helps: rank_learning compared weight
+# buckets, and a kind accepted before is accepted again whatever its rank,
+# so "raised beat lowered" held for a ranker with no effect at all. A small
+# deterministic holdout is the counterfactual: on HOLDOUT_PCT of
+# (restaurant, day) builds of a surface, Home and the one thing rank on the
+# neutral model (every weight 1.0 — what the owner is ASKED, a kind held
+# back, and every figure are unchanged); on the same share of reply drafts
+# (by review) the style note is left out; on the same share of order days
+# the owner's order corrections are not applied. Each arm is logged (the
+# shown rank meta, rec_rank_builds.arm) or reproducible from its unit, and
+# the admin readouts compare arms (admin_ops.rank_learning,
+# learning_holdouts) — never an owner-facing figure. LEARNING_HOLDOUT_PCT
+# overrides the share (0 turns it off; the test suite runs with 0).
+HOLDOUT_DEFAULT_PCT = 10
+HOLDOUT_MAX_PCT = 50
+# The day arms began: a readout counts only units from here on.
+HOLDOUT_SINCE = "2026-09-30"
+ARMS = ("learned", "holdout")
+
+
+def holdout_pct() -> int:
+    """The holdout share in percent (LEARNING_HOLDOUT_PCT, else
+    HOLDOUT_DEFAULT_PCT), bounded to 0–HOLDOUT_MAX_PCT."""
+    import os
+    try:
+        pct = int(os.getenv("LEARNING_HOLDOUT_PCT", str(HOLDOUT_DEFAULT_PCT)))
+    except (TypeError, ValueError):
+        pct = HOLDOUT_DEFAULT_PCT
+    return max(0, min(HOLDOUT_MAX_PCT, pct))
+
+
+def holdout_arm(restaurant_id, unit, surface) -> str:
+    """"holdout" or "learned" for one unit of a surface — a (restaurant,
+    day) build, a review's draft, an order day — by a stable hash, so the
+    same unit is always in the same arm and a readout can recompute it."""
+    pct = holdout_pct()
+    if pct <= 0 or not restaurant_id or unit in (None, ""):
+        return "learned"
+    import hashlib
+    h = int(hashlib.sha256(f"{int(restaurant_id)}:{surface}:{unit}".encode()).hexdigest()[:8], 16) % 100
+    return "holdout" if h < pct else "learned"
+
+
+def apply_holdout(learned, restaurant_id, surface, day=None):
+    """Put a ranking model in its arm for today's (or `day`'s) build of
+    `surface`: in the holdout arm its weights read neutral (Effectiveness.
+    weight / explain) and say so in the rank meta. Returns `learned`."""
+    if learned is None:
+        return None
+    if not day:
+        # The restaurant's own day — the same one its rank build is logged
+        # under (rec_ledger.log_rank_build).
+        try:
+            conn = get_conn(getattr(learned, "db_path", None) or DB_PATH)
+            try:
+                day = rec_ledger.local_day(conn, restaurant_id)
+            finally:
+                conn.close()
+        except Exception:
+            day = datetime.utcnow().date().isoformat()
+    day = str(day)[:10]
+    try:
+        learned.arm = holdout_arm(restaurant_id, day, surface)
+    except Exception as e:
+        print(f"[rec_learning] holdout arm unavailable for {restaurant_id}: {e}")
+    return learned
+
+
 class Effectiveness:
     """This restaurant's learned weight for a recommendation — see the
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
@@ -922,6 +992,7 @@ class Effectiveness:
         self.now = now or datetime.utcnow()
         self.perspective = perspective
         self.version = EFFECTIVENESS_VERSION
+        self.arm = "learned"           # apply_holdout: "holdout" ranks on neutral weights
         self._priors = {}
         self._cold = {}
         self._rungs = {}
@@ -1148,6 +1219,8 @@ class Effectiveness:
         return W_ACCEPT * (acc - acc_p) + W_SUCCESS * (suc - suc_p)
 
     def weight(self, key, kind=None, tags=None):
+        if getattr(self, "arm", "learned") == "holdout":
+            return 1.0, []
         key = str(key or "")
         kind = kind or rec_ledger.kind_of(key)
         tags = rec_ledger.tags_for(key, kind=kind) if tags is None else tags
@@ -1225,6 +1298,9 @@ class Effectiveness:
         "cold/<rung>" when similar restaurants' results ranked it, else
         "none". `title` lets a model line's words name its advice signature
         (its sig: tag), which its hash key cannot."""
+        if getattr(self, "arm", "learned") == "holdout":
+            return {"weight": 1.0, "why": [], "prior_rung": None, "rung": "holdout", "version": self.version,
+                    "arm": "holdout"}
         kind = kind or rec_ledger.kind_of(str(key or ""))
         if tags is None:
             tags = rec_ledger.tags_for(str(key or ""), kind=kind)
@@ -1239,7 +1315,7 @@ class Effectiveness:
         else:
             rung = "none"
         return {"weight": d["weight"], "why": list((d.get("why") or [])[:3]), "prior_rung": pr, "rung": rung,
-                "version": d.get("version")}
+                "version": d.get("version"), "arm": getattr(self, "arm", "learned")}
 
     def ceiling(self, learned, kind=None):
         """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
@@ -1567,7 +1643,7 @@ def rank_meta(item, base_score, learned_info) -> dict:
                                                                            or item.get("score") or 0), 2),
             "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2],
             "prior_rung": ({k: pr.get(k) for k in ("acceptance", "success", "cold")} if pr else None),
-            "rung": li.get("rung"), "version": li.get("version")}
+            "rung": li.get("rung"), "version": li.get("version"), "arm": li.get("arm")}
 
 
 def perspective_of(user) -> str:

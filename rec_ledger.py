@@ -553,6 +553,10 @@ def init_rec_ledger(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, surface, day)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_rank_builds_at ON rec_rank_builds(built_at)")
+        # The build's holdout arm (rec_learning.apply_holdout, memory
+        # re-audit 9/29/26 LOOPS-3): "learned" or "holdout"; NULL before.
+        if "arm" not in {r[1] for r in conn.execute("PRAGMA table_info(rec_rank_builds)")}:
+            conn.execute("ALTER TABLE rec_rank_builds ADD COLUMN arm TEXT")
         cap_recurring_silences(conn)
         cap_answer_silences(conn)
         conn.commit()
@@ -1475,8 +1479,9 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                 # rec_learning.rank_meta. 288 shown events carried no weight.
                 rank = it.get("rank")
                 if isinstance(rank, dict) and rank:
+                    # `arm`: the build's holdout arm (rec_learning.apply_holdout).
                     meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "prior_rung", "rung",
-                                                             "version")
+                                                             "version", "arm")
                                     if rank.get(k) not in (None, [], "", {})}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
@@ -1502,12 +1507,14 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     return out
 
 
-def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH) -> bool:
+def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH,
+                   arm=None) -> bool:
     """One compact row per restaurant, surface and local day with what a
     build ranked (memory audit 9/29/26, "rank_log"): the cards shown and
     the top candidates NOT shown, each {key, base, score, weight, rung,
-    version}. The latest build of the day wins. Acceptance can only be
-    corrected for exposure when the alternatives are known. Never raises."""
+    version}, and the build's holdout `arm` (rec_learning.apply_holdout).
+    The latest build of the day wins. Acceptance can only be corrected for
+    exposure when the alternatives are known. Never raises."""
     if not restaurant_id or not surface:
         return False
 
@@ -1516,7 +1523,7 @@ def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None,
         for it in items or ():
             if not isinstance(it, dict) or not it.get("key"):
                 continue
-            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung")
+            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung", "arm")
                         if it.get(k) not in (None, "")})
         return json.dumps(out)[:6000]
     try:
@@ -1525,11 +1532,12 @@ def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None,
         return False
     try:
         day = local_day(conn, restaurant_id)
-        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at) "
-                     "VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
+        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at, "
+                     "arm) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
                      "version=excluded.version, shown=excluded.shown, not_shown=excluded.not_shown, "
-                     "built_at=excluded.built_at",
-                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now()))
+                     "built_at=excluded.built_at, arm=excluded.arm",
+                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now(),
+                      arm if arm in ("learned", "holdout") else None))
         conn.commit()
         return True
     except Exception as e:

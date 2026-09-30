@@ -2439,6 +2439,10 @@ def _build(current_user, present=True):
         # theirs (memory audit, who_answered).
         learned = rec_learning.effectiveness(rid, restaurant=restaurant,
                                              perspective=rec_learning.perspective_of(current_user))
+        # The day's holdout arm (memory re-audit 9/29/26, LOOPS-3): on a
+        # held-out day the cards rank on neutral weights, so the admin can
+        # compare what learning did against what it would have been.
+        learned = rec_learning.apply_holdout(learned, rid, "home")
     except Exception as e:
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
@@ -2565,7 +2569,7 @@ def _build(current_user, present=True):
         try:
             rec_ledger.log_rank_build(rid, "home", shown=[dict(r.get("rank") or {}, key=r["key"]) for r in recs],
                                       not_shown=[dict(r.get("rank") or {}, key=r["key"]) for r in _unshown],
-                                      version=getattr(learned, "version", None))
+                                      version=getattr(learned, "version", None), arm=getattr(learned, "arm", None))
         except Exception as e:
             print(f"[home] rank log unavailable for {rid}: {e}")
 

@@ -84,7 +84,20 @@ def _learns(restaurant_id) -> bool:
         return False
 
 
-def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
+def reply_note_arm(restaurant_id, review_id) -> str:
+    """The reply style note's holdout arm for one review's draft
+    (rec_learning.holdout_arm, memory re-audit 9/29/26 LOOPS-3): on the
+    "holdout" share the OWNER'S EDITS note is left out, so the owner's edit
+    rate with and without it can be compared (admin_ops.learning_holdouts).
+    Reproducible from the review id — nothing is stored."""
+    try:
+        import rec_learning
+        return rec_learning.holdout_arm(restaurant_id, review_id, "reply_note")
+    except Exception:
+        return "learned"
+
+
+def get_owner_edit_note(restaurant_id: int, rating: int = None, review_id: int = None) -> str:
     """reply_edits.style_note over this owner's recent approvals, or "".
 
     `rating` is the review being answered (memory audit 9/29/26,
@@ -103,6 +116,13 @@ def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
         # approvals of any kind (memory re-audit 9/29/26, LOOPS-4): the note
         # stays while the drafter follows it, and only newer edits change it.
         edits = dict(edited_only=True, days=REPLY_NOTE_DAYS, limit=reply_edits.NOTE_WINDOW)
+        held_out = review_id is not None and reply_note_arm(restaurant_id, review_id) == "holdout"
+        if held_out:
+            # The style note alone is held out; what the regenerated drafts
+            # had in common is another learner and stays.
+            seen = get_reply_rejection_signals(restaurant_id, rating=rating)
+            return reply_edits.rejection_note(seen["rejected"], seen["approved"],
+                                              scope=f"for {band_label(band)} reviews") if band else ""
         if band is None:
             return reply_edits.style_note(get_reply_edit_summaries(restaurant_id, **edits))
         note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, rating=rating, **edits),
@@ -653,7 +673,8 @@ def draft_response(review_id: int, rating: int, text: str,
     # original_draft against the approved reply (reply_edits; audit #40):
     # a short, deterministic note, or "" until they have edited enough —
     # measured on replies to reviews of this one's star band.
-    edit_note = get_owner_edit_note(restaurant_id, rating=rating) if (restaurant_id and learns) else ""
+    edit_note = get_owner_edit_note(restaurant_id, rating=rating, review_id=review_id) \
+        if (restaurant_id and learns) else ""
     memory_note = _memory_block(restaurant_id, categories) if restaurant_id else ""
 
     # The owner's confirmed changes on this review's complaint categories
