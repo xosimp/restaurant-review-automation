@@ -453,7 +453,7 @@ def pick_relevant(rows, subjects=(), modules=(), limit=MAX_CONTEXT_LINES):
     return keep
 
 
-_KIND_MODULES = {"trim_day": "labor", "labor_over": "labor", "overtime": "labor", "overtime_move": "labor",
+_KIND_MODULES = {"staff_add": "labor", "trim_day": "labor", "labor_over": "labor", "overtime": "labor", "overtime_move": "labor",
                  "schedule_to_target": "labor", "insight_labor": "labor", "diag_labor": "labor",
                  "cut_waste": "food", "reprice": "food", "stock_low": "food", "diag_food": "food",
                  "insight_food": "food", "food_cost_driver": "food", "price_spike": "food",
@@ -592,7 +592,9 @@ def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
         b["first"] = min(b["first"], r["at"])
         subject = r["key"].split(":", 1)[1] if ":" in r["key"] else ""
         if r["signature"]:
-            label = r["signature"].split(":", 1)[1].split(":", 1)[-1]
+            import insight_store as _ist_ds
+            base, direction = _ist_ds.split_signature(r["signature"])
+            label = base.split(":", 1)[1].split(":", 1)[-1] + (f" ({direction})" if direction else "")
         elif subject and not re.fullmatch(r"[0-9a-f]{10}", subject):
             label = subject
         else:
