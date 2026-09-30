@@ -780,6 +780,19 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
         sold.setdefault(r["menu_item_id"], {})[r["business_date"]] = float(r["q"] or 0)
     expected = {mid: _median([by_date.get(d, 0.0) for d in dates]) for mid, by_date in sold.items()}
     expected = {mid: q for mid, q in expected.items() if q}
+    # The measured effects of what is known about the date — a game night
+    # measured at +30% here, the holiday, a guest text aimed at it — scale
+    # the usage as they scale the sales forecast (event_memory.effects_for_day;
+    # memory re-audit 9/29/26, CROSSMODULE-11): a game night used to prep a
+    # normal Sunday.
+    try:
+        import event_memory
+        eff = event_memory.effects_for_day(restaurant_id, day, db_path=db_path)
+    except Exception:
+        eff = None
+    factor = 1.0 + float(eff["pct"]) / 100.0 if eff and eff.get("pct") else 1.0
+    if factor != 1.0:
+        expected = {mid: q * factor for mid, q in expected.items()}
 
     need = {}
     for rec in recipes:
@@ -797,11 +810,16 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
         n["covered"] = n["shortfall"] == 0
         rows.append(n)
     rows.sort(key=lambda n: (n["covered"], -n["shortfall"], -n["expected_use"]))
-    return {"available": True, "day": day.isoformat(), "weekday": day.strftime("%A"),
-            "items": rows[:limit], "dishes_forecast": len(expected),
-            "promoted": promoted_dishes(restaurant_id, day, db_path=db_path),
-            "note": ("A usage forecast from each dish's typical sales on this weekday times its "
-                     "recipe. It does not model sub-recipes or batch sizes.")}
+    out = {"available": True, "day": day.isoformat(), "weekday": day.strftime("%A"),
+           "items": rows[:limit], "dishes_forecast": len(expected),
+           "promoted": promoted_dishes(restaurant_id, day, db_path=db_path),
+           "note": ("A usage forecast from each dish's typical sales on this weekday times its "
+                    "recipe. It does not model sub-recipes or batch sizes.")}
+    if factor != 1.0:
+        out.update(effect_pct=eff["pct"], effects=eff["applied"], effect_basis=eff["basis"])
+        out["note"] += (f" Scaled {eff['pct']:+.0f}% for what is known about the date, as measured on nights "
+                        "like it here — before and after, not proof.")
+    return out
 
 
 def promoted_dishes(restaurant_id, day, db_path=DB_PATH) -> list:
