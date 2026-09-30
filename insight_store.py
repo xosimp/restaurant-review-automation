@@ -170,6 +170,18 @@ def _rewrap(restaurant_id, kind, raw, out, db_path):
         conn.close()
 
 
+def is_stale(created_at, now=None) -> bool:
+    """Whether a stored read is past MAX_AGE_HOURS — the age `get` stops
+    serving it at (its prose names "this week" and "today"). An unreadable
+    stamp is stale. Memory re-audit 9/29/26, FORGET-18: `latest` hands the
+    read over whatever its age, so its callers mark it."""
+    try:
+        when = datetime.strptime(str(created_at)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return True
+    return ((now or datetime.utcnow()) - when).total_seconds() > MAX_AGE_HOURS * 3600
+
+
 def latest(restaurant_id, kind, db_path=DB_PATH):
     """(payload, created_at) of the last stored read whatever its data, for
     the "a stale read beats no read" fallback when generation fails."""
