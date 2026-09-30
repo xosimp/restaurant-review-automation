@@ -616,15 +616,18 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     out.update({v: None for v in provenance.REVIEW_FREE_VARIANT.values()})
     try:
         rows = conn.execute(
-            "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
+            "SELECT i.rec_id, i.key, i.evidence_sources, e.event FROM rec_events e "
+            "JOIN rec_instances i ON i.rec_id = e.rec_id "
             "WHERE i.restaurant_id=? AND e.at >= ? AND e.at <= ? "
             "AND e.event IN ('accepted','completed','implemented','dismissed') "
             "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown' AND s.at <= ?)",
             (restaurant_id, d28.isoformat(), end_ts, end_ts)).fetchall()
-        for suffix, keep in (("", lambda k: True), ("_ex_reviews", lambda k: not provenance.review_derived(k))):
+        for suffix, keep in (("", lambda r: True),
+                             ("_ex_reviews", lambda r: not provenance.review_derived(
+                                 r["key"], sources=r["evidence_sources"]))):
             answered, done, declined = set(), set(), set()
             for r in rows:
-                if not rec_ledger.counts_in_acceptance(r["key"]) or not keep(r["key"]):
+                if not rec_ledger.counts_in_acceptance(r["key"]) or not keep(r):
                     continue
                 answered.add(r["rec_id"])
                 (declined if r["event"] == "dismissed" else done).add(r["rec_id"])
@@ -640,9 +643,12 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     except Exception as e:
         print(f"[intelligence] results unreadable for {restaurant_id}: {e}")
         return out
+    sourced = provenance.sources_by_key(conn, restaurant_id)
     for suffix, keep in (("", lambda r: True),
-                         ("_ex_reviews", lambda r: not provenance.review_derived(r.get("source_key"),
-                                                                                 metric=r.get("metric")))):
+                         ("_ex_reviews", lambda r: not provenance.review_derived(
+                             r.get("source_key"), metric=r.get("metric"),
+                             sources=["reviews"] if sourced.get((int(restaurant_id), str(r.get("source_key") or "")))
+                             else None))):
         mine = [r for r in ev if keep(r)]
         out["outcomes_evaluated_90d" + suffix] = len(mine)
         eps = [{"rec_id": r["id"], "verdict": rec_learning.learned_verdict(r.get("verdict"), r), "tracker": r}

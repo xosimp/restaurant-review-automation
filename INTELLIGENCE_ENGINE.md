@@ -1282,11 +1282,19 @@ disconnected keeps its stored reviews, so it stays out.
   variants (`*_ex_reviews`) — so bands, patterns, trends and the cohort
   series never see them. A caller that has not looked is treated as
   connected.
-- **Recommendation rows**: `intel_rec_events.review_derived` (a review kind
-  or topic — guest experience, replies, competition — or a result on a
-  review metric) and `google_data` (review-derived AND connected), filtered
-  in every pooled reader: `kind_stats`, `similar_prior`, `rank_kinds`,
-  `platform_totals`, the confidence log and predict's taken arm.
+- **Recommendation rows**: `intel_rec_events.review_derived` — first by
+  what the episode's card DECLARED (`rec_instances.evidence_sources`
+  includes "reviews": dish_praise, a dish_promote that states a praise
+  count; `provenance.review_sourced`), then a review kind (`review_requests`,
+  `dish_praise`) or topic — guest experience, replies, competition — or a
+  result on a review metric — and `google_data` (review-derived AND
+  connected), filtered in every pooled reader: `kind_stats`,
+  `similar_prior`, `rank_kinds`, `platform_totals`, the confidence log and
+  predict's taken arm. The rule is versioned (`provenance.RULE_VERSION`,
+  mark `intelligence_provenance_rule` in `job_cursors`): when it changes,
+  `feedback._rejudge_provenance` re-judges both labels on every row once;
+  a deleted restaurant's kept row that becomes review-derived is taken as
+  Google data (memory re-audit 9/29/26, PLATFORM-5/-6).
 - **DNA and prediction**: `dna.platform_norms` leaves a connected
   restaurant's review dimensions out; `predict` leaves connected
   restaurants out of a review metric's neighbours.

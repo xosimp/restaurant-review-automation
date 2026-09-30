@@ -71,7 +71,59 @@ REVIEW_METRICS = ("avg_rating", "complaints", "response_hours")
 # rivals' side is Places data; the restaurant's own side may not be). Plus
 # the kinds that ask guests for reviews.
 REVIEW_TOPICS = ("guest_experience", "replies", "competition")
-REVIEW_KINDS = ("review_requests",)
+# dish_praise exists only because guests named a dish in positive reviews
+# (marketing_opportunities.dish_praise_cards); its topic is "marketing", so
+# the topic table missed it (memory re-audit 9/29/26, PLATFORM-5).
+REVIEW_KINDS = ("review_requests", "dish_praise")
+# The root rule since that re-audit: an episode whose card DECLARED reviews
+# among its evidence (rec_instances.evidence_sources — dish_praise's
+# ("reviews",), a dish_promote that states a praise count) is review-derived
+# whatever its kind or topic. The kind and topic tables stay as the rule for
+# a row with no episode.
+REVIEW_SOURCES = ("reviews",)
+# The rule's version (PLATFORM-6). Raise it whenever review_derived changes:
+# feedback.sync then re-judges review_derived and google_data on EVERY
+# intel_rec_events row once (its mark: job_cursors RULE_MARK) — a changed
+# rule used to reach only rows written after it.
+RULE_VERSION = 2
+RULE_MARK = "intelligence_provenance_rule"
+
+
+def review_sourced(sources) -> bool:
+    """Whether an episode's declared evidence sources (a list, a JSON list
+    or None) include reviews. Never raises."""
+    if not sources:
+        return False
+    if isinstance(sources, str):
+        try:
+            import json as _json
+            sources = _json.loads(sources)
+        except (TypeError, ValueError):
+            sources = [sources]
+    try:
+        return any(str(s or "").strip().lower() in REVIEW_SOURCES for s in sources)
+    except TypeError:
+        return False
+
+
+def sources_by_key(conn, restaurant_id=None) -> dict:
+    """{(restaurant_id, key): True} for every recommendation key some episode
+    of which declared reviews among its evidence — one query; a reader that
+    judges rows by key (a result with no episode id) looks it up here.
+    Conservative: one review-sourced episode marks the key. Never raises."""
+    out = {}
+    try:
+        sql = "SELECT restaurant_id, key, evidence_sources FROM rec_instances WHERE evidence_sources LIKE '%review%'"
+        args = ()
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args = (restaurant_id,)
+        for r in conn.execute(sql, args).fetchall():
+            if review_sourced(r["evidence_sources"]):
+                out[(int(r["restaurant_id"]), str(r["key"]))] = True
+    except Exception:
+        pass
+    return out
 
 
 def review_metric(metric) -> bool:
@@ -83,11 +135,15 @@ def review_metric(metric) -> bool:
     return m.split(":", 1)[0] in REVIEW_METRICS or m in REVIEW_FEATURES
 
 
-def review_derived(key, kind=None, metric=None) -> bool:
-    """Whether a recommendation row rests on review data: its kind's topic is
-    a review topic (rec_ledger._topic_of reads a DSR action's or a link's
-    own kind from the key), it is a review kind or a link through reviews,
-    or it measured a review metric. Never raises."""
+def review_derived(key, kind=None, metric=None, sources=None) -> bool:
+    """Whether a recommendation row rests on review data: its episode
+    declared reviews among its evidence (`sources`, rec_instances.
+    evidence_sources — the root rule, PLATFORM-5), its kind's topic is a
+    review topic (rec_ledger._topic_of reads a DSR action's or a link's own
+    kind from the key), it is a review kind or a link through reviews, or
+    it measured a review metric. Never raises."""
+    if review_sourced(sources):
+        return True
     if review_metric(metric):
         return True
     k = str(key or "")
