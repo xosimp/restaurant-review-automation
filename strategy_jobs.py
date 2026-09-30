@@ -2008,8 +2008,16 @@ def _metric_permissions(metric):
     """The permission a login needs to be told about a result on `metric`:
     a food-cost win is Food Cost's, comps and voids are LOSS_VIEW. None
     means nothing beyond the brief audience itself (sales)."""
+    import metrics as _metrics
     import permissions as _p
     base = str(metric or "").split(":", 1)[0]
+    # The one metric rule first (metrics.metric_permission): an item-waste
+    # result is Food Cost's too (memory re-audit PEOPLE-2).
+    fam = _metrics.metric_permission(base)
+    if fam == "food":
+        return {_p.FOOD_COST_VIEW}
+    if fam == "loss":
+        return {_p.LOSS_VIEW}
     need = {"labor_pct": _p.LABOR_VIEW, "overtime_hours": _p.LABOR_VIEW,
             "food_cost_pct": _p.FOOD_COST_VIEW, "weekly_waste": _p.FOOD_COST_VIEW,
             "avg_rating": _p.REVIEWS_VIEW, "complaints": _p.REVIEWS_VIEW, "response_hours": _p.REVIEWS_VIEW,

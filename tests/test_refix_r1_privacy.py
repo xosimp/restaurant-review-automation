@@ -434,3 +434,21 @@ def test_the_phone_profile_refuses_a_teammates_brand_voice_change(monkeypatch, d
     assert models.get_restaurant(rid).menu_notes == "Deep dish"
     r = client.post("/mobile/api/account/update-profile", headers=own, json={"menu_notes": "Wings Tuesday"})
     assert r.status_code == 200 and models.get_restaurant(rid).menu_notes == "Wings Tuesday"
+
+
+def test_a_rating_derived_preference_steers_only_that_logins_ask(db_path):
+    import memory_context
+    rid = _rid()
+    models.remember_ask_fact(rid, "Prefers short, direct answers", kind="preference", source="Your ratings",
+                             user_id=MANAGER["id"], db_path=db_path, subject="ask:answer_length:short",
+                             audience="author", author_label="From their own ratings", authority="system",
+                             origin="ratings")
+    assert "Prefers short" in memory_context.memory_context(rid, "ask", viewer=MANAGER, db_path=db_path).text
+    assert "Prefers short" not in memory_context.memory_context(rid, "brief", viewer=MANAGER, db_path=db_path).text
+    assert "Prefers short" not in memory_context.memory_context(rid, "digest", db_path=db_path).text
+
+
+def test_the_brief_audience_of_a_result_uses_the_one_metric_rule():
+    import permissions, strategy_jobs
+    assert strategy_jobs._metric_permissions("item_waste:Salmon") == {permissions.FOOD_COST_VIEW}
+    assert strategy_jobs._metric_permissions("void_rate") == {permissions.LOSS_VIEW}

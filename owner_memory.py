@@ -678,6 +678,10 @@ def constraint_lines(req):
     today = _local_today(req.restaurant_id)
     out = []
     for r in rows:
+        if r.get("origin") == "ratings" and surface not in (None, "ask"):
+            # A preference read off one login's own ratings steers that
+            # login's Ask answers and nothing else (memory re-audit QUALITY-9).
+            continue
         if r.get("kind") == "followup":
             due = _parse_day(r.get("due_on"))
             # A follow-up is said from a week before it is due.
