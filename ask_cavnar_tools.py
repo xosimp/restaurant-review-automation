@@ -1804,7 +1804,12 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
             payload, at = insight_store.latest(restaurant_id, kind)
             text = _read_text(payload)
             if text.strip():
-                reads.append({"what": label, "date": mdy(str(at or "")[:10]), "text": text[:1500]})
+                # Past the age the page stops serving it at, the read is
+                # marked stale (memory re-audit 9/29/26, FORGET-18): a months-
+                # old "this week waste doubled" came over as the Food Cost read
+                # with only a date — as the competitor read beside it already is.
+                reads.append({"what": label, "date": mdy(str(at or "")[:10]), "text": text[:1500],
+                              "stale": insight_store.is_stale(at)})
     except Exception as e:
         log.debug("read_recent_reads: stored reads unavailable: %s", e)
     if "intel" not in denied and (not want or want in ("intel", "competitors", "competitor")):
@@ -1845,7 +1850,8 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
     return {"reads": reads[:20], "count": len(reads),
             "note": ("What Cavnar AI already told this owner, newest first, each with its date. These are "
                      "Cavnar AI's own earlier words — quote one as what it said then, with its date; check a "
-                     "figure again with the module's own read tool before calling it current."
+                     "figure again with the module's own read tool before calling it current. A read marked "
+                     "stale is over a week old: its \"this week\" and \"today\" mean then, never now."
                      if reads else "No stored read from Cavnar AI for that — say so.")}
 
 

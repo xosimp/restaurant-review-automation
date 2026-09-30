@@ -350,7 +350,11 @@ write — and every save, draft and send fails until space is freed.
    copy is reliably running, fewer local days are needed.
 4. `ops.prune_ledgers` trims old ledger rows nightly after each backup
    (chunked, bounded); it can be run early from `/admin` → Operations →
-   Jobs → `prune_ledgers`.
+   Jobs → `prune_ledgers`. It deletes only when the newest backup wrote its
+   local snapshot within the last 26 hours (`ops.prune_backup_gate`): after
+   a failed snapshot the prune is held, counted failed and paged
+   (`retention_held`), so nothing is deleted that no copy holds — free the
+   space, let a backup succeed, then run it.
 5. The backup refuses to START with less than 3.5 × the database free
    (`BACKUP_FREE_SPACE_FACTOR`) — it fails and pages rather than filling the
    volume at 2am. Engineering → Overview → Backups shows growth per day and
@@ -425,9 +429,18 @@ way.
   `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (`BACKUP_S3_REGION`
   defaults to `auto` for R2). Give the key read and write on that one bucket
   only (the drill downloads), and add a lifecycle rule expiring objects after
-  about 35 days. A single object is at most 5 GB (no multipart yet).
+  about 35 days. A single object is at most 5 GB (no multipart yet). The
+  rule is checked weekly (`offsite_lifecycle`, `scheduler.run_offsite_lifecycle_check`
+  → `offsite_backup.lifecycle_days`, one signed `GET ?lifecycle`): no
+  enabled expiration rule covering `BACKUP_S3_PREFIX`, or one longer than
+  `BACKUP_OFFSITE_MAX_DAYS` (35), fails the run and pages
+  (`backup_lifecycle`, weekly cooldown). The key needs
+  `GetBucketLifecycleConfiguration` for it (memory re-audit 9/29/26).
 - **Email**: skipped above `BACKUP_EMAIL_MAX_BYTES` (25 MB of encrypted
-  file); the skip is in the run's `offsite_error`.
+  file); the skip is in the run's `offsite_error`. An emailed copy has no
+  expiry the code can enforce: `BACKUP_EMAIL_MODE=fallback` sends it only
+  on a night the object-storage copy was not made (the default, `always`,
+  sends it every night beside object storage).
 - **Re-run**: `/admin` → Operations → Jobs → `backup_db` → Run now.
 
 ---

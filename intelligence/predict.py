@@ -344,6 +344,13 @@ def _untaken(conn, rids, rec_kind, metric, since, span, tags=None):
             rows = conn.execute(f"SELECT o.*, i.key AS rec_key, NULL AS rec_tags {base}", args).fetchall()
         except Exception:
             return []
+    # A neighbour's demo era teaches the control arm nothing either (memory
+    # re-audit 9/29/26, PLATFORM-13): the taken arm dropped rows before
+    # learning_since and this one did not, so the lift read taken(real) −
+    # untaken(seeded) for a demo converted 91–365 days ago.
+    from .jobs import before_learning, learning_since_by_id
+    _db = next((x[2] for x in conn.execute("PRAGMA database_list") if x[1] == "main"), None)
+    learning_since = learning_since_by_id(_db) if _db else learning_since_by_id()
     out, last_end = [], {}
     # The rule rec_learning._untaken_rows counts an untaken result by: a
     # clear verdict, not read against its trigger window, not confounded —
@@ -351,6 +358,8 @@ def _untaken(conn, rids, rec_kind, metric, since, span, tags=None):
     for r in sorted((dict(x) for x in rows), key=lambda d: (str(d.get("after_start") or ""),
                                                            str(d.get("after_end") or ""))):
         if kind_of(r.get("rec_key")) != rec_kind:
+            continue
+        if before_learning(r["restaurant_id"], r.get("started_on") or r.get("after_start"), learning_since):
             continue
         if tags:
             try:

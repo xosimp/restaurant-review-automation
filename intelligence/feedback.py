@@ -104,7 +104,8 @@ def _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=None, 
         raise ValueError(f"unknown outcome {outcome}")
     from . import provenance
     key = str(source_key)[:200]
-    rd = 1 if provenance.review_derived(key, kind=rec_kind, metric=metric) else 0
+    rd = 1 if provenance.review_derived(key, kind=rec_kind, metric=metric,
+                                        sources=_episode_sources(conn, restaurant_id, key, rec_id)) else 0
     gd = 1 if (rd and google_data) else 0
     auth_col, auth_val = ((", authority", ",?"), (authority,)) if authority else (("", ""), ())
     cur = conn.execute(
@@ -132,6 +133,29 @@ def _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=None, 
                      "((confidence_at IS NULL AND ? IS NOT NULL) OR (rec_id IS NULL AND ? IS NOT NULL))",
                      (confidence_at, trust_version, rec_id, restaurant_id, key, action, confidence_at, rec_id))
     return inserted
+
+
+def _episode_sources(conn, restaurant_id, key, rec_id=None):
+    """The evidence sources an episode declared (rec_instances.
+    evidence_sources): the row's own episode when it has one, else every
+    episode of its key — a list of source names, [] when none is on file.
+    What provenance.review_derived judges first (memory re-audit 9/29/26,
+    PLATFORM-5). Never raises."""
+    out = []
+    try:
+        if rec_id:
+            rows = conn.execute("SELECT evidence_sources FROM rec_instances WHERE rec_id=?", (rec_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT evidence_sources FROM rec_instances WHERE restaurant_id=? AND key=? "
+                                "AND evidence_sources IS NOT NULL", (restaurant_id, base_key(key))).fetchall()
+        for r in rows:
+            try:
+                out += list(json.loads(r["evidence_sources"] or "[]") or [])
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        return []
+    return out
 
 
 def record(restaurant_id, rec_kind, source_key, action, outcome=None, days_to_effect=None,
@@ -828,6 +852,7 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             _cursor_set(conn, last)
         _fill_confidence(conn)
         _stamp_labels(conn, labels, provenance)
+        _rejudge_provenance(conn, labels, provenance)
         conn.commit()
     finally:
         conn.close()
@@ -913,6 +938,52 @@ def _stamp_labels(conn, labels, provenance):
         changed = True
     if changed:
         _cursor_set(conn, json.dumps(seen, sort_keys=True), key=LABELS_MARK)
+
+
+def _rejudge_provenance(conn, labels, provenance):
+    """When the provenance rule changed (provenance.RULE_VERSION against its
+    mark in job_cursors), re-judge `review_derived` and `google_data` on
+    EVERY intel_rec_events row once (memory re-audit 9/29/26, PLATFORM-6):
+    rows already written kept the old rule's labels — review_derived is set
+    once and a re-stamp only filled NULLs — so adding dish_praise to the
+    rule would have left every dish_praise row already pooled. A row's
+    Google label is its restaurant's (`labels`); a kept, anonymised row of a
+    deleted restaurant that becomes review-derived is taken as Google data
+    (its connection can no longer be read — the conservative side). On the
+    caller's connection, uncommitted. Returns rows changed, or None when the
+    rule has not changed."""
+    try:
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (provenance.RULE_MARK,)).fetchone()
+    except Exception:
+        return None
+    if row and str(row["value"] or "") == str(provenance.RULE_VERSION):
+        return None
+    by_key = provenance.sources_by_key(conn)
+    ep = {}
+    try:
+        for r in conn.execute("SELECT rec_id, evidence_sources FROM rec_instances "
+                              "WHERE evidence_sources LIKE '%review%'").fetchall():
+            ep[r["rec_id"]] = provenance.review_sourced(r["evidence_sources"])
+    except Exception:
+        pass
+    changed = 0
+    for r in conn.execute("SELECT id, restaurant_id, rec_kind, source_key, metric, rec_id, review_derived, google_data "
+                          "FROM intel_rec_events").fetchall():
+        rid = int(r["restaurant_id"])
+        sourced = ep.get(r["rec_id"]) if r["rec_id"] else by_key.get((rid, base_key(r["source_key"])))
+        rd = 1 if provenance.review_derived(r["source_key"], kind=r["rec_kind"], metric=r["metric"],
+                                            sources=["reviews"] if sourced else None) else 0
+        lab = labels.get(rid)
+        old_rd, old_gd = int(r["review_derived"] or 0), int(r["google_data"] or 0)
+        if lab is not None and lab.get("google") is not None:
+            gd = 1 if (rd and lab.get("google")) else 0
+        else:
+            gd = old_gd if rd == old_rd else (1 if rd else 0)
+        if rd != old_rd or gd != old_gd or r["review_derived"] is None:
+            conn.execute("UPDATE intel_rec_events SET review_derived=?, google_data=? WHERE id=?", (rd, gd, r["id"]))
+            changed += 1
+    _cursor_set(conn, str(provenance.RULE_VERSION), key=provenance.RULE_MARK)
+    return changed
 
 
 def history(restaurant_id, limit=100, db_path=DB_PATH) -> list:

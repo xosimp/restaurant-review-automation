@@ -216,8 +216,11 @@ def _build(db_path=DB_PATH, today: date = None) -> dict:
                              "GROUP BY week ORDER BY week DESC LIMIT 12", (_features.FEATURES_VERSION,)).fetchall()
         # trust_version: the meaning of the % averaged (only one version
         # is averaged per row, jobs.log_confidence); orgs: behind each row.
+        # The week's own figures and the trailing year's beside them
+        # (memory re-audit 9/29/26, PLATFORM-15).
         conf = conn.execute("SELECT week, cohort, rec_kind, n, mean_confidence, acceptance_rate, success_rate, "
-                            "trust_version, orgs FROM intel_confidence_log "
+                            "trust_version, orgs, trailing_n, trailing_mean_confidence, trailing_acceptance_rate, "
+                            "trailing_success_rate, trailing_orgs FROM intel_confidence_log "
                             "WHERE cohort='platform' ORDER BY week DESC, n DESC LIMIT 120").fetchall()
         new_patterns = conn.execute("SELECT COUNT(*) FROM intel_patterns WHERE status='active' AND first_seen >= ?",
                                     ((today - timedelta(days=7)).isoformat(),)).fetchone()[0]

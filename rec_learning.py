@@ -1054,7 +1054,12 @@ class Effectiveness:
                 print(f"[rec_learning] {rung} prior unavailable for {kind}: {e}")
                 continue
             if used["acceptance"] is None and s.get("answered") and s.get("acceptance_available"):
-                a = s.get("acceptance_rate_decayed_shrunk")
+                # Capped per organisation over the episodes shown near the top
+                # (memory re-audit 9/29/26, PLATFORM-9 / -10); the raw decayed
+                # figure only when the capped one cannot be formed.
+                a = s.get("acceptance_rate_decayed_capped_shrunk")
+                if a is None:
+                    a = s.get("acceptance_rate_decayed_shrunk")
                 acc = float(a if a is not None else (s.get("acceptance_rate_shrunk") or 0.5))
                 used["acceptance"] = rung
                 used["label"] = used["label"] or label
@@ -1493,8 +1498,8 @@ def _learning_floor(restaurant, since):
     floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
     if floor is None and isinstance(restaurant, dict):
         floor = restaurant.get("learning_since")
-    if floor and str(floor)[:19] > str(since or "")[:19]:
-        return str(floor)[:19]
+    if floor and str(floor).replace("T", " ")[:19] > str(since or "").replace("T", " ")[:19]:
+        return str(floor).replace("T", " ")[:19]
     return since
 
 

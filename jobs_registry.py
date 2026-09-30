@@ -88,6 +88,12 @@ JOBS = {
         description="Delete ledger rows past their retention window, in chunks, then refresh planner statistics; "
                     "soft-delete reviews past each owner's retention",
         target=("scheduler", "run_nightly_retention"), max_minutes=45),
+    "offsite_lifecycle": dict(
+        cadence="weekly, from 3am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Off-site backup expiry",
+        description="Read the object store's lifecycle rule and page when no rule deletes backup copies within "
+                    "BACKUP_OFFSITE_MAX_DAYS",
+        target=("scheduler", "run_offsite_lifecycle_check"), max_minutes=5),
     "restore_drill": dict(
         cadence="2nd of Jan / Apr / Jul / Oct, after the 2am backup", sla_minutes=None, sends=True, runnable=True,
         label="Restore drill",
