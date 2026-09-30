@@ -501,7 +501,9 @@ def test_b7_home_presents_only_answerable_items(db, monkeypatch):
 def test_b7_a_quiet_kind_never_skips_a_critical_one_thing(db):
     rid = _rid(db)
     for i in range(4):
-        rl.present_many(rid, [{"key": "urgent_reviews", "module": "reviews"}], "brief_email", db_path=db)
+        # Shown on Home: since the memory re-audit fix round (LOOPS-10) an
+        # expiry only an unopened email carried casts no quiet-kind vote.
+        rl.present_many(rid, [{"key": "urgent_reviews", "module": "reviews"}], "home", db_path=db)
         _x(db, "UPDATE rec_instances SET created_at=datetime('now', ?) WHERE status='open'", (f"-{15 + i}0 days",))
         rl.expire_stale(db_path=db)
     assert "urgent_reviews" in decisions.quiet_kinds(rid, db_path=db)
