@@ -392,18 +392,18 @@ def test_recent_returns_unseen_only_when_asked(db_path):
     assert [m["key"] for m in unseen] == ["savings:5000"]
 
 
-def test_a_labor_streak_with_salaried_staff_says_hourly_and_what_salaries_make_it(db_path):
-    """Simple EJ's, 9/30/26: "5 weeks running under your labor % target"
-    read as the whole labor bill while salaries put it at 41%. With salaried
-    people it says hourly, and last week's figure with the salaries in."""
+def test_a_labor_streak_is_judged_with_the_salaries_in(db_path):
+    """Simple EJ's: "5 weeks running under your labor % target" while the
+    salaries put the week at 41%. Labor % is all-in (owner, 9/30/26: "Erik
+    only cares about that labor %, it's the real %") and the target judges
+    it, so hourly weeks at 25% with $142.86/day of salaries (32.1%) are no
+    streak against 30%; without the salaries they are."""
     import json as _json
     rid = _restaurant(db_path, labor_target_pct=30.0)
-    models.update_restaurant(rid, {"salaried_staff_json": _json.dumps([{"name": "Pat Manager", "annual": 52000}])},
-                             db_path=db_path)
     today = date.today()
     monday = today - timedelta(days=today.weekday())
     _days(db_path, rid, monday - timedelta(days=42), 42, labor_ratio=0.25)
-    (s,) = [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]
-    assert s["headline"].endswith("under your hourly labor % target")
-    assert s["with_salaries"] is not None and s["with_salaries"] > 25.0
-    assert "With salaries, last week ran" in s["summary"]
+    assert [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]
+    models.update_restaurant(rid, {"salaried_staff_json": _json.dumps([{"name": "Pat Manager", "annual": 52000}])},
+                             db_path=db_path)
+    assert not [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]

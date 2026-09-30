@@ -567,7 +567,7 @@ def current_window(shifts, window_days=CURRENT_WINDOW_DAYS, today=None):
 
 
 def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
-                                  window_days=CURRENT_WINDOW_DAYS) -> dict:
+                                  window_days=CURRENT_WINDOW_DAYS, with_salaries: bool = True) -> dict:
     """Load shifts and analyse with client-specific hourly rate and target.
 
     `client_data` is the restaurant's client_data row when the caller has
@@ -577,8 +577,12 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
 
     `window_days` bounds the read to the current period (CURRENT_WINDOW_DAYS,
     see above). Pass None for the whole file — only the per-day history
-    archive wants that (full_history_by_day)."""
-    return _analyse_for_restaurant(restaurant_id, client_data, window_days)
+    archive wants that (full_history_by_day).
+
+    `with_salaries` (default): every labor figure is all-in, salaries
+    included (analyse_shifts salaried_per_day). The schedule generator
+    passes False — its hours budget is hourly."""
+    return _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salaries=with_salaries)
 
 
 def _without_salaried(restaurant_id, shifts):
@@ -617,7 +621,10 @@ def salaried_summary(restaurant, analysis):
     if not staff or not share or not a.get("is_live") or sales <= 0 or not days:
         return None
     cost = round(share * days, 2)
-    hourly = float(a.get("costed_labor") if a.get("costed_labor") is not None else a.get("total_labor_cost") or 0)
+    if a.get("includes_salaries"):
+        hourly = float(a.get("hourly_costed_labor") or 0)
+    else:
+        hourly = float(a.get("costed_labor") if a.get("costed_labor") is not None else a.get("total_labor_cost") or 0)
     total = round(hourly + cost, 2)
     return {"people": len(staff), "days": days, "per_day": round(share, 2), "cost": cost,
             "hourly_cost": round(hourly, 2), "total_cost": total, "total_pct": round(total / sales * 100, 1),
@@ -628,10 +635,10 @@ def full_history_by_day(restaurant_id: int) -> dict:
     """The per-day breakdown of the WHOLE shifts file, for the
     labor_daily_history archive (YoY and trends) — not the current window
     every other labor read uses."""
-    return _analyse_for_restaurant(restaurant_id, _UNREAD, None).get("by_day", {}) or {}
+    return _analyse_for_restaurant(restaurant_id, _UNREAD, None, with_salaries=False).get("by_day", {}) or {}
 
 
-def _analyse_for_restaurant(restaurant_id, client_data, window_days):
+def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salaries=False):
     if client_data is _UNREAD:
         from models import get_client_data
         client_data = get_client_data(restaurant_id)
@@ -672,10 +679,20 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
         _day_fit = _rthr.detail(restaurant_id, "labor_over_day") if is_live else None
     except Exception:
         _day_margin, _day_fit = None, None
+    _sal_day = 0.0
+    if with_salaries and is_live:
+        try:
+            from models import get_restaurant as _gr_sal, salaried_day_share, viewer_sees_salaries
+            if not viewer_sees_salaries():
+                raise LookupError("salaries are the owner's")
+            _sal_day = float(salaried_day_share(_gr_sal(restaurant_id)) or 0)
+        except Exception:
+            _sal_day = 0.0
     result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target,
                             role_rates=role_rates,
                             week_start_day=get_week_start_day(restaurant_id),
-                            covers_by_date=covers_by_date, over_margin=_day_margin)
+                            covers_by_date=covers_by_date, over_margin=_day_margin,
+                            salaried_per_day=_sal_day)
     result['over_margin'] = _day_margin
     result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
@@ -1086,8 +1103,16 @@ def analyse_shifts(shifts: list[dict],
                    role_rates: dict = None,
                    week_start_day: int = 0,
                    covers_by_date: dict = None,
-                   over_margin: float = None) -> dict:
+                   over_margin: float = None,
+                   salaried_per_day: float = 0.0) -> dict:
     """Compute labor metrics from raw shift data.
+
+    salaried_per_day: one trading day's share of the salaries
+    (models.salaried_day_share). Each day with sales carries it, so every
+    labor figure below — a day's %, the period's %, over/under target, the
+    gap — is ALL-IN, salaries included (owner, 9/30/26: "Erik only cares
+    about that labor % bc that's the real %"; the target judges it). The
+    shift-only figures ride beside it as hourly_*.
 
     covers_by_date ({iso date: covers}, covers.py) is the one figure that
     separates a lean day from a short-staffed one; when it is absent the
@@ -1248,6 +1273,15 @@ def analyse_shifts(shifts: list[dict],
     # costed day, not a fixed $2,500 that meant nothing across restaurants.
     _day_sales = sorted(v["sales"] for v in by_day.values() if v.get("sales"))
     _strong_floor = (_day_sales[len(_day_sales) // 2] * STRONG_DAY_SALES_MULTIPLE) if _day_sales else None
+
+    # The salaries, a trading day's share on each day that has sales.
+    _sal_day = float(salaried_per_day or 0)
+    if _sal_day > 0:
+        for d in by_day.values():
+            d["hourly_labor_cost"] = round(d["labor_cost"], 2)
+            if d.get("sales"):
+                d["labor_cost"] += _sal_day
+                d["salaried_cost"] = round(_sal_day, 2)
 
     # Find overstaffed days
     overstaffed = []
@@ -1482,7 +1516,15 @@ def analyse_shifts(shifts: list[dict],
         for role, d in by_role.items()
     }
 
+    _hourly_costed = sum(d.get("hourly_labor_cost", d["labor_cost"]) for k, d in by_day.items() if k in day_sales)
+    _salaried_costed = round(costed_labor - _hourly_costed, 2) if _sal_day > 0 else 0.0
     return {
+        # Salaries in, when there are any (salaried_per_day): the all-in
+        # figures are the ones below; these are the shifts alone.
+        "salaried_cost": _salaried_costed,
+        "hourly_costed_labor": round(_hourly_costed, 2),
+        "hourly_labor_pct": round(_hourly_costed / total_sales * 100, 1) if total_sales > 0 else 0,
+        "includes_salaries": _sal_day > 0,
         "total_labor_cost": round(total_labor, 2),
         # Labor on the days that carry a sales figure — the only labor that
         # may sit beside total_sales. "Labor $8,160 on $20,000 in sales"

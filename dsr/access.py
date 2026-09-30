@@ -664,12 +664,11 @@ def _live_target(facts, restaurant):
 
 
 def _live_salaries(facts, restaurant):
-    """The owner's Labor block with the night's share of the salaries beside
-    the hourly figure (owner, 9/28/26): salaried_cost is one trading day's
-    share (models.salaried_day_share), salaried_total_pct is hourly labor
-    plus it over tonight's net. Hourly labor, its % and the target are
-    untouched. Owner-only by prefix (OWNER_ONLY_PREFIXES) as well as by
-    where it is called."""
+    """The owner's Labor block with the night's share of the salaries in it:
+    salaried_cost is one trading day's share (models.salaried_day_share),
+    and pct / cost / vs_target_pts become the all-in figures (owner,
+    9/30/26), the shifts alone kept as hourly_pct / hourly_cost. Owner-only
+    by where it is called; a manager's report stays hourly."""
     blocks = (facts or {}).get("blocks") or {}
     labor, sales = blocks.get("labor") or {}, blocks.get("sales") or {}
     lm, sm = labor.get("metrics") or {}, sales.get("metrics") or {}
@@ -691,6 +690,18 @@ def _live_salaries(facts, restaurant):
     m["salaried_people"] = people
     m["salaried_total_cost"] = round(total, 2)
     m["salaried_total_pct"] = round(total / float(net) * 100.0, 1)
+    # The owner's labor % is ALL-IN and the target judges it (owner,
+    # 9/30/26: "Erik only cares about that labor %, it's the real %"):
+    # pct, cost and vs_target_pts become the salaries-in figures; the shifts
+    # alone move to hourly_pct / hourly_cost.
+    m["hourly_pct"], m["hourly_cost"] = m.get("pct"), cost
+    m["pct"], m["cost"] = m["salaried_total_pct"], m["salaried_total_cost"]
+    if m.get("target_pct") is not None:
+        try:
+            m["vs_target_pts"] = round(float(m["pct"]) - float(m["target_pct"]), 1)
+        except (TypeError, ValueError):
+            pass
+    m["includes_salaries"] = True
     return out
 
 

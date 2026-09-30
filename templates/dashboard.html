@@ -7292,11 +7292,11 @@ svg:hover .hb-xh{opacity:1}
     labor:function(b){
       var m=b.metrics||{},d=b.detail||{},t='';
       if(has(m,'pct')){var s='of net sales';if(isNum(m.target_pct))s+=' · '+esc(d.target_label||'target')+' '+hn(pct(m.target_pct,0));if(isNum(m.vs_target_pts))s+=' · '+hn((m.vs_target_pts>0?'+':(m.vs_target_pts<0?'−':''))+Math.abs(m.vs_target_pts).toFixed(1)+' pts');
-        t+=tile('Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?(d.target_source==='default'?'warn':'bad'):'good'):'');}
+        t+=tile(m.includes_salaries?'Labor with salaries':'Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?(d.target_source==='default'?'warn':'bad'):'good'):'');}
       if(has(m,'cost'))t+=tile('Labor cost',esc(money(m.cost)));
-      // The owner's night with the salaries' share beside the hourly figure
-      // (dsr.access._live_salaries); the % above stays hourly, against target.
-      if(isNum(m.salaried_total_pct))t+=tile('With salaries',esc(pct(m.salaried_total_pct)),hn(money(m.salaried_total_cost))+' · '+hn(money(m.salaried_cost))+' salaries');
+      // The owner's labor % above is all-in, judged against the target
+      // (dsr.access._live_salaries, 9/30/26); the shifts alone beside it.
+      if(m.includes_salaries&&isNum(m.hourly_pct))t+=tile('Hourly only',esc(pct(m.hourly_pct)),hn(money(m.hourly_cost))+' · '+hn(money(m.salaried_cost))+' salaries');
       if(has(m,'hours'))t+=tile('Hours',esc(cnt(m.hours)));
       if(isNum(m.overtime_hours))t+=tile('Overtime',esc(cnt(m.overtime_hours))+'<small>hrs</small>','',m.overtime_hours>0?'bad':'');
       if(isNum(m.hours_after_6pm_share_pct)&&isNum(m.sales_after_6pm_share_pct))t+=tile('After 6pm',esc(pct(m.hours_after_6pm_share_pct,0))+'<small>of hours</small>','against '+hn(pct(m.sales_after_6pm_share_pct,0))+' of sales');
@@ -9916,12 +9916,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
            are costed_labor - the days that carry sales, the same days as the
            % (labor.py NS3 H4) - so the salaries line below adds up. #}
         {% set _gap_ok = labor.is_live and savings_breakdown and savings_breakdown.labor_monthly > 0 %}
-        <div class="lb2-bn"><span class="l">{{ 'Hourly labor' if labor_salaried else 'Labor' }}</span><span class="row"><span class="hb-num stat-n">${{ (labor.costed_labor if labor.costed_labor is not none else labor.total_labor_cost)|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
-        {# Salaries beside hourly labor, never in it (owner, 9/28/26): the
-           target judges the hourly figure, which a schedule can change; the
-           owner's alone (labor.salaried_summary). #}
-        {% if labor_salaried %}
-        <div class="lb2-bn lb2-sal"><span class="l">With salaries</span><span class="row"><span class="hb-num stat-n">${{ labor_salaried.total_cost|int|format_num }}</span><span class="hb-num pct stat-n">{{ labor_salaried.total_pct }}%</span><span class="lb2-vs" title="Each trading day carries its share of the salaries: annual pay &divide; 52 weeks &divide; the days you trade a week. Set in Settings &rarr; Salaried staff."><span class="hb-num">${{ labor_salaried.cost|int|format_num }}</span> salaries &middot; <span class="hb-num">{{ labor_salaried.people }}</span> {{ 'person' if labor_salaried.people == 1 else 'people' }}</span></span></div>
+        <div class="lb2-bn"><span class="l">{{ 'Labor with salaries' if labor.includes_salaries else 'Labor' }}</span><span class="row"><span class="hb-num stat-n">${{ (labor.costed_labor if labor.costed_labor is not none else labor.total_labor_cost)|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
+        {# Labor % is ALL-IN, salaries included, and the target judges it
+           (owner, 9/30/26: "Erik only cares about that labor %, it's the
+           real %"; this reverses 9/28's hourly headline). The shifts alone
+           and the salaries sit under it (labor.salaried_summary). #}
+        {% if labor_salaried and labor.includes_salaries %}
+        <div class="lb2-bn lb2-sal"><span class="l">Hourly only</span><span class="row"><span class="hb-num stat-n">${{ labor.hourly_costed_labor|int|format_num }}</span><span class="hb-num pct stat-n">{{ labor.hourly_labor_pct }}%</span><span class="lb2-vs" title="Each trading day carries its share of the salaries: annual pay &divide; 52 weeks &divide; the days you trade a week. Set in Settings &rarr; Salaried staff."><span class="hb-num">${{ labor_salaried.cost|int|format_num }}</span> salaries &middot; <span class="hb-num">{{ labor_salaried.people }}</span> {{ 'person' if labor_salaried.people == 1 else 'people' }}</span></span></div>
         {% endif %}
       </div>
       {# Everything labor.py knows is incomplete about this upload. It has

@@ -449,7 +449,7 @@ def _build_result_harness(monkeypatch, db, today, **build_kw):
     import weather
     rid = _restaurant(db, module_labor=1)
     monkeypatch.setattr(labor, "load_shifts_for_restaurant", lambda r: [{"date": "2026-12-01", "employee": "Ana"}])
-    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r: {"is_live": True, "blended_rate": 20.0})
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r, **k: {"is_live": True, "blended_rate": 20.0})
     monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: today)
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])

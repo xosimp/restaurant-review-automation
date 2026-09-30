@@ -118,6 +118,10 @@ RESTAURANT_UNTRACKED = frozenset({
     # The account's own security: the security trail is activity_log's
     # (password, 2FA, device events), not a setting history.
     "two_fa_code", "two_fa_device_token", "two_fa_enabled", "two_fa_expires", "two_fa_method", "two_fa_pending",
+    # The owner's grant of full control through view-as: set only by the
+    # admin console's one route, whose admin_events row (record_admin_action,
+    # before/after) is its history.
+    "admin_control_until", "admin_control_note",
     # Billing and the contract: billing_status_history records every move
     # with its source and actor (models.BILLING_HISTORY_FIELDS).
     "billing_status", "pause_reason", "paused_until", "contract_status", "stripe_customer_id", "service_tier",

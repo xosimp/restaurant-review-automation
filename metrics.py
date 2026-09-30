@@ -46,6 +46,18 @@ def _d(v):
 
 # ── the metrics ────────────────────────────────────────────────────────────
 
+def _salary_share(rid, db_path):
+    """A trading day's share of the salaries, for the owner's reads (labor %
+    is all-in, owner 9/30/26; models.viewer_sees_salaries), else 0."""
+    try:
+        from models import get_restaurant, salaried_day_share, viewer_sees_salaries
+        if not viewer_sees_salaries():
+            return 0.0
+        return float(salaried_day_share(get_restaurant(rid, db_path) if db_path else get_restaurant(rid)) or 0)
+    except Exception:
+        return 0.0
+
+
 def _labor_pct(rid, start, end, param, db_path):
     conn = get_conn(db_path)
     try:
@@ -58,7 +70,8 @@ def _labor_pct(rid, start, end, param, db_path):
         conn.close()
     if not row or not row["n"] or not _f(row["sales"]):
         return None, "no days with both labor and sales in this window"
-    return round(_f(row["labor"]) / _f(row["sales"]) * 100, 1), f"{row['n']} days"
+    labor = _f(row["labor"]) + _salary_share(rid, db_path) * int(row["n"])
+    return round(labor / _f(row["sales"]) * 100, 1), f"{row['n']} days"
 
 
 def _sales(rid, start, end, param, db_path):
@@ -119,7 +132,8 @@ def _labor_pct_day(rid, start, end, param, db_path):
         conn.close()
     if not row or (row["n"] or 0) < 2 or not _f(row["sales"]):
         return None, f"fewer than two {day}s with both labor and sales in this window"
-    return round(_f(row["labor"]) / _f(row["sales"]) * 100, 1), f"{row['n']} {day}s"
+    labor = _f(row["labor"]) + _salary_share(rid, db_path) * int(row["n"])
+    return round(labor / _f(row["sales"]) * 100, 1), f"{row['n']} {day}s"
 
 
 _PARTS = ("morning", "night")

@@ -152,9 +152,9 @@ def test_sales_and_labor_are_rendered_as_the_big_numbers():
     panel = _labor_panel()
     assert '"lb2-bignums"' in panel
     assert re.search(r'class="lb2-bn"><span class="l">Sales</span>', panel)
-    # "Hourly labor" once salaried staff are set, so the salaries line beside
-    # it reads as the other half (owner, 9/28/26)
-    assert "class=\"lb2-bn\"><span class=\"l\">{{ 'Hourly labor' if labor_salaried else 'Labor' }}</span>" in panel
+    # "Labor with salaries" once salaried staff are set: the all-in figure is
+    # the headline the target judges (owner, 9/30/26)
+    assert "class=\"lb2-bn\"><span class=\"l\">{{ 'Labor with salaries' if labor.includes_salaries else 'Labor' }}</span>" in panel
     m = re.search(r"\.lb2-bn \.hb-num\{([^}]*)\}", _src())
     assert m and int(re.search(r"font-size:(\d+)px", m.group(1)).group(1)) >= 28, \
         "sales/labor need to read as the headline figures, not a caption"
@@ -173,7 +173,7 @@ def test_the_labor_number_carries_its_own_pct_colored_against_target():
     glance rather than making the owner do the division themselves."""
     panel = _labor_panel()
     m = re.search(
-        r"<span class=\"l\">\{\{ 'Hourly labor' if labor_salaried else 'Labor' \}\}</span>.*?class=\"hb-num pct[^\"]*"
+        r"<span class=\"l\">\{\{ 'Labor with salaries' if labor.includes_salaries else 'Labor' \}\}</span>.*?class=\"hb-num pct[^\"]*"
         r"\{\{ 'good' if _lp <= _lt else 'bad' \}\}\">\{\{ _lp \}\}%</span>",
         panel,
     )

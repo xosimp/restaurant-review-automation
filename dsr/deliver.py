@@ -332,12 +332,13 @@ def digest(payload, restaurant, kind=FIRST):
         # (thresholds.target_for; the scorecard and the web tile agree).
         starting = (labor.get("detail") or {}).get("target_source") == "default"
         stats.append({"value": f"{lm['pct']:.1f}%",
-                      "label": "Labor" + (f" · target {target:g}%" if target is not None else ""),
+                      "label": ("Labor with salaries" if lm.get("includes_salaries") else "Labor")
+                               + (f" · target {target:g}%" if target is not None else ""),
                       "tone": None if pts is None else (("warn" if starting else "bad") if pts > 0 else "good")})
-        # The owner's: hourly labor plus the night's share of the salaries
-        # (access._live_salaries) - beside the hourly %, never judged.
-        if _num(lm.get("salaried_total_pct")):
-            stats.append({"value": f"{lm['salaried_total_pct']:.1f}%", "label": "Labor with salaries", "tone": None})
+        # The owner's labor % above is all-in (access._live_salaries); the
+        # shifts alone ride beside it, unjudged.
+        if lm.get("includes_salaries") and _num(lm.get("hourly_pct")):
+            stats.append({"value": f"{lm['hourly_pct']:.1f}%", "label": "Hourly only", "tone": None})
 
     narrative = payload.get("narrative") or {}
     notes = (payload.get("checklist") or {}).get("narrative") or {}

@@ -9327,7 +9327,7 @@ def refresh_labor_periods(restaurant_id: int, db_path: str = DB_PATH, today=None
 
 
 def get_labor_history(restaurant_id: int, limit: int = 4,
-                      db_path: str = DB_PATH) -> list:
+                      db_path: str = DB_PATH, with_salaries: bool = True) -> list:
     """The restaurant's labor periods, newest first: [{period_start,
     period_end, labor_pct, total_labor, total_sales, days, basis, kind,
     complete, comparable, recosted_from}] — calendar payroll weeks
@@ -9340,7 +9340,13 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     against the one listed after it (the period just before it): both
     complete, adjacent (no gap between them), and costed on the same single
     basis. A comparison with anything else is "recosted, not comparable" or
-    no comparison at all (labor_period_change)."""
+    no comparison at all (labor_period_change).
+
+    `with_salaries` (default): labor_pct and total_labor are ALL-IN — each
+    day with sales in the period carries a trading day's share of the
+    salaries (salaried_day_share), the same basis as the Labor page (owner,
+    9/30/26). The stored rows stay hourly; hourly_labor_pct and
+    hourly_total_labor carry the shifts alone."""
     from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
     try:
@@ -9359,10 +9365,30 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     finally:
         conn.close()
     today = _restaurant_today(restaurant_id).isoformat()
+    share = 0.0
+    if with_salaries and viewer_sees_salaries():
+        try:
+            share = float(salaried_day_share(get_restaurant(restaurant_id, db_path)) or 0)
+        except Exception:
+            share = 0.0
     out = []
     for r in rows:
         d = dict(r)
         end = str(d.get("period_end") or "")[:10]
+        if share > 0 and d.get("total_sales"):
+            days = d.get("days")
+            if not days:
+                try:
+                    days = min(7, (_date_gh.fromisoformat(end) - _date_gh.fromisoformat(str(d["period_start"])[:10])).days + 1)
+                except (TypeError, ValueError, KeyError):
+                    days = 0
+            if days:
+                hourly = float(d.get("total_labor") or 0)
+                d["hourly_total_labor"], d["hourly_labor_pct"] = hourly, d.get("labor_pct")
+                d["salaried_cost"] = round(share * int(days), 2)
+                d["total_labor"] = round(hourly + d["salaried_cost"], 2)
+                d["labor_pct"] = round(d["total_labor"] / float(d["total_sales"]) * 100, 1)
+                d["includes_salaries"] = True
         if d.get("kind") == LABOR_PERIOD_WEEK:
             try:
                 wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
@@ -9798,6 +9824,25 @@ def open_days_per_week(restaurant) -> int:
             days |= {str(k).strip().lower() for k, v in d.items() if str(v or "").strip()}
     n = len(days & {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
     return n or 7
+
+
+def viewer_sees_salaries() -> bool:
+    """Whether this read may carry the salaries. Salaries are people's pay
+    and the owner's alone (dsr.access OWNER_ONLY_PREFIXES): an all-in labor
+    % beside the hourly one gives them away. Outside a request (a job
+    reporting to the owner) - yes; in a request, only for the account
+    holder (permissions.is_principal)."""
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return True
+        user = getattr(g, "cavnar_current_user", None)
+        if user is None:
+            return True
+        from permissions import is_principal
+        return bool(is_principal(user))
+    except Exception:
+        return False
 
 
 def salaried_day_share(restaurant):

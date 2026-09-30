@@ -59,14 +59,33 @@ def test_a_salaried_persons_punches_leave_hourly_labor(db_path):
     import labor
     rid = _world(db_path)
     a = labor.analyse_shifts_for_restaurant(rid)
-    assert a["costed_labor"] == 7 * 8 * 20.0                     # the cooks only: Erik's 28h are not $26 an hour
+    assert a["hourly_costed_labor"] == 7 * 8 * 20.0              # the cooks only: Erik's 28h are not $26 an hour
     assert a["salaried_hours_left_out"] == 28.0
     assert "Erik Baylis" not in a["employee_hours"]
     s = labor.salaried_summary(models.get_restaurant(rid), a)
     assert s["days"] == 7 and abs(s["cost"] - 300000 / 52) < 0.05     # seven trading days = one week's salary
     assert s["total_cost"] == round(1120.0 + s["cost"], 2)
     assert s["total_pct"] == round(s["total_cost"] / 35000 * 100, 1)
-    assert a["overall_labor_pct"] == 3.2                           # the headline stays hourly
+    # Labor % is all-in and the target judges it (owner, 9/30/26: "Erik only
+    # cares about that labor %, it's the real %"); the shifts alone beside it.
+    assert a["includes_salaries"] and a["overall_labor_pct"] == s["total_pct"]
+    assert abs(a["costed_labor"] - s["total_cost"]) < 0.05 and a["hourly_labor_pct"] == 3.2
+    # The schedule's hourly budget reads the shifts alone.
+    assert labor.analyse_shifts_for_restaurant(rid, with_salaries=False)["overall_labor_pct"] == 3.2
+
+
+def test_a_manager_never_reads_the_salaries_in_a_labor_figure(db_path):
+    """Salaries are the owner's (dsr OWNER_ONLY_PREFIXES): an all-in % beside
+    the hourly one would give them away, so a manager's read stays hourly."""
+    import labor
+    from flask import Flask, g
+    rid = _world(db_path)
+    mgr = {"id": 2, "restaurant_id": rid, "role": "manager", "is_admin": False}
+    with Flask(__name__).test_request_context("/"):
+        g.cavnar_current_user = mgr
+        a = labor.analyse_shifts_for_restaurant(rid)
+        assert not a["includes_salaries"] and a["overall_labor_pct"] == 3.2
+        assert not models.viewer_sees_salaries()
 
 
 def test_the_nights_report_carries_the_share_for_the_owner_only():
@@ -78,9 +97,11 @@ def test_the_nights_report_carries_the_share_for_the_owner_only():
                                            metrics={"cost": 3000.0, "pct": 30.0, "target_pct": 35.0})}}
     out = access._live_salaries(facts, r)
     m = out["blocks"]["labor"]["metrics"]
-    assert m["pct"] == 30.0                                        # hourly, untouched
     assert m["salaried_cost"] == round(300000 / 52 / 7, 2)
     assert m["salaried_total_pct"] == round((3000 + 300000 / 52 / 7) / 10000 * 100, 1)
+    # the owner's labor % is all-in and judged; the shifts alone beside it
+    assert m["pct"] == m["salaried_total_pct"] and m["hourly_pct"] == 30.0 and m["includes_salaries"]
+    assert m["vs_target_pts"] == round(m["pct"] - 35.0, 1)
     assert not access.line_allowed({}, access.MANAGER, "salaried_total_pct")
     assert access.line_allowed({}, access.OWNER, "salaried_total_pct")
     # hourly $ withheld (no wage entered): no salaries line either
@@ -112,10 +133,11 @@ def test_settings_adds_and_removes_one_person_at_a_time(db_path):
         assert got["targets"]["salaried"] == []                   # a manager never reads salaries
 
 
-def test_the_hero_and_the_report_show_it_beside_never_in_it():
-    assert "{{ 'Hourly labor' if labor_salaried else 'Labor' }}" in SRC
-    assert '<span class="l">With salaries</span>' in SRC
-    assert "if(isNum(m.salaried_total_pct))t+=tile('With salaries'" in SRC
+def test_the_hero_and_the_report_lead_with_labor_with_salaries():
+    assert "{{ 'Labor with salaries' if labor.includes_salaries else 'Labor' }}" in SRC
+    assert '<span class="l">Hourly only</span>' in SRC
+    assert "t+=tile(m.includes_salaries?'Labor with salaries':'Labor'" in SRC
+    assert "if(m.includes_salaries&&isNum(m.hourly_pct))t+=tile('Hourly only'" in SRC
     assert 'data-tg-sal-rm="' in SRC and "salaried_add: {name: n.value, annual: +a.value}" in SRC
 
 

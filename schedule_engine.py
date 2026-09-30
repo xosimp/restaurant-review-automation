@@ -167,7 +167,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     shifts = load_shifts_for_restaurant(restaurant_id)
     if not shifts:
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
-    analysis = analyse_shifts_for_restaurant(restaurant_id)
+    # Hourly: the schedule's hours budget is sales x target / the hourly rate.
+    analysis = analyse_shifts_for_restaurant(restaurant_id, with_salaries=False)
     # The guard above can never fire: load_shifts_for_restaurant substitutes
     # a bundled fictional week when a restaurant has uploaded nothing, so
     # `shifts` is always non-empty. That let a brand-new restaurant generate

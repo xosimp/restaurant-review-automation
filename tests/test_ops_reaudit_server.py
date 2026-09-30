@@ -47,7 +47,7 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
-    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r: {"is_live": True})
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r, **k: {"is_live": True})
     return db_path
 
 
