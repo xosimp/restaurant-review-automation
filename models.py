@@ -2698,6 +2698,15 @@ def init_db(db_path: str = DB_PATH):
         # snapshots are averaged) and the organisations behind each figure.
         "ALTER TABLE intel_confidence_log ADD COLUMN trust_version INTEGER",
         "ALTER TABLE intel_confidence_log ADD COLUMN orgs INTEGER",
+        # The ISO week's OWN figures are n / mean_confidence / acceptance_rate /
+        # success_rate / orgs (memory re-audit 9/29/26, PLATFORM-15: they were
+        # a 365-day trailing figure filed under the week); the trailing year
+        # has its own columns.
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_n INTEGER",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_mean_confidence REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_acceptance_rate REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_success_rate REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_orgs INTEGER",
         # What the platform believed, week by week (PLATFORM-14): one row
         # per pattern per ISO week per status it reached — written once,
         # never re-figured (the trigger refuses an UPDATE), so "this

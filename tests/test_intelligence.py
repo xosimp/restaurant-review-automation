@@ -280,7 +280,9 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
         privacy.assert_anonymous(x)
         assert not any(name in x["sentence"] for name in ("pizza 1 0", "Moat"))
     # the same kind is supported for a confidence score
-    assert patterns.support_for("reply", cohort=mine, db_path=db_path)["hypothesis"] == "reply_fast_rating"
+    # A real ledger kind, matched through its topic (memory re-audit 9/29/26,
+    # PLATFORM-16): "reply" was never a kind the ledger had.
+    assert patterns.support_for("urgent_reviews", cohort=mine, db_path=db_path)["hypothesis"] == "reply_fast_rating"
     # noise discovers nothing: shuffle the outcome and rerun
     conn = get_conn(db_path)
     rows = conn.execute("SELECT id, features_json FROM intel_features").fetchall()

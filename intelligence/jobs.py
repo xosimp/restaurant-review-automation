@@ -1041,7 +1041,15 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
       * the floors count organisations (privacy.org_map, via scoring), and
         `orgs` is stored beside n;
       * the rows of restaurants that may not teach (excluded_learning_ids)
-        and Google user data (provenance) are never in it."""
+        and Google user data (provenance) are never in it.
+
+    The row is the ISO WEEK's own (memory re-audit 9/29/26, PLATFORM-15):
+    n, mean_confidence, acceptance_rate, success_rate and orgs over the
+    events stamped in that week — each rate NULL below its own floor — with
+    the trailing-year figures in `trailing_*`. The weekly row was the
+    trailing year's, so "confidence over time" was a 52-week moving average
+    and a trust-version change took months to show. A row is written when
+    the trailing year clears the floor."""
     from datetime import timedelta
     try:
         import confidence_engine as _ce
@@ -1071,24 +1079,41 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
         c = cohorts.get(r["restaurant_id"])
         if c:
             groups.setdefault((c, r["rec_kind"]), []).append(r)
+    monday = today - timedelta(days=today.weekday())
+    week_lo, week_hi = monday.isoformat(), (monday + timedelta(days=7)).isoformat()
+
+    def figures(rs_):
+        s = scoring._summarise(rs_, orgs=orgs)
+        confs = [float(r["confidence_at"]) for r in rs_ if r["confidence_at"] is not None
+                 and (current_tv is None or r["trust_version"] == current_tv)]
+        recs = {scoring._rec(r) for r in rs_ if r["action"] != "measured"}
+        n_orgs = len({orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}") for r in rs_})
+        return {"n": len(recs), "orgs": n_orgs, "available": s["available"],
+                "mean": round(sum(confs) / len(confs), 3) if (confs and s["available"]) else None,
+                "acc": s["acceptance_rate"] if s.get("acceptance_available") else None,
+                "suc": s["success_rate"] if s.get("success_available") else None}
+
     conn = get_conn(db_path)
     try:
         for (cohort, kind), rs_ in groups.items():
-            s = scoring._summarise(rs_, orgs=orgs)
-            if not s["available"]:
+            year = figures(rs_)
+            if not year["available"]:
                 continue
-            confs = [float(r["confidence_at"]) for r in rs_ if r["confidence_at"] is not None
-                     and (current_tv is None or r["trust_version"] == current_tv)]
-            recs = {scoring._rec(r) for r in rs_ if r["action"] != "measured"}
-            n_orgs = len({orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}") for r in rs_})
+            wk = figures([r for r in rs_ if week_lo <= str(r["event_at"] or "").replace("T", " ") < week_hi])
             conn.execute("INSERT INTO intel_confidence_log (week, cohort, rec_kind, n, mean_confidence, acceptance_rate, "
-                         "success_rate, trust_version, orgs) VALUES (?,?,?,?,?,?,?,?,?) "
+                         "success_rate, trust_version, orgs, trailing_n, trailing_mean_confidence, "
+                         "trailing_acceptance_rate, trailing_success_rate, trailing_orgs) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                          "ON CONFLICT(week, cohort, rec_kind) DO UPDATE SET n=excluded.n, "
                          "mean_confidence=excluded.mean_confidence, acceptance_rate=excluded.acceptance_rate, "
                          "success_rate=excluded.success_rate, trust_version=excluded.trust_version, "
-                         "orgs=excluded.orgs, computed_at=datetime('now')",
-                         (week, cohort, kind, len(recs), round(sum(confs) / len(confs), 3) if confs else None,
-                          s["acceptance_rate"], s["success_rate"], current_tv, n_orgs))
+                         "orgs=excluded.orgs, trailing_n=excluded.trailing_n, "
+                         "trailing_mean_confidence=excluded.trailing_mean_confidence, "
+                         "trailing_acceptance_rate=excluded.trailing_acceptance_rate, "
+                         "trailing_success_rate=excluded.trailing_success_rate, trailing_orgs=excluded.trailing_orgs, "
+                         "computed_at=datetime('now')",
+                         (week, cohort, kind, wk["n"], wk["mean"], wk["acc"], wk["suc"], current_tv, wk["orgs"],
+                          year["n"], year["mean"], year["acc"], year["suc"], year["orgs"]))
             written += 1
         conn.commit()
     finally:

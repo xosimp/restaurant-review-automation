@@ -82,7 +82,7 @@ other modules need.
 | `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, `vals_json` (the member values, sorted), `members_json` (each value beside an organisation HASH), `orgs` (distinct organisations) and `max_org_share` — server-side only, so the band shown to a member leaves its whole organisation out. The cohort is a peer PARTITION key (`sm:<service model>[|bar][|protein|starch][|t<ticket band>][|v<volume band>][|u<urbanity band>]` — the ladder's rungs) or `platform` (behaviour metrics only). Frozen for the ISO week: the first computation of a week stands | stored over ≥ MIN_COHORT members from ≥ `privacy.MIN_ORGS` organisations; SHOWN only through `benchmarks.published()` (a viewer required and its organisation excluded, an organisation over ⅓ held to ⅓, ≥ 8 others from ≥ 5 organisations, spread gate, Harrell–Davis quartiles at a coarse step, ≤ 8 weeks old) |
 | `intel_peer_assignments` | per restaurant × week × family (format / labor / food): the rung reached (self / published / platform / peers), the partition, a hash of the peer set (never the ids), n and organisations with the viewer's own out, profile source and confirmation date, measured drift (#29) | tenant-keyed; server-side |
 | `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
-| `intel_confidence_log` | per week × cohort × kind: mean confidence (current `trust_version` snapshots only), acceptance, success, `n` (recommendations, not event rows), `orgs` | aggregates |
+| `intel_confidence_log` | per week × cohort × kind: the ISO week's own mean confidence (current `trust_version` snapshots only), acceptance, success, `n` (recommendations, not event rows), `orgs`; the trailing year's in `trailing_n`, `trailing_mean_confidence`, `trailing_acceptance_rate`, `trailing_success_rate`, `trailing_orgs` | aggregates |
 | `intel_rec_events` effect columns (boot ALTERs) | `metric`, `effect_pct`, `effect_z` (signed so positive = better), `baseline_kind`, `after_end`, `tags_json` — what a counted result MOVED (BM4-6) | tenant-keyed; filled only for results `rec_learning.learned_verdict` counts |
 | `intel_dna` | one row per restaurant-week of its Restaurant DNA: `dims_json` `{dim: {raw, z, n, basis, norm}}`, `coverage`, `version` | ratios, rates, shares and bands only — never dollars; `assert_anonymous` on every row |
 | `intel_benchmark_facts` | per restaurant × metric × week: the engine's `compare()` payload (kinds self/peers/platform/industry/market — never the viewer-dependent `location`), `available` | the restaurant's own comparisons only |
@@ -272,7 +272,11 @@ deleted restaurant's kept rows keep the labels they had.
    (`weeks_held`) and a retired pattern's past can be read
    (`GET /admin/api/intelligence/pattern-history`, admin only).
 6. **Confidence log** — the week's mean confidence and success by kind
-   (`jobs.log_confidence`): the mean averages only snapshots of the current
+   (`jobs.log_confidence`): since the memory re-audit (9/29/26,
+   PLATFORM-15) `n`, the mean, acceptance, success and `orgs` are the ISO
+   week's OWN events (each rate NULL below its own floor), and the
+   trailing 365 days sit beside them in `trailing_*` (they were the row);
+   the mean averages only snapshots of the current
    trust version (`confidence_engine.VERSION`, stored as `trust_version` — a
    version-1 % measured something else), `n` counts recommendations, the
    floors count organisations (`orgs` stored beside n), and rows of
@@ -1089,7 +1093,13 @@ across every restaurant on Cavnar pools every type and carries
 `pooled_types`; `patterns.pooled_on_economics` keeps such a pattern about
 labor, food cost or waste out of `support_for` (the K1 pattern-support
 factor) and out of Ask's context, since a type difference would pass as a
-behaviour effect.
+behaviour effect. A hypothesis's `rec_kinds` name real ledger kinds or
+`rec_ledger` TOPICS ("replies", "staffing", "posting" …), and
+`patterns.covers` matches a recommendation by its kind or its topic
+(`rec_ledger._topic_of`) — memory re-audit 9/29/26, PLATFORM-16: they
+named "reply", "schedule", "post", which no kind is, so a reply pattern
+could never support an `urgent_reviews` card; a test holds every entry to a
+real kind, topic or observed action.
 
 The groups are the owner-confirmed peer partitions the bands use, not the
 restaurant type (Benchmarking re-audit #21): each hypothesis runs inside
