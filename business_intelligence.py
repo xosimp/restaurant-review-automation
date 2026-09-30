@@ -1346,7 +1346,8 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         n = _low_star_waiting(restaurant_id, db_path=db_path)
         if n:
             add("urgent_reviews",
-                f"Reply to the {n} review{'' if n == 1 else 's'} at 2 stars or worse still waiting on an answer",
+                ("Reply to your unanswered 1- or 2-star review" if n == 1
+                 else f"Reply to your {n} unanswered 1- and 2-star reviews"),
                 "a guest who complained is waiting, and every later reader sees the silence",
                 ["reviews"], urgency="critical",
                 evidence=[f"{n} review{'' if n == 1 else 's'} at 1-2 stars from the last 30 days with no reply"],
