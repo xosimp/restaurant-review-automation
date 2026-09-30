@@ -54,6 +54,7 @@ def sync(restaurant_id, days=14, db_path=DB_PATH):
     """
     import pos
     end = date.today() - timedelta(days=1)
+    days = max(days, _restatement_days(restaurant_id, end, db_path))
     start = end - timedelta(days=days - 1)
     try:
         lines, provider = pos.fetch_loss_lines(restaurant_id, start, end)
@@ -64,13 +65,19 @@ def sync(restaurant_id, days=14, db_path=DB_PATH):
         if not ln.get("business_date") or ln.get("kind") not in KINDS:
             continue
         key = (ln["business_date"], ln["kind"])
-        d = daily.setdefault(key, {"amount": 0.0, "events": 0, "by_approver": {}})
+        d = daily.setdefault(key, {"amount": 0.0, "events": 0, "by_approver": {}, "by_reason": {}})
         d["amount"] += float(ln.get("amount") or 0)
         d["events"] += 1
         who = ln.get("approver") or "unrecorded"
         a = d["by_approver"].setdefault(who, {"amount": 0.0, "events": 0})
         a["amount"] += float(ln.get("amount") or 0)
         a["events"] += 1
+        if ln.get("approver_name"):
+            a["name"] = ln["approver_name"]
+        why = ln.get("reason") or "no reason recorded"
+        rr = d["by_reason"].setdefault(why, {"amount": 0.0, "events": 0})
+        rr["amount"] += float(ln.get("amount") or 0)
+        rr["events"] += 1
     conn = get_conn(db_path)
     try:
         # Replace the whole window: a day RPOWER re-posts must not keep a
@@ -86,26 +93,48 @@ def sync(restaurant_id, days=14, db_path=DB_PATH):
         d0 = start
         while d0 <= end:
             for kind in KINDS:
-                daily.setdefault((d0.isoformat(), kind), {"amount": 0.0, "events": 0, "by_approver": {}})
+                daily.setdefault((d0.isoformat(), kind), {"amount": 0.0, "events": 0, "by_approver": {},
+                                                          "by_reason": {}})
             d0 += timedelta(days=1)
         for (day, kind), d in daily.items():
             conn.execute(
                 "INSERT INTO pos_loss_daily (restaurant_id, business_date, kind, amount, events, "
-                "by_approver, provider) VALUES (?,?,?,?,?,?,?)",
+                "by_approver, by_reason, provider) VALUES (?,?,?,?,?,?,?,?)",
                 (restaurant_id, day, kind, round(d["amount"], 2), d["events"],
+                 json.dumps({k: dict({"amount": round(v["amount"], 2), "events": v["events"]},
+                                     **({"name": v["name"]} if v.get("name") else {}))
+                             for k, v in d["by_approver"].items()}),
                  json.dumps({k: {"amount": round(v["amount"], 2), "events": v["events"]}
-                             for k, v in d["by_approver"].items()}), provider))
+                             for k, v in d["by_reason"].items()}), provider))
         conn.commit()
     finally:
         conn.close()
     return {"ok": True, "days": days, "provider": provider, "lines": len(lines)}
 
 
+def _restatement_days(restaurant_id, end, db_path) -> int:
+    """How far back this sync must re-read. A row written before the POS's
+    reason names were kept (by_reason NULL — RPower endpoint audit, 9/29/26)
+    was also written under the old rules: every RPOWER comp at $0 and no
+    voids counted. signals() compares a week against the BASELINE_WEEKS
+    before it, so the first sync under the new rules re-reads that whole
+    window once; otherwise this week's real voids read as a spike against
+    weeks of stored zeros. 0 when nothing is stale."""
+    horizon = end - timedelta(days=7 * (BASELINE_WEEKS + 1) - 1)
+    conn = get_conn(db_path)
+    try:
+        stale = conn.execute("SELECT 1 FROM pos_loss_daily WHERE restaurant_id=? AND business_date>=? "
+                             "AND by_reason IS NULL LIMIT 1", (restaurant_id, horizon.isoformat())).fetchone()
+    finally:
+        conn.close()
+    return 7 * (BASELINE_WEEKS + 1) if stale else 0
+
+
 def _window(restaurant_id, start, end, db_path):
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT business_date, kind, amount, events, by_approver FROM pos_loss_daily "
+            "SELECT business_date, kind, amount, events, by_approver, by_reason FROM pos_loss_daily "
             "WHERE restaurant_id=? AND business_date>=? AND business_date<=?",
             (restaurant_id, start.isoformat(), end.isoformat())).fetchall()
     finally:
@@ -156,16 +185,24 @@ def signals(restaurant_id, today=None, db_path=DB_PATH):
                 "key": f"loss:{week_start.isoformat()}:{kind}:spike",
                 "headline": f"{kind.capitalize()}s ran {vs}",
                 "alternative": ALTERNATIVES[kind]})
-        # Who approved them.
-        who = {}
+        # Who approved them, and why (the POS's reason names).
+        who, why = {}, {}
         for r in wk:
             try:
                 for k, v in json.loads(r["by_approver"] or "{}").items():
                     w = who.setdefault(k, {"amount": 0.0, "events": 0})
                     w["amount"] += v["amount"]
                     w["events"] += v["events"]
+                    if v.get("name"):
+                        w["name"] = v["name"]
+                for k, v in json.loads(r["by_reason"] or "{}").items():
+                    y = why.setdefault(k, {"amount": 0.0, "events": 0})
+                    y["amount"] += v["amount"]
+                    y["events"] += v["events"]
             except Exception:
                 continue
+        entry["reasons"] = [{"reason": k, "amount": round(v["amount"], 2), "events": v["events"]}
+                            for k, v in sorted(why.items(), key=lambda kv: (-kv[1]["amount"], -kv[1]["events"]))]
         if amount >= MIN_WEEK_DOLLARS and who:
             top, stats = max(who.items(), key=lambda kv: kv[1]["amount"])
             share = stats["amount"] / amount if amount else 0
@@ -176,8 +213,9 @@ def signals(restaurant_id, today=None, db_path=DB_PATH):
                     # The key strategy_jobs._loss_flags_to_issues files the
                     # issue under: resolving the issue answers this flag.
                     "key": f"loss:{week_start.isoformat()}:{kind}:{top}",
-                    "headline": f"One manager (POS id {top}) approved {share:.0%} of this week's "
-                                f"{kind} dollars ({stats['events']} of {events})",
+                    "approver_name": stats.get("name"),
+                    "headline": f"One manager ({stats.get('name') or f'POS id {top}'}) approved {share:.0%} "
+                                f"of this week's {kind} dollars ({stats['events']} of {events})",
                     "alternative": "they may simply have worked the busiest shifts, or be the "
                                    "manager assigned to handle guest recovery"})
         out.append(entry)

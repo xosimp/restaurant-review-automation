@@ -482,15 +482,58 @@ def fetch_business_days(restaurant_id: int, start_date, end_date) -> dict:
 
 
 def _loss_kind(row: dict, types: dict):
-    """comp | void | refund, or None for an ordinary sale."""
-    if row.get("voided"):
-        return "void"
+    """comp | void | refund, or None for an ordinary sale.
+
+    A void is either a line flagged `voided` or a line of an "error" sales
+    type: RPOWER stores the store's voids as Error Correct lines (Simple
+    EJ's, 9/29/26: 64 in a week, `voided` 0 on every line of 9,720), so a
+    flag-only test counted no voids at all. A transfer to another check is a
+    "nonsale" line and is no loss."""
     st = types.get(str(row.get("slstype_mid"))) or {}
+    if row.get("voided") or st.get("type_error"):
+        return "void"
     if st.get("type_comp"):
         return "comp"
     if st.get("type_refund") or st.get("type_return"):
         return "refund"
     return None
+
+
+VOID_REASON_CACHE_SECONDS = 600
+_void_reason_cache = {}
+
+
+def void_reasons(restaurant_id: int) -> dict:
+    """{reason mid: name} — voidreason/getbycg, read once per
+    VOID_REASON_CACHE_SECONDS. The reason on every comp and void line was
+    kept as a bare id and never read (RPower endpoint audit, 9/29/26)."""
+    hit = _void_reason_cache.get(restaurant_id)
+    if hit and time.monotonic() - hit[0] < VOID_REASON_CACHE_SECONDS:
+        return hit[1]
+    token, base = _ctx(restaurant_id)
+    out = {str(r["mid"]): _tidy_name(r.get("name")) for r in
+           _paged(token, "voidreason/getbycg", {"cg": base["cg"], "sortorder": "name"}) if r.get("mid")}
+    _void_reason_cache[restaurant_id] = (time.monotonic(), out)
+    return out
+
+
+def _loss_amount(row: dict) -> float:
+    """What the line was worth: the item's regular price x qty, else its
+    price x qty, else |sales|. RPOWER leaves both prices 0 on comp and
+    error-correct lines and carries the value in `sales` — preferring a zero
+    price made every comp at Simple EJ's $0.00 (9/29/26: $332.59 in a week)."""
+    qty = abs(float(row.get("qty") or 1) or 1)
+    for key in ("regular_price", "price"):
+        try:
+            unit = abs(float(row.get(key) or 0))
+        except (TypeError, ValueError):
+            unit = 0.0
+        if unit > 0:
+            return round(unit * qty, 2)
+    try:
+        return round(abs(float(row.get("sales") or 0)), 2)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
@@ -505,13 +548,27 @@ def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
     prevention convention and it is also the fair one: a comp is a manager's
     decision, and the data says whose.
 
-    UNVERIFIED until the first live sync: whether a comp line's `sales` is
-    zero, negative or the comped value. The amount below prefers
-    regular_price x qty (what the item would have sold for) and falls back to
-    |sales| — stated to the owner as "as reported by RPOWER".
+    Checked live 9/29/26: a comp line's `sales` IS the comped value and both
+    prices are 0, so _loss_amount falls back to |sales|. Each line carries its
+    reason's name (void_reasons) and the approver's name — "as reported by
+    RPOWER".
     """
     token, base = _ctx(restaurant_id)
     types = sales_types(restaurant_id)
+    try:
+        reasons = void_reasons(restaurant_id)
+    except RPowerAuthError:
+        raise
+    except Exception as e:                       # the lines still count; only the words are missing
+        log.warning("[rpower] void reasons unavailable for %s: %s", restaurant_id, e)
+        reasons = {}
+    try:
+        names = (_people_cached(restaurant_id).get("employees") or {})
+    except RPowerAuthError:
+        raise
+    except Exception as e:
+        log.warning("[rpower] manager names unavailable for %s: %s", restaurant_id, e)
+        names = {}
     out = []
     for chunk_start, chunk_end in _chunk_range(start_date, end_date):
         rows = _paged(token, "ticketsales/getbybusinessdate", {
@@ -521,18 +578,14 @@ def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
             kind = _loss_kind(row, types)
             if not kind:
                 continue
-            qty = abs(float(row.get("qty") or 1) or 1)
-            unit = row.get("regular_price")
-            if unit in (None, "", 0):
-                unit = row.get("price")
-            try:
-                amount = abs(float(unit)) * qty if unit not in (None, "") else abs(float(row.get("sales") or 0))
-            except (TypeError, ValueError):
-                amount = abs(float(row.get("sales") or 0))
             approver = row.get("voidmgr_mid") if kind == "void" else row.get("mgr_mid")
+            approver = str(approver).strip() if approver not in (None, "", 0, "0") else None
+            rmid = str(row.get("voidrsn_mid") or "").strip()
             out.append({"business_date": _biz_date(row.get("date")), "kind": kind,
-                        "amount": round(amount, 2), "approver": str(approver) if approver else None,
-                        "reason": row.get("voidrsn_mid"), "shift": row.get("shift")})
+                        "amount": _loss_amount(row), "approver": approver,
+                        "approver_name": names.get(approver) if approver else None,
+                        "reason": reasons.get(rmid) or None, "reason_id": rmid or None,
+                        "shift": row.get("shift")})
     return out
 
 

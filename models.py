@@ -1154,6 +1154,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # window its guest text and replies are blanked for good
         # (history_rollups.erase_removed_reviews). NULL while restorable.
         ("reviews", "erased_at", "TEXT"),
+        # Why each comp and void happened, by the POS's own reason names
+        # ({reason: {amount, events}}; RPower endpoint audit 9/29/26 — the
+        # reason on every line was kept as an id and never read).
+        ("pos_loss_daily", "by_reason", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
