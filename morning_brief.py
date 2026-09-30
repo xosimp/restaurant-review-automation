@@ -522,7 +522,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "money": {"low": lo_m, "high": hi_m, "per": "month",
                                 "label": f"{t['label']} — opportunity, {amount}/month",
                                 "claim_kind": t.get("claim_kind"), "basis": t.get("basis")},
-                      "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month.",
+                      # A trim the figure implies on a night a campaign is
+                      # filling is said, not contradicted (CROSSMODULE-5).
+                      "text": f"Biggest dollar opportunity: {t['label']}, {amount}/month."
+                              + (f" {t['guard']}" if t.get("guard") else ""),
                       "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
     # ── accountability ──
