@@ -2212,6 +2212,15 @@ _RETENTION_DAYS = {
     # went out keeps its original on marketing_edits; the rest is only
     # needed to see which drafts were regenerated rather than used.
     "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
+    # Memory re-audit 9/29/26 (FORGET-15, INVENTORY-7): what an evicted Ask
+    # chat was about (its title — the owner's own first question — and the
+    # model's notes) and each answer's rating with its free-text note were
+    # kept forever, though nothing reads either past 400 days
+    # (read_past_conversations) or 365 (the console's AI-quality range). The
+    # monthly helpful rate outlives the ratings in learning_scorecards (kept
+    # forever, frozen a week after each month closes).
+    "ask_topics":         int(os.getenv("RETAIN_ASK_TOPICS_DAYS", "400")),
+    "ask_feedback":       int(os.getenv("RETAIN_ASK_FEEDBACK_DAYS", "400")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2236,6 +2245,7 @@ _RETENTION_COLUMN = {
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
     "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
+    "ask_topics": "created_at", "ask_feedback": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2306,6 +2316,9 @@ _RETENTION_FLOOR_DAYS = {
     # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
     # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
     "reply_draft_rejections": 90, "marketing_model_drafts": 90,
+    # Ask's past chats read up to 400 days (read_past_conversations); the
+    # console's AI quality reads up to a year of ratings.
+    "ask_topics": 400, "ask_feedback": 365,
 
 
     # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
@@ -2394,6 +2407,10 @@ _RETENTION_READERS = {
                                ("marketing_voice._match_draft", 1, None)),
 
 
+    "ask_topics": (("ask_conversations.past_conversations", 400, None),
+                   ("ask_conversations.often_asks", "ask_conversations.OFTEN_ASKS_DAYS", None)),
+    "ask_feedback": (("models.ask_feedback_rows", 180, None), ("models.ask_feedback_summary", 90, None),
+                     ("admin_ops.ai_quality", 365, None), ("learning_scorecard.compute_month", 60, None)),
     "ai_reads": (("ask_cavnar_tools._read_recent_reads", 180, None),
                  ("ai_reads.recent_reads", 30, None)),
     "ai_claims": (("ai_reads.claims_record", 365, None), ("ai_reads.confidence_calibration", 365, None),
@@ -2539,6 +2556,8 @@ def _ensure_retention_indexes(conn):
         ("morning_brief_deliveries",
          "CREATE INDEX IF NOT EXISTS idx_morning_brief_deliveries_created ON morning_brief_deliveries(created_at)"),
         ("alert_storm_caps", "CREATE INDEX IF NOT EXISTS idx_alert_storm_caps_started ON alert_storm_caps(started_at)"),
+        ("ask_topics", "CREATE INDEX IF NOT EXISTS idx_ask_topics_created ON ask_topics(created_at)"),
+        ("ask_feedback", "CREATE INDEX IF NOT EXISTS idx_ask_feedback_created ON ask_feedback(created_at)"),
     ):
         if table in have:
             try:

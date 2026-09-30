@@ -13837,6 +13837,10 @@ def delete_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PA
         if cur.rowcount:
             conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=? AND restaurant_id=?",
                          (conversation_id, restaurant_id))
+            # And what it was about, if it was ever kept (memory re-audit
+            # 9/29/26, INVENTORY-7): a deleted chat is deleted everywhere.
+            conn.execute("DELETE FROM ask_topics WHERE conversation_id=? AND restaurant_id=?",
+                         (conversation_id, restaurant_id))
         conn.commit()
         return bool(cur.rowcount)
     finally:
@@ -14114,6 +14118,19 @@ def clear_ask_history(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
             conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=?",
                          (restaurant_id, cid))
             conn.execute("DELETE FROM ask_cavnar_conversations WHERE restaurant_id=? AND id=?", (restaurant_id, cid))
+        # What this login's evicted chats were about goes too (memory
+        # re-audit 9/29/26, INVENTORY-7): "Clear history" left every title
+        # and summary in ask_topics, and the next turn still said "Recent
+        # questions: …" and read_past_conversations still returned them.
+        # The rows the login could read: its own, and the ownerless legacy
+        # ones only for an account holder (ask_conversations._reads_legacy).
+        if viewer_id is None:
+            conn.execute("DELETE FROM ask_topics WHERE restaurant_id=?", (restaurant_id,))
+        else:
+            import ask_conversations
+            legacy = ask_conversations._reads_legacy(restaurant_id, viewer_id, db_path=db_path)
+            conn.execute("DELETE FROM ask_topics WHERE restaurant_id=? AND "
+                         + ("(user_id=? OR user_id IS NULL)" if legacy else "user_id=?"), (restaurant_id, viewer_id))
         if viewer_id is None:
             conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=?", (restaurant_id,))
         conn.commit()
