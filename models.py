@@ -8242,45 +8242,48 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     one by one — the model's text again, not the owner's choice (M-3).
 
     Memory audit 9/29/26 (reply_voice): only approvals in the owner's voice
-    (reply_voice_sql), never a removed review; once the owner has edited any
-    reply, only edited replies are examples — an unedited approval is the
-    model's own text; `rating` picks the band of the review being answered
-    (in band first, then the 3-star band beside it, never across it); the
-    last 12 months first, then a known approver before an unknown one, then
-    newest. rating=None reads every band."""
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute(f"""
-            SELECT id, rating, text, draft_response, edit_category, approved_role,
-                   CASE WHEN COALESCE(approved_at, posted_at, fetched_at) >= datetime('now', ?) THEN 1 ELSE 0 END
-                       AS recent
-            FROM reviews
-            WHERE restaurant_id=? AND deleted_at IS NULL
-              AND response_status IN ('approved','posted')
-              AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
-              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-              AND {reply_voice_sql(conn)}
-            ORDER BY id DESC LIMIT ?
-        """, (f"-{int(EXAMPLES_PREFER_DAYS)} days", restaurant_id, EXAMPLES_POOL)).fetchall()
-    finally:
-        conn.close()
-    pool = [dict(r) for r in rows]
-    edited = [r for r in pool if r["edit_category"] in EDITED_CATEGORIES]
-    if edited:
-        pool = edited
+    (reply_voice_sql), never a removed review; `rating` picks the band of
+    the review being answered (in band first, then the 3-star band beside
+    it, never across it); the last 12 months first, then a known approver
+    before an unknown one, then newest. rating=None reads every band.
+
+    Per band (memory re-audit 9/29/26, PROMPTS-11): a band with an edited
+    reply offers only its edited ones (an unedited approval is the model's
+    own text); a band with none offers its approvals as drafted before the
+    neighbour band is read. One light edit to a 5-star thank-you used to
+    discard every unedited approval in every band, so the 1-star drafts —
+    where the owner's voice matters most — lost all their examples. Each
+    band is read in SQL before its own LIMIT, so a busy 5-star stream no
+    longer crowds the older in-band approvals out of one shared window."""
+    band = reply_band(rating)
+    tiers = [None] if band is None else [band] + list(_BAND_NEIGHBOURS.get(band, ()))
 
     def rank(r):
         return (0 if r["recent"] else 1, 0 if r["approved_role"] else 1, -int(r["id"]))
-    band = reply_band(rating)
-    if band is None:
-        chosen = sorted(pool, key=rank)[:limit]
-    else:
+    conn = get_conn(db_path)
+    try:
         chosen = []
-        for tier in (band,) + _BAND_NEIGHBOURS.get(band, ()):
-            chosen += sorted((r for r in pool if reply_band(r["rating"]) == tier), key=rank)
+        for tier in tiers:
+            tier_sql = f" AND rating IN ({','.join(str(int(x)) for x in tier)})" if tier else ""
+            rows = [dict(r) for r in conn.execute(f"""
+                SELECT id, rating, text, draft_response, edit_category, approved_role,
+                       CASE WHEN COALESCE(approved_at, posted_at, fetched_at) >= datetime('now', ?) THEN 1 ELSE 0 END
+                           AS recent
+                FROM reviews
+                WHERE restaurant_id=? AND deleted_at IS NULL
+                  AND response_status IN ('approved','posted')
+                  AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
+                  AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+                  AND {reply_voice_sql(conn)}{tier_sql}
+                ORDER BY id DESC LIMIT ?
+            """, (f"-{int(EXAMPLES_PREFER_DAYS)} days", restaurant_id, EXAMPLES_POOL)).fetchall()]
+            edited = [r for r in rows if r["edit_category"] in EDITED_CATEGORIES]
+            chosen += sorted(edited or rows, key=rank)
             if len(chosen) >= limit:
                 break
-        chosen = chosen[:limit]
+    finally:
+        conn.close()
+    chosen = chosen[:limit]
     return [{"rating": r["rating"], "review": (r["text"] or "")[:120], "response": r["draft_response"],
              "edited": r["edit_category"] in EDITED_CATEGORIES} for r in chosen]
 
@@ -8320,20 +8323,36 @@ def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH
         return None
 
 
+REPLY_NOTE_DAYS = 365          # how far back the drafter's style note reads EDITED approvals
+
+
 def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH,
-                             rating: int = None) -> list:
+                             rating: int = None, edited_only: bool = False, days: int = None) -> list:
     """The most recent approved replies' edit summaries, newest first —
     what drafter.draft_response turns into its OWNER'S EDITS note. Only a
     person's approvals (not the auto-approve rule's or a bulk publish's), in
     the owner's voice (reply_voice_sql), on reviews still up; `rating`
     reads only the band of the review being answered (memory audit
     9/29/26, reply_voice) — a 1-star reply's length never comes from the
-    owner's 5-star edits."""
+    owner's 5-star edits.
+
+    `edited_only` reads only the approvals the owner CHANGED (light, heavy,
+    rewrite), over the last `days` — what drafter.get_owner_edit_note reads
+    (memory re-audit 9/29/26, LOOPS-4): read over the newest approvals of any
+    kind, the note erased itself once the drafter followed it — ten
+    approvals of drafts that now matched pushed the three edits that taught
+    it out of the window, and the next drafts went back to what the owner
+    had corrected. An edit that reverses a lesson still outvotes it
+    (reply_edits.style_note's shared-signal rule)."""
     import json as _json
     conn = get_conn(db_path)
     try:
         band = reply_band(rating)
         band_sql = f" AND rating IN ({','.join(str(int(x)) for x in band)})" if band else ""
+        if edited_only:
+            band_sql += f" AND edit_category IN ({','.join(repr(c) for c in EDITED_CATEGORIES)})"
+        if days:
+            band_sql += f" AND COALESCE(approved_at, posted_at, fetched_at) >= datetime('now', '-{int(days)} days')"
         rows = conn.execute(
             "SELECT rating, edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "

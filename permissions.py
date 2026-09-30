@@ -141,6 +141,12 @@ LOSS_VIEW = "loss.view"
 # models.reply_voice_sql reads the grant — and it never earns auto-approve
 # trust, which rests on the account holder's own approvals.
 REVIEWS_VOICE = "reviews.voice"
+# The same for marketing (memory re-audit 9/29/26, LOOPS-15): a login the
+# owner marks as writing posts, emails and texts in the restaurant's voice —
+# its sent pieces and edits teach the marketing generators as the account
+# holder's do (marketing_voice._principal_rows reads the grant). A GM who
+# writes every post used to teach nothing. It opens no route and no data.
+MARKETING_VOICE = "marketing.voice"
 
 # What an owner may grant an individual login on top of its role, per
 # location (permission_grants). A fixed list on purpose: administering logins,
@@ -149,6 +155,7 @@ GRANTABLE = {
     FOOD_COST_VIEW: "Food cost & margins",
     LOSS_VIEW: "Comps & voids",
     REVIEWS_VOICE: "Writes replies in our voice",
+    MARKETING_VOICE: "Writes posts in our voice",
 }
 # Roles a grant can be given to. Owners already hold everything; employees
 # are PIN identities with no console at all.

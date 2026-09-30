@@ -235,6 +235,11 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
         # The backstop: personnel and money said by an account holder stay
         # theirs, whatever the model asked for.
         audience = "principals"
+    if who["authority"] == "admin" and audience == "team":
+        # Said by Cavnar AI support through view-as: for the account
+        # holders only (memory re-audit 9/29/26, PROMPTS-12) — support's
+        # words never reach the whole team as the restaurant's.
+        audience = "principals"
     if isinstance(modules, str):
         modules = [m.strip() for m in modules.split(",")]
     saved = models.remember_ask_fact(

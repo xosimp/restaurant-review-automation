@@ -97,13 +97,18 @@ def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
     try:
         import reply_edits
         from models import get_reply_edit_summaries, get_reply_rejection_signals, reply_band, band_label
+        from models import REPLY_NOTE_DAYS
         band = reply_band(rating)
+        # The owner's EDITED approvals over the last year, never the newest
+        # approvals of any kind (memory re-audit 9/29/26, LOOPS-4): the note
+        # stays while the drafter follows it, and only newer edits change it.
+        edits = dict(edited_only=True, days=REPLY_NOTE_DAYS, limit=reply_edits.NOTE_WINDOW)
         if band is None:
-            return reply_edits.style_note(get_reply_edit_summaries(restaurant_id))
-        note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, rating=rating),
+            return reply_edits.style_note(get_reply_edit_summaries(restaurant_id, **edits))
+        note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, rating=rating, **edits),
                                       scope=f"replies to {band_label(band)} reviews")
         if not note:
-            note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id),
+            note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id, **edits),
                                           only=reply_edits.BAND_FREE_SIGNALS, with_length=False,
                                           scope="replies to reviews of any rating")
         # What the drafts this owner regenerated had in common, against the

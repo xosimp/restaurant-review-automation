@@ -277,7 +277,9 @@ def test_trust_says_when_a_band_earned_it_what_lapsed_and_what_was_undone():
 
 
 def test_a_teammates_voice_option_says_what_it_does():
-    assert "var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.'};" in SRC
+    # marketing.voice joined it in the memory re-audit fix round (LOOPS-15).
+    assert ("var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.',"
+            "'marketing.voice':'Their posts, emails and texts teach Cavnar AI your voice.'};") in SRC
 
 
 # ── Data Health, the undo question, the Why? panel ──────────────────────────
