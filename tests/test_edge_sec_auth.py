@@ -541,6 +541,41 @@ def test_the_google_callback_never_reflects_the_error_parameter_unescaped(client
     assert "<script>alert(1)</script>" not in body
 
 
+def test_google_returns_through_a_same_site_hop_so_a_strict_view_as_session_rides_along(client, db_path):
+    """9/30/26: viewing as Simple EJ's, Google's cross-site redirect left the
+    SameSite=Strict view-as cookie behind and the callback finished as the
+    admin's own restaurant. The first landing only hops, same-site, with the
+    code unused and nothing reflected raw."""
+    import gmb
+    rid, owner, mgr = _setup(db_path)
+    called = []
+    orig = gmb.exchange_code
+    gmb.exchange_code = lambda code: called.append(code) or {}
+    try:
+        body = client.get('/auth/google/callback?code=c"><script>alert(1)</script>&state=n:1').get_data(as_text=True)
+    finally:
+        gmb.exchange_code = orig
+    assert "location.replace(" in body and "hop=1" in body and not called
+    assert "<script>alert(1)</script>" not in body
+
+
+def test_a_google_flow_started_for_another_restaurant_stores_nothing(client, db_path, monkeypatch):
+    import gmb
+    rid, owner, mgr = _setup(db_path)
+    other = create_restaurant(Restaurant(name="Other", owner_email="o@y.test"), db_path=db_path)
+    update_restaurant(rid, {"google_place_id": "P1"}, db_path=db_path)
+    monkeypatch.setattr(gmb, "exchange_code", lambda code: {"access_token": "t"})
+    monkeypatch.setattr(gmb, "find_gmb_location", lambda tok, pid: {"ok": True, "account": "a/1", "location": "l/1",
+                                                                    "title": "R"})
+    client.set_cookie("session_token", create_session(owner, db_path=db_path))
+    client.set_cookie("gmb_oauth_state", "n0nce")
+    body = client.get(f"/auth/google/callback?code=c&state=n0nce:{other}&hop=1").get_data(as_text=True)
+    assert "started for a different restaurant" in body and "signed in as R" in body
+    assert not get_restaurant(rid, db_path).gmb_location_id
+    body = client.get(f"/auth/google/callback?code=c&state=n0nce:{rid}&hop=1").get_data(as_text=True)
+    assert "gmb:'connected'" in body and get_restaurant(rid, db_path).gmb_location_id == "l/1"
+
+
 # ── malformed JSON on the unauthenticated mobile endpoints ───────────────────
 
 @pytest.mark.parametrize("body", ['"x"', "[1]"])

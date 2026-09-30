@@ -938,11 +938,10 @@ def _gmb_popup_error(message):
     error to the dashboard that opened it and says the same thing itself."""
     import json as _json_pe
     from html import escape as _esc_pe
-    return (
-        "<html><body><script>"
+    return (_SIMPLE_PAGE % (
+        "<script>"
         "window.opener&&window.opener.postMessage({gmb:'error',msg:" + _json_pe.dumps(message).replace("</", "<\\/") + "},'*');"
-        "</script><p>" + _esc_pe(message) + " Close this window.</p></body></html>"
-    )
+        "</script><h1>Google Business not connected</h1><p>" + _esc_pe(message) + "</p><p>You can close this window.</p>"))
 
 
 @auth_bp.route("/auth/google/connect")
@@ -970,6 +969,31 @@ def gmb_connect(current_user):
 
 
 @auth_bp.route("/auth/google/callback")
+def gmb_callback_entry():
+    """Where Google sends the popup back. That redirect comes from
+    accounts.google.com, a cross-site navigation, so a SameSite=Strict
+    session (an admin view-as) is not sent on it and the callback ran as
+    whoever else the browser could sign in as (9/30/26: Will, viewing as
+    Simple EJ's, finished as the admin console's own restaurant — "no
+    Google Place ID on file"). One same-site hop first brings every session
+    cookie along; the code is not used until then. Errors need no hop."""
+    from urllib.parse import urlencode
+    import json as _json_hop
+    from html import escape as _esc_hop
+    if request.args.get("code") and not request.args.get("hop"):
+        keep = {k: request.args.get(k) for k in ("code", "state", "scope", "authuser", "prompt")
+                if request.args.get(k) is not None}
+        url = "/auth/google/callback?" + urlencode(dict(keep, hop="1"))
+        resp = make_response(_SIMPLE_PAGE % (
+            "<script>location.replace(" + _json_hop.dumps(url).replace("</", "<\\/") + ");</script>"
+            "<h1>Connecting Google Business…</h1><p>One moment. If nothing happens, "
+            "<a href=\"" + _esc_hop(url) + "\">continue</a>.</p>"))
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    return gmb_callback()
+
+
 @login_required
 def gmb_callback(current_user):
     """Handle Google OAuth callback — exchange code, store tokens, discover location.
@@ -1027,6 +1051,16 @@ def gmb_callback(current_user):
             "</script><p>Connection expired. Close this window and try again.</p></body></html>"
         )
 
+    # The flow belongs to the restaurant that started it. Signed in as a
+    # different one here (a view-as that ended, another login in this
+    # browser), nothing is stored: state_rid is only compared, never used.
+    if state_rid and state_rid != str(current_user.get("restaurant_id")):
+        _here = get_restaurant(current_user["restaurant_id"])
+        return _gmb_popup_error(
+            "This connection was started for a different restaurant, but this window is signed in as "
+            + ((_here.name if _here else None) or "another account")
+            + ". Open that restaurant's dashboard and connect Google again.")
+
     try:
         # Always use the logged-in user's own restaurant — state_rid is not trusted.
         restaurant_id = current_user["restaurant_id"]
@@ -1044,13 +1078,7 @@ def gmb_callback(current_user):
         r = get_restaurant(restaurant_id)
         match = find_gmb_location(access_token, (r.google_place_id or "") if r else "")
         if not match.get("ok"):
-            _msg = _html_escape(match.get("error") or "Could not match this Google account to this restaurant.")
-            return (
-                "<html><body><script>"
-                "window.opener&&window.opener.postMessage({gmb:'error'},'*');"
-                "</script><p>Google Business not connected.</p>"
-                f"<p>{_msg}</p></body></html>"
-            )
+            return _gmb_popup_error(match.get("error") or "Could not match this Google account to this restaurant.")
 
         update_restaurant(restaurant_id, {
             "gmb_access_token":  access_token,
