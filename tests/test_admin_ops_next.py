@@ -201,7 +201,7 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
     assert next(c for c in admin_ops.clients()["clients"] if c["id"] == rid)["is_demo"] is False
     assert cl.post("/admin/api/client/999999/demo", json={"is_demo": 1, "confirm_name": "x"}).status_code == 404
     html = open("templates/admin.html").read()
-    assert "_showDemo = true" in html
+    assert "_showDemo = false" in html      # demo and internal accounts hidden on load (Will, 9/29/26)
     for f in ("hosted_dashboard.py", "demo_seed.py"):
         assert "UPDATE restaurants SET is_demo=1" not in open(f).read(), f
 

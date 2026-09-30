@@ -640,7 +640,8 @@ document.addEventListener('keydown', e => {
 const HEALTH = {healthy:['ok','Healthy'], warning:['warn','Warning'], critical:['bad','Critical'], inactive:['off','Inactive']};
 const hb = (h) => { const x = HEALTH[h] || ['off', h||'—']; return `<span class="b ${x[0]}">${x[1]}</span>`; };
 const BILL = {active:'ok', trial:'info', past_due:'bad', churned:'off', canceled:'off', paused:'warn', internal:'off'};
-const bill = (s) => `<span class="b ${BILL[s]||'off'} nodot">${esc((s||'trial').replace('_',' '))}</span>`;
+// A demo account reads "demo", never the billing status it happens to carry (usually trial).
+const bill = (s, demo) => demo ? '<span class="b ember nodot">demo</span>' : `<span class="b ${BILL[s]||'off'} nodot">${esc((s||'trial').replace('_',' '))}</span>`;
 const INT = {connected:'ok', error:'bad', off:'off'};
 const intb = (s, label) => `<span class="b ${INT[s]||'off'}">${esc(label||s)}</span>`;
 const MOD = {healthy:'ok', stale:'warn', no_data:'warn', unconfigured:'bad', off:'off'};
@@ -1273,7 +1274,7 @@ async function incidentOpen(){
 // attention (#141). Billing, Onboarding and the Support queue are tabs beside it.
 // (_clients stays the full-record cache loadClients() fills for the pages
 // that still read every record.)
-let _clients = null, _cq = '', _showDemo = true, _openBrands = {}, _ch = '', _cs = '', _csort = 'health', _cpage = 1;
+let _clients = null, _cq = '', _showDemo = false, _openBrands = {}, _ch = '', _cs = '', _csort = 'health', _cpage = 1;
 const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 72px 96px';
 const HEALTH_RANK = {inactive:-1, healthy:0, warning:1, critical:2};
 function monoTile(name, health){
@@ -1288,9 +1289,9 @@ function setupBar(sc){ if(sc == null) return '<span class="dim">—</span>';
 // Plan: the status, and what the location contributes — billed from the
 // Stripe mirror, list price where there is no mirror row yet, or nothing
 // because a group's subscription covers it (decision 1, #116).
-function planCell(r){ const c = {active:'var(--ink2)', past_due:'var(--red-t)', trial:'var(--blue)', paused:'var(--amber-t)'}[r.status] || 'var(--ink4)';
+function planCell(r){ const c = r.is_demo ? 'var(--ember2)' : ({active:'var(--ink2)', past_due:'var(--red-t)', trial:'var(--blue)', paused:'var(--amber-t)'}[r.status] || 'var(--ink4)');
   const money = r.billed_by ? 'covered by ' + ((r.billed_by && r.billed_by.name) || 'its group') : (r.monthly ? fmtUSD(r.monthly) + '/mo' + (r.mrr_source === 'list' ? ' · list price' : '') : '—');
-  return `<span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:13px;font-weight:700;color:${c}">${esc((r.status||'trial').replace('_',' ').replace(/^./,x=>x.toUpperCase()))}</span><span class="n muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(money)}">${esc(money)}</span></span>`; }
+  return `<span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:13px;font-weight:700;color:${c}">${r.is_demo ? 'Demo' : esc((r.status||'trial').replace('_',' ').replace(/^./,x=>x.toUpperCase()))}</span><span class="n muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(money)}">${esc(money)}</span></span>`; }
 function riskCell(r){
   const out = [];
   if(r.deletion_due) out.push(`<span class="chip bad" title="Asked to close their account">closing · due ${fmtD(r.deletion_due)}</span>`);
@@ -1314,7 +1315,7 @@ function custDetail(r){
 }
 function custRow(r, indent){
   const sub = [r.location_name || r.city || '', r.owner || ''].filter(Boolean).join(' · ');
-  const tag = r.segment === 'internal' ? ` <span class="chip" title="Internal accounts never count toward attention or MRR">${r.is_demo ? 'demo' : 'internal'}</span>` : '';
+  const tag = r.segment === 'internal' && !r.is_demo ? ` <span class="chip" title="Internal accounts never count toward attention or MRR">internal</span>` : '';
   return `<div class="li click" style="display:grid;${CUST_COLS};gap:14px${indent?';padding-left:46px':''}" onclick="toggleRow(this)">
     <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(r.name, r.health)}<span style="display:flex;flex-direction:column;min-width:0"><a href="#client/${r.id}" onclick="event.stopPropagation()" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(indent ? (r.location_name || r.name) : r.name)}</a><span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}${tag}</span></span></span>
     <span>${hb(r.health)}</span>${planCell(r)}${setupBar(r.setup)}<span style="display:flex;gap:4px;flex-wrap:wrap">${riskCell(r)}</span>
@@ -1446,8 +1447,8 @@ function billRow(r){
   // Sends are for customers: never the admin's own home, a demo or a test account.
   const act = r.segment !== 'customer' ? '' : r.contract_status!=='signed' && ['churned','canceled'].indexOf(r.status)<0 ? `<button class="btn s w" onclick="resendContract(${r.restaurant_id},'${jsq(r.restaurant)}','${jsq(r.owner_email||'')}')">Contract</button>`
     : (r.status!=='active' && !r.billed_by && ['churned','canceled','paused','internal'].indexOf(r.status)<0 ? `<button class="btn s w" onclick="resendPayment(${r.restaurant_id},'${jsq(r.restaurant)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">${r.status==='past_due'?'Card link':'Payment link'}</button>` : '');
-  return `<div class="li" style="display:grid;${BILL_COLS};gap:14px"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span title="${esc(r.owner_email||'')}">${esc(r.owner||'')}${r.segment==='internal'?' <span class="chip">internal</span>':''}${r.deletion?' <span class="chip bad">closing</span>':''}</span></div>
-    <span style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${bill(r.status)}${pause}</span>
+  return `<div class="li" style="display:grid;${BILL_COLS};gap:14px"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span title="${esc(r.owner_email||'')}">${esc(r.owner||'')}${r.segment==='internal'&&!r.is_demo?' <span class="chip">internal</span>':''}${r.deletion?' <span class="chip bad">closing</span>':''}</span></div>
+    <span style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${bill(r.status, r.is_demo)}${pause}</span>
     <span style="font-size:12.5px">${who}${lm}</span>
     <span style="font-size:12.5px">${live}${sm}</span>
     <span style="font-size:12.5px">${contractPill(r.contract_status)}${r.signed_at?`<div class="dim">signed ${fmtD(r.signed_at)}${r.days_since_signed!=null&&!r.converted_at&&r.status==='trial'?' · '+r.days_since_signed+'d unpaid':''}</div>`:(r.days_in_trial!=null?`<div class="dim">trial day ${r.days_in_trial}</div>`:'')}</span>
@@ -1617,7 +1618,7 @@ async function clientView(id, qs){
       <span class="mono-tile" style="width:64px;height:64px;border-radius:18px;font-size:20px;${HEALTH_TILE[c.health]||HEALTH_TILE.inactive}">${esc(monoTile(c.name, c.health).replace(/<[^>]+>/g,''))}</span>
       <div style="flex:1;min-width:260px;display:flex;flex-direction:column;gap:10px">
         <h1>${esc(c.name)}${c.location_name?` <span style="font-family:var(--sans);font-size:16px;font-weight:400;color:var(--ink4)">${esc(c.location_name)}</span>`:''}</h1>
-        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'?pill('neu', c.is_demo?'demo · internal':'internal', false):''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">${hb(c.health)}${c.is_demo?pill('emb', 'demo', false):pill(BILL[b.status]==='bad'?'bad':(b.status==='paused'?'warn':'neu'), esc((b.status||'trial').replace('_',' '))+(b.monthly?' · <span class="n">'+fmtUSD(b.monthly)+'</span>/mo'+(b.mrr_source==='list'?' list':''):''), false)}${contractPill(b.contract_status)}${pill('neu', b.modules+' module'+(b.modules===1?'':'s'), false)}${c.segment==='internal'&&!c.is_demo?pill('neu', 'internal', false):''}${churn.level==='high'||churn.level==='medium'?pill(churn.level==='high'?'bad':'warn', esc(churn.level)+' churn risk', false):''}</span>
         <span class="muted" style="font-size:13px">${esc(login?login.username:'no login')}${c.owner_name?' ('+esc(c.owner_name)+')':''}${c.owner_email?' · '+esc(c.owner_email):''}${c.owner_phone?' · '+esc(c.owner_phone):''} · joined <span class="n">${fmtD(c.created_at)}</span> · <span title="${esc(actTitle || 'No owner activity on record')}">active <span class="n">${c.last_active?ago(c.last_active)+' ago':'never'}</span></span>${c.on_ios?' <span class="chip" title="The owner uses the iOS app">iOS</span>':''}${c.team_last_seen?' · team '+ago(c.team_last_seen)+' ago':''} · #${c.id}</span>
         ${bits.length ? `<span class="muted" style="font-size:13px">${bits.join(' · ')}</span>` : ''}
       </div>
@@ -1684,10 +1685,10 @@ async function cBillingMain(c){
   const lists = $('cb-lists');
   if(lists) lists.innerHTML = cBillingLists(d);
   const envs = d.envelopes || [], env0 = envs[0] || null;
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Billing</h2>${bill(d.billing_status)}</div>
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Billing</h2>${bill(d.billing_status, c.is_demo)}</div>
     ${hold ? `<div class="warnline" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} On hold: ${esc(PAUSE_LABEL[hold] || hold)}. The owner can't resume it — only you can lift it.</div>` : ''}
     <div class="kv">
-      <span class="k">Status</span><span>${bill(d.billing_status)}${d.pause_reason?` <span class="chip warn">${esc(PAUSE_LABEL[d.pause_reason]||d.pause_reason)}</span>`:''}${d.paused_until?` <span class="dim">until ${fmtD(d.paused_until)}</span>`:''}</span>
+      <span class="k">Status</span><span>${bill(d.billing_status, c.is_demo)}${d.pause_reason?` <span class="chip warn">${esc(PAUSE_LABEL[d.pause_reason]||d.pause_reason)}</span>`:''}${d.paused_until?` <span class="dim">until ${fmtD(d.paused_until)}</span>`:''}</span>
       <span class="k">Modules</span><span>${(d.modules||[]).map(m=>`<span class="chip">${esc(((MODULE_KEYS.find(x=>x[0]===m)||[])[1])||m)}</span>`).join('') || '<span class="dim">none</span>'}${mm?` <span class="chip bad" title="${esc(JSON.stringify(mm))}">Stripe bills a different plan</span>`:''}</span>
       <span class="k">Billed by</span><span>${d.billed_by && d.billed_by.restaurant_id !== c.id ? `<a href="#client/${d.billed_by.restaurant_id}?tab=billing">${esc(d.billed_by.name||('#'+d.billed_by.restaurant_id))}</a> — this location is covered by its subscription` : (((d.covers||[]).filter(x=>x!==c.id)).length ? 'this location — it also pays for ' + (d.covers||[]).filter(x=>x!==c.id).map(x=>`<a href="#client/${x}">${esc(locName(null, x))}</a>`).join(', ') : 'this location')}</span>
       <span class="k">Stripe customer</span><span>${d.stripe_customer_id?`<a class="mono" target="_blank" rel="noopener" href="https://dashboard.stripe.com/customers/${esc(d.stripe_customer_id)}">${esc(d.stripe_customer_id)} ↗</a>`:'<span class="dim">none attached</span>'}</span>
