@@ -175,3 +175,23 @@ def test_the_report_summary_states_labor_with_salaries_for_the_owner_only():
     assert "state labor with labor.salaried_total_pct" in inspect.getsource(narrative)
     src = inspect.getsource(__import__("dsr.block_labor", fromlist=["x"]))
     assert '"salaried_total_pct": all_in' in src
+
+
+def test_a_role_whose_people_are_all_salaried_has_no_hourly_rate_to_set(db_path, monkeypatch):
+    """Owner, 9/30/26: Owner and Manager FOH sat in Targets & pay rates with a
+    $26 box nobody's pay uses. A role whose every person is salaried is left
+    out of the rates and named once; a manager never sees which it is."""
+    import staff_settings
+    import strategy_routes as sr
+    rid = models.create_restaurant(_r(), db_path=db_path)
+    models.update_restaurant(rid, {"salaried_staff_json": SAL}, db_path=db_path)
+    monkeypatch.setattr(staff_settings, "roster", lambda *a, **k: [
+        {"name": "Erik Baylis", "role": "Owner"}, {"name": "Ana B.", "role": "Server AM"}])
+    owner = {"id": 1, "restaurant_id": rid, "role": "owner"}
+    got, _ = sr._do_targets_get(owner)
+    assert got["targets"]["roles"] == ["Server AM"] and got["targets"]["salaried_roles"] == ["Owner"]
+    mgr = {"id": 2, "restaurant_id": rid, "role": "manager"}
+    got, code = sr._do_targets_get(mgr)
+    if code == 200:
+        assert got["targets"]["salaried_roles"] == []
+    assert "t.salaried_roles" in SRC

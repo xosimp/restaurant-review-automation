@@ -33444,6 +33444,9 @@ window.cavPalette = cavPalette;
       for (rk in rates) if (rates.hasOwnProperty(rk) && rk.toLowerCase() === roles[i].toLowerCase()) cur = rates[rk];
       h += '<div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b></div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
     }
+    // Roles whose every person is salaried have no hourly rate (owner, 9/30/26).
+    var salR = t.salaried_roles || [];
+    if (salR.length) h += '<div class="sr-note">' + e(salR.join(', ')) + (salR.length === 1 ? ' isn\u2019t' : ' aren\u2019t') + ' listed: everyone in ' + (salR.length === 1 ? 'it' : 'them') + ' is salaried, set below.</div>';
     $id('as-tg-roles').innerHTML = h;
     tgRenderSalaried(t);
     var roNote = $id('as-tg-ro'); if (roNote) roNote.hidden = !ro;

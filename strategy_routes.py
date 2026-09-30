@@ -5029,6 +5029,16 @@ def _targets_payload(rid):
     for k in rates:
         if k.lower() not in {x.lower() for x in roles}:
             roles.append(k)
+    # A role whose every person is salaried (Owner and Manager FOH at Simple
+    # EJ's) has no hourly rate to set - their pay is the salary (owner,
+    # 9/30/26). Named in `salaried_roles` so the screen can say why.
+    try:
+        import attendance as _att
+        _nocl = _att.roles_without_clock_in(rid, r)
+    except Exception:
+        _nocl = []
+    _nocl_low = {x.lower() for x in _nocl}
+    roles = [x for x in roles if x.lower() not in _nocl_low]
     return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
             # The same target by the week (models.weekly_revenue_target):
@@ -5036,6 +5046,7 @@ def _targets_payload(rid):
             "weekly_revenue_target": weekly_revenue_target(r),
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
+            "salaried_roles": sorted(_nocl, key=str.lower),
             # Salaried people (models.salaried_staff): costed by salary beside
             # hourly labor, never by the hour. The owner's alone (_do_targets_get);
             # `names` fills the add box so a name matches the punches exactly.
@@ -5111,7 +5122,7 @@ def _do_targets_get(u):
         t["sources"].pop("hourly_rate", None)
     if not _principal(u):
         # Salaries are named people's pay: the owner's alone.
-        t["salaried"], t["salaried_names"] = [], []
+        t["salaried"], t["salaried_names"], t["salaried_roles"] = [], [], []
     return {"ok": True, "targets": t, "can_edit": _principal(u), "sees_pay": _sees_pay(u)}, 200
 
 
