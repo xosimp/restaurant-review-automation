@@ -292,7 +292,17 @@ final class HomeDayViewModel {
         }
     }
     struct Issue: Decodable, Identifiable {
-        struct Person: Decodable { let name: String? }
+        /// A cover suggestion, or someone asked to cover — with the
+        /// manager's answer once there is one ("took" | "declined"), kept on
+        /// the issue itself (intraday.mark_cover_answer), so every device
+        /// stops asking once anyone answered (memory re-audit 9/29/26,
+        /// INVENTORY-10).
+        struct Person: Decodable {
+            let name: String?
+            var answer: String? = nil
+            var answeredAt: String? = nil
+            enum CodingKeys: String, CodingKey { case name, answer; case answeredAt = "answered_at" }
+        }
         /// A coverage issue's structured detail: who could cover, and who
         /// has already been asked (issues._public parses meta_json).
         struct Meta: Decodable { let covers: [Person]?; let asked: [Person]? }
@@ -314,10 +324,13 @@ final class HomeDayViewModel {
             if status != "open" { return .cavnarInk3 }
             return severity == "high" ? .cavnarRed : .cavnarAmber
         }
-        /// Who was asked to cover, while the issue is open (at most two).
+        /// Who was asked to cover and not answered yet, while the issue is
+        /// open (at most two) — an ask anyone answered is not asked again,
+        /// as on the web (memCoverAsks).
         var askedNames: [String] {
             guard status != "resolved" else { return [] }
-            return Array((meta?.asked ?? []).compactMap(\.name).filter { !$0.isEmpty }.prefix(2))
+            return Array((meta?.asked ?? []).filter { ($0.answer ?? "").isEmpty }
+                .compactMap(\.name).filter { !$0.isEmpty }.prefix(2))
         }
     }
     private struct BriefResponse: Decodable {

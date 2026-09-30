@@ -266,9 +266,44 @@ def last_answer_tools(restaurant_id, conversation_id, viewer_id=None, db_path=No
                 "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
         finally:
             conn.close()
-        return json.loads(row["tools_json"] or "[]") if row and row["tools_json"] else []
+        calls = json.loads(row["tools_json"] or "[]") if row and row["tools_json"] else []
     except Exception:
         return []
+    # Reads only (PROMPTS-5): a turn stored before only reads were kept may
+    # carry an action or a refused call, which is never replayed.
+    try:
+        import ask_cavnar_tools
+        return [t for t in calls if isinstance(t, dict) and ask_cavnar_tools.is_read_tool(t.get("name"))]
+    except Exception:
+        return []
+
+
+def last_answer_read_public(restaurant_id, conversation_id, viewer_id=None, db_path=None) -> bool:
+    """Whether the newest assistant turn in this chat read text a member of
+    the public wrote (its stored meta's `read_public_text`) — the turn whose
+    reads the next one is told about, so the next turn starts tainted
+    (memory re-audit 9/29/26, PROMPTS-5). False with no answer yet (or one
+    stored before the flag); True when the chat cannot be read (fail
+    closed)."""
+    if not conversation_id:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT meta_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
+                "AND role='assistant' AND (? IS NULL OR user_id IS NULL OR user_id=?) "
+                "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    if not row or not row["meta_json"]:
+        return False
+    try:
+        return bool((json.loads(row["meta_json"]) or {}).get("read_public_text"))
+    except (TypeError, ValueError):
+        return True
 
 
 def _call_text(t):
@@ -289,7 +324,10 @@ def memory_lines(req):
     import models
     import memory_context
     user = memory_context.viewer_user(getattr(req, "viewer", None))
-    uid = user.get("id") if user else None
+    # Through view-as the chat is support's own thread: never the owner's
+    # summaries or "often asks" (permissions.acting_login_id — PEOPLE-7/20).
+    from permissions import acting_login_id
+    uid = acting_login_id(user) if user and not memory_context.is_team(user) else None
     rid = req.restaurant_id
     out = []
     cid = _conversation_id(getattr(req, "subjects", ()))
@@ -311,8 +349,10 @@ def memory_lines(req):
                                 "weight": weight.get(key, 3.0), "subject": f"conversation:{cid}"})
             calls = last_answer_tools(rid, cid, viewer_id=uid, db_path=req.db_path)
             if calls:
+                # Only the reads that ran are stored (PROMPTS-5): this names
+                # what was read, never an action to repeat.
                 out.append({"text": ("Your last answer in this chat read: " + "; ".join(_call_text(t) for t in calls[:8])
-                                     + ". Call the same tools again to re-read that data rather than guessing."),
+                                     + ". Re-read with the read tools if you need that data — never guess it."),
                             "source": "system", "trusted": False, "weight": 7.0, "subject": f"conversation:{cid}"})
     if uid is not None:
         line = often_asks_line(rid, uid, db_path=req.db_path)
@@ -340,6 +380,32 @@ def _topics_rows(restaurant_id, user_id, days, db_path=None):
                 (restaurant_id, user_id, since)).fetchall()]
         except Exception:
             kept = []
+        # The same login's own chats at the organisation's other locations
+        # (memory re-audit 9/29/26, PEOPLE-13): a person, not a location — a
+        # three-location owner's questions used to split three ways. Their
+        # own chats only (user_id exact, never a legacy unowned one), each
+        # marked with the location it was had at.
+        others = []
+        if user_id is not None:
+            try:
+                import preferences
+                others = preferences.org_location_ids(restaurant_id, db_path=db_path)
+            except Exception:
+                others = []
+        for oid in others:
+            live += [dict(r, location_id=oid) for r in conn.execute(
+                "SELECT id AS conversation_id, title, topics, summary_json, updated_at AS at, 'live' AS kind "
+                "FROM ask_cavnar_conversations c WHERE restaurant_id=? AND user_id=? "
+                "AND updated_at >= ? AND EXISTS (SELECT 1 FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) "
+                "ORDER BY updated_at DESC LIMIT 100", (oid, user_id, since)).fetchall()]
+            try:
+                kept += [dict(r, location_id=oid) for r in conn.execute(
+                    "SELECT conversation_id, title, topics, summary_json, ended_at AS at, 'kept' AS kind, "
+                    "message_count FROM ask_topics WHERE restaurant_id=? AND user_id=? "
+                    "AND COALESCE(ended_at, created_at) >= ? ORDER BY id DESC LIMIT 200",
+                    (oid, user_id, since)).fetchall()]
+            except Exception:
+                pass
     finally:
         conn.close()
     return live, kept
@@ -417,9 +483,13 @@ def past_conversations(restaurant_id, user_id, query=None, days=90, limit=5, exc
     scored.sort(key=lambda x: -x[0])
     out = []
     for score, _at, r, notes in scored[:limit]:
+        elsewhere = r.get("location_id") is not None
         item = {"conversation_id": r.get("conversation_id"), "title": r.get("title") or "New conversation",
                 "date": _mdy(r.get("at")), "notes": notes or None,
-                "still_open": r.get("kind") == "live"}
+                # A chat at another location is read here, never reopened here.
+                "still_open": r.get("kind") == "live" and not elsewhere}
+        if elsewhere:
+            item["location"] = _location_name(r["location_id"], db_path)
         if r.get("kind") == "live":
             conn = get_conn(db_path)
             try:
@@ -437,6 +507,15 @@ def past_conversations(restaurant_id, user_id, query=None, days=90, limit=5, exc
             item["message_count"] = r.get("message_count")
         out.append(item)
     return out
+
+
+def _location_name(restaurant_id, db_path=None):
+    try:
+        import models
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+        return (getattr(r, "location_name", None) or getattr(r, "name", None)) if r else None
+    except Exception:
+        return None
 
 
 # ── topic of one answer (for its rating) ────────────────────────────────────

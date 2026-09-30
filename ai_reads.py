@@ -1230,7 +1230,10 @@ def claim_lines(req):
             if r.get("action") and r["claim_type"] == "cause":
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
-                said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
+                # Never a count (memory re-audit 9/29/26, QUALITY-14): the
+                # number was the model re-saying its own claim, and read back
+                # as "restated N times" it looked like evidence piling up.
+                said += " (the model's own read, repeated since — not new evidence)"
             scope = line_scope(r["surface"])
             since = []
             state = _live_state(conn, rid, r.get("rec_key"))

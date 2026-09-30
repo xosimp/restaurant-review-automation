@@ -783,6 +783,13 @@ def test_home_returns_the_signed_in_username_for_the_hero_greeting(client, db_pa
     assert data["username"] == "jamie"
 
 
+def _local_today(rid):
+    """The snapshot is stamped with the restaurant's local day; SQLite's
+    date('now') is the UTC date, already tomorrow on a Central evening."""
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(rid).date().isoformat()
+
+
 def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_path):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
@@ -793,7 +800,7 @@ def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_p
 
     conn = get_conn(db_path)
     row = conn.execute(
-        "SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')", (rid,)
+        "SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = ?", (rid, _local_today(rid))
     ).fetchone()
     conn.close()
     assert row is not None
@@ -823,8 +830,8 @@ def test_home_carries_the_k4_value_object(client, db_path):
     assert v["total"] == data["total_value_delivered"] == 400
     assert v["net_monthly"] == 250 and v["worsened"]["count"] == 1 and v["worsened"]["priced_count"] == 1
     conn = get_conn(db_path)
-    row = conn.execute("SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')",
-                       (rid,)).fetchone()
+    row = conn.execute("SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = ?",
+                       (rid, _local_today(rid))).fetchone()
     conn.close()
     assert row["total_value"] == 250
 
@@ -837,7 +844,7 @@ def test_home_value_snapshot_upserts_not_duplicates_same_day(client, db_path):
 
     conn = get_conn(db_path)
     count = conn.execute(
-        "SELECT COUNT(*) FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')", (rid,)
+        "SELECT COUNT(*) FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = ?", (rid, _local_today(rid))
     ).fetchone()[0]
     conn.close()
     assert count == 1

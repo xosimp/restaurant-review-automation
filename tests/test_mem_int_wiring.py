@@ -139,6 +139,13 @@ def _seed(monkeypatch):
     event_memory.refresh_effects(rid, {"cubs"})
     _x("INSERT INTO demand_signals (restaurant_id, date, kind, label, source) VALUES (?,?,?,?,?)",
        (rid, TODAY.isoformat(), "event", "Cubs home game", "owner"))
+    # market (re-audit fix round R7, INVENTORY-6): a competitor that opened
+    # nearby this month, and the restaurant's own rating over two weeks.
+    _x("INSERT INTO market_events (restaurant_id, place_id, name, kind, to_rating, review_count, observed_on) "
+       "VALUES (?,?,?,?,?,?,?)", (rid, "p-new", "Bella's", "arrived", 4.6, 12,
+                                  (date.today() - timedelta(days=10)).isoformat()))
+    event_memory.record_own_rating(rid, 4.5, 200, at=date.today() - timedelta(days=30))
+    event_memory.record_own_rating(rid, 4.3, 220, at=date.today())
     # people: a server trained on bar, with shifts on file.
     rows = [{"date": (TODAY - timedelta(days=d)).isoformat(), "day": "x", "employee": n, "role": role,
              "shift_start": "16:00", "shift_end": "22:00", "scheduled_hours": "6", "actual_hours": "6",

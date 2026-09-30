@@ -88,12 +88,16 @@ def episode_key(source_key, rec_id) -> str:
 
 def _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=None, days_to_effect=None,
                confidence_at=None, event_at=None, cohort=None, synced_from=None, rec_id=None, trust_version=None,
-               metric=None, partition_key=None, google_data=None) -> bool:
+               metric=None, partition_key=None, google_data=None, authority=None) -> bool:
     """record() on the caller's connection, uncommitted — sync() writes a
     whole pass on one connection (re-audit B22). `review_derived` is judged
     here (intelligence.provenance) from the key, the kind and a measured
     result's metric; `google_data` is the caller's (the restaurant is
-    Google-connected) AND that."""
+    Google-connected) AND that. `authority` is whose answer the row carries
+    (rec_events.authority / ask_cavnar_actions.authority — PLATFORM-4):
+    only the restaurant's own answers are filed at all
+    (rec_ledger.counts_for_restaurant), so it is 'principal', a delegate's
+    accept or Done ('delegate'), or NULL (a system answer)."""
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action}")
     if outcome is not None and outcome not in OUTCOMES:
@@ -102,13 +106,14 @@ def _record_on(conn, restaurant_id, rec_kind, source_key, action, outcome=None, 
     key = str(source_key)[:200]
     rd = 1 if provenance.review_derived(key, kind=rec_kind, metric=metric) else 0
     gd = 1 if (rd and google_data) else 0
+    auth_col, auth_val = ((", authority", ",?"), (authority,)) if authority else (("", ""), ())
     cur = conn.execute(
         "INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, cohort, action, outcome, days_to_effect, "
-        "confidence_at, event_at, synced_from, rec_id, trust_version, partition_key, review_derived, google_data) "
-        "VALUES (?,?,?,?,?,?,?,?,COALESCE(?, datetime('now')),?,?,?,?,?,?) "
+        "confidence_at, event_at, synced_from, rec_id, trust_version, partition_key, review_derived, google_data"
+        f"{auth_col[0]}) VALUES (?,?,?,?,?,?,?,?,COALESCE(?, datetime('now')),?,?,?,?,?,?{auth_col[1]}) "
         "ON CONFLICT(restaurant_id, source_key, action) DO NOTHING",
         (restaurant_id, rec_kind, key, cohort, action, outcome, days_to_effect, confidence_at, event_at, synced_from,
-         rec_id, trust_version, partition_key, rd, gd))
+         rec_id, trust_version, partition_key, rd, gd, *auth_val))
     inserted = cur.rowcount > 0
     if not inserted and (outcome is not None or days_to_effect is not None):
         # An existing event takes a verdict that changed since (a re-check,
@@ -731,15 +736,30 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             _cursor_set(conn, tracker_cursor, key=TRACKER_CURSOR)
 
         a0 = _cursor_get(conn, ASK_CURSOR)
-        asks = conn.execute("SELECT id, restaurant_id, action, summary, outcome, created_at, proposal_id "
-                            "FROM ask_cavnar_actions WHERE id > ? ORDER BY id LIMIT ?",
-                            (a0, LEGACY_ROWS_PER_PASS)).fetchall()
+        import rec_ledger as _rl_auth
+        asks = []
+        # `authority` is whose answer it was (PLATFORM-3); a database from
+        # before the column is read without it.
+        for cols in ("id, restaurant_id, action, summary, outcome, created_at, proposal_id, authority ",
+                     "id, restaurant_id, action, summary, outcome, created_at, proposal_id "):
+            try:
+                asks = conn.execute("SELECT " + cols + "FROM ask_cavnar_actions WHERE id > ? ORDER BY id LIMIT ?",
+                                    (a0, LEGACY_ROWS_PER_PASS)).fetchall()
+                break
+            except Exception:
+                asks = []
         for r in asks:
             if r["outcome"] not in ("confirmed", "dismissed"):
                 continue
+            # Only the restaurant's own answer: never an admin's (a view-as
+            # confirm), never a delegate's decline, which held for that
+            # login alone (rec_ledger.counts_for_restaurant — PLATFORM-3/-4).
+            who = r["authority"] if "authority" in r.keys() else None
+            if not _rl_auth.counts_for_restaurant(who, "accepted" if r["outcome"] == "confirmed" else "dismissed"):
+                continue
             key = _ask_key(r["proposal_id"], r["action"], r["summary"])
             written += put(r["restaurant_id"], f"ask:{r['action']}", key, r["outcome"], event_at=r["created_at"],
-                           synced_from="ask_cavnar_actions")
+                           synced_from="ask_cavnar_actions", authority=who)
         if asks:
             _cursor_set(conn, max(int(r["id"]) for r in asks), key=ASK_CURSOR)
 
@@ -781,8 +801,12 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             if not key or key.startswith(_BOOKKEEPING) or key.startswith("ask:") or not r["shown"]:
                 continue
             # An admin's answer through view-as is support at work, never
-            # the restaurant's preference (memory audit 9/29/26, view_as).
-            if (r["authority"] if "authority" in r.keys() else None) == "admin":
+            # the restaurant's preference (memory audit 9/29/26, view_as);
+            # a delegate's decline or snooze held for that login alone, so
+            # it is not the restaurant's either (rec_ledger.
+            # counts_for_restaurant — memory re-audit 9/29/26, PLATFORM-4).
+            who = r["authority"] if "authority" in r.keys() else None
+            if not _rl_auth.counts_for_restaurant(who, r["event"]):
                 continue
             try:
                 meta = _json.loads(r["meta"] or "{}") or {}
@@ -797,7 +821,7 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             if not action:
                 continue
             n = put(r["restaurant_id"], kind_of(key), episode_key(key, r["rec_id"]), action, event_at=r["at"],
-                    synced_from="rec_ledger", **snap_kw(r["rec_id"]))
+                    synced_from="rec_ledger", authority=who, **snap_kw(r["rec_id"]))
             written += n
             from_ledger += n
         if ledger:

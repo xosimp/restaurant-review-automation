@@ -324,7 +324,7 @@ def viewer_sees(viewer, row) -> bool:
 
 # rec_events columns the readers fold in; `authority` (memory audit
 # 9/29/26) says whose answer each is.
-_EVENT_COLS = "rec_id, event, surface, meta, at, authority"
+_EVENT_COLS = "rec_id, event, surface, meta, at, authority, user_id"
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
 # outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
@@ -360,7 +360,7 @@ def _tracker_rows(conn, rid, tids):
 
 
 def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False,
-          perspective="principal"):
+          perspective="principal", viewer_id=None):
     """Episodes of this restaurant (bookkeeping keys excluded) with their
     events folded in. `before` is a (created_at, rec_id) cursor.
 
@@ -371,7 +371,10 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
 
     `perspective` is whose answers decide each episode's state (_state):
     "principal" (the owner's view — the default) or "delegate" (a manager's
-    own view). An admin's view-as answer decides nothing either way."""
+    own view). An admin's view-as answer decides nothing either way.
+    `viewer_id` names the delegate whose view it is: their own declines
+    only, never another manager's (memory re-audit 9/29/26, LOOPS-14 /
+    PEOPLE-16); None reads every delegate's (the owner's "delegated")."""
     where, args = ["restaurant_id=?"], [rid]
     if since:
         where.append("created_at >= ?")
@@ -423,7 +426,7 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
-        r["state"] = _state(r, now, perspective)
+        r["state"] = _state(r, now, perspective, viewer_id=viewer_id)
         r["verdict"], r["verdict_at"] = _verdict(r, es, trackers.get(r.get("tracker_id")))
         r["tracker"] = trackers.get(r.get("tracker_id"))
     return rows
@@ -444,11 +447,26 @@ def _authority(e) -> str:
     return a if a in ("delegate", "admin") else "principal"
 
 
-def _delegate_declined(r) -> bool:
-    return any(e["event"] in ("dismissed", "snoozed") and _authority(e) == "delegate" for e in r.get("events") or ())
+def _own_delegate_event(e, viewer_id=None) -> bool:
+    """A delegate's event that belongs to this view: any delegate's when no
+    viewer is named (the owner's side), else only that login's own — one
+    manager's "no" never reshapes another's advice (LOOPS-14 / PEOPLE-16)."""
+    if _authority(e) != "delegate":
+        return False
+    if viewer_id is None:
+        return True
+    try:
+        return e.get("user_id") is not None and int(e["user_id"]) == int(viewer_id)
+    except (TypeError, ValueError):
+        return False
 
 
-def _state(r, now, perspective="principal"):
+def _delegate_declined(r, viewer_id=None) -> bool:
+    return any(e["event"] in ("dismissed", "snoozed") and _own_delegate_event(e, viewer_id)
+               for e in r.get("events") or ())
+
+
+def _state(r, now, perspective="principal", viewer_id=None):
     """accepted | completed | implemented | dismissed | ignored | superseded |
     snoozed | deferred | delegated | open — what the episode amounts to now.
     A taken episode whose change was actually made reads implemented
@@ -477,10 +495,14 @@ def _state(r, now, perspective="principal"):
         base = "ignored"
     else:
         base = "open"
-    if base in ("ignored", "open") and _delegate_declined(r):
+    if base in ("ignored", "open"):
         if perspective == "delegate":
-            return "dismissed"
-        return "delegated" if base == "ignored" else base
+            # The delegate's own view: their own decline, never a teammate's.
+            if _delegate_declined(r, viewer_id):
+                return "dismissed"
+            return base
+        if _delegate_declined(r):
+            return "delegated" if base == "ignored" else base
     return base
 
 
@@ -861,16 +883,18 @@ class Effectiveness:
     never the owner's rejection — or "delegate", a manager's view where the
     principal's answer still outranks theirs. The owner's reasons move it
     too: "too costly" and "doesn't fit us" are bounded, decaying penalties
-    (reason_penalties)."""
+    (reason_penalties). `viewer_id` names whose delegate view it is: that
+    manager's own reasons only (LOOPS-14 / PEOPLE-16)."""
 
     def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None,
-                 profile=None, perspective="principal"):
+                 profile=None, perspective="principal", viewer_id=None):
         self.rid = restaurant_id
         self.cohort = cohort
         self.profile = profile
         self.db_path = db_path
         self.now = now or datetime.utcnow()
         self.perspective = perspective
+        self.viewer_id = viewer_id
         self.version = EFFECTIVENESS_VERSION
         self._priors = {}
         self._cold = {}
@@ -883,11 +907,15 @@ class Effectiveness:
         # The owner's reasons (REASON_*): ages of "too costly" answers by
         # kind, of "doesn't fit us" answers by topic / focus tag.
         self.costly_kinds, self.unfit_tags = {}, {}
-        sides = ("principal", "delegate") if perspective == "delegate" else ("principal",)
         clear_eps = {}
         for e in episodes:
             for ev in e.get("events") or ():
-                if ev["event"] != "dismissed" or _authority(ev) not in sides:
+                if ev["event"] != "dismissed":
+                    continue
+                # The principal's reasons always; a delegate's only in that
+                # delegate's own view (never another manager's).
+                if _authority(ev) != "principal" and not (
+                        perspective == "delegate" and _own_delegate_event(ev, viewer_id)):
                     continue
                 code = _meta(ev).get("reason_code")
                 age = self._age_days(ev.get("at"))
@@ -1405,7 +1433,8 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
     return item
 
 
-def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal") -> Effectiveness:
+def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal",
+                  viewer_id=None) -> Effectiveness:
     """The model for one restaurant from its episodes inside
     DECAY_HORIZON_DAYS, each weighed by decay_weight. Never raises: with the
     ledger unreadable it is the neutral model (every weight 1.0).
@@ -1413,7 +1442,9 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     the owner's own (a manager's decline never counts as the owner's
     rejection) — or "delegate", a manager's view, where the principal's
     answer still outranks theirs. An admin's view-as answer teaches neither
-    (memory audit 9/29/26, who_answered / view_as). A demo, test or internal
+    (memory audit 9/29/26, who_answered / view_as). `viewer_id` (a
+    delegate's login) keeps a manager's view to their own declines
+    (LOOPS-14 / PEOPLE-16). A demo, test or internal
     account (models.learning_eligible) ranks on the neutral model."""
     now = now or datetime.utcnow()
     cohort, profile = None, None
@@ -1426,7 +1457,7 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
             # its ranking is the neutral model.
             if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
                 return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
-                                     perspective=perspective)
+                                     perspective=perspective, viewer_id=viewer_id)
             # Only a type and a partition the owner SET: a guess reads no
             # group's record (Benchmarking re-audit R2-7, #14, #20).
             from intelligence import categories as _cats
@@ -1439,14 +1470,14 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
         try:
             eps = _load(conn, restaurant_id,
                         since=_learning_floor(restaurant, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))),
-                        lean=True, perspective=perspective)
+                        lean=True, perspective=perspective, viewer_id=viewer_id)
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
     model = Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now, profile=profile,
-                          perspective=perspective)
+                          perspective=perspective, viewer_id=viewer_id)
     # The kinds the owner said to keep proposing despite their record
     # (kind_hold:<kind> answered Done / Track — memory audit 9/29/26,
     # "thresholds"): held() never stops those.
@@ -1514,6 +1545,15 @@ def rank_meta(item, base_score, learned_info) -> dict:
             "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2],
             "prior_rung": ({k: pr.get(k) for k in ("acceptance", "success", "cold")} if pr else None),
             "rung": li.get("rung"), "version": li.get("version")}
+
+
+def viewer_of(user):
+    """The login a delegate's effectiveness view belongs to (their id), or
+    None for a principal or admin view (LOOPS-14 / PEOPLE-16)."""
+    try:
+        return int(user["id"]) if perspective_of(user) == "delegate" and user.get("id") is not None else None
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
 
 
 def perspective_of(user) -> str:

@@ -35,7 +35,14 @@ HEAD = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 
 
 def _csv(tuesday, people):
-    return HEAD + "".join(f"{tuesday.isoformat()},Tuesday,{p},Server,5:00pm,10:00pm,5,\n" for p in people)
+    # Bob also works Wednesday lunch every week (memory re-audit 9/29/26,
+    # INVENTORY-2 / QUALITY-14): a person pattern is tested only in a week
+    # its person worked at all — a week Bob is simply absent from used to
+    # count as "kept Bob off Tuesday", which is how a pattern about someone
+    # who left read as confirmed forever.
+    wed = (tuesday + timedelta(days=1)).isoformat()
+    return HEAD + "".join(f"{tuesday.isoformat()},Tuesday,{p},Server,5:00pm,10:00pm,5,\n" for p in people) \
+        + f"{wed},Wednesday,Bob,Server,11:00am,3:00pm,4,\n"
 
 
 def _week(rid, tuesday, generated, final, editor="dana", age_days=0, authority=None):
@@ -112,7 +119,10 @@ def test_two_manager_reversals_retire_it():
     row = next(s for s in schedule_versions.standing_patterns(rid) if s["employee"] == "Bob" and s["kind"] == "moved_off")
     assert row["times_overridden"] == 2 and row["status"] == "retired"
     drafted, _c = schedule_versions.patterns_for_draft(rid)
-    assert not [p for p in drafted if p.get("standing") and p["employee"] == "Bob" and p["kind"] == "moved_off"]
+    # Every copy, live or standing (memory re-audit 9/29/26, LOOPS-2): the
+    # old assertion filtered on `standing` and passed while the live
+    # window's copy still told the draft to keep Bob off.
+    assert not [p for p in drafted if p.get("employee") == "Bob" and p["kind"] == "moved_off"]
 
 
 def test_two_editors_pulling_opposite_ways_go_to_the_owner_not_the_model():

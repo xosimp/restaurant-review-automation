@@ -163,10 +163,10 @@ def test_a_standing_preference_and_a_cover_taker_reach_the_labor_read():
     _staff(rid)
     conn = models.get_conn()
     conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, day, "
-                 "daypart, text, editors, first_learned, last_confirmed, times_applied, status) VALUES "
-                 "(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 "daypart, text, editors, first_learned, last_confirmed, times_applied, times_confirmed, status) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                  (rid, "moved_off|bob|tuesday|night", "moved_off", "Bob", "Server", "Tuesday", "night",
-                  "The manager has taken Bob off Tuesday dinner — 2 weeks", "{}", "2026-07-06", "2026-09-22", 8,
+                  "The manager has taken Bob off Tuesday dinner — 2 weeks", "{}", "2026-07-06", "2026-09-22", 8, 3,
                   "active"))
     for i in range(3):
         conn.execute("INSERT INTO person_signals (restaurant_id, employee_name, employee_key, kind, signal_date, ref, "
@@ -177,7 +177,11 @@ def test_a_standing_preference_and_a_cover_taker_reach_the_labor_read():
     conn.close()
     lines = people.memory_lines(_req(rid, "labor_read"))
     pat = next(l for l in lines if l["text"].startswith("Standing preference"))
-    assert "learned 7/6/26, kept 8 weeks" in pat["text"] and "taken Bob off Tuesday dinner" in pat["text"]
+    # Memory re-audit 9/29/26 (QUALITY-14): the line counts the weeks the
+    # manager's own edits kept it (times_confirmed, 3), not the 8 weeks the
+    # draft merely carried it — those used to read as "kept 8 weeks".
+    assert "learned 7/6/26, confirmed by the manager's own edits in 3 weeks" in pat["text"]
+    assert "taken Bob off Tuesday dinner" in pat["text"]
     assert pat["subject"] == "labor:day:tuesday" and pat["date"] == "2026-09-22"
     assert any(l["text"] == "Ana B." and "covered 3 shifts for teammates" in (l.get("measured") or "")
                for l in lines)   # PROMPTS-3: the count is the trusted suffix

@@ -31,6 +31,12 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path)
 
 KINDS = ("event", "reservations")
+# A scheduled post is its own kind (memory re-audit 9/29/26, CROSSMODULE-7):
+# written as an "event" it became an event flag in event_memory (and left its
+# night out of every baseline), told the schedule the night was "ASSUMED
+# busier" and suppressed trims. Never saved through save() — only
+# record_post writes it.
+POST_KIND = "post"
 MAX_ROWS = 200
 # What an event with no covers and no lift is ASSUMED to add. Carried as
 # `assumed_lift_pct` beside `assumed: True` for the prompt and the clients
@@ -162,6 +168,9 @@ def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=N
     label = " ".join(str(label or "").split())[:120]
     if not label:
         return False
+    # A campaign text is an event the night is aimed at (event_memory's one
+    # campaign label); a post is only a post (CROSSMODULE-7).
+    kind = "event" if source == "campaign" else POST_KIND
     # No figure is baked into the row: a campaign night's lift is read live
     # from the one measurement (measured_campaign_lift, by_date), so it
     # follows every night event_memory measures after this one.
@@ -172,7 +181,7 @@ def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=N
                      "created_by, ref, menu_item_id) VALUES (?,?,?,?,?,?,?,?,?,?) "
                      "ON CONFLICT(restaurant_id, date, kind, label) DO UPDATE SET lift_pct=excluded.lift_pct, "
                      "source=excluded.source, ref=excluded.ref, menu_item_id=excluded.menu_item_id",
-                     (restaurant_id, d, "event", label, None, (lift or {}).get("lift_pct"), source,
+                     (restaurant_id, d, kind, label, None, (lift or {}).get("lift_pct"), source,
                       "Cavnar AI (marketing)", (str(ref)[:60] if ref else None), menu_item_id))
         conn.commit()
         return True
@@ -217,6 +226,44 @@ def record_post(restaurant_id, scheduled_for, topic, body=None, platform=None, p
     return record_marketing(restaurant_id, str(scheduled_for)[:10], label, "post",
                             ref=f"post:{post_id}" if post_id else None, menu_item_id=tags.get("menu_item_id"),
                             db_path=db_path)
+
+
+def remove_by_ref(restaurant_id, ref, db_path=DB_PATH) -> int:
+    """Take a marketing signal off its night by what it came from ("post:12",
+    "campaign:45") — a post cancelled, or one that never went out, no longer
+    tells staffing, prep or the lineup anything (CROSSMODULE-7). Returns rows
+    removed; never raises."""
+    if not ref:
+        return 0
+    try:
+        conn = get_conn(db_path)
+        try:
+            n = conn.execute("DELETE FROM demand_signals WHERE restaurant_id=? AND ref=?",
+                             (restaurant_id, str(ref)[:60])).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        return n or 0
+    except Exception:
+        return 0
+
+
+def migrate_post_signals(conn) -> dict:
+    """At boot (models.init_demand_signals), idempotent: a post's signal
+    written as kind 'event' before CROSSMODULE-7 becomes kind 'post', and the
+    signal of a post that was cancelled or failed is taken off its night.
+    {"rekinded", "removed"}. Leaves the caller's transaction to commit."""
+    out = {"rekinded": 0, "removed": 0}
+    out["rekinded"] = conn.execute("UPDATE OR IGNORE demand_signals SET kind=? WHERE source='post' AND kind='event'",
+                                   (POST_KIND,)).rowcount or 0
+    try:
+        out["removed"] = conn.execute(
+            "DELETE FROM demand_signals WHERE source='post' AND ref LIKE 'post:%' AND EXISTS ("
+            "SELECT 1 FROM marketing_scheduled_posts p WHERE p.restaurant_id = demand_signals.restaurant_id "
+            "AND 'post:' || p.id = demand_signals.ref AND p.status IN ('cancelled','failed'))").rowcount or 0
+    except Exception:
+        pass                                  # the posts table is created later at boot on a new database
+    return out
 
 
 def parse_reservations_csv(text):
@@ -306,6 +353,56 @@ def _campaign_measured(restaurant_id, db_path=DB_PATH):
         return None
 
 
+def _post_measured(restaurant_id, signal, db_path=DB_PATH, _cache=None):
+    """The marketing module's own measured lift for a post like this one
+    (marketing_signals.attribution_summary: sales in the days after each
+    post against the same weekdays before, grouped by dish and by occasion)
+    — {"lift_pct", "n", "group", "verdict"} for a group of
+    MIN_GROUP_POSTS+ measured posts whose own verdicts say it moved sales
+    (lifted or dropped), else None: an unmeasured post adds no lift
+    (CROSSMODULE-7). A demo, test or internal restaurant teaches nothing.
+    Never raises."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+        cache = _cache if _cache is not None else {}
+        if "summary" not in cache:
+            import marketing_signals
+            cache["summary"] = marketing_signals.attribution_summary(restaurant_id, db_path=db_path)
+        summ = cache["summary"] or {}
+        if not summ.get("ok"):
+            return None
+        import marketing_signals
+        import marketing_tags
+        want = []
+        if signal.get("menu_item_id"):
+            conn = get_conn(db_path)
+            try:
+                r = conn.execute("SELECT name FROM menu_items WHERE id=? AND restaurant_id=?",
+                                 (signal["menu_item_id"], restaurant_id)).fetchone()
+            finally:
+                conn.close()
+            if r and r["name"]:
+                want.append(("by_dish", str(r["name"])))
+        what = str(signal.get("label") or "").split(": ", 1)[-1].split(" (", 1)[0].strip().lower()
+        occ = next((k for k, v in marketing_tags.OCCASION_LABELS.items() if v == what or k == what), None)
+        if occ:
+            want.append(("by_occasion", occ))
+        for key, group in want:
+            for g in summ.get(key) or []:
+                if str(g.get("group") or "").lower() != group.lower():
+                    continue
+                if int(g.get("posts") or 0) < marketing_signals.MIN_GROUP_POSTS or \
+                        g.get("verdict") not in ("lifted", "dropped"):
+                    continue
+                return {"lift_pct": int(round(float(g["median_lift_pct"]))), "n": int(g["posts"]),
+                        "group": group, "verdict": g["verdict"]}
+    except Exception:
+        return None
+    return None
+
+
 def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     """{date: {"lift_pct": int, "covers": int|None, "labels": [..]}} for the
     dates asked for. The lift is the strongest signal on the date: an
@@ -320,11 +417,25 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     signals = upcoming(restaurant_id, min(dates), max(dates), db_path=db_path)
     typical = typical_covers(restaurant_id, db_path=db_path)
     out = {}
+    post_cache = {}
     for s in signals:
         d = s["date"]
         if d not in dates:
             continue
         entry = out.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
+        if s.get("kind") == POST_KIND:
+            # A post (CROSSMODULE-7): its lift only where marketing measured
+            # posts like it; otherwise it is named for the kitchen and the
+            # floor, adds nothing, and is never an assumed-busier night.
+            pm = _post_measured(restaurant_id, s, db_path=db_path, _cache=post_cache)
+            entry.setdefault("posts", []).append({"label": s["label"], "measured": pm})
+            if pm:
+                entry["labels"].append(f"{s['label']} (posts like it measured {pm['lift_pct']:+d}% here over "
+                                       f"{pm['n']} posts)")
+                entry["lift_pct"] = pm["lift_pct"] if entry["lift_pct"] is None else max(entry["lift_pct"],
+                                                                                        pm["lift_pct"])
+                entry.setdefault("lift_source", "post_measured")
+            continue
         label = s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else "")
         lift = s.get("lift_pct")
         if s.get("kind") == "event" and str(s.get("source") or "") == "campaign":
@@ -383,6 +494,9 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
             if e.get("lift_source") == "measured":
                 tail += (f" (this restaurant's own measured median over {e.get('measured_n')} past nights like it — "
                          "before and after, not proof)")
+            elif e.get("lift_source") == "post_measured":
+                tail += (" (the sales change measured after this restaurant's own posts like it — before and "
+                         "after, not proof)")
             else:
                 seen = [m for m in e.get("measured") or [] if m.get("owner_lift_pct") is not None]
                 if seen:
@@ -398,6 +512,14 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
         # dish) and the date is M/D/YY (memory reaching a prompt, 9/29/26).
         import ai_guard
         from time_utils import mdy
+        unmeasured = [p["label"] for p in e.get("posts") or [] if not p.get("measured")]
+        if unmeasured:
+            post_tail = (" — a post goes out that day with no measured effect on sales here yet: not a reason "
+                         "to staff above a usual " + day)
+            if what:
+                lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
+            lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted('; '.join(unmeasured))}{post_tail}")
+            continue
         lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
     if not lines:
         return ""

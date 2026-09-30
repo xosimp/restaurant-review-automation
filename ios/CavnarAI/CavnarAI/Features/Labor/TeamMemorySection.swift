@@ -701,9 +701,13 @@ struct CapabilityHistoryBlock: View {
 /// The manager's word on a cover ask — they took it, or they didn't
 /// (POST /mobile/api/issues/<id>/cover-answer {name, accepted}). It stands
 /// over what the nightly job infers from the punches, and their record of
-/// taking covers ranks the next suggestions. The issue payload does not say
-/// an ask was answered, so the answer is remembered on this device to keep
-/// the question from coming back.
+/// taking covers ranks the next suggestions. The answer lives on the issue
+/// (its `asked[].answer`, decoded by HomeDay's Issue.Person), so once anyone
+/// answers — here, on another device or on the web — the row is not shown
+/// again and the server refuses a different later answer (memory re-audit
+/// 9/29/26, INVENTORY-10). Nothing is kept on
+/// the device: the old UserDefaults copy held a staff name unencrypted, and
+/// is cleared the first time the row appears.
 struct CoverAnswerRow: View {
     let issueId: Int
     let name: String
@@ -713,7 +717,9 @@ struct CoverAnswerRow: View {
 
     private struct AnswerBody: Encodable { let name: String; let accepted: Bool }
 
-    static func storageKey(issue: Int, name: String) -> String {
+    /// The key an earlier build stored the answer under — read only to
+    /// remove it.
+    static func legacyStorageKey(issue: Int, name: String) -> String {
         "coverAnswer.\(issue).\(name.lowercased())"
     }
 
@@ -749,8 +755,7 @@ struct CoverAnswerRow: View {
             }
         }
         .onAppear {
-            let key = Self.storageKey(issue: issueId, name: name)
-            if UserDefaults.standard.object(forKey: key) != nil { answer = UserDefaults.standard.bool(forKey: key) }
+            UserDefaults.standard.removeObject(forKey: Self.legacyStorageKey(issue: issueId, name: name))
         }
     }
 
@@ -766,7 +771,6 @@ struct CoverAnswerRow: View {
                     body: AnswerBody(name: name, accepted: accepted), retryTransient: false)
                 if r.ok {
                     answer = accepted
-                    UserDefaults.standard.set(accepted, forKey: Self.storageKey(issue: issueId, name: name))
                     Haptic.success()
                 } else {
                     error = r.error ?? "Couldn\u{2019}t save that."
