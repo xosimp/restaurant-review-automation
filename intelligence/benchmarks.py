@@ -480,6 +480,52 @@ def viewer_org(restaurant_id, db_path=DB_PATH) -> frozenset:
     return frozenset(privacy.org_hash(k) for k in keys)
 
 
+def strip_old_members(db_path=DB_PATH, today: date = None) -> dict:
+    """Drop the member list (members_json: each member's value beside its
+    organisation's hash) from every band older than any reader serves —
+    MAX_BAND_AGE_WEEKS (memory re-audit 9/29/26, FORGET-8). The band's
+    quartiles, counts and anonymous values (vals_json) stay; which
+    organisation stood behind each value does not outlive the window a
+    viewer's organisation must be taken out of it in. Returns the standard
+    counts."""
+    floor = _week_floor(today)
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE intel_benchmarks SET members_json=NULL WHERE week < ? AND members_json IS NOT NULL",
+                         (floor,)).rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False, "stripped": n}
+
+
+def strip_member_hashes(conn, hashes) -> int:
+    """Take every member whose organisation hash is in `hashes` out of the
+    stored bands' member lists, on the caller's connection (delete_restaurant,
+    inside its transaction). A deleted restaurant's value stops standing in
+    any band a viewer is shown at once. Returns bands changed. Never raises."""
+    hashes = set(hashes or ())
+    if not hashes:
+        return 0
+    changed = 0
+    try:
+        rows = conn.execute("SELECT rowid, members_json FROM intel_benchmarks WHERE members_json IS NOT NULL").fetchall()
+    except Exception:
+        return 0
+    for r in rows:
+        try:
+            members = json.loads(r[1] or "null")
+        except (TypeError, ValueError):
+            continue
+        if not members:
+            continue
+        kept = [m for m in members if not (isinstance(m, (list, tuple)) and len(m) == 2 and m[1] in hashes)]
+        if len(kept) != len(members):
+            conn.execute("UPDATE intel_benchmarks SET members_json=? WHERE rowid=?", (json.dumps(kept), r[0]))
+            changed += 1
+    return changed
+
+
 def group_size(cohort, week, exclude_org=None, db_path=DB_PATH) -> int:
     """The most restaurants in `cohort` that measured any benchmarked metric
     in `week`, the viewer's organisation left out — the group's size as the

@@ -82,43 +82,43 @@ HYPOTHESES = (
     {"key": "reply_fast_rating", "behaviour": ("response_24h_rate_30d", ">=", 0.5), "outcome": "avg_rating_delta",
      "better": "higher", "unit": "★",
      "sentence": "those replying to at least half their reviews within a day saw their rating move {effect_abs:.2f}★ {direction} than those that did not, measured at the same time as the replying (not after it)",
-     "rec_kinds": ("reply", "respond", "reviews", "urgent")},
+     "rec_kinds": ("replies",)},
     {"key": "reply_rate_rating", "behaviour": ("reply_rate_30d", ">=", 0.8), "outcome": "avg_rating_30d",
      "better": "higher", "unit": "★",
      "sentence": "those replying to four in five reviews averaged {effect_abs:.2f}★ {direction}",
-     "rec_kinds": ("reply", "respond", "reviews")},
+     "rec_kinds": ("replies",)},
     {"key": "adjust_schedule_variance", "behaviour": ("schedule_adjust_rate", ">=", 0.5), "outcome": "labor_pct_sd_28d",
      "better": "lower", "unit": "pts",
      "sentence": "those adjusting at least half their weekly schedules before publishing ran {effect_abs:.1f} points {direction} day-to-day labor variance",
-     "rec_kinds": ("trim_day", "schedule", "labor", "observed:schedule_published")},
+     "rec_kinds": ("staffing", "hours", "observed:schedule_published")},
     {"key": "adjust_schedule_labor", "behaviour": ("schedule_adjust_rate", ">=", 0.5), "outcome": "labor_pct_28d",
      "better": "lower", "unit": "%",
      "sentence": "those adjusting at least half their weekly schedules before publishing ran labor {effect_abs:.1f} points {direction}",
-     "rec_kinds": ("trim_day", "schedule", "labor")},
+     "rec_kinds": ("staffing", "hours")},
     {"key": "dish_posts_lift", "behaviour": ("dish_posts_28d", ">=", 2), "outcome": "post_lift_median_28d",
      "better": "higher", "unit": "%",
      "sentence": "those posting about a specific dish at least twice a month saw {effect_abs:.1f} points {direction} median sales lift after their posts",
-     "rec_kinds": ("post_this_week", "first_post", "post", "marketing", "observed:post_published")},
+     "rec_kinds": ("posting", "dish_promote", "dish_praise")},
     {"key": "occasion_posts_engagement", "behaviour": ("occasion_posts_28d", ">=", 1), "outcome": "post_engagement_rate_28d",
      "better": "higher", "unit": "share",
      "sentence": "those tying at least one post a month to a game, holiday or event drew {effect_pct:.1f} points {direction} engagement rates",
-     "rec_kinds": ("post_this_week", "post", "marketing")},
+     "rec_kinds": ("posting", "holiday_promo")},
     {"key": "offer_posts_lift", "behaviour": ("offer_posts_28d", ">=", 1), "outcome": "post_lift_median_28d",
      "better": "higher", "unit": "%",
      "sentence": "those posting at least one offer a month saw {effect_abs:.1f} points {direction} median sales lift after their posts",
-     "rec_kinds": ("post", "marketing", "draft_campaign")},
+     "rec_kinds": ("posting", "marketing")},
     {"key": "post_cadence_lift", "behaviour": ("posts_28d", ">=", 4), "outcome": "post_lift_median_28d",
      "better": "higher", "unit": "%",
      "sentence": "those publishing weekly or more saw {effect_abs:.1f} points {direction} median sales lift per post",
-     "rec_kinds": ("post_this_week", "first_post", "post")},
+     "rec_kinds": ("posting",)},
     {"key": "campaign_cadence_return", "behaviour": ("campaigns_28d", ">=", 2), "outcome": "campaign_return_rate_28d",
      "better": "higher", "unit": "share",
      "sentence": "those texting their list at least twice a month had {effect_pct:.0f} points {direction} return rates within 14 days",
-     "rec_kinds": ("draft_campaign", "marketing")},
+     "rec_kinds": ("guest_outreach",)},
     {"key": "waste_tracking_food_cost", "behaviour": ("waste_sales_pct_28d", "<=", 2.0), "outcome": "food_cost_pct_28d",
      "better": "lower", "unit": "%",
      "sentence": "those holding waste under 2% of sales ran food cost {effect_abs:.1f} points {direction}",
-     "rec_kinds": ("cut_waste", "count", "inventory", "reprice")},
+     "rec_kinds": ("waste", "ordering", "reprice")},
     {"key": "acting_on_recs_improves", "behaviour": ("recs_done_28d", ">=", 1), "outcome": "outcomes_improved_rate_90d",
      "better": "higher", "unit": "share",
      "sentence": "those acting on at least one recommendation a month had {effect_pct:.0f} points {direction} measured-improvement rates",
@@ -126,7 +126,7 @@ HYPOTHESES = (
     {"key": "weekend_share_labor", "behaviour": ("weekend_sales_share_28d", ">=", 0.55), "outcome": "labor_pct_28d",
      "better": "lower", "unit": "%",
      "sentence": "those taking over 55% of sales Friday to Sunday ran labor {effect_abs:.1f} points {direction} overall",
-     "rec_kinds": ("trim_day", "schedule")},
+     "rec_kinds": ("staffing",)},
 )
 
 
@@ -217,19 +217,19 @@ PROSPECTIVE_HYPOTHESES = (
     {"key": "prospective_reply_fast_rating", "behaviour": ("response_24h_rate_30d", ">=", 0.5),
      "outcome": "avg_rating_30d", "better": "higher", "unit": "★",
      "did": "replied to at least half their reviews within a day", "outcome_text": "their average rating",
-     "rec_kinds": ("reply", "respond", "reviews", "urgent")},
+     "rec_kinds": ("replies",)},
     {"key": "prospective_adjust_schedule_labor", "behaviour": ("schedule_adjust_rate", ">=", 0.5),
      "outcome": "labor_pct_28d", "better": "lower", "unit": " pts",
      "did": "adjusted at least half their weekly schedules before publishing", "outcome_text": "labor %",
-     "rec_kinds": ("trim_day", "schedule", "labor")},
+     "rec_kinds": ("staffing", "hours")},
     {"key": "prospective_waste_food_cost", "behaviour": ("waste_sales_pct_28d", "<=", 2.0),
      "outcome": "food_cost_pct_28d", "better": "lower", "unit": " pts",
      "did": "held logged waste under 2% of sales (logging it regularly)", "outcome_text": "food cost %",
-     "rec_kinds": ("cut_waste", "count", "inventory")},
+     "rec_kinds": ("waste", "ordering")},
     {"key": "prospective_post_cadence_lift", "behaviour": ("posts_28d", ">=", 4),
      "outcome": "post_lift_median_28d", "better": "higher", "unit": " pts",
      "did": "published weekly or more", "outcome_text": "the median sales lift after a post",
-     "rec_kinds": ("post_this_week", "first_post", "post")},
+     "rec_kinds": ("posting",)},
     {"key": "prospective_acting_on_recs", "behaviour": ("recs_done_28d", ">=", 1),
      "outcome": "outcomes_improved_rate_90d", "better": "higher", "unit": " pts",
      "did": "acted on at least one recommendation in a month", "outcome_text": "their measured-improvement rate",
@@ -805,14 +805,39 @@ def all_patterns(db_path=DB_PATH, limit=100) -> list:
     return out
 
 
+def covers(kinds, rec_kind) -> bool:
+    """Whether a pattern's `rec_kinds` cover a recommendation: its exact
+    kind, or its rec_ledger topic (rec_ledger._topic_of — "replies" covers
+    urgent_reviews, no_response and publish_drafts; memory re-audit
+    9/29/26, PLATFORM-16: the entries named kinds the ledger never had —
+    "reply", "respond", "schedule", "post" — so a reply pattern could never
+    support an urgent_reviews card)."""
+    kinds = set(kinds or ())
+    if not kinds or not rec_kind:
+        return False
+    kind = str(rec_kind).split(":")[0]
+    if rec_kind in kinds or kind in kinds:
+        return True
+    try:
+        import rec_ledger
+        topic = rec_ledger._topic_of(kind, rec_kind)
+    except Exception:
+        topic = None
+    return bool(topic) and topic in kinds
+
+
+_HYPOTHESIS_KINDS = {h["key"]: tuple(h["rec_kinds"]) for h in HYPOTHESES + PROSPECTIVE_HYPOTHESES}
+
+
 def support_for(rec_kind: str, cohort=None, db_path=DB_PATH) -> dict | None:
-    """The strongest active pattern whose rec_kinds cover this kind — never
-    a platform-pooled one about an economics metric (pooled_on_economics)."""
-    kind = (rec_kind or "").split(":")[0]
+    """The strongest active pattern whose rec_kinds cover this kind (covers:
+    the kind or its topic; a pattern stored before the re-audit also takes
+    its hypothesis's current rec_kinds) — never a platform-pooled one about
+    an economics metric (pooled_on_economics)."""
     for p in active(cohort, db_path=db_path):
         if pooled_on_economics(p):
             continue
-        kinds = p["evidence"].get("rec_kinds") or []
-        if rec_kind in kinds or kind in kinds:
+        kinds = set(p["evidence"].get("rec_kinds") or []) | set(_HYPOTHESIS_KINDS.get(p.get("hypothesis")) or ())
+        if covers(kinds, rec_kind):
             return p
     return None

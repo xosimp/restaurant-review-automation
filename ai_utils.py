@@ -3124,6 +3124,12 @@ def rollup_usage(db_path=None, recent_days=2):
                 _roll_validation_day(conn, day)
             out["validation_days"] = len(vdays)
         except sqlite3.Error as e:
+            # Only a database that has no validation ledger yet is skipped. Any
+            # other failure raises (memory re-audit 9/29/26, FORGET-11): it
+            # was swallowed, the rollup read as clean, and ops' registry then
+            # pruned ai_validation_log with no daily row for those days.
+            if "no such table" not in str(e).lower():
+                raise
             log.warning("validation rollup skipped: %s", e)
         conn.commit()
     finally:

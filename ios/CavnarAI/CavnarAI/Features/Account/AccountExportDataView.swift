@@ -106,7 +106,7 @@ struct AccountExportDataView: View {
                             }
                             .tint(Color.cavnarEmber)
                         }
-                        Text("Reviews older than this are removed nightly. Nothing else is touched.")
+                        Text("Reviews older than this leave the app nightly, and 30 days later their words and replies are erased for good. Monthly counts and ratings stay.")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.vertical, 9)

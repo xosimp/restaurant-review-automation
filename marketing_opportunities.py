@@ -385,7 +385,7 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
     except Exception:
         _dnp = {}
     promote = sorted((d for d in usable if d.get("action") == "promote"
-                      and not link_memory_names(_dnp, d.get("name"))), key=lambda d: -float(d["margin"]))
+                      and not link_memory_names(_dnp, d.get("name"), d.get("id"))), key=lambda d: -float(d["margin"]))
     for i, d in enumerate(promote):
         name = d["name"]
         pos = praised.get(name.strip().lower(), 0)
@@ -397,17 +397,23 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
             facts=[f"Named in {pos} positive review{'' if pos == 1 else 's'}" if pos >= 2 else ""],
             prompt=f"Feature our {name}",
             evidence={"n": days, "kind": "trading_days", "basis": f"{days} days of item sales"},
-            sources=("pos", "sales"), score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
+            # A card that states (and scores on) a praise count rests on the
+            # reviews too, so it declares them (memory re-audit 9/29/26,
+            # PLATFORM-5): its episode is review-derived for pooled learning.
+            sources=("pos", "sales") + (("reviews",) if pos >= 2 else ()),
+            score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
     return out
 
 
-def link_memory_names(listed, name):
-    """Whether the do-not-promote list names this menu dish (never raises)."""
+def link_memory_names(listed, name, menu_item_id=None):
+    """Whether the do-not-promote list names this menu dish — the one menu
+    row its link resolved to, by id when the row carries it (re-audit
+    CROSSMODULE-14). Never raises."""
     if not listed:
         return False
     try:
         import link_memory
-        return bool(link_memory.names_dish(listed, name))
+        return bool(link_memory.names_dish(listed, name, menu_item_id=menu_item_id))
     except Exception:
         return False
 
@@ -682,7 +688,13 @@ def fingerprint(restaurant_id, today, db_path=DB_PATH, restaurant=None) -> str:
                 ("SELECT COUNT(*), SUM(COALESCE(unit_cost,0)), MAX(updated_at) FROM ingredients "
                  "WHERE restaurant_id=?", (restaurant_id,)),
                 ("SELECT COUNT(*), MAX(business_date), SUM(qty_sold) FROM menu_item_sales WHERE restaurant_id=? "
-                 "AND business_date >= date(?, '-35 days')", (restaurant_id, today.isoformat()))):
+                 "AND business_date >= date(?, '-35 days')", (restaurant_id, today.isoformat())),
+                # The do-not-promote list dish_margins reads (re-audit
+                # 9/29/26, CROSSMODULE-16): a reviews_x_menu link found or
+                # resolved at noon changes the feed at noon, not tomorrow.
+                ("SELECT COUNT(*), MAX(last_seen), MAX(resolved_at), SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 "
+                 "END), SUM(COALESCE(menu_item_id, 0)) FROM bi_links WHERE restaurant_id=? AND kind='reviews_x_menu'",
+                 (restaurant_id,))):
             try:
                 row = conn.execute(sql, args).fetchone()
                 parts.append(list(row) if row else None)

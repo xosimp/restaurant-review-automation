@@ -2665,14 +2665,22 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     when there is nothing to add."""
     try:
         import business_intelligence as bi
+        # Only links the owner has NOT answered (executive_brief filters
+        # them — re-audit 9/29/26, CROSSMODULE-2): a declined "complaints on
+        # lean Fridays" used to push every weekly draft to add Friday staff.
         links = [l for l in (bi.executive_brief(restaurant_id).get("links") or [])
                  if l.get("kind") == "reviews_x_labor" and l.get("headline")]
     except Exception:
         links = []
     if not links:
         return sched_notes
-    lines = ["Cavnar AI finding (reviews x labor) — reflect this in the draft and say so in the summary: "
-             + l["headline"] + (" Confirm by: " + l["confirm_by"] if l.get("confirm_by") else "")
+    # A co-occurrence is a QUESTION for the draft, never a directive, and it
+    # carries what it is not (its not_a_cause), as every other surface does.
+    lines = ["Cavnar AI question (reviews x labor, two modules pointing at one day — not a proven cause): "
+             + l["headline"] + ". Consider whether the draft should staff that day differently, and say in the "
+             "summary what you decided and why."
+             + (" What it is not: " + l["not_a_cause"] if l.get("not_a_cause") else "")
+             + (" What would confirm it: " + l["confirm_by"] if l.get("confirm_by") else "")
              for l in links[:2]]
     return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
 
@@ -3566,6 +3574,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["soft_requirements"] = _stsig_ap.applied(result.get("soft_requirements") or [], preview_rows, _typ)
             if isinstance(result.get("review"), dict) and result["soft_requirements"]:
                 result["review"]["soft_requirements"] = result["soft_requirements"]
+            # Each review "+1" is a recommendation the owner is shown here;
+            # publishing a week that carries it records it as implemented
+            # (staffing_signals.record_published, re-audit CROSSMODULE-10).
+            _stsig_ap.present_requirements(restaurant_id, result["soft_requirements"])
         except Exception as _sax:
             print(f"[schedule] soft requirement check skipped: {_sax}")
             result.pop("_soft_typical", None)

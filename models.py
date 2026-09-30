@@ -1148,6 +1148,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # model draft. reply_voice_sql leaves a 'view_as' edit out of the
         # style examples, the OWNER'S EDITS note and auto-approve trust.
         ("reviews", "draft_edited_via", "TEXT"),
+        # When a removed review's words were erased (memory re-audit 9/29/26,
+        # FORGET-1): a soft-deleted review keeps its row — the unique key
+        # stops a re-fetch re-adding it — but past ops' "reviews_erase"
+        # window its guest text and replies are blanked for good
+        # (history_rollups.erase_removed_reviews). NULL while restorable.
+        ("reviews", "erased_at", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -2707,6 +2713,15 @@ def init_db(db_path: str = DB_PATH):
         # snapshots are averaged) and the organisations behind each figure.
         "ALTER TABLE intel_confidence_log ADD COLUMN trust_version INTEGER",
         "ALTER TABLE intel_confidence_log ADD COLUMN orgs INTEGER",
+        # The ISO week's OWN figures are n / mean_confidence / acceptance_rate /
+        # success_rate / orgs (memory re-audit 9/29/26, PLATFORM-15: they were
+        # a 365-day trailing figure filed under the week); the trailing year
+        # has its own columns.
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_n INTEGER",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_mean_confidence REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_acceptance_rate REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_success_rate REAL",
+        "ALTER TABLE intel_confidence_log ADD COLUMN trailing_orgs INTEGER",
         # What the platform believed, week by week (PLATFORM-14): one row
         # per pattern per ISO week per status it reached — written once,
         # never re-figured (the trigger refuses an UPDATE), so "this
@@ -4545,6 +4560,18 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     backstop for every other caller.
     """
     rid = int(restaurant_id)
+    # Its organisation hashes, read before the write lock (memory re-audit
+    # 9/29/26, FORGET-8): a restaurant alone in its organisation is taken out
+    # of every stored band's member list below. One whose organisation keeps
+    # other restaurants leaves its organisation's hash, which is theirs too.
+    _band_hashes = set()
+    try:
+        from intelligence import benchmarks as _bm_del, privacy as _pv_del
+        _canon, _org_rows = _pv_del.org_members(rid, db_path=db_path)
+        if not [r for r in _org_rows if int(r.get("id") or 0) != rid]:
+            _band_hashes = set(_bm_del.viewer_org(rid, db_path=db_path))
+    except Exception as _e_del:
+        print(f"[delete_restaurant] band member hashes unavailable for {rid}: {_e_del}")
     conn = get_conn(db_path)
     conn.execute("PRAGMA foreign_keys=OFF")          # must be set outside the transaction
     deleted = {}
@@ -4571,6 +4598,11 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                                     f"move them before deleting it")
         _row_tb = conn.execute("SELECT * FROM restaurants WHERE id=?", (rid,)).fetchone()
         _tombstoned = _tombstone_learning(conn, rid, _row_tb)
+        if _band_hashes and "intel_benchmarks" in tables:
+            from intelligence import benchmarks as _bm_del2
+            n = _bm_del2.strip_member_hashes(conn, _band_hashes)
+            if n:
+                deleted["intel_benchmarks.members"] = n
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -5061,10 +5093,15 @@ def _apply_review_edit(conn, r: "Review") -> tuple:
     published against it.
     """
     row = conn.execute(
-        "SELECT id, rating, text, original_rating FROM reviews "
+        "SELECT id, rating, text, original_rating, deleted_at FROM reviews "
         "WHERE restaurant_id=? AND platform=? AND external_id=?",
         (r.restaurant_id, r.platform, r.external_id)).fetchone()
     if not row:
+        return (False, False)
+    if row["deleted_at"]:
+        # A removed review stays removed (memory re-audit 9/29/26, FORGET-1):
+        # a later guest edit used to rewrite the hidden row's text, so words
+        # the owner's retention had removed — or erased — came back.
         return (False, False)
     old_rating = int(row["rating"] or 0)
     new_rating = int(r.rating or 0)
@@ -10214,7 +10251,7 @@ def learning_eligible(restaurant, since=None, db_path=None) -> bool:
         return False
     if since is not None:
         floor = _learning_get(r, "learning_since")
-        if floor and str(since).replace("T", " ")[:19] < str(floor)[:19]:
+        if floor and str(since).replace("T", " ")[:19] < str(floor).replace("T", " ")[:19]:
             return False
     return True
 
@@ -10262,8 +10299,12 @@ def learning_rows_sql(rid_column, time_column) -> str:
     """A WHERE fragment dropping rows recorded before their restaurant's
     learning_since (its demo era): correlated on `rid_column`, compared on
     `time_column` (an ISO date or SQLite stamp)."""
+    # Both sides normalised to a space stamp (memory re-audit 9/29/26,
+    # PLATFORM-17): 'T' sorts after ' ', so an ISO row stamped the morning
+    # of a conversion compared as later and taught.
     return (f"NOT EXISTS (SELECT 1 FROM restaurants _ls WHERE _ls.id = {rid_column} "
-            f"AND _ls.learning_since IS NOT NULL AND {time_column} < _ls.learning_since)")
+            f"AND _ls.learning_since IS NOT NULL "
+            f"AND replace({time_column}, 'T', ' ') < replace(_ls.learning_since, 'T', ' '))")
 
 
 def learning_since_map(conn=None, db_path=None) -> dict:
@@ -14221,6 +14262,10 @@ def delete_ask_conversation(restaurant_id, conversation_id, db_path: str = DB_PA
         if cur.rowcount:
             conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=? AND restaurant_id=?",
                          (conversation_id, restaurant_id))
+            # And what it was about, if it was ever kept (memory re-audit
+            # 9/29/26, INVENTORY-7): a deleted chat is deleted everywhere.
+            conn.execute("DELETE FROM ask_topics WHERE conversation_id=? AND restaurant_id=?",
+                         (conversation_id, restaurant_id))
         conn.commit()
         return bool(cur.rowcount)
     finally:
@@ -14498,6 +14543,19 @@ def clear_ask_history(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
             conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=?",
                          (restaurant_id, cid))
             conn.execute("DELETE FROM ask_cavnar_conversations WHERE restaurant_id=? AND id=?", (restaurant_id, cid))
+        # What this login's evicted chats were about goes too (memory
+        # re-audit 9/29/26, INVENTORY-7): "Clear history" left every title
+        # and summary in ask_topics, and the next turn still said "Recent
+        # questions: …" and read_past_conversations still returned them.
+        # The rows the login could read: its own, and the ownerless legacy
+        # ones only for an account holder (ask_conversations._reads_legacy).
+        if viewer_id is None:
+            conn.execute("DELETE FROM ask_topics WHERE restaurant_id=?", (restaurant_id,))
+        else:
+            import ask_conversations
+            legacy = ask_conversations._reads_legacy(restaurant_id, viewer_id, db_path=db_path)
+            conn.execute("DELETE FROM ask_topics WHERE restaurant_id=? AND "
+                         + ("(user_id=? OR user_id IS NULL)" if legacy else "user_id=?"), (restaurant_id, viewer_id))
         if viewer_id is None:
             conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=?", (restaurant_id,))
         conn.commit()

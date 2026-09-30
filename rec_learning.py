@@ -1054,7 +1054,12 @@ class Effectiveness:
                 print(f"[rec_learning] {rung} prior unavailable for {kind}: {e}")
                 continue
             if used["acceptance"] is None and s.get("answered") and s.get("acceptance_available"):
-                a = s.get("acceptance_rate_decayed_shrunk")
+                # Capped per organisation over the episodes shown near the top
+                # (memory re-audit 9/29/26, PLATFORM-9 / -10); the raw decayed
+                # figure only when the capped one cannot be formed.
+                a = s.get("acceptance_rate_decayed_capped_shrunk")
+                if a is None:
+                    a = s.get("acceptance_rate_decayed_shrunk")
                 acc = float(a if a is not None else (s.get("acceptance_rate_shrunk") or 0.5))
                 used["acceptance"] = rung
                 used["label"] = used["label"] or label
@@ -1493,8 +1498,8 @@ def _learning_floor(restaurant, since):
     floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
     if floor is None and isinstance(restaurant, dict):
         floor = restaurant.get("learning_since")
-    if floor and str(floor)[:19] > str(since or "")[:19]:
-        return str(floor)[:19]
+    if floor and str(floor).replace("T", " ")[:19] > str(since or "").replace("T", " ")[:19]:
+        return str(floor).replace("T", " ")[:19]
     return since
 
 
@@ -1998,6 +2003,11 @@ WORKED_TAG_PREFIXES = ("topic:", "focus:", "category:", "dish:", "item:", "daypa
 IGNORED_LINE_MIN = 3            # left unanswered this often, never taken → said
 WORKED_LINES_MAX = 6
 # The modules whose kinds and the lever topics whose tags each surface reads.
+# Kinds a surface reads beyond its own modules: what the schedule did with
+# the reviews diagnosis's "+1" is the review diagnosis's own result too
+# (re-audit 9/29/26, CROSSMODULE-10).
+SURFACE_EXTRA_KINDS = {"review_diagnosis": ("staff_add",)}
+
 SURFACE_SCOPE = {
     "labor_read": (("labor", "schedule"), ("staffing", "hours", "overtime")),
     "schedule": (("labor", "schedule"), ("staffing", "hours", "overtime")),
@@ -2152,6 +2162,8 @@ def _stored_what_worked(restaurant_id, db_path=DB_PATH):
 
 def _kind_label(kind) -> str:
     k = str(kind or "")
+    if k == "staff_add":
+        return "adding a person where guests complained"
     if k.startswith("insight_"):
         return f"the {k[len('insight_'):]} read's suggestions"
     if k.startswith("diag_"):
@@ -2198,8 +2210,9 @@ def what_worked_lines(req):
         for i in range(len(parts) - 1):
             wanted_tags.add(f"{parts[i]}:{parts[i + 1]}")
     cand = []
+    extra = SURFACE_EXTRA_KINDS.get(getattr(req, "surface", None), ())
     for kind, b in (rec.get("kinds") or {}).items():
-        if modules and (b.get("module") or "home") not in modules:
+        if modules and (b.get("module") or "home") not in modules and kind not in extra:
             continue
         cand.append(("kind", kind, b))
     for tag, b in (rec.get("tags") or {}).items():
