@@ -13188,7 +13188,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 {% set _principal = is_principal if is_principal is defined else _is_owner %}
 
 <div class="panel" id="panel-account"
-     data-profile-done="{{ _profile_done }}" data-conn="{{ _conn_count }}" data-conn-err="{{ 1 if _pos_err else 0 }}"
+     data-profile-done="{{ _profile_done }}" data-profile-has-owner-name="{{ 1 if restaurant.owner_name else 0 }}" data-profile-has-owner-phone="{{ 1 if restaurant.owner_phone else 0 }}" data-profile-has-timezone="{{ 1 if restaurant.timezone else 0 }}" data-profile-has-voice="{{ 1 if restaurant.voice_notes else 0 }}" data-conn="{{ _conn_count }}" data-conn-err="{{ 1 if _pos_err else 0 }}"
      data-twofa="{{ 1 if restaurant.two_fa_enabled else 0 }}" data-alerts="{{ 1 if _alerts_on else 0 }}"
      data-digest="{{ 1 if restaurant.digest_enabled else 0 }}" data-login-notify="{{ 1 if restaurant.login_notify else 0 }}"
      data-modules="{{ active_modules|length }}" data-full="{{ 1 if is_full_tier else 0 }}" data-principal="{{ 1 if _principal else 0 }}">
@@ -18692,7 +18692,11 @@ function saveBrandVoice(){
     sign_off_name:document.getElementById('bv-signoff').value
   })}).then(apiJson).then(function(d){
     if(btn){btn.disabled=false;btn.style.opacity='';}
-    if(d.ok){toast('Brand voice saved','success');closeBrandVoice();}
+    if(d.ok){toast('Brand voice saved','success');closeBrandVoice();
+      // The profile form carries the same voice: keep it (and Account
+      // health, which reads it) in step without a reload.
+      var pv=document.getElementById('pe-voice');if(pv)pv.value=document.getElementById('bv-voice').value;
+      if(window.acctHealthRefresh)acctHealthRefresh();}
     else{if(st){st.textContent=d.error||'Could not save';st.style.display='inline';}}
   }).catch(function(){
     if(btn){btn.disabled=false;btn.style.opacity='';}
@@ -31905,10 +31909,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(!$('ac-health-grid'))return;
     var d=window._acctData,pts=0,max=6;
 
-    var pd=parseInt(flag('profile-done'),10)||0;
+    // The four profile details, read live from the profile form when it is
+    // on the page (it holds what was just saved), else from the flags the
+    // template stamped - so a save updates this without a reload, and the
+    // line names what is missing (owner, 9/29/26: "1 of 4 details missing"
+    // with no way to tell it was the brand voice, which is set elsewhere).
+    var PD=[['pe-owner-name','owner-name','your name'],['pe-phone','owner-phone','a phone number'],
+            ['pe-tz','timezone','your timezone'],['pe-voice','voice','your brand voice (how you sound)']];
+    var miss=[];
+    for(var pi=0;pi<PD.length;pi++){var inp=$(PD[pi][0]),val=inp?String(inp.value||'').trim():flag('profile-has-'+PD[pi][1]);
+      if(!val||val==='0')miss.push(PD[pi][2]);}
+    var pd=4-miss.length;
     if(pd>=4){pts+=1;setItem('profile','ok','Complete — contact, timezone and brand voice all set');}
-    else if(pd>=2){pts+=.5;setItem('profile','warn',(4-pd)+' of 4 details missing — the AI writes better with them',(4-pd)+' profile detail'+(4-pd===1?'':'s')+' missing');}
-    else setItem('profile','bad','Add your contact details and how you sound','your profile is mostly empty');
+    else if(pd>=2){pts+=.5;setItem('profile','warn','Missing '+miss.join(' and ')+' — the AI writes better with '+(miss.length===1?'it':'them'),'profile: '+miss.join(', ')+' missing');}
+    else setItem('profile','bad','Missing '+miss.join(', ')+' — add your contact details and how you sound','your profile is mostly empty');
 
     if(d.team===undefined&&d.staff===undefined)setItem('people','warn','Checking…');
     else{
