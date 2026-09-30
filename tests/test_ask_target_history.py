@@ -93,3 +93,15 @@ def test_the_tool_is_registered_labelled_and_refuses_a_bad_date():
 
 def test_value_as_of_has_a_reader_now():
     assert "read_target_history" in change_log.__doc__
+
+
+def test_a_stepper_clicked_five_times_is_one_change_and_a_round_trip_is_none():
+    rid = _rid()
+    for i, (a, b) in enumerate([(2.5, 3.0), (3.0, 3.5), (3.5, 4.0), (4.0, 4.5), (4.5, 5.0)]):
+        _change(rid, "waste_target_pct", a, b, f"2026-09-28 19:2{i}:00")
+    _change(rid, "labor_target_pct", 30.0, 28.0, "2026-09-20 15:00:00")
+    _change(rid, "labor_target_pct", 28.0, 30.0, "2026-09-20 15:03:00")
+    _change(rid, "waste_target_pct", 5.0, 4.0, "2026-09-29 15:00:00")      # a later, separate edit
+    got = change_log.target_changes(rid)
+    assert [(c["label"], c["from"], c["to"]) for c in got] == [("Waste target", "5%", "4%"),
+                                                               ("Waste target", "2.5%", "5%")]

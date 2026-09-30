@@ -652,16 +652,47 @@ def targets_as_of(restaurant_id, when, fields=None, current=None, db_path=None) 
     return out
 
 
+# Back-to-back changes to one target this close together are one edit — a
+# stepper clicked five times (Simple EJ's waste target, 9/28/26: 2.5 → 3 →
+# 3.5 → 4 → 4.5 → 5 in one sitting) reads as "2.5% → 5%".
+EDIT_BURST_MINUTES = 10
+
+
 def target_changes(restaurant_id, fields=None, limit=20, db_path=None) -> list:
     """The owner targets' changes, newest first: [{field, label, from, to,
-    on (M/D/YY, the restaurant's day), by}]."""
+    on (M/D/YY, the restaurant's day), by}]. Consecutive changes to the same
+    target by the same source within EDIT_BURST_MINUTES are one change, from
+    the first value to the last."""
+    from datetime import datetime as _dt
     fields = set(fields or _models.OWNER_TARGET_FIELDS)
-    rows = [r for r in history(restaurant_id, kinds="target", limit=200, db_path=db_path)
-            if r.get("field") in fields][:limit]
-    return [{"field": r["field"], "label": FIELD_LABELS.get(r["field"], r["field"]),
-             "from": _show_target(r["field"], r.get("old_value")), "to": _show_target(r["field"], r.get("new_value")),
-             "on": _local_mdy(restaurant_id, r["changed_at"]), "by": SOURCE_LABELS.get(r.get("source"))}
-            for r in rows]
+    rows = [r for r in history(restaurant_id, kinds="target", limit=500, db_path=db_path)
+            if r.get("field") in fields]
+
+    def _at(r):
+        try:
+            return _dt.fromisoformat(str(r["changed_at"]).replace("T", " ")[:19])
+        except ValueError:
+            return None
+    merged = []                                   # oldest first while merging
+    for r in reversed(rows):
+        last = merged[-1] if merged else None
+        a, b = (_at(last["_end"]) if last else None), _at(r)
+        if (last and last["field"] == r["field"] and last["_end"].get("source") == r.get("source")
+                and a and b and (b - a).total_seconds() <= EDIT_BURST_MINUTES * 60):
+            last["_end"] = r
+            continue
+        merged.append({"field": r["field"], "_start": r, "_end": r})
+    out = []
+    for m in reversed(merged):
+        f, first, end = m["field"], m["_start"], m["_end"]
+        if _show_target(f, first.get("old_value")) == _show_target(f, end.get("new_value")):
+            continue                              # changed and changed back: no change
+        out.append({"field": f, "label": FIELD_LABELS.get(f, f), "from": _show_target(f, first.get("old_value")),
+                    "to": _show_target(f, end.get("new_value")), "on": _local_mdy(restaurant_id, end["changed_at"]),
+                    "by": SOURCE_LABELS.get(end.get("source"))})
+        if len(out) >= limit:
+            break
+    return out
 
 
 # ── what a change means to the learning readers ───────────────────────────
