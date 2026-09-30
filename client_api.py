@@ -1995,10 +1995,11 @@ def _do_review_insight(rid, viewer=None):
               AND {_AXIS} >= datetime('now','-28 days')
             GROUP BY week ORDER BY week
         """, (rid,)).fetchall()
+        from models import urgent_review_sql as _urg_sql
         this_week = _conn_ri.execute(f"""
             SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
                    SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) as neg,
-                   SUM(CASE WHEN urgency='high' AND response_status NOT IN ('posted','skipped') THEN 1 ELSE 0 END) as urgent
+                   SUM(CASE WHEN {_urg_sql()} AND response_status NOT IN ('posted','skipped') THEN 1 ELSE 0 END) as urgent
             FROM reviews
             WHERE restaurant_id=? AND deleted_at IS NULL
               AND {_AXIS} >= datetime('now','-7 days')

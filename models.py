@@ -11120,7 +11120,7 @@ def get_review_stats(restaurant_id):
             AVG(rating)                                                                 AS avg_rating,
             SUM(response_status='drafted')                                              AS drafted,
             SUM(response_status NOT IN ('drafted','posted','approved','skipped'))        AS needs_response,
-            SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
+            SUM({_URG} AND COALESCE(response_status,'') NOT IN ('posted','approved','skipped')) AS urgent,
             SUM(response_status='posted')                                               AS posted,
             SUM(response_status IN ('posted','approved'))                               AS responded,
             SUM(response_status='skipped')                                              AS skipped,
@@ -11129,7 +11129,7 @@ def get_review_stats(restaurant_id):
             SUM({_AX} >= date('now','-30 days'))                                        AS last_30d,
             AVG(CASE WHEN {_AX} >= date('now','-30 days') THEN rating END)              AS avg_rating_30d
         FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL
-    """.format(_AX=REVIEW_TIME_AXIS_BARE), (restaurant_id,)).fetchone()
+    """.format(_AX=REVIEW_TIME_AXIS_BARE, _URG=urgent_review_sql()), (restaurant_id,)).fetchone()
 
     # Average response time in hours (review_date → approved_at) — industry standard definition.
     # Matches how Google/Podium/Birdeye measure it: time from when customer wrote review
@@ -11448,6 +11448,40 @@ _SEVERITY_LABELS = {
 REVIEWS_PAGE_SIZE = 50
 
 
+# "Urgent" as the owner sees it (Will, 9/29/26: "a 2 star review should be
+# flagged as urgent"): the analyser's safety/legal call (urgency='high'), OR a
+# 1-2 star review still owed a reply (the last REPLY_OWED_MAX_AGE_DAYS, not
+# answered) — the same reviews Home's top card counts. The stored `urgency`
+# column is NOT widened to match: it drives the health/safety alert
+# (notify._is_health_alert), and a 2-star review is not a safety incident.
+_ANSWERED = "('posted','approved','skipped')"
+
+
+def urgent_review_sql() -> str:
+    """The SQL predicate for an urgent review (columns unqualified)."""
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
+    return ("(urgency='high' OR (rating <= 2 AND COALESCE(response_status,'') NOT IN " + _ANSWERED +
+            f" AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', '-{int(REPLY_OWED_MAX_AGE_DAYS)} days')))")
+
+
+def is_urgent_review(r: dict, today=None) -> bool:
+    """urgent_review_sql for one review row already read."""
+    if str(r.get("urgency") or "").lower() == "high":
+        return True
+    try:
+        if int(r.get("rating") or 0) < 1 or int(r.get("rating")) > 2:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if (r.get("response_status") or "") in ("posted", "approved", "skipped"):
+        return False
+    from thresholds import REPLY_OWED_MAX_AGE_DAYS
+    from datetime import date as _date, timedelta as _td
+    when = str(r.get("review_date") or r.get("fetched_at") or "")[:10]
+    today = today or _date.today()
+    return bool(when) and when >= (today - _td(days=int(REPLY_OWED_MAX_AGE_DAYS))).isoformat()
+
+
 def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None,
                      limit=None, offset=0, include_total=False, review_id=None):
     """Rows for the review inbox.
@@ -11472,7 +11506,7 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         # from a diagnosis). Scoped to the restaurant like every other read.
         where.append("id=?"); params.append(int(review_id))
     if filter_by == "urgent":
-        where.append("urgency='high'")
+        where.append(urgent_review_sql())
     elif filter_by in ("positive","neutral","negative"):
         where.append("sentiment=?"); params.append(filter_by)
     elif filter_by == "pending":
@@ -11511,7 +11545,7 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     # answered ones begin.
     sql = f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE WHEN COALESCE(response_status,'') IN ('posted','approved','skipped') THEN 1 ELSE 0 END,
-        CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
+        CASE WHEN {urgent_review_sql()} THEN 0 ELSE 1 END,
         CASE COALESCE(severity,'service')
              WHEN 'safety' THEN 0 WHEN 'legal' THEN 1 WHEN 'operational' THEN 2
              WHEN 'service' THEN 3 ELSE 4 END,
@@ -11553,6 +11587,7 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         d["severity"] = d.get("severity") or None
         d["severity_label"] = _SEVERITY_LABELS.get(d.get("severity") or "", None)
         d["specific_complaint"] = d.get("specific_complaint") or None
+        d["urgent"] = is_urgent_review(d)
         result.append(d)
     if include_total:
         return result, total

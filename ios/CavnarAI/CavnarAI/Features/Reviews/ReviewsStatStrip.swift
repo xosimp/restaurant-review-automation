@@ -141,7 +141,7 @@ enum ReviewsWhyLine {
     static func make(urgent: Int, reviews: [Review]) -> String? {
         let recent = Array(reviews.prefix(window))
         if urgent > 0 {
-            let urgentRows = recent.filter { $0.urgency == "high" && !$0.isPosted }
+            let urgentRows = recent.filter { $0.isUrgent && !$0.isPosted }
             let lead = "\(urgent) urgent"
             if let top = topCategory(urgentRows), top.count == urgentRows.count, urgentRows.count > 0 {
                 let about = urgentRows.count == 1 ? "about \(top.label)"

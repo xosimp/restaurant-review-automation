@@ -30,7 +30,7 @@ struct AccountHelpView: View {
             FAQItem(question: "Does Cavnar AI post responses automatically?",
                     answer: "No — every AI-drafted response needs your approval before it goes out. You can edit the draft, approve it as-is, or regenerate it from the review's detail screen."),
             FAQItem(question: "Why does a review show as \"urgent\"?",
-                    answer: "Reviews mentioning health, safety, or a sharp negative sentiment are flagged urgent so they surface above routine reviews and can trigger an alert, depending on your Alert settings."),
+                    answer: "Two kinds: a 1- or 2-star review from the last 30 days that hasn\u{2019}t been answered yet, and any review about illness, injury, a legal threat or staff misconduct. Urgent reviews sit at the top of your list until they\u{2019}re answered. The safety and legal ones can also send you an alert, depending on your Alert settings."),
         ]),
         FAQGroup(title: "Security", items: [
             FAQItem(question: "What does two-factor authentication protect?",

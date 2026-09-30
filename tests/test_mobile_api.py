@@ -3100,7 +3100,8 @@ def test_home_pulse_overnight_and_publish_cta(client, db_path):
     token = _login(client, db_path, rid)
     data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
     reviews_module = next(m for m in data["modules"] if m["key"] == "reviews")
-    assert reviews_module["pulse"] == {"value": "0/1", "label": "replies · 0%", "tone": "warn"}
+    # the fixture is an unanswered 2-star review: urgent (Will, 9/29/26)
+    assert reviews_module["pulse"] == {"value": "0/1", "label": "1 urgent unanswered", "tone": "bad"}
     # The draft was written just now, so it counts as "answered" in the 24h window.
     assert data["overnight"] == {"answered": 1, "flagged": 0, "window_hours": 24}
     item = next(i for i in data["needs_attention"] if i["type"] == "reviews_awaiting_approval")

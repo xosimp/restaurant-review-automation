@@ -122,7 +122,23 @@ struct Review: Codable, Identifiable, Hashable {
     var canRetract: Bool { canRetractFlag ?? false }
     var isPosted: Bool { responseStatus == "posted" }
     var isApproved: Bool { responseStatus == "approved" }
-    var isUrgent: Bool { urgency == "high" }
+    /// "Urgent" as the owner sees it, the server's rule (models.is_urgent_review):
+    /// the analyser's safety/legal call, or a 1-2 star review still owed a
+    /// reply — unanswered and from the last 30 days
+    /// (thresholds.REPLY_OWED_MAX_AGE_DAYS). A review with no date counts
+    /// as owed, as the server falls back to when it was fetched.
+    var isUrgent: Bool {
+        if urgency == "high" { return true }
+        guard let rating, (1...2).contains(rating),
+              !["posted", "approved", "skipped"].contains(responseStatus) else { return false }
+        guard let day = reviewDate?.prefix(10), day.count == 10 else { return true }
+        let cutoff = Calendar.current.date(byAdding: .day, value: -Review.replyOwedDays, to: Date()) ?? Date()
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return String(day) >= f.string(from: cutoff)
+    }
+    static let replyOwedDays = 30
 
     /// review_date's format depends entirely on which source fetched it
     /// (fetcher.py/gmb.py) — there's no single shape:

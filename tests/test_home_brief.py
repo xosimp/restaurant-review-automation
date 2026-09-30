@@ -241,7 +241,8 @@ def test_group_brief_lists_every_location_without_averaging(db_path, monkeypatch
     assert st == 200 and g["scope"] == "group"
     locs = {l["name"]: l for l in g["locations"]}
     assert locs["Downtown"]["reviews"]["rating_30d"] == 5.0 and locs["Downtown"]["health"] == "healthy"
-    assert locs["Uptown"]["reviews"]["urgent"] == 1 and locs["Uptown"]["health"] == "critical"
+    # four unanswered 2-stars and the safety-flagged 1-star: all owed a reply now (Will, 9/29/26)
+    assert locs["Uptown"]["reviews"]["urgent"] == 5 and locs["Uptown"]["health"] == "critical"
     assert locs["Uptown"]["labor"] is None  # sample shifts never appear as a location's labor
     assert g["portfolio"]["strongest"]["location"] == "Downtown" and g["portfolio"]["weakest"]["location"] == "Uptown"
     assert g["attention"][0]["location"] == "Uptown" and g["attention"][0]["severity"] == "critical"

@@ -156,8 +156,11 @@ def test_web_gap_chip_only_says_on_target_under_the_contract():
     i = s.index("fetch('/api/labor-gap')")
     body = s[i:s.index("});\n}", i)]
     assert "var gapOk=d.is_live!==false&&d.projectable!==false&&!d.sales_data_missing" in body
-    on = body.index("gapEl.textContent='on target'")
-    assert body.rfind("else if(gapOk&&d.over_target===false)", 0, on) > 0
+    # Under target the chip hides: the hero's headline already says "On
+    # target" (Will, 9/29/26), so the chip never shows a green label.
+    under = body.index("else if(gapOk&&d.over_target===false)")
+    assert "gapEl.textContent=''; gapEl.hidden=true;" in body[under:under + 300]
+    assert "gapEl.textContent='on target'" not in body
     assert "d.reason" in body  # the dash carries the server's reason
     assert "#6fcf97" not in body
 

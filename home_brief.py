@@ -410,7 +410,8 @@ def _location_signal(conn, r, now):
     from thresholds import REPLY_OWED_MAX_AGE_DAYS as _OWED_DAYS
     # Urgent means a reply still owed: the last REPLY_OWED_MAX_AGE_DAYS, as
     # on the location's own Home.
-    urgent = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, f"-{int(_OWED_DAYS)} days")) or {}
+    from models import urgent_review_sql as _urg_sql
+    urgent = _one_dict(conn, f"SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND {_urg_sql()} AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, f"-{int(_OWED_DAYS)} days")) or {}
     awaiting = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='drafted'", (rid,)) or {}
     rating = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')", (rid,)) or {}
     issues = []
@@ -1187,7 +1188,8 @@ def _build(current_user, present=True):
     from thresholds import REPLY_OWED_MAX_AGE_DAYS as _OWED_DAYS
     _owed_since = f"-{int(_OWED_DAYS)} days"
     stale_unanswered = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND rating<=3 AND response_status IN ('pending','drafted') AND julianday(fetched_at) < julianday('now','-2 days') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, _owed_since)) or {}
-    urgent_owed = _one_dict(conn, "SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, _owed_since)) or {}
+    from models import urgent_review_sql as _urg_sql
+    urgent_owed = _one_dict(conn, f"SELECT COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND {_urg_sql()} AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)", (rid, _owed_since)) or {}
     rating_prev = _one_dict(conn, "SELECT ROUND(AVG(rating),1) AS r, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days')", (rid,)) or {}
 
     # The client_data row carries the whole shifts CSV. Read once here and
@@ -2758,9 +2760,10 @@ def _location_record(conn, r, now):
     so a seven-location owner doesn't pay for seven sample analyses."""
     rid = r["id"]
     sig = _location_signal(conn, r, now)
-    rs = _one_dict(conn, """SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
+    from models import urgent_review_sql as _urg_sql
+    rs = _one_dict(conn, f"""SELECT COUNT(*) AS total, SUM(response_status IN ('posted','approved')) AS responded,
                               SUM(response_status='drafted') AS awaiting,
-                              SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS urgent,
+                              SUM({_urg_sql()} AND response_status NOT IN ('posted','approved','skipped') AND COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS urgent,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days') THEN rating END),1) AS avg30,
                               SUM(COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-30 days')) AS n30,
                               ROUND(AVG(CASE WHEN COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','-60 days') AND COALESCE(NULLIF(review_date,''), fetched_at) < date('now','-30 days') THEN rating END),1) AS avg_prev,
