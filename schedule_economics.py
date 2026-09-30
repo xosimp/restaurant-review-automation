@@ -65,7 +65,8 @@ def _daypart(r):
 # ── overtime-priced cost ───────────────────────────────────────────────────
 
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
-                base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None) -> dict:
+                base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None,
+                salaried=None) -> dict:
     """Dollars for the week with every overtime hour at the multiplier.
 
     Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
@@ -79,7 +80,11 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     daily_ot_hours: where daily overtime applies, the hours past it in one
     day are overtime too — flagged by the sweep and, until now, never priced
     (SCHED-7). An hour already paid as daily overtime does not also count
-    toward the weekly ceiling."""
+    toward the weekly ceiling.
+
+    salaried: names (models.salaried_name_key) paid the same whatever the
+    hours — their shifts add no hourly dollars and no overtime."""
+    sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
     try:
@@ -89,7 +94,7 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     per_person = {}
     for r in rows or []:
         n = (r.get("employee") or "").strip()
-        if not n:
+        if not n or " ".join(n.lower().split()) in sal:
             continue
         rate = rates.get((r.get("role") or "").strip().lower(), blended)
         per_person.setdefault(n, []).append((r.get("date") or "", _minutes(r.get("shift_start", "")) or 0, _hours(r), rate))
@@ -834,7 +839,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     _t0 = _time.monotonic()
     rows = list(rows or [])
     budget = float(hours_budget or 0)
-    total = sum(_hours(r) for r in rows)
+    # A salaried person's hours are not paid from the hourly budget and are
+    # never trimmed to fit it (models.salaried_staff).
+    _sal = getattr(constraints, "is_salaried", None)
+
+    def _paid(r):
+        return not (_sal and _sal(r.get("employee")))
+    total = sum(_hours(r) for r in rows if _paid(r))
     if budget <= 0 or total <= budget * (1 + tolerance):
         return rows, [], 0.0
     from schedule_rules import floor_for
@@ -865,7 +876,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         except Exception:
             no_show = set()
     if no_show:
-        total = sum(_hours(r) for r in rows if id(r) not in no_show)
+        total = sum(_hours(r) for r in rows if id(r) not in no_show and _paid(r))
         if total <= budget * (1 + tolerance):
             return rows, [], 0.0
 
@@ -874,7 +885,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return sum(_hours(x) for x in rows if (x.get("employee") or "").strip().lower() == low and id(x) not in no_show)
 
     def removable(r):
-        if r.get("needs_review") or id(r) in no_show:
+        if r.get("needs_review") or id(r) in no_show or not _paid(r):
             return False
         if only_dates and r.get("date") not in only_dates:
             return False          # a day the owner kept in a partial redo

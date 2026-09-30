@@ -629,6 +629,11 @@ def daypart_of(shift_start: str) -> str:
 
 # ── the constraint set ─────────────────────────────────────────────────────
 
+# The most a salaried person with no limit of their own is scheduled in a
+# week: seven 12-hour days. They owe no overtime, so the 40h line is not theirs.
+SALARIED_HOURS_CAP = 84.0
+
+
 @dataclass
 class Constraints:
     restaurant_id: int
@@ -644,6 +649,7 @@ class Constraints:
     unavailable_days: dict = field(default_factory=dict)   # {lower: set(day)}
     daypart_avail: dict = field(default_factory=dict)      # {lower: {day: any|morning|night|off}}
     hours_limits: dict = field(default_factory=dict)       # {lower: (min, max)}
+    salaried: set = field(default_factory=set)             # models.salaried_name_key of salaried people
     employment: dict = field(default_factory=dict)         # {lower: 'full'|'part'}
     minors: set = field(default_factory=set)
     minor_bands: dict = field(default_factory=dict)        # {lower: "14-15"|"16-17"} (MINOR_BANDS)
@@ -682,8 +688,17 @@ class Constraints:
         except (TypeError, ValueError):
             return ""          # a garbled date is flagged elsewhere; it counts toward no payroll week
 
+    def is_salaried(self, name: str) -> bool:
+        """Paid the same whatever the hours (models.salaried_staff) — Erik and
+        Jim at Simple EJ's work the floor most of the week (owner, 9/30/26)."""
+        return " ".join(str(name or "").lower().split()) in self.salaried
+
     def max_hours(self, name: str) -> float:
         lim = self.hours_limits.get((name or "").strip().lower())
+        if self.is_salaried(name):
+            # No weekly ceiling or overtime for a salaried person: only the
+            # owner's own limit for them, else a week of long days.
+            return float(lim[1]) if lim and lim[1] else SALARIED_HOURS_CAP
         ceiling = float(self.compliance.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
         if lim and lim[1]:
             return min(float(lim[1]), ceiling) if ceiling else float(lim[1])
@@ -800,6 +815,11 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
     c.compliance = compliance(restaurant)
+    try:
+        from models import salaried_staff, salaried_name_key
+        c.salaried = {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
+    except Exception:
+        c.salaried = set()
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
@@ -1179,7 +1199,7 @@ def violations(rows: list, c: Constraints) -> list:
             if mm and hrs > float(mm) + 0.01:
                 out.append(_v("minor_hours", i, r, f"{hrs:g}h, minors stop at {float(mm):g}h a day"))
         dot = c.compliance.get("daily_ot_hours")
-        if dot and hrs > float(dot) + 0.01:
+        if dot and hrs > float(dot) + 0.01 and not c.is_salaried(name):
             out.append(_v("daily_ot", i, r, f"{hrs:g}h in one day, daily overtime starts at {float(dot):g}h"))
         mb = c.compliance.get("meal_break_after_hours")
         if mb and hrs > float(mb) + 0.01:
@@ -1571,6 +1591,10 @@ def prompt_block(c: Constraints) -> str:
                      + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
     if c.role_requirements:
         lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
+    if c.salaried:
+        lines.append("- Salaried (the same pay whatever the hours): " + ", ".join(sorted(n.title() for n in c.salaried))
+                     + " — no overtime and no weekly hours ceiling for them, and their hours are not spent from the "
+                       "hourly hours budget. Never move an hourly person's shift onto them to save overtime.")
     if c.close_mins and c.close_times:
         lines.append("- Stays after close: " + "; ".join(f"the last {role} until {m} min after close" for role, m in sorted(c.close_mins.items())) + ".")
     if c.minors:
@@ -1674,7 +1698,11 @@ OT_MAX_SWEEPS = 300
 
 
 def overtime_line(c: "Constraints", name: str, line: float = None) -> float:
+    """The hours past which a person's week is overtime; a salaried
+    person's never is (their own limit, else SALARIED_HOURS_CAP)."""
     from labor import OVERTIME_THRESHOLD_HOURS
+    if c.is_salaried(name):
+        return c.max_hours(name)
     ot = float(line or OVERTIME_THRESHOLD_HOURS)
     mx = c.max_hours(name)
     lim = c.hours_limits.get((name or "").strip().lower())
@@ -1738,7 +1766,10 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
             h = row_hours(r)
             role = (r.get("role") or "").strip().lower()
             taken = {(x.get("employee") or "").strip().lower() for x in rows if x.get("date") == r.get("date")}
-            cands = sorted((n for n in by_role.get(role, ()) if n != low and n not in taken),
+            # Hours moved off someone to spare overtime never land on a
+            # salaried person: that is their fixed week, not spare room.
+            cands = sorted((n for n in by_role.get(role, ()) if n != low and n not in taken
+                            and not c.is_salaried(display.get(n, n))),
                            key=lambda n: (hb.get((n, b), 0.0), n))
             for n in cands:
                 if sweeps >= max_sweeps:

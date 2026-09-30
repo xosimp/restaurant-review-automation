@@ -2792,7 +2792,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sg .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between}
 .hb-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11px}
 .hb-sg .k i.warn{color:var(--hb-warn)}.hb-sg .k i.bad{color:var(--hb-bad)}.hb-sg .k i.good{color:var(--hb-good)}
-.hb-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
+.hb-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+/* Every piece beside the big figure sits on ITS baseline, one line each: a
+   label that wrapped to two lines sat off it ("% of / sales", 9/30/26). A
+   narrow tile moves a whole piece to the next line instead. */
+.hb-sg .v>*{white-space:nowrap}
 .hb-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:400;letter-spacing:0;color:var(--ink3)}
 .hb-sg .v .dl{font-size:13.5px;font-weight:600;letter-spacing:0}
 /* What the delta is against, in the server's words ("vs the week before" -
@@ -13372,7 +13376,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           </dl>
           <div class="ac-inline" style="margin-top:12px">
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('email-modal').style.display='flex'">Change email</button>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change password</button>
+            {# The password changes in one place: Security -> Sign-in protection (owner, 9/30/26). #}
           </div>
         </div>
       </div>

@@ -1155,6 +1155,15 @@ def _summarize_schedule_csv_by_day_role(csv_text: str) -> dict:
     return summary
 
 
+def _hourly_hours_sum(rows: list, constraints=None) -> float:
+    """Hours the HOURLY budget pays for: a salaried person's shifts are left
+    out. The hours budget is sales x the labor target / the hourly rate, so
+    Erik's and Jim's weeks on the floor (owner, 9/30/26) are not spent from
+    it and never crowd out an hourly shift."""
+    sal = getattr(constraints, "is_salaried", None)
+    return _safe_hours_sum([r for r in rows or [] if not (sal and sal(r.get("employee")))])
+
+
 def _safe_hours_sum(rows: list) -> float:
     """Total scheduled_hours across rows, skipping any row whose value
     isn't actually numeric instead of raising — a live generation
@@ -3037,9 +3046,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] role floors added {pizza_rows_added} row(s) across {pizza_added_dates}")
 
+            _hourly_so_far = _hourly_hours_sum(preview_rows, _constraints)
             preview_rows, hours_added, added_dates = _top_up_hours_gap(
                 preview_rows, result.get("daily_target_hours", {}),
-                result.get("hours_budget", 0), hours_scheduled, restaurant_id,
+                result.get("hours_budget", 0), _hourly_so_far, restaurant_id,
                 _close_times, _role_close_buffers, constraints=_constraints, scorer_for=_scorer_for,
             )
             if hours_added:
@@ -3147,6 +3157,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                                 # owner's hours ceiling: a 35h ceiling priced
                                                 # $50 of "premium" on a week that owes none (NS3 H5).
                                                 ceiling=_labor_ot_line(),
+                                                salaried=getattr(_constraints, "salaried", None),
                                                 base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
                                                 bucket=_constraints.bucket,
                                                 daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))
@@ -3203,7 +3214,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             try:
                 _hb2 = float(result.get("hours_budget") or 0)
                 if _fixes and _hb2 > 0 and int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) \
-                        and _safe_hours_sum(preview_rows) > _hb2 * (1 + _econ.TRIM_TOLERANCE):
+                        and _hourly_hours_sum(preview_rows, _constraints) > _hb2 * (1 + _econ.TRIM_TOLERANCE):
                     preview_rows, _t2, _h2 = _econ.trim_to_budget(
                         preview_rows, _hb2, result.get("daily_target_hours") or {}, constraints=_constraints,
                         floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
@@ -3347,7 +3358,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # The budget is a ceiling. A week written past it is named at
             # the top of the review, never trimmed into a thinner week.
             try:
-                _hs = _safe_hours_sum(preview_rows)
+                _hs = _hourly_hours_sum(preview_rows, _constraints)
                 _hb = float(result.get("hours_budget") or 0)
             except (TypeError, ValueError):
                 _hs = _hb = 0.0

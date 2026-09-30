@@ -3353,7 +3353,8 @@ def _schedule_economics(rid, history_id, rows, week_start):
                                   week_start_day=int(getattr(r, "week_start_day", 0) or 0))
         cost = _econ.priced_cost(rows, rates, rates.get("_default") or getattr(r, "hourly_rate", None) or 15.0,
                                  ceiling=OVERTIME_THRESHOLD_HOURS, bucket=cons.bucket,
-                                 daily_ot_hours=(_rules.compliance(r) or {}).get("daily_ot_hours"))
+                                 daily_ot_hours=(_rules.compliance(r) or {}).get("daily_ot_hours"),
+                                 salaried=[x["name"] for x in __import__("models").salaried_staff(r)])
     except Exception as e:
         print(f"[schedule history] pricing failed for {history_id}: {e}")
     return econ, cost
