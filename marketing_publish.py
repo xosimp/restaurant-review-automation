@@ -388,7 +388,20 @@ def cancel_scheduled(post_id, restaurant_id, db_path: str = DB_PATH) -> dict:
         conn.close()
     if not n:
         return {"ok": False, "error": "That post has already gone out or was cancelled."}
+    _void_post_signal(restaurant_id, post_id, db_path=db_path)
     return {"ok": True}
+
+
+def _void_post_signal(restaurant_id, post_id, db_path: str = DB_PATH):
+    """A post that will not go out takes its demand signal with it (memory
+    re-audit 9/29/26, CROSSMODULE-7): cancelled, or failed with nothing sent,
+    it no longer tells the prep list or the lineup about its night. A
+    failure that may have reached the platform keeps it. Never raises."""
+    try:
+        import demand_signals
+        demand_signals.remove_by_ref(restaurant_id, f"post:{post_id}", db_path=db_path)
+    except Exception as e:
+        log.warning("post demand signal not removed for post %s: %s", post_id, e)
 
 
 def _explain_failure(platform, error):
@@ -565,6 +578,7 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
         when = _parse_local(row["scheduled_for"])
         if when is None:
             _finish(row["id"], "failed", error="Unreadable scheduled time", db_path=db_path)
+            _void_post_signal(row["restaurant_id"], row["id"], db_path=db_path)
             # Every other terminal failure tells the owner; this one was
             # silent (MOD-A6-queue-21).
             _alert_failed_post(row, "Unreadable scheduled time", db_path=db_path)
@@ -578,6 +592,7 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             # A brunch post landing at dinner is worse than one that didn't land.
             late = f"Missed its slot by more than {LATE_TOLERANCE_HOURS} hours"
             _finish(row["id"], "failed", error=late, db_path=db_path)
+            _void_post_signal(row["restaurant_id"], row["id"], db_path=db_path)
             _alert_failed_post(row, late, db_path=db_path)
             failed += 1
             continue
@@ -615,6 +630,7 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             _finish(row["id"], status, error=result.get("error"), attempts=attempts, db_path=db_path)
             if status == "failed":
                 failed += 1
+                _void_post_signal(row["restaurant_id"], row["id"], db_path=db_path)
                 # Once, on the way out — not on each retry.
                 _alert_failed_post(row, result.get("error"), db_path=db_path)
     if failed:

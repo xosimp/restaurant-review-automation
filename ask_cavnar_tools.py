@@ -1867,7 +1867,8 @@ def _read_upcoming(restaurant_id, days=14, _viewer=None):
         import demand_signals
         for s in demand_signals.upcoming(restaurant_id, today.isoformat(), end.isoformat()) or []:
             extra = {k: s[k] for k in ("covers", "lift_pct") if s.get(k) is not None}
-            add(s.get("date"), "reservations" if s.get("kind") == "reservations" else "event", s.get("label"),
+            # A scheduled post is a post, not an event (CROSSMODULE-7).
+            add(s.get("date"), s.get("kind") if s.get("kind") in ("reservations", "post") else "event", s.get("label"),
                 **extra)
     except Exception as e:
         log.debug("read_upcoming: demand signals unavailable: %s", e)

@@ -6930,6 +6930,10 @@ def init_demand_signals(db_path: str = DB_PATH):
             except sqlite3.OperationalError as e:
                 if "duplicate column" not in str(e).lower():
                     raise
+    # A scheduled post is kind 'post', not an event (re-audit 9/29/26,
+    # CROSSMODULE-7), and a cancelled or failed post's signal is gone.
+    import demand_signals as _ds
+    _ds.migrate_post_signals(conn)
     conn.commit()
     conn.close()
 

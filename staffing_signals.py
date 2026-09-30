@@ -113,11 +113,14 @@ def service_clusters(restaurant_id, db_path=None) -> list:
 
 
 def live_fill_signals(restaurant_id, start, end, db_path=None) -> list:
-    """Marketing's fill-a-night signals dated inside [start, end]."""
+    """Marketing's fill-a-night signals dated inside [start, end]: a guest
+    text sent to fill the night (source 'campaign'). A scheduled post is not
+    one (memory re-audit 9/29/26, CROSSMODULE-7) — a dish post three days a
+    week suppressed every trim on those nights, even after it was cancelled."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM demand_signals WHERE restaurant_id=? AND date BETWEEN ? AND ? AND "
-                            "source IN ('campaign','post') ORDER BY date",
+                            "source='campaign' ORDER BY date",
                             (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
     except Exception:
         return []
@@ -131,7 +134,7 @@ def trim_guard(restaurant_id, weekday, daypart=None, on_date=None, db_path=None)
     read's trims, the DSR's control_hours, the pre-dinner cut.
 
     {suppress, why, caution, rank_penalty, campaign, cluster}:
-      suppress/why  a live campaign or post aimed at filling that night
+      suppress/why  a live campaign (a guest text) aimed at filling that night
                     (the next `weekday`, or `on_date`): no trim is suggested,
                     and the reason says so;
       caution       a service, wait or floor-staff complaint cluster on that
