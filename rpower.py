@@ -1435,6 +1435,139 @@ def fetch_job_codes(restaurant_id: int) -> dict:
             if _tidy_name(j.get("name")) and str(j.get("ext_id") or "").strip()}
 
 
+def pos_employees(restaurant_id: int) -> list:
+    """Every employee record in the store's group: [{"mid", "name",
+    "payroll_id", "current"}]. `current` is no term date (RPOWER writes
+    2000-01-01 for "none")."""
+    token, base = _ctx(restaurant_id)
+    out = []
+    for e in _paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+        term = str(e.get("term_date") or "")
+        out.append({"mid": _id(e.get("mid")), "name": employee_display_name(e),
+                    "payroll_id": str(e.get("payroll_id") or "").strip(),
+                    "current": not term or term[:4] <= "2000"})
+    return out
+
+
+def _payroll_by_name(restaurant_id: int) -> dict:
+    """{name_key: payroll id} for current employees whose name is theirs
+    alone. The fallback when Cavnar holds no POS id for a person (Simple
+    EJ's has none linked, 9/29/26) — the same exact-name rule the role sync
+    uses; a name two current people share matches neither."""
+    import staff_settings as _ss
+    seen, out = set(), {}
+    for e in pos_employees(restaurant_id):
+        if not (e["current"] and e["payroll_id"] and e["name"]):
+            continue
+        k = _ss.name_key(e["name"])
+        if k in seen:
+            out.pop(k, None)
+            continue
+        seen.add(k)
+        out[k] = e["payroll_id"]
+    return out
+
+
+def _schedule_payload(restaurant_id: int, base: dict, shifts: list, job_codes: dict = None,
+                      payroll_by_name: dict = None) -> tuple:
+    """(payload, {payroll id: [rows]}, skipped) — the push body, built one way
+    for the push and its preview. A person's payroll id is the shift's own,
+    then the one Cavnar keeps (people.person_aliases, source rpower_payroll),
+    then RPOWER's own list by exact name (read only when needed)."""
+    by_employee, skipped = {}, []
+    try:
+        import people as _people
+        import staff_settings as _ss
+        _payroll = _people.external_ids(restaurant_id, "rpower_payroll")
+    except Exception:
+        _payroll, _ss = {}, None
+    for s in shifts or []:
+        pid = str(s.get("employee_payroll_id") or s.get("payroll_id") or "").strip()
+        if not pid and _ss is not None and s.get("employee"):
+            key = _ss.name_key(s.get("employee"))
+            pid = str(_payroll.get(key) or "").strip()
+            if not pid:
+                if payroll_by_name is None:
+                    try:
+                        payroll_by_name = _payroll_by_name(restaurant_id)
+                    except RPowerError:
+                        payroll_by_name = {}
+                pid = str(payroll_by_name.get(key) or "").strip()
+        job = (s.get("job") or s.get("role") or "").strip()
+        # RPOWER: "the job code is the job name" (laborschedule/push). A
+        # caller may still pass fetch_job_codes() to send ext_ids instead.
+        job = (job_codes or {}).get(job.lower(), job)
+        start, end = s.get("start"), s.get("end")
+        # An employee with no payroll id cannot be matched to anyone at the
+        # store. Pushing them under a blank id would either fail the whole
+        # batch or silently attach hours to nobody, so they are reported back
+        # instead of dropped.
+        if not (pid and job and start and end):
+            skipped.append({"employee": s.get("employee") or pid or "(unnamed)",
+                            "why": "no payroll id at the POS" if not pid else "missing job or times"})
+            continue
+        by_employee.setdefault(pid, []).append({
+            "inTime": str(start)[:19], "jobCode": job, "outTime": str(end)[:19]})
+    payload = {"storeMid": base["storemid"],
+               "schedules": [{"payrollid": pid, "schedules": rows}
+                             for pid, rows in by_employee.items()]}
+    return payload, by_employee, skipped
+
+
+MAX_SHIFT_HOURS = 16
+
+
+def preview_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None) -> dict:
+    """What push_labor_schedule WOULD send, checked against the store's own
+    records — and never sent. Reads only (employees, jobs, who holds which
+    job). `problems` lists anything RPOWER would reject or misfile: a payroll
+    id no current employee has, a job the store does not have or the person
+    does not hold, a time not in RPOWER's format, a shift that ends before it
+    starts or runs past MAX_SHIFT_HOURS, two shifts of one person that overlap."""
+    import re
+    token, base = _ctx(restaurant_id)
+    emps = pos_employees(restaurant_id)
+    payload, by_employee, skipped = _schedule_payload(restaurant_id, base, shifts, job_codes)
+    by_payroll = {e["payroll_id"]: e for e in emps if e["payroll_id"] and e["current"]}
+    names = {n.lower() for n in _people_cached(restaurant_id).get("jobs", {}).values()}
+    codes = set((job_codes or {}).values())
+    held = {}
+    for j in fetch_employee_jobs(restaurant_id):
+        held.setdefault(j["external_id"], set()).add((j["role"] or "").lower())
+    code_to_name = {v: k for k, v in (job_codes or {}).items()}
+    fmt = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+    problems = []
+    for pid, rows in by_employee.items():
+        emp = by_payroll.get(pid)
+        who = (emp or {}).get("name") or pid
+        if not emp:
+            problems.append({"payrollid": pid, "problem": "no current employee has this payroll id"})
+        spans = []
+        for r in rows:
+            job = r["jobCode"]
+            job_name = code_to_name.get(job, job).lower()
+            if job.lower() not in names and job not in codes:
+                problems.append({"employee": who, "shift": r, "problem": f"the store has no job \"{job}\""})
+            elif emp and held.get(emp["mid"]) is not None and job_name not in held[emp["mid"]]:
+                problems.append({"employee": who, "shift": r,
+                                 "problem": f"{who} does not hold \"{job}\" at the POS"})
+            if not (fmt.match(r["inTime"]) and fmt.match(r["outTime"])):
+                problems.append({"employee": who, "shift": r, "problem": "time not in YYYY-MM-DDTHH:mm:ss"})
+                continue
+            a, b = datetime.fromisoformat(r["inTime"]), datetime.fromisoformat(r["outTime"])
+            if b <= a or (b - a).total_seconds() > MAX_SHIFT_HOURS * 3600:
+                problems.append({"employee": who, "shift": r,
+                                 "problem": "ends before it starts" if b <= a else f"longer than {MAX_SHIFT_HOURS} hours"})
+            spans.append((a, b, r))
+        spans.sort(key=lambda x: x[0])
+        for (a1, b1, r1), (a2, b2, r2) in zip(spans, spans[1:]):
+            if a2 < b1:
+                problems.append({"employee": who, "shift": r2, "problem": f"overlaps {r1['inTime']}–{r1['outTime']}"})
+    return {"ok": bool(by_employee) and not problems, "sent": False, "would_send": payload,
+            "employees": len(by_employee), "shifts": sum(len(v) for v in by_employee.values()),
+            "skipped": skipped, "problems": problems}
+
+
 def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None) -> dict:
     """Send a generated schedule to the store's POS.
 
@@ -1444,58 +1577,22 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     here means the feature is not enabled for this token, which is a
     different problem from a bad token and is reported as such.
 
-    AS OF 18 Sep 2026 this is EXPECTED to fail: RPOWER confirmed our access is
-    read-only, and said there is "a secondary way apart from the API to push
-    schedules if we need to do that temporarily". So until the write scope is
-    granted, weekly schedule delivery goes out by Cavnar's own email path
-    (labor's publish_schedule, which emails each employee their own shifts)
-    and this function stays unused rather than removed — the moment the scope
-    is enabled it is the path, and the 401/403 message already tells an
-    operator exactly what to ask for.
+    Enabled for our token 9/29/26 (Justin, RPOWER). Nothing calls it on its
+    own yet: preview_labor_schedule builds the same body and checks it
+    against the store's records without sending, and the first live push
+    waits on Will.
 
-    `shifts` is Cavnar's own shape — [{employee_payroll_id, job, start, end}]
-    — grouped here into RPOWER's per-employee structure. Times are local wall
+    `shifts` is Cavnar's own shape — [{employee_payroll_id or employee, job
+    or role, start, end}] (labor.timed_shifts_from_csv) — grouped here into
+    RPOWER's per-employee structure. Times are local wall
     clock, matching what RPOWER documents and what the timeclock returns.
     """
     token, base = _ctx(restaurant_id)
-    by_employee = {}
-    skipped = []
-    # A person's payroll id is kept now (people.person_aliases, source
-    # rpower_payroll — memory audit 9/29/26, identity): a Cavnar schedule
-    # names people, and the push can find each one's id.
-    try:
-        import people as _people
-        import staff_settings as _ss
-        _payroll = _people.external_ids(restaurant_id, "rpower_payroll")
-    except Exception:
-        _payroll, _ss = {}, None
-    for s in shifts or []:
-        pid = (s.get("employee_payroll_id") or s.get("payroll_id") or "").strip()
-        if not pid and _ss is not None and s.get("employee"):
-            pid = str(_payroll.get(_ss.name_key(s.get("employee"))) or "").strip()
-        job = (s.get("job") or s.get("role") or "").strip()
-        # The sync stores the job's NAME as the role ("Server AM"); RPOWER's
-        # push wants its code. Pass fetch_job_codes() to translate.
-        job = (job_codes or {}).get(job.lower(), job)
-        start, end = s.get("start"), s.get("end")
-        # An employee with no payroll id cannot be matched to anyone at the
-        # store. Pushing them under a blank id would either fail the whole
-        # batch or silently attach hours to nobody, so they are reported back
-        # instead of dropped.
-        if not (pid and job and start and end):
-            skipped.append({"employee": s.get("employee") or pid or "(unnamed)",
-                            "why": "missing payroll id, job, or times"})
-            continue
-        by_employee.setdefault(pid, []).append({
-            "inTime": str(start)[:19], "jobCode": job, "outTime": str(end)[:19]})
-
+    payload, by_employee, skipped = _schedule_payload(restaurant_id, base, shifts, job_codes)
     if not by_employee:
         return {"ok": False, "error": "No shifts had a payroll id and job to push.",
                 "skipped": skipped}
 
-    payload = {"storeMid": base["storemid"],
-               "schedules": [{"payrollid": pid, "schedules": rows}
-                             for pid, rows in by_employee.items()]}
     import requests
     try:
         resp = requests.post(

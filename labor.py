@@ -4477,6 +4477,35 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     return shifts
 
 
+def timed_shifts_from_csv(schedule_csv: str) -> list:
+    """Every shift in a generated schedule as [{employee, role, start, end}]
+    with full local datetimes ("2026-10-05T16:00:00") — what a POS schedule
+    push needs. A shift whose end is at or before its start closes after
+    midnight and ends the next day. Rows without both times are left out."""
+    import csv as _csv
+    import io as _io
+    from datetime import datetime as _dt, timedelta as _td
+    import schedule_rules as _rules
+    out = []
+    if not schedule_csv:
+        return out
+    for row in _csv.DictReader(_io.StringIO(schedule_csv)):
+        name, day = (row.get("employee") or "").strip(), (row.get("date") or "").strip()
+        a, b = _rules.parse_minutes(row.get("shift_start")), _rules.parse_minutes(row.get("shift_end"))
+        try:
+            d0 = _dt.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            continue
+        if not name or a is None or b is None:
+            continue
+        start = d0 + _td(minutes=a)
+        end = d0 + _td(days=1 if b <= a else 0, minutes=b)
+        out.append({"employee": name, "role": (row.get("role") or "").strip(),
+                    "start": start.strftime("%Y-%m-%dT%H:%M:%S"), "end": end.strftime("%Y-%m-%dT%H:%M:%S")})
+    out.sort(key=lambda s: (s["start"], s["employee"].lower()))
+    return out
+
+
 def employees_in_schedule(schedule_csv: str) -> list:
     """Every distinct employee named in a generated schedule, in the order
     a person would read them (alphabetical)."""
