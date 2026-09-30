@@ -2181,6 +2181,12 @@ _RETENTION_DAYS = {
     # people, person_aliases, person_questions, person_merges, person_roles,
     # person_quarters and schedule_standing_patterns are kept forever.
     "shift_facts":        int(os.getenv("RETAIN_SHIFT_FACTS_DAYS", "1095")),
+    # The ticket-level POS archive (pos_archive, 9/29/26): three years, the
+    # history every people, table and price learner reads.
+    "pos_tickets":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "pos_ticket_lines":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "pos_punches":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "pos_archive_days":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
     "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
     # Cavnar AI's own reads and their claims (ai_reads, memory audit
@@ -2241,6 +2247,8 @@ _RETENTION_COLUMN = {
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
+    "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
+    "pos_archive_days": "business_date",
     "ai_reads": "created_at", "ai_claims": "created_at",
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
@@ -2318,6 +2326,7 @@ _RETENTION_FLOOR_DAYS = {
     # 360 days, a person's record its guest mentions a year; tenure reads
     # person_quarters for the rest.
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
+    "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
     # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
     # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).

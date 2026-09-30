@@ -215,6 +215,8 @@ class _BoundedWalk:
 
 # The walks above, bounded (#84). Each is per-restaurant model or POS work.
 LOSS_SYNC_MAX_SECONDS = 30 * 60
+# The POS archive's walk (run_pos_archive): a week of backfill is ~25 reads.
+POS_ARCHIVE_MAX_SECONDS = 20 * 60
 WEEKLY_PLAN_MAX_SECONDS = 45 * 60
 RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
 ISSUE_SCAN_MAX_SECONDS = 15 * 60
@@ -392,6 +394,35 @@ def run_loss_sync(db_path=DB_PATH):
     # The counts job_runs judges a partial or failed night by (DH2-1, #39).
     return _counts(synced + failed, synced, failed, unsupported, walk.hit_bound,
                    synced=synced, not_supported=unsupported)
+
+
+def run_pos_archive(db_path=DB_PATH):
+    """Nightly: the ticket-level POS archive (pos_archive.run_for) — each
+    store that can archive stores yesterday, any day its POS restated, and a
+    week of backfill. Bounded and resumable (_BoundedWalk, #84)."""
+    import ops
+    import pos_archive
+    ok = failed = unsupported = days = restated = 0
+    walk = _BoundedWalk("pos_archive", _restaurants(db_path), db_path, POS_ARCHIVE_MAX_SECONDS)
+    for r in walk:
+        if pos_archive.provider_for(r.id)[1] is None:
+            unsupported += 1
+            continue
+        try:
+            out = pos_archive.run_for(r.id, db_path=db_path)
+        except Exception as e:
+            ops.capture(e, job="pos_archive", context=f"restaurant_id={r.id}")
+            failed += 1
+            continue
+        days += len(out.get("archived") or [])
+        restated += out.get("restated") or 0
+        if out.get("ok"):
+            ok += 1
+        else:
+            failed += 1
+            ops.capture(RuntimeError(f"pos_archive: days not archived {out.get('failed')}"),
+                        job="pos_archive", context=f"restaurant_id={r.id}")
+    return _counts(ok + failed, ok, failed, unsupported, walk.hit_bound, days=days, restated=restated)
 
 
 def _record_loss(restaurant_id, ok, error, provider, db_path):

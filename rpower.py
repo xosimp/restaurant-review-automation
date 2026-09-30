@@ -998,9 +998,13 @@ def _punch_dt(raw) -> Optional[datetime]:
     if not raw:
         return None
     try:
-        return datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S")
+        dt = datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         return None
+    # RPOWER writes 2000-01-01T00:00:00 for "no value" — a ticket not closed,
+    # a store with no kitchen screens (kvs/bump), no "needed by" time, a punch
+    # never edited (checked on Simple EJ's, 9/29/26). It is never a time.
+    return None if dt.year <= 2000 else dt
 
 
 # ── who each punch belongs to ───────────────────────────────────────────────
@@ -1497,3 +1501,205 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
                 "error": f"RPOWER returned HTTP {resp.status_code}: {resp.text[:200]}"}
     return {"ok": True, "employees": len(by_employee),
             "shifts": sum(len(v) for v in by_employee.values()), "skipped": skipped}
+
+
+# ── the ticket-level archive (pos_archive.py stores these) ──────────────────
+#
+# RPower endpoint audit, 9/29/26, Critical #2: only daily totals were kept, so
+# every night's ticket detail — the server, the table, the kitchen's fire and
+# bump times, covers, tips, the reason on each comp — was summed and thrown
+# away. RPOWER itself asks integrators to archive. These return one business
+# date as provider-neutral rows; pos_archive writes them.
+
+CATALOG_CACHE_SECONDS = 600
+_catalog_cache = {}
+
+
+def _catalog(restaurant_id: int, path: str, by_store: bool = False) -> dict:
+    """{mid: row} of one RPOWER list (tables, rooms, meal times, profit
+    centers), read once per CATALOG_CACHE_SECONDS."""
+    key = (restaurant_id, path)
+    hit = _catalog_cache.get(key)
+    if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
+        return hit[1]
+    token, base = _ctx(restaurant_id)
+    params = dict(base) if by_store else {"cg": base["cg"]}
+    params["sortorder"] = "name"
+    out = {str(r["mid"]): r for r in _paged(token, path, params) if r.get("mid")}
+    _catalog_cache[key] = (time.monotonic(), out)
+    return out
+
+
+def _id(value):
+    """An RPOWER reference, or None for its empty forms ("", 0, "0")."""
+    v = str(value if value is not None else "").strip()
+    return None if v in ("", "0", "0.0") else v
+
+
+def _num(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _local_stamp(raw):
+    dt = _punch_dt(raw)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") if dt else None
+
+
+def line_kind(row: dict, types: dict) -> str:
+    """What one ticketsales line is: sale | comp | void | refund | discount |
+    nonsale | other — from its sales type (salestype/getbycg)."""
+    loss = _loss_kind(row, types)
+    if loss:
+        return loss
+    st = types.get(str(row.get("slstype_mid"))) or {}
+    if st.get("type_discnt") or st.get("type_hashdisc"):
+        return "discount"
+    if st.get("type_nonsale"):
+        return "nonsale"
+    if _counts_as_revenue(row, types):
+        return "sale"
+    return "other"
+
+
+def archive_rows(restaurant_id: int, business_date) -> dict:
+    """One business date's tickets, sale lines and punches, every field the
+    archive keeps, names resolved from RPOWER's own lists:
+    {"tickets": [...], "lines": [...], "punches": [...], "max_stamp"}.
+
+    Reads ticket/, ticketsales/getbybusinessdate and timeclock/getbydaterange
+    (the day and the next, kept to the business day: 5am local to 5am), and
+    the lists: sales types, menu, void reasons, people, tables and rooms
+    (table/room getbystore), meal times and profit centers (getbycg)."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
+    token, base = _ctx(restaurant_id)
+    iso = _d(day)
+    types = sales_types(restaurant_id)
+    menu = menu_lookup(restaurant_id)
+    reasons = void_reasons(restaurant_id)
+    people = _people_cached(restaurant_id)
+    emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
+    tables = _catalog(restaurant_id, "table/getbystore", by_store=True)
+    rooms = _catalog(restaurant_id, "room/getbystore", by_store=True)
+    meals = _catalog(restaurant_id, "mealtime/getbycg")
+    centers = _catalog(restaurant_id, "profitcenter/getbycg")
+
+    def _name(cat, mid):
+        row = cat.get(mid) if mid else None
+        return _tidy_name(row.get("name")) if row and row.get("name") else None
+
+    raw_lines = _paged(token, "ticketsales/getbybusinessdate",
+                       {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    raw_tickets = _paged(token, "ticket/getbybusinessdate",
+                         {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    stamps = []
+    lines, net_by_ticket = [], {}
+    for r in raw_lines:
+        if _biz_date(r.get("date")) != iso or not r.get("rid"):
+            continue
+        kind = line_kind(r, types)
+        tid = _id(r.get("ticket_rid"))
+        item = _id(r.get("menuitem_mid"))
+        sales = round(_num(r.get("sales")), 2)
+        if kind in ("sale", "discount") and tid:
+            net_by_ticket[tid] = round(net_by_ticket.get(tid, 0.0) + sales, 2)
+        approver = _id(r.get("voidmgr_mid") if kind == "void" else r.get("mgr_mid"))
+        reason = _id(r.get("voidrsn_mid"))
+        stamps.append(str(r.get("time_stamp") or ""))
+        lines.append({
+            "line_id": str(r["rid"]), "ticket_id": tid, "business_date": iso,
+            "item_id": item, "item_name": (menu.get(item) or {}).get("name") if item else None,
+            "item_kind": (menu.get(item) or {}).get("kind") if item else None,
+            "kind": kind, "qty": _num(r.get("qty"), 1.0), "sales": sales,
+            "price": round(_num(r.get("price")), 2), "regular_price": round(_num(r.get("regular_price")), 2),
+            "loss_amount": _loss_amount(r) if kind in ("comp", "void", "refund") else None,
+            "reason": reasons.get(reason) if reason else None, "approver_id": approver,
+            "item_at": _local_stamp(r.get("item_dttm")),
+            "mealtime": _name(meals, _id(r.get("mealtime_mid"))),
+            "profit_center": _name(centers, _id(r.get("pcenter_mid"))),
+            "price_level_id": _id(r.get("prclvl_mid")),
+            "source_stamp": str(r.get("time_stamp") or "")[:19] or None})
+    tickets = []
+    for t in raw_tickets:
+        if _biz_date(t.get("date")) != iso or not t.get("rid"):
+            continue
+        tid = str(t["rid"])
+        table = tables.get(_id(t.get("table_mid")) or "") or {}
+        room = rooms.get(_id(table.get("room_mid")) or "") or {}
+        server = _id(t.get("main_server"))
+        stamps.append(str(t.get("time_stamp") or ""))
+        tickets.append({
+            "ticket_id": tid, "business_date": iso, "ticket_no": _id(t.get("ticket")),
+            "opened_at": _local_stamp(t.get("open_dttm")), "closed_at": _local_stamp(t.get("close_dttm")),
+            "fired_at": _local_stamp(t.get("kvs_dttm")), "bumped_at": _local_stamp(t.get("bump_dttm")),
+            "need_at": _local_stamp(t.get("need_dttm")),
+            "server_id": server, "server_name": emps.get(server) if server else None,
+            "table_id": _id(t.get("table_mid")), "table_name": _tidy_name(table.get("name")) or None,
+            "room_name": _tidy_name(room.get("name")) or None,
+            "is_bar": 1 if room.get("is_bar") else 0,
+            "guest_count": int(_num(t.get("guest_count"))), "entree_count": int(_num(t.get("entree_count"))),
+            "bev_count": int(_num(t.get("bev_count"))), "net_sales": net_by_ticket.get(tid, 0.0),
+            "discount": round(_num(t.get("discount")), 2), "tip": round(_num(t.get("tip")), 2),
+            "grat": round(_num(t.get("grat")), 2), "tax": round(_num(t.get("tax")), 2),
+            "mealtime": _name(meals, _id(t.get("mealtime_mid"))),
+            "profit_center": _name(centers, _id(t.get("pcenter_mid"))),
+            "cancelled": 1 if t.get("is_cancelled") else 0,
+            "source_stamp": str(t.get("time_stamp") or "")[:19] or None})
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
+    end = start + timedelta(days=1)
+    raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
+                   if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
+    stations = station_logins(raw_punches, people)
+    punches = []
+    for e in raw_punches:
+        if not e.get("rid"):
+            continue
+        mid = _id(e.get("emp_mid"))
+        punches.append({
+            "punch_id": str(e["rid"]), "business_date": iso,
+            "employee_id": mid, "employee_name": emps.get(mid) if mid else None,
+            "job_id": _id(e.get("job_mid")), "role": jobs.get(_id(e.get("job_mid")) or "") or None,
+            "clock_in": _local_stamp(e.get("in_dttm")), "clock_out": _local_stamp(e.get("out_dttm")),
+            "reg_hours": _num(e.get("reg_hours")), "ot_hours": _num(e.get("ot_hours")),
+            "dt_hours": _num(e.get("dt_hours")), "reg_rate": _num(e.get("reg_rate")),
+            "ot_rate": _num(e.get("ot_rate")),
+            "pay": round(sum(_num(e.get(k)) for k in ("reg_pay", "ot_pay", "dt_pay", "spread_pay", "callin_pay")), 2),
+            "ot_pay": round(_num(e.get("ot_pay")) + _num(e.get("dt_pay")), 2),
+            "tips": round(_num(e.get("tips_total")), 2), "tips_net": round(_num(e.get("tip_net")), 2),
+            "grats": round(_num(e.get("grats_actual")), 2),
+            "break_minutes": _num(e.get("break_minutes")),
+            "meal_minutes": _num(e.get("meal1_minutes")) + _num(e.get("meal2_minutes")),
+            "rest_minutes": sum(_num(e.get(f"rest{i}_minutes")) for i in (1, 2, 3)),
+            # editmgr_mid is one placeholder id on every punch at EJ's; an edit
+            # is real only when it has a real edit time.
+            "edited_by": _id(e.get("editmgr_mid")) if _punch_dt(e.get("edit_dttm")) else None,
+            "edited_at": _local_stamp(e.get("edit_dttm")),
+            "edit_what": _id(e.get("edit_what")),
+            "is_station": 1 if mid in stations else 0,
+            "source_stamp": str(e.get("time_stamp") or "")[:19] or None})
+        stamps.append(str(e.get("time_stamp") or ""))
+    return {"tickets": tickets, "lines": lines, "punches": punches,
+            "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None)}
+
+
+def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
+    """Business dates with a sale line written or rewritten in RPOWER's
+    database between two UTC moments — ticketsales/getbytimestamp, which
+    RPOWER documents as "when a record was last inserted or updated" (UTC).
+    A store re-posting a closed day moves its time_stamp, so a date already
+    archived shows up here and is archived again."""
+    token, base = _ctx(restaurant_id)
+    lo = since_utc.strftime("%Y-%m-%d %H:%M:%S")
+    rows = _paged(token, "ticketsales/getbytimestamp", {
+        **base, "startdate": _d(since_utc), "enddate": _d(until_utc + timedelta(days=1)),
+        "sortorder": "time_stamp"})
+    out = set()
+    for r in rows:
+        stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
+        day = _biz_date(r.get("date"))
+        if day and stamp and stamp > lo:
+            out.add(day)
+    return out

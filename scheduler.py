@@ -4489,6 +4489,12 @@ def scheduler_loop():
                 from strategy_jobs import run_loss_sync
                 _ops.run_job("loss_sync", run_loss_sync)
 
+            # 4am daily — the ticket-level POS archive (pos_archive): yesterday,
+            # restated days, a week of backfill.
+            if _due(now, 4) and _ops.claim_period("pos_archive", str(today)):
+                from strategy_jobs import run_pos_archive
+                _ops.run_job("pos_archive", run_pos_archive)
+
             # 3:30am — refresh the Stripe subscription mirror and record
             # where Stripe and the local billing state disagree
             # (billing_jobs.reconcile_stripe: bounded, resumable, reads

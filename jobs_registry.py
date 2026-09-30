@@ -118,6 +118,11 @@ JOBS = {
         cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Loss sync", description="Pull comps, voids and refunds from POSes that report them",
         target=("strategy_jobs", "run_loss_sync"), max_minutes=45, retry=True),
+    "pos_archive": dict(
+        cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        label="POS archive", description="Store yesterday's tickets, sale lines and punches; re-store days the POS "
+                                         "restated; backfill a week (bounded, resumable)",
+        target=("strategy_jobs", "run_pos_archive"), max_minutes=30, retry=True),
     "intelligence_features": dict(
         cadence="3am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Intelligence features", description="The intelligence engine's per-restaurant feature pass (bounded, resumable)",
