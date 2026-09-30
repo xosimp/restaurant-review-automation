@@ -937,7 +937,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .mkt-card{margin-top:10px}
 .mkt-help{font-size:14px;color:var(--ink3);line-height:1.5;margin:0 0 14px}
 .mkt-attr-line{margin-top:4px}
-.mkt-alltime{font-size:13.5px;color:var(--ink3);margin:0 0 14px}
+.mkt-alltime{font-size:15px;color:var(--ink3);margin:0 0 14px}
 .mkt-sec{margin-top:6px}
 /* Marketing Opportunity Feed (9/28/26): Home's recommendation cards
    (.hb-card.hb-rec in .hb-recs), a kind label for what the card rests on,
@@ -3229,10 +3229,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* One control for Food Cost's rows (owner, 9/26/26): selects, the quantity
    box and the button beside them are one height, sized to what they hold,
    never stretched across the card; the select draws the brand chevron. */
-.fc2-block .fc2-ctl,#panel-inventory .fc2-ctl{width:220px;height:42px;box-sizing:border-box;margin:0;padding:0 14px;border-radius:10px;font-size:14.5px;line-height:40px;color:var(--ink);border:1px solid var(--hb-line);background-color:var(--sf-recess)}
-.fc2-block select.fc2-ctl,#panel-inventory select.fc2-ctl{-webkit-appearance:none;appearance:none;padding-right:38px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d4583a' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px}
+.fc2-block .fc2-ctl,#panel-inventory .fc2-ctl,#mkt-tab-analytics .fc2-ctl{width:220px;height:42px;box-sizing:border-box;margin:0;padding:0 14px;border-radius:10px;font-size:14.5px;line-height:40px;color:var(--ink);border:1px solid var(--hb-line);background-color:var(--sf-recess)}
+.fc2-block select.fc2-ctl,#panel-inventory select.fc2-ctl,#mkt-tab-analytics select.fc2-ctl{-webkit-appearance:none;appearance:none;padding-right:38px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d4583a' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px}
 .fc2-block .fc2-ctl.fc2-qty,#panel-inventory .fc2-ctl.fc2-qty{width:120px;text-align:right;padding-right:10px}
-.fc2-block .fc2-ctl:focus,#panel-inventory .fc2-ctl:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2);outline:none}
+.fc2-block .fc2-ctl:focus,#panel-inventory .fc2-ctl:focus,#mkt-tab-analytics .fc2-ctl:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2);outline:none}
 .fc2-block .fc2-ctl-btn{height:42px;min-width:120px;padding:0 22px}
 #panel-inventory .fc2-sup-row select.fc2-ctl{width:190px;max-width:none}
 .fc2-sup-grid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
@@ -4022,6 +4022,9 @@ svg:hover .hb-xh{opacity:1}
     if(!_hbIO)_hbIO=new IntersectionObserver(function(entries){for(var j=0;j<entries.length;j++){if(entries[j].isIntersecting){entries[j].target.classList.add('cm-inview');_hbIO.unobserve(entries[j].target);}}},{rootMargin:'0px 0px -8% 0px'});
     for(var k=0;k<els.length;k++)_hbIO.observe(els[k]);
   }
+  // Other tabs' .hb-rise cards (Marketing's opportunity feed) need the same
+  // observer, or they stay paused at opacity 0 and leave a blank gap.
+  window.hbReveal=hbReveal;
   // ── the monitoring pill keeps its clock honest ────────────────────────────
   var _hbLiveTimer=null;
   function hbLiveTick(){
@@ -12259,35 +12262,26 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
     <!-- A period, against the period before it. The all-time totals below
          are a number, not a metric: no denominator, no trend. -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-      <select id="mkt-window-days" class="topic-input" style="width:auto;font-size:12px;padding:6px 10px" onchange="loadMktWindow()">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <select id="mkt-window-days" class="fc2-ctl" style="width:190px" aria-label="Period" onchange="loadMktWindow()">
         <option value="7">Last 7 days</option>
         <option value="30" selected>Last 30 days</option>
         <option value="90">Last 90 days</option>
       </select>
     </div>
     <div id="mkt-window-body" style="display:none;margin-bottom:16px">
-      <div class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-        <div class="rv-stat-cell" style="padding:18px 16px">
-          <div class="rv-stat-n" id="mkt-win-reach" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
-          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Reach <span id="mkt-win-reach-d" style="font-family:'Space Grotesk',sans-serif"></span></div>
-        </div>
-        <div class="rv-stat-cell" style="padding:18px 16px">
-          <div class="rv-stat-n" id="mkt-win-eng" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
-          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Engagement <span id="mkt-win-eng-d" style="font-family:'Space Grotesk',sans-serif"></span></div>
-        </div>
-        <div class="rv-stat-cell" style="padding:18px 16px">
-          <div class="rv-stat-n" id="mkt-win-rate" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
-          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Engagement rate</div>
-        </div>
+      <div class="hb-stats">
+        <div class="hb-stat"><div class="k">Reach</div><div class="v" id="mkt-win-reach">—</div><div class="s hb-num" id="mkt-win-reach-d"></div></div>
+        <div class="hb-stat"><div class="k">Engagement</div><div class="v" id="mkt-win-eng">—</div><div class="s hb-num" id="mkt-win-eng-d"></div></div>
+        <div class="hb-stat"><div class="k">Engagement rate</div><div class="v" id="mkt-win-rate">—</div></div>
       </div>
-      <div id="mkt-win-platforms" style="margin-top:12px"></div>
+      <div id="mkt-win-platforms" style="margin-top:14px"></div>
     </div>
 
     <!-- What posts did to the till. Correlational, and said so. -->
-    <div class="card" id="mkt-attr-card" style="display:none;margin-bottom:16px;padding:16px 18px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:var(--ember);margin-bottom:8px">What posts did to sales</div>
-      <div id="mkt-attr-body" style="font-size:12px;color:var(--ink3);line-height:1.6"></div>
+    <div class="hb-card" id="mkt-attr-card" style="display:none;margin-bottom:16px;padding:20px 22px">
+      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales</div>
+      <div id="mkt-attr-body" style="font-size:15px;color:var(--ink2);line-height:1.6"></div>
     </div>
 
     <div id="mkt-perf-sync" class="dh-line" hidden style="margin:0 0 10px"></div>
@@ -12309,8 +12303,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     </div>
     <div id="mkt-perf-empty" style="display:none"></div>
 
-    <div class="card" style="margin-top:20px;padding:16px 18px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:var(--ember);margin-bottom:12px">Recently Generated</div>
+    <div class="hb-card" style="margin-top:20px;padding:20px 22px">
+      <div class="hb-kicker" style="margin-bottom:12px">Recently generated</div>
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:7px" id="recent-topics-row">
         <span id="recent-topics-list" style="display:flex;flex-wrap:wrap;gap:7px"></span>
       </div>
@@ -18503,7 +18497,7 @@ function mktLoadHeader(){
     chip('mkt-chip-reach',rc==null?'—':((rc>0?'+':'')+Math.round(rc)+'%'),rc==null?'neutral':(rc>=5?'good':(rc<=-5?'warn':'neutral')));
     var rcEl=document.getElementById('mkt-chip-reach');if(rcEl)rcEl.title=rc==null?(d.change_note||'Not enough posts to compare periods'):'Reach, the last '+d.days+' days against the '+d.days+' before';
     var nx=d.next_scheduled;
-    chip('mkt-chip-next',nx?(esc(nx.date)+(nx.time?' · '+esc(nx.time):'')):'none','neutral');
+    chip('mkt-chip-next',nx?(esc(nx.date)+(nx.time?' · '+esc(nx.time):'')):'\u2014','neutral');
   }).catch(function(){_headFailed(null);});
   fetch('/api/marketing/attribution',{credentials:'same-origin'}).then(apiJson).then(function(d){
     var el=document.getElementById('mkt-attr-line');if(!el)return;
@@ -18595,13 +18589,13 @@ function loadMktWindow(){
     var html = '';
     // No period-on-period % under the post floor (marketing_signals
     // change_note, CA1 M5): the blank change says why.
-    if(d.change_note) html += '<div style="font-size:12px;color:var(--ink3);padding:4px 0 7px">' + _escHtml(d.change_note) + '.</div>';
+    if(d.change_note) html += '<div style="font-size:15px;color:var(--ink3);padding:2px 0 8px">' + _escHtml(d.change_note) + '.</div>';
     for(var i=0;i<(d.by_platform||[]).length;i++){
       var p = d.by_platform[i];
       // A platform whose reach was never measured (Google posts; a post
       // Meta has not answered for) says so, never "0 reach".
       var reachTxt = p.reach_posts ? (p.reach||0).toLocaleString() + ' reach' : 'reach not measured';
-      html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
+      html += '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--paper3);font-size:15px">'
         + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
         + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + reachTxt + ' · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
         + '</div>';
@@ -18630,7 +18624,7 @@ function loadMktAttribution(){
     // CA1 M3): how many cleared their band each way, never a median alone.
     var vc=d.verdicts||null;
     if(vc){var vn=(+vc.lifted||0)+(+vc.dropped||0)+(+vc.no_clear_change||0);
-      if(vn)html+='<div style="margin-bottom:10px;font-size:13px;color:var(--ink2)">Of <b class="hb-num">'+vn+'</b> measured post'+(vn===1?'':'s')+': <b class="hb-num" style="color:var(--hb-good)">'+(+vc.lifted||0)+'</b> lifted sales past normal variation, <b class="hb-num">'+(+vc.no_clear_change||0)+'</b> showed no clear change, <b class="hb-num" style="color:var(--red)">'+(+vc.dropped||0)+'</b> dropped.</div>';}
+      if(vn)html+='<div style="margin-bottom:10px;font-size:15px;color:var(--ink2)">Of <b class="hb-num">'+vn+'</b> measured post'+(vn===1?'':'s')+': <b class="hb-num" style="color:var(--hb-good)">'+(+vc.lifted||0)+'</b> lifted sales past normal variation, <b class="hb-num">'+(+vc.no_clear_change||0)+'</b> showed no clear change, <b class="hb-num" style="color:var(--red)">'+(+vc.dropped||0)+'</b> dropped.</div>';}
     // The verdict is the server's: a lift inside the weekday's own noise
     // band is "no clear change", never green (marketing_signals.lift_verdict).
     function _liftBadge(p){
@@ -18652,7 +18646,7 @@ function loadMktAttribution(){
       if(p.engagement_rate!=null)extra.push('<b class="hb-num">'+(Math.round(p.engagement_rate*1000)/10)+'%</b> engagement');
       if(p.guest_list_delta)extra.push('guest list <b class="hb-num">'+(p.guest_list_delta>0?'+':'')+p.guest_list_delta+'</b>');
       if(p.overlapping)extra.push('shares its two days with another post');
-      return '<div style="padding:7px 0;border-bottom:1px solid var(--paper3)"><div style="display:flex;justify-content:space-between;gap:10px">'
+      return '<div style="padding:10px 0;border-bottom:1px solid var(--paper3)"><div style="display:flex;justify-content:space-between;gap:10px">'
         + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + (about.length?' <span class="hb-chip" style="margin-left:6px">'+_escHtml(about.join(' \u00b7 '))+'</span>':'') + '</span>'
         + _liftBadge(p)
         + '</div>'+(extra.length?'<div style="font-size:12px;color:var(--ink3);margin-top:2px">'+extra.join(' \u00b7 ')+'</div>':'')+'</div>';
@@ -27820,6 +27814,8 @@ function mktPaintOpps() {
   var h = '';
   for (var i = 0; i < _mktOpps.length; i++) h += mktOppCard(_mktOpps[i], i);
   list.innerHTML = h;
+  if (window.hbReveal) window.hbReveal();
+  else { var rs = list.querySelectorAll('.hb-rise'); for (var r = 0; r < rs.length; r++) rs[r].classList.add('cm-inview'); }
   var extra = _mktOpps.length - MKT_OPP_VISIBLE, folded = extra > 0 && !_mktOppSt.open, bad = mktOppsSourceWords().bad;
   list.classList.toggle('collapsed', folded);
   foot.innerHTML = (folded ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="mktOppsMore(this)">Show ' + extra + ' more</button>' : '')

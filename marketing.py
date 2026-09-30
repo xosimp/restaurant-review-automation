@@ -1235,6 +1235,50 @@ def _calendar_week_context(restaurant_id, iso_map, now):
     return (("\n" + "\n".join(lines)) if lines else ""), "\n- ".join(rules)
 
 
+_DRINK_CATEGORY = ("beer", "cocktail", "whiskey", "bourbon", "cordial", "seltzer", "wine", "vodka",
+                   "tequila", "rum", "gin", "liquor", "bubbles", "rose", "drink", "spirit", "shot")
+MENU_SELLER_DAYS = 28
+
+
+def menu_sellers_block(restaurant_id, days=MENU_SELLER_DAYS, food=10, drinks=5, db_path=None) -> str:
+    """The restaurant's own best sellers, from its POS (menu_item_sales x
+    menu_items), for a model writing posts about its food. Simple EJ's had
+    no menu notes, so the calendar asked for "a photo of food" and never
+    named a dish on its menu (Will, 9/29/26). Modifier and add-on groups,
+    discounts, catering and soft drinks are left out; names are the POS's
+    own buttons. Empty when the POS has not reported item sales."""
+    if not restaurant_id:
+        return ""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT mi.name, COALESCE(mi.pos_category,'') AS cat, SUM(s.qty_sold) AS q "
+            "FROM menu_item_sales s JOIN menu_items mi ON mi.id=s.menu_item_id AND mi.restaurant_id=s.restaurant_id "
+            "WHERE s.restaurant_id=? AND s.business_date >= date('now', ?) AND COALESCE(mi.kind,'dish')='dish' "
+            "AND COALESCE(mi.is_active,1)=1 GROUP BY mi.id HAVING q > 0 ORDER BY q DESC LIMIT 200",
+            (restaurant_id, f"-{int(days)} days")).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    eat, sip = [], []
+    for r in rows:
+        name, cat = (r["name"] or "").strip(), (r["cat"] or "").lower()
+        if not name or cat.startswith("(") or any(w in cat for w in ("discount", "catering", "beverage", "kids", "gift")):
+            continue
+        (sip if any(w in cat for w in _DRINK_CATEGORY) else eat).append(name)
+    eat, sip = eat[:food], sip[:drinks]
+    if not eat:
+        return ""
+    out = f"\nBest-selling food on the POS, last {int(days)} days, most sold first: " + ", ".join(eat)
+    if sip:
+        out += "\nBest-selling drinks: " + ", ".join(sip)
+    return out + ("\nThese are the POS's own button names, sometimes abbreviated — write each the way a guest "
+                  "would read it (\"Chix Tenders\" is chicken tenders) and never name a dish that is not listed "
+                  "here or in the menu notes.")
+
+
 def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -> list[dict]:
     """A week of content ideas. Generated once per restaurant per week and
     cached from then on; `force=True` is the owner explicitly asking for a
@@ -1298,6 +1342,7 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
         upcoming_holidays = ', '.join(filtered) if filtered else None
 
     menu_context = f"\nMenu & current specials: {p['menu_notes']}\nReference specific dishes and specials in content ideas when relevant." if p.get('menu_notes') else ""
+    menu_context += menu_sellers_block(restaurant_id)
     # The calendar plans a whole week and used to know only the profile and a
     # fixed holiday list — not which posts landed, not what guests are saying,
     # and not that Saturday is the first 75° day of the year.
@@ -1345,7 +1390,7 @@ Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 Rules:
 - {sms_rule}
 - Put a holiday idea only on the weekday THIS WEEK'S DATES gives its date; a holiday whose date isn't one of them belongs to another week
-- Reference real menu items and dishes by name when menu info is provided
+- Reference real menu items and dishes by name when menu info is provided: any idea about food or drink (a photo, a special, a feature) names a specific item from the menu lists above, never \"your food\" in general
 - For any upcoming holiday, make the content feel natural and relevant to THIS restaurant — skip it if it doesn't fit
 - Vary platforms across the 7 days — don't use Instagram more than 3 times
 - Make every idea specific enough that the owner knows exactly what to post
