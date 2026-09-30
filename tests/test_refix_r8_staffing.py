@@ -89,11 +89,18 @@ def test_every_day_guarded_drops_the_starting_clause():
     assert c["what"] == "Build the next schedule to your 30% target" and c["start_day"] is None
 
 
-def test_a_campaign_for_this_weeks_night_does_not_guard_next_weeks_schedule():
+def test_a_campaign_for_another_weeks_night_does_not_guard_next_weeks_schedule():
+    """A Tuesday campaign in any week but the one the next draft covers
+    guards nothing. This week's Tuesday is that week only on a Monday or a
+    Tuesday - from Wednesday the next Tuesday IS the draft's - so the test
+    failed five days a week on CI (9/30/26). The other week is this week's
+    Tuesday while it is still ahead, else the week after the draft's."""
     rid = _rid()
-    this_week = ss._next_date("Tuesday", bi._local_today(rid))
-    assert this_week != ss.next_draft_date(rid, "Tuesday")
-    _campaign(rid, this_week)
+    draft = ss.next_draft_date(rid, "Tuesday")
+    this_week = draft - timedelta(days=7)
+    other = this_week if this_week >= bi._local_today(rid) else draft + timedelta(days=7)
+    assert other != draft
+    _campaign(rid, other)
     assert _labor_candidate(rid)["what"].endswith("starting with Tuesday")
 
 
