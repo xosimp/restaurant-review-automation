@@ -1830,6 +1830,17 @@ BACKUP_FREE_SPACE_FACTOR = float(os.getenv("BACKUP_FREE_SPACE_FACTOR", "3.5"))
 # attachment travels base64'd, so ~25 MB is the most that reliably arrives;
 # past it the only off-volume copy has to live somewhere other than email.
 BACKUP_EMAIL_MAX_BYTES = int(os.getenv("BACKUP_EMAIL_MAX_BYTES", str(25 * 1024 * 1024)))
+# Off-site copies are kept at most this long (memory re-audit 9/29/26,
+# FORGET-9): the object store's own lifecycle rule deletes them, and the
+# weekly check (run_offsite_lifecycle_check) pages when no rule does, or one
+# keeps them longer.
+BACKUP_OFFSITE_MAX_DAYS = int(os.getenv("BACKUP_OFFSITE_MAX_DAYS", "35"))
+# The emailed copy: "always" (each night, beside object storage — the
+# default, unchanged) or "fallback" (only on a night the object-storage copy
+# was not made). An email in an inbox has no expiry the code can enforce, so
+# "fallback" is how the off-site copies keep BACKUP_OFFSITE_MAX_DAYS; which
+# to run is the owner's call (the R9 report).
+BACKUP_EMAIL_MODE = (os.getenv("BACKUP_EMAIL_MODE", "always") or "always").strip().lower()
 _BACKUP_CHUNK = 3 * 1024 * 1024           # a multiple of 3, so base64 chunks join cleanly
 
 
@@ -1976,6 +1987,8 @@ def _scrub_lines_html(scrubbed):
     if d["precaution"]:
         lines.append(f"<b>Also blanked, not yet classified</b>: {esc(d['precaution'])} — add each to "
                      "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
+    if d.get("removed_rows"):
+        lines.append(f"<b>Guest text of removed rows</b>: {esc(d['removed_rows'])}.")
     lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
     return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
 
@@ -2014,6 +2027,39 @@ def _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=None):
     if not getattr(res, "ok", False):
         return f"email not sent: {getattr(res, 'error', None) or 'not accepted'}"
     return None
+
+
+def run_offsite_lifecycle_check():
+    """Weekly: does the object store delete old backup copies within
+    BACKUP_OFFSITE_MAX_DAYS? (memory re-audit 9/29/26, FORGET-9 — the expiry
+    was a manual bucket rule nothing read.) Reads the bucket's lifecycle
+    configuration (offsite_backup.lifecycle_days); no rule, a rule longer
+    than the limit, or an unreadable one is a failed run, captured and paged
+    (weekly cooldown). Skipped when object storage is not configured.
+    Returns the standard counts and the days found."""
+    import offsite_backup
+    cfg = offsite_backup.s3_config()
+    if not cfg:
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False,
+                "state": "object storage is not configured"}
+    got = offsite_backup.lifecycle_days(cfg)
+    days = got.get("days")
+    ok = days is not None and days <= BACKUP_OFFSITE_MAX_DAYS
+    out = {"attempted": 1, "ok": 1 if ok else 0, "failed": 0 if ok else 1, "skipped": 0, "hit_bound": False,
+           "lifecycle_days": days, "rule": got.get("rule"), "limit_days": BACKUP_OFFSITE_MAX_DAYS}
+    if not ok:
+        why = got.get("error") or f"the bucket keeps backup copies {days} days, over {BACKUP_OFFSITE_MAX_DAYS}"
+        out["error"] = why
+        log.error(f"offsite lifecycle: {why}")
+        _ops.capture(RuntimeError(f"off-site backup expiry: {why}"), job="offsite_lifecycle", context="lifecycle")
+        try:
+            _ops.page_operator("backup_lifecycle", "Cavnar AI: off-site backups have no expiry",
+                               [why, f"Set an expiration rule of at most {BACKUP_OFFSITE_MAX_DAYS} days on the "
+                                     f"bucket for the prefix {cfg.get('prefix') or '(all)'} (docs/ops/RECOVERY.md)."],
+                               cooldown_minutes=6 * 24 * 60)
+        except Exception as e:
+            log.error(f"offsite lifecycle page failed: {e}")
+    return out
 
 
 def backup_db():
@@ -2143,7 +2189,10 @@ def backup_db():
                 errors.append(f"object storage: {e}")
                 log.error(f"backup_db: object-storage copy failed: {e}")
                 _ops.capture(e, job="backup_db", context="s3")
-        if cfg.get("email"):
+        if cfg.get("email") and BACKUP_EMAIL_MODE == "fallback" and targets:
+            run["_detail"]["email"] = "not sent: BACKUP_EMAIL_MODE=fallback and object storage took tonight's copy"
+            log.info("backup_db: emailed copy skipped (BACKUP_EMAIL_MODE=fallback; object storage took it)")
+        elif cfg.get("email"):
             why = _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=scrubbed)
             if why is None:
                 targets.append("email")
@@ -2992,8 +3041,26 @@ def run_nightly_retention():
     retention registry (ops.prune_ledgers — chunked, a commit per chunk,
     bounded, then planner statistics) and each owner's own review retention
     (models.purge_expired_reviews). Both ran hourly inside the daily alert
-    checks, each table one DELETE under the write lock (#81)."""
-    out = _ops.prune_ledgers()
+    checks, each table one DELETE under the write lock (#81).
+
+    The registry's deletes run only when tonight's backup wrote its local
+    snapshot (ops.prune_backup_gate; memory re-audit 9/29/26, FORGET-10):
+    with the volume full and the snapshot failed, rows past their windows
+    were deleted with no copy anywhere. Held, paged and counted failed; the
+    reviews' soft delete (reversible) still runs."""
+    ok, why = _ops.prune_backup_gate()
+    if ok:
+        out = _ops.prune_ledgers()
+    else:
+        out = {"attempted": 1, "ok": 0, "failed": 1, "skipped": 0, "hit_bound": False, "held": why}
+        log.error(f"Retention held: {why}")
+        _ops.capture(RuntimeError(f"retention held: {why}"), job="prune_ledgers", context="backup gate")
+        try:
+            _ops.page_operator("retention_held", "Cavnar AI: retention held — no fresh backup",
+                               [f"Nothing was pruned tonight: {why}.",
+                                "The prune runs again after the next good backup."], cooldown_minutes=12 * 60)
+        except Exception as pe:
+            log.error(f"retention-held page failed: {pe}")
     try:
         from models import purge_expired_reviews
         purged = purge_expired_reviews()
@@ -4356,6 +4423,10 @@ def scheduler_loop():
                 # ops.prune_ledgers (the one retention registry) and each
                 # owner's review retention, nightly (#72, #81).
                 _ops.run_job("prune_ledgers", run_nightly_retention)
+            # Weekly, after the backup: the object store's own expiry of the
+            # off-site copies (FORGET-9).
+            if _due(now, 3) and _ops.claim_period("offsite_lifecycle", now.strftime("%G-W%V")):
+                _ops.run_job("offsite_lifecycle", run_offsite_lifecycle_check)
 
             # Weekly Intel, claimed per ISO WEEK (DH2-10): due from Monday
             # 6am with Monday–Wednesday catch-up, so a lost Monday runs

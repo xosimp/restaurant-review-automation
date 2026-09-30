@@ -2212,6 +2212,15 @@ _RETENTION_DAYS = {
     # went out keeps its original on marketing_edits; the rest is only
     # needed to see which drafts were regenerated rather than used.
     "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
+    # Memory re-audit 9/29/26 (FORGET-15, INVENTORY-7): what an evicted Ask
+    # chat was about (its title — the owner's own first question — and the
+    # model's notes) and each answer's rating with its free-text note were
+    # kept forever, though nothing reads either past 400 days
+    # (read_past_conversations) or 365 (the console's AI-quality range). The
+    # monthly helpful rate outlives the ratings in learning_scorecards (kept
+    # forever, frozen a week after each month closes).
+    "ask_topics":         int(os.getenv("RETAIN_ASK_TOPICS_DAYS", "400")),
+    "ask_feedback":       int(os.getenv("RETAIN_ASK_FEEDBACK_DAYS", "400")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2236,6 +2245,7 @@ _RETENTION_COLUMN = {
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
     "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
+    "ask_topics": "created_at", "ask_feedback": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2243,6 +2253,12 @@ _RETENTION_COLUMN = {
 # rec_events' showings, opens and lifecycle rows go at their age.
 _RETENTION_ONLY = {
     "rec_events": "event IN ('shown', 'opened', 'evidence_viewed', 'superseded', 'expired')",
+    # An account holder's rule that a full lane pushed out is kept until
+    # someone dismisses it in Account (owner_memory.dismiss) — never deleted
+    # for age alone (memory re-audit 9/29/26, R3 lane_eviction).
+    "ask_memory_archive": "NOT (reason='evicted' AND kind='constraint' "
+                          "AND COALESCE(authority, '') NOT IN ('delegate', 'admin') "
+                          "AND COALESCE(audience, 'team')!='author')",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
@@ -2306,6 +2322,9 @@ _RETENTION_FLOOR_DAYS = {
     # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
     # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
     "reply_draft_rejections": 90, "marketing_model_drafts": 90,
+    # Ask's past chats read up to 400 days (read_past_conversations); the
+    # console's AI quality reads up to a year of ratings.
+    "ask_topics": 400, "ask_feedback": 365,
 
 
     # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
@@ -2394,6 +2413,10 @@ _RETENTION_READERS = {
                                ("marketing_voice._match_draft", 1, None)),
 
 
+    "ask_topics": (("ask_conversations.past_conversations", 400, None),
+                   ("ask_conversations.often_asks", "ask_conversations.OFTEN_ASKS_DAYS", None)),
+    "ask_feedback": (("models.ask_feedback_rows", 180, None), ("models.ask_feedback_summary", 90, None),
+                     ("admin_ops.ai_quality", 365, None), ("learning_scorecard.compute_month", 60, None)),
     "ai_reads": (("ask_cavnar_tools._read_recent_reads", 180, None),
                  ("ai_reads.recent_reads", 30, None)),
     "ai_claims": (("ai_reads.claims_record", 365, None), ("ai_reads.confidence_calibration", 365, None),
@@ -2413,8 +2436,8 @@ _RETENTION_KNOWN_GAPS = {
     ("job_runs", "platform_monitor._last_run"): "the quarterly restore drill's last run is pruned at 45 days",
     ("alert_log", "scheduler.send_while_away_nudges"): "reads everything since the owner's last sign-in, uncapped",
     ("email_log", "client_api._do_upload_data"): "the 'first upload ever' check re-fires after 365 days",
-    ("login_history", "admin_ops._load_with"): "owner sign-ins and team last-seen read all rows kept 90 days; "
-                                               "engagement_monthly holds the months before",
+    ("login_history", "admin_ops._load_with"): "team last-seen reads the staff sign-ins kept 90 days (the owners' "
+                                               "last console sign-in falls back to engagement_monthly's months)",
 }
 # Past this many rows in one table in one pass, the rest waits a night.
 RETENTION_PASS_MAX_ROWS = int(os.getenv("RETENTION_PASS_MAX_ROWS", "200000"))
@@ -2440,6 +2463,8 @@ SUPERSEDED_DRAFTS_KEEP_DAYS = int(os.getenv("RETAIN_SUPERSEDED_DRAFTS_DAYS", "36
 # thinned the same way; the generated, published and final ones never are.
 DRAFT_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_DRAFT_DETAIL_DAYS", "30"))
 VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
+# Removed reviews keep their words this long, then they are erased.
+REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
 # The prunes that are not one table's rows by one stamp, with the same
 # floor rule: {name: (current days, floor)}. The schedule learner reads the
@@ -2455,6 +2480,10 @@ def _special_retention():
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
         "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),
+        # A removed review's words (memory re-audit 9/29/26, FORGET-1): the
+        # soft delete is a month's undo window, then the guest text is
+        # erased (history_rollups.erase_removed_reviews). Floor 7 days.
+        "reviews_erase": (REVIEW_ERASE_DAYS, 7),
     }
 
 
@@ -2533,6 +2562,8 @@ def _ensure_retention_indexes(conn):
         ("morning_brief_deliveries",
          "CREATE INDEX IF NOT EXISTS idx_morning_brief_deliveries_created ON morning_brief_deliveries(created_at)"),
         ("alert_storm_caps", "CREATE INDEX IF NOT EXISTS idx_alert_storm_caps_started ON alert_storm_caps(started_at)"),
+        ("ask_topics", "CREATE INDEX IF NOT EXISTS idx_ask_topics_created ON ask_topics(created_at)"),
+        ("ask_feedback", "CREATE INDEX IF NOT EXISTS idx_ask_feedback_created ON ask_feedback(created_at)"),
     ):
         if table in have:
             try:
@@ -2778,6 +2809,24 @@ def _prune_schedules(conn, deadline, refused=None):
     return out
 
 
+def _erase_removed_reviews(conn, deadline=None, refused=None):
+    """Blank the guest text of reviews removed past REVIEW_ERASE_DAYS
+    (memory re-audit 9/29/26, FORGET-1) — the soft delete alone kept every
+    removed review's words in the database and every backup for good. Under
+    the same floor rule as every prune: a window under its floor erases
+    nothing and is refused."""
+    st = retention_state("reviews_erase")
+    if st["state"] == "disabled":
+        return 0
+    if st["state"] == "below_floor":
+        if refused is not None:
+            refused.append(st)
+        return 0
+    import history_rollups
+    return history_rollups.erase_removed_reviews(conn, st["days"], deadline=deadline,
+                                                 max_rows=RETENTION_PASS_MAX_ROWS, chunk=RETENTION_CHUNK_ROWS)
+
+
 def _optimize(conn):
     """Planner statistics after the nightly prune (#72): no ANALYZE ran
     anywhere, and on a large copy it cut one admin query from 1,364 ms to
@@ -2911,6 +2960,22 @@ def prune_ledgers(db_path=None):
             except Exception:
                 pass
             log.debug(f"prune_ledgers skipped schedules: {e}")
+        try:
+            n = _erase_removed_reviews(conn, deadline, refused=refused)
+            if n:
+                deleted["reviews_erased"] = n
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if _missing(e):
+                log.debug(f"prune_ledgers skipped the review erase: {e}")
+            else:
+                counts["attempted"] += 1
+                counts["failed"] += 1
+                log.error(f"prune_ledgers could not erase removed reviews: {e}")
+                capture(e, job="prune_ledgers", context="reviews_erase", db_path=db_path)
         _optimize(conn)
     finally:
         conn.close()
@@ -3275,6 +3340,39 @@ def record_backup_run(row: dict, db_path=None):
     except Exception as e:
         log.error(f"backup run not recorded: {e}")
         return None
+
+
+# How recent the snapshot a prune relies on must be (memory re-audit
+# 9/29/26, FORGET-10): the prune runs straight after the 2am backup, so the
+# pruned rows are in last night's snapshot — but only if that snapshot was
+# taken.
+PRUNE_NEEDS_BACKUP_WITHIN_HOURS = 26
+
+
+def prune_backup_gate(db_path=None) -> tuple:
+    """(ok, why) — whether a retention prune may delete tonight: the newest
+    backup_runs row must have written its local snapshot (local_ok=1) and
+    have started within PRUNE_NEEDS_BACKUP_WITHIN_HOURS. A failed snapshot,
+    no backup at all, or an unreadable ledger holds the prune (fail closed:
+    a row deleted with no copy anywhere cannot come back). Never raises."""
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            last = conn.execute(
+                "SELECT local_ok, started_at, (julianday('now') - julianday(started_at)) * 24.0 AS age "
+                "FROM backup_runs ORDER BY id DESC LIMIT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        return False, f"the backup ledger is unreadable: {e}"
+    if not last:
+        return False, "no backup has run"
+    if not last["local_ok"]:
+        return False, f"the newest backup ({last['started_at']}) did not write its snapshot"
+    if last["age"] is None or float(last["age"]) > PRUNE_NEEDS_BACKUP_WITHIN_HOURS:
+        return False, f"the newest good snapshot ({last['started_at']}) is over {PRUNE_NEEDS_BACKUP_WITHIN_HOURS} hours old"
+    return True, None
 
 
 def backup_status(db_path=None) -> dict:

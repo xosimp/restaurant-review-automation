@@ -85,6 +85,7 @@ PROVIDERS = {
     "what_worked":  ("rec_learning:what_worked_lines", 50),   # measured results for this kind
     "links":        ("link_memory:link_lines", 55),           # cross-module links this surface acts on, kept
     "events":       ("event_memory:memory_lines", 60),        # how events, weather, campaigns moved sales here
+    "market":       ("event_memory:market_lines", 65),        # competitors opening/closing/moving, own rating (INVENTORY-6)
     "people":       ("people:memory_lines", 70),              # attendance, standing patterns, notes (staffing)
     "marketing":    ("marketing:memory_lines", 80),           # what worked in marketing, the owner's voice
     "conversation": ("owner_memory:conversation_lines", 90),  # Ask only: the rolling chat summary
@@ -98,14 +99,14 @@ SURFACE_SECTIONS = {
     # would pay twice for the same memory. Not "conversation": that is per
     # chat and per turn, so it rides on "ask_conversation" below, outside the
     # snapshot the viewer's other chats share.
-    "ask": ("constraints", "goals", "last_claim", "events", "people", "marketing"),
+    "ask": ("constraints", "goals", "last_claim", "events", "market", "people", "marketing"),
     # Ask, per turn: the chat's rolling summary, what its last answer read,
     # and the questions this login keeps asking — the first context block.
     "ask_conversation": ("conversation",),
     "schedule": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "labor_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "food_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
-    "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
+    "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "market"),
     "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people"),
     "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "links"),
     "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
@@ -116,10 +117,13 @@ SURFACE_SECTIONS = {
     # guest_marketing.returns_block, marketing_voice.voice_block; the
     # drafter's voice learning), and marketing:memory_lines says nothing
     # there rather than say it twice (INT_NOTES #30).
-    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "links"),
+    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "market", "links"),
     "reply_drafter": ("constraints", "decisions"),
-    "competitor_read": ("constraints", "last_claim", "decisions"),
-    "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
+    # "market" (re-audit 9/29/26, INVENTORY-6): the public history — who
+    # opened, closed or moved nearby, and this restaurant's own rating —
+    # kept forever and until now read by one screen.
+    "competitor_read": ("constraints", "last_claim", "decisions", "market"),
+    "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "market"),
 }
 
 DEFAULT_BUDGET_CHARS = 2400
@@ -129,7 +133,7 @@ DEFAULT_BUDGET_CHARS = 2400
 # conversation carry the most weight: they are the memory the owner would
 # otherwise have to repeat.
 SECTION_SHARES = {"constraints": 3, "goals": 2, "last_claim": 2, "decisions": 3, "what_worked": 2,
-                  "events": 2, "people": 2, "marketing": 2, "conversation": 3, "links": 2}
+                  "events": 2, "market": 2, "people": 2, "marketing": 2, "conversation": 3, "links": 2}
 DEFAULT_SHARE = 2
 
 # How each section is headed in the prompt. The heading says what the lines
@@ -142,6 +146,8 @@ SECTION_TITLES = {
     "decisions": "WHAT THE OWNER DECIDED",
     "what_worked": "WHAT HAS WORKED HERE, AND WHAT THE OWNER KEEPS PASSING ON",
     "events": "WHAT EVENTS, WEATHER AND CAMPAIGNS HAVE DONE HERE",
+    "market": ("WHAT THE LOCAL MARKET AND THIS RESTAURANT'S PUBLIC RATING HAVE DONE (Google's public listings as "
+               "Cavnar AI's competitor check saw them — what happened, never why)"),
     "people": "THE PEOPLE",
     "marketing": "MARKETING MEMORY",
     "links": ("WHAT TWO MODULES KEEP POINTING AT TOGETHER (found by Cavnar AI's cross-module read, with how long "
@@ -399,7 +405,14 @@ def visible(line, user, authority=None, _cache=None) -> bool:
         return True
     if is_team(user):
         return False                             # a shared output reads no one's private line
-    uid = user.get("id")
+    # Through view-as the reader is the admin behind it, never the owner it
+    # views as: support does not read the owner's author-only lines
+    # (permissions.acting_login_id — PEOPLE-20).
+    try:
+        from permissions import acting_login_id
+        uid = acting_login_id(user)
+    except Exception:
+        uid = None
     if audience == "author":
         return line.get("author_id") is not None and uid is not None and int(line["author_id"]) == int(uid)
     if audience == "principals":
@@ -589,6 +602,16 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
             block.sections[n] = kept
             block.sizes[n] = sum(len(_line_text(l)) + 1 for l in kept)
         block.text = "\n\n".join(parts)
+        # The owner's facts this prompt carried: lane eviction goes least
+        # used first (owner_memory.mark_used; memory re-audit R3).
+        used = [l.get("fact_id") for ls in block.sections.values() for l in ls
+                if l.get("fact_id") and l.get("source") == "owner"]
+        if used:
+            try:
+                import owner_memory
+                owner_memory.mark_used(restaurant_id, used, db_path=db_path)
+            except Exception as e:
+                log.debug("memory_context: use not stamped for rid=%s: %s", restaurant_id, e)
 
     _note_sizes(surface, block.sizes, block.dropped)
     if block.sizes or block.dropped or block.errors:

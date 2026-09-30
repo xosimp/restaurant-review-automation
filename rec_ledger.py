@@ -1431,10 +1431,24 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     read's numbered lines, keyed by a hash of their words): an open episode
     of one of those kinds that is not in the batch was replaced by the new
     read, and closes as superseded rather than lingering to expire as
-    ignored."""
+    ignored.
+
+    `user_id` is the login it is shown to: a key that login's own answer
+    silences (rec_silences — a manager's "not for us") reads as answered
+    for them — None, not shown — while the owner is still shown it
+    (memory re-audit 9/29/26, PEOPLE-4)."""
     out = {}
     if not restaurant_id or not items:
         return out
+    mine = own_silences(restaurant_id, int(user_id), db_path=db_path) if isinstance(user_id, int) else ()
+    if mine:
+        for it in items:
+            k = str(it.get("key") or "").strip()[:160]
+            if k in mine:
+                out[k] = None
+        items = [it for it in items if str(it.get("key") or "").strip()[:160] not in mine]
+        if not items:
+            return out
     # Measured before the write connection opens (the snapshot reads the
     # ledger and each source on connections of its own).
     snaps = _snapshots(restaurant_id, items, db_path=db_path)
@@ -1558,8 +1572,10 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
     measuring window). Never raises.
 
     `authority` is permissions.answer_authority of whoever answered
-    (principal | delegate | admin; None is a system answer, read as the
-    principal's). A delegate's decline, hide or snooze silences the key for
+    (principal | delegate | admin). Not given, it is derived from the
+    request's signed-in login (request_authority — PEOPLE-3); None is left
+    only for a system answer (a job, a sync, a replay carried in with `at`),
+    read as the principal's. A delegate's decline, hide or snooze silences the key for
     that login only (rec_silences), leaving the episode open for the owner;
     an admin's answer through view-as (derived from the request when not
     given, `via` naming the admin) is kept in the trail and changes nothing
@@ -1594,9 +1610,7 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
         # is dropped rather than stored as if it were one of the six.
         meta = {k: v for k, v in meta.items() if k != "reason_code"}
     if authority is None and via is None and when is None:
-        via = request_via()
-        if via:
-            authority = "admin"
+        authority, via = request_authority()
     try:
         conn = get_conn(db_path)
     except Exception as e:
@@ -1627,6 +1641,28 @@ _DECLINE_EVENTS = ("dismissed", "snoozed")
 _ANSWER_EVENTS = ("accepted", "completed", "dismissed", "snoozed")
 
 
+def counts_for_restaurant(authority, event) -> bool:
+    """Whether an answer is the RESTAURANT's — what pooled learning, the
+    feature rows and the restaurant's own record may count (memory re-audit
+    9/29/26, PLATFORM-2/-4). The same line _record_on draws: an admin's
+    answer (support triage, view-as) never is; a delegate's decline or
+    snooze held for that login alone, so it is not; a delegate's accept,
+    Done or implemented closed the restaurant's episode, so it is; a
+    principal's or a system answer (NULL) always is."""
+    if authority == "admin":
+        return False
+    if authority == "delegate" and event in _DECLINE_EVENTS:
+        return False
+    return True
+
+
+def restaurant_answer_sql(alias="e") -> str:
+    """counts_for_restaurant as a SQL condition on a rec_events alias."""
+    a = f"{alias}." if alias else ""
+    return (f"(COALESCE({a}authority,'principal') = 'principal' OR ({a}authority = 'delegate' "
+            f"AND {a}event NOT IN ('dismissed','snoozed')))")
+
+
 def request_via(user=None):
     """{"admin_id", "admin", "role"} when this request (or `user`) is an
     admin acting through view-as — the admin behind it, never the owner it
@@ -1636,6 +1672,40 @@ def request_via(user=None):
         return acting_via(user)
     except Exception:
         return None
+
+
+def _request_login_id():
+    """The signed-in login's id for this request (the acting admin's for a
+    view-as), else None. Never raises."""
+    try:
+        import change_log
+        return silence_subject(change_log._request_user())
+    except Exception:
+        return None
+
+
+def request_authority():
+    """(authority, via) of the login behind this write, derived from the
+    request (or a change_log.attributed block) — permissions.answer_authority
+    of the signed-in login, `via` naming the admin behind a view-as — or
+    (None, None) with no login behind it (a job, a sync, a script: a system
+    answer, read as the principal's).
+
+    record() and implemented_on() call it whenever a live answer arrives
+    without an authority (memory re-audit 9/29/26, PEOPLE-3): a caller that
+    forgot the kwarg used to store NULL, read as the owner's, so a manager's
+    "Not for us" silenced the whole restaurant and trained the owner's
+    declines. Never raises."""
+    via = request_via()
+    if via:
+        return "admin", via
+    try:
+        import change_log
+        ctx = change_log.actor_context()
+    except Exception:
+        return None, None
+    a = (ctx or {}).get("authority")
+    return (a if a in AUTHORITIES else None), None
 
 
 def silence_subject(user):
@@ -1750,6 +1820,10 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
     caller already inside its own write transaction (a schedule save), where
     a second connection would wait on the lock that caller holds."""
     authority = authority if authority in AUTHORITIES else None
+    if authority is None and not via and when is None:
+        # A live answer on the caller's connection says who gave it too
+        # (implemented_on inside a schedule save — PEOPLE-3).
+        authority, via = request_authority()
     if via and authority is None:
         authority = "admin"
     meta = dict(meta) if meta else None
@@ -1806,6 +1880,13 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
     if login_only:
         if event in _ANSWER_EVENTS:
             subject = (via or {}).get("admin_id") if authority == "admin" else user_id
+            if subject is None:
+                # An admin console login (no view-as) or a caller that named
+                # no login: the silence holds for whoever is signed in, and
+                # with nobody it is kept in the trail only.
+                subject = user_id if user_id is not None else _request_login_id()
+            if subject is None:
+                return added
             if event == "snoozed":
                 days = SAFETY_CYCLE_DAYS if kind_of(key) in SAFETY_KINDS else 1
                 if snooze_until:
@@ -2339,6 +2420,30 @@ def unsilence_login(restaurant_id, key, subject_id, db_path=DB_PATH, authority=N
 
 def silenced(restaurant_id, key, db_path=DB_PATH, viewer=None) -> bool:
     return str(key or "")[:160] in silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
+
+
+def own_silences(restaurant_id, viewer, db_path=DB_PATH) -> frozenset:
+    """The keys only THIS login's own answers silence (rec_silences — a
+    manager's decline, an admin's view-as answer), for a surface built once
+    and shared by several logins that must still honour each one's own "no"
+    (the morning brief's per-view build, a push fan-out — memory re-audit
+    9/29/26, PEOPLE-4). Empty for no login. Never raises."""
+    subject = viewer if isinstance(viewer, int) else silence_subject(viewer)
+    if subject is None:
+        return frozenset()
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return frozenset()
+    try:
+        return frozenset(r["key"] for r in conn.execute(
+            "SELECT key FROM rec_silences WHERE restaurant_id=? AND subject_id=? AND until > ?",
+            (restaurant_id, int(subject), _now())))
+    except Exception as e:
+        print(f"[rec_ledger] login silences unreadable: {e}")
+        return frozenset()
+    finally:
+        conn.close()
 
 
 def silenced_keys(restaurant_id, db_path=DB_PATH, viewer=None) -> set:

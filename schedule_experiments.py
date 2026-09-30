@@ -532,23 +532,19 @@ def verdict(exp, arms: list) -> dict:
 def _excluded(db_path):
     """Restaurants that may not teach any learner (intelligence.jobs.
     excluded_learning_ids — models.learning_eligible and the demo
-    quarantine). An unreadable set excludes none, and says so."""
-    try:
-        from intelligence.jobs import excluded_learning_ids
-        return set(excluded_learning_ids(db_path=db_path))
-    except Exception as e:
-        print(f"[experiments] eligibility unavailable: {e}")
-        return set()
+    quarantine). Raises when unreadable (memory re-audit 9/29/26,
+    PLATFORM-11): an unreadable set excluded none, so a test account's weeks
+    joined a verdict. The weekly verdict job fails and is captured."""
+    from intelligence.jobs import excluded_learning_ids
+    return set(excluded_learning_ids(db_path=db_path))
 
 
 def _learning_since(db_path):
     """{restaurant_id: learning_since} — a converted demo's weeks before it
-    are its demo era and read in no arm (INT #20). {} when unreadable."""
-    try:
-        from intelligence.jobs import learning_since_by_id
-        return learning_since_by_id(db_path=db_path)
-    except Exception:
-        return {}
+    are its demo era and read in no arm (INT #20). Raises when unreadable
+    (PLATFORM-11), like _excluded."""
+    from intelligence.jobs import learning_since_by_id
+    return learning_since_by_id(db_path=db_path)
 
 
 def _before_learning(restaurant_id, week_start, since):

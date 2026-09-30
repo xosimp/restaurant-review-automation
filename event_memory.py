@@ -88,6 +88,21 @@ EFFECT_BOUNDS = (-50.0, 100.0)
 RAIN_LABEL = "rain"
 PAYDAY_LABELS = {1: ("1st month", "the 1st of the month"), 15: ("15th month", "the 15th of the month")}
 CAMPAIGN_LABEL = ("guest text", "a guest text campaign")
+# A holiday is keyed by its calendar identity, never by its words (memory
+# re-audit 9/29/26, QUALITY-5): "New Year's Day" normalised to "new year's",
+# a token subset of "new year's eve", so New Year's Day read New Year's Eve's
+# nights (and Christmas Day read Christmas Eve's). holiday_key("New Year's
+# Day") is "holiday:new_years_day", matched exactly.
+HOLIDAY_PREFIX = "holiday:"
+# Event effects age (QUALITY-21): a night counts half for every
+# EFFECT_HALF_LIFE_YEARS it is older than the label's newest night, in whole
+# years — nights inside a year of the newest count alike, so a recent record
+# is its plain median. When the last DRIFT_RECENT nights all sit outside the
+# spread of the older ones (and at least DRIFT_RECENT older nights exist),
+# the record has moved: the recent median is the figure, and the sentence
+# says "was +25%, the last 3 nights +8%".
+EFFECT_HALF_LIFE_YEARS = 2.0
+DRIFT_RECENT = 3
 
 
 # ── schema (at boot: models.init_db) ────────────────────────────────────────
@@ -196,11 +211,97 @@ def init_event_memory(db_path=DB_PATH):
             captured_at     TEXT,
             PRIMARY KEY (restaurant_id, place_id, month)
         )""")
+        # A night that carried more than one thing (a holiday AND the owner's
+        # "Mother's Day brunch", a game on a rainy payday) is `confounded`:
+        # its one lift belongs to no single label, so a label is measured on
+        # its nights alone where it has enough of them, and `co_labels` (JSON)
+        # names what else was on the night, for display (QUALITY-4). The
+        # same two facts ride on each label's summary (event_effects), with
+        # `drift_json` when its recent nights moved (QUALITY-21).
+        for table, cols in (("event_outcomes", (("confounded", "INTEGER NOT NULL DEFAULT 0"),
+                                                ("co_labels", "TEXT"))),
+                            ("event_effects", (("confounded", "INTEGER NOT NULL DEFAULT 0"),
+                                               ("drift_json", "TEXT")))):
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for col, typ in cols:
+                if col not in have:
+                    try:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                    except Exception as e:
+                        if "duplicate column" not in str(e).lower():
+                            raise
         conn.commit()
     finally:
         conn.close()
     backfill_public_history(db_path)
     retract_churn_events(db_path)
+    rekey_record(db_path)
+
+
+def rekey_record(db_path=DB_PATH) -> dict:
+    """At boot, idempotent: bring the record kept before the re-audit fix
+    round (9/29/26) to its rules — every holiday row re-keyed by its date's
+    calendar identity (holiday_key, QUALITY-5), every night's rows marked
+    `confounded` when the night carried more than one thing (QUALITY-4) —
+    and the summaries of every label it touched recomputed. {"rekeyed",
+    "marked"}. Never raises."""
+    out = {"rekeyed": 0, "marked": 0}
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, restaurant_id, business_date, kind, label, confounded, co_labels FROM event_outcomes "
+                "ORDER BY restaurant_id, business_date, id").fetchall()]
+        finally:
+            conn.close()
+        if not rows:
+            return out
+        touched = {}
+        updates = []
+        for r in rows:
+            if r["kind"] != "holiday" or is_holiday_key(r["label"]):
+                continue
+            try:
+                hol = _holiday(_as_date(r["business_date"]))
+            except ValueError:
+                hol = None
+            if hol and hol[0] and hol[0] != r["label"]:
+                touched.setdefault(r["restaurant_id"], set()).update({r["label"], hol[0]})
+                updates.append(("label", hol[0], r["id"]))
+                r["label"] = hol[0]
+                out["rekeyed"] += 1
+        nights = {}
+        for r in rows:
+            nights.setdefault((r["restaurant_id"], r["business_date"]), []).append(r)
+        for (rid, _d), group in nights.items():
+            marks = _confounding([{"label": r["label"]} for r in group])
+            for r in group:
+                conf, co = marks[r["label"]]
+                if int(r["confounded"] or 0) != conf or (r["co_labels"] or None) != co:
+                    updates.append(("confounded", (conf, co), r["id"]))
+                    touched.setdefault(rid, set()).add(r["label"])
+                    out["marked"] += 1
+        if not updates:
+            return out
+        conn = get_conn(db_path)
+        try:
+            for what, value, row_id in updates:
+                if what == "label":
+                    conn.execute("UPDATE OR IGNORE event_outcomes SET label=? WHERE id=?", (value, row_id))
+                else:
+                    conn.execute("UPDATE event_outcomes SET confounded=?, co_labels=? WHERE id=?",
+                                 (value[0], value[1], row_id))
+            conn.commit()
+        finally:
+            conn.close()
+        for rid, labels in touched.items():
+            refresh_effects(rid, labels, db_path=db_path)
+        if out["rekeyed"] or out["marked"]:
+            log.info("event_memory: record re-keyed (%s holiday rows, %s confounding marks)",
+                     out["rekeyed"], out["marked"])
+    except Exception as e:
+        log.warning("event_memory: record not re-keyed: %s", e)
+    return out
 
 
 # The day openings and closures started needing evidence (NEW_PLACE_MAX_REVIEWS,
@@ -322,6 +423,38 @@ def _tokens(label) -> set:
     return set(str(label or "").split())
 
 
+def _same_thing(a, b) -> bool:
+    """Two labels name one thing when one's words are all in the other's
+    ("cubs" and "cubs cards") — measured_effect's own match. A holiday's key
+    is one word no event label can contain."""
+    ta, tb = _tokens(a), _tokens(b)
+    return bool(ta and tb) and (ta <= tb or tb <= ta)
+
+
+def _confounding(flags) -> dict:
+    """{label: (confounded 0|1, co_labels JSON or None)} for one night's
+    flags (QUALITY-4): the night's labels grouped into the distinct things
+    that happened (_same_thing), and every label on a night with more than
+    one thing is confounded, carrying the others' labels. A closer's "Cubs
+    game" beside the owner's listed "Cubs home game" is one thing."""
+    groups = []
+    for f in flags:
+        lab = f["label"]
+        for g in groups:
+            if any(_same_thing(lab, o) for o in g):
+                if lab not in g:
+                    g.append(lab)
+                break
+        else:
+            groups.append([lab])
+    out = {}
+    for g in groups:
+        others = [o[0] for o in groups if o is not g]
+        for lab in g:
+            out[lab] = (1, json.dumps(others)) if others else (0, None)
+    return out
+
+
 def _iso(d):
     return d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
 
@@ -332,9 +465,22 @@ def _as_date(d):
 
 # ── what is known about a date ─────────────────────────────────────────────
 
+def holiday_key(name) -> str:
+    """"New Year's Day" -> "holiday:new_years_day": a holiday's calendar
+    identity (QUALITY-5), "" for no name. Never a token subset of another
+    holiday's key, and never matched by an event's words."""
+    slug = re.sub(r"[^a-z0-9]+", "_", str(name or "").lower().replace("'", "").replace("\u2019", "")).strip("_")
+    return f"{HOLIDAY_PREFIX}{slug}" if slug else ""
+
+
+def is_holiday_key(label) -> bool:
+    return str(label or "").startswith(HOLIDAY_PREFIX)
+
+
 def _holiday(day):
-    """(label, name) for a dining holiday on `day`, or None — never one the
-    calendar only approximates (demand.APPROXIMATE_HOLIDAYS)."""
+    """(key, name) for a dining holiday on `day` (holiday_key: its calendar
+    identity), or None — never one the calendar only approximates
+    (demand.APPROXIMATE_HOLIDAYS)."""
     try:
         import schedule_economics
         from demand import APPROXIMATE_HOLIDAYS, holiday_display_name
@@ -346,7 +492,7 @@ def _holiday(day):
     name = holiday_display_name(name)
     if name in APPROXIMATE_HOLIDAYS:
         return None
-    return normalise_label(name) or None, name
+    return holiday_key(name) or None, name
 
 
 def _campaign_nights(conn, restaurant_id, start, end) -> dict:
@@ -532,20 +678,25 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
             written = []
             if m.get("lift_pct") is not None:
                 covers, labor = _night_extras(conn, restaurant_id, iso)
+                # One lift, one night: a night that carried two things is
+                # kept for each, marked confounded (QUALITY-4) — a label is
+                # measured on its own nights where it has enough of them.
+                marks = _confounding(flags)
                 seen = set()
                 for f in flags:
                     key = (f["kind"], f["label"])
                     if key in seen:
                         continue
                     seen.add(key)
+                    conf, co = marks.get(f["label"], (0, None))
                     conn.execute(
                         "INSERT INTO event_outcomes (restaurant_id, business_date, weekday, kind, label, raw_label, "
                         "source, net, baseline, baseline_n, lift_pct, basis, net_source, covers, labor_pct, "
-                        "owner_lift_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "owner_lift_pct, confounded, co_labels) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (restaurant_id, iso, day.strftime("%A"), f["kind"], f["label"], str(f.get("raw") or "")[:160],
                          f.get("source"), m["net"], m["baseline"], m["baseline_n"], m["lift_pct"], m.get("basis"),
                          m.get("source"), covers if covers is not None else f.get("covers"), labor,
-                         f.get("owner_lift_pct")))
+                         f.get("owner_lift_pct"), conf, co))
                     written.append(f["label"])
             conn.commit()
         finally:
@@ -569,29 +720,111 @@ def _display(rows):
     return rows[-1]["label"] if rows else None
 
 
+def _clears_floor(kind, n, med) -> bool:
+    """A label's record is a pattern (measured_effect's `applies`): EFFECT_MIN_N
+    nights, or a holiday's two nights or one past HOLIDAY_ONE_NIGHT_PCT."""
+    return n >= EFFECT_MIN_N or (kind == "holiday" and (n >= 2 or abs(med or 0) >= HOLIDAY_ONE_NIGHT_PCT))
+
+
+def _age_weight(night, newest) -> float:
+    """A night's weight (QUALITY-21): half for every EFFECT_HALF_LIFE_YEARS
+    it is older than the label's newest night, counted in whole years."""
+    try:
+        years = (_as_date(newest) - _as_date(night)).days // 365
+    except ValueError:
+        return 1.0
+    return 0.5 ** (max(0, years) / EFFECT_HALF_LIFE_YEARS)
+
+
+def _weighted_median(pairs):
+    """The weighted median of [(value, weight)]: each value placed at the
+    middle of its weight's share of the whole and read at the half by
+    interpolation — equal weights give exactly the plain median."""
+    pts = sorted((float(v), float(w)) for v, w in pairs if w > 0)
+    if not pts:
+        return None
+    total = sum(w for _v, w in pts)
+    run, xs = 0.0, []
+    for v, w in pts:
+        xs.append(((run + w / 2.0) / total, v))
+        run += w
+    if 0.5 <= xs[0][0]:
+        return xs[0][1]
+    for (p0, v0), (p1, v1) in zip(xs, xs[1:]):
+        if p0 <= 0.5 <= p1:
+            return v0 if p1 == p0 else v0 + (v1 - v0) * (0.5 - p0) / (p1 - p0)
+    return xs[-1][1]
+
+
 def _summary(rows) -> dict | None:
-    """One label's summary over its nights (one per date)."""
+    """One label's summary over its nights (one per date).
+
+    Which nights (QUALITY-4): the ones the label had to itself (not
+    `confounded`) when they alone clear the floor (_clears_floor); else
+    every night, and the summary says `confounded` — its figure also carries
+    what else was on those nights, so effects_for_day never multiplies it
+    with a label measured on the same nights. `dates` are the nights used.
+
+    The figure (QUALITY-21): the age-weighted median (_age_weight) — the
+    plain median while every night is within a year of the newest — and when
+    the last DRIFT_RECENT nights all fall outside the older nights' spread,
+    the recent median, with `drift` {"was", "recent", "n_recent", "since"}."""
     by_date = {}
-    for r in rows:
+    for r in sorted(rows, key=lambda r: int(r.get("confounded") or 0)):
         if r.get("lift_pct") is None:
             continue
         by_date.setdefault(r["business_date"], r)
     nights = sorted(by_date.values(), key=lambda r: r["business_date"])
     if not nights:
         return None
-    lifts = sorted(float(r["lift_pct"]) for r in nights)
-    med = _median(lifts)
-    guesses = [float(r["owner_lift_pct"]) for r in nights if r.get("owner_lift_pct") is not None]
-    wd = {}
-    for r in nights:
-        wd[r["weekday"]] = wd.get(r["weekday"], 0) + 1
     kinds = [r["kind"] for r in nights]
-    return {"n": len(nights), "median_lift_pct": round(med, 1), "low_lift_pct": lifts[0], "high_lift_pct": lifts[-1],
+    kind = max(set(kinds), key=kinds.count)
+    clean = [r for r in nights if not int(r.get("confounded") or 0)]
+    use = nights
+    if clean and len(clean) < len(nights) and \
+            _clears_floor(kind, len(clean), _median([float(r["lift_pct"]) for r in clean])):
+        use = clean
+    confounded = any(int(r.get("confounded") or 0) for r in use)
+    newest = use[-1]["business_date"]
+    med = _weighted_median([(r["lift_pct"], _age_weight(r["business_date"], newest)) for r in use])
+    drift = None
+    if len(use) >= 2 * DRIFT_RECENT:
+        recent, older = use[-DRIFT_RECENT:], use[:-DRIFT_RECENT]
+        r_lifts = [float(r["lift_pct"]) for r in recent]
+        o_lifts = [float(r["lift_pct"]) for r in older]
+        lo, hi = min(o_lifts), max(o_lifts)
+        if all(x < lo for x in r_lifts) or all(x > hi for x in r_lifts):
+            r_med, o_med = _median(r_lifts), _weighted_median(
+                [(r["lift_pct"], _age_weight(r["business_date"], older[-1]["business_date"])) for r in older])
+            if abs(r_med - o_med) >= EFFECT_FLOOR_PCT:
+                drift = {"was": round(o_med, 1), "recent": round(r_med, 1), "n_recent": DRIFT_RECENT,
+                         "since": recent[0]["business_date"]}
+                med = r_med
+    lifts = sorted(float(r["lift_pct"]) for r in use)
+    guesses = [float(r["owner_lift_pct"]) for r in use if r.get("owner_lift_pct") is not None]
+    wd = {}
+    for r in use:
+        wd[r["weekday"]] = wd.get(r["weekday"], 0) + 1
+    return {"n": len(use), "median_lift_pct": round(med, 1), "low_lift_pct": lifts[0], "high_lift_pct": lifts[-1],
             "direction": ("up" if med >= EFFECT_FLOOR_PCT else "down" if med <= -EFFECT_FLOOR_PCT else "none"),
-            "first_date": nights[0]["business_date"], "last_date": nights[-1]["business_date"],
-            "weekdays": wd, "kind": max(set(kinds), key=kinds.count), "display": _display(nights),
+            "first_date": use[0]["business_date"], "last_date": use[-1]["business_date"],
+            "weekdays": wd, "kind": kind, "display": _display(nights),
             "owner_guesses": len(guesses), "owner_median_pct": round(_median(guesses), 1) if guesses else None,
-            "basis": sorted({r.get("basis") or "" for r in nights} - {""})}
+            "basis": sorted({r.get("basis") or "" for r in use} - {""}),
+            "confounded": bool(confounded), "n_nights": len(nights), "n_alone": len(clean),
+            "dates": [r["business_date"] for r in use], "drift": drift}
+
+
+def _record_words(s) -> str:
+    """What a summary adds to its sentence: the drift, and nights shared
+    with something else. "" when neither."""
+    bits = []
+    d = s.get("drift")
+    if d:
+        bits.append(f"was {d['was']:+.0f}%, the last {d['n_recent']} nights {d['recent']:+.0f}%")
+    if s.get("confounded"):
+        bits.append("on nights with something else going on too")
+    return ("; " + "; ".join(bits)) if bits else ""
 
 
 def refresh_effects(restaurant_id, labels, db_path=None):
@@ -614,16 +847,18 @@ def refresh_effects(restaurant_id, labels, db_path=None):
                 conn.execute(
                     "INSERT INTO event_effects (restaurant_id, label, kind, display, n, median_lift_pct, low_lift_pct, "
                     "high_lift_pct, direction, first_date, last_date, weekdays_json, owner_guesses, owner_median_pct, "
-                    "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) "
+                    "confounded, drift_json, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) "
                     "ON CONFLICT(restaurant_id, label) DO UPDATE SET kind=excluded.kind, display=excluded.display, "
                     "n=excluded.n, median_lift_pct=excluded.median_lift_pct, low_lift_pct=excluded.low_lift_pct, "
                     "high_lift_pct=excluded.high_lift_pct, direction=excluded.direction, "
                     "first_date=excluded.first_date, last_date=excluded.last_date, "
                     "weekdays_json=excluded.weekdays_json, owner_guesses=excluded.owner_guesses, "
-                    "owner_median_pct=excluded.owner_median_pct, updated_at=excluded.updated_at",
+                    "owner_median_pct=excluded.owner_median_pct, confounded=excluded.confounded, "
+                    "drift_json=excluded.drift_json, updated_at=excluded.updated_at",
                     (restaurant_id, lab, s["kind"], s["display"], s["n"], s["median_lift_pct"], s["low_lift_pct"],
                      s["high_lift_pct"], s["direction"], s["first_date"], s["last_date"], json.dumps(s["weekdays"]),
-                     s["owner_guesses"], s["owner_median_pct"]))
+                     s["owner_guesses"], s["owner_median_pct"], 1 if s["confounded"] else 0,
+                     json.dumps(s["drift"]) if s["drift"] else None))
             conn.commit()
         finally:
             conn.close()
@@ -640,42 +875,56 @@ def measured_effect(restaurant_id, label, db_path=None):
 
     Matched by label TOKENS over the record, one night per date: "cubs"
     counts every night whose label names the Cubs ("cubs", "cubs cardinals").
+    A holiday's key (holiday_key, "holiday:new_years_day") is matched
+    exactly — New Year's Day never reads New Year's Eve (QUALITY-5).
     Also carries "label", "display", "kind", "low_lift_pct",
     "high_lift_pct", "direction" (up | down | none, past EFFECT_FLOOR_PCT),
     "applies" (n clears the floor — EFFECT_MIN_N, or a holiday's one night
     past HOLIDAY_ONE_NIGHT_PCT), "owner_median_pct" (what the owner guessed
-    on those nights, when they did) and "basis" — the sentence a surface
-    says. Never raises."""
-    norm = normalise_label(label)
-    want = _tokens(norm)
-    if not want:
-        return None
-    probe = max(want, key=len)
+    on those nights, when they did), "confounded" / "dates" (the nights it
+    rests on, and whether something else was on them — QUALITY-4), "drift"
+    (QUALITY-21) and "basis" — the sentence a surface says. Never raises."""
+    if is_holiday_key(label):
+        norm = str(label).strip()
+        want = None
+    else:
+        norm = normalise_label(label)
+        want = _tokens(norm)
+        if not want:
+            return None
     try:
         conn = get_conn(db_path)
         try:
-            rows = [dict(r) for r in conn.execute(
-                "SELECT * FROM event_outcomes WHERE restaurant_id=? AND lift_pct IS NOT NULL AND label LIKE ?",
-                (restaurant_id, f"%{probe}%")).fetchall()]
+            if want is None:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM event_outcomes WHERE restaurant_id=? AND lift_pct IS NOT NULL AND label=?",
+                    (restaurant_id, norm)).fetchall()]
+            else:
+                probe = max(want, key=len)
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM event_outcomes WHERE restaurant_id=? AND lift_pct IS NOT NULL AND label LIKE ?",
+                    (restaurant_id, f"%{probe}%")).fetchall()]
         finally:
             conn.close()
     except Exception:
         return None
-    hits = [r for r in rows if want <= _tokens(r["label"])]
+    hits = rows if want is None else [r for r in rows if not is_holiday_key(r["label"]) and want <= _tokens(r["label"])]
     s = _summary(hits)
     if not s:
         return None
     n, med = s["n"], s["median_lift_pct"]
-    applies = n >= EFFECT_MIN_N or (s["kind"] == "holiday" and (n >= 2 or abs(med) >= HOLIDAY_ONE_NIGHT_PCT))
+    applies = _clears_floor(s["kind"], n, med)
     from time_utils import mdy
     word = "above" if med >= 0 else "below"
     basis = (f"{s['display'] or label}: nights here ran a median {abs(med):.0f}% {word} a typical same weekday "
-             f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(s['last_date'])}) — before and after, not proof")
+             f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(s['last_date'])}{_record_words(s)}) — before and "
+             f"after, not proof")
     return {"median_lift_pct": med, "n": n, "last": date.fromisoformat(s["last_date"]),
             "label": norm,
             "display": s["display"], "kind": s["kind"], "low_lift_pct": s["low_lift_pct"],
             "high_lift_pct": s["high_lift_pct"], "direction": s["direction"], "applies": bool(applies),
-            "owner_median_pct": s["owner_median_pct"], "basis": basis}
+            "owner_median_pct": s["owner_median_pct"], "basis": basis,
+            "confounded": s["confounded"], "dates": list(s["dates"]), "drift": s["drift"]}
 
 
 def summaries(restaurant_id, limit=12, db_path=None) -> list:
@@ -691,8 +940,8 @@ def summaries(restaurant_id, limit=12, db_path=None) -> list:
         try:
             rows = [dict(r) for r in conn.execute(
                 "SELECT label, display, kind, n, median_lift_pct, low_lift_pct, high_lift_pct, direction, last_date, "
-                "owner_median_pct FROM event_effects WHERE restaurant_id=? ORDER BY n DESC, ABS(median_lift_pct) DESC",
-                (restaurant_id,)).fetchall()]
+                "owner_median_pct, confounded, drift_json FROM event_effects WHERE restaurant_id=? "
+                "ORDER BY n DESC, ABS(median_lift_pct) DESC", (restaurant_id,)).fetchall()]
         finally:
             conn.close()
     except Exception:
@@ -700,10 +949,17 @@ def summaries(restaurant_id, limit=12, db_path=None) -> list:
     out = []
     for r in rows:
         n, med = int(r["n"] or 0), float(r["median_lift_pct"] or 0.0)
-        applies = n >= EFFECT_MIN_N or (r["kind"] == "holiday" and (n >= 2 or abs(med) >= HOLIDAY_ONE_NIGHT_PCT))
+        applies = _clears_floor(r["kind"], n, med)
         word = "above" if med >= 0 else "below"
+        try:
+            drift = json.loads(r.pop("drift_json") or "null")
+        except ValueError:
+            drift = None
+        r["drift"] = drift
+        r["confounded"] = bool(r.get("confounded"))
         text = (f"{r['display'] or r['label']}: nights ran a median {abs(med):.0f}% {word} a typical same weekday "
-                f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(r['last_date'])}) — before and after, not proof")
+                f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(r['last_date'])}{_record_words(r)}) — before "
+                f"and after, not proof")
         if r.get("owner_median_pct") is not None:
             text += f"; you had listed it at {float(r['owner_median_pct']):+.0f}%"
         out.append(dict(r, applies=bool(applies), text=text))
@@ -741,12 +997,21 @@ def campaign_night(restaurant_id, day, db_path=None):
 
 def effects_for_day(restaurant_id, day, db_path=None, flags=None) -> dict | None:
     """The measured effects a forecast of `day` may apply: for each kind known
-    BEFORE the night (a listed event, the holiday, a campaign, the 1st or
-    15th), the label on the day whose measured effect clears the floor
+    BEFORE the night (a listed event, the holiday, a campaign aimed at it, the
+    1st or 15th), the label on the day whose measured effect clears the floor
     (measured_effect's `applies`) and moves sales past EFFECT_FLOOR_PCT —
     the most-measured one per kind — combined multiplicatively and bounded
-    to EFFECT_BOUNDS. {"pct", "applied": [{"label", "display", "kind",
-    "lift_pct", "n"}], "basis"} or None when nothing applies. Never raises."""
+    to EFFECT_BOUNDS.
+
+    Never twice for one lift (QUALITY-4): two labels measured on any of the
+    same nights (Mother's Day and the owner's "Mother's Day brunch", every
+    one of them the same Sunday) are not independent, so only the larger
+    applies — the other is `subsumed`, never multiplied in. Mother's Day at
+    +40% three years running forecasts +40%, not +96%.
+
+    {"pct", "applied": [{"label", "display", "kind", "lift_pct", "n"}],
+    "subsumed": [same shape, with "by"], "basis"} or None when nothing
+    applies. Never raises."""
     try:
         day = _as_date(day)
         fl = (flags if flags is not None else flags_for(restaurant_id, [day], db_path=db_path,
@@ -761,15 +1026,25 @@ def effects_for_day(restaurant_id, day, db_path=None, flags=None) -> dict | None
             cur = best.get(f["kind"])
             if cur is None or (e["n"], abs(e["median_lift_pct"])) > (cur["n"], abs(cur["lift_pct"])):
                 best[f["kind"]] = {"label": f["label"], "display": e["display"] or f.get("raw"), "kind": f["kind"],
-                                   "lift_pct": e["median_lift_pct"], "n": e["n"], "basis": e["basis"]}
+                                   "lift_pct": e["median_lift_pct"], "n": e["n"], "basis": e["basis"],
+                                   "_dates": set(e.get("dates") or ())}
         if not best:
             return None
+        applied, subsumed, used = [], [], {}
+        for e in sorted(best.values(), key=lambda e: (-abs(e["lift_pct"]), -e["n"])):
+            shared = next((lab for lab, ds in used.items() if ds & e["_dates"]), None)
+            if shared is not None:
+                subsumed.append(dict(e, by=shared))
+                continue
+            applied.append(e)
+            used[e["label"]] = e["_dates"]
         factor = 1.0
-        for e in best.values():
+        for e in applied:
             factor *= 1.0 + e["lift_pct"] / 100.0
         pct = max(EFFECT_BOUNDS[0], min(EFFECT_BOUNDS[1], round((factor - 1.0) * 100.0, 1)))
-        applied = sorted(best.values(), key=lambda e: -abs(e["lift_pct"]))
-        return {"pct": pct, "applied": applied,
+        for e in applied + subsumed:
+            e.pop("_dates", None)
+        return {"pct": pct, "applied": applied, "subsumed": subsumed,
                 "basis": "; ".join(e["basis"] for e in applied)}
     except Exception as e:
         log.warning("event_memory: effects unreadable rid=%s day=%s: %s", restaurant_id, day, e)
@@ -874,8 +1149,8 @@ def memory_lines(req):
             floor = "" if e["applies"] else f" — fewer than {EFFECT_MIN_N} nights, not yet a pattern"
             out.append({"text": (f"{wd} {mdy(d)}: {f.get('raw') or f['label']} — nights like it here ran a median "
                                  f"{abs(e['median_lift_pct']):.0f}% {word} a typical same weekday (measured {e['n']} "
-                                 f"time{'s' if e['n'] != 1 else ''}, last {mdy(e['last'])}; before and after, not "
-                                 f"proof){guess}{floor}."),
+                                 f"time{'s' if e['n'] != 1 else ''}, last {mdy(e['last'])}{_record_words(e)}; before "
+                                 f"and after, not proof){guess}{floor}."),
                         "date": d, "source": "system", "subject": f"event:{e['label']}",
                         "weight": 2.0 + min(e["n"], 10) / 10.0, "trusted": False})
     if getattr(req, "surface", "") in ("ask", "schedule", "weekly_plan", "marketing"):
@@ -883,7 +1158,8 @@ def memory_lines(req):
             conn = get_conn(db_path)
             try:
                 rows = [dict(r) for r in conn.execute(
-                    "SELECT label, display, n, median_lift_pct, last_date FROM event_effects WHERE restaurant_id=? "
+                    "SELECT label, display, n, median_lift_pct, last_date, confounded, drift_json FROM event_effects "
+                    "WHERE restaurant_id=? "
                     "AND n >= ? AND ABS(median_lift_pct) >= ? ORDER BY n DESC, ABS(median_lift_pct) DESC LIMIT ?",
                     (rid, EFFECT_MIN_N, EFFECT_FLOOR_PCT, MEMORY_TOP_LABELS + len(named))).fetchall()]
             finally:
@@ -892,9 +1168,13 @@ def memory_lines(req):
             rows = []
         for r in [r for r in rows if r["label"] not in named][:MEMORY_TOP_LABELS]:
             word = "above" if r["median_lift_pct"] >= 0 else "below"
+            try:
+                r["drift"] = json.loads(r.get("drift_json") or "null")
+            except ValueError:
+                r["drift"] = None
             out.append({"text": (f"Recurring here: {r['display'] or r['label']} — nights ran a median "
                                  f"{abs(r['median_lift_pct']):.0f}% {word} a typical same weekday (measured {r['n']} "
-                                 f"times; before and after, not proof)."),
+                                 f"times{_record_words(r)}; before and after, not proof)."),
                         "date": r["last_date"], "source": "system", "subject": f"event:{r['label']}",
                         "weight": 1.0 + min(r["n"], 10) / 10.0, "trusted": False})
     return out
@@ -1298,3 +1578,101 @@ def market_history(restaurant_id, since=None, db_path=None) -> list:
             conn.close()
     except Exception:
         return []
+
+
+# ── the public history, read back (INVENTORY-6) ─────────────────────────────
+#
+# The market's events and the restaurant's own rating trajectory were kept
+# forever and read by one screen (/intel/movement): "Bella's opened across the
+# street in March and our rating slid 0.3 since" sat on a chart and never in
+# the competitor read, the review read, the weekly plan, marketing or Ask.
+
+MARKET_MEMORY_DAYS = 180
+MARKET_MEMORY_MAX_EVENTS = 6
+
+
+def _week_start(week):
+    """"2026-W39" -> the Monday that ISO week starts, or None."""
+    try:
+        y, w = str(week).split("-W")
+        return date.fromisocalendar(int(y), int(w), 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def market_summary(restaurant_id, today=None, days=MARKET_MEMORY_DAYS, db_path=None) -> dict:
+    """{"since", "events": [market_history rows, newest first, at most
+    MARKET_MEMORY_MAX_EVENTS], "n_events", "own": {"from", "to", "from_week",
+    "to_week", "change", "weeks"} or None, "text": [the sentences, M/D/YY]}
+    — what the local market did in the last `days` (competitors opening,
+    closing, their ratings moving MARKET_MOVE_STARS or more) and this
+    restaurant's own public rating over the same window. The one reading
+    memory_context's "market" section and Ask's read_market_history say.
+    Public Google listings, as the weekly competitor check saw them. Never
+    raises."""
+    from time_utils import mdy
+    today = _as_date(today) if today else date.today()
+    since = today - timedelta(days=days)
+    events = market_history(restaurant_id, since=since, db_path=db_path)
+    text, items = [], []
+    for ev in events[:MARKET_MEMORY_MAX_EVENTS]:
+        before = len(text)
+        name = str(ev.get("name") or "A competitor")[:80]
+        when = mdy(ev.get("observed_on"))
+        k = ev.get("kind")
+        if k == "arrived":
+            count = ev.get("review_count")
+            text.append(f"{name} opened nearby (first seen {when}"
+                        + (f", {int(count)} Google reviews then" if isinstance(count, (int, float)) else "") + ").")
+        elif k == "gone":
+            text.append(f"{name} closed (Google lists it as closed, seen {when}).")
+        elif k in ("rating_up", "rating_down") and ev.get("from_rating") is not None \
+                and ev.get("to_rating") is not None:
+            text.append(f"{name}'s Google rating {'rose' if k == 'rating_up' else 'fell'} from "
+                        f"{float(ev['from_rating']):.1f} to {float(ev['to_rating']):.1f} (seen {when}).")
+        if len(text) > before:
+            items.append({"event": ev, "text": text[-1]})
+    own = None
+    traj = own_rating_trajectory(restaurant_id, db_path=db_path)
+    series = traj.get("series") or []
+    if len(series) >= 2:
+        cutoff = _iso_week(since)
+        before = [r for r in series if str(r["week"]) <= cutoff]
+        first = before[-1] if before else series[0]
+        last = series[-1]
+        if first is not last:
+            change = round(float(last["rating"]) - float(first["rating"]), 2)
+            own = {"from": first["rating"], "to": last["rating"], "from_week": first["week"],
+                   "to_week": last["week"], "change": change, "weeks": len(series)}
+            start, end = _week_start(first["week"]), _week_start(last["week"])
+            move = ("held at" if abs(change) < 0.05 else "rose from" if change > 0 else "fell from")
+            own["text"] = (f"This restaurant's own Google rating {move} {float(first['rating']):.1f}"
+                           + ("" if move == "held at" else f" to {float(last['rating']):.1f}")
+                           + (f" between the weeks of {mdy(start)} and {mdy(end)}" if start and end else "")
+                           + f" ({len(series)} weeks on file).")
+            text.append(own["text"])
+    return {"since": since.isoformat(), "events": events[:MARKET_MEMORY_MAX_EVENTS], "n_events": len(events),
+            "items": items, "own": own, "text": text}
+
+
+def market_lines(req):
+    """memory_context provider ("market"): market_summary's sentences for the
+    surfaces that reason about the market — the competitor read, the review
+    read, the weekly plan, marketing and Ask (memory_context.SURFACE_SECTIONS).
+    Competitors' names are Google's public listing text, so those lines are
+    fenced (trusted False); the own-rating line is figures only. Each line is
+    the Intel module's (module "intel"): a login that cannot open Intel never
+    reads it."""
+    rid = req.restaurant_id
+    now = getattr(req, "now", None) or datetime.now()
+    today = now.date() if isinstance(now, datetime) else _as_date(now)
+    s = market_summary(rid, today=today, db_path=getattr(req, "db_path", None))
+    out = []
+    for it in s["items"]:
+        ev = it["event"]
+        out.append({"text": it["text"], "date": ev.get("observed_on"), "source": "system", "module": "intel",
+                    "subject": f"market:{ev.get('place_id')}", "weight": 1.5, "trusted": False})
+    if s["own"]:
+        out.append({"text": s["own"]["text"], "date": _week_start(s["own"]["to_week"]), "source": "system",
+                    "module": "intel", "subject": "market:own_rating", "weight": 2.0, "trusted": True})
+    return out

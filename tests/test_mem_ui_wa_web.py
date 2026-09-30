@@ -204,8 +204,12 @@ def test_memory_shows_who_what_about_whom_until_when_and_what_left():
     assert "a === 'principals' ? 'Only owners' : (a === 'author' ? 'Just you'" in _fn("memAudience")
     lm = _fn("loadMemory")
     assert "memLanes(d.lanes);" in lm and "f.can_forget === false" in lm
-    for field in ("d.archived", "x.reason_label", "x.archived_on", "x.can_restore", "data-restore-fact"):
-        assert field in lm, field
+    assert "d.archived" in lm
+    # The archive row moved into memArchRow when the archive became paged
+    # (memory re-audit 9/29/26, R3 archive_restore).
+    row = _fn("memArchRow")
+    for field in ("x.reason_label", "x.archived_on", "x.can_restore", "data-restore-fact"):
+        assert field in row, field
     lanes = _fn("memLanes")
     assert "l.cap" in lanes and "l.count" in lanes
     assert "fetch('/api/account/memory/restore'" in SRC and "JSON.stringify({id: +b.getAttribute('data-restore-fact')})" in SRC

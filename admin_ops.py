@@ -43,7 +43,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
 from models import get_restaurant
@@ -839,6 +839,24 @@ def _load_with(conn):
                                  AND COALESCE(l.device_type,'') NOT IN ('staff_pin','admin-view-as')
                                  AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
                                GROUP BY l.restaurant_id""", label="login_history")
+    # Before login_history's 90 days (memory re-audit 9/29/26, INVENTORY-12):
+    # engagement_monthly (history_rollups.roll_engagement) keeps each login's
+    # sign-ins per month, so an owner who has not signed in for three months
+    # still shows the month of their last console sign-in — the last day of
+    # it, flagged `from_month` — instead of none. Raw rows win when present.
+    for r in _rows_dict(conn, f"""SELECT e.restaurant_id AS restaurant_id, MAX(e.month) AS month
+                                  FROM engagement_monthly e JOIN users u ON u.id = e.user_id
+                                  WHERE COALESCE(e.logins, 0) > 0 AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
+                                  GROUP BY e.restaurant_id""", label="engagement_monthly", optional=True):
+        if r["restaurant_id"] in owner_logins or not r.get("month"):
+            continue
+        try:
+            y, m = int(r["month"][:4]), int(r["month"][5:7])
+            last_day = (date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)).isoformat()
+        except (TypeError, ValueError):
+            continue
+        owner_logins[r["restaurant_id"]] = {"restaurant_id": r["restaurant_id"], "last_at": f"{last_day} 23:59:59",
+                                            "n": None, "from_month": r["month"]}
     team_seen = per_rid("SELECT restaurant_id, datetime(MAX(julianday(created_at))) AS last_at FROM login_history "
                         "WHERE event='staff_login' GROUP BY restaurant_id", label="login_history")
     s_cols = _columns(conn, "sessions")
@@ -1849,6 +1867,9 @@ def _storm_cap_view(row):
 
 
 DELETION_DUE_DAYS = 30
+# A cancelled account's operational data is deleted within this many days of
+# the cancellation (public/privacy.html section 07; FORGET-9).
+CANCELLED_DATA_DAYS = 30
 
 
 def _deletion_for(r):
@@ -2062,6 +2083,27 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         at = _newest(ev.get("customer.subscription.deleted"), hist.get("churned"), hist.get("canceled"))
         add("canceled", "Subscription canceled", "warning", at, "Open billing", None, zone="UTC",
             action_kind="link", action_href=billing_tab)
+        # The privacy policy (section 07) promises a cancelled account's
+        # operational data is deleted within 30 days (memory re-audit 9/29/26,
+        # FORGET-9): only an admin's delete ever ran, and a cancellation in
+        # Stripe set no deletion request, so an account cancelled for
+        # non-payment kept its whole history. Raised here, never auto-deleted:
+        # the admin works the offboarding checklist, or resolves the issue
+        # with why the data is kept (the owner is returning, a legal hold).
+        # An open deletion request is its own issue above.
+        ended = _parse_utc(at, "UTC") if at else None
+        if ended and not deletion and not r.get("is_demo"):
+            due = ended + timedelta(days=CANCELLED_DATA_DAYS)
+            left = (due - _utcnow()).days
+            due_label = _mdy(due.strftime(_ZFMT), "UTC")
+            add("cancelled_data",
+                (f"Cancelled account's data overdue for deletion by {-left} days (due {due_label})" if left < 0
+                 else f"Cancelled account's data due for deletion by {due_label}"),
+                "critical" if left < 0 else "warning", at, "Open offboarding", None,
+                f"Cancelled {_mdy(ended.strftime(_ZFMT), 'UTC')}. The privacy policy promises operational data is "
+                f"deleted within {CANCELLED_DATA_DAYS} days of cancellation: finish the offboarding and delete the "
+                "account, or resolve this with why the data is kept.",
+                zone="UTC", action_kind="link", action_href=f"{client}?tab=offboarding")
     # A hold only an admin lifts (H, #114): a chargeback, a full refund, or
     # an admin's own. The action is H's lift-hold (a note is required).
     hold = billing.get("pause_reason") if billing.get("pause_reason") in ("dispute", "refund") else None

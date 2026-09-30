@@ -257,7 +257,7 @@ struct DemandSignal: Codable, Identifiable, Equatable {
         measured = (try? c.decodeIfPresent(EventMeasured.self, forKey: .measured)) ?? nil
     }
 
-    var kindLabel: String { kind == "reservations" ? "Reservations" : "Event" }
+    var kindLabel: String { kind == "reservations" ? "Reservations" : kind == "post" ? "Post" : "Event" }
 }
 
 // MARK: - Shift requests

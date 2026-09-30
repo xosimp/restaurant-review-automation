@@ -274,6 +274,23 @@ def observe(restaurant_id, links, consulted=None, today=None, db_path=None) -> l
     return links
 
 
+def _local_day(restaurant_id, stamp):
+    """A UTC event stamp's restaurant-local day (ISO). rec_events.at is UTC,
+    and its date part is tomorrow every evening in the Americas — which
+    pushed a link's resolved day, and so its reopening, a day late."""
+    if not stamp:
+        return None
+    try:
+        from time_utils import parse_stamp, restaurant_now_by_id
+        at = parse_stamp(stamp)
+        tz = restaurant_now_by_id(restaurant_id).tzinfo
+        if at and tz:
+            return at.astimezone(tz).date().isoformat()
+    except Exception:
+        pass
+    return str(stamp)[:10]
+
+
 def _answer(conn, restaurant_id, key, since):
     """The owner's answer to a link's recommendation since `since`:
     'done', 'implemented', 'not_for_us', or None, with its date."""
@@ -290,8 +307,8 @@ def _answer(conn, restaurant_id, key, since):
             meta = {}
         if meta.get("kind") != "not_for_us":
             return None, None
-        return DECLINED, str(ev["at"])[:10]
-    return ("done" if ev["event"] == "completed" else "implemented"), str(ev["at"])[:10]
+        return DECLINED, _local_day(restaurant_id, ev["at"])
+    return ("done" if ev["event"] == "completed" else "implemented"), _local_day(restaurant_id, ev["at"])
 
 
 def settle(restaurant_id, today=None, db_path=None) -> dict:

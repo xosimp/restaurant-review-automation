@@ -1237,7 +1237,10 @@ def claim_lines(req):
             if r.get("action") and r["claim_type"] == "cause":
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
-                said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
+                # Never a count (memory re-audit 9/29/26, QUALITY-14): the
+                # number was the model re-saying its own claim, and read back
+                # as "restated N times" it looked like evidence piling up.
+                said += " (the model's own read, repeated since — not new evidence)"
             scope = line_scope(r["surface"])
             lines.append({"text": said, "date": str(r.get("after_start") or r["created_at"])[:10], "source": "model",
                           "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False, **scope})
@@ -1282,17 +1285,22 @@ def _quarter_bounds(q):
 RESUMMARISE_DAYS = HORIZON_MAX_DAYS + UNSCORABLE_AFTER_DAYS + 30
 
 
-def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
+def summarise_quarters(restaurant_id, today=None, db_path=None, strict=False) -> int:
     """Write (or refresh) one ai_read_summaries row per closed quarter,
     surface and subject that has reads — the row that outlives the raw
     reads (kept 13 months). said: the last words of the quarter; done: what
     the advice those reads carried got (taken / declined / ignored); what
-    happened: the claims' verdicts. Returns rows written. Never raises."""
+    happened: the claims' verdicts. Returns rows written. Never raises —
+    unless `strict` (the retention rollup, memory re-audit 9/29/26
+    FORGET-11: a swallowed failure let the raw reads be pruned with no
+    quarter row)."""
     today = _day(today) if today else _local_today(restaurant_id)
     this_q_start = _quarter_bounds(_quarter(today))[0]
     try:
         conn = get_conn(db_path)
     except Exception:
+        if strict:
+            raise
         return 0
     n = 0
     try:
@@ -1329,11 +1337,18 @@ def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
                           else "ignored" if st in ("ignored", "replaced") else "open" if st == "open" else None)
                 if bucket:
                     done[bucket] += 1
+            # The group's claims are the ones ITS reads made (read_id), not
+            # every claim of the surface: an unscoped group matched '1=1' and
+            # counted the subject groups' claims again (memory re-audit
+            # 9/29/26, FORGET-19). A claim with no read id falls back to its
+            # subject, which only a scoped group has.
             claims = conn.execute(
                 f"SELECT verdict, verdict_basis FROM ai_claims WHERE restaurant_id=? AND surface=? "
-                f"AND {'subject=?' if g['subject'] else '1=1'} AND created_at BETWEEN ? AND ? ORDER BY id",
-                (restaurant_id, g["surface"], *sub_args, q_start.isoformat(),
-                 f"{q_end.isoformat()} 23:59:59")).fetchall()
+                f"AND (read_id IN (SELECT id FROM ai_reads WHERE restaurant_id=? AND surface=? AND {sub_sql})"
+                f"{' OR (read_id IS NULL AND subject=?)' if g['subject'] else ''}) "
+                f"AND created_at BETWEEN ? AND ? ORDER BY id",
+                (restaurant_id, g["surface"], restaurant_id, g["surface"], *sub_args, *sub_args,
+                 q_start.isoformat(), f"{q_end.isoformat()} 23:59:59")).fetchall()
             counts = {v: sum(1 for c in claims if c["verdict"] == v) for v in VERDICTS}
             happened = next((c["verdict_basis"] for c in reversed(claims) if c["verdict_basis"]), None)
             conn.execute(
@@ -1355,6 +1370,8 @@ def summarise_quarters(restaurant_id, today=None, db_path=None) -> int:
         except Exception:
             pass
         log.warning("ai_reads: quarterly summaries failed rid=%s: %s", restaurant_id, e)
+        if strict:
+            raise
     finally:
         conn.close()
     return n
@@ -1367,22 +1384,31 @@ def rollup_quarters(db_path=None) -> int:
     quarters summarised (summarise_quarters, idempotent), so no raw read is
     deleted before the row that outlives it exists — whether or not the
     restaurant is one the nightly learning pass walks. Returns rows
-    written. Never raises."""
-    try:
-        conn = get_conn(db_path)
-    except Exception:
-        return 0
+    written. RAISES when any restaurant's summary failed (memory re-audit
+    9/29/26, FORGET-11): it "never raised", so ops' registry recorded a
+    clean rollup and pruned ai_reads / ai_claims whatever happened; now a
+    failed one keeps tonight's rows. Every restaurant is still tried."""
+    conn = get_conn(db_path)
     try:
         start = _quarter_bounds(_quarter(date.today()))[0].isoformat()
         rids = [r[0] for r in conn.execute(
             "SELECT DISTINCT restaurant_id FROM ai_reads WHERE created_at < ?", (start,)).fetchall()]
-    except Exception:
-        rids = []
+    except Exception as e:
+        if "no such table" in str(e).lower():
+            rids = []          # nothing written yet on this database, so nothing to summarise
+        else:
+            raise
     finally:
         conn.close()
-    n = 0
+    n, failed = 0, []
     for rid in rids:
-        n += summarise_quarters(rid, db_path=db_path) or 0
+        try:
+            n += summarise_quarters(rid, db_path=db_path, strict=True) or 0
+        except Exception as e:
+            failed.append(f"{rid}: {e}")
+    if failed:
+        raise RuntimeError(f"ai_reads quarterly summaries failed for {len(failed)} restaurant(s): "
+                           + "; ".join(failed)[:400])
     return n
 
 

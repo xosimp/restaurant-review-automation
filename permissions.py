@@ -368,6 +368,30 @@ def acting_via(user=None):
             "role": ctx.get("acting_admin_role") or "admin"}
 
 
+def acting_login_id(user):
+    """The login a request's own history belongs to: the admin (or support
+    login) behind a view-as session — never the owner it views as — else
+    the login itself; None without one. Read from the login dict only.
+
+    What an admin does through view-as is support's, not the owner's
+    (memory re-audit 9/29/26, PEOPLE-7 / PEOPLE-20): Ask chats, summaries,
+    topics and ratings are stored and read under this id, so a view-as
+    chat is a separate support thread the owner never sees in their
+    history or "often asks", and support never reads the owner's past
+    chats or their author-only memory. Never raises."""
+    if not isinstance(user, dict):
+        return None
+    try:
+        if user.get("acting_admin_id") is not None:
+            return int(user["acting_admin_id"])
+        if user.get("acting_admin_role") or str(user.get("device_type") or "") == "admin-view-as":
+            # A view-as with no admin named reads and writes as nobody's.
+            return -1
+        return int(user["id"]) if user.get("id") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def principal_only(user, what="this"):
     """None when `user` is an account holder, otherwise the 403 JSON response
     a route returns as-is. For the restaurant-wide switches whose blast radius

@@ -397,7 +397,11 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
             facts=[f"Named in {pos} positive review{'' if pos == 1 else 's'}" if pos >= 2 else ""],
             prompt=f"Feature our {name}",
             evidence={"n": days, "kind": "trading_days", "basis": f"{days} days of item sales"},
-            sources=("pos", "sales"), score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
+            # A card that states (and scores on) a praise count rests on the
+            # reviews too, so it declares them (memory re-audit 9/29/26,
+            # PLATFORM-5): its episode is review-derived for pooled learning.
+            sources=("pos", "sales") + (("reviews",) if pos >= 2 else ()),
+            score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
     return out
 
 

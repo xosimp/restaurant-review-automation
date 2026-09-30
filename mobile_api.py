@@ -1973,7 +1973,7 @@ def mobile_ask_cavnar(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_ask_cavnar(
         current_user["restaurant_id"], data.get("question"), history=data.get("history"),
-        user_id=current_user.get("id"),
+        user_id=_capi._ask_uid(current_user),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
         user=current_user, screen=data.get("screen"),
@@ -1994,7 +1994,7 @@ def mobile_ask_cavnar_stream(current_user):
     """
     data = request.get_json(silent=True) or {}
     return _capi._ask_cavnar_stream_response(
-        current_user["restaurant_id"], current_user.get("id"), data.get("question"),
+        current_user["restaurant_id"], _capi._ask_uid(current_user), data.get("question"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")), user=current_user,
         screen=data.get("screen"))
@@ -2005,14 +2005,14 @@ def mobile_ask_cavnar_stream(current_user):
 def mobile_ask_cavnar_history(current_user):
     from models import get_ask_history
     return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"],
-                                                     viewer_id=current_user.get("id")))
+                                                     viewer_id=_capi._ask_uid(current_user)))
 
 
 @mobile_bp.route("/ask-cavnar/history", methods=["DELETE"])
 @mobile_login_required
 def mobile_ask_cavnar_clear_history(current_user):
     from models import clear_ask_history
-    clear_ask_history(current_user["restaurant_id"], viewer_id=current_user.get("id"))
+    clear_ask_history(current_user["restaurant_id"], viewer_id=_capi._ask_uid(current_user))
     return jsonify(ok=True)
 
 
@@ -2023,14 +2023,14 @@ def mobile_ask_cavnar_clear_history(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_conversations(current_user):
     payload, status = _capi._do_list_ask_conversations(current_user["restaurant_id"],
-                                                       viewer_id=current_user.get("id"))
+                                                       viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
 @mobile_bp.route("/ask-cavnar/conversations", methods=["POST"])
 @mobile_login_required
 def mobile_ask_cavnar_new_conversation(current_user):
-    payload, status = _capi._do_create_ask_conversation(current_user["restaurant_id"], current_user.get("id"))
+    payload, status = _capi._do_create_ask_conversation(current_user["restaurant_id"], _capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2038,7 +2038,7 @@ def mobile_ask_cavnar_new_conversation(current_user):
 @mobile_login_required
 def mobile_ask_cavnar_conversation(current_user, conversation_id):
     payload, status = _capi._do_get_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                                     viewer_id=current_user.get("id"))
+                                                     viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2046,7 +2046,7 @@ def mobile_ask_cavnar_conversation(current_user, conversation_id):
 @mobile_login_required
 def mobile_ask_cavnar_delete_conversation(current_user, conversation_id):
     payload, status = _capi._do_delete_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                                        viewer_id=current_user.get("id"))
+                                                        viewer_id=_capi._ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -2057,7 +2057,7 @@ def mobile_ask_cavnar_record_action(current_user):
     the same route its own button uses. See client_api's shared body."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_record_ask_action(
-        current_user["restaurant_id"], current_user.get("id"), data, user=current_user)
+        current_user["restaurant_id"], _capi._ask_uid(current_user), data, user=current_user)
     return jsonify(**payload), status
 
 
@@ -4832,7 +4832,11 @@ def mobile_set_rating(current_user):
             score=data.get("score"),
             flag=data.get("flag"),
             notes=data.get("notes"),
-            updated_by=who,
+            # Through view-as the rating is support's, never filed under the
+            # owner's name (PEOPLE-15); `user` stores whose it is.
+            updated_by=(f"support:{current_user.get('acting_admin') or current_user.get('acting_admin_id')}"
+                        if current_user.get("acting_admin_id") else who),
+            user=current_user,
         )
         record_capability_change(rid, "rating", subject=f"{name} · {attribute}",
                                  before=before, after=out, changed_by=who)
@@ -7646,7 +7650,7 @@ def mobile_ask_opening(current_user):
                 ok=True,
                 # How the owner has rated answers so far (ask_feedback) —
                 # aggregate only, read with no model call (#48).
-                feedback=_ask_feedback_tally(rid, current_user.get("id")),
+                feedback=_ask_feedback_tally(rid, _capi._ask_uid(current_user)),
                 briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
                            "detail": None, "module": None, "ask": l.get("ask")}
                           for l in _lines[:5]],
@@ -7691,7 +7695,7 @@ def mobile_ask_opening(current_user):
         changes = payload.get("changes") or {}
         return jsonify(
             ok=True,
-            feedback=_ask_feedback_tally(rid, current_user.get("id")),
+            feedback=_ask_feedback_tally(rid, _capi._ask_uid(current_user)),
             briefing=briefing,
             suggestions=suggestions[:5],
             headline=_opening_headline(payload, briefing),

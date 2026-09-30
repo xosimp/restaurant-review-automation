@@ -139,6 +139,75 @@ _WEEKDAY_BASE_MULTIPLIER = 1.0 / _WEEKEND_MEAN
 
 _WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# The shape above is everyone's (memory re-audit 9/29/26, CROSSMODULE-11): a
+# restaurant whose busiest night is Thursday, or whose Saturday is slow, was
+# ordered for a generic weekend. usage_profile() is THIS restaurant's week —
+# each weekday's typical night from its own finished nights
+# (demand.weekday_gaps, one window), normalised so the week averages 1.0,
+# and a weekday with no nights in that window (closed) using nothing — once
+# PROFILE_MIN_WEEKDAYS weekdays each rest on demand.MIN_SAMPLES nights; the
+# shape above only until then.
+PROFILE_MIN_WEEKDAYS = 4
+_DEFAULT_PROFILE = {d: _WEEKEND_USAGE_MULTIPLIER.get(d, _WEEKDAY_BASE_MULTIPLIER) for d in range(7)}
+# How far ahead the measured effects of what is known about a date (a listed
+# event, the holiday, a guest text aimed at the night, the 1st or 15th —
+# event_memory.effects_for_day) are read for an order: the order's own window.
+ORDER_EFFECT_DAYS = 7
+
+
+def usage_profile(restaurant_id, today=None) -> dict:
+    """{"multipliers": {0..6 (Mon=0): share of an average day}, "source":
+    "measured" | "default", "basis"} — see PROFILE_MIN_WEEKDAYS. Never
+    raises."""
+    default = {"multipliers": dict(_DEFAULT_PROFILE), "source": "default",
+               "basis": "a typical restaurant's week (Fri/Sat/Sun heavier) until this restaurant's own nights are on file"}
+    try:
+        import demand
+        g = demand.weekday_gaps(restaurant_id, today=today)
+    except Exception:
+        return default
+    if not g.get("available"):
+        return default
+    days = {d["day"]: d for d in g.get("days") or []}
+    names = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    if sum(1 for d in days.values() if d["samples"] >= demand.MIN_SAMPLES) < PROFILE_MIN_WEEKDAYS:
+        return default
+    med = [float(days[n]["median_sales"]) if n in days else 0.0 for n in names]
+    total = sum(med)
+    if total <= 0:
+        return default
+    return {"multipliers": {i: round(m * 7.0 / total, 4) for i, m in enumerate(med)}, "source": "measured",
+            "basis": (f"this restaurant's own week — each weekday's typical night over the "
+                      f"{demand.LOOKBACK_WEEKS} weeks before {g.get('end')}")}
+
+
+def order_window_effects(restaurant_id, today, days=ORDER_EFFECT_DAYS) -> dict:
+    """{iso: {"factor", "pct", "labels"}} for the dates in the order's window
+    that carry a measured effect here (event_memory.effects_for_day, behind
+    its sample floor). {} when none do. Never raises."""
+    out = {}
+    try:
+        import event_memory
+        for k in range(days):
+            d = today + timedelta(days=k)
+            eff = event_memory.effects_for_day(restaurant_id, d)
+            if eff and eff.get("pct"):
+                out[d.isoformat()] = {"factor": 1.0 + float(eff["pct"]) / 100.0, "pct": eff["pct"],
+                                      "labels": [e.get("display") or e.get("label") for e in eff.get("applied") or []],
+                                      "kinds": sorted({e.get("kind") for e in (eff.get("applied") or [])
+                                                       + (eff.get("subsumed") or []) if e.get("kind")})}
+    except Exception as e:
+        print(f"[inventory] measured effects unavailable for {restaurant_id}: {e}")
+    return out
+
+
+def _day_usage(avg_daily_usage, d, profile=None, day_effects=None) -> float:
+    """One date's expected usage: the average day × the weekday's share of
+    the week × the date's measured effect."""
+    mult = (profile or _DEFAULT_PROFILE).get(d.weekday(), 1.0)
+    eff = (day_effects or {}).get(d.isoformat())
+    return avg_daily_usage * mult * (eff["factor"] if eff else 1.0)
+
 
 def _holiday_relevant_keywords(upcoming_holidays: str) -> set:
     """Ingredient keywords relevant to any holiday named in an
@@ -174,19 +243,24 @@ def days_until_next_delivery(delivery_days: str, today=None):
     return None
 
 
-def _simulate_days_remaining(current_stock: float, avg_daily_usage: float, today=None) -> float:
-    """Days until current_stock is depleted, weighting Fri/Sat/Sun usage
-    higher than the flat weekly average instead of a single flat division —
-    a restaurant heading into a busy weekend runs out sooner than a flat
-    avg_daily_usage implies. Falls back to identical output as the old flat
-    division for date ranges with no weekend in them."""
+def _simulate_days_remaining(current_stock: float, avg_daily_usage: float, today=None,
+                             profile=None, day_effects=None) -> float:
+    """Days until current_stock is depleted, day by day: each date's usage is
+    the average day × its weekday's share of this restaurant's week
+    (`profile`, usage_profile's multipliers; the default Fri/Sat/Sun-heavier
+    shape without one) × the date's measured effect (`day_effects`,
+    order_window_effects) — a restaurant heading into its own busy nights, or
+    a game night measured at +30% here, runs out sooner than a flat
+    avg_daily_usage implies. A closed weekday uses nothing."""
     if avg_daily_usage <= 0:
         return 99.0
     today = today or datetime.now(ZoneInfo('America/Chicago')).date()
     remaining = current_stock
     for day_offset in range(0, 30):
         d = today + timedelta(days=day_offset)
-        usage = avg_daily_usage * _WEEKEND_USAGE_MULTIPLIER.get(d.weekday(), _WEEKDAY_BASE_MULTIPLIER)
+        usage = _day_usage(avg_daily_usage, d, profile, day_effects)
+        if usage <= 0:
+            continue
         if remaining <= usage:
             return round(day_offset + max(0.0, remaining / usage), 1)
         remaining -= usage
@@ -328,7 +402,8 @@ def parse_inventory_rows(rows):
 def analyse_inventory(items: list[dict], delivery_days: str = None,
                       upcoming_holidays: str = None, today=None,
                       purchases_window: float = None, counted_from: str = None,
-                      counted_to: str = None, waste_target_pct: float = None) -> dict:
+                      counted_to: str = None, waste_target_pct: float = None,
+                      usage_profile: dict = None, day_effects: dict = None, tz=None) -> dict:
     """Compute waste, overstock, and reorder flags.
 
     delivery_days: optional comma-separated weekday abbreviations (e.g.
@@ -355,6 +430,20 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         these figures. The window label used to be hardcoded to "today minus
         six days" regardless of when anything was actually counted, so a
         three-week-old count was presented as the last seven days.
+    usage_profile / day_effects (re-audit 9/29/26, CROSSMODULE-11): this
+        restaurant's own week (inventory.usage_profile) and the measured
+        effects of the dates in the order's window (order_window_effects).
+        Days remaining is simulated through both; the order's "three days of
+        usage" is the next three dates' expected usage once either is
+        measured (flat without); and a measured holiday in the window
+        replaces the generic 1.4x holiday bump — the restaurant's own
+        record, not a keyword guess. Without them the default shape stands.
+    tz: the restaurant's timezone, for the "last updated" stamp.
+
+    One waste adjustment (CROSSMODULE-19): the order comes down for last
+    week's waste once, here (waste_adj; no waste recorded, no trim), and
+    `waste_trimmed_units` names what it took off — the supplier draft no
+    longer trims it a second time.
     """
     today = today or datetime.now(ZoneInfo('America/Chicago')).date()
     if isinstance(today, datetime):
@@ -362,6 +451,13 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     delivery_offset = days_until_next_delivery(delivery_days, today)
     holiday_keywords = _holiday_relevant_keywords(upcoming_holidays)
     holiday_days_away = _days_until_relevant_holiday(upcoming_holidays, today)
+    profile = (usage_profile or {}).get("multipliers") if isinstance(usage_profile, dict) else None
+    measured_profile = bool(profile) and (usage_profile or {}).get("source") == "measured"
+    day_effects = day_effects or {}
+    if any("holiday" in (v.get("kinds") or ()) for v in day_effects.values()):
+        # The restaurant's own measured record of the holiday in the window
+        # stands in for the generic keyword bump.
+        holiday_keywords = set()
 
     waste_items   = []
     overstock     = []
@@ -383,7 +479,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         # Weekend-weighted depletion simulation instead of a flat division —
         # a restaurant heading into a busy Fri/Sat/Sun runs out sooner than
         # a single flat avg_daily_usage would suggest.
-        days_remaining  = _simulate_days_remaining(stock, item["avg_daily_usage"], today)
+        days_remaining  = _simulate_days_remaining(stock, item["avg_daily_usage"], today,
+                                                   profile=profile, day_effects=day_effects)
         waste_cost      = item["waste_last_week"] * item["unit_cost"]
         # Category-specific overstock thresholds (industry standard)
         # Proteins/dairy: flag at 110% of par (perishable, high cost)
@@ -412,8 +509,16 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
 
         # Suggested order quantity: target 1.5x par, cover 3 days usage, adjusted for waste rate
         # If wasting a lot, pull the order quantity down proportionally
-        waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
-        raw_qty       = (item["par_level"] * 1.5) - stock + (item["avg_daily_usage"] * 3)
+        # No waste recorded, no trim (the supplier draft's own rule, now the
+        # one adjustment — CROSSMODULE-19).
+        waste_adj     = (min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
+                         if float(item.get("waste_last_week") or 0) > 0 else 1.0)
+        if measured_profile or day_effects:
+            coming = sum(_day_usage(item["avg_daily_usage"], today + timedelta(days=k), profile, day_effects)
+                         for k in range(3))
+        else:
+            coming = item["avg_daily_usage"] * 3
+        raw_qty       = (item["par_level"] * 1.5) - stock + coming
 
         # Event scaling — bump quantity for items tied to a holiday/event in
         # the next 30 days, so the actual order number reflects the surge,
@@ -428,6 +533,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
             raw_qty *= _event_scale(holiday_days_away)
 
         suggested_qty = max(0.0, raw_qty * waste_adj)
+        item["waste_trimmed_units"] = (int(round(max(0.0, raw_qty) - suggested_qty))
+                                       if waste_adj < 1.0 and raw_qty > 0 else 0)
 
         # Case-size/MOQ rounding — round up to the nearest full supplier
         # case so the number is directly actionable, not a raw formula
@@ -595,7 +702,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         benchmark_tone   = "bad"
         benchmark_detail = f"Well over {_tgt_words}{_tgt_note} — you're at {waste_rate_pct}%"
 
-    now_chi = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
+    now_chi = datetime.now(tz or ZoneInfo('America/Chicago')).replace(tzinfo=None)
     # Two different windows, kept apart on purpose.
     #
     # week_start/week_end label the period the WASTE figures cover, and for a
@@ -700,6 +807,11 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "week_end":       fmt(week_end_dt),
         "waste_window":   {"start": week_start_dt.date().isoformat(), "end": week_end_dt.date().isoformat()},
         "last_updated":   fmt(now_chi),
+        # What the projections rest on (CROSSMODULE-11): this restaurant's
+        # week or the default shape, and the measured dates in the window.
+        "demand_basis": {"profile": (usage_profile or {}).get("source") or "default",
+                         "profile_basis": (usage_profile or {}).get("basis"),
+                         "effects": [dict(v, date=k) for k, v in sorted(day_effects.items())]},
     }
 
 
@@ -1963,6 +2075,15 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         except Exception:
             pass
 
+    # This restaurant's own week and the measured effects of the dates the
+    # order covers (CROSSMODULE-11), on its own calendar and clock.
+    profile = usage_profile(restaurant_id, today=local_today) if is_live else None
+    effects = order_window_effects(restaurant_id, local_today) if is_live else {}
+    try:
+        from time_utils import restaurant_tz as _rtz
+        tz = _rtz(restaurant) if restaurant else None
+    except Exception:
+        tz = None
     analysis = analyse_inventory(
         items,
         delivery_days=restaurant.delivery_days if restaurant else None,
@@ -1972,6 +2093,9 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         counted_from=counted_from,
         counted_to=counted_to,
         waste_target_pct=getattr(restaurant, "waste_target_pct", None) if restaurant else None,
+        usage_profile=profile,
+        day_effects=effects,
+        tz=tz,
     )
     analysis["is_live"] = bool(is_live)
     # Where the week's waste came from (DH1-1): summed from dated waste
@@ -2050,23 +2174,28 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
 
 # ── Supplier orders ────────────────────────────────────────────────────────────
 
+# The cap the draft's own second waste trim used. That trim is gone (re-audit
+# 9/29/26, CROSSMODULE-19): an item with 80% of its last order wasted was cut
+# to 0.60 in analyse_inventory and then by up to another 30% here — about 42%
+# of what it needed, and a stock-out after one bad week. Kept only as the
+# figure that trim used. Candidate for future cleanup after additional
+# verification.
 WASTE_TRIM_CAP = 0.30
 
 
 def _trim_for_waste(item):
-    """(qty, trimmed_units): the suggested order less last week's waste share
-    of usage, capped at WASTE_TRIM_CAP. No waste recorded, no trim."""
+    """(qty, trimmed_units): the suggested order as analyse_inventory set it
+    — after its ONE waste adjustment — and the units that adjustment took
+    off (waste_trimmed_units), for the line to name. No second trim
+    (CROSSMODULE-19). No waste recorded, no trim."""
     try:
         qty = int(item.get("suggested_order_qty") or 0)
-        waste = float(item.get("waste_last_week") or 0)
-        usage = float(item.get("avg_daily_usage") or 0) * 7
+        trimmed = int(item.get("waste_trimmed_units") or 0)
     except (TypeError, ValueError):
         return int(item.get("suggested_order_qty") or 0), 0
-    if qty <= 0 or waste <= 0 or usage <= 0:
+    if qty <= 0 or float(item.get("waste_last_week") or 0) <= 0:
         return qty, 0
-    share = min(WASTE_TRIM_CAP, waste / usage)
-    trimmed = int(round(qty * share))
-    return max(1, qty - trimmed), trimmed
+    return qty, max(0, trimmed)
 
 
 def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
@@ -2137,9 +2266,9 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
             if int(item.get("suggested_order_qty") or 0) <= 0:
                 continue
             seen.add(key)
-            # What was thrown away last week comes off what is ordered this
-            # week — capped, so a bad week never halves an order, and named
-            # on the line so the owner sees why the number is lower.
+            # What was thrown away last week came off this order once, in
+            # analyse_inventory (bounded, so a bad week never halves it), and
+            # is named on the line so the owner sees why the number is lower.
             qty, trimmed = _trim_for_waste(item)
             line = {
                 "ingredient_id": item.get("ingredient_id"),
