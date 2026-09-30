@@ -33,11 +33,9 @@ and goal (M2) writers call record() with `subject=` naming the thing.
 Readers: rec_trust.owner_changes and outcomes.find_concurrent (the
 "changed since" caution and the concurrent-change check), history() for
 the Account change list. value_as_of (the target in force on a date) is
-the record's own query and has NO production caller yet (memory re-audit
-9/29/26, INVENTORY-12): no result or claim is judged against a target
-today, so nothing reads it; it is kept as an intentional record for the
-first reader that does (an Ask "which target applied then" tool, or a
-target-based verdict).
+read by Ask's read_target_history tool (targets_as_of / target_changes —
+"what was my food cost target in August?", Will, 9/29/26; memory re-audit
+INVENTORY-12 had found it with no reader).
 """
 import contextlib
 import contextvars
@@ -510,11 +508,13 @@ def value_as_of(restaurant_id, field, when, db_path=None, current=None):
     stamp) — "which labor target applied last March?". The newest change
     at or before it gives its new value; with none, the oldest change after
     it gives its OLD value (what held before anyone changed it); with no
-    change at all, `current` (the column as it is now). Returns
-    {"value", "since" (the change's stamp or None), "source"}."""
+    change at all, `current` (the column as it is now). A bare date is the
+    RESTAURANT's day: changed_at is UTC, so the bound is the end of that
+    local day in UTC (a 9pm Central change is already tomorrow in UTC).
+    Returns {"value", "since" (the change's stamp or None), "source"}."""
     import models
     w = str(when).replace("T", " ")[:19]
-    bound = w if len(w) > 10 else f"{w} 23:59:59"
+    bound = w if len(w) > 10 else _local_day_end_utc(restaurant_id, w)
     conn = models.get_conn(db_path) if db_path else models.get_conn()
     try:
         before = conn.execute("SELECT new_value, changed_at, source FROM change_log WHERE restaurant_id=? AND field=? "
@@ -582,6 +582,86 @@ def describe(row) -> str:
     tail = (f", by {who}" if who else "") + (f" on {mdy(row.get('changed_at'))}" if row.get("changed_at") else "")
     return (f"{what[:1].upper()}{what[1:]}: {_show(row.get('old_value'), switch)} → "
             f"{_show(row.get('new_value'), switch)}{tail}")
+
+
+def _restaurant_tz(restaurant_id):
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).tzinfo
+    except Exception:
+        return None
+
+
+def _local_day_end_utc(restaurant_id, day) -> str:
+    """The last second of the restaurant's local `day` (YYYY-MM-DD) as the
+    UTC stamp change_log stores; the plain end of day when the restaurant's
+    zone is unknown."""
+    from datetime import date as _date, datetime as _dt, time as _time, timezone as _tz
+    tz = _restaurant_tz(restaurant_id)
+    try:
+        d = _date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return f"{str(day)[:10]} 23:59:59"
+    if tz is None:
+        return f"{d.isoformat()} 23:59:59"
+    local = _dt.combine(d, _time(23, 59, 59)).replace(tzinfo=tz)
+    return local.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _local_mdy(restaurant_id, stamp) -> str:
+    """A UTC changed_at as M/D/YY on the restaurant's own day."""
+    from datetime import datetime as _dt, timezone as _tz
+    from time_utils import mdy
+    try:
+        at = _dt.fromisoformat(str(stamp).replace("T", " ")[:19]).replace(tzinfo=_tz.utc)
+    except ValueError:
+        return mdy(stamp)
+    tz = _restaurant_tz(restaurant_id)
+    return mdy((at.astimezone(tz) if tz else at).date().isoformat())
+
+
+def _show_target(field, value) -> str:
+    """A target as an owner reads it: "28%" or "$368,333 a month ($85,000 a
+    week)". Zero or empty is "not set"."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "not set" if value in (None, "") else str(value)
+    if not v:
+        return "not set"
+    if field == "monthly_revenue_target":
+        from metrics import WEEKS_PER_MONTH
+        return f"${v:,.0f} a month (${v / WEEKS_PER_MONTH:,.0f} a week)"
+    return f"{v:g}%"
+
+
+def targets_as_of(restaurant_id, when, fields=None, current=None, db_path=None) -> list:
+    """Which owner targets applied on `when` (a date on the restaurant's
+    day, or a UTC stamp): value_as_of for each field (default every one of
+    models.OWNER_TARGET_FIELDS). `current` maps field → the column now, the
+    answer when it was never changed. [{field, label, value, shown, set_on
+    (M/D/YY on the restaurant's day, or None when it predates the record),
+    set_by}]."""
+    out = []
+    for f in (fields or _models.OWNER_TARGET_FIELDS):
+        got = value_as_of(restaurant_id, f, when, db_path=db_path, current=(current or {}).get(f))
+        out.append({"field": f, "label": FIELD_LABELS.get(f, f), "value": got["value"],
+                    "shown": _show_target(f, got["value"]),
+                    "set_on": _local_mdy(restaurant_id, got["since"]) if got["since"] else None,
+                    "set_by": SOURCE_LABELS.get(got["source"]) if got["since"] else None})
+    return out
+
+
+def target_changes(restaurant_id, fields=None, limit=20, db_path=None) -> list:
+    """The owner targets' changes, newest first: [{field, label, from, to,
+    on (M/D/YY, the restaurant's day), by}]."""
+    fields = set(fields or _models.OWNER_TARGET_FIELDS)
+    rows = [r for r in history(restaurant_id, kinds="target", limit=200, db_path=db_path)
+            if r.get("field") in fields][:limit]
+    return [{"field": r["field"], "label": FIELD_LABELS.get(r["field"], r["field"]),
+             "from": _show_target(r["field"], r.get("old_value")), "to": _show_target(r["field"], r.get("new_value")),
+             "on": _local_mdy(restaurant_id, r["changed_at"]), "by": SOURCE_LABELS.get(r.get("source"))}
+            for r in rows]
 
 
 # ── what a change means to the learning readers ───────────────────────────

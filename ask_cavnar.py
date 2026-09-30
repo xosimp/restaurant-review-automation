@@ -1842,6 +1842,7 @@ _TOOL_LABELS = {
     "set_staff_unavailable": "Getting that availability change ready",
     "read_recent_reads": "Reading what Cavnar AI told you",
     "read_upcoming": "Checking what's coming up",
+    "read_target_history": "Checking which targets applied",
     "read_forecast_record": "Checking how the forecasts have held up",
     "read_closeouts": "Reading the close-outs",
     "read_marketing_results": "Checking what your marketing did",
@@ -2545,6 +2546,7 @@ _UNTAGGED_MODULE = {
     "read_past_conversations": "past chats", "read_recent_reads": "earlier reads",
     "read_upcoming": "what's coming", "read_forecast_record": "forecast record",
     "read_closeouts": "daily report",
+    "read_target_history": "target history",
 }
 
 

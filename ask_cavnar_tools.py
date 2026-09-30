@@ -1941,6 +1941,42 @@ _MODULE_OF_SURFACE = {"reviews": "reviews", "review_diagnosis": "reviews", "revi
                       "intel": "intel"}
 
 
+def _read_target_history(restaurant_id, as_of=None, _viewer=None):
+    """Which targets applied on a date, and every change to them (Will,
+    9/29/26): "what was my food cost target in August?", "when did we
+    change the labor target?". change_log.targets_as_of / target_changes —
+    the record, never a guess. A target this login may not see stays out:
+    labor needs Labor, food cost and waste need Food Cost; the revenue
+    target is shown to every login, as in Ask's own context."""
+    from datetime import date as _date
+    from models import get_restaurant
+    import change_log
+    denied = _denied(_viewer)
+    need = {"labor_target_pct": "labor", "food_cost_target": "inventory", "waste_target_pct": "inventory",
+            "monthly_revenue_target": None}
+    fields = [f for f in change_log._models.OWNER_TARGET_FIELDS if need.get(f) not in denied]
+    if not fields:
+        return {"error": "This login can't see any of the restaurant's targets."}
+    r = get_restaurant(restaurant_id)
+    current = {f: getattr(r, f, None) for f in fields} if r else {}
+    out = {"now": [{"label": change_log.FIELD_LABELS.get(f, f), "shown": change_log._show_target(f, current.get(f))}
+                   for f in fields],
+           "changes": change_log.target_changes(restaurant_id, fields=fields),
+           "note": ("Changes are recorded from when Cavnar AI began keeping this history; a target with no change "
+                    "on record applied as it stands now.")}
+    if as_of:
+        try:
+            day = _date.fromisoformat(str(as_of)[:10])
+        except ValueError:
+            return {"error": "as_of must be a date, YYYY-MM-DD."}
+        from time_utils import mdy
+        out["as_of"] = mdy(day.isoformat())
+        out["applied"] = [{k: t[k] for k in ("label", "shown", "set_on", "set_by")}
+                          for t in change_log.targets_as_of(restaurant_id, day.isoformat(), fields=fields,
+                                                            current=current)]
+    return out
+
+
 def _read_upcoming(restaurant_id, days=14, _viewer=None):
     """What is coming, by date, from what Cavnar AI holds: the owner's own
     events and reservations (demand_signals), the next night's DSR
@@ -2942,6 +2978,23 @@ TOOLS = [
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "module": {"type": "string"},
                 "days": {"type": "integer", "description": "How far back. Default 30."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_target_history,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_target_history",
+            "description": (
+                "WHICH TARGETS APPLIED WHEN: the labor, food cost, waste and revenue targets in force on a given "
+                "date, who set each and when, and every change to them, newest first. Call it for 'what was my "
+                "food cost target in August', 'when did we change the labor target', 'was I over target that "
+                "week' (read the target that applied THEN, not today's). as_of is a date on the restaurant's "
+                "own calendar; leave it out for today's targets and the change list."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "as_of": {"type": "string", "description": "A date, YYYY-MM-DD."}}},
         },
     },
     {

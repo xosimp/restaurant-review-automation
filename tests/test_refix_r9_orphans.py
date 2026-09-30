@@ -50,6 +50,7 @@ def test_an_owner_past_the_raw_window_keeps_their_last_sign_in_month(db_path):
 
 def test_the_records_nothing_reads_say_so():
     import inspect
-    assert "NO production caller" in change_log.__doc__
+    # value_as_of has had a reader since 9/29/26 (Ask's read_target_history).
+    assert "read_target_history" in change_log.__doc__
     src = open("DATABASE_SCHEMA.md").read()
     assert "`learning_tombstones.category` has no reader" in src and "intentional record" in src
