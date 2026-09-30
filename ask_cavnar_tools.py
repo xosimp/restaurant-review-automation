@@ -41,6 +41,8 @@ _UNTRUSTED_CONTENT_TOOLS = {
     # Earlier chats and stored reads can quote guests; close-outs are the
     # closer's own words (memory audit 9/29/26, conversations / ask_reach).
     "read_past_conversations", "read_recent_reads", "read_closeouts",
+    # Competitor names are Google's listing text (re-audit 9/29/26, INVENTORY-6).
+    "read_market_history",
 }
 
 _UNTRUSTED_NOTE = (
@@ -1985,6 +1987,38 @@ def _read_forecast_record(restaurant_id, _viewer=None):
     return out
 
 
+def _read_market_history(restaurant_id, days=180):
+    """The public history (re-audit 9/29/26, INVENTORY-6): competitors that
+    opened, closed or moved their Google rating nearby, and this
+    restaurant's own rating over the window — event_memory.market_summary,
+    the reading the competitor read and the weekly plan also say. Competitor
+    names are Google's listing text: data, fenced."""
+    import event_memory
+    window = _days(days, 180, 730)
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        today = None
+    s = event_memory.market_summary(restaurant_id, today=today, days=window)
+    from time_utils import mdy
+    events = [{"name": ev.get("name"), "kind": ev.get("kind"), "from_rating": ev.get("from_rating"),
+               "to_rating": ev.get("to_rating"), "review_count": ev.get("review_count"),
+               "seen": mdy(ev.get("observed_on")), "text": it["text"]}
+              for it in s["items"] for ev in (it["event"],)]
+    own = dict(s["own"]) if s["own"] else None
+    if own:
+        for k in ("from_week", "to_week"):
+            wk = event_memory._week_start(own.pop(k))
+            own[k.replace("_week", "_week_of")] = mdy(wk) if wk else None
+    return {"window_days": window, "since": mdy(s["since"]), "events": events, "n_events": s["n_events"],
+            "own_rating": own,
+            "note": ("What Google's public listings showed at each weekly competitor check — what happened, "
+                     "not why. A rating move is between two checks; an opening needs a new place with few "
+                     "reviews, a closure Google's own closed status." if events or own else
+                     "No market event or rating change on file in that window.")}
+
+
 def _read_closeouts(restaurant_id, days=7):
     """The last close-outs — the closer's own account of each night (what
     went well and wrong, what ran out, who didn't make it, equipment, the
@@ -2839,6 +2873,21 @@ TOOLS = [
     },
     {
         "kind": "read",
+        "fn": _read_market_history,
+        "module": None,
+        "spec": {
+            "name": "read_market_history",
+            "description": (
+                "THE MARKET'S HISTORY: competitors that opened, closed or moved their Google rating nearby, with "
+                "the date each was seen, and this restaurant's own Google rating over the same window. Call it "
+                "for 'did anyone new open near us', 'when did our rating start slipping', 'has the competition "
+                "changed since spring'."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far back. Default 180."}}},
+        },
+    },
+    {
+        "kind": "read",
         "fn": _read_closeouts,
         "module": None,
         "spec": {
@@ -3393,7 +3442,7 @@ _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 # tool_specs) then hides those modules with no second list to keep in step.
 
 # Tools with no module flag that still read a module, by permission key.
-_INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors"}
+_INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors", "read_market_history"}
 # Write tools whose route saves for an account holder only.
 _PRINCIPAL_TOOLS = {"add_closed_date"}
 # Metrics that are the Food Cost module's numbers wherever they appear.
