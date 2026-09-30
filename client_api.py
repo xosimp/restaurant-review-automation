@@ -2577,6 +2577,27 @@ def review_read_memory(rid, category=None) -> str:
         return ""
 
 
+def marketing_read_memory(rid) -> str:
+    """The Marketing read's memory section (memory_context surface
+    "marketing_read", memory re-audit 9/29/26 PROMPTS-19): the owner's
+    rules and the team's notes, the marketing goals, what the read said
+    last time and how it turned out, and what the owner decided — as the
+    team reads it (the read is served to every login with Marketing view).
+    "" when there is nothing; never raises."""
+    try:
+        import memory_context
+        block = memory_context.memory_context(rid, "marketing_read")
+        if not block.text:
+            return ""
+        from ai_guard import MEMORY_FENCE_NOTE
+        return ("\n\nWHAT CAVNAR AI REMEMBERS (earlier reads, the owner's answers and what was measured since, "
+                "the owner's rules and the team's notes; do not repeat advice the owner declined, and no offer, "
+                "price or date comes from it. " + MEMORY_FENCE_NOTE + "):\n" + block.text)
+    except Exception as e:
+        print(f"[mkt-insight] memory unavailable rid={rid}: {e}")
+        return ""
+
+
 def _record_insight_fallback(surface, rid, exc):
     """An insight route fell back after an exception (#140). A code failure
     is captured (it used to be printed to stdout only); every fallback is an
@@ -3671,7 +3692,7 @@ Brand voice: {p["voice"]}.
 {menu_clause}
 {never_clause}
 Upcoming holidays in the next 30 days: {upcoming if upcoming else "none"}.
-Recent content already generated (do NOT repeat these): {recent_str}.{perf_clause}{feed_clause}
+Recent content already generated (do NOT repeat these): {recent_str}.{perf_clause}{feed_clause}{marketing_read_memory(rid)}
 
 Return EXACTLY this shape and nothing else:
 
