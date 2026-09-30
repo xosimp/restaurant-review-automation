@@ -4758,6 +4758,15 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # denominator (memory audit 9/29/26, "reasons").
         if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") == "bad_timing":
             continue
+        # The same states rec_learning keeps out of every rate (memory
+        # re-audit 9/29/26): "don't trust the data" (LOOPS-11), a decline
+        # the owner took back (QUALITY-1) and — below, once `answered` is
+        # known — an episode only an unopened email carried (LOOPS-10).
+        if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") in ("distrust", "verified"):
+            continue
+        import rec_learning as _rl_states
+        if i["status"] == "dismissed" and _rl_states.reopened_after(es):
+            continue
         # "Already doing it" is taken: the owner's answer closed it completed.
         if i["status"] == "completed" and "completed" not in names and "dismissed" in names:
             names = (names - {"dismissed"}) | {"completed"}
@@ -4767,6 +4776,8 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # owner disowned or that reversed at its re-check counted as a win.
         verdict = learned_episode_verdict(es, trackers.get(i.get("tracker_id")))
         answered = names & {"accepted", "completed", "dismissed", "implemented"}
+        if not answered and not rec_ledger.episode_seen(es):
+            continue
         first_act = next((e["at"] for e in es if e["event"] in ("accepted", "completed", "dismissed",
                                                                  "implemented")), None)
         hours = None

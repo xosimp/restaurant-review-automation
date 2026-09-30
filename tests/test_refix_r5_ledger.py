@@ -296,3 +296,27 @@ def test_an_old_reasoned_decline_survives_many_newer_answers():
     hist = {r["key"]: r for r in decisions.history(rid)}
     assert hist["trim_day:Monday"]["answer"] == "not for us"
     assert hist["trim_day:Monday"]["reason"] == "We need the cover"
+
+
+def test_the_admin_acceptance_funnel_keeps_the_same_states_out(monkeypatch):
+    import admin_ops
+    import decisions
+    import rec_ledger
+    monkeypatch.setattr(admin_ops, "get_conn", models.get_conn, raising=False)
+    rid = _rid()
+    _decline_three(rid)                                            # three declines ...
+    decisions.restore_kind(rid, "trim_day", user_id=1, authority="principal")      # ... taken back
+    rec_ledger.record(rid, "cut_waste:Salmon", "shown", surface="home")
+    rec_ledger.record(rid, "cut_waste:Salmon", "dismissed", surface="home",
+                      meta={"kind": "not_for_us", "reason_code": "dont_trust_data"}, authority="principal")
+    _expired(rid, "cut_waste:Emailed", "weekly_email")
+    rec_ledger.record(rid, "reprice:Soup", "shown", surface="home")
+    rec_ledger.record(rid, "reprice:Soup", "dismissed", surface="home", meta={"kind": "not_for_us"},
+                      authority="principal")
+    since = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = models.get_conn()
+    try:
+        keys = {e["key"] for e in admin_ops._episodes(conn, since, restaurant_id=rid)}
+    finally:
+        conn.close()
+    assert keys == {"reprice:Soup"}
