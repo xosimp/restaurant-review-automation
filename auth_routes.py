@@ -414,7 +414,7 @@ def verify_2fa():
         # Confirm this token was actually issued by OUR login flow for this
         # login at this restaurant — not just a base64 blob with a guessed
         # restaurant_id — and has not been used yet.
-        from auth import two_fa_challenge_exists as _tfce, check_two_fa_code as _ctfc
+        from auth import two_fa_challenge_exists as _tfce
         if not _tfce(uid, pending_user_id, pending_secret):
             _record_failed_attempt("2fa:" + ip)
             return redirect("/login")
@@ -435,13 +435,26 @@ def verify_2fa():
         # the page in backup-code mode if it comes back with an error.
         from models import normalize_backup_code as _nbc
         _backup_mode = bool(_nbc(code_entered))
-        _otp_result = _ctfc(uid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+        # A login on an authenticator app is also throttled per login: its
+        # secret is fixed, so guesses from many addresses add up (R10).
+        from auth import second_factor_throttle_key as _sftk, check_sign_in_code as _csic
+        _app_key = _sftk(_pending_user)
+        if _app_key and _is_rate_limited(_app_key):
+            resp_lim = make_response(render_template('two_fa.html',
+                masked_email=masked, channel=channel_v, backup_mode=_backup_mode,
+                error="Too many attempts. Please wait 15 minutes and try again.",
+                pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
+            resp_lim.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+            return resp_lim
+        _otp_result = _csic(_pending_user, uid, pending_user_id, code_entered, pending_secret)
         if _otp_result == "wrong":
             # The login's own backup codes for an internal login; the
             # restaurant's for everyone else (auth.verify_backup_code_for).
             from auth import verify_backup_code_for as _vbcf
             if not (_pending_user and _vbcf(_pending_user, uid, code_entered)):
                 _record_failed_attempt("2fa:" + ip)
+                if _app_key:
+                    _record_failed_attempt(_app_key)
                 resp_err = make_response(render_template('two_fa.html',
                     masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Incorrect code. Try again.",
                     pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
@@ -455,6 +468,8 @@ def verify_2fa():
             return resp_exp
         # Code correct — clear it (and the pending secret, single-use) and create session
         _clear_attempts("2fa:" + ip, clear_key=True)
+        if _app_key:
+            _clear_attempts(_app_key, clear_key=True)
         # When the password step happened — the session's re-auth stamp, so
         # a step-up counts from the password, not from the code.
         from auth import two_fa_challenge_started_at as _tfcsa
@@ -526,15 +541,24 @@ def resend_two_fa(pending_token):
     rest = get_restaurant(uid)
     if not rest:
         return expired
-    from auth import reissue_two_fa_code as _rtfc
-    code = _rtfc(uid, _pending_uid_r, pending_secret_r)
-    if not code:
-        return expired
     from auth import (two_fa_destination as _tfd_r, deliver_two_fa_code as _dtfc_r, get_user_by_id as _gubi_r,
-                      undelivered_code_message as _ucm_r)
+                      undelivered_code_message as _ucm_r, two_fa_challenge_exists as _tfce_r,
+                      TOTP_METHOD as _app_r)
     _user_r = _gubi_r(_pending_uid_r)
     _dest_r = _tfd_r(_user_r, rest)
     if not _dest_r:
+        return expired
+    if _dest_r["kind"] == _app_r:
+        # An authenticator-app login is never sent a code, by email or text:
+        # a stolen password must not be able to ask for one (R10).
+        if not _tfce_r(uid, _pending_uid_r, pending_secret_r):
+            return expired
+        return {"ok": False, "channel": _app_r,
+                "error": "Your code comes from your authenticator app — nothing is sent. "
+                         "Lost your phone? Use a backup code."}, 400
+    from auth import reissue_two_fa_code as _rtfc
+    code = _rtfc(uid, _pending_uid_r, pending_secret_r)
+    if not code:
         return expired
     # "Sent" only when it went: this answered ok when the send raised or the
     # provider refused, so the person waited for a code that never came. A

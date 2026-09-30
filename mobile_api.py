@@ -622,27 +622,37 @@ def mobile_verify_2fa():
     if not rest:
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    from auth import two_fa_challenge_exists, check_two_fa_code, end_two_fa_challenge
+    from auth import two_fa_challenge_exists, end_two_fa_challenge
     if not two_fa_challenge_exists(rid, pending_user_id, pending_secret):
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    otp_result = check_two_fa_code(rid, pending_user_id, code_entered, pending=pending_secret, consume=False)
+    # The web's check (auth.check_sign_in_code): an authenticator-app login
+    # is checked against its app, and throttled per login too (R10).
+    from auth import get_user_by_id as _gubi_bc, verify_backup_code_for, check_sign_in_code, \
+        second_factor_throttle_key
+    _pending_user = _gubi_bc(pending_user_id)
+    app_key = second_factor_throttle_key(_pending_user)
+    if app_key and _is_rate_limited(app_key):
+        return jsonify(ok=False, error="Too many attempts. Please wait 15 minutes and try again."), 429
+    otp_result = check_sign_in_code(_pending_user, rid, pending_user_id, code_entered, pending_secret)
     if otp_result == "wrong":
         # Not the emailed/texted code — try a 2FA backup code before
         # failing outright (unlike the OTP, backup codes have no expiry
         # window; a stolen phone with no email/SMS access is exactly the
         # scenario recovery codes exist for). The login's own codes for an
         # internal login, the restaurant's for everyone else.
-        from auth import get_user_by_id as _gubi_bc, verify_backup_code_for
-        _pending_user = _gubi_bc(pending_user_id)
         if not (_pending_user and verify_backup_code_for(_pending_user, rid, code_entered)):
             _record_failed_attempt("2fa:" + ip)
+            if app_key:
+                _record_failed_attempt(app_key)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
     elif otp_result != "ok":
         return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip, clear_key=True)
+    if app_key:
+        _clear_attempts(app_key, clear_key=True)
     # When the password step happened, for the session's re-auth stamp.
     from auth import two_fa_challenge_started_at
     pw_at = two_fa_challenge_started_at(rid, pending_user_id, pending_secret)
