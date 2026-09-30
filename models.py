@@ -3526,6 +3526,40 @@ def init_db(db_path: str = DB_PATH):
             archived_at     TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, provider, business_date)
         )""",
+        # Each payment on a ticket (method, amount, card tip) and each cash
+        # payout or pay-in (category, manager) — High ROI #9 and #10.
+        """CREATE TABLE IF NOT EXISTS pos_payments (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            payment_id      TEXT NOT NULL,
+            ticket_id       TEXT,
+            business_date   TEXT NOT NULL,
+            method          TEXT,
+            is_cash         INTEGER NOT NULL DEFAULT 0,
+            is_card         INTEGER NOT NULL DEFAULT 0,
+            amount          REAL NOT NULL DEFAULT 0,
+            tip             REAL NOT NULL DEFAULT 0,
+            tip_fee         REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (restaurant_id, provider, payment_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_payments_day ON pos_payments(restaurant_id, business_date)",
+        """CREATE TABLE IF NOT EXISTS pos_payouts (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            payout_id       TEXT NOT NULL,
+            business_date   TEXT NOT NULL,
+            category        TEXT,
+            is_payin        INTEGER NOT NULL DEFAULT 0,
+            amount          REAL NOT NULL DEFAULT 0,
+            manager_id      TEXT,
+            manager_name    TEXT,
+            paid_at         TEXT,
+            reference       TEXT,
+            PRIMARY KEY (restaurant_id, provider, payout_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_payouts_day ON pos_payouts(restaurant_id, business_date)",
+        "CREATE INDEX IF NOT EXISTS idx_pos_payments_bdate ON pos_payments(business_date)",
+        "CREATE INDEX IF NOT EXISTS idx_pos_payouts_bdate ON pos_payouts(business_date)",
         # The retention prune deletes by date across every restaurant.
         "CREATE INDEX IF NOT EXISTS idx_pos_tickets_bdate ON pos_tickets(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_lines_bdate ON pos_ticket_lines(business_date)",

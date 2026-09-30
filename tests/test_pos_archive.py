@@ -132,6 +132,15 @@ def test_rpower_archive_rows_names_everything_and_drops_the_null_date(db_path, m
              "close_dttm": "2026-09-28T19:05:00", "kvs_dttm": NULL, "bump_dttm": NULL, "need_dttm": NULL,
              "main_server": "E1", "table_mid": "T1", "guest_count": 3, "entree_count": 2, "bev_count": 4,
              "tip": 7.0, "mealtime_mid": "MT", "pcenter_mid": "PC", "time_stamp": "2026-09-29T00:05:00"}],
+        "paymentmethod/getbycg": [{"mid": "PM1", "name": "Visa", "is_cc": 1}, {"mid": "PM2", "name": "Cash", "is_cash": 1}],
+        "payoutcategory/getbycg": [{"mid": "PC1", "name": "Misc. Payout"}],
+        "ticketpayment/getbybusinessdate": [
+            {"rid": "Y1", "ticket_rid": "TK", "date": "2026-09-28T00:00:00", "paymeth_mid": "PM1", "paid_ticket": 20.0,
+             "paid_tip": 5.0},
+            {"rid": "Y2", "ticket_rid": "TK", "date": "2026-09-28T00:00:00", "paymeth_mid": "PM2", "paid_ticket": 5.0}],
+        "payout/getbydaterange": [
+            {"rid": "PO1", "date": "2026-09-28T00:00:00", "pocat_mid": "PC1", "net": 42.5, "mgr_mid": "E1",
+             "dttm": "2026-09-28T15:00:00", "reference": "produce run"}],
         "timeclock/getbydaterange": [
             {"rid": "P1", "emp_mid": "E1", "job_mid": "J1", "in_dttm": "2026-09-28T16:00:00",
              "out_dttm": "2026-09-28T23:00:00", "reg_hours": 7, "reg_rate": 2.13, "reg_pay": 14.91, "tips_total": 88,
@@ -149,6 +158,10 @@ def test_rpower_archive_rows_names_everything_and_drops_the_null_date(db_path, m
     (p,) = out["punches"]
     assert (p["employee_name"], p["role"], p["pay"], p["tips"], p["edited_by"]) == ("Dana Reyes", "Server PM", 14.91, 88.0, None)
     assert out["max_stamp"] == "2026-09-29T04:00:00"
+    assert [(y["method"], y["is_card"], y["amount"], y["tip"]) for y in out["payments"]] == [
+        ("Visa", 1, 20.0, 5.0), ("Cash", 0, 5.0, 0.0)]
+    (po,) = out["payouts"]
+    assert (po["category"], po["amount"], po["manager_name"], po["reference"]) == ("Misc. Payout", 42.5, "Dana Reyes", "produce run")
 
 
 # ── who can work which job (High ROI #5) ─────────────────────────────────────

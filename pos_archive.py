@@ -48,8 +48,13 @@ _PUNCH_COLS = ("punch_id", "business_date", "employee_id", "employee_name", "job
                "clock_out", "reg_hours", "ot_hours", "dt_hours", "reg_rate", "ot_rate", "pay", "ot_pay", "tips",
                "tips_net", "grats", "break_minutes", "meal_minutes", "rest_minutes", "edited_by", "edited_at",
                "edit_what", "is_station", "source_stamp")
+_PAYMENT_COLS = ("payment_id", "ticket_id", "business_date", "method", "is_cash", "is_card", "amount", "tip",
+                 "tip_fee")
+_PAYOUT_COLS = ("payout_id", "business_date", "category", "is_payin", "amount", "manager_id", "manager_name",
+                "paid_at", "reference")
 _TABLES = (("pos_tickets", _TICKET_COLS, "tickets"), ("pos_ticket_lines", _LINE_COLS, "lines"),
-           ("pos_punches", _PUNCH_COLS, "punches"))
+           ("pos_punches", _PUNCH_COLS, "punches"), ("pos_payments", _PAYMENT_COLS, "payments"),
+           ("pos_payouts", _PAYOUT_COLS, "payouts"))
 
 
 def provider_for(restaurant_id):
@@ -83,7 +88,7 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
             marks = ",".join("?" for _ in range(len(cols) + 2))
             conn.executemany(
                 f"INSERT OR REPLACE INTO {table} (restaurant_id, provider, {','.join(cols)}) VALUES ({marks})",
-                [(restaurant_id, name, *[r.get(c) for c in cols]) for r in rows[key]])
+                [(restaurant_id, name, *[r.get(c) for c in cols]) for r in rows.get(key) or []])
         restated = bool(prev and prev["max_stamp"] and rows.get("max_stamp")
                         and rows["max_stamp"] != prev["max_stamp"])
         conn.execute(

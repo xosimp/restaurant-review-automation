@@ -129,3 +129,17 @@ def test_pay_and_tips_by_role_and_person_and_honest_about_breaks(db_path):
     assert dana["enough"] and dana["tips"] == 1200.0 and bo == {"name": "Bo Park", "shifts": 1, "enough": False}
     assert out["breaks"]["recorded"] == 0 and "no meal or rest breaks" in out["breaks"]["note"]
     assert out["edited_punches"]["count"] == 0
+
+
+def test_payments_give_tender_mix_and_card_tips_and_say_when_no_payouts(db_path):
+    rid = _rid()
+    conn = models.get_conn()
+    for i, (m, cash, card, amt, tip) in enumerate([("Visa", 0, 1, 80.0, 16.0), ("Cash", 1, 0, 20.0, 0.0)]):
+        conn.execute("INSERT INTO pos_payments (restaurant_id, provider, payment_id, business_date, method, is_cash, "
+                     "is_card, amount, tip) VALUES (?,?,?,?,?,?,?,?,?)", (rid, "rpower", f"y{i}", "2026-09-20", m, cash,
+                                                                         card, amt, tip))
+    conn.commit()
+    conn.close()
+    out = sp.payments(rid, days=30, today=TODAY)
+    assert (out["total_paid"], out["card_share_pct"], out["card_tips"], out["card_tip_rate_pct"]) == (100.0, 80.0, 16.0, 20.0)
+    assert out["payouts"]["recorded"] == 0 and "no cash payouts" in out["payouts"]["note"]

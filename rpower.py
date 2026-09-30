@@ -1569,10 +1569,11 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     archive keeps, names resolved from RPOWER's own lists:
     {"tickets": [...], "lines": [...], "punches": [...], "max_stamp"}.
 
-    Reads ticket/, ticketsales/getbybusinessdate and timeclock/getbydaterange
-    (the day and the next, kept to the business day: 5am local to 5am), and
-    the lists: sales types, menu, void reasons, people, tables and rooms
-    (table/room getbystore), meal times and profit centers (getbycg)."""
+    Reads ticket/, ticketsales/ and ticketpayment/getbybusinessdate,
+    payout/getbydaterange and timeclock/getbydaterange (the day and the next,
+    kept to the business day: 5am local to 5am), and the lists: sales types,
+    menu, void reasons, people, tables and rooms (table/room getbystore),
+    meal times, profit centers, payment methods and payout categories."""
     from time_utils import BUSINESS_DAY_START_HOUR
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
     token, base = _ctx(restaurant_id)
@@ -1681,7 +1682,33 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "is_station": 1 if mid in stations else 0,
             "source_stamp": str(e.get("time_stamp") or "")[:19] or None})
         stamps.append(str(e.get("time_stamp") or ""))
-    return {"tickets": tickets, "lines": lines, "punches": punches,
+    methods = _catalog(restaurant_id, "paymentmethod/getbycg")
+    payments = []
+    for p in _paged(token, "ticketpayment/getbybusinessdate",
+                    {**base, "startdate": iso, "enddate": iso, "sortorder": "date"}):
+        if _biz_date(p.get("date")) != iso or not p.get("rid"):
+            continue
+        m = methods.get(_id(p.get("paymeth_mid")) or "") or {}
+        payments.append({
+            "payment_id": str(p["rid"]), "ticket_id": _id(p.get("ticket_rid")), "business_date": iso,
+            "method": _tidy_name(m.get("name")) or None, "is_cash": 1 if m.get("is_cash") else 0,
+            "is_card": 1 if m.get("is_cc") else 0, "amount": round(_num(p.get("paid_ticket")), 2),
+            "tip": round(_num(p.get("paid_tip")), 2), "tip_fee": round(_num(p.get("tip_fee")), 2)})
+    cats = _catalog(restaurant_id, "payoutcategory/getbycg")
+    payouts = []
+    # RPOWER's own example spells this one `startDate` (and `enddate`), a
+    # single day asked as start == end.
+    for p in _paged(token, "payout/getbydaterange", {**base, "startDate": iso, "enddate": iso, "sortorder": "date"}):
+        if _biz_date(p.get("date")) != iso or not p.get("rid"):
+            continue
+        c = cats.get(_id(p.get("pocat_mid")) or "") or {}
+        mgr = _id(p.get("mgr_mid")) or _id(p.get("emp_mid"))
+        payouts.append({
+            "payout_id": str(p["rid"]), "business_date": iso, "category": _tidy_name(c.get("name")) or None,
+            "is_payin": 1 if p.get("is_payin") else 0, "amount": round(_num(p.get("net")), 2),
+            "manager_id": mgr, "manager_name": emps.get(mgr) if mgr else None,
+            "paid_at": _local_stamp(p.get("dttm")), "reference": (str(p.get("reference") or "").strip() or None)})
+    return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None)}
 
 

@@ -212,6 +212,58 @@ def pay_and_tips(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
                                {"count": 0, "note": "the POS recorded no punch edits in these days"})}
 
 
+def payments(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
+    """How guests paid, and the cash paid out of the drawer (High ROI #9,
+    #10): tender mix by method, cash vs card, card tips and their rate; each
+    payout and pay-in category with who approved it. No card-fee figure: the
+    processor's rate is not on file, and a guessed rate would be a guess."""
+    start, end = _window(days, today)
+    conn = get_conn(db_path)
+    try:
+        pays = [dict(r) for r in conn.execute(
+            "SELECT method, is_cash, is_card, amount, tip FROM pos_payments WHERE restaurant_id=? AND "
+            "business_date>=? AND business_date<=?", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+        outs = [dict(r) for r in conn.execute(
+            "SELECT category, is_payin, amount, manager_name, manager_id FROM pos_payouts WHERE restaurant_id=? AND "
+            "business_date>=? AND business_date<=?", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+    finally:
+        conn.close()
+    if not pays:
+        return {"available": False, "reason": "no payments archived for these days yet"}
+    total = sum(p["amount"] for p in pays)
+    card = [p for p in pays if p["is_card"]]
+    card_amt = sum(p["amount"] for p in card)
+    by = {}
+    for p in pays:
+        b = by.setdefault(p["method"] or "not recorded", {"payments": 0, "amount": 0.0})
+        b["payments"] += 1
+        b["amount"] += p["amount"]
+    out = {"available": True, "window": [start.isoformat(), end.isoformat()],
+           "total_paid": round(total, 2), "card_paid": round(card_amt, 2),
+           "cash_paid": round(sum(p["amount"] for p in pays if p["is_cash"]), 2),
+           "card_share_pct": round(100.0 * card_amt / total, 1) if total else None,
+           "card_tips": round(sum(p["tip"] for p in card), 2),
+           "card_tip_rate_pct": round(100.0 * sum(p["tip"] for p in card) / card_amt, 1) if card_amt else None,
+           "by_method": sorted(({"method": k, "payments": v["payments"], "amount": round(v["amount"], 2),
+                                 "share_pct": round(100.0 * v["amount"] / total, 1) if total else None}
+                                for k, v in by.items()), key=lambda r: -r["amount"])}
+    if not outs:
+        out["payouts"] = {"recorded": 0, "note": "no cash payouts or pay-ins were recorded in the POS in these days"}
+    else:
+        cats = {}
+        for p in outs:
+            key = (p["category"] or "not recorded", "pay-in" if p["is_payin"] else "payout")
+            c = cats.setdefault(key, {"count": 0, "amount": 0.0, "by": {}})
+            c["count"] += 1
+            c["amount"] += p["amount"]
+            who = p["manager_name"] or (f"POS id {p['manager_id']}" if p["manager_id"] else "not recorded")
+            c["by"][who] = round(c["by"].get(who, 0.0) + p["amount"], 2)
+        out["payouts"] = {"recorded": len(outs), "categories": [
+            {"category": k[0], "type": k[1], "count": v["count"], "amount": round(v["amount"], 2), "by": v["by"]}
+            for k, v in sorted(cats.items(), key=lambda kv: -abs(kv[1]["amount"]))]}
+    return out
+
+
 def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Servers, rooms and dayparts, and the kitchen, in one read."""
     s = servers(restaurant_id, days, db_path, today)
@@ -221,6 +273,7 @@ def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     return {**s, "rooms": r.get("rooms"), "dayparts": r.get("dayparts"),
             "kitchen": kitchen(restaurant_id, days, db_path, today),
             "pay_and_tips": pay_and_tips(restaurant_id, days, db_path, today),
+            "payments": payments(restaurant_id, days, db_path, today),
             "note": ("Measured from the POS's own tickets. A server's figures appear past "
                      f"{MIN_TICKETS} tickets; tip rate counts only tickets with a recorded (card) tip; turn "
                      "time counts dine-in tables only.")}

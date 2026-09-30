@@ -2187,6 +2187,8 @@ _RETENTION_DAYS = {
     "pos_ticket_lines":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_punches":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_archive_days":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "pos_payments":       int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "pos_payouts":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
     "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
     # Cavnar AI's own reads and their claims (ai_reads, memory audit
@@ -2248,7 +2250,7 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
-    "pos_archive_days": "business_date",
+    "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "ai_reads": "created_at", "ai_claims": "created_at",
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
@@ -2327,6 +2329,7 @@ _RETENTION_FLOOR_DAYS = {
     # person_quarters for the rest.
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
+    "pos_payments": 400, "pos_payouts": 400,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
     # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
     # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
@@ -2368,6 +2371,8 @@ _RETENTION_READERS = {
     "pos_tickets": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
     "pos_ticket_lines": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
     "pos_punches": (("service_performance.pay_and_tips", "service_performance.MAX_DAYS", None),),
+    "pos_payments": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
+    "pos_payouts": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
     "ai_usage": (("ai_utils._spend_since", 31, None), ("admin_ops.ai_ops", 90, None)),
     "ai_validation_log": (("admin_ops.validation_rates", 90, None),),
     "activity_log": (("rec_trust.owner_changes", "rec_trust.CHANGES_LOOKBACK_DAYS", None),

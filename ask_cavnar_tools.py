@@ -3005,8 +3005,10 @@ TOOLS = [
                 "the tickets, covers, sales per cover, check average, drinks per entree, card tip rate, "
                 "median table turn and comps on their checks (figures only past 20 tickets); by room and by "
                 "daypart; kitchen speed where the POS records it; pay and tips by role and person (hours, "
-                "pay, overtime pay, tips, earned per hour). Call it for 'who are my best servers', 'who upsells "
-                "drinks', 'how fast do we turn tables', 'lunch vs dinner', 'what do my servers make an hour'. "
+                "pay, overtime pay, tips, earned per hour); how guests paid (cash vs card, by card type, card "
+                "tips) and cash paid out of the drawer by category and manager. Call it for 'who are my best "
+                "servers', 'who upsells drinks', 'how fast do we turn tables', 'lunch vs dinner', 'what do my "
+                "servers make an hour', 'how much is cash', 'what's been paid out'. "
                 "Personnel data: the "
                 "account holder's. days: the window, default 28, at most 90."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
