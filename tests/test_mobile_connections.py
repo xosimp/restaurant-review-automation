@@ -85,7 +85,7 @@ def test_update_profile_saves_editable_fields(client, db_path):
 
     r = get_restaurant(rid, db_path=db_path)
     assert r.owner_name == "Jamie Rivera"
-    assert r.owner_phone == "312-555-0100"
+    assert r.owner_phone == "(312) 555-0100"   # saved as an owner reads it (9/29/26)
     assert r.voice_notes == "Warm, a little playful"
     assert r.never_say == "cheap"
     assert r.menu_notes == "Try the deep dish"

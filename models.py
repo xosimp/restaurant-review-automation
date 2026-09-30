@@ -4031,6 +4031,9 @@ _ALERT_CONFIG_FIELDS = (
 
 
 def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
+    if getattr(r, "owner_phone", None):
+        from auth import display_phone as _dp
+        r.owner_phone = _dp(r.owner_phone)   # "(334) 568-9292", as update_restaurant keeps it
     conn = get_conn(db_path)
     alert_cols = ", ".join(_ALERT_CONFIG_FIELDS)
     alert_qs = ", ".join("?" * len(_ALERT_CONFIG_FIELDS))
@@ -4350,6 +4353,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         fields = dict(fields)
         fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
+    # A phone number is kept the way an owner reads it, "(334) 568-9292"
+    # (Will, 9/29/26); every reader of owner_phone takes its digits.
+    if updates.get("owner_phone"):
+        from auth import display_phone as _dp
+        updates["owner_phone"] = _dp(updates["owner_phone"])
     if not updates:
         return
     # Who is making this change (memory audit 9/29/26, "change_log"):

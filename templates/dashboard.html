@@ -2026,6 +2026,7 @@ function loadFailed(el, d){
 })();
 </script>
 <script src="/static/cavnar-orb.js"></script>
+<script src="/static/cavnar-phone.js"></script>
 
 <!-- Branded upload loading overlay -->
 <div id="upload-loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center;flex-direction:column">
@@ -13280,7 +13281,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
         <div class="ac-form">
           <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"{% if is_principal is defined and not is_principal %} readonly title="Only an owner can change the brand voice"{% endif %}></div>
-          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" value="{{restaurant.owner_phone or ''}}"></div>
+          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" type="tel" autocomplete="tel" value="{{ restaurant.owner_phone|format_phone }}"></div>
           <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
             {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
             <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
@@ -13313,7 +13314,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <dl class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Owner / GM</dt><dd class="{{ '' if restaurant.owner_name else 'muted' }}">{{ restaurant.owner_name or 'Not set' }}</dd></div>
             <div><dt>Email</dt><dd id="profile-email-display">{{ restaurant.owner_email or '—' }}</dd></div>
-            <div><dt>Phone</dt><dd class="{{ '' if restaurant.owner_phone else 'muted' }}">{{ restaurant.owner_phone or 'Not set' }}</dd></div>
+            <div><dt>Phone</dt><dd class="{{ '' if restaurant.owner_phone else 'muted' }}">{{ (restaurant.owner_phone|format_phone) or 'Not set' }}</dd></div>
             <div><dt>Timezone</dt><dd>{{ (restaurant.timezone or 'America/Chicago').split('/')[-1].replace('_',' ') }}</dd></div>
           </dl>
         </div>
@@ -24700,9 +24701,9 @@ function openAlertsModal() {
     // With no contact saved, contact 1 starts as the owner (U2-26); it is
     // only a contact once saved with the consent box ticked.
     document.getElementById('alert-c1-name').value  = (c[0] && c[0].name)  || (!c.length && ow.name)  || '';
-    document.getElementById('alert-c1-phone').value = (c[0] && c[0].phone) || (!c.length && ow.phone) || '';
+    document.getElementById('alert-c1-phone').value = fmtPhone((c[0] && c[0].phone) || (!c.length && ow.phone) || '');
     document.getElementById('alert-c2-name').value  = (c[1] && c[1].name)  || '';
-    document.getElementById('alert-c2-phone').value = (c[1] && c[1].phone) || '';
+    document.getElementById('alert-c2-phone').value = fmtPhone((c[1] && c[1].phone) || '');
     var s = d.settings || {};
     document.getElementById('al-1star').checked       = !!s.alert_1star;
     document.getElementById('al-2star').checked       = !!s.alert_2star;
@@ -25930,7 +25931,7 @@ function loadAlertsSummary() {
       tEl.textContent = '';
     } else {
       cEl.innerHTML = c.map(function(ct) {
-        return '<span style="font-weight:600;color:var(--ink)">' + _escH(ct.name || 'Contact') + '</span> &middot; ' + _escH(ct.phone || '');
+        return '<span style="font-weight:600;color:var(--ink)">' + _escH(ct.name || 'Contact') + '</span> &middot; ' + _escH(fmtPhone(ct.phone || ''));
       }).join('<br>');
       var s = d.settings || {};
       var on = [];
@@ -28972,8 +28973,8 @@ function _loadGuestContactsList() {
       var visitLabel = c.last_visit ? ('Last visit ' + _fmtVisitDate(c.last_visit)) : 'No visit recorded';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--paper3)">'
         + '<div style="min-width:0">'
-        + '<div style="font-size:15.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(String(c.name || c.phone || '')) + '</div>'
-        + '<div style="font-size:14px;color:var(--ink3);margin-top:2px">' + _escHtml(String(c.phone || '')) + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
+        + '<div style="font-size:15.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(String(c.name || fmtPhone(c.phone) || '')) + '</div>'
+        + '<div style="font-size:14px;color:var(--ink3);margin-top:2px">' + _escHtml(fmtPhone(c.phone || '')) + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
         + '<div style="font-size:13.5px;color:var(--ink3);margin-top:2px">' + visitLabel + '</div>'
         + '</div>'
         + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
@@ -32795,7 +32796,7 @@ window.cavPalette = cavPalette;
     h += '<div>' + (p.has_login ? ('Staff login' + (p.pin_set ? ' · PIN set' : ' · no PIN yet') + (p.schedule_texts ? ' · texts when a week is posted' : '')) : 'No staff login yet — add one in Account → People.') + '</div>';
     h += '<div class="sr-k">Contact</div><div class="ps-grid">'
        + '<div class="ac-field"><label for="pp-email">Email</label><input class="ac-input" id="pp-email" data-pp="email" value="' + e(p.email) + '"' + dis + '></div>'
-       + '<div class="ac-field"><label for="pp-phone">Phone</label><input class="ac-input" id="pp-phone" data-pp="phone" value="' + e(p.phone) + '"' + dis + '></div>'
+       + '<div class="ac-field"><label for="pp-phone">Phone</label><input class="ac-input" id="pp-phone" type="tel" autocomplete="tel" data-pp="phone" value="' + e(fmtPhone(p.phone || '')) + '"' + dis + '></div>'
        + '<div class="ac-field"><label for="pp-pos">POS id</label><input class="ac-input" id="pp-pos" data-pp="pos_id" value="' + e(p.pos_id) + '" title="The id your POS shows for this person — names a comp or void pattern"' + dis + '></div></div>';
     var hr = p.hours || {}, types = ch.employment_type || ['full', 'part'];
     h += '<div class="sr-k">Hours</div><div class="ps-grid">'

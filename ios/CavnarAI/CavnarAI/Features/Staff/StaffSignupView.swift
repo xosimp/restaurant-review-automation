@@ -125,7 +125,7 @@ struct StaffSignupView: View {
             Text("Enter the code")
                 .font(.cavnarHeadline(25))
                 .foregroundStyle(Color.cavnarInk)
-            Text("We texted a 6-digit code to \(phone).")
+            Text("We texted a 6-digit code to \(PhoneFormat.display(phone)).")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
 

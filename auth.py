@@ -2350,6 +2350,23 @@ class SignupError(ValueError):
     """A signup step that cannot proceed, with a message safe to show."""
 
 
+def display_phone(value) -> str:
+    """A phone number the way an owner reads it: "(334) 568-9292" for any US
+    number however it was stored ("+13345689292", "334.568.9292",
+    "1 334 568 9292"); anything else (international, an extension, a
+    fragment) is returned as it was. Display only — storage and sending keep
+    normalize_phone's spelling."""
+    raw = str(value or "").strip()
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    elif raw.startswith("+") and not raw.startswith("+1"):
+        return raw
+    if len(digits) != 10:
+        return raw
+    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+
+
 def normalize_phone(value) -> str:
     """One spelling for a phone number, so it works as an identity key."""
     from notify import _normalize_phone

@@ -681,7 +681,7 @@ def test_the_owner_still_gets_their_code_by_text(db_path, client, sent, texts):
     rid, _owner, _mgr = _setup(db_path, two_fa=True)
     update_restaurant(rid, {"two_fa_method": "sms", "owner_phone": "+15125550100"}, db_path=db_path)
     r = client.post("/mobile/api/login", json={"username": "owner", "password": "ownerpass1"}).get_json()
-    assert r["requires_2fa"] and [to for to, _c in texts] == ["+15125550100"] and sent["2fa"] == []
+    assert r["requires_2fa"] and [__import__("notify")._normalize_phone(to) for to, _c in texts] == ["+15125550100"] and sent["2fa"] == []
 
 
 def test_a_manager_without_a_phone_gets_a_text_restaurants_code_by_email(db_path, client, sent, texts):

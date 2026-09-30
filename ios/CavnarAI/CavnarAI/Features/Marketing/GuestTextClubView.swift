@@ -624,7 +624,7 @@ struct GuestTextClubView: View {
                 Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
                     .font(.cavnarBody(16, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
-                Text(contact.phone).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
+                Text(PhoneFormat.display(contact.phone)).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
                 Text(contact.statusLabel)
                     .font(.cavnarBody(15, weight: 700))
                     .foregroundStyle(statusColor(contact.status))

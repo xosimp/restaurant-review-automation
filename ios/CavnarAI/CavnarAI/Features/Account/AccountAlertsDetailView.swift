@@ -382,6 +382,7 @@ struct AccountAlertsDetailView: View {
                                         .foregroundStyle(Color.cavnarInk)
                                         .focused($focusedField, equals: .contactName(contact.id))
                                     TextField("Phone", text: $contact.phone)
+                                        .onChange(of: contact.phone) { _, v in let f = PhoneFormat.typing(v); if f != v { contact.phone = f } }
                                         .font(.cavnarNumber(15))
                                         .foregroundStyle(Color.cavnarInk2)
                                         .keyboardType(.phonePad)

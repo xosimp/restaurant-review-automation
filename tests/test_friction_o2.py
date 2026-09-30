@@ -341,7 +341,7 @@ def test_alert_contact_one_starts_as_the_owner(db_path, monkeypatch):
     update_restaurant(rid, {"owner_name": "Erik", "owner_phone": "+15555550100"}, db_path=db_path)
     _as(monkeypatch, rid)
     d = _app().test_client().get("/api/alert-settings").get_json()
-    assert d["owner"] == {"name": "Erik", "phone": "+15555550100"}
+    assert d["owner"] == {"name": "Erik", "phone": "(555) 555-0100"}   # kept as an owner reads it (9/29/26)
     assert "(!c.length && ow.name)" in _src()
 
 

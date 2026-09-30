@@ -92,6 +92,7 @@ textarea{resize:vertical;min-height:60px}
 .fc-inline input,.fc-inline select{width:auto}
 
 </style>
+<script src="/static/cavnar-phone.js"></script>
 </head>
 <body>
 {% include "_csrf_fetch.html" %}
@@ -125,7 +126,7 @@ textarea{resize:vertical;min-height:60px}
         </div>
         <div class="form-group">
           <label>Owner phone number</label>
-          <input type="text" id="owner_phone" value="{{ restaurant.owner_phone or '' }}" placeholder="(312) 555-0100">
+          <input type="tel" id="owner_phone" value="{{ restaurant.owner_phone|format_phone }}" placeholder="(312) 555-0100">
         </div>
         <div class="form-group">
           <label>Location group (multi-location)</label>
@@ -600,7 +601,7 @@ textarea{resize:vertical;min-height:60px}
         <div id="alert-contact-{{ c.id }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
           <div style="flex:1">
             <div style="font-weight:600;font-size:13px">{{ c.name or 'No name' }}</div>
-            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{ c.phone }} · {{ 'texts on (consented)' if c.sms_consent else 'no texts until they consent' }}</div>
+            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{ c.phone|format_phone }} · {{ 'texts on (consented)' if c.sms_consent else 'no texts until they consent' }}</div>
           </div>
           <button onclick="removeAlertContact({{ c.id }})"
             style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper);color:var(--ember);cursor:pointer;font-family:'DM Sans',sans-serif">

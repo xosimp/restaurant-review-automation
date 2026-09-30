@@ -212,15 +212,7 @@ struct AccountStaffDetailView: View {
         }
     }
 
-    private func formatted(_ phone: String) -> String {
-        var digits = phone.filter(\.isNumber)
-        if digits.count == 11, digits.hasPrefix("1") { digits.removeFirst() }
-        guard digits.count == 10 else { return phone }
-        let area = digits.prefix(3)
-        let mid = digits.dropFirst(3).prefix(3)
-        let last = digits.suffix(4)
-        return "(\(area)) \(mid)-\(last)"
-    }
+    private func formatted(_ phone: String) -> String { PhoneFormat.display(phone) }
 }
 
 /// One text field, one save — used for both the name and the job, because

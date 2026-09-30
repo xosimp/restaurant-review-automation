@@ -59,8 +59,8 @@ def test_the_content_calendar_escapes_every_model_field():
 
 
 def test_a_guest_contacts_name_and_phone_are_escaped():
-    i = SRC.index("text-overflow:ellipsis\">' + _escHtml(String(c.name || c.phone || ''))")
-    assert "_escHtml(String(c.phone || ''))" in SRC[i:i + 400]
+    i = SRC.index("text-overflow:ellipsis\">' + _escHtml(String(c.name || fmtPhone(c.phone) || ''))")
+    assert "_escHtml(fmtPhone(c.phone || ''))" in SRC[i:i + 400]
 
 
 # ── 5. [hidden] always hides ──────────────────────────────────────────────

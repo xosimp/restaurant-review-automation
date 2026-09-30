@@ -442,7 +442,7 @@ struct PersonSheet: View {
         if person.canEdit == false {
             AccountSection(kicker: "Contact") {
                 kv("Role", person.role?.isEmpty == false ? person.role! : "Not set")
-                kv("Phone", person.phone?.isEmpty == false ? person.phone! : "Not set")
+                kv("Phone", person.phone?.isEmpty == false ? PhoneFormat.display(person.phone) : "Not set")
                 kv("Email", person.email?.isEmpty == false ? person.email! : "Not set")
                 kv("POS id", last: true, person.posId?.isEmpty == false ? person.posId! : "Not set")
             }
@@ -455,6 +455,7 @@ struct PersonSheet: View {
                         kv("Role", person.role?.isEmpty == false ? person.role! : "Not set")
                     }
                     field("Phone", text: $viewModel.phone, keyboard: .phonePad)
+                        .onChange(of: viewModel.phone) { _, v in let f = PhoneFormat.typing(v); if f != v { viewModel.phone = f } }
                     field("Email", text: $viewModel.email, keyboard: .emailAddress)
                     field("POS id", text: $viewModel.posId, keyboard: .asciiCapable)
                     if person.mayEdit("pay_rate", fallback: false) {

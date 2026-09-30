@@ -139,6 +139,10 @@ this automatically); iOS uses `HomeMixedText.make(...)` or
 `.font(.cavnarNumber(...))`. Use `font-variant-numeric: tabular-nums` /
 tabular figures wherever digits line up in a column.
 
+### Phone numbers (one format, everywhere)
+
+A US number reads **(334) 568-9292** wherever it shows — web, admin, iOS (Will, 9/29/26). Python `auth.display_phone` (Jinja `|format_phone`), web `fmtPhone()` (`static/cavnar-phone.js`, loaded by every page with a phone), iOS `PhoneFormat.display`. International numbers and fragments show as entered. A phone field (`type="tel"`, or `data-phone`) formats as it is typed and on blur; iOS fields use `PhoneFormat.typing` in `onChange`. A one-time-code field (`inputmode="numeric"`) is left alone. Owner phones are saved in this form (`create_restaurant` / `update_restaurant`); sending and matching always go through `notify._normalize_phone`, never the displayed string.
+
 ### Dates and times (one format, everywhere)
 
 **One exception (owner's call, 9/25/26):** Home's kicker above the greeting reads the date in words, "September 25th, 2026" (`longDate`). Everywhere else stays M/D/YY.

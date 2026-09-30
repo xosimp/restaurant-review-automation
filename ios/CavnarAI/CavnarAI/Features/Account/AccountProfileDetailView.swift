@@ -58,7 +58,7 @@ struct AccountProfileDetailView: View {
         self.viewModel = viewModel
         self.profile = profile
         _ownerName  = State(initialValue: profile.ownerName ?? "")
-        _ownerPhone = State(initialValue: profile.ownerPhone ?? "")
+        _ownerPhone = State(initialValue: PhoneFormat.display(profile.ownerPhone))
         _voiceNotes = State(initialValue: profile.voiceNotes ?? "")
         _neverSay   = State(initialValue: profile.neverSay ?? "")
         _menuNotes  = State(initialValue: profile.menuNotes ?? "")
@@ -259,6 +259,7 @@ struct AccountProfileDetailView: View {
             AccountField(label: "Owner", text: $ownerName, focus: $focusedField, field: .ownerName)
                 .disabled(!isOwner)
             AccountField(label: "Phone", text: $ownerPhone, focus: $focusedField, field: .ownerPhone, keyboardType: .phonePad, isNumber: true)
+                .onChange(of: ownerPhone) { _, v in let f = PhoneFormat.typing(v); if f != v { ownerPhone = f } }
             // Shares AccountFieldRow's exact label/value/reserved-underline
             // footprint (see AccountDisplayRow's own doc comment) — Email
             // isn't edited inline (it opens its own sheet), but it sits in
