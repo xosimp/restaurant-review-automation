@@ -158,6 +158,60 @@ def kitchen(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
                         for h, v in sorted(by_hour.items())]}
 
 
+MIN_SHIFTS = 8          # a person's pay-and-tips figures appear past this many shifts
+
+
+def pay_and_tips(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
+    """What the POS's payroll engine paid, and the tips it recorded, by role
+    and by person (RPower endpoint audit, 9/29/26, High ROI #6): hours, pay,
+    overtime pay, tips, and pay and tips per hour worked. Breaks and punch
+    edits are reported only where the POS records them — a POS that records
+    none says so rather than showing a clean zero."""
+    start, end = _window(days, today)
+    conn = get_conn(db_path)
+    try:
+        punches = [dict(r) for r in conn.execute(
+            "SELECT employee_id, employee_name, role, reg_hours, ot_hours, dt_hours, pay, ot_pay, tips, "
+            "meal_minutes, rest_minutes, edited_at FROM pos_punches WHERE restaurant_id=? AND business_date>=? "
+            "AND business_date<=? AND is_station=0 AND clock_out IS NOT NULL",
+            (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+    finally:
+        conn.close()
+    if not punches:
+        return {"available": False, "reason": "no time punches archived for these days yet"}
+
+    def _agg(ps):
+        hours = sum(p["reg_hours"] + p["ot_hours"] + p["dt_hours"] for p in ps)
+        pay, tips = sum(p["pay"] for p in ps), sum(p["tips"] for p in ps)
+        return {"shifts": len(ps), "hours": round(hours, 1), "pay": round(pay, 2),
+                "overtime_pay": round(sum(p["ot_pay"] for p in ps), 2), "tips": round(tips, 2),
+                "pay_per_hour": round(pay / hours, 2) if hours else None,
+                "tips_per_hour": round(tips / hours, 2) if hours else None,
+                "earned_per_hour": round((pay + tips) / hours, 2) if hours else None}
+    by_role, by_person = {}, {}
+    for p in punches:
+        by_role.setdefault(p["role"] or "not recorded", []).append(p)
+        if p["employee_id"]:
+            by_person.setdefault(p["employee_id"], []).append(p)
+    people = []
+    for eid, ps in by_person.items():
+        name = next((x["employee_name"] for x in ps if x["employee_name"]), None) or f"POS id {eid}"
+        row = {"name": name, "shifts": len(ps), "enough": len(ps) >= MIN_SHIFTS}
+        if row["enough"]:
+            row.update(_agg(ps))
+        people.append(row)
+    people.sort(key=lambda r: -(r.get("hours") or 0))
+    breaks = sum(1 for p in punches if (p["meal_minutes"] or 0) > 0 or (p["rest_minutes"] or 0) > 0)
+    edits = sum(1 for p in punches if p["edited_at"])
+    return {"available": True, "window": [start.isoformat(), end.isoformat()], "house": _agg(punches),
+            "roles": sorted(({"role": k, **_agg(v)} for k, v in by_role.items()), key=lambda r: -r["hours"]),
+            "people": people, "min_shifts": MIN_SHIFTS,
+            "breaks": ({"recorded": breaks} if breaks else
+                       {"recorded": 0, "note": "the POS recorded no meal or rest breaks on these punches"}),
+            "edited_punches": ({"count": edits} if edits else
+                               {"count": 0, "note": "the POS recorded no punch edits in these days"})}
+
+
 def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Servers, rooms and dayparts, and the kitchen, in one read."""
     s = servers(restaurant_id, days, db_path, today)
@@ -166,6 +220,7 @@ def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     r = rooms(restaurant_id, days, db_path, today)
     return {**s, "rooms": r.get("rooms"), "dayparts": r.get("dayparts"),
             "kitchen": kitchen(restaurant_id, days, db_path, today),
+            "pay_and_tips": pay_and_tips(restaurant_id, days, db_path, today),
             "note": ("Measured from the POS's own tickets. A server's figures appear past "
                      f"{MIN_TICKETS} tickets; tip rate counts only tickets with a recorded (card) tip; turn "
                      "time counts dine-in tables only.")}

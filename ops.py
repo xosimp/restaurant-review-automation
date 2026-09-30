@@ -2367,6 +2367,7 @@ _RETENTION_ROLLUP = {
 _RETENTION_READERS = {
     "pos_tickets": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
     "pos_ticket_lines": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
+    "pos_punches": (("service_performance.pay_and_tips", "service_performance.MAX_DAYS", None),),
     "ai_usage": (("ai_utils._spend_since", 31, None), ("admin_ops.ai_ops", 90, None)),
     "ai_validation_log": (("admin_ops.validation_rates", 90, None),),
     "activity_log": (("rec_trust.owner_changes", "rec_trust.CHANGES_LOOKBACK_DAYS", None),

@@ -3004,8 +3004,10 @@ TOOLS = [
                 "HOW EACH SERVER, ROOM AND DAYPART PERFORMED, measured from the POS's own tickets: per server "
                 "the tickets, covers, sales per cover, check average, drinks per entree, card tip rate, "
                 "median table turn and comps on their checks (figures only past 20 tickets); by room and by "
-                "daypart; kitchen speed where the POS records it. Call it for 'who are my best servers', "
-                "'who upsells drinks', 'how fast do we turn tables', 'lunch vs dinner'. Personnel data: the "
+                "daypart; kitchen speed where the POS records it; pay and tips by role and person (hours, "
+                "pay, overtime pay, tips, earned per hour). Call it for 'who are my best servers', 'who upsells "
+                "drinks', 'how fast do we turn tables', 'lunch vs dinner', 'what do my servers make an hour'. "
+                "Personnel data: the "
                 "account holder's. days: the window, default 28, at most 90."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "days": {"type": "integer", "description": "How far back. Default 28, at most 90."}}},

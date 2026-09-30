@@ -104,3 +104,28 @@ def test_the_ask_tool_is_the_account_holders_only(db_path):
     out = json.loads(tools.run_read_tool("read_service_performance", rid, {"days": 30},
                                          restaurant=get_restaurant(rid)))
     assert out["available"] and "/" in out["window"][0] and "-" not in out["window"][0]
+
+
+def _punch(rid, n, emp, name, role, day, hours, pay, tips, meal=0, edited=None):
+    conn = models.get_conn()
+    conn.execute("INSERT INTO pos_punches (restaurant_id, provider, punch_id, business_date, employee_id, employee_name, "
+                 "role, clock_in, clock_out, reg_hours, pay, tips, meal_minutes, edited_at) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (rid, "rpower", f"p{n}", day, emp, name, role, f"{day}T16:00:00", f"{day}T22:00:00", hours, pay,
+                  tips, meal, edited))
+    conn.commit()
+    conn.close()
+
+
+def test_pay_and_tips_by_role_and_person_and_honest_about_breaks(db_path):
+    rid = _rid()
+    for i in range(10):
+        _punch(rid, i, "E1", "Dana Reyes", "Server PM", f"2026-09-{10 + i}", 6, 12.78, 120.0)
+    _punch(rid, 50, "E2", "Bo Park", "Line Cook", "2026-09-20", 8, 136.0, 0.0)
+    out = sp.pay_and_tips(rid, days=30, today=TODAY)
+    server = next(r for r in out["roles"] if r["role"] == "Server PM")
+    assert (server["hours"], server["tips_per_hour"], server["earned_per_hour"]) == (60.0, 20.0, 22.13)
+    dana, bo = out["people"]
+    assert dana["enough"] and dana["tips"] == 1200.0 and bo == {"name": "Bo Park", "shifts": 1, "enough": False}
+    assert out["breaks"]["recorded"] == 0 and "no meal or rest breaks" in out["breaks"]["note"]
+    assert out["edited_punches"]["count"] == 0
