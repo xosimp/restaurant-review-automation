@@ -987,6 +987,37 @@ def silenced_keys(restaurant_id, db_path: str = DB_PATH) -> set:
         return set()
 
 
+def drop_self_silenced(restaurant_id, audience, recs, alert_type=None, db_path: str = DB_PATH):
+    """The push audience less every login whose OWN answer silences every
+    recommendation this alert carries (rec_ledger.own_silences — a
+    manager's "not for us" holds on their phone too; memory re-audit
+    9/29/26, PEOPLE-4). The restaurant-wide silence is checked before an
+    alert is raised at all; this is the per-recipient half, in the fan-out.
+    `audience` None (every device's login) becomes the explicit set only
+    when someone is dropped. Health and safety (never_silenced) reach
+    everyone. Never raises: on any failure the audience is unchanged."""
+    if not recs or (alert_type and never_silenced(alert_type)):
+        return audience
+    try:
+        import rec_ledger
+        uids = set(audience) if audience is not None else None
+        if uids is None:
+            from push import get_device_tokens
+            uids = {int(t.get("user_id")) for t in (get_device_tokens(restaurant_id, db_path, for_delivery=True)
+                                                   or []) if t.get("user_id")}
+        keys = [r["key"] for r in recs if r and r.get("key")]
+        if not keys or not uids:
+            return audience
+        dropped = {u for u in uids
+                   if all(k in rec_ledger.own_silences(restaurant_id, int(u), db_path=db_path) for k in keys)}
+        if not dropped:
+            return audience
+        return uids - dropped
+    except Exception as e:
+        print(f"[notify] per-login silences not applied rid={restaurant_id}: {e}")
+        return audience
+
+
 def _present_alert(restaurant_id, recs, channels, db_path: str = DB_PATH):
     """What an alert showed, on each channel that DELIVERED it. Only the
     presentable keys (rec_delivery.presentable). Never raises."""
@@ -2579,6 +2610,8 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     if via_push:
         try:
             audience = alert_audience(restaurant_id, audience_types or [alert_type], db_path)
+            # Not to a login whose own "not for us" already answers it (PEOPLE-4).
+            audience = drop_self_silenced(restaurant_id, audience, recs, alert_type=alert_type, db_path=db_path)
             if audience is None or audience:
                 from push import fire_push as _fp
                 # alert_id and rec_key ride the payload so the open names

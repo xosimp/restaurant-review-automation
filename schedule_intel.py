@@ -958,7 +958,9 @@ def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db
     """chemistry_suggestions as an owner sees them: without the pairs they
     said "Ignore" to (rec_ledger, on any device), and logged as shown."""
     import rec_ledger as _rl
-    quiet = _rl.silenced_keys(restaurant_id, db_path=db_path)
+    # ...and this login's own "Ignore" (PEOPLE-4).
+    quiet = _rl.silenced_keys(restaurant_id, db_path=db_path,
+                              viewer=user_id if isinstance(user_id, int) else None)
     out = [x for x in chemistry_suggestions(restaurant_id, db_path=db_path) if x["rec_key"] not in quiet]
     _rl.present_many(restaurant_id, [dict(key=x["rec_key"], module="schedule", kind="suggested_pair",
                                           title=f"Pair {x['a']} with {x['b']}", evidence_sources=["schedule"])
@@ -1290,8 +1292,19 @@ def dismissed_patterns(restaurant_id, db_path=DB_PATH) -> set:
 def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH) -> None:
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT OR IGNORE INTO schedule_pattern_dismissals (restaurant_id, key, dismissed_by) VALUES (?,?,?)",
-                     (restaurant_id, str(key)[:200], (actor or "")[:120] or None))
+        # The person the key names (its second field), so a rename or merge
+        # re-keys the dismissal with the pattern (people.NAME_STORES).
+        parts = str(key).split("|")
+        who = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+        if who:
+            try:
+                import people as _people
+                who = _people.canonical_names(restaurant_id, [who], db_path=db_path if db_path != DB_PATH else None
+                                              ).get(who) or who
+            except Exception:
+                pass
+        conn.execute("INSERT OR IGNORE INTO schedule_pattern_dismissals (restaurant_id, key, dismissed_by, employee) "
+                     "VALUES (?,?,?,?)", (restaurant_id, str(key)[:200], (actor or "")[:120] or None, who))
         conn.commit()
     finally:
         conn.close()
@@ -1399,6 +1412,41 @@ def init_schedule_intel(db_path: str = DB_PATH):
         updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(restaurant_id, pattern_key)
     )""")
+    # The standing pattern's lifecycle (memory re-audit 9/29/26, LOOPS-2 /
+    # QUALITY-2 / FORGET-5 / INVENTORY-2 / QUALITY-3 / QUALITY-14):
+    #   person_id        the person a person pattern is about (people.NAME_STORES
+    #                    re-points and re-keys it on a rename or merge)
+    #   detail           JSON the kinds need beyond the key: was_role, delta, names
+    #   times_confirmed  weeks the MANAGER's own hand kept it (the draft had not
+    #                    already carried it, or they edited that slot and kept it)
+    #                    — times_applied also counts the weeks the draft carried it
+    #   last_overridden  when a manager last reversed it: reversals count toward
+    #                    retirement only inside STANDING_OVERRIDE_WINDOW_DAYS
+    #   retired_at / retired_week  when it retired, and the newest published week
+    #                    (schedule_history.id) that retired it — only evidence
+    #                    newer than that week brings it back
+    #   dormant_at       set while its person has had no shift for
+    #                    people.MEMORY_GONE_DAYS or is inactive; cleared on return
+    _sp = {r[1] for r in conn.execute("PRAGMA table_info(schedule_standing_patterns)").fetchall()}
+    for _col, _typ in (("person_id", "INTEGER"), ("detail", "TEXT"),
+                       ("times_confirmed", "INTEGER NOT NULL DEFAULT 0"), ("last_overridden", "TEXT"),
+                       ("retired_at", "TEXT"), ("retired_week", "INTEGER"), ("dormant_at", "TEXT")):
+        if _col not in _sp:
+            try:
+                conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
+    # Whose pattern a dismissal is (INVENTORY-2): the key carries the name,
+    # so a rename re-keys it (people._repoint_patterns) and a merge folds it.
+    _pd = {r[1] for r in conn.execute("PRAGMA table_info(schedule_pattern_dismissals)").fetchall()}
+    for _col, _typ in (("employee", "TEXT"), ("person_id", "INTEGER")):
+        if _col not in _pd:
+            try:
+                conn.execute(f"ALTER TABLE schedule_pattern_dismissals ADD COLUMN {_col} {_typ}")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
     conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         employee_name  TEXT    NOT NULL,
@@ -1509,16 +1557,45 @@ def forget_stale_names(restaurant_id, window_rows: list, db_path=DB_PATH) -> int
     kept counting them as staff after the names were fixed (9/28/26). A
     person last seen before the window keeps their history. Returns rows
     removed."""
+    from staff_settings import name_key
     names = {(r.get("employee") or "").strip() for r in window_rows or [] if (r.get("employee") or "").strip()}
     dates = sorted({(r.get("date") or "")[:10] for r in window_rows or [] if len((r.get("date") or "")[:10]) == 10})
     if not names or not dates:
         return 0
     lo, hi = dates[0], dates[-1]
+    # Compared on name_key, and a person's other spelling is folded into the
+    # one the sync used before it goes (memory re-audit 9/29/26, FORGET-17):
+    # an exact-string match dropped "Dana K."'s earliest first_seen the day
+    # the POS started sending "Dana k.", and tenure restarted from the sync.
+    by_key = {}
+    for n in names:
+        by_key.setdefault(name_key(n), n)
     conn = get_conn(db_path)
     try:
-        stale = [r["employee_name"] for r in conn.execute(
-            "SELECT employee_name FROM staff_first_seen WHERE restaurant_id=? AND last_seen BETWEEN ? AND ?",
-            (restaurant_id, lo, hi)).fetchall() if r["employee_name"] not in names]
+        rows = conn.execute("SELECT employee_name, first_seen, last_seen, shifts_seen FROM staff_first_seen "
+                            "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        have = {r["employee_name"]: r for r in rows}
+        stale = []
+        for r in rows:
+            n = r["employee_name"]
+            if n in names or not (r["last_seen"] and lo <= str(r["last_seen"])[:10] <= hi):
+                continue
+            into = by_key.get(name_key(n))
+            if into and into != n:
+                # Another spelling of someone the sync names: their earliest
+                # day and the most shifts ever counted move to that spelling.
+                if into in have:
+                    conn.execute("UPDATE staff_first_seen SET first_seen=MIN(first_seen, ?), "
+                                 "last_seen=MAX(COALESCE(last_seen, ''), COALESCE(?, '')), "
+                                 "shifts_seen=MAX(shifts_seen, ?), updated_at=datetime('now') "
+                                 "WHERE restaurant_id=? AND employee_name=?",
+                                 (r["first_seen"], r["last_seen"], int(r["shifts_seen"] or 0), restaurant_id, into))
+                else:
+                    conn.execute("UPDATE staff_first_seen SET employee_name=?, updated_at=datetime('now') "
+                                 "WHERE restaurant_id=? AND employee_name=?", (into, restaurant_id, n))
+                    have[into] = r
+                    continue
+            stale.append(n)
         for n in stale:
             conn.execute("DELETE FROM staff_first_seen WHERE restaurant_id=? AND employee_name=?", (restaurant_id, n))
         conn.commit()

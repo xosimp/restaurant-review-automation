@@ -1127,7 +1127,8 @@ def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=N
                 d["answered"] = d["rec_key"] not in kept
             else:
                 if silenced is None:
-                    silenced = rec_ledger.silenced_keys(rid)
+                    # ...and this login's own "not for us" (PEOPLE-4).
+                    silenced = rec_ledger.silenced_keys(rid, viewer=user_id if isinstance(user_id, int) else None)
                 d["answered"] = d["rec_key"] in silenced
             d["answerable"] = not d["answered"]
     return diags
@@ -2847,6 +2848,17 @@ def _ask_meta(meta):
     }
 
 
+def _ask_uid(user):
+    """The login an Ask request's chats, summaries, topics and ratings are
+    stored and read under: the admin behind a view-as session, never the
+    owner it views as (permissions.acting_login_id — memory re-audit
+    9/29/26, PEOPLE-7). A view-as chat is support's own thread: it never
+    lands in the owner's history, "often asks" or notes, and support never
+    pages through the owner's chats."""
+    from permissions import acting_login_id
+    return acting_login_id(user)
+
+
 def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
                    new_conversation=False, brief=False, user=None, screen=None):
     """The AI copilot's shared body — answers a plain-English question about
@@ -2973,7 +2985,7 @@ def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"), brief=(data.get("surface") == "home"),
-                                     user_id=current_user.get("id"),
+                                     user_id=_ask_uid(current_user),
                                      conversation_id=_parse_conversation_id(data.get("conversation_id")),
                                      new_conversation=bool(data.get("new_conversation")),
                                      user=current_user, screen=data.get("screen"))
@@ -3012,6 +3024,10 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
         return jsonify(**payload), status
 
     events = queue.Queue()
+    # The worker thread has no request: a chat it has to start is marked
+    # support's own from here (PEOPLE-7).
+    from permissions import acting_via as _acting_via
+    _via_chat = "view_as" if _acting_via(user) else None
 
     def work():
         cid = conversation_id
@@ -3033,7 +3049,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             try:
                 import ask_cavnar as _ac_props
                 _ac_props.record_proposals(rid, proposals, user_id=uid)
-                cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
+                cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid, via=_via_chat)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
                                  user_id=uid, conversation_id=cid, tools=(meta or {}).get("tool_calls"),
                                  meta=_ac_props.turn_record(meta))
@@ -3115,7 +3131,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
 def ask_cavnar_stream(current_user):
     data = request.get_json(silent=True) or {}
     return _ask_cavnar_stream_response(
-        current_user["restaurant_id"], current_user.get("id"), data.get("question"),
+        current_user["restaurant_id"], _ask_uid(current_user), data.get("question"),
         conversation_id=_parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
         brief=(data.get("surface") == "home"), user=current_user, screen=data.get("screen"))
@@ -3126,14 +3142,14 @@ def ask_cavnar_stream(current_user):
 def ask_cavnar_history(current_user):
     from models import get_ask_history
     return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"],
-                                                     viewer_id=current_user.get("id")))
+                                                     viewer_id=_ask_uid(current_user)))
 
 
 @client_bp.route("/api/ask-cavnar/history", methods=["DELETE"])
 @login_required
 def ask_cavnar_clear_history(current_user):
     from models import clear_ask_history
-    clear_ask_history(current_user["restaurant_id"], viewer_id=current_user.get("id"))
+    clear_ask_history(current_user["restaurant_id"], viewer_id=_ask_uid(current_user))
     return jsonify(ok=True)
 
 
@@ -3176,14 +3192,14 @@ def _do_delete_ask_conversation(restaurant_id, conversation_id, viewer_id=None):
 @login_required
 def ask_cavnar_conversations(current_user):
     payload, status = _do_list_ask_conversations(current_user["restaurant_id"],
-                                                 viewer_id=current_user.get("id"))
+                                                 viewer_id=_ask_uid(current_user))
     return jsonify(**payload), status
 
 
 @client_bp.route("/api/ask-cavnar/conversations", methods=["POST"])
 @login_required
 def ask_cavnar_new_conversation(current_user):
-    payload, status = _do_create_ask_conversation(current_user["restaurant_id"], current_user.get("id"))
+    payload, status = _do_create_ask_conversation(current_user["restaurant_id"], _ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -3191,7 +3207,7 @@ def ask_cavnar_new_conversation(current_user):
 @login_required
 def ask_cavnar_conversation(current_user, conversation_id):
     payload, status = _do_get_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                               viewer_id=current_user.get("id"))
+                                               viewer_id=_ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -3199,7 +3215,7 @@ def ask_cavnar_conversation(current_user, conversation_id):
 @login_required
 def ask_cavnar_delete_conversation(current_user, conversation_id):
     payload, status = _do_delete_ask_conversation(current_user["restaurant_id"], conversation_id,
-                                                  viewer_id=current_user.get("id"))
+                                                  viewer_id=_ask_uid(current_user))
     return jsonify(**payload), status
 
 
@@ -3267,15 +3283,21 @@ def _do_record_ask_action(restaurant_id, user_id, data, user=None):
     if reason_code not in (None, "") and reason_code not in _rl_ask.REASON_CODES:
         return {"ok": False, "error": "reason_code must be one of " + ", ".join(_rl_ask.REASON_CODES)}, 400
     reason_code = reason_code or None
+    # Whose answer this is (PLATFORM-3): an admin's through view-as never
+    # teaches pooled learning; a delegate's decline holds for that login.
+    from permissions import answer_authority as _aa_ask
+    _via_ask = _rl_ask.request_via(user) if user is not None else _rl_ask.request_via()
+    _auth_ask = _aa_ask(user) if user is not None else (_rl_ask.request_authority()[0])
     log_ask_action(restaurant_id, action, summary=summary,
                    body=body, outcome=outcome, user_id=user_id,
-                   proposal_id=proposal_id, reason=reason)
+                   proposal_id=proposal_id, reason=reason, authority=_auth_ask,
+                   acting_admin_id=(_via_ask or {}).get("admin_id"))
     if proposal_id is not None:
         try:
             import rec_ledger, ask_cavnar as _ac_rec
             rec_ledger.record(restaurant_id, _ac_rec.proposal_key(proposal_id),
                               "accepted" if outcome == "confirmed" else "dismissed", surface="ask",
-                              user_id=user_id,
+                              user_id=user_id, authority=_auth_ask, via=_via_ask,
                               meta=dict({"action": action}, **({"reason": reason} if reason else {}),
                                         **({"reason_code": reason_code} if reason_code else {})),
                               source_ref=f"ask:{proposal_id}:{outcome}")
@@ -3322,7 +3344,7 @@ def _settle_confirmed_proposal(response):
 @login_required
 def ask_cavnar_record_action(current_user):
     data = request.get_json(silent=True) or {}
-    payload, status = _do_record_ask_action(current_user["restaurant_id"], current_user.get("id"), data,
+    payload, status = _do_record_ask_action(current_user["restaurant_id"], _ask_uid(current_user), data,
                                             user=current_user)
     return jsonify(**payload), status
 
@@ -3986,7 +4008,8 @@ def present_calendar_ideas(rid, ideas, user_id=None, shown=None):
                 answered = ids[key] is None
             else:
                 if silenced is None:
-                    silenced = rec_ledger.silenced_keys(rid)
+                    # ...and this login's own "not for us" (PEOPLE-4).
+                    silenced = rec_ledger.silenced_keys(rid, viewer=user_id if isinstance(user_id, int) else None)
                 answered = key in silenced
             idea["answered"] = bool(answered or idea.get("written"))
             idea["answerable"] = not idea["answered"]

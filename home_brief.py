@@ -461,7 +461,8 @@ def _answered_only(restaurant_id, items, surface, user_id=None, db_path=None) ->
     must filter what the owner answered and record nothing."""
     try:
         import rec_ledger
-        silenced = rec_ledger.silenced_keys(restaurant_id)
+        # ...and this login's own "not for us" (PEOPLE-4).
+        silenced = rec_ledger.silenced_keys(restaurant_id, viewer=user_id if isinstance(user_id, int) else None)
     except Exception:
         silenced = set()
     return {it["key"]: (None if it["key"] in silenced else 0) for it in (items or []) if it.get("key")}
@@ -2438,7 +2439,8 @@ def _build(current_user, present=True):
         # the owner's Home, and the owner's answers outrank a manager's on
         # theirs (memory audit, who_answered).
         learned = rec_learning.effectiveness(rid, restaurant=restaurant,
-                                             perspective=rec_learning.perspective_of(current_user))
+                                             perspective=rec_learning.perspective_of(current_user),
+                                             viewer_id=rec_learning.viewer_of(current_user))
     except Exception as e:
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None

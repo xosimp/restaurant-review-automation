@@ -345,6 +345,25 @@ def _stamped_by(stamp, end) -> bool:
     return not stamp or _d(stamp) <= end
 
 
+
+def _utc_end_ts(restaurant_id, end) -> str:
+    """The last moment of the restaurant's local day `end`, as the UTC stamp
+    the ledgers store ("YYYY-MM-DD HH:MM:SS"). Local "23:59:59" compared to
+    UTC stamps dropped every answer given after ~7pm Central from that day's
+    features (9/29/26)."""
+    from datetime import datetime as _dt, time as _time, timezone as _tz, date as _date
+    if isinstance(end, str):
+        end = _date.fromisoformat(end[:10])
+    try:
+        from time_utils import restaurant_now_by_id
+        tz = restaurant_now_by_id(restaurant_id).tzinfo
+        if tz is not None:
+            local = _dt.combine(end, _time(23, 59, 59)).replace(tzinfo=tz)
+            return local.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    return end.isoformat() + " 23:59:59"
+
 def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> dict:
     """The feature dict for this restaurant as of `today`. Pure read.
 
@@ -357,7 +376,7 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
     today = today or date.today()
     d30, d60, d90, d28 = (today - timedelta(days=n) for n in (30, 90, 90, 28))
     end = today.isoformat()
-    end_ts = end + " 23:59:59"
+    end_ts = _utc_end_ts(restaurant_id, today)
     f = {k: None for k in FEATURE_KEYS}
     f["features_version"] = FEATURES_VERSION
     conn = get_conn(db_path)
@@ -610,7 +629,7 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
     import rec_ledger
     from . import provenance
     end = end or date.today()
-    end_ts = end.isoformat() + " 23:59:59"
+    end_ts = _utc_end_ts(restaurant_id, end)
     out = {"recs_answered_28d": None, "recs_done_28d": None, "recs_declined_28d": None,
            "outcomes_evaluated_90d": None, "outcomes_improved_rate_90d": None}
     out.update({v: None for v in provenance.REVIEW_FREE_VARIANT.values()})
@@ -619,6 +638,10 @@ def _rec_loop(conn, restaurant_id, d28, d90, end: date = None) -> dict:
             "SELECT i.rec_id, i.key, e.event FROM rec_events e JOIN rec_instances i ON i.rec_id = e.rec_id "
             "WHERE i.restaurant_id=? AND e.at >= ? AND e.at <= ? "
             "AND e.event IN ('accepted','completed','implemented','dismissed') "
+            # Only the restaurant's own answers: never an admin's (support
+            # triage, view-as), never a delegate's decline that held for
+            # that login alone (rec_ledger.counts_for_restaurant — PLATFORM-2).
+            f"AND {rec_ledger.restaurant_answer_sql('e')} "
             "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id = i.rec_id AND s.event = 'shown' AND s.at <= ?)",
             (restaurant_id, d28.isoformat(), end_ts, end_ts)).fetchall()
         for suffix, keep in (("", lambda k: True), ("_ex_reviews", lambda k: not provenance.review_derived(k))):

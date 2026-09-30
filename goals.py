@@ -13,10 +13,18 @@ when the number is moving the right way by more than its own noise band.
 "Met" itself needs the reading past the target by the noise band
 (target_band, CA1 O15); a reading just across the line is "at_target".
 """
-from datetime import date
+from datetime import date, timedelta
 
 import metrics
 from models import get_conn, DB_PATH
+
+# A goal whose deadline passed without reaching it is read as "missed" for
+# this many days — the owner hears it — then retired: status 'missed', kept
+# in history, out of every prompt and every "am I on track", and offered once
+# in Goals to renew or close (memory re-audit 9/29/26, R3 QUALITY-10: a
+# missed March goal still headed the goals section of Ask, the brief, the
+# DSR and the digest in September, weighted as the most urgent line).
+MISSED_GRACE_DAYS = 14
 
 
 def _checked(metric, target, deadline):
@@ -214,6 +222,13 @@ def describe_target(g) -> str:
 
 
 def end_goal(restaurant_id, goal_id, db_path=DB_PATH, user_id=None, authority=None):
+    """End the ACTIVE goal `goal_id`: its metric falls back to the module
+    setting. Only an account holder (or an internal caller, None) may: a
+    goal is the target every module judges against, and a teammate's or an
+    admin's attempt to SET one is only a proposal, so their END is refused
+    here too (memory re-audit 9/29/26, PEOPLE-6) — False, nothing changed."""
+    if authority in ("delegate", "admin"):
+        return False
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT metric, target, deadline FROM owner_goals WHERE id=? AND restaurant_id=? "
@@ -251,8 +266,10 @@ def target_band(restaurant_id, metric, target, today=None, db_path=DB_PATH) -> d
             "basis": nb.get("basis")}
 
 
-def progress(restaurant_id, db_path=DB_PATH, today=None):
-    """Every active goal with where it stands now."""
+def progress(restaurant_id, db_path=DB_PATH, today=None, include_retired=False):
+    """Every active goal with where it stands now — a missed one only for
+    MISSED_GRACE_DAYS past its deadline (`include_retired` reads them all:
+    retire_missed's own sweep)."""
     today = today or date.today()
     conn = get_conn(db_path)
     try:
@@ -293,9 +310,102 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
             g["days_left"] = days_left
             if days_left < 0 and g["state"] != "met":
                 g["state"] = "missed"
+                if not include_retired and -days_left > MISSED_GRACE_DAYS:
+                    continue            # past its grace: retired, whether or not the sweep has run
         g["gap"] = (round(current - g["target"], 2) if current is not None else None)
         out.append(g)
     return out
+
+
+def retire_missed(restaurant_id, db_path=DB_PATH, today=None):
+    """Move active goals missed more than MISSED_GRACE_DAYS ago to status
+    'missed' — out of the prompts and the target, kept in history, and
+    listed once in Goals to renew or close (missed()). Runs in the 6am
+    outcomes job beside mark_achieved; returns the goals it retired."""
+    today = today or date.today()
+    gone = [g for g in progress(restaurant_id, db_path=db_path, today=today, include_retired=True)
+            if g["status"] == "active" and g.get("state") == "missed"
+            and -(g.get("days_left") or 0) > MISSED_GRACE_DAYS]
+    if not gone:
+        return []
+    conn = get_conn(db_path)
+    try:
+        for g in gone:
+            conn.execute("UPDATE owner_goals SET status='missed' WHERE id=? AND restaurant_id=? AND status='active'",
+                         (g["id"], restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _targets_changed(restaurant_id)
+    return gone
+
+
+def missed(restaurant_id, db_path=DB_PATH, today=None) -> list:
+    """The goals that passed their deadline and were retired, waiting for an
+    account holder to renew or close them — each with its label, unit and
+    summary. Retires any the morning sweep has not reached yet first."""
+    try:
+        retire_missed(restaurant_id, db_path=db_path, today=today)
+    except Exception as e:
+        print(f"[goals] missed goals not retired rid={restaurant_id}: {e}")
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM owner_goals WHERE restaurant_id=? AND status='missed' ORDER BY id DESC",
+            (restaurant_id,)).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    for g in rows:
+        try:
+            info = metrics.describe(g["metric"])
+            g.update({"label": info["label"], "unit": info["unit"]})
+        except Exception:
+            g.update({"label": g["metric"], "unit": ""})
+        g["summary"] = describe_target(g)
+    return rows
+
+
+def renew_missed(restaurant_id, goal_id, days=30, user_id=None, db_path=DB_PATH, authority=None):
+    """Renew a missed goal: the same target, a new deadline `days` from
+    today, set like any goal (a teammate's is a proposal). The missed one is
+    closed as 'replaced'. Returns the new goal, or None."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT metric, target, note FROM owner_goals WHERE id=? AND restaurant_id=? "
+                           "AND status='missed'", (goal_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    days = max(7, min(int(days or 30), 366))
+    g = set_goal(restaurant_id, row["metric"], row["target"], deadline=(date.today() + timedelta(days=days)).isoformat(),
+                 note=row["note"], user_id=user_id, db_path=db_path, authority=authority, source="renewed")
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE owner_goals SET status='replaced' WHERE id=? AND restaurant_id=? AND status='missed'",
+                     (goal_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _targets_changed(restaurant_id)
+    return g
+
+
+def close_missed(restaurant_id, goal_id, user_id=None, db_path=DB_PATH) -> bool:
+    """Close a missed goal for good ('abandoned', like ending one)."""
+    conn = get_conn(db_path)
+    try:
+        ok = conn.execute("UPDATE owner_goals SET status='abandoned', confirmed_by=COALESCE(confirmed_by, ?) "
+                          "WHERE id=? AND restaurant_id=? AND status='missed'",
+                          (user_id, goal_id, restaurant_id)).rowcount > 0
+        conn.commit()
+    finally:
+        conn.close()
+    if ok:
+        _targets_changed(restaurant_id)
+    return ok
 
 
 def mark_achieved(restaurant_id, db_path=DB_PATH, today=None):

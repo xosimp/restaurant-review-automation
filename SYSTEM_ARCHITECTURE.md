@@ -292,6 +292,7 @@ Every prompt builder used to pick its own memory by hand, with fixed caps and no
 | `what_worked` (50) | `rec_learning.what_worked_lines` | measured results for the kind of advice in play |
 | `links` (55) | `link_memory.link_lines` | the cross-module links a surface acts on (`link_memory.SURFACE_KINDS`: the food diagnosis and marketing), with how long each has stood — co-occurrences, never a cause |
 | `events` (60) | `event_memory.memory_lines` | how events, weather, holidays, paydays and campaigns moved sales here |
+| `market` (65) | `event_memory.market_lines` | competitors that opened, closed or moved nearby in the last 180 days, and the restaurant's own Google rating change (Intel-gated; re-audit 9/29/26, INVENTORY-6) |
 | `people` (70) | `people.memory_lines` | attendance, standing patterns, notes |
 | `marketing` (80) | `marketing.memory_lines` | marketing memory; says nothing on the marketing generators and the reply drafter, which build richer blocks of their own |
 | `conversation` (90) | `owner_memory.conversation_lines` → `ask_conversations.memory_lines` | Ask only: the chat's rolling summary, the tools its last answer ran, what this login often asks |

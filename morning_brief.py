@@ -628,7 +628,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             # the first item alone, answering the salmon alert hid
             # "Salmon, Chicken" entirely.
             import rec_ledger
-            quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path) or set()
+            quiet = _safe(rec_ledger.silenced_keys, restaurant_id, db_path=db_path, viewer=viewer) or set()
             low = [i for i in low if rec_ledger.rec_key("stock_low", i) not in quiet]
         if low:
             named = ", ".join(low[:STOCK_NAMED]) + (f" and {len(low) - STOCK_NAMED} more"
@@ -750,7 +750,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # A line whose recommendation the owner already answered — hidden,
     # "not for us", done, snoozed — on Home, in the queue or anywhere else
     # is not said again here (rec_ledger.silenced_keys).
-    lines = _drop_answered(restaurant_id, lines, db_path)
+    lines = _drop_answered(restaurant_id, lines, db_path, viewer=viewer)
     lines = _one_line_per_news(lines)
     # Advice pulling against other advice (memory audit 9/29/26,
     # "conflicts"): a line the owner settled against is left out; the weaker
@@ -910,13 +910,15 @@ def _one_line_per_news(lines):
     return out
 
 
-def _drop_answered(restaurant_id, lines, db_path=DB_PATH):
-    """Lines whose ledger key an answer is silencing, removed."""
+def _drop_answered(restaurant_id, lines, db_path=DB_PATH, viewer=None):
+    """Lines whose ledger key an answer is silencing, removed — the
+    restaurant's answers, and the `viewer` login's own (a manager's "not for
+    us" holds in their brief too — PEOPLE-4)."""
     keyed = [l.get("rec") for l in lines if l.get("rec")]
     if not keyed:
         return lines
     import rec_ledger
-    silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path)
+    silenced = rec_ledger.silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
     return [l for l in lines if not (l.get("rec") and l["rec"] in silenced)]
 
 
@@ -1411,6 +1413,11 @@ def recipients(restaurant_id, db_path=DB_PATH, include_opted_out=False):
     return out
 
 
+def _own_silences(restaurant_id, user, db_path=DB_PATH):
+    import rec_ledger
+    return rec_ledger.own_silences(restaurant_id, user, db_path=db_path)
+
+
 def _view_key(user):
     """Two logins with the same view get the same brief — built once."""
     from permissions import has_permission, LOSS_VIEW, MODULE_VIEW_PERMISSIONS
@@ -1575,7 +1582,10 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
         if done and done["status"] in ("sent", "queued"):
             continue                      # already reached (or on its way) today
-        key = _view_key(u)
+        # Built once per view AND per login's own silences (PEOPLE-4): two
+        # logins with one view share a brief only while neither has said
+        # "not for us" to something the other has not.
+        key = (_view_key(u), _safe(_own_silences, restaurant_id, u, db_path) or frozenset())
         if key not in built:
             # Deduped against the other surfaces BEFORE anything here is
             # presented: the brief's own showings never count against it.

@@ -484,7 +484,10 @@ def par_suggestions(restaurant_id, db_path=DB_PATH, today=None) -> list:
     try:
         conn = get_conn(db_path)
         try:
-            raised = {r["key"]: str(r["at"])[:10] for r in conn.execute(
+            # implemented_at is a UTC stamp: its restaurant-local day, like
+            # par_changed_at's — the UTC date part is tomorrow every evening
+            # in the Americas, which moved the cutoff past that night's 86.
+            raised = {r["key"]: _local_day(r["at"]) for r in conn.execute(
                 "SELECT key, MAX(implemented_at) AS at FROM rec_instances WHERE restaurant_id=? "
                 "AND key LIKE 'raise_par:%' AND implemented_at IS NOT NULL GROUP BY key", (restaurant_id,)).fetchall()}
             try:
