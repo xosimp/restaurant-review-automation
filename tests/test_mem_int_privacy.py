@@ -151,7 +151,8 @@ def test_the_marketing_do_not_promote_line_reaches_the_team_without_the_dish_cos
                       "headline": "Brisket is a food cost driver guests complain about", "dish": "the brisket",
                       "detail": {"complaints": 4}}])
     mkt = memory_context.memory_context(rid, "marketing", viewer=MANAGER).text
-    assert "DO NOT PROMOTE the brisket" in mkt and "food cost" not in mkt
+    # The dish is fenced, the instruction is trusted (memory re-audit 9/29/26, PROMPTS-1).
+    assert "the brisket" in mkt and "DO NOT PROMOTE that dish" in mkt and "food cost" not in mkt
     food = memory_context.memory_context(rid, "food_diagnosis").text
     assert "Brisket is a food cost driver" in food, "the food read keeps the cost side"
 

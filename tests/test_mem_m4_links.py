@@ -291,7 +291,8 @@ def test_the_food_diagnosis_and_marketing_read_their_links_fenced():
     assert ai_guard.UNTRUSTED_OPEN in food.text, "guest-derived words are fenced"
     assert "6 posts went out" not in food.text, "each surface reads its own kinds"
     mkt = memory_context.memory_context(rid, "marketing")
-    assert "DO NOT PROMOTE the brisket" in mkt.text and "6 posts went out" in mkt.text
+    # The dish is fenced, the instruction is trusted (memory re-audit 9/29/26, PROMPTS-1).
+    assert "the brisket" in mkt.text and "DO NOT PROMOTE that dish" in mkt.text and "6 posts went out" in mkt.text
     assert "Friday carries" not in mkt.text
 
 
