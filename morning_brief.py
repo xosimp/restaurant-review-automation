@@ -279,10 +279,16 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
             return str(v)[:10] == today.isoformat() or (hasattr(v, "isoformat") and v.isoformat()[:10] == today.isoformat())
         except Exception:
             return False
+    uid = (viewer or {}).get("id") if isinstance(viewer, dict) else None
     for ln in (block.sections or {}).get("constraints") or []:
         if _is_today(ln.get("date")) and ln.get("text"):
+            # "Your note" only when it is: an owner's or a teammate's note
+            # says whose it is (memory re-audit PEOPLE-9).
+            mine = uid is not None and ln.get("author_id") is not None and int(ln["author_id"]) == int(uid)
+            who = " ".join(str(ln.get("who") or "").split())[:60]
+            lead = "Your note for today" if mine else (f"Note for today from {who}" if who else "Note for today")
             out.append({"key": "memory:constraint", "tone": "action", "source": "memory", "claim_kind": "owner",
-                        "text": f"Your note for today: {' '.join(str(ln['text']).split())}",
+                        "text": f"{lead}: {' '.join(str(ln['text']).split())}",
                         "ask": "What should I keep in mind today?"})
             break
     has_effects = any(l.get("key") == "today" and "measured" in (l.get("text") or "") for l in lines)
@@ -526,7 +532,8 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "ask": f"How do I go after the {t['label'].lower()} opportunity?"})
 
     # ── accountability ──
-    s = _safe(issues.summary, restaurant_id, db_path=db_path)
+    s = _safe(issues.summary, restaurant_id, db_path=db_path, sees_loss=sees_loss,
+              hide_modules=issues.hidden_modules(viewer))
     if s and (s["open"] or s["acknowledged"]):
         age = (f" — oldest waiting {s['oldest_open_hours']:.0f}h unacknowledged"
                if s.get("oldest_open_hours") else "")
@@ -1417,6 +1424,35 @@ def _view_key(user):
             has_permission(user, LOSS_VIEW), access.view_for(user))
 
 
+def _personal(restaurant_id, user, db_path=DB_PATH) -> bool:
+    """Whether this login's brief may differ from another's with the same
+    view key: the restaurant keeps memory some logins may not read (an
+    owner-only or one login's own fact), or this login has its own
+    silences. Then its brief is built for it alone — a co-owner received the
+    first recipient's own notes, and a manager another manager's view
+    (memory re-audit PEOPLE-9). Fails toward per-login."""
+    uid = (user or {}).get("id")
+    if uid is None:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            if conn.execute("SELECT 1 FROM ask_memory WHERE restaurant_id=? AND COALESCE(audience, 'team') != 'team' "
+                            "LIMIT 1", (restaurant_id,)).fetchone():
+                return True
+            try:
+                if conn.execute("SELECT 1 FROM rec_silences WHERE restaurant_id=? AND subject_id=? LIMIT 1",
+                                (restaurant_id, uid)).fetchone():
+                    return True
+            except Exception:
+                pass                      # no silences table on this database
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    return False
+
+
 def _only_all_clear(brief):
     lines = brief.get("lines") or []
     return len(lines) == 1 and lines[0].get("key") == "all_clear"
@@ -1573,6 +1609,8 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         if done and done["status"] in ("sent", "queued"):
             continue                      # already reached (or on its way) today
         key = _view_key(u)
+        if _personal(restaurant_id, u, db_path):
+            key = key + (("login", u["id"]),)
         if key not in built:
             # Deduped against the other surfaces BEFORE anything here is
             # presented: the brief's own showings never count against it.
