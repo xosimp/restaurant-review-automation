@@ -192,8 +192,12 @@ def roll_alerts(db_path=None, now=None) -> dict:
                         "WHERE opened_at >= ? AND opened_at < ? GROUP BY restaurant_id, alert_type",
                         (m + "-01", nxt + "-01")).fetchall():
                     opens[(o["restaurant_id"], o["alert_type"])] = int(o["n"] or 0)
-            except Exception:
-                pass
+            except Exception as e:
+                # Only a database with no opens ledger reads 0 opens. A failed
+                # read raises (memory re-audit 9/29/26, FORGET-11): it wrote
+                # opened=0 for the month and alert_log was pruned under it.
+                if "no such table" not in str(e).lower():
+                    raise
             conn.execute("DELETE FROM alert_monthly WHERE month=?", (m,))
             for r in rows:
                 conn.execute("INSERT INTO alert_monthly (restaurant_id, month, alert_type, fired, dollars, opened) "
@@ -300,11 +304,14 @@ def stamp_newsletter_results(db_path=None, now=None) -> dict:
             if "no such" in str(e).lower():
                 return {"stamped": 0}
             raise
-        try:
-            import guest_email
-            tracking = guest_email.opens_tracked(db_path) if ids else False
-        except Exception:
-            tracking = False
+        # Whether opens were tracked is read once; a failed read stamps
+        # nothing tonight (memory re-audit 9/29/26, FORGET-11). It was read
+        # as "not tracked" and stamped NULL opens on the row for good — a
+        # stamp is written once — and email_log was then pruned under it.
+        # Raising keeps email_log's rows (ops' registry) until a night the
+        # read works.
+        import guest_email
+        tracking = guest_email.opens_tracked(db_path) if ids else False
         for nid in ids:
             r = conn.execute(
                 "SELECT SUM(CASE WHEN r.message_id IS NOT NULL THEN 1 ELSE 0 END) AS tracked, "
