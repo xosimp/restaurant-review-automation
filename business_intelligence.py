@@ -1561,12 +1561,21 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
 
 # ── the one brief ──────────────────────────────────────────────────────────
 
-def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH, ctx=None) -> dict:
+def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH, ctx=None,
+                    log_rank: bool = False) -> dict:
     """One cross-module read: where the money is, what connects, what to do
     first, and what could not be answered.
 
     Deterministic — no model runs here. Everything is either measured by a
     module or explicitly reported as unavailable.
+
+    `log_rank` logs the one thing's pick and the candidates it beat as the
+    day's "one_thing" rank build (pick_one_thing). Only the owner's Home
+    passes it (strategy_routes._do_cross_module): every other caller — Ask,
+    a manager's view, the schedule engine, the morning brief per recipient,
+    the weekly and monthly reviews — overwrote the day's row with a
+    candidate set the owner never saw (memory re-audit 9/29/26,
+    CROSSMODULE-13).
     """
     data = gather(restaurant_id, restaurant=restaurant, db_path=db_path)
     links = correlations(restaurant_id, data=data, db_path=db_path)
@@ -1578,7 +1587,7 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH,
     # What to do first, across modules rather than within one: a concrete
     # action, never a module label, ranked by urgency x dollars.
     candidates = one_thing_candidates(restaurant_id, data, links, db_path=db_path)
-    first = pick_one_thing(restaurant_id, candidates, db_path=db_path, ctx=ctx)
+    first = pick_one_thing(restaurant_id, candidates, db_path=db_path, ctx=ctx, log_rank=log_rank)
 
     unanswered = []
     for m in data.get("modules_off", []):

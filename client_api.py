@@ -11011,7 +11011,9 @@ def home_dismiss_api(current_user):
     rid = current_user["restaurant_id"]
     if data.get("restore_kind"):
         import decisions
-        ok = decisions.restore_kind(rid, str(data["restore_kind"])[:60], user_id=current_user.get("id"))
+        from permissions import answer_authority as _aa_restore
+        ok = decisions.restore_kind(rid, str(data["restore_kind"])[:60], user_id=current_user.get("id"),
+                                    authority=_aa_restore(current_user))
         home_brief.invalidate(rid)
         return jsonify(ok=True, restored=bool(ok))
     key = data.get("key").strip() if isinstance(data.get("key"), str) else ""
@@ -11031,7 +11033,8 @@ def home_dismiss_api(current_user):
         import rec_ledger as _rl_sub
         from permissions import answer_authority as _aa_undo
         return jsonify(**home_brief.undismiss(rid, key, subject_id=_rl_sub.silence_subject(current_user),
-                                              own=_aa_undo(current_user) == "principal"))
+                                              own=_aa_undo(current_user) == "principal",
+                                              authority=_aa_undo(current_user)))
     # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
     # refused, never stored as if it were one of the six.
     import rec_ledger as _rl_codes

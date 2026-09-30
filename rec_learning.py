@@ -166,8 +166,23 @@ REASON_STEP, REASON_CAP = 0.05, 0.15
 REASON_HALF_LIFE_DAYS = 90
 # The states an episode can be in that count in no rate: replaced, still
 # live, snoozed, put off for timing ("bad timing"), or answered only by a
-# delegate the owner has not answered (from the owner's side).
-UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated")
+# delegate the owner has not answered (from the owner's side). And (memory
+# re-audit 9/29/26):
+#   distrusted  "don't trust the data" (silence_rule distrust / verified) —
+#               a question about the feed, not a "no" to the advice; every
+#               other reader (insight_store, decisions.declined_subjects)
+#               already treated it so, while the ranker and the fatigue
+#               throttle counted it a rejection (LOOPS-11).
+#   reopened    a decline the owner took back ("Use again", restoring a
+#               quiet kind — rec_ledger.unsilence's `reopened` event): the
+#               owner asked for the advice back, so the decline no longer
+#               teaches (QUALITY-1).
+#   unseen      went unanswered, but only ever DELIVERED where nobody may
+#               have looked — an email that was never opened
+#               (rec_ledger.DELIVERY_ONLY_SURFACES) — never on a screen, a
+#               push, a text or a click: not "ignored", in no denominator
+#               (LOOPS-10).
+UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated", "distrusted", "reopened", "unseen")
 
 
 def _stamp(d):
@@ -394,7 +409,9 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         return []
     evs = {}
     shown = set()
+    seen_shown = set()
     ids = [r["rec_id"] for r in rows]
+    only = ",".join(f"'{x}'" for x in rec_ledger.DELIVERY_ONLY_SURFACES)
     for i in range(0, len(ids), 400):
         chunk = ids[i:i + 400]
         marks = ",".join("?" for _ in chunk)
@@ -402,9 +419,12 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
-            for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
-                                  f"AND event = 'shown'", chunk).fetchall():
+            for e in conn.execute(f"SELECT rec_id, MAX(CASE WHEN COALESCE(surface, '') NOT IN ({only}) "
+                                  f"THEN 1 ELSE 0 END) AS on_screen FROM rec_events WHERE rec_id IN ({marks}) "
+                                  f"AND event = 'shown' GROUP BY rec_id", chunk).fetchall():
                 shown.add(e["rec_id"])
+                if e["on_screen"]:
+                    seen_shown.add(e["rec_id"])
         else:
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN "
                                   f"({marks}) ORDER BY at, id", chunk).fetchall():
@@ -421,6 +441,13 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         es = evs.get(r["rec_id"], [])
         r["events"] = es
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
+        # Whether anyone could have seen it (LOOPS-10): an episode only an
+        # unopened email carried is `unseen`, not ignored (_state).
+        if lean:
+            emailed_only = r["rec_id"] in shown and r["rec_id"] not in seen_shown
+            r["seen"] = not emailed_only or any(e["event"] in rec_ledger.SEEN_EVENTS for e in es)
+        else:
+            r["seen"] = rec_ledger.episode_seen(es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
         r["state"] = _state(r, now, perspective)
@@ -442,6 +469,23 @@ def _authority(e) -> str:
     or admin."""
     a = (e or {}).get("authority")
     return a if a in ("delegate", "admin") else "principal"
+
+
+def reopened_after(events, perspective="principal") -> bool:
+    """Whether the latest decline in `events` (an episode's, oldest first)
+    was taken back afterwards (rec_ledger.unsilence's `reopened`) by the
+    same side — the owner's reversal for the owner's decline, a delegate's
+    for theirs. An admin's view-as reversal takes nothing back."""
+    side = "delegate" if perspective == "delegate" else "principal"
+    last_decline = last_reopen = None
+    for i, e in enumerate(events or ()):
+        if _authority(e) != side:
+            continue
+        if e["event"] == "dismissed":
+            last_decline = (str(e.get("at") or ""), i)
+        elif e["event"] == "reopened":
+            last_reopen = (str(e.get("at") or ""), i)
+    return bool(last_decline and last_reopen and last_reopen > last_decline)
 
 
 def _delegate_declined(r) -> bool:
@@ -467,6 +511,10 @@ def _state(r, now, perspective="principal"):
         return "implemented"
     if st == "dismissed" and str(r.get("silence_rule") or "") == "bad_timing":
         return "deferred"
+    if st == "dismissed" and str(r.get("silence_rule") or "") in ("distrust", "verified"):
+        return "distrusted"
+    if st == "dismissed" and reopened_after(r.get("events") or (), perspective):
+        return "reopened"
     if st in ("accepted", "completed", "implemented", "dismissed", "superseded"):
         return st
     if st == "expired":
@@ -479,8 +527,10 @@ def _state(r, now, perspective="principal"):
         base = "open"
     if base in ("ignored", "open") and _delegate_declined(r):
         if perspective == "delegate":
-            return "dismissed"
+            return "reopened" if reopened_after(r.get("events") or (), "delegate") else "dismissed"
         return "delegated" if base == "ignored" else base
+    if base == "ignored" and r.get("seen") is False:
+        return "unseen"
     return base
 
 
@@ -1268,8 +1318,10 @@ class Effectiveness:
 # The owner's answer to "keep suggesting this kind?" (kind_hold:<kind>): a
 # yes (Done / Track) keeps the kind proposed for this long; a "not for us"
 # leaves it stopped.
-KIND_HOLD_PREFIX = "kind_hold"
-KIND_HOLD_KEEP_DAYS = 180
+KIND_HOLD_PREFIX = rec_ledger.KIND_HOLD_KIND
+# The keep's length lives in rec_ledger, which silences the question for
+# exactly as long (answer_silence; memory re-audit 9/29/26, LOOPS-6).
+KIND_HOLD_KEEP_DAYS = rec_ledger.KIND_HOLD_KEEP_DAYS
 
 
 def kept_hold_kinds(restaurant_id, db_path=DB_PATH, now=None) -> set:
