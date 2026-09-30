@@ -1768,3 +1768,24 @@ def fetch_menu_prices(restaurant_id: int) -> list:
         out.append({"item_id": item, "item_name": menu[item].get("name"), "level_id": level,
                     "level": levels.get(level), "price": price})
     return out
+
+
+def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
+    """Orders due at a later time — catering, scheduled pick-up — by the time
+    they are needed: [{"due_at", "date", "guests", "net_sales", "ticket_no"}]
+    (ticket/getbyneeddatetime; RPower endpoint audit, High ROI #11). Only
+    tickets with a real "needed by" time: RPOWER's 2000-01-01 means none
+    (every ticket at Simple EJ's, 9/29/26)."""
+    token, base = _ctx(restaurant_id)
+    rows = _paged(token, "ticket/getbyneeddatetime", {**base, "startdate": _d(start_date),
+                                                       "enddate": _d(end_date + timedelta(days=1)),
+                                                       "sortorder": "need_dttm"})
+    out = []
+    for t in rows:
+        due = _punch_dt(t.get("need_dttm"))
+        if due is None or t.get("is_cancelled") or not (start_date <= due.date() <= end_date):
+            continue
+        out.append({"due_at": due.strftime("%Y-%m-%dT%H:%M:%S"), "date": due.date().isoformat(),
+                    "guests": int(_num(t.get("guest_count"))), "ticket_no": _id(t.get("ticket")),
+                    "net_sales": round(_num(t.get("items")), 2)})
+    return out

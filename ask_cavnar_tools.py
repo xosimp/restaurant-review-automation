@@ -2017,6 +2017,18 @@ def _read_upcoming(restaurant_id, days=14, _viewer=None):
                 **extra)
     except Exception as e:
         log.debug("read_upcoming: demand signals unavailable: %s", e)
+    # Orders already rung for a later time — catering, scheduled pick-up —
+    # from a POS that records "needed by" (RPower endpoint audit, #11).
+    try:
+        import pos as _pos_u
+        _name_u, _mod_u = _pos_u.connected_provider(restaurant_id)
+        _due_fn = getattr(_mod_u, "fetch_orders_due", None) if _mod_u else None
+        if callable(_due_fn):
+            for o in _due_fn(restaurant_id, today, end) or []:
+                what = f"Order due at {o['due_at'][11:16]}" + (f" for {o['guests']} guests" if o.get("guests") else "")
+                add(o["date"], "order_due", what)
+    except Exception as e:
+        log.debug("read_upcoming: orders due unavailable: %s", e)
     try:
         import schedule_rules
         from models import get_restaurant
@@ -3041,6 +3053,7 @@ TOOLS = [
             "name": "read_upcoming",
             "description": (
                 "WHAT IS COMING, BY DATE, from what is on the books: the owner's own events and reservations, "
+                "orders already rung for a later time (catering, scheduled pick-up, where the POS records them), "
                 "tomorrow from the daily report (prep, the forecast and its record), closed dates, scheduled "
                 "social posts, guest texts waiting to go, and approved or requested time off. Call it for "
                 "'what's on this Friday', 'anything I should know about next week', 'who's off Saturday'. Not a "

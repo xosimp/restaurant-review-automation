@@ -115,3 +115,13 @@ def test_clock_ins_cover_the_business_day_by_name_and_rpower_id(db_path, monkeyp
 def test_pos_reports_rpower_as_able_to_answer_during_service(db_path):
     rid = _connected(db_path)
     assert pos.supports(rid, "fetch_sales_today") and pos.supports(rid, "fetch_clock_ins_today")
+
+
+def test_orders_due_later_skip_rpowers_no_value_date(db_path, monkeypatch):
+    rid = _connected(db_path)
+    _stub(monkeypatch, {"ticket/getbyneeddatetime": [
+        {"ticket": 7, "need_dttm": "2026-10-02T11:30:00", "guest_count": 40, "items": 900.0},
+        {"ticket": 8, "need_dttm": "2000-01-01T00:00:00", "guest_count": 2, "items": 30.0}]})
+    got = rpower.fetch_orders_due(rid, date(2026, 9, 30), date(2026, 10, 13))
+    assert got == [{"due_at": "2026-10-02T11:30:00", "date": "2026-10-02", "guests": 40, "ticket_no": "7",
+                    "net_sales": 900.0}]
