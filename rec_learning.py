@@ -2136,6 +2136,82 @@ def _worked_sentence(label, b) -> str:
     return f"{label}: " + "; ".join(bits) if bits else ""
 
 
+def record_gates(restaurant_id, db_path=DB_PATH, now=None) -> tuple:
+    """({kind: gate}, {tag: gate}) over the what-worked window — each gate
+    {"modules": set, "owner_only": bool, "loss": bool}, the union over every
+    episode of that kind (or carrying that tag): the modules its content
+    comes from (modules_of), whether any rests on owner-only figures, and
+    whether any is a loss. What the what-worked record is gated by for a
+    viewer (line_gate / viewer_sees_record): its bucket's single most
+    frequent module let a food kind filed under Home, a loss kind or an
+    owner-only DSR action reach a manager's and the shared outputs' prompts
+    (memory re-audit QUALITY-15). Never raises (fails closed per line)."""
+    now = now or datetime.utcnow()
+    kinds, tags = {}, {}
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT key, kind, module, evidence_sources, owner_only, tags FROM rec_instances "
+                                "WHERE restaurant_id=? AND created_at >= ?",
+                                (restaurant_id, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)))).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_learning] record gates unavailable for {restaurant_id}: {e}")
+        return None, None
+    for r in rows:
+        row = dict(r)
+        kind = row.get("kind") or rec_ledger.kind_of(row["key"])
+        mods = modules_of(dict(row, kind=kind))
+        loss = _is_loss(dict(row, kind=kind))
+        owner_only = bool(row.get("owner_only"))
+        try:
+            tag_list = [t for t in rec_ledger.episode_tags(r) if str(t).startswith(WORKED_TAG_PREFIXES)]
+        except Exception:
+            tag_list = []
+        for bucket, name in [(kinds, kind)] + [(tags, t) for t in tag_list]:
+            g = bucket.setdefault(name, {"modules": set(), "owner_only": False, "loss": False})
+            g["modules"] |= mods
+            g["owner_only"] = g["owner_only"] or owner_only
+            g["loss"] = g["loss"] or loss
+    return kinds, tags
+
+
+def line_gate(scope, name, bucket_module=None, gates=None) -> dict:
+    """The memory_context gate fields for one what-worked line: "modules"
+    (every module its record draws on — "loss" for comps and voids) and
+    "audience" "principals" when any of it rests on owner-only figures.
+    `gates` is record_gates()'s (kinds, tags); None — unreadable — fails
+    closed to the account holders."""
+    kinds, tags = gates if gates else (None, None)
+    if kinds is None:
+        return {"modules": ["loss"], "audience": "principals"}
+    g = (kinds if scope == "kind" else tags).get(name) or {"modules": set(), "owner_only": False, "loss": False}
+    mods = set(g["modules"])
+    if scope == "kind":
+        mods |= modules_of({"key": name, "kind": name})
+        if _is_loss({"key": name, "kind": name}):
+            mods.add("loss")
+    if bucket_module:
+        mods.add(_module_name(bucket_module))
+    if g["loss"]:
+        mods.add("loss")
+    mods -= {"home", ""}
+    out = {"modules": sorted(mods)}
+    if g["owner_only"]:
+        out["audience"] = "principals"
+    return out
+
+
+def viewer_sees_record(viewer, scope, name, gates=None) -> bool:
+    """Whether a login may read the record of one kind or tag (line_gate,
+    through memory_context.visible). No viewer: an internal caller."""
+    if viewer is None:
+        return True
+    import memory_context
+    return memory_context.visible(dict(line_gate(scope, name, None, gates), text="x"), viewer)
+
+
 def what_worked_lines(req):
     """memory_context provider: "WHAT HAS WORKED HERE" — per kind and per
     subject tag of this restaurant's advice: how often it was taken, how
@@ -2150,6 +2226,7 @@ def what_worked_lines(req):
         return []
     db_path = getattr(req, "db_path", None) or DB_PATH
     rec = _stored_what_worked(rid, db_path=db_path) or what_worked(rid, db_path=db_path)
+    gates = record_gates(rid, db_path=db_path)
     modules, topics = SURFACE_SCOPE.get(getattr(req, "surface", None), (None, None))
     subjects = [str(s).lower() for s in (getattr(req, "subjects", None) or ()) if s]
     wanted_tags = set()
@@ -2188,10 +2265,14 @@ def what_worked_lines(req):
                                                           else 0.5) + min(1.0, b.get("measured", 0) / 20.0)
         line = {"text": text, "date": None, "source": "system", "subject": name, "weight": weight,
                 "trusted": True}
+        # Scoped to the logins who may see what it rests on (the assembler's
+        # viewer check): every module its episodes draw on — a food kind
+        # filed under Home is food — "loss" for comps and voids, and the
+        # account holders only when any of it rests on owner-only figures
+        # (memory re-audit QUALITY-15). A manager without Food Cost never
+        # reads what food advice did here.
+        line.update(line_gate(scope, name, b.get("module"), gates))
         if b.get("module") and b["module"] != "home":
-            # Scoped to the logins who may see that module (the assembler's
-            # viewer check): a manager without Food Cost never reads what
-            # food advice did here.
             line["module"] = b["module"]
         lines.append(line)
     lines.sort(key=lambda ln: -ln["weight"])

@@ -147,7 +147,9 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH, denied_module
     mem = memory.restaurant_memory(restaurant_id, db_path=db_path)
     if denied:
         mem = dict(mem, slopes={k: v for k, v in (mem.get("slopes") or {}).items() if visible(k, denied)})
-    lines = memory.lines(mem)
+    # No advice record here: Ask (this section's one reader) takes "what
+    # worked" from memory_context, viewer-gated (PEOPLE-11 / QUALITY-16).
+    lines = memory.lines(mem, record=False)
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
