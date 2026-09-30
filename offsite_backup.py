@@ -275,6 +275,72 @@ def lifecycle_days(cfg=None) -> dict:
     return {"days": best[0], "rule": best[1], "error": None}
 
 
+# A key scoped to one bucket's objects (R2 "Object Read & Write" — the least
+# privilege the backup needs) cannot read the bucket's lifecycle rule: the
+# GET ?lifecycle answers 403. The copies themselves can still be listed.
+LIFECYCLE_FORBIDDEN = ("lifecycle unreadable: HTTP 401", "lifecycle unreadable: HTTP 403")
+S3_LIST_MAX_PAGES = 50                      # 50,000 objects; a nightly backup makes one a day
+
+
+def oldest_copy_days(cfg=None) -> dict:
+    """{"oldest_days", "count", "error"} — the age in days of the oldest
+    object under BACKUP_S3_PREFIX (ListObjectsV2, paged, each call with a
+    timeout). What the lifecycle rule exists to guarantee, measured
+    directly, for a key that may not read the rule (9/29/26). oldest_days is
+    None when there are no copies yet. Never raises."""
+    import requests
+    import xml.etree.ElementTree as ET
+    cfg = cfg or s3_config()
+    if not cfg:
+        return {"oldest_days": None, "count": 0, "error": "object storage is not configured (BACKUP_S3_*)"}
+    empty = hashlib.sha256(b"").hexdigest()
+    path = f"/{cfg['bucket']}"
+    host = urllib.parse.urlparse(cfg["endpoint"]).netloc
+    now = _dt.datetime.now(_dt.timezone.utc)
+    oldest, count, token = None, 0, None
+    for _ in range(S3_LIST_MAX_PAGES):
+        query = {"list-type": "2", "prefix": cfg.get("prefix") or ""}
+        if token:
+            query["continuation-token"] = token
+        amz_date = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        headers = {"host": host, "x-amz-date": amz_date, "x-amz-content-sha256": empty}
+        auth = sign("GET", path, headers, empty, cfg["access_key"], cfg["secret_key"], cfg["region"], amz_date,
+                    query=query)
+        send = {k: v for k, v in headers.items() if k != "host"}
+        send["Authorization"] = auth
+        try:
+            resp = requests.get(cfg["endpoint"] + _uri_encode(path, True) + "?" + canonical_query(query),
+                                headers=send, timeout=S3_LIFECYCLE_TIMEOUT)
+        except Exception as e:
+            return {"oldest_days": None, "count": count, "error": f"copies unlistable: {e}"}
+        if resp.status_code != 200:
+            return {"oldest_days": None, "count": count, "error": f"copies unlistable: HTTP {resp.status_code}"}
+        try:
+            root = ET.fromstring(resp.content or b"")
+        except ET.ParseError as e:
+            return {"oldest_days": None, "count": count, "error": f"copies unlistable: {e}"}
+        truncated, token = False, None
+        for el in root:
+            name = el.tag.rsplit("}", 1)[-1]
+            if name == "Contents":
+                stamp = next((c.text for c in el if c.tag.rsplit("}", 1)[-1] == "LastModified"), None)
+                try:
+                    at = _dt.datetime.fromisoformat((stamp or "").replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                count += 1
+                age = (now - at).total_seconds() / 86400.0
+                oldest = age if oldest is None or age > oldest else oldest
+            elif name == "IsTruncated":
+                truncated = (el.text or "").strip().lower() == "true"
+            elif name == "NextContinuationToken":
+                token = (el.text or "").strip() or None
+        if not (truncated and token):
+            return {"oldest_days": None if oldest is None else round(oldest, 1), "count": count, "error": None}
+    return {"oldest_days": None if oldest is None else round(oldest, 1), "count": count,
+            "error": f"copies unlistable: more than {S3_LIST_MAX_PAGES} pages"}
+
+
 # ── the credential scrub registry (#102) ────────────────────────────────────
 
 # Column names that look like a credential. Anything matching is scrubbed

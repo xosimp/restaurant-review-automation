@@ -2035,7 +2035,9 @@ def run_offsite_lifecycle_check():
     was a manual bucket rule nothing read.) Reads the bucket's lifecycle
     configuration (offsite_backup.lifecycle_days); no rule, a rule longer
     than the limit, or an unreadable one is a failed run, captured and paged
-    (weekly cooldown). Skipped when object storage is not configured.
+    (weekly cooldown). A key that may not read the rule (403) is checked by
+    the age of the oldest copy instead (offsite_backup.oldest_copy_days).
+    Skipped when object storage is not configured.
     Returns the standard counts and the days found."""
     import offsite_backup
     cfg = offsite_backup.s3_config()
@@ -2047,8 +2049,22 @@ def run_offsite_lifecycle_check():
     ok = days is not None and days <= BACKUP_OFFSITE_MAX_DAYS
     out = {"attempted": 1, "ok": 1 if ok else 0, "failed": 0 if ok else 1, "skipped": 0, "hit_bound": False,
            "lifecycle_days": days, "rule": got.get("rule"), "limit_days": BACKUP_OFFSITE_MAX_DAYS}
+    why = None
+    if not ok and got.get("error") in offsite_backup.LIFECYCLE_FORBIDDEN:
+        # A least-privilege key (this bucket's objects only) may not read the
+        # rule. Measure what the rule guarantees instead: no copy older than
+        # the limit, plus a day for the store's deletion lag. A missing rule
+        # then pages within a week of the first copy overstaying.
+        aged = offsite_backup.oldest_copy_days(cfg)
+        oldest = aged.get("oldest_days")
+        out.update({"checked": "copies", "oldest_copy_days": oldest, "copies": aged.get("count")})
+        ok = aged.get("error") is None and (oldest is None or oldest <= BACKUP_OFFSITE_MAX_DAYS + 1)
+        out["ok"], out["failed"] = (1, 0) if ok else (0, 1)
+        if not ok:
+            why = aged.get("error") or (f"the oldest backup copy is {oldest} days old, over "
+                                        f"{BACKUP_OFFSITE_MAX_DAYS} (the key cannot read the bucket rule)")
     if not ok:
-        why = got.get("error") or f"the bucket keeps backup copies {days} days, over {BACKUP_OFFSITE_MAX_DAYS}"
+        why = why or got.get("error") or f"the bucket keeps backup copies {days} days, over {BACKUP_OFFSITE_MAX_DAYS}"
         out["error"] = why
         log.error(f"offsite lifecycle: {why}")
         _ops.capture(RuntimeError(f"off-site backup expiry: {why}"), job="offsite_lifecycle", context="lifecycle")

@@ -434,8 +434,14 @@ way.
   → `offsite_backup.lifecycle_days`, one signed `GET ?lifecycle`): no
   enabled expiration rule covering `BACKUP_S3_PREFIX`, or one longer than
   `BACKUP_OFFSITE_MAX_DAYS` (35), fails the run and pages
-  (`backup_lifecycle`, weekly cooldown). The key needs
-  `GetBucketLifecycleConfiguration` for it (memory re-audit 9/29/26).
+  (`backup_lifecycle`, weekly cooldown) (memory re-audit 9/29/26). A key
+  that may not read the rule — production's is R2 "Object Read & Write" on
+  `cavnar-backups` only, which R2 answers 403 — is checked by the copies
+  instead (`offsite_backup.oldest_copy_days`, ListObjectsV2): the oldest
+  copy under the prefix older than `BACKUP_OFFSITE_MAX_DAYS` + 1 day, or a
+  listing that fails, pages the same way. Production (9/29/26): bucket
+  `cavnar-backups`, rule `expire-35d` (35 days, all prefixes), set with
+  `wrangler r2 bucket lifecycle add`.
 - **Email**: skipped above `BACKUP_EMAIL_MAX_BYTES` (25 MB of encrypted
   file); the skip is in the run's `offsite_error`. An emailed copy has no
   expiry the code can enforce: `BACKUP_EMAIL_MODE=fallback` sends it only
