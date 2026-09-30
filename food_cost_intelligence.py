@@ -1279,7 +1279,15 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     were never joined. Sample data is refused rather than reported, following
     ask_cavnar's own precedent.
     """
-    ctx = {"labor": None, "reviews": None, "marketing": None, "notes": []}
+    ctx = {"labor": None, "reviews": None, "marketing": None, "guests": None, "notes": []}
+    # The guests the nightly reports measured (re-audit 9/29/26,
+    # CROSSMODULE-18): the food diagnosis could not tell "waste rose" from
+    # "guests rose".
+    try:
+        import business_intelligence as _bi_g
+        ctx["guests"] = _bi_g.measured_guests(restaurant_id, db_path=db_path)
+    except Exception:
+        pass
     try:
         from labor import analyse_shifts_for_restaurant
         a = analyse_shifts_for_restaurant(restaurant_id)
@@ -1390,6 +1398,13 @@ def _operational_lines(ctx) -> dict:
             f"- Marketing: {mk['posts_30d']} published posts in 30 days"
             + (f" reaching {reach:,} unique accounts" if reach is not None else " (reach not measured)")
             + " — a demand change would show up in usage", fields)
+    g = ctx.get("guests")
+    if g:
+        try:
+            import review_intelligence as _ri_g
+            lines["guests"] = _ri_g.guests_line(g)
+        except Exception:
+            pass
     return lines
 
 
@@ -1562,7 +1577,7 @@ EVIDENCE RULES — these bound what you may claim:
 - Your `cause` must name at least one driver from "WHERE THE MONEY IS" by its label. You may not introduce a driver that is not listed.
 - Name an ingredient, a dish, a supplier or a weekday ONLY if it appears above.
 - The drivers are ALREADY RANKED. Do not re-rank them. Your job is to explain why the top ones are the top ones and what connects them.
-- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED", or to the receiving and invoice line under "WHAT CHANGED IN BUYING" (module "purchasing"), only by naming that figure in `operational_evidence`. If those sections say there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
+- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED" (the nightly reports' "Guests" line is module "guests" — more guests is more usage, not waste), or to the receiving and invoice line under "WHAT CHANGED IN BUYING" (module "purchasing"), only by naming that figure in `operational_evidence`. If those sections say there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
 - Two things moving together in one window is not proof one caused the other. Say they moved together.
 - Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit. Low recipe coverage or a high inferred-waste share means the underlying usage figures are soft, and your confidence must reflect that regardless of how large the dollar figures look.
 - `confidence` is "high" only when the drivers are specific AND the trust block is clean AND another module points the same way. It is "low" when you are reasoning mostly from totals.
@@ -1574,7 +1589,7 @@ Return this exact shape:
   "cause": "the most likely driver or combination of drivers, naming them, 1-2 sentences",
   "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
   "what_would_confirm": "one concrete thing the owner could check or count this week that would tell the two apart, 1 sentence",
-  "operational_evidence": [{{"module": "labor|reviews|marketing|purchasing", "metric": "what it is", "value": "the figure exactly as given above"}}],
+  "operational_evidence": [{{"module": "labor|reviews|marketing|purchasing|guests", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "the single highest-value thing to do first, startable this week with the staff and suppliers they already have, 1 sentence",
   "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
@@ -1711,7 +1726,7 @@ def _pattern_block(wd, seasonal) -> str:
     return "\n".join(lines) if lines else "- Nothing above the evidence floor."
 
 
-OPERATIONAL_MODULES = ("labor", "reviews", "marketing", "purchasing")
+OPERATIONAL_MODULES = ("labor", "reviews", "marketing", "purchasing", "guests")
 
 
 def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
