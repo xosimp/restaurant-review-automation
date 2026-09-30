@@ -958,7 +958,9 @@ def _load_with(conn):
     # The learning scorecard's latest month (learning_scorecard, memory audit
     # 9/29/26): a curve worsening or flat, and fatigue — admin rows that are
     # now issues on the client, never only numbers on a page.
-    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, s.fatigued, s.computed_at "
+    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, "
+                       # the throttle's own reading (learning_scorecard.rolling_fatigue)
+                       "COALESCE(s.fatigue_now, s.fatigued) AS fatigued, s.computed_at "
                        "FROM learning_scorecards s WHERE s.month = (SELECT MAX(s2.month) FROM learning_scorecards s2 "
                        "WHERE s2.restaurant_id = s.restaurant_id)", label="learning_scorecards", optional=True)
 
@@ -2349,7 +2351,8 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         if lrow.get("fatigued"):
             add("learning:fatigue", "Owner fatigue: most recommendations dismissed or ignored", "warning",
                 lrow.get("computed_at"), "Open AI quality", None,
-                "Three quarters or more of what this owner settled in the month went dismissed or ignored; "
+                "Three quarters or more of what this owner settled in the last 30 days went dismissed or "
+                "ignored; "
                 "Home, the nightly report and the feed now show fewer until it recovers.", zone="UTC",
                 action_kind="link", action_href=f"{client}?tab=ai")
     return out
