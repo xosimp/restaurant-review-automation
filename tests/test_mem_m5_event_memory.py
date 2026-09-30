@@ -8,6 +8,7 @@ floor), by the owner's listed events (measured once they recur), by the
 nightly report's predictions (only in the measured direction), by
 memory_context, and by the other workstreams (measured_effect, night_facts).
 """
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -442,3 +443,31 @@ def test_the_events_screen_carries_what_the_nights_taught():
     ev = next(x for x in body["signals"] if x["kind"] == "event")
     assert ev["measured"]["n"] == 3 and ev["measured"]["applies"] is True and "10/" not in ev["measured"]["last"]
     assert "measured" not in next(x for x in body["signals"] if x["kind"] == "reservations")
+
+
+def test_each_recorded_night_keeps_who_worked_it_and_the_effect_says_so():
+    """Owner, 9/30/26: it poured all day - does it learn how many servers
+    were on? Each recorded night keeps the people punched in by role and
+    their hours, and a label's measured effect says what stood on its nights."""
+    import shift_facts
+    rid = _rid()
+    _history(rid, games={3, 6, 9})
+    for k, servers in ((3, 4), (6, 5), (9, 4)):
+        d = TUE - timedelta(weeks=k)
+        rows = [{"date": d.isoformat(), "day": d.strftime("%A"), "employee": f"Server {i}", "role": "Server",
+                 "shift_start": "16:00", "shift_end": "22:00", "scheduled_hours": "6", "actual_hours": "6",
+                 "sales": "5000", "schedule_known": "0"} for i in range(servers)]
+        rows.append({"date": d.isoformat(), "day": d.strftime("%A"), "employee": "Cook A", "role": "Kitchen",
+                     "shift_start": "15:00", "shift_end": "23:00", "scheduled_hours": "8", "actual_hours": "8",
+                     "sales": "5000", "schedule_known": "0"})
+        shift_facts.ingest(rid, rows, "rpower")
+        em.record_night(rid, d)
+    conn = models.get_conn()
+    r = conn.execute("SELECT headcount, headcount_json, labor_hours FROM event_outcomes WHERE restaurant_id=? "
+                     "AND business_date=?", (rid, (TUE - timedelta(weeks=6)).isoformat())).fetchone()
+    conn.close()
+    assert r["headcount"] == 6 and json.loads(r["headcount_json"]) == {"Kitchen": 1, "Server": 5}
+    assert r["labor_hours"] == 38.0
+    e = em.measured_effect(rid, "Cubs")
+    assert e["staffing"]["median_headcount"] == 5 and e["staffing"]["by_role"] == {"Kitchen": 1, "Server": 4}
+    assert "a median 5 people worked (4 Server, 1 Kitchen)" in e["basis"]

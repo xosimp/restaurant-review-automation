@@ -1791,6 +1791,10 @@ def _do_compliance_get(u):
             "cross_training_defaults": _cross_training_defaults(_rid(u)),
             "cross_training_default": int(round(__import__("shift_quality").CROSS_TRAINING_DEFAULT * 100)),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
+            # Dining sections: the most servers on the floor at once
+            # (schedule_rules over_section_cap). Moved here from the admin
+            # page, its only editor until 9/30/26.
+            "section_count": int(getattr(r, "section_count", 0) or 0) or None,
             # "Never cut a role below N people": the cut floor for a role
             # with no floor of its own (schedule_rules.cut_floor), 1..10.
             "cut_floor_default": _sr.cut_floor_default(r), "cut_floor_max": _sr.CUT_FLOOR_MAX,
@@ -1889,6 +1893,19 @@ def _do_compliance_set(u):
     if cut_floor is not None:
         settings["cut_floor_default"] = cut_floor
         out["cut_floor_default"] = cut_floor
+    if "section_count" in b:
+        v = b.get("section_count")
+        if v in (None, "", 0, "0"):
+            n = None
+        else:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                n = -1
+            if isinstance(v, bool) or n < 1 or n > 30 or str(v).strip() not in (str(n), f"{n}.0"):
+                return {"ok": False, "error": "Dining sections must be a whole number from 1 to 30, or blank."}, 400
+        settings["section_count"] = n
+        out["section_count"] = n
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))

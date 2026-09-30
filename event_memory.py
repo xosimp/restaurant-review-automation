@@ -138,6 +138,14 @@ def init_event_memory(db_path=DB_PATH):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_event_outcomes_rid_date ON event_outcomes(restaurant_id, business_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_event_outcomes_rid_label ON event_outcomes(restaurant_id, label)")
+        # Who worked the night (owner, 9/30/26: "does it learn ... how many
+        # servers were on that day?"): the people punched in by role, their
+        # count and their hours - so a rain night that sold 20% under can be
+        # read beside the floor that stood for it.
+        _have = {r[1] for r in conn.execute("PRAGMA table_info(event_outcomes)").fetchall()}
+        for _col, _typ in (("headcount", "INTEGER"), ("headcount_json", "TEXT"), ("labor_hours", "REAL")):
+            if _col not in _have:
+                conn.execute(f"ALTER TABLE event_outcomes ADD COLUMN {_col} {_typ}")
         conn.execute("""CREATE TABLE IF NOT EXISTS event_effects (
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
             label           TEXT    NOT NULL,
@@ -622,6 +630,33 @@ def _night_extras(conn, restaurant_id, iso):
     return covers, labor
 
 
+def _night_staff(restaurant_id, iso, db_path=None):
+    """(headcount, {role: people}, hours) for one night from the stored
+    punches (shift_facts): each person once, by the role they worked. (None,
+    None, None) with no punches on file. Never raises."""
+    try:
+        import shift_facts
+        rows = shift_facts.rows(restaurant_id, since=iso, until=iso, db_path=db_path)
+    except Exception:
+        return None, None, None
+    people, by_role, hours = set(), {}, 0.0
+    for r in rows or []:
+        if str(r.get("date") or "")[:10] != iso:
+            continue
+        who = " ".join(str(r.get("employee") or "").lower().split())
+        if not who:
+            continue
+        people.add(who)
+        by_role.setdefault((r.get("role") or "Unassigned").strip() or "Unassigned", set()).add(who)
+        try:
+            hours += float(r.get("actual_hours") or r.get("scheduled_hours") or 0)
+        except (TypeError, ValueError):
+            pass
+    if not people:
+        return None, None, None
+    return len(people), {k: len(v) for k, v in sorted(by_role.items())}, round(hours, 1)
+
+
 def measure_night(restaurant_id, day, db_path=None, flags=None) -> dict:
     """{"net", "basis", "source", "baseline", "baseline_n", "lift_pct",
     "flags"} for one night, or {"reason"} when it cannot be measured: the
@@ -678,6 +713,7 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
             written = []
             if m.get("lift_pct") is not None:
                 covers, labor = _night_extras(conn, restaurant_id, iso)
+                heads, heads_by_role, hours = _night_staff(restaurant_id, iso, db_path=db_path)
                 # One lift, one night: a night that carried two things is
                 # kept for each, marked confounded (QUALITY-4) — a label is
                 # measured on its own nights where it has enough of them.
@@ -692,11 +728,13 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
                     conn.execute(
                         "INSERT INTO event_outcomes (restaurant_id, business_date, weekday, kind, label, raw_label, "
                         "source, net, baseline, baseline_n, lift_pct, basis, net_source, covers, labor_pct, "
-                        "owner_lift_pct, confounded, co_labels) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "owner_lift_pct, confounded, co_labels, headcount, headcount_json, labor_hours) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (restaurant_id, iso, day.strftime("%A"), f["kind"], f["label"], str(f.get("raw") or "")[:160],
                          f.get("source"), m["net"], m["baseline"], m["baseline_n"], m["lift_pct"], m.get("basis"),
                          m.get("source"), covers if covers is not None else f.get("covers"), labor,
-                         f.get("owner_lift_pct"), conf, co))
+                         f.get("owner_lift_pct"), conf, co, heads,
+                         json.dumps(heads_by_role) if heads_by_role else None, hours))
                     written.append(f["label"])
             conn.commit()
         finally:
@@ -919,12 +957,48 @@ def measured_effect(restaurant_id, label, db_path=None):
     basis = (f"{s['display'] or label}: nights here ran a median {abs(med):.0f}% {word} a typical same weekday "
              f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(s['last_date'])}{_record_words(s)}) — before and "
              f"after, not proof")
+    staffing = _staffing_on(hits)
+    if staffing:
+        basis += f"; {staffing['text']}"
     return {"median_lift_pct": med, "n": n, "last": date.fromisoformat(s["last_date"]),
-            "label": norm,
+            "label": norm, "staffing": staffing,
             "display": s["display"], "kind": s["kind"], "low_lift_pct": s["low_lift_pct"],
             "high_lift_pct": s["high_lift_pct"], "direction": s["direction"], "applies": bool(applies),
             "owner_median_pct": s["owner_median_pct"], "basis": basis,
             "confounded": s["confounded"], "dates": list(s["dates"]), "drift": s["drift"]}
+
+
+def _staffing_on(rows):
+    """Who stood on a label's nights: {"n", "median_headcount",
+    "median_labor_pct", "median_hours", "by_role", "text"} over the nights
+    that carry punches, or None. by_role is each role's median people.
+    The words say what was staffed, never whether it was right - that is
+    the owner's (or the schedule's) to judge against the lift."""
+    nights = {}
+    for r in rows or []:
+        if r.get("headcount"):
+            nights.setdefault(r["business_date"], r)
+    if not nights:
+        return None
+    vals = list(nights.values())
+    heads = _median([v["headcount"] for v in vals])
+    labor = [v["labor_pct"] for v in vals if v.get("labor_pct") is not None]
+    hours = [v["labor_hours"] for v in vals if v.get("labor_hours")]
+    roles = {}
+    for v in vals:
+        try:
+            for k, c in (json.loads(v.get("headcount_json") or "{}") or {}).items():
+                roles.setdefault(k, []).append(int(c))
+        except (TypeError, ValueError):
+            continue
+    by_role = {k: _median(c) for k, c in sorted(roles.items())}
+    lab = _median(labor) if labor else None
+    top = ", ".join(f"{v:g} {k}" for k, v in sorted(by_role.items(), key=lambda kv: -kv[1])[:3])
+    text = (f"on those nights a median {heads:g} people worked" + (f" ({top})" if top else "")
+            + (f" and labor ran {lab:.1f}% of sales" if lab is not None else "")
+            + f", over {len(vals)} night{'s' if len(vals) != 1 else ''} with punches")
+    return {"n": len(vals), "median_headcount": heads, "median_labor_pct": lab,
+            "median_hours": _median(hours) if hours else None, "by_role": by_role, "text": text}
 
 
 def summaries(restaurant_id, limit=12, db_path=None) -> list:

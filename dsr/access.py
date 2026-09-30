@@ -156,6 +156,7 @@ _TOPIC_WORDS = {
     "prime": r"prime[\s-]+cost",
     "food": r"food[\s-]+cost|cogs",
     "loss": r"comps?|comped|voids?|voided|refunds?|refunded|loss(?:es)?|shrink",
+    "salaries": r"salar\w*",
 }
 
 
@@ -174,6 +175,8 @@ def _hidden_topics(hidden):
         words.append(_TOPIC_WORDS["food"])
     if any(h.split(".", 1)[-1] in LOSS_KEYS for h in hs):
         words.append(_TOPIC_WORDS["loss"])
+    if any(h.split(".", 1)[-1].startswith("salaried") for h in hs):
+        words.append(_TOPIC_WORDS["salaries"])
     return re.compile(r"\b(" + "|".join(words) + r")\b", re.I) if words else None
 
 
@@ -681,7 +684,7 @@ def _live_salaries(facts, restaurant):
         cost, net = lm.get("cost"), sm.get("net")
         if not share or cost is None or not net or float(net) <= 0:
             return facts
-        total = float(cost) + share
+        total = float(cost) + share         # today's salaries: a changed one recosts the night
     except Exception:
         return facts
     out = copy.deepcopy(facts)
@@ -699,6 +702,7 @@ def _live_salaries(facts, restaurant):
     if m.get("target_pct") is not None:
         try:
             m["vs_target_pts"] = round(float(m["pct"]) - float(m["target_pct"]), 1)
+            m["salaried_vs_target_pts"] = m["vs_target_pts"]
         except (TypeError, ValueError):
             pass
     m["includes_salaries"] = True

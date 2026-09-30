@@ -413,6 +413,23 @@ def collect(ctx):
         # "Employees scheduled"); None without a published schedule.
         "scheduled": scheduled,
     }
+    # The owner's labor, salaries in (owner, 9/30/26: "Erik is going to want
+    # to see labor with salaries included in the report - that's his actual
+    # labor"): the night's share of the salaries (models.salaried_day_share)
+    # on top of the hourly cost, over tonight's net, and its gap to the
+    # target. Owner-only by name (dsr.access OWNER_ONLY_PREFIXES "salaried"):
+    # the manager's view drops these keys and every narrative line citing them.
+    if costed and net and pct is not None:
+        try:
+            from models import salaried_day_share
+            share = float(salaried_day_share(ctx.restaurant) or 0)
+        except Exception:
+            share = 0.0
+        if share > 0:
+            all_in = round((cost + share) / net * 100.0, 1)
+            metrics.update({"salaried_cost": round(share, 2), "salaried_total_cost": round(cost + share, 2),
+                            "salaried_total_pct": all_in,
+                            "salaried_vs_target_pts": round(all_in - target, 1)})
 
     observations = []
     if pct is not None:

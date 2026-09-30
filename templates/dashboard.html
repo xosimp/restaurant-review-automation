@@ -31803,6 +31803,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+='</div>';
     // Front-of-house and patio roles: chip pickers over the same roles.
     h+='<div class="lb2-sub">Front of house<small>the roles the section cap and covers apply to</small></div><div class="chip-tog" id="rul-foh">'+_chipTog(roles,d.foh_roles||[],'data-foh',ro)+'</div>';
+    // Dining sections: the most front-of-house people on the floor at once
+    // (over_section_cap). Blank means no cap. Moved from the admin page.
+    h+='<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="rul-sections">Dining sections</label><input type="number" class="ac-input ac-num n" id="rul-sections" min="1" max="30" step="1" value="'+(d.section_count?esc(d.section_count):'')+'" placeholder="—" aria-label="Dining sections"'+(ro?' disabled':'')+'><small>The most front-of-house people on the floor at once. Leave blank for no cap.</small></div></div>';
     h+='<div class="lb2-sub">Patio roles<small>staffed only when the weather allows</small></div><div class="chip-tog" id="rul-patio">'+_chipTog(roles,d.patio_roles||[],'data-patio',ro)+'</div>';
     // Reservation feed: which system, its key, and what it can do today.
     var rf=d.reservation_feed||{},provs=d.reservation_providers||[];
@@ -31869,6 +31872,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var body={rules:rules,role_floors:floors};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
+    var secIn=document.getElementById('rul-sections');
+    if(secIn&&!secIn.disabled){var secV=secIn.value.trim(),secN=+secV;
+      if(secV!==''&&(secN!==Math.floor(secN)||secN<1||secN>30)){toast('Dining sections must be a whole number from 1 to 30, or blank','error');secIn.focus();return;}
+      body.section_count=secV===''?null:secN;}
     var cutIn=document.getElementById('rul-cut-floor');
     if(cutIn&&!cutIn.disabled){
       var cutV=cutIn.value.trim(),cutNum=+cutV,cutMx=+(cutIn.getAttribute('max')||10);

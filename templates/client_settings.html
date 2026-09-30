@@ -218,26 +218,8 @@ textarea{resize:vertical;min-height:60px}
         </label>
         <div class="hint">Saving a Place ID with Review Intelligence on turns this on. A connected Google Business Profile is fetched either way.{% if shared_listing and restaurant.is_demo %} This listing also belongs to {{ shared_listing }}, so this demo can't fetch it.{% endif %}</div>
       </div>
-      <div style="margin-top:14px">
-        <div class="form-grid">
-          <div class="form-group">
-            <label>Weekly digest day</label>
-            <select id="digest_day">
-              {% for day in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
-              <option value="{{ day }}" {{"selected" if restaurant.digest_day == day}}>{{ day|title }}</option>
-              {% endfor %}
-            </select>
-            <div class="hint">Owner receives their weekly review summary on this day at 8am</div>
-          </div>
-          <div class="form-group">
-            <label>Weekly digest email</label>
-            <select id="digest_enabled">
-              <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled — send automatically</option>
-              <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
-            </select>
-          </div>
-        </div>
-      </div>
+      {# The weekly digest's day and on/off live in the owner's Account ->
+         Alerts, one place (owner, 9/30/26). #}
     </div>
   </div>
 
@@ -278,64 +260,6 @@ textarea{resize:vertical;min-height:60px}
           <label>Labor % target</label>
           <input type="number" id="labor_target_pct" value="{{ restaurant.labor_target_pct or 30.0 }}" min="15" max="50" step="0.5">
           <div class="hint">Default is 30%. {% if bench_hints and bench_hints.labor %}{{ bench_hints.labor }}{% else %}No published labor benchmark for this restaurant's type, so set the owner's own target.{% endif %}</div>
-        </div>
-        <div class="form-group">
-          <label>Payroll week starts on</label>
-          <select id="week_start_day">
-            <option value="0"{% if (restaurant.week_start_day or 0) == 0 %} selected{% endif %}>Monday</option>
-            <option value="1"{% if (restaurant.week_start_day or 0) == 1 %} selected{% endif %}>Tuesday</option>
-            <option value="2"{% if (restaurant.week_start_day or 0) == 2 %} selected{% endif %}>Wednesday</option>
-            <option value="3"{% if (restaurant.week_start_day or 0) == 3 %} selected{% endif %}>Thursday</option>
-            <option value="4"{% if (restaurant.week_start_day or 0) == 4 %} selected{% endif %}>Friday</option>
-            <option value="5"{% if (restaurant.week_start_day or 0) == 5 %} selected{% endif %}>Saturday</option>
-            <option value="6"{% if (restaurant.week_start_day or 0) == 6 %} selected{% endif %}>Sunday</option>
-          </select>
-          <div class="hint">Overtime is calculated per this 7-day week, and generated schedules start on this day. Federal overtime rules use the employer's own designated workweek, so this must match payroll.</div>
-        </div>
-        <div class="form-group">
-          <label>Monthly revenue target ($)</label>
-          <input type="number" id="monthly_revenue_target" value="{{ restaurant.monthly_revenue_target or 0 }}" min="0" step="1000" placeholder="e.g. 365000">
-          <div class="hint">Used to compute PAR hours budget for AI schedule generation. One target with the weekly below: a month is 52/12 = 4.33 weeks.</div>
-        </div>
-        <div class="form-group">
-          <label>Weekly revenue target ($)</label>
-          <input type="number" id="weekly_revenue_target" value="{{ ((restaurant.monthly_revenue_target or 0) * 12 / 52)|round(2) if restaurant.monthly_revenue_target else 0 }}" min="0" step="100" placeholder="e.g. 84000">
-          <div class="hint">For owners who plan by the week. Typing either one fills the other; the one typed last is saved.</div>
-        </div>
-        <div class="form-group full">
-          <label>Restaurant hours &amp; shift rules (for AI schedule generation)</label>
-          <textarea id="hours_notes" rows="5" placeholder="e.g. Open 11am–9pm Sun–Wed, 11am–10pm Thu–Sat. Cooks arrive 8:30am. Bartenders evening only, stay 1h after close...">{{ restaurant.hours_notes or '' }}</textarea>
-          <div class="hint">Exact open/close times, role-specific arrival rules, and closer policies. The AI follows these exactly when generating schedules.</div>
-        </div>
-        <div class="form-group full">
-          <label>Additional scheduling notes (admin override)</label>
-          <textarea id="sched_notes" rows="3" placeholder="e.g. Always keep at least 1 experienced server on Saturdays. Maria trains new hires and should open when available.">{{ restaurant.sched_notes or '' }}</textarea>
-          <div class="hint">Freeform notes injected directly into the AI prompt. Use for one-off policies or manager preferences not captured by other settings.</div>
-        </div>
-        <div class="form-group">
-          <label>Dining sections (#)</label>
-          <input type="number" id="section_count" value="{{ restaurant.section_count or '' }}" min="1" max="30" placeholder="e.g. 5">
-          <div class="hint">Max concurrent servers is capped to this number. Leave blank to skip.</div>
-        </div>
-        <div class="form-group">
-          <label>Delivery % of sales</label>
-          <input type="number" id="delivery_pct" value="{{ restaurant.delivery_pct or '' }}" min="0" max="100" placeholder="e.g. 25">
-          <div class="hint">If delivery is 25%+ of sales, the AI weights more labor toward kitchen roles.</div>
-        </div>
-        <div class="form-group full">
-          <label>Daypart split</label>
-          <input type="text" id="daypart_split" value="{{ restaurant.daypart_split or '' }}" placeholder="e.g. lunch 35%, dinner 65%">
-          <div class="hint">Tells the AI which daypart drives more revenue so it can weight staffing accordingly.</div>
-        </div>
-        <div class="form-group full">
-          <label>Role minimums (JSON override)</label>
-          <textarea id="role_minimums_json" rows="3" placeholder='e.g. {"Server": 2, "Cook": 3, "Bartender": 1}'>{{ restaurant.role_minimums_json or '' }}</textarea>
-          <div class="hint">Override the default minimum floor per role. Must be valid JSON. Leave blank to use defaults.</div>
-        </div>
-        <div class="form-group">
-          <label>Never cut a role below (people)</label>
-          <input type="number" id="cut_floor_default" value="{{ restaurant.cut_floor_default if restaurant.cut_floor_default is not none else 2 }}" min="1" max="10" step="1">
-          <div class="hint">Used for any role without its own floor (the owner's role floors, then the role minimums above). Cavnar AI never suggests sending someone home if it would leave fewer than this on. Cuts only; not a staffing requirement. The owner can change it under Labor, Schedule rules.</div>
         </div>
         <div class="form-group full">
           <label>Per-role hourly rates (JSON)</label>

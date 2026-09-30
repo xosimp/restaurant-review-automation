@@ -11576,6 +11576,30 @@ _SEVERITY_LABELS = {
     "service":     "Service quality",
     "minor":       "Minor",
 }
+# What earns each tier, said on the chip's hover beside this review's own
+# complaint (owner, 9/30/26: "why does this review have a legal exposure
+# tag?"). The definitions are analyser.ANALYSE_PROMPT's severity rules.
+_SEVERITY_WHY = {
+    "safety":      "Tagged when a review describes illness, food poisoning, an allergic reaction, a foreign "
+                   "object, an injury on the premises or an active hazard.",
+    "legal":       "Tagged when a review alleges staff misconduct, discrimination or harassment, or mentions a "
+                   "lawsuit, an attorney, the health department or the BBB.",
+    "operational": "Tagged when something broke in how the restaurant runs: a wrong or missing order, a very "
+                   "long wait, cold food, a reservation not honoured.",
+    "service":     "Tagged when the experience was poor but nothing failed outright: unfriendly, inattentive, "
+                   "rushed or noisy.",
+    "minor":       "Tagged for a preference, a small gripe, or a review with no complaint in it.",
+}
+
+
+def severity_reason(severity, complaint=None, summary=None):
+    """The chip's hover: this review's own complaint, then what the tier
+    means. None for an untiered review."""
+    label = _SEVERITY_LABELS.get(severity or "")
+    if not label:
+        return None
+    what = " ".join(str(complaint or summary or "").split()).rstrip(".")
+    return (f"{label}: {what}. " if what else f"{label}. ") + _SEVERITY_WHY.get(severity, "")
 
 # The inbox's page size. The list used to be unbounded: every review a
 # restaurant had ever received was selected, serialised and — on the web —
@@ -11723,6 +11747,7 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         d["severity"] = d.get("severity") or None
         d["severity_label"] = _SEVERITY_LABELS.get(d.get("severity") or "", None)
         d["specific_complaint"] = d.get("specific_complaint") or None
+        d["severity_reason"] = severity_reason(d["severity"], d["specific_complaint"], d.get("summary"))
         d["urgent"] = is_urgent_review(d)
         result.append(d)
     if include_total:

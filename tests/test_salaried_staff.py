@@ -5,6 +5,7 @@ it. A salaried person's punches leave hourly labor (their pay is the salary),
 each trading day carries annual / 52 / trading days a week, and the figure is
 the owner's alone.
 """
+import inspect
 import json
 import os
 from datetime import date, timedelta
@@ -145,3 +146,32 @@ def test_rpowers_system_manager_login_is_a_station_not_a_manager():
     import rpower
     assert rpower.is_station_name("System Manager")
     assert not rpower.is_station_name("Andrew Marola")
+
+
+def test_the_report_summary_states_labor_with_salaries_for_the_owner_only():
+    """Owner, 9/30/26: "Erik is going to want to see labor with salaries
+    included in the report - that's his actual labor." The night's labor
+    block carries the salaries-in figures (owner-only by name), the writer is
+    told to state labor with them, and a manager's copy drops every line that
+    cites them or names salaries."""
+    import dsr
+    from dsr import access, narrative
+    facts = {"blocks": {"sales": dsr.block(dsr.READY, source="rpower", metrics={"net": 10000.0}),
+                        "labor": dsr.block(dsr.READY, source="rpower", metrics={
+                            "cost": 3000.0, "pct": 30.0, "target_pct": 35.0, "salaried_cost": 824.18,
+                            "salaried_total_cost": 3824.18, "salaried_total_pct": 38.2,
+                            "salaried_vs_target_pts": 3.2})}}
+    story = {"executive_summary": {"text": "Labor with salaries ran 38.2%, 3.2 points over target.",
+                                   "cites": ["labor.salaried_total_pct", "labor.salaried_vs_target_pts"]},
+             "operations_summary": {"text": "Labor ran 30% of sales.", "cites": ["labor.pct"]},
+             "went_well": [{"text": "Salaries held steady.", "cites": ["sales.net"]}]}
+    mgr = {"id": 2, "role": "manager", "is_admin": False}
+    _, hidden = access.redact(facts, mgr)
+    assert {"labor.salaried_total_pct", "labor.salaried_vs_target_pts"} <= hidden
+    n = access.narrative_for(story, hidden)
+    assert "38.2" not in str(n) and "alar" not in str(n)
+    assert narrative.owner_only_cite("labor.salaried_total_pct")
+    assert narrative._OWNER_TOPIC_RE.search("salaries held")
+    assert "state labor with labor.salaried_total_pct" in inspect.getsource(narrative)
+    src = inspect.getsource(__import__("dsr.block_labor", fromlist=["x"]))
+    assert '"salaried_total_pct": all_in' in src

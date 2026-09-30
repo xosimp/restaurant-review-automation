@@ -1258,13 +1258,13 @@ def _rv_reason(verdict):
 # no figure: the manager view hides budget, prime cost, food cost and comps,
 # voids and refunds (dsr.access), so the manager's opening may not raise them.
 _OWNER_TOPIC_RE = re.compile(r"\b(budget\w*|prime[\s-]+cost|food[\s-]+cost|comps?|comped|voids?|voided|"
-                             r"refunds?|refunded|loss(?:es)?|shrink)\b", re.I)
+                             r"refunds?|refunded|loss(?:es)?|shrink|salar\w*)\b", re.I)
 
 
 def owner_only_cite(cite):
     """Whether a fact key is one the Manager DSR never shows, whatever the
     manager was granted: the Food block (FOOD_COST_VIEW), the owner-only
-    financials (budget*, vs_budget*, prime_cost*, source_checks) and the loss
+    financials (budget*, vs_budget*, prime_cost*, source_checks, salaried*) and the loss
     lines (comps, voids, refunds, loss*) — dsr.access's own name rules."""
     from dsr.access import LOSS_KEYS, OWNER_ONLY_PREFIXES
     block, _, key = str(cite).partition(".")
@@ -1808,7 +1808,8 @@ EVIDENCE RULES. A line that breaks one is deleted before the owner reads it; an 
 
 WHAT TO WRITE
 - executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in tonight's facts drove it, then what to watch. Measured figures only.
-- operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, or comps, voids and refunds. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
+- Labor for the owner: when labor.salaried_total_pct is under TONIGHT'S FACTS it is the owner's real labor — the hourly labor plus tonight's share of the salaries — and the target judges it. Everywhere but operations_summary, state labor with labor.salaried_total_pct (its gap with labor.salaried_vs_target_pts and labor.target_pct), not labor.pct, and call it labor with salaries.
+- operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, salaries, or comps, voids and refunds. For labor there use labor.pct, never a labor.salaried_* key, and never mention salaries. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
 - went_well, needs_attention: up to 4 each, one sentence each, most important first. An empty list is fine.
 - biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
 - actions_tomorrow: at most 5, ranked most important first — each an ACTION, never an observation ("Order chicken.", "Schedule another bartender Friday.", "Respond to yesterday's two-star review."), something the manager or owner can start tomorrow with the staff and suppliers they already have.

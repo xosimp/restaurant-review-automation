@@ -260,7 +260,29 @@ def test_the_admin_settings_save_accepts_and_refuses_the_default(db, monkeypatch
         assert not out["ok"] and "1 to 10" in out["error"], junk
     assert get_restaurant(rid, db).cut_floor_default == 4
     html = open("templates/client_settings.html").read()
-    # The page sends every field it tracks by the server's own list
-    # (admin_routes.SETTINGS_FIELDS), one reader for all of them.
-    assert 'id="cut_floor_default"' in html and "cut_floor_default" in admin_routes.SETTINGS_FIELDS
+    # The owner's Scheduling rules is the one place it is set on screen (owner,
+    # 9/30/26: the admin page repeated it); the admin save still accepts it
+    # from the server's own list (admin_routes.SETTINGS_FIELDS).
+    assert 'id="cut_floor_default"' not in html and "cut_floor_default" in admin_routes.SETTINGS_FIELDS
     assert "var CAV_FIELD_KEYS = {{ settings_fields|tojson }};" in html
+
+
+def test_dining_sections_are_set_in_the_owners_rules(db, monkeypatch):
+    """Moved from the admin page (its only editor, 9/30/26): the section
+    cap is a whole number 1-30 or blank in Labor -> Scheduling rules."""
+    import strategy_routes
+    rid = _rest(db, "Sections")
+    owner = {"id": 1, "restaurant_id": rid, "role": "client", "is_admin": False, "username": "o"}
+    assert strategy_routes._do_compliance_get(owner)[0]["section_count"] is None
+    monkeypatch.setattr(strategy_routes, "_body", lambda: {"section_count": 6})
+    assert strategy_routes._do_compliance_set(owner)[1] == 200
+    assert get_restaurant(rid, db).section_count == 6
+    assert strategy_routes._do_compliance_get(owner)[0]["section_count"] == 6
+    for junk in (0.5, 31, "x", -1, True):
+        monkeypatch.setattr(strategy_routes, "_body", lambda junk=junk: {"section_count": junk})
+        assert strategy_routes._do_compliance_set(owner)[1] == 400, junk
+    monkeypatch.setattr(strategy_routes, "_body", lambda: {"section_count": None})
+    strategy_routes._do_compliance_set(owner)
+    assert not get_restaurant(rid, db).section_count
+    src = open("templates/dashboard.html").read()
+    assert 'id="rul-sections"' in src and "body.section_count=" in src

@@ -126,10 +126,14 @@ def test_the_live_math_rounds_for_display_only():
     assert json.loads(out.stdout) == ["216667", "84230.77", "", "", "50000"]
 
 
-def test_the_admin_form_saves_only_the_box_typed_in():
+def test_the_revenue_target_is_set_in_one_place_the_owners_account():
+    """The admin page repeated the owner's Account -> Targets boxes (owner,
+    9/30/26); the owner's pair is the one on screen. The admin save still
+    takes either (the route test below)."""
     admin = open(os.path.join(ROOT, "templates", "client_settings.html"), encoding="utf-8").read()
-    assert 'id="weekly_revenue_target"' in admin
-    assert "if (cavRevSource === 'weekly') payload.weekly_revenue_target" in admin
+    assert 'id="weekly_revenue_target"' not in admin and 'id="monthly_revenue_target"' not in admin
+    dash = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    assert 'id="as-tg-weekly_revenue_target"' in dash and 'id="as-tg-monthly_revenue_target"' in dash
 
 
 def test_the_admin_save_takes_the_weekly_over_the_monthly_it_resent(db, monkeypatch):
