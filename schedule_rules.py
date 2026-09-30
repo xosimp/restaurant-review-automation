@@ -53,7 +53,7 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
-                  "before_arrival", "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
+                  "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
@@ -76,7 +76,6 @@ LABELS = {
     "outside_window": "outside the hours they can work that day",
     "missing_cert": "missing a certification the role needs",
     "no_manager_on_duty": "no manager or keyholder on the shift",
-    "before_arrival": "starts before that role's arrival time",
     "ends_before_role_close": "ends before that role is meant to stay until",
     "manager_rule_unusable": "manager on duty is on, but nobody is a closer or keyholder",
     "minor_early": "a minor starting before the earliest allowed start",
@@ -659,7 +658,6 @@ class Constraints:
     preferred: dict = field(default_factory=dict)          # {name: {"preferred_dayparts": [...], "desired_hours": n}}
     foh_roles: set = field(default_factory=lambda: {"server"})
     patio_roles: set = field(default_factory=set)
-    arrivals: dict = field(default_factory=dict)           # {role lower: minutes relative to open}
     close_mins: dict = field(default_factory=dict)         # {role lower: minutes after close the role stays until}
     section_cap: int = 0
     role_floors: dict = field(default_factory=dict)
@@ -866,12 +864,6 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
     c.foh_roles = {str(x).strip().lower() for x in foh if str(x).strip()} or {"server"}
     c.patio_roles = {str(x).strip().lower() for x in (_load_json(getattr(restaurant, "patio_roles_json", None), []) or []) if str(x).strip()}
-    c.arrivals = {}
-    for k, v in (_load_json(getattr(restaurant, "role_arrival_json", None), {}) or {}).items():
-        try:
-            c.arrivals[str(k).strip().lower()] = int(v)
-        except (TypeError, ValueError):
-            continue
     c.close_mins = {}
     for k, v in (_load_json(getattr(restaurant, "role_close_min_json", None), {}) or {}).items():
         try:
@@ -1200,16 +1192,6 @@ def violations(rows: list, c: Constraints) -> list:
         ok, why = c.cert_ok(name, r.get("role", ""))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
-        arr = c.arrivals.get((r.get("role") or "").strip().lower())
-        if arr is not None and c.open_times:
-            try:
-                day = datetime.strptime(r.get("date", ""), "%Y-%m-%d").strftime("%A")
-            except (ValueError, TypeError):
-                day = r.get("day") or ""
-            open_m = parse_minutes((c.open_times or {}).get(day, ""))
-            start_m = parse_minutes(r.get("shift_start", ""))
-            if open_m is not None and start_m is not None and start_m < open_m + arr - 15:
-                out.append(_v("before_arrival", i, r, f"starts {r.get('shift_start')}, {r.get('role')} arrives at {_fmt_minutes(open_m + arr)}"))
 
     # a role that stays until N minutes after close: the last of that role
     # each night must end no earlier ("bartenders stay an hour after close")
@@ -1591,11 +1573,6 @@ def prompt_block(c: Constraints) -> str:
         lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
     if c.close_mins and c.close_times:
         lines.append("- Stays after close: " + "; ".join(f"the last {role} until {m} min after close" for role, m in sorted(c.close_mins.items())) + ".")
-    if c.arrivals and c.open_times:
-        bits = []
-        for role, off in sorted(c.arrivals.items()):
-            bits.append(f"{role} {abs(off)} min {'before' if off < 0 else 'after'} open" if off else f"{role} at open")
-        lines.append("- Arrival times by role: " + "; ".join(bits) + " — nobody starts earlier than their role's arrival.")
     if c.minors:
         # The limits Cavnar CHECKS, said as that — not as the law. Minors
         # with an age band carry the band's federal floor (NS5 H4).

@@ -49,9 +49,12 @@ OUTCOMES = ("on_time", "late", "no_show", "called_out", "left_early", "covered")
 MISSES = ("no_show", "called_out")
 # Who may overwrite whom: a stronger source's outcome stands.
 SOURCE_RANK = {"manual": 4, "closeout_confirmed": 3, "coverage_check": 2, "schedule_vs_punch_join": 1}
-# Past this many minutes after the scheduled start a clock-in is late (the
-# live check's own grace, intraday.COVERAGE_GRACE_MINUTES).
+# Past this many minutes after the expected clock-in a clock-in is late.
+# The expected clock-in is the scheduled start less the role's lead
+# (clock_in_leads — "servers clock in 5 minutes before their shift").
 LATE_AFTER_MINUTES = 10
+# The furthest ahead of a shift a role may be asked to clock in.
+CLOCK_IN_LEAD_MAX = 120
 # Worked this much less than scheduled: left early (staff_settings'
 # short-shift rule).
 LEFT_EARLY_HOURS = 1.5
@@ -244,12 +247,69 @@ def pos_day_final(restaurant_id, day, db_path=None) -> bool:
     return bool(row and row["provider"] and (row["final"] is None or int(row["final"]) == 1) and punches)
 
 
+def clock_in_leads(restaurant) -> dict:
+    """{role lowercased: minutes} — how long before their OWN shift start
+    someone in that role is expected to clock in (role_arrival_json; owner,
+    9/30/26: "5 minutes before each employee's starting shift, not before
+    open"). Never moves a shift; it only sets when a clock-in counts as on
+    time. A role left out clocks in at its start."""
+    raw = getattr(restaurant, "role_arrival_json", None) if restaurant is not None else None
+    try:
+        rows = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    out = {}
+    for k, v in (rows.items() if isinstance(rows, dict) else ()):
+        try:
+            # Stored positive; an older negative "before open" value reads
+            # as the same number of minutes.
+            m = min(CLOCK_IN_LEAD_MAX, abs(int(v)))
+        except (TypeError, ValueError):
+            continue
+        if str(k).strip():
+            out[str(k).strip().lower()] = m
+    return out
+
+
+def salaried_keys(restaurant) -> set:
+    """salaried_name_key()s of the salaried staff — they don't clock in
+    (owner, 9/30/26: "managers don't clock in"), so a missing punch is
+    never theirs to answer for."""
+    try:
+        from models import salaried_staff, salaried_name_key
+        return {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
+    except Exception:
+        return set()
+
+
+def roles_without_clock_in(restaurant_id, restaurant=None, db_path=None) -> list:
+    """The roles whose every active person is salaried (Manager FOH at
+    Simple EJ's) — the rules screen asks no clock-in lead for them."""
+    sal = salaried_keys(restaurant or _models_mod.get_restaurant(restaurant_id, db_path or _models_mod.DB_PATH))
+    if not sal:
+        return []
+    try:
+        import staff_settings
+        from models import salaried_name_key
+        people = staff_settings.roster(restaurant_id, db_path=db_path or _models_mod.DB_PATH)
+    except Exception:
+        return []
+    by_role = {}
+    for p in people:
+        role = (p.get("role") or "").strip()
+        if role:
+            by_role.setdefault(role, []).append(salaried_name_key(p.get("name")) in sal)
+    return sorted(r for r, flags in by_role.items() if flags and all(flags))
+
+
 def join_published(restaurant_id, day, db_path=None) -> dict:
     """The published week's `day` against the POS punches for it — the
     night after, and only for a night whose POS day is final
     (pos_day_final). Each scheduled shift: a punch for its person that day
-    → on_time, late (past LATE_AFTER_MINUTES) or left_early (LEFT_EARLY_HOURS
+    → on_time, late (LATE_AFTER_MINUTES past the expected clock-in, the
+    start less the role's clock_in_leads) or left_early (LEFT_EARLY_HOURS
     short); none → covered when a drop or swap was covered, else no_show.
+    A salaried person doesn't clock in and is not judged.
     Source schedule_vs_punch_join, the weakest: the live check and a
     closer's word stand over it. Returns {watched, recorded}."""
     rows, hid = _published_rows(restaurant_id, day, db_path)
@@ -260,20 +320,27 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
     for p in shift_facts.rows(restaurant_id, since=day, until=day, db_path=db_path):
         if p.get("source") in ("rpower", "toast", "square", "clover"):
             punches.setdefault(_nk(p["employee"]), []).append(p)
+    restaurant = _models_mod.get_restaurant(restaurant_id, db_path or _models_mod.DB_PATH)
+    sal, leads = salaried_keys(restaurant), clock_in_leads(restaurant)
+    if sal:
+        from models import salaried_name_key
+        rows = [r for r in rows if salaried_name_key(r["employee"]) not in sal]
     pids = _person_ids(restaurant_id, [r["employee"] for r in rows], db_path)
     n = 0
     for r in rows:
         name, start = r["employee"], (r.get("shift_start") or "").strip()
         mine = punches.get(_nk(name)) or []
         sched_start, sched_end = _minutes(start), _minutes(r.get("shift_end"))
+        # When they were due to clock in: the start less their role's lead.
+        due_in = None if sched_start is None else sched_start - leads.get((r.get("role") or "").strip().lower(), 0)
         outcome, late, covered = None, None, None
         if mine:
             # The punch nearest the scheduled start is this shift's.
             best = min(mine, key=lambda p: abs((_minutes(p.get("shift_start")) or 0) - (sched_start or 0)))
             in_m, out_m = _minutes(best.get("shift_start")), _minutes(best.get("shift_end"))
             outcome = "on_time"
-            if in_m is not None and sched_start is not None and in_m - sched_start > LATE_AFTER_MINUTES:
-                outcome, late = "late", int(in_m - sched_start)
+            if in_m is not None and due_in is not None and in_m - due_in > LATE_AFTER_MINUTES:
+                outcome, late = "late", int(in_m - due_in)
             elif (out_m is not None and sched_end is not None and sched_end - out_m >= LEFT_EARLY_HOURS * 60
                   and out_m > (in_m or 0)):
                 outcome = "left_early"

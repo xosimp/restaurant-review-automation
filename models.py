@@ -588,7 +588,7 @@ class Restaurant:
     role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
     cut_floor_default: int           = 2     # the fewest people a cut suggestion leaves in a role with no floor set (1..10; schedule_rules.cut_floor)
     jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
-    role_arrival_json: Optional[str] = None  # {"Line Cook": -60} minutes relative to open a role may start (negative = before)
+    role_arrival_json: Optional[str] = None  # {"Server": 5} minutes before their own shift start a role clocks in (attendance.clock_in_leads)
     role_close_min_json: Optional[str] = None  # {"Bartender": 60} the last of a role stays until N minutes after close
     role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only

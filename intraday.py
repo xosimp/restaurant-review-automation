@@ -309,6 +309,13 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     except Exception:
         _canon = {}
     scheduled = [dict(s, employee=_canon.get(s["employee"], s["employee"])) for s in scheduled]
+    # Salaried people don't clock in (owner, 9/30/26: "managers don't clock
+    # in"): a missing punch is never theirs.
+    import attendance as _att
+    _sal = _att.salaried_keys(restaurant)
+    if _sal:
+        from models import salaried_name_key
+        scheduled = [s for s in scheduled if salaried_name_key(s["employee"]) not in _sal]
     scheduled_keys = [_ss.name_key(s["employee"]) for s in scheduled]
     missing = []
     for s in scheduled:

@@ -3058,12 +3058,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] trimmed {rows_trimmed} row(s) over the server cap across {trimmed_dates}")
 
-            # Arrival times by role, staggered starts along the day's sales
-            # curve, and the trim back to the budget — the three passes the
-            # second audit asked for, each reported in the review.
+            # Staggered starts along the day's sales curve and the trim back
+            # to the budget, each reported in the review. A role's arrival
+            # is a clock-in lead before each person's own shift
+            # (attendance.clock_in_leads), never a reason to move a shift.
             import schedule_economics as _econ
-            for _r in preview_rows:
-                _enforce_arrival_time(_r, _r.get("day"), _constraints.open_times, _constraints.arrivals)
             try:
                 _curve = _hourly_profile(restaurant_id)
             except Exception:
@@ -3803,30 +3802,6 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
 
 
 _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
-
-
-def _enforce_arrival_time(row: dict, real_day: str, open_times: dict, arrivals: dict) -> None:
-    """A role's arrival time relative to open (role_arrival_json), enforced
-    the way close times are: a row that starts more than fifteen minutes
-    before its role's arrival is moved to it. hours_notes used to carry
-    "cooks 8–8:30am" as prose the code could not check."""
-    if not (row and real_day and open_times and arrivals):
-        return
-    role = (row.get("role") or "").strip().lower()
-    if role not in arrivals:
-        return
-    open_m = _parse_time_to_minutes((open_times or {}).get(real_day, ""))
-    start_m = _parse_time_to_minutes(row.get("shift_start", ""))
-    end_m = _parse_time_to_minutes(row.get("shift_end", ""))
-    if open_m is None or start_m is None or end_m is None:
-        return
-    arrive = open_m + int(arrivals[role])
-    if start_m >= arrive - 15 or end_m <= arrive + 60:
-        return
-    row["shift_start"] = _format_minutes_to_time(arrive)
-    row["scheduled_hours"] = str(round((end_m - arrive) / 60, 1))
-    note = (row.get("notes") or "").strip()
-    row["notes"] = f"{note}; moved to {row.get('role')} arrival" if note else f"moved to {row.get('role')} arrival"
 
 
 def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None, economics=None):

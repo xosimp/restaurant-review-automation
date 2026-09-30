@@ -31740,12 +31740,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // the fewest people a send-home suggestion may leave on. Cuts only.
     var cutMax=d.cut_floor_max||10,cutN=d.cut_floor_default==null?2:d.cut_floor_default;
     h+='<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="rul-cut-floor">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="rul-cut-floor" min="1" max="'+cutMax+'" step="1" value="'+esc(cutN)+'" aria-label="Never cut a role below this many people"'+(ro?' disabled':'')+'>people<small>Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.</small></div></div>';
-    // Arrivals: minutes before or after open, per role.
-    var arr=d.role_arrivals||{},reqs=d.role_requirements||{},certs=d.certifications||[];
-    h+='<div class="lb2-sub">Arrivals<small>when each role clocks in against the open</small></div><div id="rul-arrivals">';
+    // Arrivals: how many minutes before their OWN shift start each role
+    // clocks in (attendance.clock_in_leads) — never "before open", and it
+    // never moves a shift. A role whose people are all salaried doesn't
+    // clock in, so it is asked nothing (owner, 9/30/26).
+    var arr=d.role_arrivals||{},reqs=d.role_requirements||{},certs=d.certifications||[],noClock={};
+    for(i=0;i<(d.roles_without_clock_in||[]).length;i++)noClock[String(d.roles_without_clock_in[i]).toLowerCase()]=1;
+    h+='<div class="lb2-sub">Arrivals<small>how early each role clocks in before their own shift starts; more than 10 minutes past that counts as late</small></div><div id="rul-arrivals">';
     if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
-    for(i=0;i<roles.length;i++){var m=arr[roles[i]],has=m!==undefined&&m!==null,before=has?m<=0:true;
-      h+='<div class="rul-row" data-arr-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-arr-n min="0" max="240" step="5" value="'+(has?Math.abs(+m):'')+'" placeholder="—" aria-label="'+esc(roles[i])+' minutes"'+(ro?' disabled':'')+'><span class="lbl">minutes</span><select class="ac-select" data-arr-dir aria-label="Before or after open"'+(ro?' disabled':'')+'><option value="before"'+(before?' selected':'')+'>before open</option><option value="after"'+(before?'':' selected')+'>after open</option></select></div>';
+    for(i=0;i<roles.length;i++){var m=arr[roles[i]],has=m!==undefined&&m!==null;
+      if(noClock[roles[i].toLowerCase()]){h+='<div class="rul-row"><span class="role">'+esc(roles[i])+'</span><span class="lbl">Salaried, doesn\'t clock in</span></div>';continue;}
+      h+='<div class="rul-row" data-arr-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-arr-n min="0" max="120" step="5" value="'+(has?Math.abs(+m):'')+'" placeholder="0" aria-label="'+esc(roles[i])+' minutes before their shift"'+(ro?' disabled':'')+'><span class="lbl">minutes before their shift</span></div>';
     }
     h+='</div>';
     // Cross-training: the share of each role on a shift that should be able
@@ -31837,7 +31842,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       body.cut_floor_default=cutNum;
     }
     var arrs=document.querySelectorAll('#rules-body [data-arr-role]'),arrivals={};
-    for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value,ad=arrs[i].querySelector('[data-arr-dir]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=ad==='before'?-Math.abs(+an):Math.abs(+an);}
+    for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=Math.min(120,Math.abs(Math.round(+an)));}
     body.role_arrivals=arrivals;
     var cts=document.querySelectorAll('#rules-body [data-ct-role]'),cross={};
     for(i=0;i<cts.length;i++){var cn=cts[i].querySelector('[data-ct-n]').value;if(cn==='')continue;cross[cts[i].getAttribute('data-ct-role')]=Math.max(0,Math.min(100,+cn));}

@@ -938,7 +938,10 @@ final class ScheduleSetupViewModel {
     var jurisdiction: String?
     var pack: CompliancePack?
     var packs: [CodeLabel] = []
+    /// Minutes before their own shift start each role clocks in.
     var roleArrivals: [String: Int] = [:]
+    /// Roles whose people are all salaried — they don't clock in.
+    var rolesWithoutClockIn: [String] = []
     var roleRequirements: [String: [String]] = [:]
     var fohRoles: [String] = []
     var patioRoles: [String] = []
@@ -973,6 +976,7 @@ final class ScheduleSetupViewModel {
         let pack: CompliancePack?
         let packs: [CodeLabel]?
         let roleArrivals: [String: Int]?
+        let rolesWithoutClockIn: [String]?
         let roleRequirements: [String: [String]]?
         let fohRoles: [String]?
         let patioRoles: [String]?
@@ -990,6 +994,7 @@ final class ScheduleSetupViewModel {
             case ok, rules, defaults, roles, error, jurisdiction, pack, packs, certifications
             case roleFloors = "role_floors"
             case roleArrivals = "role_arrivals"
+            case rolesWithoutClockIn = "roles_without_clock_in"
             case roleRequirements = "role_requirements"
             case fohRoles = "foh_roles"
             case patioRoles = "patio_roles"
@@ -1068,6 +1073,7 @@ final class ScheduleSetupViewModel {
             pack = r.pack
             packs = r.packs ?? []
             roleArrivals = r.roleArrivals ?? [:]
+            rolesWithoutClockIn = r.rolesWithoutClockIn ?? []
             roleRequirements = r.roleRequirements ?? [:]
             fohRoles = r.fohRoles ?? []
             patioRoles = r.patioRoles ?? []

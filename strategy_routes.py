@@ -1774,7 +1774,12 @@ def _do_compliance_get(u):
     return {"ok": True, "rules": rules, "defaults": dict(_sr.DEFAULTS),
             "role_floors": _sr.role_floors(r), "can_edit": _principal(u),
             "jurisdiction": getattr(r, "jurisdiction", None), "pack": pack, "packs": compliance_packs.available(),
-            "role_arrivals": _sr._load_json(getattr(r, "role_arrival_json", None), {}),
+            # Minutes before their OWN shift each role clocks in
+            # (attendance.clock_in_leads); roles whose people are all
+            # salaried don't clock in and are asked nothing.
+            "role_arrivals": {k: abs(int(v)) for k, v in (_sr._load_json(getattr(r, "role_arrival_json", None), {}) or {}).items()
+                              if isinstance(v, (int, float))},
+            "roles_without_clock_in": __import__("attendance").roles_without_clock_in(_rid(u), r),
             "role_close_mins": _sr._load_json(getattr(r, "role_close_min_json", None), {}),
             "manager_rule_unusable": bool(rules.get("manager_on_duty")) and not _keyholders(_rid(u)),
             "role_requirements": _sr._load_json(getattr(r, "role_requirements_json", None), {}),
@@ -1839,10 +1844,13 @@ def _do_compliance_set(u):
         settings["jurisdiction"] = code or None
         out["jurisdiction"] = code or None
     if "role_arrivals" in b and isinstance(b.get("role_arrivals"), dict):
+        import attendance
         clean = {}
         for k, v in b["role_arrivals"].items():
             try:
-                clean[str(k).strip()[:60]] = max(-240, min(240, int(v)))
+                # Minutes before each person's own shift start, stored
+                # positive; a signed "before" value reads as its size.
+                clean[str(k).strip()[:60]] = min(attendance.CLOCK_IN_LEAD_MAX, abs(int(v)))
             except (TypeError, ValueError):
                 continue
         settings["role_arrival_json"] = _j.dumps(clean) if clean else None

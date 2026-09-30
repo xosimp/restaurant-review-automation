@@ -198,11 +198,13 @@ struct ScheduleRulesSheet: View {
 
     // MARK: Arrivals
 
-    /// Minutes before (negative) or after open each role should arrive.
+    /// Minutes before their OWN shift start each role clocks in
+    /// (attendance.clock_in_leads on the server) — never "before open", and
+    /// it never moves a shift. Salaried-only roles don't clock in.
     private var arrivalsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Arrivals")
-            Text("Minutes before open a role arrives — 30 means half an hour early, -15 a quarter hour after. Blank means at open.")
+            Text("How many minutes before their own shift starts each role clocks in. More than 10 minutes past that counts as late. Blank means at the start.")
                 .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -219,9 +221,15 @@ struct ScheduleRulesSheet: View {
                                 .font(.cavnarBody(15, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 6)
-                            floorField(label: "MIN", value: Binding(
-                                get: { arrivals[role] ?? "" },
-                                set: { arrivals[role] = $0 }), id: "arr|\(role)", keyboard: .numbersAndPunctuation)
+                            if viewModel.rolesWithoutClockIn.contains(where: { $0.caseInsensitiveCompare(role) == .orderedSame }) {
+                                Text("Salaried, doesn't clock in")
+                                    .font(.cavnarBody(13.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            } else {
+                                floorField(label: "MIN", value: Binding(
+                                    get: { arrivals[role] ?? "" },
+                                    set: { arrivals[role] = $0 }), id: "arr|\(role)", keyboard: .numberPad)
+                            }
                         }
                         .padding(.vertical, 9)
                         if index < roles.count - 1 { AccountRowDivider() }
@@ -712,7 +720,7 @@ struct ScheduleRulesSheet: View {
         rules["keyholder_until_close"] = .bool(keyholderUntilClose)
         var arrivalMinutes: [String: Int] = [:]
         for (role, text) in arrivals {
-            if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = n }
+            if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = min(120, abs(n)) }
         }
         var p = ScheduleSetupViewModel.RulesPatch(rules: rules, roleFloors: cleanedFloors())
         p.jurisdiction = .some(jurisdiction.isEmpty ? nil : jurisdiction)

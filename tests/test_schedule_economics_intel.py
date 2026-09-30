@@ -211,16 +211,6 @@ def test_monday_wednesday_friday_has_no_two_days_off_together():
     assert not any(x["kind"] == "days_off" for x in sr.violations(rows, c))
 
 
-def test_arrival_time_by_role_is_a_soft_flag_and_a_backstop():
-    import schedule_engine
-    c = _c(open_times={"Monday": "11:00am"}, arrivals={"line cook": -90})
-    v = sr.violations([_row(WEEK[0], "Ana", "7:00am", "3:00pm", role="Line Cook")], c)
-    assert [x["kind"] for x in v] == ["before_arrival"] and not v[0]["hard"]
-    row = _row(WEEK[0], "Ana", "7:00am", "3:00pm", role="Line Cook")
-    schedule_engine._enforce_arrival_time(row, "Monday", c.open_times, c.arrivals)
-    assert row["shift_start"] == "9:30am" and row["scheduled_hours"] == "5.5" and "arrival" in row["notes"]
-
-
 # ── staff settings: windows, certifications, preferences ───────────────
 
 @pytest.fixture
