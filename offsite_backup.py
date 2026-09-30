@@ -292,6 +292,8 @@ SCRUB_TABLES = {
     "app_secrets": "this install's own link-signing secrets",
     "view_as_sessions": "admin view-as sessions",
     "user_backup_codes": "each login's own 2FA recovery codes (hashed) — the admin's included (fix round A)",
+    "user_totp": "each internal login's authenticator-app secret (encrypted under CREDENTIAL_KEY) — a live "
+                 "second factor, never needed off the server (R10)",
     "async_jobs": "transient job results (6-hour TTL); one can hold a one-time password (the review-account "
                   "seed's password_once) until it is read",
 }

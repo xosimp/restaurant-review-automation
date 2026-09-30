@@ -12,7 +12,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--good:#2d6a4f;--bad:#c0392b;--r:8px}
-body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow-x:hidden}
 @keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
 .card{background:var(--paper);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:440px;border:1.5px solid var(--ember);box-shadow:0 0 0 5px rgba(200,75,47,.08),0 28px 70px rgba(0,0,0,.55);position:relative;overflow:hidden;animation:cardIn .48s cubic-bezier(.2,.9,.3,1) .08s both;z-index:1}
 .card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember)}
@@ -30,6 +30,8 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
 .status{font-size:14px;line-height:1.5;margin:0 0 14px;min-height:1px}
 .status.err{color:var(--bad)}
 .status.ok{color:var(--good)}
+.qr{display:block;width:200px;height:200px;margin:0 auto 14px;border-radius:var(--r);background:var(--paper2)}
+.secret{font-family:'Space Grotesk',monospace;font-size:16px;letter-spacing:.08em;color:var(--ink);background:var(--paper2);border-radius:var(--r);padding:12px 14px;margin:0 0 14px;word-break:break-all;user-select:all}
 .codes{font-family:'Space Grotesk',monospace;font-size:16px;color:var(--ink);background:var(--paper2);border-radius:var(--r);padding:14px 16px;margin:0 0 14px;columns:2;line-height:1.9}
 .stack{display:flex;flex-direction:column;gap:10px}
 .back{display:block;text-align:center;margin-top:18px;font-size:12px;color:var(--ink3);text-decoration:none}
@@ -50,37 +52,60 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
   <div id="enrol">
     <div class="heading">Two-factor for your login.</div>
     <p class="desc">{% if required %}Every admin login here needs a code at sign-in, on top of the password. Turn it on to open the console.{% else %}A code at every sign-in, on top of your password — on every way you sign in.{% endif %}</p>
+  </div>
+  {% else %}
+  <div id="manage">
+    <div class="heading">Two-factor is on.</div>
+    {% if method == 'app' %}
+    <p class="desc">Codes come from your authenticator app. They are never emailed or texted for this login — if you lose your phone, sign in with a backup code. {{ backup_left }} backup code{% if backup_left != 1 %}s{% endif %} left.</p>
+    {% else %}
+    <p class="desc">Codes go to your {% if method == 'sms' %}phone{% else %}email{% endif %} ({% if method == 'sms' %}{{ phone_masked }}{% else %}{{ email_masked }}{% endif %}). {{ backup_left }} backup code{% if backup_left != 1 %}s{% endif %} left.</p>
+    {% endif %}
+    <div class="status" id="manage-status" role="status" aria-live="polite"></div>
+    <div class="stack">
+      <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="{{ next_url }}">Back to the console</a>
+      <button type="button" class="cbtn cbtn-secondary cbtn-block" id="change-btn">{% if method == 'app' %}Move to a new phone or change method{% else %}Use an authenticator app instead{% endif %}</button>
+      <button type="button" class="cbtn cbtn-secondary cbtn-block" id="codes-btn">Make new backup codes</button>
+      {% if not required %}<button type="button" class="cbtn cbtn-text cbtn-sm" id="off-btn">Turn two-factor off</button>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div id="chooser"{% if enrolled %} hidden{% endif %}>
     <div id="step-send">
+      {% if enrolled %}<p class="desc">Pick where codes come from. We'll ask for your password first, and your current method keeps working until the new one is confirmed.</p>{% endif %}
       <fieldset class="opts">
-        <legend>Send codes to</legend>
-        <label class="opt"><input type="radio" name="method" value="email" checked{% if not email_masked %} disabled{% endif %}> Email <span class="dim">{{ email_masked or "— no email on your login" }}</span></label>
-        <label class="opt"><input type="radio" name="method" value="sms"{% if not phone_masked %} disabled{% endif %}> Text <span class="dim">{{ phone_masked or "— no phone on your login" }}</span></label>
+        <legend>{% if enrolled %}Get codes from{% else %}Send codes to{% endif %}</legend>
+        <label class="opt"><input type="radio" name="method" value="app"{% if app_available %}{% if enrolled %} checked{% endif %}{% else %} disabled{% endif %}> Authenticator app <span class="dim">{% if app_available %}Duo Mobile, Google Authenticator…{% else %}— needs CREDENTIAL_KEY on the server{% endif %}</span></label>
+        <label class="opt"><input type="radio" name="method" value="email"{% if not enrolled %} checked{% endif %}{% if not email_masked or (enrolled and method == 'email') %} disabled{% endif %}> Email <span class="dim">{% if enrolled and method == 'email' %}— your current method{% else %}{{ email_masked or "— no email on your login" }}{% endif %}</span></label>
+        <label class="opt"><input type="radio" name="method" value="sms"{% if not phone_masked or (enrolled and method == 'sms') %} disabled{% endif %}> Text <span class="dim">{% if enrolled and method == 'sms' %}— your current method{% else %}{{ phone_masked or "— no phone on your login" }}{% endif %}</span></label>
       </fieldset>
       <div class="status" id="send-status" role="status" aria-live="polite"></div>
-      <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="send-btn">Send code</button>
+      <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="send-btn">{% if enrolled %}Show QR code{% else %}Send code{% endif %}</button>
     </div>
     <div id="step-verify" hidden>
       <label class="field" for="code">The 6-digit code we sent</label>
       <input class="input" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
       <div class="status" id="verify-status" role="status" aria-live="polite"></div>
       <div class="stack">
-        <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="verify-btn">Turn on two-factor</button>
+        <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="verify-btn">{% if enrolled %}Switch to this method{% else %}Turn on two-factor{% endif %}</button>
         <button type="button" class="cbtn cbtn-text cbtn-sm" id="resend-btn">Send a new code</button>
       </div>
     </div>
-  </div>
-  {% else %}
-  <div id="manage">
-    <div class="heading">Two-factor is on.</div>
-    <p class="desc">Codes go to your {% if method == 'sms' %}phone{% else %}email{% endif %} ({% if method == 'sms' %}{{ phone_masked }}{% else %}{{ email_masked }}{% endif %}). {{ backup_left }} backup code{% if backup_left != 1 %}s{% endif %} left.</p>
-    <div class="status" id="manage-status" role="status" aria-live="polite"></div>
-    <div class="stack">
-      <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="{{ next_url }}">Back to the console</a>
-      <button type="button" class="cbtn cbtn-secondary cbtn-block" id="codes-btn">Make new backup codes</button>
-      {% if not required %}<button type="button" class="cbtn cbtn-text cbtn-sm" id="off-btn">Turn two-factor off</button>{% endif %}
+    <div id="step-app" hidden>
+      <p class="desc">In Duo Mobile tap <strong>+</strong> (Add), then <strong>Use QR code</strong>, and scan this. Any authenticator app works the same way.</p>
+      <img class="qr" id="qr" alt="QR code to add Cavnar AI to your authenticator app" width="200" height="200">
+      <p class="field">Can't scan? Add an account by hand with this key (time-based):</p>
+      <div class="secret" id="secret"></div>
+      <label class="field" for="app-code">Then enter the 6-digit code the app shows</label>
+      <input class="input" id="app-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      <div class="status" id="app-status" role="status" aria-live="polite"></div>
+      <div class="stack">
+        <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="app-verify-btn">{% if enrolled %}Switch to the app{% else %}Turn on two-factor{% endif %}</button>
+        <button type="button" class="cbtn cbtn-text cbtn-sm" id="app-new-btn">Show a new QR code</button>
+      </div>
     </div>
   </div>
-  {% endif %}
 
   <div id="reauth" hidden>
     <label class="field" for="reauth-pw">Enter your password to continue</label>
@@ -119,22 +144,26 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
     for (var i = 0; i < codes.length; i++) { var d = document.createElement('div'); d.textContent = codes[i]; box.appendChild(d); }
     if ($('enrol')) $('enrol').hidden = true;
     if ($('manage')) $('manage').hidden = true;
+    $('chooser').hidden = true;
     $('reauth').hidden = true;
     $('done').hidden = false;
   }
   // A sensitive action answered {reauth_required}: ask for the password,
-  // confirm it with /admin/api/reauth, then run the action again.
+  // confirm it with /admin/api/reauth, then run the action again. onOk
+  // takes a success; without one, backup codes are shown or the page
+  // reloads.
   var pending = null;
-  function withReauth(action, statusId){
+  function withReauth(action, statusId, onOk){
     action(function(d, st){
       if (d && d.reauth_required) {
-        pending = function(){ withReauth(action, statusId); };
+        pending = function(){ withReauth(action, statusId, onOk); };
         $('reauth').hidden = false; $('reauth-pw').value = ''; $('reauth-pw').focus();
         say('reauth-status', '');
         return;
       }
       if (d && d.session_expired) { window.location.href = '/login?next=' + encodeURIComponent(NEXT); return; }
       if (!d || !d.ok) { say(statusId, (d && d.error) || 'That didn’t work. Try again.', 'err'); return; }
+      if (onOk) { onOk(d); return; }
       if (d.backup_codes) { showCodes(d.backup_codes); return; }
       window.location.reload();
     });
@@ -148,20 +177,49 @@ body{font-family:'Apfel Grotezk',sans-serif;background:#0c0c0c;min-height:100vh;
     });
   });
   function method(){ var r = document.querySelector('input[name="method"]:checked'); return r ? r.value : 'email'; }
+  function labelSend(){ if ($('send-btn')) $('send-btn').textContent = method() === 'app' ? 'Show QR code' : 'Send code'; }
+  var radios = document.querySelectorAll('input[name="method"]');
+  for (var i = 0; i < radios.length; i++) radios[i].addEventListener('change', labelSend);
+  labelSend();
+  // A switch (or the app on a new phone) is confirmed with a new code, then
+  // the page reloads to show the new method; a first enrolment shows its
+  // backup codes once.
+  function finished(d){
+    if (d.next) { $('continue').setAttribute('href', d.next); }
+    if (d.backup_codes) { showCodes(d.backup_codes); return; }
+    window.location.reload();
+  }
+  function showApp(d){
+    $('qr').setAttribute('src', d.qr);
+    $('secret').textContent = d.secret;
+    $('step-send').hidden = true; $('step-verify').hidden = true; $('step-app').hidden = false;
+    $('app-code').value = ''; $('app-code').focus();
+    say('app-status', 'This QR code works for ' + d.expires_minutes + ' minutes.', 'ok');
+  }
   function send(statusId){
-    post('/admin/two-factor/send', {method: method()}, function(d){
-      if (!d || !d.ok) { say(statusId, (d && d.error) || 'We couldn’t send a code.', 'err'); return; }
-      $('step-send').hidden = true; $('step-verify').hidden = false; $('code').focus();
+    var m = method();
+    withReauth(function(cb){ post('/admin/two-factor/send', {method: m}, cb); }, statusId, function(d){
+      if (d.method === 'app') { showApp(d); return; }
+      $('step-send').hidden = true; $('step-app').hidden = true; $('step-verify').hidden = false; $('code').focus();
       say('verify-status', (d.method === 'sms' ? 'We texted a code to ' : 'We emailed a code to ') + d.masked + '.', 'ok');
     });
   }
+  if ($('change-btn')) $('change-btn').addEventListener('click', function(){
+    $('chooser').hidden = false; $('manage').hidden = true;
+  });
   if ($('send-btn')) $('send-btn').addEventListener('click', function(){ send('send-status'); });
   if ($('resend-btn')) $('resend-btn').addEventListener('click', function(){ send('verify-status'); });
+  if ($('app-new-btn')) $('app-new-btn').addEventListener('click', function(){ send('app-status'); });
   if ($('verify-btn')) $('verify-btn').addEventListener('click', function(){
-    post('/admin/two-factor/verify', {code: $('code').value, method: method(), next: NEXT}, function(d){
-      if (!d || !d.ok) { say('verify-status', (d && d.error) || 'That code isn’t right.', 'err'); return; }
-      if (d.next) { $('continue').setAttribute('href', d.next); }
-      showCodes(d.backup_codes || []);
+    var body = {code: $('code').value, method: method(), next: NEXT};
+    withReauth(function(cb){ post('/admin/two-factor/verify', body, cb); }, 'verify-status', finished);
+  });
+  if ($('app-verify-btn')) $('app-verify-btn').addEventListener('click', function(){
+    var body = {code: $('app-code').value, method: 'app', next: NEXT};
+    withReauth(function(cb){ post('/admin/two-factor/verify', body, cb); }, 'app-status', function(d){
+      // The secret leaves the page as soon as it is confirmed.
+      $('qr').removeAttribute('src'); $('secret').textContent = '';
+      finished(d);
     });
   });
   if ($('codes-btn')) $('codes-btn').addEventListener('click', function(){
