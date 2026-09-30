@@ -254,10 +254,15 @@ def _read_team(restaurant_id):
     if not analysis.get("is_live"):
         return {"rated": False,
                 "note": "No shift data uploaded yet, so there is no roster to rate."}
+    # Someone taken off the roster (staff_settings.active=0 — no longer
+    # employed) is not on the team Ask describes, as on the Team screen: the
+    # shift history alone listed them (Simple EJ's, 9/30/26).
+    import staff_settings as _ss_rt
+    gone = {_ss_rt.name_key(n) for n, st in _ss_rt.get_all(restaurant_id).items() if not st.get("active", True)}
     seen = {}
     for sh in load_shifts_for_restaurant(restaurant_id) or []:
         name = (sh.get("employee") or "").strip()
-        if not name:
+        if not name or _ss_rt.name_key(name) in gone:
             continue
         e = seen.setdefault(name, {"name": name, "role": None, "shifts": 0, "last": ""})
         e["shifts"] += 1

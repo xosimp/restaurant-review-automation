@@ -200,6 +200,23 @@ def test_the_team_tool_says_so_rather_than_inventing_a_roster(db_path):
     assert "team" not in out
 
 
+
+def test_the_team_tool_leaves_out_someone_taken_off_the_roster(db_path, monkeypatch):
+    """No longer employed (staff_settings.active=0) is off the team Ask
+    describes, as on the Team screen — the shift history alone listed them
+    (Simple EJ's, 9/30/26)."""
+    import labor
+    import staff_settings
+    rid = _restaurant(db_path)
+    shifts = [{"employee": "Dana Reyes", "role": "Server", "date": "2026-09-28"},
+              {"employee": "Ann Boska", "role": "Bartender", "date": "2026-09-29"}]
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {"is_live": True})
+    monkeypatch.setattr(labor, "load_shifts_for_restaurant", lambda rid: shifts)
+    real = models.get_conn
+    monkeypatch.setattr(staff_settings, "get_conn", lambda *a, **k: real(db_path))   # a bound import
+    staff_settings.upsert(rid, "Ann Boska", active=False)
+    assert [t["name"] for t in tools._read_team(rid)["team"]] == ["Dana Reyes"]
+
 # ── 4. alerts ────────────────────────────────────────────────────────────
 
 def _alert(db_path, rid, alert_type="1star", review_id=None, days_ago=1):
