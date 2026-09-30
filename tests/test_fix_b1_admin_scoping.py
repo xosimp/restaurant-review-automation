@@ -556,3 +556,18 @@ setTimeout(function () {
         assert 'onfocus="alert' not in markup, f"{key} breaks out of an attribute"
     assert "&lt;img src=x onerror=alert(1)&gt;" in out["fc-ing-rows"]
     assert 'value="&quot; onfocus=&quot;alert(2)"' in out["fc-ing-rows"]
+
+
+def test_support_manages_its_own_two_factor_and_the_step_up_unlocks_nothing_else(world):
+    """9/29/26: a support login steps up and makes its own backup codes (or
+    switches method) itself — no one resets its two-factor for it. The
+    step-up changes nothing about every other admin write."""
+    sup = world["support"]
+    r = _post(sup, "/admin/two-factor/backup-codes")
+    assert r.status_code == 403 and r.get_json().get("reauth_required"), r.get_json()
+    assert _post(sup, "/admin/api/reauth", json={"password": "Support-pass-2026"}).get_json()["ok"] is True
+    r = _post(sup, "/admin/two-factor/backup-codes")
+    assert r.status_code == 409 and "two-factor on first" in r.get_json()["error"]   # past both gates
+    r = _post(sup, f"/admin/upload-data/{world['client']}",
+              data={"file": (io.BytesIO(SHIFTS.encode()), "shifts.csv")}, content_type="multipart/form-data")
+    assert r.status_code == 403 and "read-only" in (r.get_json() or {}).get("error", "")

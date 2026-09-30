@@ -228,11 +228,15 @@ def test_the_admin_second_factor_states():
           "`error` (fails closed, 503)")
 
 
-def test_support_may_write_only_view_as_and_its_own_enrolment():
+def test_support_may_write_only_view_as_and_its_own_two_factor():
+    # 9/29/26: support manages its own second factor end to end (the step-up,
+    # new backup codes, turning it off) so no one has to reset it for them.
     import auth
     assert set(auth._SUPPORT_WRITE_OK) == {"admin.view_as_client", "admin.admin_two_factor_send",
-                                            "admin.admin_two_factor_verify"}
-    _says(SECURITY, "except opening a view-as and its own two-factor enrolment")
+                                            "admin.admin_two_factor_verify", "admin.admin_api_reauth",
+                                            "admin.admin_two_factor_backup_codes",
+                                            "admin.admin_two_factor_disable"}
+    _says(SECURITY, "except opening a view-as and managing its own two-factor")
 
 
 # ── lockouts, the request ceiling, the password policy ─────────────────────

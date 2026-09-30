@@ -4761,8 +4761,15 @@ def _tab_location_moved(user):
 # and open a view-as session; every other admin write needs the admin bit.
 # Their own two-factor enrolment is theirs to write, too. (/admin/stop-viewing
 # runs on the view-as session itself, never through admin_required.)
+# Beyond view-as, only routes that act on the support login's OWN second
+# factor — enrolment, switching method (with its password step-up), new
+# backup codes, turning it off where it is not required. Each touches only
+# current_user's row, so no one has to reset a support login's two-factor for
+# it (Will, 9/29/26). The step-up grants nothing else: every other write is
+# still refused here.
 _SUPPORT_WRITE_OK = frozenset({"admin.view_as_client", "admin.admin_two_factor_send",
-                               "admin.admin_two_factor_verify"})
+                               "admin.admin_two_factor_verify", "admin.admin_api_reauth",
+                               "admin.admin_two_factor_backup_codes", "admin.admin_two_factor_disable"})
 
 
 def current_admin_role():
