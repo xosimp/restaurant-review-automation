@@ -1804,7 +1804,11 @@ def _build(current_user, present=True):
                 if trim:
                     try:
                         import staffing_signals as _stsig
-                        _guard = _stsig.trim_guard(rid, trim["day"], daypart="night")
+                        # The advice is "on the next schedule": guarded on
+                        # that week's night, not this week's (re-audit
+                        # 9/29/26, CROSSMODULE-21).
+                        _guard = _stsig.trim_guard(rid, trim["day"], daypart="night",
+                                                   on_date=_stsig.next_draft_date(rid, trim["day"]))
                     except Exception as _ge:
                         print(f"[home] trim guard unavailable for {rid}: {_ge}")
                         _guard = {}

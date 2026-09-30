@@ -447,7 +447,9 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
         listed = link_memory.do_not_promote(restaurant_id, db_path=db_path)
         if listed:
             for d in out:
-                g = link_memory.dish_guard(restaurant_id, d["dish"], listed=listed)
+                # Matched on the one menu row the link names (CROSSMODULE-14).
+                g = link_memory.dish_guard(restaurant_id, d["dish"], listed=listed,
+                                           menu_item_id=d.get("menu_item_id"))
                 if g:
                     d["guard"] = g
     except Exception as e:

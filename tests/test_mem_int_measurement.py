@@ -86,6 +86,13 @@ CALLERS = {
     ("forecast_log.py", "explained_by"): "checks",
     ("guest_marketing.py", "_campaign_night_effect"): "display",
     ("staffing_signals.py", "last_nights"): "display",
+    # Re-audit 9/29/26, CROSSMODULE-12: the marketing x labor link says what
+    # its campaign's own night measured, and ends — it acts on no effect.
+    ("business_intelligence.py", "_end_campaign_link"): "display",
+    # CROSSMODULE-11 (b7aef3da): the prep list and an order's window scale by
+    # the measured effects of their nights, through effects_for_day's floor.
+    ("demand.py", "prep_list"): "floor inside",
+    ("inventory.py", "order_window_effects"): "floor inside",
 }
 
 

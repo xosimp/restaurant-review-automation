@@ -2139,6 +2139,11 @@ WORKED_TAG_PREFIXES = ("topic:", "focus:", "category:", "dish:", "item:", "daypa
 IGNORED_LINE_MIN = 3            # left unanswered this often, never taken → said
 WORKED_LINES_MAX = 6
 # The modules whose kinds and the lever topics whose tags each surface reads.
+# Kinds a surface reads beyond its own modules: what the schedule did with
+# the reviews diagnosis's "+1" is the review diagnosis's own result too
+# (re-audit 9/29/26, CROSSMODULE-10).
+SURFACE_EXTRA_KINDS = {"review_diagnosis": ("staff_add",)}
+
 SURFACE_SCOPE = {
     "labor_read": (("labor", "schedule"), ("staffing", "hours", "overtime")),
     "schedule": (("labor", "schedule"), ("staffing", "hours", "overtime")),
@@ -2293,6 +2298,8 @@ def _stored_what_worked(restaurant_id, db_path=DB_PATH):
 
 def _kind_label(kind) -> str:
     k = str(kind or "")
+    if k == "staff_add":
+        return "adding a person where guests complained"
     if k.startswith("insight_"):
         return f"the {k[len('insight_'):]} read's suggestions"
     if k.startswith("diag_"):
@@ -2339,8 +2346,9 @@ def what_worked_lines(req):
         for i in range(len(parts) - 1):
             wanted_tags.add(f"{parts[i]}:{parts[i + 1]}")
     cand = []
+    extra = SURFACE_EXTRA_KINDS.get(getattr(req, "surface", None), ())
     for kind, b in (rec.get("kinds") or {}).items():
-        if modules and (b.get("module") or "home") not in modules:
+        if modules and (b.get("module") or "home") not in modules and kind not in extra:
             continue
         cand.append(("kind", kind, b))
     for tag, b in (rec.get("tags") or {}).items():

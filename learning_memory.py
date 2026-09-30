@@ -16,6 +16,12 @@ and resumable), each step isolated so one failing never stops the others:
                (restaurant_thresholds.refresh)
   scorecard    this month's learning scorecard and its flags
                (learning_scorecard.snapshot; kept forever)
+  observe_links  run the cross-module read once, in the owner's full view
+               (business_intelligence.correlations → link_memory.observe),
+               so link memory — first and last found, weeks running, the
+               misses that make a link "gone", the do-not-promote list and
+               the reprice guard — no longer depends on some surface
+               happening to read it (re-audit 9/29/26, CROSSMODULE-8)
   links        resolve the cross-module links the owner answered or that a
                later read no longer found (link_memory.settle)
 
@@ -66,6 +72,13 @@ def _scorecard(restaurant_id, today, db_path):
     return learning_scorecard.snapshot(restaurant_id, today=today, db_path=db_path)
 
 
+def _observe_links(restaurant_id, today, db_path):
+    import business_intelligence as bi
+    kw = {"db_path": db_path} if db_path else {}
+    links = bi.correlations(restaurant_id, **kw)
+    return {"found": len(links or [])}
+
+
 def _links(restaurant_id, today, db_path):
     import link_memory
     return link_memory.settle(restaurant_id, today=today, db_path=db_path)
@@ -78,6 +91,7 @@ STEPS = [
     ("implemented_trackers", _implemented_trackers),
     ("thresholds", _thresholds),
     ("scorecard", _scorecard),
+    ("observe_links", _observe_links),
     ("links", _links),
 ]
 

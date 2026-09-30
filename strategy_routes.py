@@ -3663,7 +3663,8 @@ def _do_cross_module(u):
         _log_rank = _aa_rank(u) == "principal"
     except Exception:
         _log_rank = False
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, log_rank=_log_rank)
+    # The login's own answers leave its links too (CROSSMODULE-2).
+    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
