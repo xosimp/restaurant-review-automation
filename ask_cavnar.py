@@ -1785,6 +1785,7 @@ _TOOL_LABELS = {
     "read_menu": "Pulling up your menu",
     "read_food_cost": "Going through your food cost",
     "read_competitors": "Checking your competitors",
+    "read_market_history": "Looking back at your market",
     "read_marketing_posts": "Reviewing what you've published",
     "read_guest_club": "Checking your text club",
     "change_setting": "Updating that setting",
@@ -2483,7 +2484,7 @@ _ACROSS_LABEL = "across the business"
 
 _UNTAGGED_MODULE = {
     "read_alerts": "alerts", "read_email_history": "account",
-    "read_competitors": "intel", "read_ai_visibility": "visibility",
+    "read_competitors": "intel", "read_ai_visibility": "visibility", "read_market_history": "intel",
     "change_setting": "account", "remember": "memory", "forget": "memory",
     "read_dsr": "daily report", "find_days": "daily report", "read_week": "daily report",
     "read_period": "daily report",

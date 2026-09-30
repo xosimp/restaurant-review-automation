@@ -31484,7 +31484,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
       for(i=0;i<list.length;i++){var sg=list[i];var lift=sg.lift_pct==null?null:+sg.lift_pct;
         h+='<tr style="cursor:default"><td><span class="hb-num">'+esc(mdy(sg.date))+'</span> <span style="color:var(--ink3)">'+esc(_dayShort(sg.date))+'</span></td>'
-          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='event'?'event':'reservations')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">via '+esc(sg.source)+'</span>':'')
+          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">via '+esc(sg.source)+'</span>':'')
             // Its label's own record here (M5 measured), before and after.
             +(sg.measured&&window.memMeasuredLine?'<span class="mem-ln">'+memNum(memMeasuredLine(sg.measured))+'</span>':'')+'</td>'
           +'<td class="r">'+(sg.covers==null?'<span class="dim">—</span>':'<span class="hb-num">'+esc(sg.covers)+'</span>')+'</td>'

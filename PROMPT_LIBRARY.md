@@ -249,15 +249,15 @@ Every model call that reads a restaurant's memory gets it from one assembler, `m
 | Schedule | `schedule` (team) | constraints, goals, last_claim, decisions, what_worked, events, people | the last of the extra blocks |
 | Labor read | `labor_read` (team) | as the schedule | the end of the Data block, before the evidence rules |
 | Food read | `food_read` (team, food-cost view) | constraints, goals, last_claim, decisions, what_worked | after the CFO block and the root-cause read |
-| Reviews read | `review_read` (team) | constraints, goals, last_claim, decisions, what_worked | after the stored diagnosis, before the evidence rules |
+| Reviews read | `review_read` (team) | constraints, goals, last_claim, decisions, what_worked, market | after the stored diagnosis, before the evidence rules |
 | Review diagnosis | `review_diagnosis` (team) | constraints, last_claim, decisions, what_worked, people | WHAT CAVNAR AI REMEMBERS ABOUT THIS THEME |
 | Food diagnosis | `food_diagnosis` (team, food-cost view) | constraints, last_claim, decisions, what_worked, links | WHAT CAVNAR AI REMEMBERS ABOUT THIS |
 | DSR narrative | `dsr_narrative` (team) | constraints, goals, last_claim, decisions, what_worked, events | the last section of the user turn |
 | Weekly digest | `digest` (the owner's view) | constraints, goals, decisions, what_worked | context for the ACTION line |
-| Weekly plan | `weekly_plan` (team, food-cost view) | constraints, goals, last_claim, decisions, what_worked, events | after LAST WEEK'S PLAN |
-| Post, calendar, newsletter, guest text | `marketing` (team) | constraints, goals, decisions, what_worked, events, links | beside the owner's voice |
+| Weekly plan | `weekly_plan` (team, food-cost view) | constraints, goals, last_claim, decisions, what_worked, events, market | after LAST WEEK'S PLAN |
+| Post, calendar, newsletter, guest text | `marketing` (team) | constraints, goals, decisions, what_worked, events, market, links | beside the owner's voice |
 | Reply drafts | `reply_drafter` (team) | constraints, decisions | after the other style blocks, before the language rule |
-| Competitor read | `competitor_read` (team) | constraints, last_claim, decisions | after the restaurant's profile |
+| Competitor read | `competitor_read` (team) | constraints, last_claim, decisions, market | after the restaurant's profile |
 
 The morning brief reads the `brief` surface deterministically (no model call). Each section is described with its call site above.
 

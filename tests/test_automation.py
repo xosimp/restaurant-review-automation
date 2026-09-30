@@ -618,12 +618,19 @@ def test_scoring_records_the_signed_error(db_path, monkeypatch):
         assert row["signed_error_pct"] == 20.0
 
 
-def test_waste_trims_the_order_but_never_below_one_or_past_the_cap():
+def test_waste_trims_the_order_once_and_the_line_names_it():
+    # Re-audit fix round R7 (CROSSMODULE-19): this asserted the draft's own
+    # SECOND waste trim (up to 30% more after analyse_inventory's waste_adj,
+    # ~42% of the need for an item wasting 80%). The order now comes down
+    # once, in analyse_inventory; _trim_for_waste only reads back the units
+    # that adjustment took off, for the line to name.
     import inventory
-    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 0, "avg_daily_usage": 2}) == (10, 0)
-    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 1.4, "avg_daily_usage": 2}) == (9, 1)
-    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 100, "avg_daily_usage": 2}) == (7, 3)
-    assert inventory._trim_for_waste({"suggested_order_qty": 1, "waste_last_week": 100, "avg_daily_usage": 2}) == (1, 0)
+    assert inventory._trim_for_waste({"suggested_order_qty": 10, "waste_last_week": 0,
+                                      "waste_trimmed_units": 0}) == (10, 0)
+    assert inventory._trim_for_waste({"suggested_order_qty": 9, "waste_last_week": 1.4,
+                                      "waste_trimmed_units": 1}) == (9, 1)
+    assert inventory._trim_for_waste({"suggested_order_qty": 13, "waste_last_week": 100,
+                                      "waste_trimmed_units": 8}) == (13, 8)
 
 
 def test_the_best_margin_dish_joins_the_calendar_only_when_margins_are_real(db_path, monkeypatch):

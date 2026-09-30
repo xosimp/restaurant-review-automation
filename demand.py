@@ -132,7 +132,7 @@ def prediction_range(hist):
 STALE_SAMPLE_DAYS = 14
 
 
-def forecast_day(restaurant_id, day=None, db_path=DB_PATH, effects=True):
+def forecast_day(restaurant_id, day=None, db_path=DB_PATH, effects=True, calibrate=True):
     """Typical sales for `day` (default the restaurant's today), from its own
     weekday history — the POS sync's final daily totals.
 
@@ -147,17 +147,26 @@ def forecast_day(restaurant_id, day=None, db_path=DB_PATH, effects=True):
     from this restaurant's own nights (event_memory.effects_for_day, behind
     its sample floor), applied to the weekday median and said: `base_sales`
     is the plain median, `effects` what moved it, `effect_basis` the
-    sentence. False reads the plain weekday median ("a typical Tuesday")."""
+    sentence. False reads the plain weekday median ("a typical Tuesday").
+
+    `calibrate` (default, with `effects`): corrected by this restaurant's own
+    measured misses (forecast_calibration — a consistent lean over enough
+    scored nights, bounded; memory re-audit 9/29/26, LOOPS-13): `raw_sales`
+    is the figure before it, the one the nightly report records and the
+    correction is measured against, so it never feeds on itself;
+    `calibration` / `calibration_note` say it."""
     day = day or local_today(restaurant_id)
     weekday = day.strftime("%A")
     dated = _weekday_history_dated(restaurant_id, weekday, day, db_path=db_path)
     out = _forecast_from(dated, day, weekday)
     if effects and out.get("available"):
         _apply_effects(restaurant_id, day, out, db_path)
+        if calibrate:
+            _apply_calibration(restaurant_id, day, out, db_path)
     return out
 
 
-def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True):
+def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True, calibrate=True):
     """forecast_day on the nightly report's OWN basis (canonical_facts
     .BASIS_DSR) — the only forecast a report's net may be set beside and the
     one its predictions are graded against (memory audit 9/29/26, net_basis).
@@ -173,7 +182,8 @@ def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True):
     day = day or local_today(restaurant_id)
     weekday = day.strftime("%A")
     if cf.pos_basis(cf._current_provider(restaurant_id)) != cf.BASIS_POS:
-        fc = (forecast_day(restaurant_id, day, db_path=db_path) if effects
+        fc = (forecast_day(restaurant_id, day, db_path=db_path) if effects and calibrate
+              else forecast_day(restaurant_id, day, db_path=db_path, calibrate=False) if effects
               else forecast_day(restaurant_id, day, db_path=db_path, effects=False))
         return dict(fc, basis=cf.BASIS_DSR) if isinstance(fc, dict) else fc
     start = day - timedelta(weeks=LOOKBACK_WEEKS)
@@ -188,6 +198,8 @@ def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True):
                          "tonight's net is not set beside a forecast built from it")
     if effects and out.get("available"):
         _apply_effects(restaurant_id, day, out, db_path)
+        if calibrate:
+            _apply_calibration(restaurant_id, day, out, db_path)
     return out
 
 
@@ -248,7 +260,132 @@ def _apply_effects(restaurant_id, day, out, db_path=DB_PATH):
             out[k] = round(out[k] * factor, 2)
     out["effect_pct"] = eff["pct"]
     out["effects"] = eff["applied"]
+    # Labels whose lift the applied ones already carry (measured on the same
+    # nights — event_memory QUALITY-4): said, never multiplied in.
+    if eff.get("subsumed"):
+        out["effects_subsumed"] = eff["subsumed"]
     out["effect_basis"] = eff["basis"]
+    return out
+
+
+# ── the forecast corrected by its own misses (LOOPS-13) ─────────────────────
+#
+# demand_accuracy measured the lean ("nights ran 12% above the forecast") and
+# only displayed it: a restaurant running 12% above for two months was
+# forecast low every night — the prep list, the DSR's range, the brief. The
+# rule is forecast_log's (a consistent lean over enough scored periods,
+# bounded, the raw figure kept for scoring), over nights: the nightly report
+# records each night's RAW forecast (sales.forecast_raw_net), and the lean is
+# measured against that, never against a corrected figure.
+
+CALIBRATION_MIN_NIGHTS = 14          # scored same-basis nights before any correction
+CALIBRATION_MIN_LEAN_PCT = 5.0       # a lean smaller than this is day-to-day noise
+CALIBRATION_MIN_SHARE = 2 / 3.0      # of the nights on the lean's side: "consistent"
+CALIBRATION_MAX_PCT = 15.0           # the correction is bounded either way
+CALIBRATION_WINDOW_DAYS = 56         # the nights read: demand_accuracy's own window
+
+
+def _scored_nights(restaurant_id, start, end, db_path=DB_PATH):
+    """({business_date: {metric: value}}, excluded_other_basis) — the nightly
+    reports' forecast metrics in [start, end], same basis only (memory audit
+    9/29/26, net_basis): a night scored against a forecast built from a POS
+    total counted another way learned the counting gap as forecast bias. A
+    night records whether its forecast rested on the report's own basis
+    (sales.forecast_same_basis); a night from before that record counts
+    unless its POS is known to build a different figure."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT business_date, metric, value, source FROM dsr_metrics WHERE restaurant_id=? "
+            "AND business_date BETWEEN ? AND ? AND metric IN "
+            "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high',"
+            "'sales.forecast_net','sales.forecast_raw_net','sales.forecast_same_basis') "
+            "AND value IS NOT NULL", (restaurant_id, start, end)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    nights, sources = {}, {}
+    for r in rows:
+        nights.setdefault(r["business_date"], {})[r["metric"]] = float(r["value"])
+        if r["metric"] == "sales.net":
+            sources[r["business_date"]] = r["source"]
+    import canonical_facts as _cf
+    other_basis = [d for d, n in nights.items()
+                   if not (n.get("sales.forecast_same_basis") == 1.0
+                           or ("sales.forecast_same_basis" not in n
+                               and _cf.pos_basis(sources.get(d)) != _cf.BASIS_POS))]
+    for d in other_basis:
+        nights.pop(d, None)
+    return nights, len(other_basis)
+
+
+def forecast_calibration(restaurant_id, before=None, days=CALIBRATION_WINDOW_DAYS, db_path=DB_PATH) -> dict:
+    """{"available", "factor", "lean_pct", "n", "share", "reading", "reason"}
+    — how the RAW day forecast has missed over the `days` before `before`
+    (default the restaurant's today): actual ÷ raw forecast − 1 per scored
+    same-basis night (a night recorded before the raw figure existed stored
+    its raw forecast as sales.forecast_net — nothing corrected it then).
+    A correction (`factor` ≠ 1) needs CALIBRATION_MIN_NIGHTS nights, a mean
+    lean of CALIBRATION_MIN_LEAN_PCT or more, and CALIBRATION_MIN_SHARE of
+    the nights on that side; it is bounded to ±CALIBRATION_MAX_PCT. Never
+    raises."""
+    out = {"available": False, "factor": 1.0, "lean_pct": None, "n": 0, "share": None, "reading": None,
+           "reason": None}
+    try:
+        before = before or local_today(restaurant_id)
+        start = (before - timedelta(days=days)).isoformat()
+        end = (before - timedelta(days=1)).isoformat()
+        nights, _other = _scored_nights(restaurant_id, start, end, db_path=db_path)
+    except Exception as e:
+        out["reason"] = f"forecast record unreadable: {e}"
+        return out
+    errs = []
+    for n in nights.values():
+        actual = n.get("sales.net")
+        raw = n.get("sales.forecast_raw_net", n.get("sales.forecast_net"))
+        if actual and actual > 0 and raw and raw > 0:
+            errs.append((actual / raw - 1.0) * 100.0)
+    out["n"] = len(errs)
+    if len(errs) < CALIBRATION_MIN_NIGHTS:
+        out["reason"] = (f"only {len(errs)} nights scored against their forecast in the last {days} days — "
+                         f"a correction needs {CALIBRATION_MIN_NIGHTS}")
+        return out
+    lean = sum(errs) / len(errs)
+    share = sum(1 for e in errs if (e > 0) == (lean > 0) and e != 0) / len(errs)
+    out.update(available=True, lean_pct=round(lean, 1), share=round(share, 2))
+    if abs(lean) < CALIBRATION_MIN_LEAN_PCT or share < CALIBRATION_MIN_SHARE:
+        out["reading"] = "no consistent lean"
+        return out
+    bounded = max(-CALIBRATION_MAX_PCT, min(CALIBRATION_MAX_PCT, lean))
+    out["factor"] = round(1.0 + bounded / 100.0, 4)
+    out["reading"] = (f"nights here ran {abs(lean):.0f}% {'above' if lean > 0 else 'below'} the forecast across the "
+                      f"last {len(errs)} scored nights")
+    return out
+
+
+def _apply_calibration(restaurant_id, day, out, db_path=DB_PATH):
+    """Correct an available forecast by forecast_calibration, measured over
+    the nights before `day` (and never past the restaurant's today): the
+    range moves with it, `raw_sales` keeps the figure before it. Never
+    raises."""
+    out["raw_sales"] = out.get("typical_sales")
+    try:
+        today = local_today(restaurant_id)
+        cal = forecast_calibration(restaurant_id, before=min(day, today), db_path=db_path)
+    except Exception as e:
+        print(f"[demand] forecast calibration unavailable for {restaurant_id}: {e}")
+        return out
+    if not cal.get("available") or cal.get("factor", 1.0) == 1.0:
+        return out
+    f = float(cal["factor"])
+    out["typical_sales"] = round(out["typical_sales"] * f, 2)
+    for k in ("low", "high"):
+        if out.get(k) is not None:
+            out[k] = round(out[k] * f, 2)
+    out["calibration"] = {"factor": f, "lean_pct": cal["lean_pct"], "n": cal["n"], "reading": cal["reading"]}
+    out["calibration_note"] = (f"corrected {(f - 1) * 100:+.0f}% because {cal['reading']} — before and after, "
+                               "not proof")
     return out
 
 
@@ -294,37 +431,8 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
     base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None, "actual_vs_forecast_pct": None,
             "inside_range_pct": None, "n_ranged": 0, "window_days": days, "claim_kind": "measured",
             "skill_vs_last_pct": None, "skill_vs_mean_pct": None, "skill_pct": None, "n_skill": 0}
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute(
-            "SELECT business_date, metric, value, source FROM dsr_metrics WHERE restaurant_id=? "
-            "AND business_date BETWEEN ? AND ? AND metric IN "
-            "('sales.vs_forecast_pct','sales.net','sales.forecast_low','sales.forecast_high',"
-            "'sales.forecast_net','sales.forecast_same_basis') "
-            "AND value IS NOT NULL", (restaurant_id, start, end)).fetchall()
-    except Exception:
-        rows = []
-    finally:
-        conn.close()
-    nights, sources = {}, {}
-    for r in rows:
-        nights.setdefault(r["business_date"], {})[r["metric"]] = float(r["value"])
-        if r["metric"] == "sales.net":
-            sources[r["business_date"]] = r["source"]
-    # Same basis only (memory audit 9/29/26, net_basis): a night scored
-    # against a forecast built from a POS total counted another way learned
-    # the counting gap as forecast bias. A night records whether its forecast
-    # rested on the report's own basis (sales.forecast_same_basis); a night
-    # from before that record counts unless its POS is known to build a
-    # different figure.
-    import canonical_facts as _cf
-    other_basis = [d for d, n in nights.items()
-                   if not (n.get("sales.forecast_same_basis") == 1.0
-                           or ("sales.forecast_same_basis" not in n
-                               and _cf.pos_basis(sources.get(d)) != _cf.BASIS_POS))]
-    for d in other_basis:
-        nights.pop(d, None)
-    base["excluded_other_basis"] = len(other_basis)
+    nights, n_other = _scored_nights(restaurant_id, start, end, db_path=db_path)
+    base["excluded_other_basis"] = n_other
     pcts = [n["sales.vs_forecast_pct"] for n in nights.values() if "sales.vs_forecast_pct" in n]
     ranged = [n for n in nights.values()
               if all(k in n for k in ("sales.net", "sales.forecast_low", "sales.forecast_high"))]
@@ -424,10 +532,14 @@ def week_projection(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
             day = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
         except ValueError:
             continue
-        fc = forecast_day(restaurant_id, day, db_path=db_path)
+        # Uncorrected (calibrate=False): the frozen weekly projection has its
+        # own record and its own correction (forecast_log revenue_week), and
+        # a day figure already corrected would be corrected twice.
+        fc = forecast_day(restaurant_id, day, db_path=db_path, calibrate=False)
         if fc.get("available"):
             by_day[day.isoformat()] = fc["typical_sales"]
-            labels = [e.get("label") for e in (fc.get("effects") or []) if e.get("label")]
+            labels = [e.get("label") for e in (fc.get("effects") or []) + (fc.get("effects_subsumed") or [])
+                      if e.get("label")]
             if labels:
                 modelled[day.isoformat()] = labels
         else:
@@ -668,6 +780,19 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
         sold.setdefault(r["menu_item_id"], {})[r["business_date"]] = float(r["q"] or 0)
     expected = {mid: _median([by_date.get(d, 0.0) for d in dates]) for mid, by_date in sold.items()}
     expected = {mid: q for mid, q in expected.items() if q}
+    # The measured effects of what is known about the date — a game night
+    # measured at +30% here, the holiday, a guest text aimed at it — scale
+    # the usage as they scale the sales forecast (event_memory.effects_for_day;
+    # memory re-audit 9/29/26, CROSSMODULE-11): a game night used to prep a
+    # normal Sunday.
+    try:
+        import event_memory
+        eff = event_memory.effects_for_day(restaurant_id, day, db_path=db_path)
+    except Exception:
+        eff = None
+    factor = 1.0 + float(eff["pct"]) / 100.0 if eff and eff.get("pct") else 1.0
+    if factor != 1.0:
+        expected = {mid: q * factor for mid, q in expected.items()}
 
     need = {}
     for rec in recipes:
@@ -685,11 +810,16 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
         n["covered"] = n["shortfall"] == 0
         rows.append(n)
     rows.sort(key=lambda n: (n["covered"], -n["shortfall"], -n["expected_use"]))
-    return {"available": True, "day": day.isoformat(), "weekday": day.strftime("%A"),
-            "items": rows[:limit], "dishes_forecast": len(expected),
-            "promoted": promoted_dishes(restaurant_id, day, db_path=db_path),
-            "note": ("A usage forecast from each dish's typical sales on this weekday times its "
-                     "recipe. It does not model sub-recipes or batch sizes.")}
+    out = {"available": True, "day": day.isoformat(), "weekday": day.strftime("%A"),
+           "items": rows[:limit], "dishes_forecast": len(expected),
+           "promoted": promoted_dishes(restaurant_id, day, db_path=db_path),
+           "note": ("A usage forecast from each dish's typical sales on this weekday times its "
+                    "recipe. It does not model sub-recipes or batch sizes.")}
+    if factor != 1.0:
+        out.update(effect_pct=eff["pct"], effects=eff["applied"], effect_basis=eff["basis"])
+        out["note"] += (f" Scaled {eff['pct']:+.0f}% for what is known about the date, as measured on nights "
+                        "like it here — before and after, not proof.")
+    return out
 
 
 def promoted_dishes(restaurant_id, day, db_path=DB_PATH) -> list:
