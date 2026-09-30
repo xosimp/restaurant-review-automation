@@ -287,7 +287,13 @@ deleted restaurant's kept rows keep the labels they had.
   clients read its `score` (always a number), `band`, `label`, `reason`.
 - Ask gets two tools (`read_restaurant_memory`, `read_platform_intelligence`)
   and one short context section (`intelligence.context_bundle`), with counts
-  and effects only. Since the Benchmarking audit (9/24/26, workstream V)
+  and effects only. The section carries no advice record since the memory
+  re-audit (PEOPLE-11 / QUALITY-16, 9/29/26): what worked and what was
+  declined reach Ask from memory_context's `what_worked` section, gated per
+  viewer (`rec_learning.line_gate`: every module the kind rests on, loss,
+  owner-only), and `read_restaurant_memory` projects `record` the same way
+  (`rec_learning.viewer_sees_record`); `memory.own_record` stays the
+  engine's. Since the Benchmarking audit (9/24/26, workstream V)
   the comparison lines are the Benchmark Engine's (`engine.compare_all` +
   `engine.prompt_lines`): a band of the restaurant's own type, or the
   all-types band ONLY for a behaviour metric — never an all-types labor %,
