@@ -817,6 +817,13 @@ def _commitments_context(restaurant_id, viewer=None):
             own_only = None if (who.get("is_admin") or is_principal(who)) else who.get("id")
         except Exception:
             own_only = who.get("id")
+        if own_only is None and not who.get("is_admin"):
+            import memory_context as _mc_cm
+            if _mc_cm.is_team(who):
+                # The team (the Monday plan's viewer) is no login: it reads
+                # no one's own proposals — with id None it read everyone's
+                # (memory re-audit PROMPTS-8). 0 matches no login.
+                own_only = 0
     open_since = (_dt.utcnow() - _td(days=PROPOSAL_OPEN_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     # A proposal that was never confirmed or dismissed is still open, and that
     # is the interesting state — but the same action appears twice (proposed,

@@ -452,3 +452,14 @@ def test_the_brief_audience_of_a_result_uses_the_one_metric_rule():
     import permissions, strategy_jobs
     assert strategy_jobs._metric_permissions("item_waste:Salmon") == {permissions.FOOD_COST_VIEW}
     assert strategy_jobs._metric_permissions("void_rate") == {permissions.LOSS_VIEW}
+
+
+def test_the_plans_commitments_carry_no_logins_own_proposals(monkeypatch):
+    import ask_cavnar, memory_context
+    rows = [{"id": 1, "action": "send_supplier_order", "summary": "Email Fresh Co", "outcome": "proposed",
+             "user_id": 2, "created_at": "2099-01-01 00:00:00", "surface": "ask"}]
+    monkeypatch.setattr(models, "get_ask_actions", lambda *a, **k: rows)
+    team = type("V", (), {"_ask_dsr_user": dict(memory_context.team_viewer("weekly_plan"))})()
+    owner = type("V", (), {"_ask_dsr_user": dict(OWNER)})()
+    assert "Fresh Co" not in ask_cavnar._commitments_context(1, viewer=team)
+    assert "Fresh Co" in ask_cavnar._commitments_context(1, viewer=owner)
