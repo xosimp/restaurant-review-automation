@@ -1144,7 +1144,17 @@ all-types patterns are served (`patterns.active(None)`; the admin view is
   VIEWER'S WHOLE ORGANISATION is taken out of the band it sees (each member
   value sits beside an org hash in `members_json`; `viewer_org` returns the
   organisation's hashes including the keys a band frozen earlier in the
-  week used, so the key change never leaves a viewer inside its own band),
+  week used, so the key change never leaves a viewer inside its own band;
+  since the memory re-audit (9/29/26, FORGET-8) the hash is an HMAC under
+  this install's own key — `privacy.org_hash`, key `intel_org_hash` in
+  `app_secrets`, which off-site copies empty — never a bare sha256 anyone
+  could recompute from "r5" or an owner email; a band's member list is
+  dropped once the band is older than any reader serves
+  (`benchmarks.strip_old_members`, the `band_members` stage of the nightly
+  pass: `MAX_BAND_AGE_WEEKS`, `vals_json` and the quartiles stay); and
+  `models.delete_restaurant` takes a restaurant alone in its organisation
+  out of every stored band's member list — `benchmarks.strip_member_hashes`
+  — so its value stops standing in a band at once),
   and one Google listing counts once. An organisation over a third of what
   a viewer would see is HELD to a third — its surplus locations sit out,
   the same ones for every viewer that ISO week (`benchmarks.
@@ -1207,6 +1217,23 @@ own and the platform's, and every admin learning check. Test and internal
 accounts used to be excluded only when an admin ticked the flag, so the
 internal rid 1 counted as live. The admin console shows the status beside
 the override (`models.learning_status`).
+
+Since the memory re-audit (9/29/26, PLATFORM-14) there is no second,
+narrower definition: `jobs.seeded_restaurant_ids` (and so
+`real_restaurant_ids` and `active_restaurants`, the restaurant list of the
+band, pattern, ledger and prediction passes) is the demo quarantine plus
+every restaurant `learning_exclusion` refuses (`models.learning_ineligible_ids`),
+and `jobs.member_info`'s `excluded` is `learning_exclusion(...) is not None`
+— it read `exclude_from_learning` alone.
+
+**Fail closed** (PLATFORM-11). An eligibility or provenance read that fails
+raises instead of teaching everything: `provenance.google_connected_ids`
+(it returned "nobody is connected"), a row whose eligibility cannot be
+judged (`jobs.excluded_learning_ids` — it read as eligible),
+`features._not_teaching` / `_since_weeks` and the A/B readout's
+`_excluded` / `_learning_since` (each returned "exclude none"). Only a
+database without the column or table is forgiven. The pooled stage that
+raised is skipped and captured, and last week's frozen rows keep serving.
 
 **The demo era.** When a demo becomes a real account its seeded history
 stays (never hard-deleted), and `learning_since` is stamped at the

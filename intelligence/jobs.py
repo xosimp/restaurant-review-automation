@@ -83,19 +83,34 @@ SEEDED_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1
                          "(demo_cleared_at IS NOT NULL AND demo_cleared_at >= datetime('now', ?))")
 
 
+def _schema_gap(err) -> bool:
+    text = str(err).lower()
+    return "no such column" in text or "no such table" in text
+
+
 def seeded_restaurant_ids(db_path=DB_PATH) -> set:
     """The complement of real_restaurant_ids within the restaurants table:
-    demo accounts and recently de-flagged ones. Readers of the feature and
-    event tables drop these ids."""
+    demo accounts, recently de-flagged ones, and — since the memory
+    re-audit (9/29/26, PLATFORM-14) — every restaurant the one "may teach"
+    predicate refuses (models.learning_exclusion: an admin's exclude
+    override, internal billing, a home of internal logins only, a test
+    name). This was a second, narrower definition (is_demo,
+    exclude_from_learning, demo_cleared_at), so active_restaurants() handed
+    the band, pattern, ledger and prediction passes test and internal
+    accounts. Readers of the feature and event tables drop these ids."""
     conn = get_conn(db_path)
     try:
         try:
             rows = conn.execute(SEEDED_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
-        except Exception:
+        except Exception as e:
+            if not _schema_gap(e):
+                raise
             rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1").fetchall()
+        out = {int(r["id"]) for r in rows}
+        out |= _models_mod.learning_ineligible_ids(conn=conn)
     finally:
         conn.close()
-    return {int(r["id"]) for r in rows}
+    return out
 
 
 def real_restaurant_ids(db_path=DB_PATH) -> set:
@@ -108,13 +123,11 @@ def real_restaurant_ids(db_path=DB_PATH) -> set:
     filtered by this — only what it contributes to everyone else's."""
     conn = get_conn(db_path)
     try:
-        try:
-            rows = conn.execute(REAL_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
-        except Exception:
-            rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0").fetchall()
+        ids = {int(r["id"]) for r in conn.execute("SELECT id FROM restaurants").fetchall()}
     finally:
         conn.close()
-    return {int(r["id"]) for r in rows}
+    # The one predicate (PLATFORM-14): every restaurant not seeded_restaurant_ids.
+    return ids - seeded_restaurant_ids(db_path)
 
 
 # models.learning_eligible over every restaurant, kept this long per
@@ -142,17 +155,22 @@ def excluded_learning_ids(db_path=DB_PATH) -> set:
     try:
         try:
             out = {int(r["id"]) for r in conn.execute(SEEDED_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",))}
-        except Exception:
+        except Exception as e:
+            if not _schema_gap(e):
+                raise
             out = {int(r["id"]) for r in conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1")}
         rows = conn.execute("SELECT * FROM restaurants").fetchall()
+        homes = _models_mod._internal_home_ids_on(conn)
     finally:
         conn.close()
     since = {}
     for r in rows:
+        # Fails closed (memory re-audit 9/29/26, PLATFORM-11): a row whose
+        # eligibility cannot be read teaches nothing. It read as eligible.
         try:
-            ok = _models_mod.learning_eligible(dict(r))
+            ok = _models_mod.learning_exclusion(dict(r), internal_homes=homes) is None
         except Exception:
-            ok = True
+            ok = False
         if not ok:
             out.add(int(r["id"]))
         if "learning_since" in r.keys() and r["learning_since"]:
@@ -365,6 +383,7 @@ def member_info(db_path=DB_PATH, today: date = None) -> dict:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM restaurants").fetchall()
+        homes = _models_mod._internal_home_ids_on(conn)
     finally:
         conn.close()
     try:
@@ -386,7 +405,10 @@ def member_info(db_path=DB_PATH, today: date = None) -> dict:
             "org": org, "org_hash": privacy.org_hash(org),
             "org_hashes": frozenset(privacy.org_hash(k) for k in aliases.get(org, {org})),
             "place_id": (str(d.get("google_place_id") or "").strip() or None),
-            "excluded": bool(d.get("exclude_from_learning")),
+            # The one "may teach" predicate (PLATFORM-14): it read
+            # exclude_from_learning alone, ignoring the admin's override,
+            # internal billing, an internal-only home and a test name.
+            "excluded": _models_mod.learning_exclusion(d, internal_homes=homes) is not None,
             "live": (d.get("billing_status") or "trial").lower() in _LIVE,
             "live_weeks": _weeks_since(d.get("created_at"), today),
             "cost_basis": _thr.labor_cost_basis(d),
@@ -972,6 +994,8 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     _stage(out, "cohort_series", lambda: trends.persist(cohorts=partitions, members=members, db_path=db_path,
                                                         today=today))
     _stage(out, "confidence_log", lambda: log_confidence(db_path=db_path, cohorts=cohorts, today=today))
+    # Member lists leave bands no reader serves any more (FORGET-8).
+    _stage(out, "band_members", lambda: benchmarks.strip_old_members(db_path=db_path, today=today))
     # The engine's comparisons, materialised per restaurant after tonight's
     # bands (BM4-14, Top-50 #46): bounded and resumable like every pass here.
     try:
@@ -991,7 +1015,7 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     # The standard counts (#39), by stage: a stage that raised is failed
     # (and captured), the bands held for an unfinished feature pass skipped.
     stages = [k for k in ("feedback", "patterns", "benchmarks", "peer_ledger", "cohort_series", "confidence_log",
-                          "benchmark_facts", "effects") if k in out]
+                          "band_members", "benchmark_facts", "effects") if k in out]
     failed = sum(1 for k in stages if isinstance(out[k], dict) and out[k].get("error"))
     held = 1 if isinstance(out.get("benchmarks"), dict) and out["benchmarks"].get("held") else 0
     out.update(attempted=len(stages) - held, ok=len(stages) - held - failed, failed=failed, skipped=held,

@@ -784,21 +784,20 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3, pooled:
 
 
 def _not_teaching(db_path) -> set:
-    try:
-        from .jobs import excluded_learning_ids
-        return set(excluded_learning_ids(db_path=db_path))
-    except Exception:
-        return set()
+    """Every restaurant that may not teach (jobs.excluded_learning_ids).
+    Raises when unreadable (memory re-audit 9/29/26, PLATFORM-11): an
+    unreadable set used to exclude none, so a test account's rows reached
+    that week's frozen bands. The pooled stage fails and is captured."""
+    from .jobs import excluded_learning_ids
+    return set(excluded_learning_ids(db_path=db_path))
 
 
 def _since_weeks(db_path) -> dict:
-    """{restaurant_id: ISO week of its learning_since} (jobs.learning_since_week)."""
-    try:
-        from .jobs import learning_since_by_id, learning_since_week
-        since = learning_since_by_id(db_path=db_path)
-        return {rid: learning_since_week(rid, since) for rid in since}
-    except Exception:
-        return {}
+    """{restaurant_id: ISO week of its learning_since} (jobs.learning_since_week).
+    Raises when unreadable, like _not_teaching."""
+    from .jobs import learning_since_by_id, learning_since_week
+    since = learning_since_by_id(db_path=db_path)
+    return {rid: learning_since_week(rid, since) for rid in since}
 
 
 def _demo_era(row, since_weeks) -> bool:

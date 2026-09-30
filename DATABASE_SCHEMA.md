@@ -301,7 +301,7 @@ At boot, once per restaurant with no history yet, the public history is replayed
 - `webhook_verifications` (9/29/26) — per inbound provider (Stripe, DocuSign): `last_verified_at`, `last_verified_event`, `last_failure_at`, `last_failure_error`, `failures_total`, `failures_since_verified`, `last_captured_at` (a failure reaches `ops.capture` at most once an hour per provider). Written by `webhook_routes._webhook_seen`, which since the integration wave also writes the Stripe and DocuSign verdicts to `inbound_webhook_health` (`models.record_inbound_webhook`); still read by the billing health panel.
 - `inbound_webhook_health` (9/29/26) — the same for Resend and Twilio (inbound and status callbacks): the last verified event and its type, verified and failed counts, `failed_since_verified`, `last_failure_reason`, `last_capture_at`, and Resend's bounce and complaint counts and last times. Since the integration wave it holds every provider, Stripe and DocuSign included, and the console's webhook health reads it first (`admin_ops._webhook_health`), falling back to `webhook_verifications` only for a Stripe or DocuSign row written before it. `webhook_verifications` as a second table is a candidate for future cleanup after additional verification.
 - `docusign_envelopes` gains `status` / `status_at` / `status_reason` (the envelope's own DocuSign state), `module_count` / `modules_list` (the terms it was sent with, so a resend knows whether the module list changed), `resend_count` / `last_resent_at`.
-- `app_secrets` — this install's own signing secrets, never `SECRET_KEY`: `email_links` (unsubscribe links) and, since 9/29/26, VERSIONED kept secrets `join_links:vN`, `pay_links:vN`, `issue_links:vN` (`models.kept_secret(name, version)`; `rotate_kept_secret` mints the next version and every older one keeps verifying, because the version rides in the token). Emptied from every off-site backup copy.
+- `app_secrets` — this install's own signing secrets, never `SECRET_KEY`: `email_links` (unsubscribe links) and, since 9/29/26, VERSIONED kept secrets `join_links:vN`, `pay_links:vN`, `issue_links:vN`, `intel_org_hash:vN` (the key of the benchmark bands' organisation hashes, `intelligence.privacy.org_hash`) (`models.kept_secret(name, version)`; `rotate_kept_secret` mints the next version and every older one keeps verifying, because the version rides in the token). Emptied from every off-site backup copy.
 
 ## Admin / Ops
 
@@ -575,7 +575,10 @@ Benchmarking audit (9/24/26, workstream P), all DDL at boot:
   `profile_changed` activity event with the old and new values of every
   profile field that changed.
 - `intel_benchmarks` gains `orgs`, `max_org_share` and `members_json`
-  (`[[value, org hash], …]`, server-side only); the cohort is a peer
+  (`[[value, org hash], …]`, server-side only; the hash an HMAC under
+  `app_secrets` `intel_org_hash:vN`; the list NULLed once the band is past
+  `benchmarks.MAX_BAND_AGE_WEEKS`, and a deleted restaurant alone in its
+  organisation removed from every list — memory re-audit 9/29/26); the cohort is a peer
   partition key (`sm:…`, see the ladder below) or `platform` (behaviour metrics only); a week's
   row is written once and frozen (a row from before `members_json` is
   replaced, and is never shown). Invariant: no stored band rests on fewer

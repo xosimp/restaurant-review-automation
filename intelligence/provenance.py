@@ -176,29 +176,38 @@ def google_connected_ids(db_path=None, conn=None) -> set:
     file, a revoked connection, or any stored review carrying a Business
     Profile resource name (reviews.review_name — set only by the GBP API,
     including on a Places row it later matched). Read in two queries. A
-    database without those columns has none."""
+    database without those columns has none.
+
+    Fails CLOSED (memory re-audit 9/29/26, PLATFORM-11): any other error
+    raises. It returned an empty set — every restaurant "not connected" —
+    so one failed read at 4am let Google review figures into that week's
+    frozen bands. A pooled stage that raises is skipped and captured, and
+    last week's frozen rows keep serving."""
     own = conn is None
     conn = conn or _conn(db_path)
     out = set()
     try:
-        try:
-            for r in conn.execute(
-                    "SELECT id FROM restaurants WHERE COALESCE(gmb_refresh_token,'') != '' "
+        for sql in ("SELECT id FROM restaurants WHERE COALESCE(gmb_refresh_token,'') != '' "
                     "OR COALESCE(gmb_access_token,'') != '' OR COALESCE(gmb_location_id,'') != '' "
-                    "OR COALESCE(gmb_revoked_at,'') != ''").fetchall():
-                out.add(int(r[0]))
-        except Exception:
-            pass
-        try:
-            for r in conn.execute("SELECT DISTINCT restaurant_id FROM reviews "
-                                  "WHERE COALESCE(review_name,'') != ''").fetchall():
-                out.add(int(r[0]))
-        except Exception:
-            pass
+                    "OR COALESCE(gmb_revoked_at,'') != ''",
+                    "SELECT DISTINCT restaurant_id FROM reviews WHERE COALESCE(review_name,'') != ''"):
+            try:
+                for r in conn.execute(sql).fetchall():
+                    out.add(int(r[0]))
+            except Exception as e:
+                if not _schema_gap(e):
+                    raise
     finally:
         if own:
             conn.close()
     return out
+
+
+def _schema_gap(err) -> bool:
+    """A database from before a column or table existed (it has none of
+    what the query looks for) — the only error a fail-closed read forgives."""
+    text = str(err).lower()
+    return "no such column" in text or "no such table" in text
 
 
 def pooled_features(f: dict, google: bool) -> dict:

@@ -4536,6 +4536,18 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     backstop for every other caller.
     """
     rid = int(restaurant_id)
+    # Its organisation hashes, read before the write lock (memory re-audit
+    # 9/29/26, FORGET-8): a restaurant alone in its organisation is taken out
+    # of every stored band's member list below. One whose organisation keeps
+    # other restaurants leaves its organisation's hash, which is theirs too.
+    _band_hashes = set()
+    try:
+        from intelligence import benchmarks as _bm_del, privacy as _pv_del
+        _canon, _org_rows = _pv_del.org_members(rid, db_path=db_path)
+        if not [r for r in _org_rows if int(r.get("id") or 0) != rid]:
+            _band_hashes = set(_bm_del.viewer_org(rid, db_path=db_path))
+    except Exception as _e_del:
+        print(f"[delete_restaurant] band member hashes unavailable for {rid}: {_e_del}")
     conn = get_conn(db_path)
     conn.execute("PRAGMA foreign_keys=OFF")          # must be set outside the transaction
     deleted = {}
@@ -4562,6 +4574,11 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                                     f"move them before deleting it")
         _row_tb = conn.execute("SELECT * FROM restaurants WHERE id=?", (rid,)).fetchone()
         _tombstoned = _tombstone_learning(conn, rid, _row_tb)
+        if _band_hashes and "intel_benchmarks" in tables:
+            from intelligence import benchmarks as _bm_del2
+            n = _bm_del2.strip_member_hashes(conn, _band_hashes)
+            if n:
+                deleted["intel_benchmarks.members"] = n
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
