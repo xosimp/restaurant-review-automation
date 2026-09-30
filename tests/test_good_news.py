@@ -390,3 +390,20 @@ def test_recent_returns_unseen_only_when_asked(db_path):
     assert len(milestones.recent(rid, db_path=db_path)) == 2
     unseen = milestones.recent(rid, db_path=db_path, unseen_only=True)
     assert [m["key"] for m in unseen] == ["savings:5000"]
+
+
+def test_a_labor_streak_with_salaried_staff_says_hourly_and_what_salaries_make_it(db_path):
+    """Simple EJ's, 9/30/26: "5 weeks running under your labor % target"
+    read as the whole labor bill while salaries put it at 41%. With salaried
+    people it says hourly, and last week's figure with the salaries in."""
+    import json as _json
+    rid = _restaurant(db_path, labor_target_pct=30.0)
+    models.update_restaurant(rid, {"salaried_staff_json": _json.dumps([{"name": "Pat Manager", "annual": 52000}])},
+                             db_path=db_path)
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    _days(db_path, rid, monday - timedelta(days=42), 42, labor_ratio=0.25)
+    (s,) = [x for x in good_news.streaks(rid, today=today, db_path=db_path) if x["metric"] == "labor_pct"]
+    assert s["headline"].endswith("under your hourly labor % target")
+    assert s["with_salaries"] is not None and s["with_salaries"] > 25.0
+    assert "With salaries, last week ran" in s["summary"]

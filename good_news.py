@@ -280,6 +280,17 @@ def streaks(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
 
         if weeks < MIN_STREAK_WEEKS:
             continue
+        label = info["label"]
+        with_salaries = None
+        if key == "labor_pct":
+            # The target is on hourly labor (owner, 9/28/26: the salaries sit
+            # beside it). With salaried people the card says HOURLY and what
+            # last week ran with the salaries in — "5 weeks under target" read
+            # as the whole labor bill at Simple EJ's (41% with salaries, 9/30/26).
+            with_salaries = _labor_with_salaries(restaurant, restaurant_id, _week_bounds(today)[0] - timedelta(days=1),
+                                                 db_path)
+            if with_salaries is not None:
+                label = "Hourly labor %"
         out.append({
             "kind": "streak",
             "key": f"streak:{key}:{weeks}",
@@ -290,14 +301,42 @@ def streaks(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
             "weeks": weeks,
             "target": target,
             "best": best,
-            "headline": f"{weeks} weeks running under your {info['label'].lower()} target",
-            "summary": (f"{info['label']} has come in at or under your "
+            "headline": f"{weeks} weeks running under your {label.lower()} target",
+            "summary": (f"{label} has come in at or under your "
                         f"{_fmt(target, info['unit'])} target for {weeks} weeks straight — "
-                        f"best week {_fmt(best, info['unit'])}."),
+                        f"best week {_fmt(best, info['unit'])}."
+                        + (f" With salaries, last week ran {_fmt(with_salaries, info['unit'])}."
+                           if with_salaries is not None else "")),
+            "with_salaries": with_salaries,
             "caveat": CAVEAT,
         })
     out.sort(key=lambda s: s["weeks"], reverse=True)
     return out
+
+
+def _labor_with_salaries(restaurant, restaurant_id, day_in_week, db_path=DB_PATH):
+    """Labor % for the completed week holding `day_in_week` with each trading
+    day's share of the salaries added (models.salaried_day_share), or None
+    with nobody salaried or no week measured."""
+    try:
+        from models import salaried_day_share
+        share = salaried_day_share(restaurant)
+        if not share:
+            return None
+        start, end = _week_bounds(day_in_week)
+        import models as _m_gn
+        conn = _m_gn.get_conn(db_path) if db_path != DB_PATH else _m_gn.get_conn()
+        try:
+            row = conn.execute("SELECT SUM(labor_cost), SUM(sales), COUNT(*) FROM labor_daily_history "
+                               "WHERE restaurant_id=? AND date>=? AND date<=? AND sales > 0 AND labor_cost IS NOT NULL",
+                               (restaurant_id, start.isoformat(), end.isoformat())).fetchone()
+        finally:
+            conn.close()
+        if not row or not row[2] or not row[1]:
+            return None
+        return round((float(row[0]) + share * int(row[2])) / float(row[1]) * 100, 1)
+    except Exception:
+        return None
 
 
 # ── things that stopped happening ────────────────────────────────────────────
