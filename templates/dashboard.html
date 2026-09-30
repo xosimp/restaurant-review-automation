@@ -10602,6 +10602,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <!-- Ratings stored under a name nobody on the roster has judge
              nobody: each with the roster name it most likely means. -->
         <div id="team-unmatched"></div>
+        <div id="team-admin-set" class="ts-note warn" hidden style="font-size:15px;line-height:1.5;padding:12px 14px;border-radius:10px;border:1px solid var(--amber);margin-bottom:12px"></div>
         <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
           <div class="dr-pulse" role="status" aria-label="Loading your team"><i></i></div>
         </div>
@@ -22238,10 +22239,31 @@ document.addEventListener('click', function (ev) {
 function renderTeamCoverage(cov) {
   var chip = document.getElementById('team-coverage-chip');
   if (!chip) return;
+  var note = document.getElementById('team-admin-set');
+  if (note) {
+    // Ratings entered through support are shown but don't count until
+    // someone at the restaurant confirms them (models.adopt_admin_ratings).
+    var n = (cov && cov.admin_set) || 0;
+    note.hidden = !n;
+    if (n) note.innerHTML = '<b>' + n + ' rating' + (n === 1 ? ' was' : 's were') + ' entered through Cavnar AI support</b>, so the scheduler doesn\u2019t count ' + (n === 1 ? 'it' : 'them')
+      + ' yet. If they\u2019re yours, count them \u2014 signed in as yourself.'
+      + ' <button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-left:6px" onclick="teamAdoptRatings(this)">Count them as mine</button>';
+  }
   if (!cov || !cov.total) { chip.textContent = ''; return; }
   chip.textContent = cov.rated === cov.total
     ? '· all ' + cov.total + ' rated'
     : '· ' + cov.rated + ' of ' + cov.total + ' rated';
+}
+
+function teamAdoptRatings(btn) {
+  var done = window.cbtnBusy ? cbtnBusy(btn) : function () {};
+  fetch('/api/labor/team/ratings/adopt', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(apiJson).then(function (d) {
+      done();
+      if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Those ratings didn\u2019t update.', 'error'); return; }
+      if (typeof toast === 'function') toast(d.adopted + ' ratings now count', 'success');
+      loadTeamPanel();
+    }).catch(function () { done(); if (typeof toast === 'function') toast('Those ratings didn\u2019t update \u2014 check your connection.', 'error'); });
 }
 
 function renderTeamList() {

@@ -4820,6 +4820,20 @@ def mobile_labor_team(current_user):
         return jsonify(ok=False, error=_safe_err(e), team=[]), 500
 
 
+@mobile_bp.route("/labor/team/ratings/adopt", methods=["POST"])
+@mobile_login_required
+def mobile_adopt_ratings(current_user):
+    """Count the ratings an admin entered as this account holder's own."""
+    from models import adopt_admin_ratings, CapabilityError
+    try:
+        n = adopt_admin_ratings(current_user["restaurant_id"], current_user)
+    except CapabilityError as ce:
+        return jsonify(ok=False, error=ce.args[0] if ce.args else "Not allowed."), 403
+    _log_account_event(current_user["restaurant_id"], "ratings_adopted", current_user=current_user,
+                       detail=f"{n} ratings entered through support now count as the owner's")
+    return jsonify(ok=True, adopted=n), 200
+
+
 @mobile_bp.route("/labor/team/rating", methods=["POST"])
 @mobile_login_required
 def mobile_set_rating(current_user):

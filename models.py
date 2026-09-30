@@ -7136,6 +7136,27 @@ def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             and c.get("overall", {}).get("authority") != "admin"}
 
 
+def adopt_admin_ratings(restaurant_id: int, user: dict, db_path: str = DB_PATH) -> int:
+    """An account holder counts, as their own, the ratings an admin entered
+    (through view-as or support) — usually with the owner beside them. Only
+    a principal who is not an admin and not in view-as may; returns how many
+    rows (scores and closer flags) now count. Recorded in the account log by
+    the route."""
+    from permissions import answer_authority
+    if answer_authority(user) != "principal":
+        raise CapabilityError("Only the account holder, signed in as themselves, can count these ratings as theirs.")
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            "UPDATE staff_capabilities SET authority='principal', via='normal', updated_by_user_id=?, "
+            "updated_by=? WHERE restaurant_id=? AND authority='admin'",
+            (user.get("id"), ((user.get("username") or "owner") + " (confirmed)")[:120], restaurant_id)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH) -> dict:
     """How much of this roster has been rated.
 
@@ -7149,8 +7170,21 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     # (MOD-EMP-2): matched on case- and space-folded names.
     keys = {" ".join(str(k).split()).casefold() for k in scores}
     rated = [n for n in names if " ".join(str(n).split()).casefold() in keys]
+    # Ratings entered by an admin or through view-as: shown on the team, but
+    # not counted (get_operational_scores) until someone at the restaurant
+    # confirms them — said so the screen never shows ratings the scheduler
+    # ignores without a word (Simple EJ's, 9/30/26: "0 of 57 rated").
+    try:
+        admin_keys = {" ".join(str(n).split()).casefold()
+                      for n, c in get_capabilities(restaurant_id, attribute="overall", db_path=db_path).items()
+                      if (c.get("overall") or {}).get("score") is not None
+                      and (c.get("overall") or {}).get("authority") == "admin"}
+    except Exception:
+        admin_keys = set()
+    admin_set = [n for n in names if " ".join(str(n).split()).casefold() in admin_keys]
     return {
         "rated": len(rated),
+        "admin_set": len(admin_set),
         "total": len(names),
         "unrated": sorted(n for n in names if n not in rated),
         "active": bool(rated),

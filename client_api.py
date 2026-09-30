@@ -11374,6 +11374,12 @@ def labor_team(current_user):
     return _m("mobile_labor_team")(current_user)
 
 
+@client_bp.route("/api/labor/team/ratings/adopt", methods=["POST"])
+@login_required
+def labor_team_ratings_adopt(current_user):
+    return _m("mobile_adopt_ratings")(current_user)
+
+
 @client_bp.route("/api/labor/team/rating", methods=["POST"])
 @login_required
 def labor_team_rating(current_user):
