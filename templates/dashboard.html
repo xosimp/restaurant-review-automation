@@ -13788,6 +13788,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div id="acct-memory-arch" hidden>
           <div class="lb2-sub">Left on its own<small>a full lane, a date that passed, a recommendation you used again &mdash; put any of them back</small></div>
           <div id="acct-memory-arch-list" class="ac-rows"></div>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" id="acct-memory-arch-more" data-mem-older hidden>Show older</button>
         </div>
       </div>
       {# The owner's goals and the goals a teammate proposed (GET /api/goals:
@@ -25342,8 +25343,14 @@ function memMeta(f) {
   if (f.created_on) bits.push(f.created_on);
   if (f.due_label) bits.push('due ' + f.due_label);
   if (f.valid_until_label) bits.push('until ' + f.valid_until_label);
+  /* Memory re-audit 9/29/26 (R3): whose wording it is, who said it again,
+     and a note from someone who no longer has access. */
+  if (f.worded_by) bits.push('in ' + f.worded_by + '’s words');
+  if (f.confirmed_by) bits.push('said again by ' + f.confirmed_by + (f.confirmed_on ? ' ' + f.confirmed_on : ''));
   var aud = memAudience(f.audience);
-  return num(bits.join(' · ')) + (aud ? ' <span class="ac-mem-aud">' + esc(aud) + '</span>' : '');
+  return num(bits.join(' · ')) + (aud ? ' <span class="ac-mem-aud">' + esc(aud) + '</span>' : '')
+    + (f.pinned ? ' <span class="ac-mem-aud">Pinned</span>' : '')
+    + (f.author_left ? ' <span class="ac-mem-aud">Added by someone who left</span>' : '');
 }
 function memLanes(lanes) {
   var box = document.getElementById('acct-memory-lanes'); if (!box) return;
@@ -25353,6 +25360,24 @@ function memLanes(lanes) {
     var w = Math.max(0, Math.min(100, Math.round(n / cap * 100)));
     h += '<div class="ac-mem-lane' + (n >= cap ? ' full' : '') + '"><div class="k">' + esc(MEM_LANE[l.kind] || l.kind) + '<span class="hb-num">' + n + '/' + cap + '</span></div><div class="ac-meter"><i style="width:' + w + '%"></i></div></div>'; }
   box.innerHTML = h; box.hidden = !any;
+}
+/* One archived row: Put it back and Dismiss where this login may. */
+function memArchRow(x) {
+  return '<div class="ac-row"><div class="l"><b>' + esc(x.fact || '') + '</b><span>' + num((MEM_KIND[x.kind] || 'Background') + (x.author ? ' · ' + x.author : '') + (x.archived_on ? ' · left ' + x.archived_on : '') + (x.reason_label ? ' — ' + x.reason_label : '')) + '</span></div>'
+    + (x.can_restore ? '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-restore-fact="' + esc(x.id) + '">Put it back</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-fact="' + esc(x.id) + '">Dismiss</button></div>' : '') + '</div>';
+}
+/* The archive is paged by the server (archive_before), filtered for this
+   login before the page is cut - every page reachable, not the 12 newest. */
+var memArchLast = null;
+function memArchPage(arch, more, append) {
+  var ab = document.getElementById('acct-memory-arch'), al = document.getElementById('acct-memory-arch-list'), mb = document.getElementById('acct-memory-arch-more');
+  if (!ab || !al) return;
+  var a = '';
+  for (var j = 0; j < arch.length; j++) a += memArchRow(arch[j]);
+  if (arch.length) memArchLast = arch[arch.length - 1].id;
+  al.innerHTML = append ? al.innerHTML + a : a;
+  ab.hidden = !al.innerHTML;
+  if (mb) mb.hidden = !more;
 }
 function loadMemory() {
   var el = document.getElementById('acct-memory-list'); if (!el) return;
@@ -25364,22 +25389,40 @@ function loadMemory() {
     else {
       var h = '';
       for (var i = 0; i < facts.length; i++) { var f = facts[i];
+        var btns = (f.can_pin ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pin-fact="' + esc(f.id) + '" data-pin-on="' + (f.pinned ? '0' : '1') + '">' + (f.pinned ? 'Unpin' : 'Pin') + '</button>' : '')
+          + (f.can_forget === false ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button>');
         h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + memMeta(f) + '</span></div>'
-          + (f.can_forget === false ? '' : '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button></div>') + '</div>';
+          + (btns ? '<div class="c">' + btns + '</div>' : '') + '</div>';
       }
+      if (+d.others_private) h += '<div class="ac-row"><div class="l"><span>' + num(d.others_private + (+d.others_private === 1 ? ' private note' : ' private notes') + ' kept by teammates for themselves — not shown here.') + '</span></div></div>';
       el.innerHTML = h;
     }
-    var arch = d.archived || [], ab = document.getElementById('acct-memory-arch'), al = document.getElementById('acct-memory-arch-list');
-    if (ab && al) {
-      var a = '';
-      for (var j = 0; j < Math.min(arch.length, 12); j++) { var x = arch[j];
-        a += '<div class="ac-row"><div class="l"><b>' + esc(x.fact || '') + '</b><span>' + num((MEM_KIND[x.kind] || 'Background') + (x.author ? ' · ' + x.author : '') + (x.archived_on ? ' · left ' + x.archived_on : '') + (x.reason_label ? ' — ' + x.reason_label : '')) + '</span></div>'
-          + (x.can_restore ? '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-restore-fact="' + esc(x.id) + '">Put it back</button></div>' : '') + '</div>';
-      }
-      al.innerHTML = a; ab.hidden = !a;
-    }
+    memArchPage(d.archived || [], !!d.archive_more, false);
   }).catch(function() { el.textContent = 'Could not load.'; });
 }
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-mem-older]') : null; if (!b || memArchLast == null) return;
+  var done = cbtnBusy(b, 'Loading…');
+  fetch('/api/account/memory?archive_before=' + encodeURIComponent(memArchLast), {credentials: 'same-origin'}).then(apiJson)
+    .then(function (d) { done(); if (d && d.ok) memArchPage(d.archived || [], !!d.archive_more, true); })
+    .catch(function () { done(); });
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-dismiss-fact]') : null; if (!b) return;
+  if (!confirm('Let this note go for good? It can’t be put back after this.')) return;
+  var done = cbtnBusy(b, 'Dismissing…');
+  fetch('/api/account/memory/dismiss', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: +b.getAttribute('data-dismiss-fact')})})
+    .then(apiJson).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Dismissed' : ((d && d.error) || 'Could not dismiss'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .catch(function () { done(); });
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-pin-fact]') : null; if (!b) return;
+  var on = b.getAttribute('data-pin-on') === '1';
+  var done = cbtnBusy(b, on ? 'Pinning…' : 'Unpinning…');
+  fetch('/api/account/memory/pin', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: +b.getAttribute('data-pin-fact'), pinned: on})})
+    .then(apiJson).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? (on ? 'Pinned — a full lane won’t push it out' : 'Unpinned') : ((d && d.error) || 'Could not save that'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .catch(function () { done(); });
+});
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-forget-fact]') : null; if (!b) return;
   var done = cbtnBusy(b, 'Forgetting…');
@@ -25427,10 +25470,20 @@ function acctRemember(btn) {
         var u = document.getElementById('acct-memory-until'), du = document.getElementById('acct-memory-due'); if (u) u.value = ''; if (du) du.value = '';
         for (var j = 0; j < ms.length; j++) { ms[j].classList.remove('on'); ms[j].setAttribute('aria-pressed', 'false'); }
       }
-      /* A full lane makes room by moving its oldest fact of that kind to
-         "Left on its own" - said, so nothing leaves unseen. */
-      var msg = d && d.ok ? ('Remembered' + (d.evicted ? ' — the oldest ' + (MEM_KIND[d.kind] || 'fact').toLowerCase() + ' made room, and can be put back' : '')) : ((d && d.error) || 'Could not save');
-      if (typeof toast === 'function') toast(msg, d && d.ok ? 'success' : 'error'); loadMemory(); })
+      /* A full lane makes room by moving its least-used fact of that kind
+         to "Left on its own" - said, so nothing leaves unseen. */
+      var msg = d && d.ok ? (d.confirmed ? 'Already remembered — noted you said it too' : ('Remembered' + (d.replaced ? ' — it replaced “' + d.replaced + '”' : '') + (d.evicted ? ' — the least-used ' + (MEM_KIND[d.kind] || 'fact').toLowerCase() + ' made room, and can be put back' : ''))) : ((d && d.error) || 'Could not save');
+      if (typeof toast === 'function') toast(msg, d && d.ok ? 'success' : 'error');
+      /* A note that looks like one already kept: does this replace it? */
+      var sim = d && d.ok && d.similar && d.similar.length ? d.similar[0] : null;
+      if (sim && confirm('This looks like an earlier note: “' + sim.fact + '”. Does the new one replace it?')) {
+        body.replaces = sim.id;
+        fetch('/api/account/memory/add', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+          .then(apiJson).then(function (r) { if (typeof toast === 'function') toast(r && r.ok && r.replaced ? 'Replaced the earlier note' : ((r && r.error) || 'Could not replace it'), r && r.ok ? 'success' : 'error'); loadMemory(); })
+          .catch(function () {});
+        return;
+      }
+      loadMemory(); })
     .catch(function () { done(); });
 }
 /* Goals (GET /api/goals): a teammate's goal waits as a proposal until an
@@ -25445,6 +25498,14 @@ function loadGoalsCard() {
       h += '<div class="ac-row"><div class="l"><b>' + num(p.summary || p.label || 'A proposed goal') + '</b><span>' + esc('Proposed' + (p.proposed_by ? ' by ' + p.proposed_by : '')) + ' <span class="ac-mem-aud">Waiting for an owner</span></span></div>'
         + (d.can_confirm ? '<div class="c"><button type="button" class="cbtn cbtn-success cbtn-sm" data-goal-answer="confirm" data-goal-id="' + (+p.id) + '">Confirm</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-goal-answer="decline" data-goal-id="' + (+p.id) + '">Decline</button></div>' : '') + '</div>';
     }
+    /* A goal whose date passed without reaching it, retired from every
+       prompt after two weeks: asked once - renew it or close it (memory
+       re-audit 9/29/26, R3). */
+    var ms = d.missed || [];
+    for (i = 0; i < ms.length; i++) { var m = ms[i];
+      h += '<div class="ac-row"><div class="l"><b>' + num(m.summary || m.label || 'A missed goal') + '</b><span>Its date passed without reaching it <span class="ac-mem-aud">Renew or close</span></span></div>'
+        + (d.can_confirm ? '<div class="c"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-goal-answer="renew" data-goal-id="' + (+m.id) + '">Another month</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-goal-answer="close" data-goal-id="' + (+m.id) + '">Close it</button></div>' : '') + '</div>';
+    }
     for (i = 0; i < gl.length; i++) { var g = gl[i];
       /* An active goal's line is its label, target and date (goals.
          describe_target's shape; progress() sends the parts). */
@@ -25458,10 +25519,12 @@ document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-goal-answer]') : null; if (!b || b.disabled) return;
   e.preventDefault();
   var ans = b.getAttribute('data-goal-answer'), id = b.getAttribute('data-goal-id');
-  var done = cbtnBusy(b, ans === 'confirm' ? 'Confirming…' : 'Declining…');
-  fetch('/api/goals/' + encodeURIComponent(id) + '/' + ans, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+  var busy = {confirm: 'Confirming…', decline: 'Declining…', renew: 'Renewing…', close: 'Closing…'};
+  var said = {confirm: 'Confirmed — it’s the target now', decline: 'Declined', renew: 'Renewed for another month — it’s the target again', close: 'Closed'};
+  var done = cbtnBusy(b, busy[ans] || 'Saving…');
+  fetch('/api/goals/' + encodeURIComponent(id) + '/' + ans, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: ans === 'renew' ? '{"days": 30}' : '{}'})
     .then(apiJson).then(function (d) { done();
-      if (typeof toast === 'function') toast(d && d.ok ? (ans === 'confirm' ? 'Confirmed — it’s the target now' : 'Declined') : ((d && d.error) || 'Could not save that'), d && d.ok ? 'success' : 'error');
+      if (typeof toast === 'function') toast(d && d.ok ? (said[ans] || 'Saved') : ((d && d.error) || 'Could not save that'), d && d.ok ? 'success' : 'error');
       loadGoalsCard(); if (window.hbDirty) hbDirty(); })
     .catch(function () { done(); });
 });
