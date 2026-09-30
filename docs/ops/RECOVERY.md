@@ -350,7 +350,11 @@ write — and every save, draft and send fails until space is freed.
    copy is reliably running, fewer local days are needed.
 4. `ops.prune_ledgers` trims old ledger rows nightly after each backup
    (chunked, bounded); it can be run early from `/admin` → Operations →
-   Jobs → `prune_ledgers`.
+   Jobs → `prune_ledgers`. It deletes only when the newest backup wrote its
+   local snapshot within the last 26 hours (`ops.prune_backup_gate`): after
+   a failed snapshot the prune is held, counted failed and paged
+   (`retention_held`), so nothing is deleted that no copy holds — free the
+   space, let a backup succeed, then run it.
 5. The backup refuses to START with less than 3.5 × the database free
    (`BACKUP_FREE_SPACE_FACTOR`) — it fails and pages rather than filling the
    volume at 2am. Engineering → Overview → Backups shows growth per day and

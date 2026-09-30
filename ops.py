@@ -3317,6 +3317,39 @@ def record_backup_run(row: dict, db_path=None):
         return None
 
 
+# How recent the snapshot a prune relies on must be (memory re-audit
+# 9/29/26, FORGET-10): the prune runs straight after the 2am backup, so the
+# pruned rows are in last night's snapshot — but only if that snapshot was
+# taken.
+PRUNE_NEEDS_BACKUP_WITHIN_HOURS = 26
+
+
+def prune_backup_gate(db_path=None) -> tuple:
+    """(ok, why) — whether a retention prune may delete tonight: the newest
+    backup_runs row must have written its local snapshot (local_ok=1) and
+    have started within PRUNE_NEEDS_BACKUP_WITHIN_HOURS. A failed snapshot,
+    no backup at all, or an unreadable ledger holds the prune (fail closed:
+    a row deleted with no copy anywhere cannot come back). Never raises."""
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            last = conn.execute(
+                "SELECT local_ok, started_at, (julianday('now') - julianday(started_at)) * 24.0 AS age "
+                "FROM backup_runs ORDER BY id DESC LIMIT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        return False, f"the backup ledger is unreadable: {e}"
+    if not last:
+        return False, "no backup has run"
+    if not last["local_ok"]:
+        return False, f"the newest backup ({last['started_at']}) did not write its snapshot"
+    if last["age"] is None or float(last["age"]) > PRUNE_NEEDS_BACKUP_WITHIN_HOURS:
+        return False, f"the newest good snapshot ({last['started_at']}) is over {PRUNE_NEEDS_BACKUP_WITHIN_HOURS} hours old"
+    return True, None
+
+
 def backup_status(db_path=None) -> dict:
     """The newest backup, for /health, the console and the SLA watchdog:
     {last_local_ok_at, last_offsite_ok_at, last_size_bytes, last_error,

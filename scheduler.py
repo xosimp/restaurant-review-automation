@@ -2994,8 +2994,26 @@ def run_nightly_retention():
     retention registry (ops.prune_ledgers — chunked, a commit per chunk,
     bounded, then planner statistics) and each owner's own review retention
     (models.purge_expired_reviews). Both ran hourly inside the daily alert
-    checks, each table one DELETE under the write lock (#81)."""
-    out = _ops.prune_ledgers()
+    checks, each table one DELETE under the write lock (#81).
+
+    The registry's deletes run only when tonight's backup wrote its local
+    snapshot (ops.prune_backup_gate; memory re-audit 9/29/26, FORGET-10):
+    with the volume full and the snapshot failed, rows past their windows
+    were deleted with no copy anywhere. Held, paged and counted failed; the
+    reviews' soft delete (reversible) still runs."""
+    ok, why = _ops.prune_backup_gate()
+    if ok:
+        out = _ops.prune_ledgers()
+    else:
+        out = {"attempted": 1, "ok": 0, "failed": 1, "skipped": 0, "hit_bound": False, "held": why}
+        log.error(f"Retention held: {why}")
+        _ops.capture(RuntimeError(f"retention held: {why}"), job="prune_ledgers", context="backup gate")
+        try:
+            _ops.page_operator("retention_held", "Cavnar AI: retention held — no fresh backup",
+                               [f"Nothing was pruned tonight: {why}.",
+                                "The prune runs again after the next good backup."], cooldown_minutes=12 * 60)
+        except Exception as pe:
+            log.error(f"retention-held page failed: {pe}")
     try:
         from models import purge_expired_reviews
         purged = purge_expired_reviews()
