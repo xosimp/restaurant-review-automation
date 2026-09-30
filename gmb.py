@@ -225,8 +225,28 @@ def get_valid_token(restaurant_id: int) -> str | None:
 
 # ── Account/Location discovery ────────────────────────────────────────────────
 
+# Why the last account listing failed, in the owner's words, or None when it
+# answered. A refusal used to read as "manages no locations" (9/30/26: a 429
+# from a project with no Business Profile API quota, on an account that
+# plainly managed Simple EJ's).
+_last_accounts_error = None
+
+
+def _accounts_error_sentence(status: int) -> str:
+    if status == 429:
+        return ("Google refused the request: this Cavnar AI project has no Business Profile API quota yet "
+                "(Google's access approval is pending). Nothing is wrong with this Google account.")
+    if status in (401, 403):
+        return ("Google refused access to Business Profile for this sign-in. Try again and allow "
+                "every permission Google asks for.")
+    return "Google's Business Profile service didn't answer. Try again in a few minutes."
+
+
 def list_gmb_accounts(access_token: str) -> list:
-    """Every GBP account this token can see, newest API shape."""
+    """Every GBP account this token can see, newest API shape. On a failure
+    it returns [] and leaves the reason in _last_accounts_error."""
+    global _last_accounts_error
+    _last_accounts_error = None
     try:
         resp = requests.get(
             "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
@@ -237,6 +257,8 @@ def list_gmb_accounts(access_token: str) -> list:
         return resp.json().get("accounts", []) or []
     except Exception as e:
         print(f"[GMB] list_gmb_accounts error: {e}")
+        status = getattr(getattr(e, "response", None), "status_code", None) or 0
+        _last_accounts_error = _accounts_error_sentence(int(status))
         return []
 
 
@@ -304,7 +326,8 @@ def find_gmb_location(access_token: str, place_id: str) -> dict:
                                       "Add one before connecting Google Business Profile."}
     accounts = list_gmb_accounts(access_token)
     if not accounts:
-        return {"ok": False, "error": "This Google account manages no Business Profile locations."}
+        return {"ok": False, "error": _last_accounts_error
+                or "This Google account manages no Business Profile locations."}
 
     choices = []
     for acct in accounts:

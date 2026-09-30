@@ -760,3 +760,24 @@ def test_a_resent_code_goes_where_the_first_one_did(db_path, client, sent):
     csrf = client.get_cookie("csrf_token").value
     client.post("/resend-2fa", json={"pending_token": pending}, headers={"X-CSRF-Token": csrf})
     assert [to for to, _c in sent["2fa"]] == ["mgr@x.test", "mgr@x.test"]
+
+
+def test_a_google_quota_refusal_is_not_reported_as_an_account_with_no_locations(monkeypatch):
+    """9/30/26: a 429 (the project's Business Profile API quota is zero until
+    Google approves it) read "This Google account manages no Business
+    Profile locations" on Erik's account, which plainly manages Simple EJ's."""
+    import gmb
+    import requests
+
+    class _Resp:
+        status_code = 429
+
+        def raise_for_status(self):
+            raise requests.HTTPError("429 Client Error: Too Many Requests", response=self)
+
+    monkeypatch.setattr(gmb.requests, "get", lambda *a, **k: _Resp())
+    out = gmb.find_gmb_location("tok", "P1")
+    assert not out["ok"] and "quota" in out["error"] and "manages no" not in out["error"]
+    monkeypatch.setattr(gmb.requests, "get", lambda *a, **k: type("R", (), {
+        "raise_for_status": lambda self: None, "json": lambda self: {"accounts": []}})())
+    assert "manages no Business Profile" in gmb.find_gmb_location("tok", "P1")["error"]
