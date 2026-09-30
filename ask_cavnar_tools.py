@@ -367,7 +367,7 @@ def _viewer_user(viewer):
 
 
 def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
-              audience=None, replaces=None, _viewer=None):
+              audience=None, replaces=None, scope=None, _viewer=None):
     """Record something the owner (or a teammate) said that should survive
     this conversation — typed (owner_memory.remember: kind, modules,
     subject, dates, audience) and stamped with who said it, so every
@@ -384,7 +384,10 @@ def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, v
         saved = owner_memory.remember(restaurant_id, fact, kind=kind or "context", modules=modules,
                                       subject=subject, valid_until=valid_until, due_on=due_on, audience=audience,
                                       user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask",
-                                      replaces=replaces)
+                                      replaces=replaces,
+                                      # Every location of the organisation, when a group
+                                      # owner says so (memory re-audit 9/29/26, PEOPLE-13).
+                                      scope="org" if scope == "org" else None)
     except ValueError as e:
         return {"error": str(e)}
     out = {"remembered": saved["fact"], "kind": saved["kind"], "audience": saved["audience"]}
@@ -2385,6 +2388,10 @@ TOOLS = [
                 "replaces": {"type": "string",
                              "description": ("The exact text of a note this one replaces (they said it changed) — "
                                              "that note is archived. Only when they confirmed it.")},
+                "scope": {"type": "string", "enum": ["location", "org"],
+                          "description": ("'org' only when they say it holds for EVERY one of their locations "
+                                          "('we close every location on Thanksgiving'); only an owner of all "
+                                          "the locations may. Omit for this location.")},
             }, "required": ["fact"]},
         },
     },

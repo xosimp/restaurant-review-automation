@@ -148,6 +148,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
     by = {}
     for v in versions:
         by.setdefault(v["history_id"], []).append(v)
+    # One spelling per person (memory re-audit 9/29/26, INVENTORY-2): a week
+    # drafted before "Bob S." was renamed "Bob Smith" still reads as Bob
+    # Smith, so the patterns it teaches key on the person, not a spelling.
+    from schedule_versions import canonical_rows
+    canon = canonical_rows(restaurant_id, [rows_from_csv(v["schedule_csv"]) for v in versions], db_path=db_path,
+                           mapping_only=True)
     out = []
     for hid in ids:
         vs = by.get(hid) or []
@@ -161,12 +167,14 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         final = mgr[-1] if mgr else vs[-1]
         if final["version"] <= base["version"]:
             continue
-        b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(final["schedule_csv"])
+        b = canonical_rows(restaurant_id, [rows_from_csv(base["schedule_csv"])], mapping=canon)[0]
+        f = canonical_rows(restaurant_id, [rows_from_csv(final["schedule_csv"])], mapping=canon)[0]
         # Who settled on it (memory audit 9/29/26, standing_patterns): two
         # GMs with opposite habits on alternate weeks blended into one
         # "manager". The editor of the week's last manager save.
         editor = (str(final["saved_by"] or "").strip() if "saved_by" in final.keys() else "") or None
-        out.append({"history_id": hid, "base": b, "final": f, "diff": diff(b, f), "editor": editor})
+        out.append({"history_id": hid, "week_start": next((h["week_start"] for h in hist if h["history_id"] == hid), None),
+                    "base": b, "final": f, "diff": diff(b, f), "editor": editor})
     return out
 
 
@@ -205,6 +213,7 @@ def retime_patterns(week_edits: list, min_repeats=2) -> list:
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
+                    "last_week": max(e["weeks"]),
                     "text": f"The manager keeps {verb} {_plural(role)} on {day} {_PRETTY.get(part, part)} at {when} "
                             f"({_weeks_text(n)}) — {'start' if kind == 'retime_start' else 'end'} them then in the draft."})
     return out
@@ -256,9 +265,10 @@ def headcount_patterns(week_edits: list, min_repeats=2) -> list:
                 per[slot] = per.get(slot, 0) + delta
         for slot, delta in per.items():
             if delta:
-                tally.setdefault(slot, []).append(delta)
+                tally.setdefault(slot, []).append((delta, int(w.get("history_id") or 0)))
     out = []
-    for (day, part, rl), deltas in tally.items():
+    for (day, part, rl), pairs in tally.items():
+        deltas = [d for d, _h in pairs]
         ups = sorted(d for d in deltas if d > 0)
         downs = sorted(d for d in deltas if d < 0)
         side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
@@ -274,7 +284,8 @@ def headcount_patterns(week_edits: list, min_repeats=2) -> list:
             text = (f"The manager has cut {-delta} {role if delta == -1 else _plural(role)} from {day} "
                     f"{_PRETTY.get(part, part)} in {_weeks_text(n)} — draft {-delta} fewer there.")
         out.append({"kind": "headcount_add" if delta > 0 else "headcount_cut", "employee": "", "role": role,
-                    "day": day, "daypart": part, "delta": int(delta), "times": n, "text": text})
+                    "day": day, "daypart": part, "delta": int(delta), "times": n, "text": text,
+                    "last_week": max((h for d, h in pairs if (d > 0) == (delta > 0)), default=0)})
     return out
 
 
@@ -303,7 +314,7 @@ def role_change_patterns(week_edits: list, min_repeats=2) -> list:
             continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
-                    "times": n,
+                    "times": n, "last_week": max(e["weeks"]),
                     "text": f"The manager keeps switching {name} from {old or 'no role'} to {new} on {day} "
                             f"{_PRETTY.get(part, part)} ({_weeks_text(n)}) — draft them as {new} there."})
     return out
@@ -356,7 +367,7 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
-                    "names": names,
+                    "names": names, "last_week": max(e["weeks"]),
                     "text": f"On {day} {_PRETTY.get(part, part)} the manager keeps swapping a stronger hand onto "
                             f"{role or 'the floor'} — a closer or a higher Operational Score ({', '.join(names)}) — "
                             f"in {_weeks_text(n)}. Draft a leader there."})
@@ -385,17 +396,45 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
     """{(weekday, daypart): {role: delta}} — the net headcount the manager
     keeps adding (+) or cutting (−) per role, for a requirements table to
     apply on top of its own figure. Dismissed patterns are left out; the
-    role is spelled as the schedule spells it."""
+    role is spelled as the schedule spells it.
+
+    What worked stays learned (memory re-audit 9/29/26, QUALITY-3): once
+    the draft carried the 4th server the manager stopped adding one, the
+    edits aged out of the eight-week window and the draft dropped the
+    server again. An ACTIVE standing headcount row (schedule_versions.
+    refresh_standing_patterns) now applies whenever the live window no
+    longer shows it, and a live pattern its standing row has retired
+    (without newer evidence) no longer applies."""
     from schedule_intel import dismissed_patterns, pattern_key
+    import schedule_versions as _sv
     pats = headcount_patterns(edited_weeks(restaurant_id, weeks, db_path), min_weeks)
-    if not pats:
-        return {}
     dismissed = dismissed_patterns(restaurant_id, db_path)
-    out = {}
+    try:
+        standing = {s_["key"]: s_ for s_ in _sv.standing_patterns(restaurant_id, db_path=db_path)
+                    if s_["kind"] in ("headcount_add", "headcount_cut")}
+    except Exception as e:                 # a read; the live window still applies
+        log.warning("standing headcount unavailable for restaurant %s: %s", restaurant_id, e)
+        standing = {}
+    out, live_slots = {}, set()
     for p in pats:
-        if pattern_key(p) in dismissed:
+        k = pattern_key(p)
+        if k in dismissed or _sv.suppressed(p, standing.get(k), standing):
             continue
         out.setdefault((p["day"], p["daypart"]), {})[p["role"]] = p["delta"]
+        live_slots.add((p["day"], p["daypart"], (p["role"] or "").strip().lower()))
+    for k, s_ in standing.items():
+        if s_["status"] != "active" or k in dismissed or s_.get("delta") in (None, ""):
+            continue
+        slot = (s_["day"], s_["daypart"], (s_["role"] or "").strip().lower())
+        if slot in live_slots:
+            continue                       # the live window's own figure is the newer word
+        try:
+            delta = int(s_["delta"])
+        except (TypeError, ValueError):
+            continue
+        if delta:
+            out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = delta
+            live_slots.add(slot)
     return out
 
 
@@ -607,6 +646,12 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
     by = {}
     for v in versions:
         by.setdefault(v["history_id"], []).append(v)
+    # One spelling per person (memory re-audit 9/29/26, INVENTORY-2): a week
+    # drafted before "Bob S." was renamed "Bob Smith" still reads as Bob
+    # Smith, so the patterns it teaches key on the person, not a spelling.
+    from schedule_versions import canonical_rows
+    canon = canonical_rows(restaurant_id, [rows_from_csv(v["schedule_csv"]) for v in versions], db_path=db_path,
+                           mapping_only=True)
     out = []
     for hid in ids:
         vs = by.get(hid) or []

@@ -25348,7 +25348,9 @@ function memMeta(f) {
   if (f.worded_by) bits.push('in ' + f.worded_by + '’s words');
   if (f.confirmed_by) bits.push('said again by ' + f.confirmed_by + (f.confirmed_on ? ' ' + f.confirmed_on : ''));
   var aud = memAudience(f.audience);
-  return num(bits.join(' · ')) + (aud ? ' <span class="ac-mem-aud">' + esc(aud) + '</span>' : '')
+  /* Kept for every location of the organisation (owner_memory scope 'org'). */
+  var every = f.scope === 'org' ? ' <span class="ac-mem-aud">' + esc(f.from_location != null ? 'All locations — kept at another' : 'All locations') + '</span>' : '';
+  return num(bits.join(' · ')) + (aud ? ' <span class="ac-mem-aud">' + esc(aud) + '</span>' : '') + every
     + (f.pinned ? ' <span class="ac-mem-aud">Pinned</span>' : '')
     + (f.author_left ? ' <span class="ac-mem-aud">Added by someone who left</span>' : '');
 }
@@ -25389,7 +25391,8 @@ function loadMemory() {
     else {
       var h = '';
       for (var i = 0; i < facts.length; i++) { var f = facts[i];
-        var btns = (f.can_pin ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pin-fact="' + esc(f.id) + '" data-pin-on="' + (f.pinned ? '0' : '1') + '">' + (f.pinned ? 'Unpin' : 'Pin') + '</button>' : '')
+        var btns = (f.can_set_scope ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-scope="' + esc(f.id) + '" data-scope="' + (f.scope === 'org' ? 'location' : 'org') + '">' + (f.scope === 'org' ? 'This location only' : 'Every location') + '</button>' : '')
+          + (f.can_pin ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pin-fact="' + esc(f.id) + '" data-pin-on="' + (f.pinned ? '0' : '1') + '">' + (f.pinned ? 'Unpin' : 'Pin') + '</button>' : '')
           + (f.can_forget === false ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button>');
         h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + memMeta(f) + '</span></div>'
           + (btns ? '<div class="c">' + btns + '</div>' : '') + '</div>';
@@ -25428,6 +25431,13 @@ document.addEventListener('click', function (e) {
   var done = cbtnBusy(b, 'Forgetting…');
   fetch('/api/account/memory/forget', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fact: b.getAttribute('data-forget-fact')})})
     .then(apiJson).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? 'Forgotten' : ((d && d.error) || 'Could not forget'), d && d.ok ? 'success' : 'error'); loadMemory(); })
+    .catch(function () { done(); });
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-mem-scope]') : null; if (!b) return;
+  var done = cbtnBusy(b, 'Saving…'), sc = b.getAttribute('data-scope');
+  fetch('/api/account/memory/scope', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: +b.getAttribute('data-mem-scope'), scope: sc})})
+    .then(apiJson).then(function (d) { done(); if (typeof toast === 'function') toast(d && d.ok ? (sc === 'org' ? 'Every location reads it now' : 'This location only now') : ((d && d.error) || 'Could not change that'), d && d.ok ? 'success' : 'error'); loadMemory(); })
     .catch(function () { done(); });
 });
 document.addEventListener('click', function (e) {
@@ -33504,7 +33514,7 @@ function memRetagBody(was, now) {
   function ln(html, cls) { return html ? '<span class="mem-ln' + (cls ? ' ' + cls : '') + '">' + html + '</span>' : ''; }
 
   /* ── Labor: who is who, and guests naming staff (Waiting on you) ── */
-  var _pq = {questions: null, canAnswer: false, mentions: null, canConfirm: false};
+  var _pq = {questions: null, canAnswer: false, mentions: null, canConfirm: false, merges: null, canUndo: false};
   window.memWaitCount = function () {
     var n = 0;
     if (_pq.questions) n += _pq.questions.length;
@@ -33524,6 +33534,14 @@ function memRetagBody(was, now) {
             + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-identity="' + (+q.id) + '" data-same="1">Same person</button>'
           : '<span class="sr-note">The account owner answers this</span>') + '</div></div>';
     }
+    /* A merge the owner can still take back (people.UNMERGE_DAYS). */
+    for (i = 0; _pq.canUndo && i < (_pq.merges || []).length; i++) {
+      var mg = _pq.merges[i];
+      if (!mg.undoable) continue;
+      h += '<div class="ac-row" data-wait-key="merge-' + (+mg.merge_id) + '"><div class="l"><b>' + memEsc('Merged ' + (mg.from || '') + ' into ' + (mg.into || '')) + '</b>'
+        + '<span>' + memNum('on ' + (mg.merged_on || '') + (mg.undo_until ? ' · two people after all? You can undo it until ' + mg.undo_until : '')) + '</span></div>'
+        + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-unmerge="' + (+mg.merge_id) + '">Undo merge</button></div></div>';
+    }
     for (i = 0; i < (_pq.mentions || []).length; i++) {
       m = _pq.mentions[i];
       h += '<div class="ac-row" data-wait-key="mention-' + (+m.id) + '"><div class="l"><b>' + memNum(memMentionLine(m)) + ' — is this them?</b>'
@@ -33542,11 +33560,22 @@ function memRetagBody(was, now) {
     if (!$id('lb2-wait-people')) return;
     getJ('/api/people/identity', function (d) { _pq.questions = d.ok ? (d.questions || []) : []; _pq.canAnswer = !!d.can_answer; paintPeopleQs(); });
     getJ('/api/people/mentions', function (d) { _pq.mentions = d.ok ? (d.mentions || []) : []; _pq.canConfirm = !!d.can_confirm; paintPeopleQs(); });
+    getJ('/api/people/merges', function (d) { _pq.merges = d.ok ? (d.merges || []) : []; _pq.canUndo = !!d.can_undo; paintPeopleQs(); });
   };
   document.addEventListener('click', function (ev) {
-    var t = ev.target && ev.target.closest ? ev.target.closest('[data-mem-identity],[data-mem-mention]') : null;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-mem-identity],[data-mem-mention],[data-mem-unmerge]') : null;
     if (!t || t.disabled) return;
     var done = busy(t, '');
+    if (t.hasAttribute('data-mem-unmerge')) {
+      postJ('/api/people/merges/' + (+t.getAttribute('data-mem-unmerge')) + '/undo', {}, function (d) {
+        done();
+        if (!d.ok) { say(d.error || 'Couldn’t undo that merge', 'error'); return; }
+        say('Two people again: ' + (d.from || '') + ' and ' + (d.into || '') + ' — each has their own records back');
+        window._lb2People = null;
+        window.memLoadPeopleQs();
+      });
+      return;
+    }
     if (t.hasAttribute('data-mem-identity')) {
       var qid = +t.getAttribute('data-mem-identity'), same = t.getAttribute('data-same') === '1';
       postJ('/api/people/identity/' + qid, {same: same}, function (d) {
@@ -33755,7 +33784,11 @@ function memRetagBody(was, now) {
       h += '<div class="sr-k">Name and records</div><div class="mem-inline">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-rename="1">Rename</button>'
         + '<select class="ac-select" id="mem-merge-into" aria-label="The same person as"><option value="">The same person as…</option></select>'
-        + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-merge="1">Merge</button></div><div id="mem-merge-confirm"></div>';
+        + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-merge="1">Merge</button>'
+        /* Someone who has left and asked to be forgotten (people.erase_person):
+           only once they are off the roster and hold no staff login. */
+        + (!p.active && !p.has_login ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-erase="1">Erase their record</button>' : '')
+        + '</div><div id="mem-merge-confirm"></div>';
     }
     return h;
   };
@@ -33773,9 +33806,29 @@ function memRetagBody(was, now) {
   function personKey() { var t = $id('person-title'); return t ? t.getAttribute('data-key') : ''; }
   function reopenPerson(key) { if (window.openPersonSheet) openPersonSheet(key); }
   document.addEventListener('click', function (ev) {
-    var t = ev.target && ev.target.closest ? ev.target.closest('[data-mem-role-add],[data-mem-role-rm],[data-mem-rename],[data-mem-merge],[data-mem-merge-go],[data-mem-merge-no]') : null;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-mem-role-add],[data-mem-role-rm],[data-mem-rename],[data-mem-merge],[data-mem-merge-go],[data-mem-merge-no],[data-mem-erase],[data-mem-erase-go]') : null;
     if (!t || t.disabled) return;
     var key = personKey(); if (!key) return;
+    if (t.hasAttribute('data-mem-erase')) {
+      var ebox = $id('mem-merge-confirm'), who = ($id('person-title') || {}).textContent || 'this person';
+      /* Erasing cannot be undone: it asks in place like the merge, and the
+         name typed back is the confirmation (DESIGN_SYSTEM §10, tier 3:
+         erasing a person). */
+      if (ebox) ebox.innerHTML = '<div class="mem-confirm"><b>Erase ' + memEsc(who) + '’s record for good?</b> Every rating, note, setting, shift and learned pattern about them is deleted and cannot be brought back. Schedules already published stay as they were sent.'
+        + '<div class="mem-inline"><input class="ac-input" id="mem-erase-name" maxlength="120" placeholder="Type ' + memEsc(who) + ' to confirm" aria-label="Their name, to confirm"></div>'
+        + '<div class="cbtn-row"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-merge-no="1">Not yet</button><button type="button" class="cbtn cbtn-danger cbtn-sm" data-mem-erase-go="1">Erase for good</button></div></div>';
+      return;
+    }
+    if (t.hasAttribute('data-mem-erase-go')) {
+      var typed = ($id('mem-erase-name') || {}).value || '', fin3 = busy(t, 'Erasing…');
+      postJ('/api/people/' + encodeURIComponent(key) + '/erase', {confirm: typed}, function (d) {
+        fin3();
+        if (!d.ok) { say(d.error || 'Couldn’t erase their record', 'error'); return; }
+        say('Their record is erased'); window._lb2People = null;
+        if (window.closePersonSheet) closePersonSheet();
+      });
+      return;
+    }
     if (t.hasAttribute('data-mem-role-add') || t.hasAttribute('data-mem-role-rm')) {
       var body = {};
       if (t.hasAttribute('data-mem-role-rm')) body = {role: t.getAttribute('data-mem-role-rm'), remove: true};
@@ -33812,9 +33865,10 @@ function memRetagBody(was, now) {
     if (t.hasAttribute('data-mem-merge')) {
       if (!into) { say('Pick who they are the same person as', 'error'); return; }
       var other = sel.options[sel.selectedIndex].text.replace(/ \(off the roster\)$/, ''), me = ($id('person-title') || {}).textContent || 'this person';
-      /* A merge moves every record onto one name and is not undone from
-         here: it asks once, in place, naming both (§10, tier 2 shape). */
-      if (box) box.innerHTML = '<div class="mem-confirm"><b>Merge ' + memEsc(me) + ' into ' + memEsc(other) + '?</b> Every rating, note, role and shift of ' + memEsc(me) + ' moves to ' + memEsc(other) + ', and ' + memEsc(me) + ' stays on as another name for them.'
+      /* A merge moves every record onto one name: it asks once, in place,
+         naming both (§10, tier 2 shape). It can be undone for 30 days from
+         the team's "waiting on you" list (people.unmerge_people). */
+      if (box) box.innerHTML = '<div class="mem-confirm"><b>Merge ' + memEsc(me) + ' into ' + memEsc(other) + '?</b> Every rating, note, role and shift of ' + memEsc(me) + ' moves to ' + memEsc(other) + ', and ' + memEsc(me) + ' stays on as another name for them. You can undo it for 30 days.'
         + '<div class="cbtn-row"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-merge-no="1">Not yet</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-mem-merge-go="' + memEsc(into) + '">Merge them</button></div></div>';
       return;
     }

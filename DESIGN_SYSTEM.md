@@ -686,6 +686,12 @@ notification actions).
 3. **`confirm()` only for security and account-destructive steps** — two-factor
    off, backup codes, revoking a teammate, a new join code, disconnecting an
    integration, co-owner access. Everything else is tier 1 or tier 2.
+   Erasing a departed employee's record (`people.erase_person`) is the one
+   data-destructive step with its own shape: the person sheet's in-place
+   `.mem-confirm` card (the merge's) saying what is deleted and what stays,
+   with their name typed back as the confirmation — the route refuses any
+   other text. A merge, by contrast, is undoable for 30 days from the
+   team's waiting list ("Undo merge"), so it keeps its one in-place ask.
 
 **Where a link lands.** Anything that sends the owner somewhere names the
 item, not the module: a `nav` path (nav.py — `review/412`,

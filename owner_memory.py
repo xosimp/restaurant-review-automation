@@ -329,11 +329,13 @@ def _narrower(a, b):
 
 def remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
              audience=None, user=None, source=None, origin="ask", author_label=None, db_path=None,
-             today=None, replaces=None) -> dict:
+             today=None, replaces=None, scope=None) -> dict:
     """Keep one fact. Returns {"fact", "kind", "evicted", "evicted_facts",
     "audience", "valid_until", "due_on", "id", "similar", "replaced",
     "confirmed"}; raises MemoryRefused (a ValueError) for an empty fact, a
     past date, or a measurable target (any kind — memory re-audit R3).
+    `scope` "org": every location of the organisation reads it — a group
+    owner only (may_set_org; memory re-audit R6, PEOPLE-13).
 
     `user` is the login saying it — its id, label and authority are stored
     on the fact, so a manager's remark is never shown as the owner's; None
@@ -377,6 +379,8 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
         audience = "principals"
     if isinstance(modules, str):
         modules = [m.strip() for m in modules.split(",")]
+    if scope == "org" and not may_set_org(restaurant_id, user, db_path=db_path):
+        raise MemoryRefused("Only the owner of every location can keep a fact for all of them.")
     viewer = memory_context.viewer_user(user)
     same = [r for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
             if r["fact"] == text and r.get("user_id") != who["user_id"]]
@@ -387,6 +391,8 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
             row = seen[0]
             models.confirm_ask_fact(restaurant_id, row["id"], confirmed_by=author_label or who["label"],
                                     db_path=db_path or models.DB_PATH)
+            if scope == "org":
+                models.set_ask_fact_scope(restaurant_id, row["id"], "org", db_path=db_path or models.DB_PATH)
             invalidate(restaurant_id)
             return {"fact": row["fact"], "kind": row.get("kind") or "context", "evicted": 0, "evicted_facts": [],
                     "audience": row.get("audience") or "team", "valid_until": row.get("valid_until"),
@@ -398,7 +404,8 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
         restaurant_id, text, kind=kind, source=source, user_id=who["user_id"], db_path=db_path or models.DB_PATH,
         modules=list(modules or ()), subject=subject, audience=audience,
         author_label=author_label or who["label"], authority=who["authority"] or ("system" if user is None else None),
-        valid_until=until.isoformat() if until else None, due_on=due.isoformat() if due else None, origin=origin)
+        valid_until=until.isoformat() if until else None, due_on=due.isoformat() if due else None, origin=origin,
+        scope="org" if scope == "org" else None)
     replaced = None
     if replaces not in (None, "", 0):
         replaced = _replace(restaurant_id, replaces, user, keep_id=saved.get("id"), db_path=db_path)
@@ -469,6 +476,8 @@ def forget(restaurant_id, fact, user=None, db_path=None) -> dict:
     # This login's own row first: the same words from someone else are theirs.
     exact.sort(key=lambda r: r.get("user_id") != (user or {}).get("id"))
     row = exact[0]
+    if row.get("from_location") is not None:
+        return {"error": "that note is kept for every location at another of your locations; forget it there"}
     if not _may_edit(row, user):
         return {"error": "that note was added by someone else; only its author or the owner can drop it"}
     if row.get("origin") == "ratings":
@@ -506,13 +515,26 @@ def _rating_pref_rows(restaurant_id, user_id, db_path=None):
             and f.get("origin") == "ratings"]
 
 
+def _org_others(restaurant_id, db_path=None) -> list:
+    """The organisation's other locations (preferences.org_location_ids)."""
+    try:
+        import preferences
+        return preferences.org_location_ids(restaurant_id, db_path=db_path)
+    except Exception:
+        return []
+
+
 def rating_preference(restaurant_id, user_id, db_path=None):
     """"short" | "full" | None — the answer length this login's ratings ask
-    for (the live derived fact; a forgotten one is gone)."""
+    for (the live derived fact; a forgotten one is gone). A person, not a
+    location (memory re-audit 9/29/26, PEOPLE-13): with none derived here,
+    the one their ratings set at another of the organisation's locations
+    applies — a three-location owner said "shorter" once, not three times."""
     if user_id is None:
         return None
-    for f in _rating_pref_rows(restaurant_id, user_id, db_path=db_path):
-        return str(f["subject"]).rsplit(":", 1)[-1] if str(f["subject"]).count(":") >= 2 else None
+    for rid in [restaurant_id] + _org_others(restaurant_id, db_path=db_path):
+        for f in _rating_pref_rows(rid, user_id, db_path=db_path):
+            return str(f["subject"]).rsplit(":", 1)[-1] if str(f["subject"]).count(":") >= 2 else None
     return None
 
 
@@ -578,7 +600,12 @@ def derive_rating_preferences(restaurant_id, user, db_path=None):
     if uid is None:
         return None
     dbp = db_path or models.DB_PATH
+    # Their ratings at every location of the organisation: the person's own
+    # habit, read once, not relearned per location (R6, PEOPLE-13).
     rows = models.ask_feedback_rows(restaurant_id, user_id=uid, db_path=dbp)
+    for other in _org_others(restaurant_id, db_path=db_path):
+        rows += models.ask_feedback_rows(other, user_id=uid, db_path=dbp)
+    rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
     forgot = models.get_ask_memory_archive(restaurant_id, limit=1, db_path=dbp, user_id=uid, reason="forgotten",
                                            subject_prefix=RATING_PREF_SUBJECT)
     if forgot:
@@ -776,7 +803,14 @@ def mark_used(restaurant_id, fact_ids, db_path=None) -> int:
     (memory re-audit 9/29/26, R3 lane_eviction). Never raises."""
     try:
         import models
-        return models.mark_ask_facts_used(restaurant_id, fact_ids, db_path=db_path or models.DB_PATH)
+        n = models.mark_ask_facts_used(restaurant_id, fact_ids, db_path=db_path or models.DB_PATH)
+        # An organisation-wide fact kept at another location (R6, PEOPLE-13)
+        # was used too: stamped where it lives, so that location's lane
+        # budget does not evict it as unused while every sibling reads it.
+        # Fact ids are unique across locations, so only those rows match.
+        for other in _org_others(restaurant_id, db_path=db_path) if fact_ids else ():
+            n += models.mark_ask_facts_used(other, fact_ids, db_path=db_path or models.DB_PATH)
+        return n
     except Exception as e:
         log.debug("owner_memory: use not stamped for %s: %s", restaurant_id, e)
         return 0
@@ -802,6 +836,7 @@ def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, 
         except Exception as e:
             log.debug("owner_memory: expiry skipped for %s: %s", restaurant_id, e)
     rows = models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH, kinds=kinds)
+    rows += _org_facts(restaurant_id, rows, kinds=kinds, today=today, db_path=db_path)
     user = memory_context.viewer_user(viewer)
     authority = memory_context._authority(user)
     want = SURFACE_MODULES.get(surface, None) if surface else None
@@ -815,6 +850,66 @@ def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, 
             continue
         out.append(r)
     return out
+
+
+def _org_facts(restaurant_id, have, kinds=None, today=None, db_path=None) -> list:
+    """The organisation-wide facts the group's other locations keep (scope
+    'org', memory re-audit 9/29/26, PEOPLE-13): "we close every location on
+    Thanksgiving", told at one location, reaches the others' schedules and
+    nightly reports. Each carries `from_location` (its id); a date that has
+    passed is left out (its own location's expiry archives it); a text this
+    location already keeps is not repeated. They pass the same visibility
+    rule as this location's own facts (facts_for)."""
+    import models
+    others = _org_others(restaurant_id, db_path=db_path)
+    if not others:
+        return []
+    today = today or _local_today(restaurant_id)
+    mine = {str(r.get("fact") or "").strip().lower() for r in have or []}
+    out = []
+    for r in models.org_ask_memory(others, db_path=db_path or models.DB_PATH, kinds=kinds):
+        until = _parse_day(r.get("valid_until"))
+        if until is not None and until < today:
+            continue
+        key = str(r.get("fact") or "").strip().lower()
+        if key in mine:
+            continue
+        mine.add(key)
+        out.append(dict(r, from_location=r.get("restaurant_id")))
+    return out
+
+
+def may_set_org(restaurant_id, user, db_path=None) -> bool:
+    """Whether `user` may keep a fact for every location: a group owner —
+    an account holder who may switch between the organisation's locations
+    (preferences.may_apply_to_all, the rule every organisation-wide setting
+    uses)."""
+    if not isinstance(user, dict) or not user:
+        return False
+    try:
+        import models
+        import preferences
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+        return preferences.may_apply_to_all(user, r)
+    except Exception:
+        return False
+
+
+def set_scope(restaurant_id, fact_id, scope, user, db_path=None) -> dict:
+    """"For every location" / "this location only" on one of this
+    location's facts. Only a group owner (may_set_org). Raises
+    MemoryRefused."""
+    import models
+    if scope not in ("org", "location"):
+        raise MemoryRefused("scope is org or location")
+    if not may_set_org(restaurant_id, user, db_path=db_path):
+        raise MemoryRefused("Only the owner of every location can keep a fact for all of them.")
+    if not models.set_ask_fact_scope(restaurant_id, int(fact_id), scope, db_path=db_path or models.DB_PATH):
+        raise MemoryRefused("That fact isn't kept at this location.")
+    invalidate(restaurant_id)
+    for other in _org_others(restaurant_id, db_path=db_path):
+        invalidate(other)
+    return {"id": int(fact_id), "scope": scope}
 
 
 def _who(row):
@@ -838,10 +933,13 @@ def _line(row, weight_bonus=0.0):
         text = f"Constraint: {text}"
     elif kind == "preference":
         text = f"Preference: {text}"
+    who = _who(row)
+    if row.get("from_location") is not None:
+        who = f"{who or 'the owner'}, for every location"
     return {"text": text, "date": str(row.get("created_at") or "")[:10] or None, "source": "owner",
             "subject": row.get("subject") or (mods[0] if len(mods) == 1 else None),
             "weight": _KIND_WEIGHT.get(kind, 1.0) + weight_bonus, "trusted": False,
-            "who": _who(row), "until": row.get("valid_until"), "audience": row.get("audience") or "team",
+            "who": who, "until": row.get("valid_until"), "audience": row.get("audience") or "team",
             "author_id": row.get("user_id"), "module": mods[0] if len(mods) == 1 else None,
             "kind": kind, "fact_id": row.get("id")}
 
@@ -1332,6 +1430,7 @@ def account_view(restaurant_id, user, db_path=None, archive_before=None, archive
     import models
     principal = _principal(user)
     rows = facts_for(restaurant_id, viewer=user, db_path=db_path)
+    org_ok = may_set_org(restaurant_id, user, db_path=db_path)
     departed = departed_author_ids(restaurant_id, db_path=db_path) if principal else set()
     facts = []
     for r in rows:
@@ -1342,13 +1441,19 @@ def account_view(restaurant_id, user, db_path=None, archive_before=None, archive
                       "modules": sorted(_modules_of(r)), "subject": r.get("subject"),
                       "valid_until": r.get("valid_until"), "valid_until_label": _mdy(r.get("valid_until")),
                       "due_on": r.get("due_on"), "due_label": _mdy(r.get("due_on")),
-                      "origin": r.get("origin"), "can_forget": _may_edit(r, user),
+                      "origin": r.get("origin"),
+                      # Another location's organisation-wide fact is forgotten
+                      # where it was kept (R6, PEOPLE-13).
+                      "can_forget": _may_edit(r, user) and r.get("from_location") is None,
+                      "scope": "org" if r.get("scope") == "org" else "location",
+                      "from_location": r.get("from_location"),
+                      "can_set_scope": r.get("from_location") is None and org_ok,
                       # Ask's remember tool writes the model's summary of what
                       # was said — shown as such (re-audit R3, QUALITY-11).
                       "worded_by": "Cavnar AI" if r.get("origin") == "ask" else None,
                       "confirmed_by": r.get("confirmed_by"),
                       "confirmed_on": _mdy(str(r.get("confirmed_at") or "")[:10]) if r.get("confirmed_by") else "",
-                      "pinned": bool(r.get("pinned")), "can_pin": principal,
+                      "pinned": bool(r.get("pinned")), "can_pin": principal and r.get("from_location") is None,
                       "author_left": r.get("user_id") in departed})
     counts = {}
     for r in rows:
@@ -1379,4 +1484,4 @@ def account_view(restaurant_id, user, db_path=None, archive_before=None, archive
                          "archived_on": _mdy(str(a.get("archived_at") or "")[:10]),
                          "can_restore": _may_restore(a, user)})
     return {"facts": facts, "lanes": lanes, "others_private": others_private, "archived": archived,
-            "archive_more": more}
+            "archive_more": more, "can_set_org": org_ok}

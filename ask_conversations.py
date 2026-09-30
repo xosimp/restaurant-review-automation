@@ -380,6 +380,32 @@ def _topics_rows(restaurant_id, user_id, days, db_path=None):
                 (restaurant_id, user_id, since)).fetchall()]
         except Exception:
             kept = []
+        # The same login's own chats at the organisation's other locations
+        # (memory re-audit 9/29/26, PEOPLE-13): a person, not a location — a
+        # three-location owner's questions used to split three ways. Their
+        # own chats only (user_id exact, never a legacy unowned one), each
+        # marked with the location it was had at.
+        others = []
+        if user_id is not None:
+            try:
+                import preferences
+                others = preferences.org_location_ids(restaurant_id, db_path=db_path)
+            except Exception:
+                others = []
+        for oid in others:
+            live += [dict(r, location_id=oid) for r in conn.execute(
+                "SELECT id AS conversation_id, title, topics, summary_json, updated_at AS at, 'live' AS kind "
+                "FROM ask_cavnar_conversations c WHERE restaurant_id=? AND user_id=? "
+                "AND updated_at >= ? AND EXISTS (SELECT 1 FROM ask_cavnar_messages m WHERE m.conversation_id=c.id) "
+                "ORDER BY updated_at DESC LIMIT 100", (oid, user_id, since)).fetchall()]
+            try:
+                kept += [dict(r, location_id=oid) for r in conn.execute(
+                    "SELECT conversation_id, title, topics, summary_json, ended_at AS at, 'kept' AS kind, "
+                    "message_count FROM ask_topics WHERE restaurant_id=? AND user_id=? "
+                    "AND COALESCE(ended_at, created_at) >= ? ORDER BY id DESC LIMIT 200",
+                    (oid, user_id, since)).fetchall()]
+            except Exception:
+                pass
     finally:
         conn.close()
     return live, kept
@@ -457,9 +483,13 @@ def past_conversations(restaurant_id, user_id, query=None, days=90, limit=5, exc
     scored.sort(key=lambda x: -x[0])
     out = []
     for score, _at, r, notes in scored[:limit]:
+        elsewhere = r.get("location_id") is not None
         item = {"conversation_id": r.get("conversation_id"), "title": r.get("title") or "New conversation",
                 "date": _mdy(r.get("at")), "notes": notes or None,
-                "still_open": r.get("kind") == "live"}
+                # A chat at another location is read here, never reopened here.
+                "still_open": r.get("kind") == "live" and not elsewhere}
+        if elsewhere:
+            item["location"] = _location_name(r["location_id"], db_path)
         if r.get("kind") == "live":
             conn = get_conn(db_path)
             try:
@@ -477,6 +507,15 @@ def past_conversations(restaurant_id, user_id, query=None, days=90, limit=5, exc
             item["message_count"] = r.get("message_count")
         out.append(item)
     return out
+
+
+def _location_name(restaurant_id, db_path=None):
+    try:
+        import models
+        r = models.get_restaurant(restaurant_id, db_path) if db_path else models.get_restaurant(restaurant_id)
+        return (getattr(r, "location_name", None) or getattr(r, "name", None)) if r else None
+    except Exception:
+        return None
 
 
 # ── topic of one answer (for its rating) ────────────────────────────────────
