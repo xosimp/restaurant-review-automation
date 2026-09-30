@@ -2355,6 +2355,23 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
                 "ignored; "
                 "Home, the nightly report and the feed now show fewer until it recovers.", zone="UTC",
                 action_kind="link", action_href=f"{client}?tab=ai")
+    # A paying account whose NAME the automatic rule reads as a test
+    # ("Nashville Test Kitchen", "The Sample Room") is kept out of pooled
+    # learning only — it still learns for itself (models.learns_for_itself)
+    # — and the admin is asked to confirm, never left to find a console
+    # label weeks later (memory re-audit 9/29/26, INVENTORY-1 / PLATFORM-8).
+    try:
+        import models as _m_tn
+        if (bs in ("active", "past_due") and not r.get("is_demo") and not r.get("exclude_from_learning")
+                and not str(r.get("learning_override") or "").strip()
+                and _m_tn.learning_test_name(r.get("name"))):
+            add("learning:test_name", "Named like a test account — left out of platform learning", "warning",
+                None, "Open settings", None,
+                "A paying account whose name reads as a test (the automatic rule). It still learns for "
+                "itself; include it (Branding & peer profile → Learning) if it is a real restaurant, or mark "
+                "it a test account.", zone="UTC", action_kind="link", action_href=client)
+    except Exception as e:
+        log.warning("learning name check failed for %s: %s", rid, e)
     return out
 
 

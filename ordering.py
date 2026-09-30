@@ -358,12 +358,12 @@ def _line_qty(line, *keys):
 def order_corrections(restaurant_id, db_path=DB_PATH) -> dict:
     """{ingredient_id: {"factor", "orders", "median", "basis"}} for the
     ingredients whose draft the owner keeps changing — {} for a restaurant
-    that may not teach a learner (models.learning_eligible). Only orders a
+    that does not learn for itself (models.learns_for_itself). Only orders a
     person at the restaurant sent (source 'owner', never an admin's through
     view-as) with their draft kept; a line the owner took off the order is a
     0. Never raises."""
     try:
-        if not _models_mod.learning_eligible(restaurant_id):
+        if not _models_mod.learns_for_itself(restaurant_id):
             return {}
         conn = get_conn(db_path)
         try:

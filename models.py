@@ -9838,12 +9838,60 @@ def learning_eligible(restaurant, since=None, db_path=None) -> bool:
     return True
 
 
+# Two flags, not one (memory re-audit 9/29/26, INVENTORY-1 / PLATFORM-8): the
+# predicate above decides who may teach POOLED learning (every cross-
+# restaurant reader). A restaurant's OWN learners — its ranking, reply and
+# marketing voice, re-tag examples, standing schedule patterns, order and
+# reprice corrections, event memory, the nightly learning pass — follow
+# learns_for_itself: off only for a seeded demo or an account an admin
+# excluded outright. A paying "Nashville Test Kitchen" the name rule caught
+# stopped learning anything at all, silently; the name rule now keeps it out
+# of pooled learning only, and raises an admin issue to confirm
+# (admin_ops, "learning:test_name").
+def learns_for_itself(restaurant, since=None, db_path=None) -> bool:
+    """Whether this restaurant's OWN learners may learn from its own record:
+    not a demo (is_demo) and not excluded by an admin (learning_override
+    'exclude' / exclude_from_learning). Test-named, internal-billing and
+    admin-home accounts learn for themselves; they are kept out of pooled
+    learning by learning_eligible. With `since`, also False for data
+    recorded before learning_since (a converted demo's seeded era). Accepts a
+    Restaurant, a row/dict, or an id."""
+    r = restaurant
+    if isinstance(r, int):
+        r = get_restaurant(r, db_path or DB_PATH)
+    if r is None or _learning_get(r, "is_demo"):
+        return False
+    override = str(_learning_get(r, "learning_override") or "").strip().lower()
+    if override == "exclude" or _learning_get(r, "exclude_from_learning"):
+        return False
+    if since is not None:
+        floor = _learning_get(r, "learning_since")
+        if floor and str(since).replace("T", " ")[:19] < str(floor)[:19]:
+            return False
+    return True
+
+
+def learning_billing_history(restaurant) -> bool:
+    """Whether an account has a billing history — paying now, ended after
+    paying, or a Stripe customer on file: a real restaurant, whose record
+    an admin including it in learning keeps by default (PLATFORM-8)."""
+    bs = str(_learning_get(restaurant, "billing_status") or "").strip().lower()
+    return bs in ("active", "past_due", "churned", "canceled", "cancelled") or \
+        bool(str(_learning_get(restaurant, "stripe_customer_id") or "").strip())
+
+
 def learning_status(restaurant, db_path=None) -> dict:
     """{eligible, reason, label, automatic, override, since} — what the admin
     console shows beside the override control."""
     r = restaurant if not isinstance(restaurant, int) else get_restaurant(restaurant, db_path or DB_PATH)
     why = learning_exclusion(r, db_path=db_path) if r is not None else "missing"
     return {"eligible": why is None, "reason": why, "label": LEARNING_EXCLUSION_LABELS.get(why),
+            # Its own learners (learns_for_itself): on for everything but a
+            # demo or an admin's exclusion, whatever the pooled rule says.
+            "learns_for_itself": bool(r is not None and learns_for_itself(r, db_path=db_path)),
+            # An account that has paid (or had a Stripe customer): including
+            # it keeps its history by default (PLATFORM-8).
+            "billing_history": bool(r is not None and learning_billing_history(r)),
             "automatic": why in ("internal", "admin_home", "test_name"),
             "override": (_learning_get(r, "learning_override") or None) if r is not None else None,
             "since": _learning_get(r, "learning_since") if r is not None else None}

@@ -242,11 +242,11 @@ REPRICE_RATIO_BOUNDS = (0.25, 1.5)
 def reprice_acceptance(restaurant_id, db_path=DB_PATH) -> dict:
     """{"ratio", "decisions", "median", "basis"} once REPRICE_RATIO_MIN
     decisions exist, else {"ratio": None, "decisions": n}. Never raises; a
-    restaurant that may not teach a learner (models.learning_eligible) has
+    restaurant that does not learn for itself (models.learns_for_itself) has
     none."""
     try:
         import models as _m
-        if not _m.learning_eligible(restaurant_id):
+        if not _m.learns_for_itself(restaurant_id):
             return {"ratio": None, "decisions": 0}
         conn = _conn(db_path)
         try:

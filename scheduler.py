@@ -3151,13 +3151,16 @@ LEARNING_MEMORY_CURSOR_KEY = "learning_memory_cursor"
 
 def run_learning_memory():
     """Daily, after the outcome evaluations — the nightly learning pass for
-    every restaurant allowed to teach a learner (learning_memory.nightly:
+    every restaurant that learns for itself (learning_memory.nightly:
     score AI claims at their horizon, summarise closed quarters of reads,
     and the steps the memory audit added after them). Bounded and resumable
     like every sweep here; sends nothing."""
     import learning_memory
-    ids = learning_memory.eligible_ids()
-    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    # The restaurants left out (a demo, an admin's exclusion) are counted
+    # skipped, not silently dropped (memory re-audit 9/29/26, INVENTORY-1).
+    passed_over = []
+    ids = learning_memory.eligible_ids(skipped=passed_over)
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": len(passed_over)}
     lock = threading.Lock()
 
     def _one(rid):

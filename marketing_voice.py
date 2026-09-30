@@ -344,13 +344,13 @@ def voice_block(restaurant_id, channel, db_path=None) -> str:
     up to three pieces they sent in their own words (fenced — their voice,
     never a source for an offer, a date or a price), and what the drafts
     they threw away had in common. "" when nothing is known yet — and for a
-    restaurant that may not teach a learner (models.learning_eligible: a
-    demo, test or internal account). Never raises."""
+    restaurant that does not learn for itself (models.learns_for_itself: a
+    demo, or an account an admin excluded). Never raises."""
     if not restaurant_id or channel not in CHANNELS:
         return ""
     try:
         import models
-        if not models.learning_eligible(restaurant_id):
+        if not models.learns_for_itself(restaurant_id):
             return ""
         from ai_guard import wrap_untrusted
         conn = get_conn(db_path)

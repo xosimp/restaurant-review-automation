@@ -19,9 +19,12 @@ and resumable), each step isolated so one failing never stops the others:
   links        resolve the cross-module links the owner answered or that a
                later read no longer found (link_memory.settle)
 
-Only restaurants that may teach a learner are passed in
-(models.learning_eligible): a demo, a test account or an internal one never
-scores a claim or writes a summary another reader would learn from.
+Only restaurants that learn for themselves are passed in
+(models.learns_for_itself, memory re-audit 9/29/26 INVENTORY-1): a demo or an
+account an admin excluded is skipped — and counted skipped. A test-named or
+internal account keeps its own bookkeeping (claims, trackers, thresholds, the
+scorecard); every pooled reader of those rows filters it out
+(models.learning_filter_sql / learning_ineligible_ids).
 """
 import logging
 
@@ -98,16 +101,22 @@ def nightly(restaurant_id, today=None, db_path=None) -> dict:
     return out
 
 
-def eligible_ids(db_path=None) -> list:
-    """The restaurants the nightly pass walks: in service and allowed to
-    teach a learner (models.learning_eligible)."""
+def eligible_ids(db_path=None, skipped=None) -> list:
+    """The restaurants the nightly pass walks: in service and learning for
+    themselves (models.learns_for_itself). `skipped`, a list, receives the
+    in-service ids left out (a demo, an admin's exclusion), so the job can
+    say how many it passed over."""
     import models
     rows = models.get_all_restaurants(db_path=db_path) if db_path else models.get_all_restaurants()
     out = []
     for r in rows or []:
         try:
-            if models.in_service(r) and models.learning_eligible(r):
+            if not models.in_service(r):
+                continue
+            if models.learns_for_itself(r):
                 out.append(r.id)
+            elif skipped is not None:
+                skipped.append(r.id)
         except Exception:
             continue
     return out

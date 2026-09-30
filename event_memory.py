@@ -1078,7 +1078,7 @@ def run_event_memory(db_path=None, now=None) -> dict:
               "nights_recorded": 0, "weather_days": 0}
     lock = threading.Lock()
     try:
-        from models import in_service_sql, learning_eligible
+        from models import in_service_sql, learns_for_itself
         conn = get_conn(db_path)
         try:
             rows = conn.execute("SELECT id FROM restaurants WHERE " + in_service_sql()).fetchall()
@@ -1093,7 +1093,9 @@ def run_event_memory(db_path=None, now=None) -> dict:
             rest = _models_mod.get_restaurant(r["id"])
         except Exception:
             rest = None
-        if rest is not None and learning_eligible(rest):
+        # Its own event memory (models.learns_for_itself, INVENTORY-1):
+        # only a demo or an admin-excluded account is skipped.
+        if rest is not None and learns_for_itself(rest):
             ids.append(r["id"])
         else:
             counts["skipped"] += 1

@@ -209,11 +209,11 @@ def retag_examples(restaurant_id, db_path=None) -> list:
     """The restaurant's recent re-tagged reviews as analyser examples:
     [{"text", "rating", "fields": {field: value}}], newest first. Never an
     admin's or a view-as correction, never a removed review, and nothing
-    for a restaurant that may not teach a learner (models.learning_eligible).
+    for a restaurant that does not learn for itself (models.learns_for_itself).
     Never raises."""
     try:
         import models
-        if not models.learning_eligible(restaurant_id):
+        if not models.learns_for_itself(restaurant_id):
             return []
         conn = get_conn(db_path)
         try:

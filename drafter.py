@@ -73,11 +73,13 @@ def _format_examples(rows) -> str:
 
 
 def _learns(restaurant_id) -> bool:
-    """models.learning_eligible for the drafter's learned inputs; fails closed."""
+    """models.learns_for_itself for the drafter's learned inputs (its OWN
+    learning: a test-named or internal account learns its own voice — memory
+    re-audit 9/29/26, INVENTORY-1); fails closed."""
     if not restaurant_id:
         return False
     try:
-        return bool(_models_mod.learning_eligible(restaurant_id))
+        return bool(_models_mod.learns_for_itself(restaurant_id))
     except Exception:
         return False
 

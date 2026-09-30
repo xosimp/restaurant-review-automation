@@ -1465,18 +1465,20 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     the owner's own (a manager's decline never counts as the owner's
     rejection) — or "delegate", a manager's view, where the principal's
     answer still outranks theirs. An admin's view-as answer teaches neither
-    (memory audit 9/29/26, who_answered / view_as). A demo, test or internal
-    account (models.learning_eligible) ranks on the neutral model."""
+    (memory audit 9/29/26, who_answered / view_as). A demo, or an account an
+    admin excluded (models.learns_for_itself), ranks on the neutral model; a
+    test-named or internal account learns for itself (memory re-audit
+    9/29/26, INVENTORY-1) and stays out of pooled learning."""
     now = now or datetime.utcnow()
     cohort, profile = None, None
     try:
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
-            # No demo, test or internal account teaches a learner, its own
-            # included (models.learning_eligible, memory audit 9/29/26):
-            # its ranking is the neutral model.
-            if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
+            # A demo, or an account an admin excluded, learns nothing — its
+            # own ranking included (models.learns_for_itself, memory
+            # re-audit 9/29/26 INVENTORY-1): its ranking is the neutral model.
+            if hasattr(_models_mod, "learns_for_itself") and not _models_mod.learns_for_itself(restaurant):
                 return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
                                      perspective=perspective)
             # Only a type and a partition the owner SET: a guess reads no

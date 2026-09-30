@@ -4089,7 +4089,7 @@ function brandFill(p){
   const pr = p.profile || {};
   PROFILE_FIELDS.forEach(f=>{ $(f[0]).value = pr[f[1]] == null ? '' : String(pr[f[1]]); });
   $('b-bar').checked = !!pr.bar_led; $('b-excl').value = p.exclude_from_learning ? '1' : '0';
-  $('b-lov').value = (p.learning && p.learning.override) || ''; $('b-lhist').checked = false;
+  $('b-lov').value = (p.learning && p.learning.override) || ''; $('b-lhist').checked = !!(p.learning && p.learning.billing_history);
   $('b-learn').innerHTML = learnStatus(p.learning);
   brandLearnHint();
   $('b-load').textContent = pr.profile_source === 'set' ? 'Peer profile confirmed' + (pr.profile_confirmed_at ? ' ' + fmtD(pr.profile_confirmed_at) : '') + '.' : 'Peer profile not confirmed yet.';
@@ -4105,7 +4105,10 @@ function learnStatus(l){
   const since = l.since ? ` · rows from ${fmtD(l.since)} on` : '';
   if(l.eligible) return `<span><b style="color:var(--green-t)">Yes</b> — its data may teach its own learning and the platform's${since}${l.override === 'include' ? ' <span class="chip">included by an admin</span>' : ''}.</span>`;
   const inc = l.automatic ? ` <button class="cbtn btn s g w" type="button" onclick="brandLearnInclude()">Include it</button>` : '';
-  return `<span><b style="color:var(--amber-t)">No</b> — ${esc(l.label || l.reason || 'left out')}${l.automatic ? ' (the automatic rule)' : ''}.${inc}</span>`;
+  // Pooled learning only (models.learns_for_itself): a test-named, internal
+  // or admin-home account still learns for itself.
+  const own = l.learns_for_itself ? ' It still learns for itself; only the platform\'s learning leaves it out.' : '';
+  return `<span><b style="color:var(--amber-t)">No</b> — ${esc(l.label || l.reason || 'left out')}${l.automatic ? ' (the automatic rule)' : ''}.${own}${inc}</span>`;
 }
 function brandLearnInclude(){ $('b-lov').value = 'include'; brandLearnHint(); }
 function brandLearnHint(){
@@ -4115,7 +4118,7 @@ function brandLearnHint(){
   let h = '';
   if(v === 'include' && l.reason === 'demo') h = 'A demo never teaches, whatever this says — turning it into a real account does.';
   else if(v === 'include' && $('b-excl').value === '1') h = 'The account type above says test or internal, which keeps it out whatever this says.';
-  else if(v === 'include' && changed) h = 'Save starts its teaching today; tick the box to let its history before today teach too.';
+  else if(v === 'include' && changed) h = l.billing_history ? 'It has a billing history, so its history before today teaches too — untick the box to start today.' : 'Save starts its teaching today; tick the box to let its history before today teach too.';
   else if(v === 'exclude' && changed) h = 'Save stops it teaching any learner, its own included.';
   else if(v === '' && changed) h = 'Save hands it back to the automatic rule.';
   $('b-lhint').textContent = h;
@@ -4140,7 +4143,7 @@ async function brandSave(){
   // teaching on the save that sets it (learning_since), unless the history
   // box says its past teaches too.
   const lov = $('b-lov').value, lov0 = (_b0.learning && _b0.learning.override) || '';
-  if(lov !== lov0){ body.learning_override = lov; if(lov === 'include' && $('b-lhist').checked) body.learning_history = true; }
+  if(lov !== lov0){ body.learning_override = lov; if(lov === 'include') body.learning_history = $('b-lhist').checked; }
   if(clear.length) body.clear = clear;
   if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
   const d = await post('/admin/api/brand/'+_bRid, body);
