@@ -348,7 +348,7 @@ def test_ask_reads_the_link_history_labelled_and_by_module_view():
     got = act._read_restaurant_memory(rid)
     assert {h["kind"]: h["status"] for h in got["links"]} == {"reviews_x_labor": "you said not for us",
                                                                "reviews_x_food_cost": "open"}
-    assert "not for us" in got["note"]
+    assert "not for us" in got["links_note"]
 
 
 # ── CROSSMODULE-16 ───────────────────────────────────────────────────────────

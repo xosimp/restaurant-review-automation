@@ -1279,9 +1279,10 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
             # problem before, and did I pass on it?" — projected by the
             # login's module views (link_memory.LINE_MODULE).
             "links": _link_history(restaurant_id, denied),
-            "note": ("This restaurant's own history only. `links`: what two modules pointed at together, when "
-                     "it was found and how it ended — a link marked 'you said not for us' is never re-proposed "
-                     "as new; say it was declined and when.")}
+            "note": "This restaurant's own history only.",
+            "links_note": ("What two modules pointed at together, when it was found and how it ended — a link "
+                           "marked 'you said not for us' is never re-proposed as new; say it was declined and "
+                           "when.")}
 
 
 def _link_history(restaurant_id, denied):
