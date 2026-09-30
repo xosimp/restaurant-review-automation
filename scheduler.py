@@ -4831,8 +4831,8 @@ def scheduler_loop():
                 _ops.run_job("review_request_nudge", run_review_request_nudge)
 
             # During service — the only part of the product that can see a
-            # day while it is happening (Toast reads; RPOWER is month-at-a-
-            # time and says so). Capture is hourly per restaurant, the pulse
+            # day while it is happening (Toast and RPOWER both post during
+            # service). Capture is hourly per restaurant, the pulse
             # is one push before dinner, coverage runs while they're open.
             if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
                 # The restaurants are read ONCE per slot and handed to all

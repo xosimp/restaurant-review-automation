@@ -1064,6 +1064,76 @@ def fetch_people(restaurant_id: int) -> dict:
     return {"jobs": jobs, "employees": emps, "station_names": stations}
 
 
+# ── during service (the live view) ───────────────────────────────────────
+#
+# RPOWER's above-store database is fed while the store trades. Read-only
+# check on Simple EJ's, 9/29/26 10:04pm: the whole day was there (838 lines,
+# 120 tickets, 32 punches); the first sale (11:21am) was posted by 11:25am and
+# the last (9:41pm) by 10:02pm (`time_stamp` is UTC and is rewritten when a
+# ticket closes, so these are the latest write, an upper bound on arrival).
+# The vendor's "a month at most, a week preferred" is how much one request
+# may span, not how late the data is. So pos.fetch_sales_today and
+# pos.fetch_clock_ins_today, which look these up by name, now reach RPOWER.
+
+PEOPLE_CACHE_SECONDS = 600
+_people_cache = {}
+
+
+def _people_cached(restaurant_id: int) -> dict:
+    """fetch_people, read once per PEOPLE_CACHE_SECONDS: the coverage check
+    runs every 20 minutes through service and the lists rarely change."""
+    hit = _people_cache.get(restaurant_id)
+    if hit and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
+        return hit[1]
+    out = fetch_people(restaurant_id)
+    _people_cache[restaurant_id] = (time.monotonic(), out)
+    return out
+
+
+def fetch_sales_today(restaurant_id: int, business_date) -> float:
+    """Net sales posted so far for this business date — the same revenue
+    rules as fetch_business_days, so the hourly figure and the night's total
+    agree. Raises when nothing has posted yet: "no sales yet" and "RPOWER
+    has not answered" are not the same as $0 (pos.fetch_sales_today)."""
+    day = _d(business_date)
+    value = (fetch_business_days(restaurant_id, business_date, business_date) or {}).get(day)
+    if value is None:
+        raise RPowerError(f"RPOWER has no sales posted for {day} yet")
+    return float(value)
+
+
+def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
+    """Everyone who has clocked in this business day: [{"employee", "role",
+    "clocked_in_at", "external_id"}] — the shape intraday.coverage_gaps
+    reads. The day runs from BUSINESS_DAY_START_HOUR local to the same hour
+    the next morning (RPOWER's punch times are local wall clock), so a
+    12:30am clock-in during a late close is tonight's. Station logins (a
+    "Bar 1" record) are left out, as in the labor sync. `external_id` is the
+    employee's RPOWER id, which people.person_aliases keys the person on."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
+    end = start + timedelta(days=1)
+    entries = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
+               if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
+    if not entries:
+        return []
+    people = _people_cached(restaurant_id)
+    _require_resolved(entries, people)
+    stations = station_logins(entries, people)
+    jobs, emps = people.get("jobs") or {}, people.get("employees") or {}
+    rows = []
+    for e in entries:
+        mid = str(e.get("emp_mid") or "").strip()
+        if not mid or mid in stations or mid not in emps:
+            continue
+        rows.append({"employee": emps[mid],
+                     "role": jobs.get(str(e.get("job_mid") or "")) or (e.get("job_id") or "").strip() or "Staff",
+                     "clocked_in_at": _punch_dt(e.get("in_dttm")).isoformat(),
+                     "external_id": mid})
+    return rows
+
+
 def _require_resolved(entries: list, people: dict) -> None:
     """Refuse a pull whose punches mostly can't be matched to a person: saved
     under payroll codes they read as strangers and never merge with the

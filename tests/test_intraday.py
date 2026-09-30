@@ -2,7 +2,7 @@
 
 Everything else in the product reads yesterday. These two read today — and
 must say plainly when they can't, because a POS that cannot be asked during
-service is the normal case (RPOWER is month-at-a-time).
+service is a normal case (a POS with no live feed).
 """
 from datetime import date, datetime, timedelta
 

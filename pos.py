@@ -556,8 +556,9 @@ def fetch_sales_today(restaurant_id, business_date):
     """Net sales SO FAR today, from a POS that can be asked during service.
 
     Returns (net_sales, provider). Raises POSCapabilityError where the POS
-    cannot answer intraday — RPOWER's API is month-at-a-time (vendor
-    confirmed), so a mid-service figure from it does not exist. Never
+    cannot answer intraday. Toast and RPOWER both can: RPOWER's above-store
+    data posts during service (measured 9/29/26 — see rpower.py, "during
+    service"); its "a month at most" is how much one request may span. Never
     returns 0 for "don't know": a restaurant told it has done no business
     by 5pm would act on it.
     """

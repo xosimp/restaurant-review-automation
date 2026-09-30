@@ -319,7 +319,8 @@ def test_labor_coverage_is_counted_only_where_it_was_measured(db, monkeypatch):
     monkeypatch.setattr(pos, "connected_provider", lambda r: ("rpower", object()))
     _history(db, rid)
     b = block_labor.collect(_ctx(db, rid))
-    # RPOWER has no live clock-in feed: nothing was watched, so no count.
+    # A POS with no live clock-in feed (this stand-in has none): nothing was
+    # watched, so no count.
     assert b["metrics"]["no_shows"] is None and b["detail"]["coverage"]["measured"] is False
     conn = models.get_conn(db)
     for who, note, status in (("ana", "Closed automatically: they clocked in.", "resolved"), ("bo", None, "open")):
