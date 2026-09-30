@@ -763,6 +763,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                  for l in lines if not l.get("rec") or l.get("rec") in _kept]
     except Exception as e:
         print(f"[morning_brief] lever conflicts unavailable for {restaurant_id}: {e}")
+    lines = _rank_learned(restaurant_id, restaurant, lines, db_path, viewer)
     _attach_confidence(restaurant_id, lines, db_path)
 
     # ── what another module would let me say ──
@@ -904,6 +905,45 @@ def _one_line_per_news(lines):
         if rec:
             said.add(rec)
         out.append(l)
+    return out
+
+
+def _rank_learned(restaurant_id, restaurant, lines, db_path=DB_PATH, viewer=None):
+    """The brief's lines weighed by the same effectiveness model Home ranks
+    with (rec_learning.effectiveness, from the reader's side — memory
+    re-audit 9/29/26, LOOPS-12: the brief learned only silences). The weight
+    only reorders the lines BETWEEN critical ones, stably, so with nothing
+    learned the order is exactly as built and nothing learned moves a
+    critical line. Each weighed line carries `learned_weight`. Never raises."""
+    if not any(l.get("rec") for l in lines):
+        return lines
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path, restaurant=restaurant,
+                                             perspective=rec_learning.perspective_of(viewer) if viewer
+                                             else "principal")
+    except Exception as e:
+        print(f"[morning_brief] effectiveness unavailable for {restaurant_id}: {e}")
+        return lines
+    weighed = []
+    for l in lines:
+        w = 1.0
+        if l.get("rec") and not l.get("critical"):
+            try:
+                w = float(rec_learning.weigh(learned, l["rec"], title=l.get("text"))["weight"] or 1.0)
+            except Exception:
+                w = 1.0
+            l = dict(l, learned_weight=round(w, 3)) if w != 1.0 else l
+        weighed.append((l, w))
+    out, run = [], []
+    for l, w in weighed:
+        if l.get("critical"):
+            out.extend(x for x, _w in sorted(run, key=lambda p: -p[1]))
+            run = []
+            out.append(l)
+        else:
+            run.append((l, w))
+    out.extend(x for x, _w in sorted(run, key=lambda p: -p[1]))
     return out
 
 

@@ -1911,6 +1911,54 @@ ENGAGEMENT_PUSH_COLUMN = {
 }
 
 
+# The alert-type engagement weight (memory re-audit 9/29/26, LOOPS-12): opens
+# and answers of a type against what was delivered. Nothing is switched off
+# (a banner read on a lock screen leaves no tap — engagement_report stays a
+# suggestion); a type below ENGAGEMENT_LOW_RATE on ENGAGEMENT_MIN_DELIVERED or
+# more goes last in the combined morning notification and never leads its
+# text or push, and a low-engagement type raised while the morning batch is
+# collecting joins it rather than interrupting on its own.
+ENGAGEMENT_LOW_RATE = 0.10
+
+
+def alert_engagement(restaurant_id: int, db_path: str = DB_PATH, days: int = ENGAGEMENT_WINDOW_DAYS) -> dict:
+    """{alert_type: {"delivered", "engaged", "rate", "low"}} over `days`.
+    `engaged` counts the type's notifications opened (notification_opens)
+    plus its recommendations answered or opened anywhere (rec_ledger, the
+    episodes of that kind), at most `delivered`. `low` needs
+    ENGAGEMENT_MIN_DELIVERED deliveries — a floor — and never marks an
+    ENGAGEMENT_NEVER_QUIET type. Never raises."""
+    from models import notification_engagement
+    out = {}
+    try:
+        rows = notification_engagement(restaurant_id, days, db_path)
+    except Exception as e:
+        print(f"[notify] engagement unreadable for rid={restaurant_id}: {e}")
+        return out
+    answered = {}
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            for r in conn.execute(
+                    "SELECT i.kind, COUNT(DISTINCT e.rec_id) AS n FROM rec_events e JOIN rec_instances i "
+                    "ON i.rec_id = e.rec_id WHERE e.restaurant_id=? AND e.at >= datetime('now', ?) AND e.event IN "
+                    "('opened','evidence_viewed','accepted','completed','dismissed','snoozed','implemented') "
+                    "GROUP BY i.kind", (restaurant_id, f"-{int(days)} days")).fetchall():
+                answered[r["kind"]] = int(r["n"] or 0)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] alert answers unreadable for rid={restaurant_id}: {e}")
+    for row in rows:
+        t, n = row["alert_type"], int(row["delivered"] or 0)
+        engaged = min(n, int(row["opened"] or 0) + answered.get(t, 0))
+        rate = round(engaged / n, 3) if n else None
+        out[t] = {"delivered": n, "engaged": engaged, "rate": rate,
+                  "low": bool(n >= ENGAGEMENT_MIN_DELIVERED and rate is not None and rate < ENGAGEMENT_LOW_RATE
+                              and t not in ENGAGEMENT_NEVER_QUIET)}
+    return out
+
+
 def engagement_report(restaurant_id: int, db_path: str = DB_PATH) -> list:
     """Notification types this restaurant receives a lot of and never opens.
 
@@ -2727,9 +2775,19 @@ def _restaurant_name(restaurant_id):
 
 
 def _deliver_combined(restaurant_id, items, db_path):
-    """One notification for the whole morning, worst first."""
-    from push import priority_of
-    items.sort(key=lambda i: (priority_of(i.alert_type), i.alert_type))
+    """One notification for the whole morning, worst first — and, below a
+    health or safety alert, the types this restaurant engages with before
+    the ones it has not opened or answered in weeks (alert_engagement,
+    LOOPS-12): a low-engagement type is still in the email, but never the
+    item the text and the push lead with."""
+    from push import priority_of, P0_CRITICAL
+    try:
+        eng = alert_engagement(restaurant_id, db_path)
+    except Exception:
+        eng = {}
+    items.sort(key=lambda i: (0 if priority_of(i.alert_type) == P0_CRITICAL else 1,
+                              1 if (eng.get(i.alert_type) or {}).get("low") else 0,
+                              priority_of(i.alert_type), i.alert_type))
     name = _restaurant_name(restaurant_id)
     lead = items[0]
     n = len(items)
@@ -2760,6 +2818,17 @@ def _deliver_combined(restaurant_id, items, db_path):
     # (_already_alerted / _recent) and the history behave exactly as before.
     for item in items:
         _log_alert(restaurant_id, item.alert_type, db_path=db_path, value=item.value)
+
+
+def _low_engagement(restaurant_id, alert_type, db_path=DB_PATH) -> bool:
+    """alert_engagement's `low` for one type; never for a health or safety
+    alert (never_silenced). Never raises."""
+    try:
+        if never_silenced(alert_type):
+            return False
+        return bool((alert_engagement(restaurant_id, db_path).get(alert_type) or {}).get("low"))
+    except Exception:
+        return False
 
 
 def _strip_tags(text: str) -> str:
@@ -2802,7 +2871,8 @@ def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str
             return False
     if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
         return False
-    if _batch is not None and alert_type in DAILY_BATCH_TYPES:
+    if _batch is not None and (alert_type in DAILY_BATCH_TYPES or _low_engagement(restaurant_id, alert_type,
+                                                                                  db_path)):
         _batch.setdefault(restaurant_id, []).append(
             _Pending(alert_type, sms_text, subject, lines, value, recs))
         return True
