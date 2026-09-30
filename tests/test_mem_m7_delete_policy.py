@@ -1,10 +1,12 @@
 """Memory fix round (9/29/26), workstream M7 — "delete_policy".
 
 Owner decision (Will, 9/29/26): when a restaurant is deleted its own data is
-always deleted, but its anonymised learning — its intel_rec_events and
-intel_features rows — is KEPT under a tombstoned id (no name, no raw rows,
-every recommendation key hashed), so cohort priors do not forget what a
-churned restaurant measured. A demo's or a test account's rows go with it,
+always deleted, but its anonymised learning — its intel_rec_events rows — is
+KEPT under a tombstoned id (no name, no raw rows, every recommendation key
+hashed), so cohort priors do not forget what a churned restaurant measured.
+Its intel_features weeks were kept too until Will's second decision the same
+night (re-audit FORGET-16): they taught no band once three weeks old, so they
+are now deleted with the restaurant. A demo's or a test account's rows go with it,
 and so does anything a converted demo recorded before its learning_since.
 """
 import json
@@ -70,13 +72,13 @@ def test_a_real_restaurants_learning_is_kept_under_a_tombstone_and_its_own_data_
     assert _q("SELECT id FROM intel_rec_events WHERE restaurant_id=?", (rid,)) == []
     (tid, cat, src, rows_json), = _q("SELECT id, category, category_source, rows_json FROM learning_tombstones")
     assert (cat, src) == ("italian", "set")
-    assert json.loads(rows_json) == {"intel_features": 1, "intel_rec_events": 2}
+    assert json.loads(rows_json) == {"intel_rec_events": 2}
     kept = _q("SELECT restaurant_id, rec_kind, source_key, cohort, outcome FROM intel_rec_events ORDER BY id")
     assert {r[0] for r in kept} == {-tid}
     keys = [r[2] for r in kept]
     assert keys[0].startswith("overtime_move:~") and keys[0].endswith("#o12") and "Maria" not in keys[0]
     assert keys[1].startswith("trim_day:~") and "tuesday" not in keys[1]
-    assert _q("SELECT restaurant_id, week FROM intel_features") == [(-tid, "2026-W37")]
+    assert _q("SELECT restaurant_id, week FROM intel_features") == [], "its weekly features go with it"
     blob = json.dumps(_q("SELECT * FROM learning_tombstones")) + json.dumps(kept)
     assert "Bella" not in blob and str(rid) not in [str(x) for r in kept for x in r if isinstance(x, int) and x > 0]
 
@@ -113,7 +115,7 @@ def test_a_converted_demo_keeps_only_what_it_recorded_after_learning_since():
     models.delete_restaurant(rid)
     kept = _q("SELECT rec_kind FROM intel_rec_events")
     assert kept == [("overtime_move",)], "the demo-era answer (8/1/26) was not kept"
-    assert _q("SELECT week FROM intel_features") == [("2026-W37",)]
+    assert _q("SELECT week FROM intel_features") == []
 
 
 def test_the_policy_is_written_where_the_routine_is():

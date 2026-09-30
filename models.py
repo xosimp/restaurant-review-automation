@@ -4456,14 +4456,17 @@ _KEEP_ON_RESTAURANT_DELETE = frozenset({"admin_events", "offboarding_steps", "bi
 
 # The anonymised learning a deleted restaurant leaves behind (owner decision,
 # Will, 9/29/26 — memory audit "delete_policy"): the restaurant's own data is
-# always deleted, but its rows in these two cross-restaurant tables — ratios,
-# counts, and whether each recommendation was taken and what it measured —
-# are kept under a TOMBSTONED id (restaurant_id = -learning_tombstones.id),
-# with every recommendation key hashed (a key can name a dish or a person),
-# so cohort priors keep what a churned restaurant measured. Only for a
-# restaurant that could teach (models.learning_exclusion) and only rows from
-# its learning_since on; a demo's or a test account's go with it.
-_TOMBSTONE_TABLES = ("intel_rec_events", "intel_features")
+# always deleted, but its intel_rec_events rows — whether each recommendation
+# was taken and what it measured — are kept under a TOMBSTONED id
+# (restaurant_id = -learning_tombstones.id), with every recommendation key
+# hashed (a key can name a dish or a person), so cohort priors keep what a
+# churned restaurant measured. Only for a restaurant that could teach
+# (models.learning_exclusion) and only rows from its learning_since on; a
+# demo's or a test account's go with it.
+# Its intel_features weeks are NOT kept (Will, 9/29/26, re-audit FORGET-16):
+# a band reads only the last few weeks, so a deleted restaurant's features
+# taught nothing once three weeks old — they are deleted with the rest.
+_TOMBSTONE_TABLES = ("intel_rec_events",)
 
 
 def _anonymous_key(key) -> str:
@@ -4503,15 +4506,6 @@ def _tombstone_learning(conn, rid, restaurant_row) -> dict:
                          (-tid, _anonymous_key(r[1]), r[0]))
         kept["intel_rec_events"] = conn.execute("SELECT COUNT(*) FROM intel_rec_events WHERE restaurant_id=?",
                                                 (-tid,)).fetchone()[0]
-    if "intel_features" in have:
-        floor = ""
-        if since:
-            from datetime import date as _d_tb
-            y, w, _ = _d_tb.fromisoformat(str(since)[:10]).isocalendar()
-            floor = f"{y}-W{w:02d}"
-        conn.execute("UPDATE intel_features SET restaurant_id=? WHERE restaurant_id=? AND week >= ?", (-tid, rid, floor))
-        kept["intel_features"] = conn.execute("SELECT COUNT(*) FROM intel_features WHERE restaurant_id=?",
-                                              (-tid,)).fetchone()[0]
     if not any(kept.values()):
         conn.execute("DELETE FROM learning_tombstones WHERE id=?", (tid,))
         return {}
