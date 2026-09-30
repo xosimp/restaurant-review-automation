@@ -1416,16 +1416,38 @@ def _do_memory_add(u):
         kind = "context"
     modules = b.get("modules") if isinstance(b.get("modules"), list) else None
     try:
+        # scope "org": every location of the organisation reads it — a group
+        # owner only (owner_memory.may_set_org; memory re-audit 9/29/26,
+        # PEOPLE-13).
         saved = owner_memory.remember(_rid(u), fact, kind=kind, modules=modules,
                                       valid_until=b.get("valid_until") or None, due_on=b.get("due_on") or None,
                                       audience=b.get("audience") or None, user=u, source="Account",
-                                      origin="account")
+                                      origin="account", scope="org" if b.get("scope") == "org" else None)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
     log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
     return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
             "kind": saved.get("kind"), "audience": saved.get("audience"),
             "evicted": saved.get("evicted", 0)}, 200
+
+
+def _do_memory_scope(u):
+    """{id, scope: "org" | "location"} — one of this location's facts kept
+    for every location of the organisation, or for this one only. A group
+    owner only (memory re-audit 9/29/26, PEOPLE-13)."""
+    import owner_memory
+    from client_api import log_account_event
+    b = _body()
+    if not isinstance(b.get("id"), int) or b.get("scope") not in ("org", "location"):
+        return {"ok": False, "error": "Send the fact's id and a scope (org or location)."}, 400
+    if not owner_memory.may_set_org(_rid(u), u):
+        return _forbidden("Only the owner of every location can keep a fact for all of them.")
+    try:
+        out = owner_memory.set_scope(_rid(u), b["id"], b["scope"], u)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 404
+    log_account_event(_rid(u), "memory_scope", current_user=u, detail=f"fact {out['id']} → {out['scope']}")
+    return {"ok": True, **out}, 200
 
 
 def _do_decisions(u):
@@ -2932,6 +2954,61 @@ def _do_people_merge(u):
     return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
 
 
+def _do_people_merges(u):
+    """The merges of the last people.UNMERGE_DAYS days, each with whether
+    it can still be undone (memory re-audit 9/29/26, INVENTORY-11)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "merges": _people.recent_merges(_rid(u)), "can_undo": _principal(u),
+            "undo_days": _people.UNMERGE_DAYS}, 200
+
+
+def _do_people_merge_undo(u, merge_id):
+    """Undo a merge: the two people are two again, every record back where
+    it was (people.unmerge_people). The account owner's decision, like the
+    merge itself."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can undo a merge.")
+    import people as _people
+    try:
+        out = _people.unmerge_people(_rid(u), int(merge_id), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_unmerged", current_user=u, detail=f"{out['into']} → {out['from']}")
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_erase(u, key):
+    """{confirm: their name} — a departed employee's request to be
+    forgotten: every record about them erased (people.erase_person). The
+    account owner's decision; the name typed back guards a wrong tap.
+    Refused while they are on the roster or hold a staff login."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can erase someone's record.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    typed = " ".join(str(_body().get("confirm") or "").split()).casefold()
+    if typed != " ".join(str(p["name"]).split()).casefold():
+        return {"ok": False, "error": f"Type {p['name']} to confirm."}, 400
+    pid = _people.person_id_for(_rid(u), p["name"], create=False)
+    if not pid:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    try:
+        out = _people.erase_person(_rid(u), pid, user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "person_erased", current_user=u, detail=f"person #{out['person_id']}")
+    return {"ok": True, "erased": out["erased"]}, 200
+
+
 def _do_person_roles(u, key):
     """{role, since?, primary?, remove?} — a role this person holds beyond
     the shifts they have worked: "trained on bar from 9/1" (a candidate for
@@ -2998,6 +3075,21 @@ def _do_issue_cover_answer(u, issue_id):
         return {"ok": False, "error": "That coverage issue wasn't found."}, 404
     day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
         else _local_today(u).isoformat()
+    # Answered already — on the web, another phone, by someone else: a
+    # stale screen's later tap does not overwrite it (memory re-audit
+    # 9/29/26, INVENTORY-10). The same answer again is fine.
+    import json as _json
+    import staff_settings as _ss_cover
+    try:
+        _asked = (_json.loads(issue.get("meta_json") or "null") or {}).get("asked") or []
+    except (TypeError, ValueError):
+        _asked = []
+    _prior = next((a.get("answer") for a in _asked if isinstance(a, dict) and a.get("answer")
+                   and _ss_cover.name_key(a.get("name")) == _ss_cover.name_key(b["name"])), None)
+    if _prior and _prior != ("took" if b["accepted"] else "declined"):
+        first = str(b["name"]).split(" ")[0]
+        return {"ok": False, "answer": _prior,
+                "error": f"Already answered: {first} {'took it' if _prior == 'took' else 'didn’t take it'}."}, 409
     _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
     # Kept on the issue's own ask too, so Home stops asking (UI wave).
     import intraday as _intraday
@@ -5058,6 +5150,7 @@ _ROUTES = [
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),
     ("/account/memory", ["GET"], _do_memory_list, "memory_list"),
     ("/account/memory/add", ["POST"], _do_memory_add, "memory_add"),
+    ("/account/memory/scope", ["POST"], _do_memory_scope, "memory_scope"),
     ("/marketing/posts/<int:post_id>/tags", ["POST"], _do_post_tags, "post_tags"),
     ("/intel/ai-visibility/queries", ["GET"], _do_ai_visibility_queries, "ai_visibility_queries"),
     ("/marketing/diagnosis", ["GET"], _do_marketing_diagnosis, "marketing_diagnosis"),
@@ -5133,9 +5226,12 @@ _ROUTES = [
     ("/people/identity", ["GET"], _do_people_identity, "people_identity"),
     ("/people/identity/<int:question_id>", ["POST"], _do_people_identity_answer, "people_identity_answer"),
     ("/people/merge", ["POST"], _do_people_merge, "people_merge"),
+    ("/people/merges", ["GET"], _do_people_merges, "people_merges"),
+    ("/people/merges/<int:merge_id>/undo", ["POST"], _do_people_merge_undo, "people_merge_undo"),
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
     ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
+    ("/people/<key>/erase", ["POST"], _do_person_erase, "person_erase"),
     ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
     ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
     ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
