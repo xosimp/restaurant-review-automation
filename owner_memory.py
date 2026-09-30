@@ -71,11 +71,26 @@ SURFACE_METRICS = {
     "review_read": ("avg_rating", "complaints", "response_hours"),
 }
 # The module whose view permission a goal's metric needs (memory_context
-# viewer scoping reads it off the line).
+# viewer scoping reads it off the line). Comps and voids are "loss"
+# (LOSS_VIEW, memory_context's loss gate), not labor: a comp goal and its
+# measured reading reached a manager's Ask and the shared nightly report
+# (memory re-audit PEOPLE-2). _goal_module asks metrics.metric_permission
+# first, so a food-cost or loss metric this map misses is gated anyway.
 _METRIC_MODULE = {"labor_pct": "labor", "overtime_hours": "labor", "sales": "labor", "weekday_sales": "labor",
-                  "food_cost_pct": "food", "weekly_waste": "food", "avg_rating": "reviews",
-                  "complaints": "reviews", "response_hours": "reviews", "comp_rate": "labor",
-                  "void_rate": "labor"}
+                  "food_cost_pct": "food", "weekly_waste": "food", "item_waste": "food", "avg_rating": "reviews",
+                  "complaints": "reviews", "response_hours": "reviews", "comp_rate": "loss",
+                  "void_rate": "loss", "labor_pct_day": "labor", "labor_pct_part": "labor"}
+
+
+def _goal_module(metric):
+    """The module a goal line on `metric` is gated by."""
+    base = str(metric or "").split(":", 1)[0]
+    try:
+        import metrics
+        need = metrics.metric_permission(base)
+    except Exception:
+        need = None
+    return need or _METRIC_MODULE.get(base)
 
 # Words that make a principal's fact private to the account holders by
 # default, whatever audience the model asked for: personnel plans and money
@@ -87,6 +102,80 @@ _PRIVATE_RE = re.compile(
     r"lay(ing)?\s*off|laid\s+off|salar(y|ies)|raise\s+for|pay\s+cut|payroll\s+for|sell(ing)?\s+the\s+"
     r"(restaurant|business|place)|lawsuit|lawyer|attorney|divorce|loan|debt|investor|partner(ship)?\s+"
     r"(split|buyout)|buy\s*out)\b", re.I)
+
+# Money said about a person or the business that is private on its own —
+# a pay rate, a raise, a PIP, a sale of the business — whoever it names
+# (memory re-audit PEOPLE-10: "Marco makes $18 an hour", "Giving Marco a $2
+# raise", "Dana is on a PIP", "We are selling the bar", "Talking to a buyer
+# for the restaurant" all missed _PRIVATE_RE and were stored "team").
+_PRIVATE_ALONE_RE = re.compile(
+    r"(\$\s?\d+(\.\d+)?\s*(an?\s+hour|/\s*h(ou)?r\b|per\s+hour|hourly)|"
+    r"\b(makes|earns|paid|paying|pays)\s+\$\s?\d|"
+    r"\b(give|gives|giving|gave|get|gets|getting|got)\s+\w+\s+(a\s+)?(\$\s?\d+(\.\d+)?\s+)?raise\b|"
+    r"\bpay\s+raise\b|\bpip\b|\bperformance\s+improvement|\bbuyer\b|\bbuy(ing)?\s+us\s+out\b|"
+    r"\bsell(ing|s)?\s+(the|our|my)\s+(bar|restaurant|business|place|building|location|stake)\b)", re.I)
+# Personnel actions: private when they name a person (a roster name, a
+# person:* subject, or a capitalised name in the sentence) — "Fire Dana next
+# week", "Dana's last day is Friday", "Cutting Dana's hours after the
+# review", "Writing up Dana for no-shows".
+_PERSONNEL_RE = re.compile(
+    r"\b(fire[ds]?|firing|let(ting)?\s+\w+\s+go|terminat\w*|write\s+\w+\s+up|writ(e|es|ing)\s+up|"
+    r"written\s+up|warning|disciplin\w*|last\s+day|quit(s|ting)?|resign\w*|notice|probation|suspen\w*|"
+    r"demot\w*|promot(e|ed|ing|ion)\b|replac(e|ing)\s+(him|her|them)|cut(ting|s)?\s+\w+'?s?\s+hours|"
+    r"hours\s+cut|no[-\s]?shows?|performance\s+review|pay\b|wage\w*|bonus\w*|salar(y|ies))", re.I)
+_NAME_RE = re.compile(r"\b([A-Z][a-z]{1,20})\b")
+# Capitalised words that are not a person.
+_NOT_NAMES = {"I", "We", "Our", "The", "They", "He", "She", "It", "This", "That", "My", "Me", "Us", "A", "An",
+              "Fire", "Firing", "Writing", "Cutting", "Giving", "Talking", "Remind", "Remember", "Note", "Please",
+              "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "January", "February",
+              "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
+              "Cavnar", "AI", "Ask", "Toast", "Square", "Clover", "Google", "Yelp", "Instagram", "Facebook",
+              "Sysco", "Christmas", "Thanksgiving", "Easter", "Labor", "Memorial", "Day", "PIP", "GM", "Chef"}
+
+
+def _roster_names(restaurant_id, db_path=None) -> set:
+    """Lower-cased first and full names on the roster (people.list_people)."""
+    if not restaurant_id:
+        return set()
+    try:
+        import people
+        out = set()
+        for p in people.list_people(restaurant_id, db_path=db_path):
+            name = " ".join(str(p.get("name") or "").split()).lower()
+            if name:
+                out.add(name)
+                out.add(name.split(" ", 1)[0])
+        return {n for n in out if len(n) >= 2}
+    except Exception:
+        return set()
+
+
+def is_private(text, restaurant_id=None, subject=None, db_path=None) -> bool:
+    """Whether a fact is personnel or money that stays with the account
+    holders (and its author) by default: _PRIVATE_RE, money private on its
+    own (_PRIVATE_ALONE_RE), or a personnel action (_PERSONNEL_RE) about a
+    named person — a roster name (people.list_people), a "person:*"
+    subject, or a capitalised name in the sentence (memory re-audit
+    PEOPLE-10)."""
+    text = text or ""
+    if _PRIVATE_RE.search(text) or _PRIVATE_ALONE_RE.search(text):
+        return True
+    if not _PERSONNEL_RE.search(text):
+        return False
+    if str(subject or "").startswith("person:"):
+        return True
+    for m in _NAME_RE.finditer(text):
+        if m.group(1) in _NOT_NAMES:
+            continue
+        # A sentence's first word is capitalised anyway: a name only when
+        # it is possessive ("Dana's last day").
+        before = text[:m.start()].rstrip()
+        if (not before or before[-1] in ".!?:;\n") and not text[m.end():m.end() + 2] in ("'s", "’s"):
+            continue
+        return True
+    low = " " + " ".join(re.findall(r"[a-z0-9'-]+", text.lower())) + " "
+    return any(f" {n} " in low or f" {n}'s " in low for n in _roster_names(restaurant_id, db_path=db_path))
+
 
 # A measurable target said as a sentence ("labor under 26% by December"):
 # the remember tool refuses it as a goal and points at set_goal, where it is
@@ -173,12 +262,33 @@ def author_of(user) -> dict:
             "authority": authority}
 
 
-def _default_audience(kind, authority, text):
+def _default_audience(kind, authority, text, restaurant_id=None, subject=None, db_path=None):
+    """A follow-up is its author's; personnel and money (is_private) are the
+    account holders' — whoever said it: a manager's "we're firing the
+    dishwasher" was stored "team" because the default ran for principals
+    only (memory re-audit PEOPLE-10). A delegate's private fact still reads
+    for its author (memory_context.visible)."""
     if kind == "followup":
         return "author"
-    if authority == "principal" and _PRIVATE_RE.search(text or ""):
+    if is_private(text, restaurant_id=restaurant_id, subject=subject, db_path=db_path):
         return "principals"
     return "team"
+
+
+_KIND_LABELS = {"constraint": "Constraint", "context": "Note", "preference": "Preference", "goal": "Aim",
+                "followup": "Follow-up"}
+_AUDIENCE_LABELS = {"team": "read by the team", "principals": "read by the account holders only",
+                    "author": "read by the person who added it only"}
+
+
+def activity_detail(kind, audience) -> str:
+    """What the Account activity log says about a memory change: its type
+    and who may read it — never the fact's words. Every console login reads
+    that log (/account/activity), so the text of an owner-only or a
+    teammate's own fact there undid the audience it was stored with
+    (memory re-audit PEOPLE-1)."""
+    return (f"{_KIND_LABELS.get(kind or 'context', 'Note')} · "
+            f"{_AUDIENCE_LABELS.get(audience or 'team', _AUDIENCE_LABELS['team'])}")
 
 
 # A per-restaurant memory version, bumped by every memory write (remember,
@@ -331,13 +441,16 @@ def _narrower(a, b):
 
 def remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
              audience=None, user=None, source=None, origin="ask", author_label=None, db_path=None,
-             today=None, replaces=None, scope=None) -> dict:
+             today=None, audience_chosen=False, replaces=None, scope=None) -> dict:
     """Keep one fact. Returns {"fact", "kind", "evicted", "evicted_facts",
-    "audience", "valid_until", "due_on", "id", "similar", "replaced",
-    "confirmed"}; raises MemoryRefused (a ValueError) for an empty fact, a
-    past date, or a measurable target (any kind — memory re-audit R3).
-    `scope` "org": every location of the organisation reads it — a group
-    owner only (may_set_org; memory re-audit R6, PEOPLE-13).
+    "audience", "private_default", "valid_until", "due_on", "id", "similar",
+    "replaced", "confirmed"}; raises MemoryRefused (a ValueError) for an
+    empty fact, a past date, or a measurable target (any kind — memory
+    re-audit R3). `scope` "org": every location of the organisation reads it
+    — a group owner only (may_set_org; memory re-audit R6, PEOPLE-13).
+    `private_default`: the fact went to the account holders because it is
+    personnel or money (is_private — memory re-audit PEOPLE-10); only an
+    explicit `audience_chosen` keeps such a fact "team".
 
     `user` is the login saying it — its id, label and authority are stored
     on the fact, so a manager's remark is never shown as the owner's; None
@@ -373,12 +486,19 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
     if kind == "followup" and due is None:
         due = today + timedelta(days=7)
     who = author_of(user)
+    private_default = False
     if audience not in ("team", "principals", "author"):
-        audience = _default_audience(kind, who["authority"], text)
-    elif who["authority"] == "principal" and audience == "team" and _PRIVATE_RE.search(text):
-        # The backstop: personnel and money said by an account holder stay
-        # theirs, whatever the model asked for.
+        audience = _default_audience(kind, who["authority"], text, restaurant_id=restaurant_id, subject=subject,
+                                     db_path=db_path)
+        private_default = audience == "principals"
+    elif audience == "team" and not audience_chosen and is_private(text, restaurant_id=restaurant_id,
+                                                                   subject=subject, db_path=db_path):
+        # The backstop: personnel and money stay with the account holders
+        # (and the author), whatever the model asked for and whoever said it.
+        # Only a person's own explicit choice in Account ("Share with the
+        # team" — audience_chosen) makes such a fact the team's.
         audience = "principals"
+        private_default = True
     if isinstance(modules, str):
         modules = [m.strip() for m in modules.split(",")]
     if scope == "org" and not may_set_org(restaurant_id, user, db_path=db_path):
@@ -387,8 +507,7 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
     same = [r for r in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
             if r["fact"] == text and r.get("user_id") != who["user_id"]]
     if user is not None:
-        seen = [r for r in same if memory_context.visible(
-            {"audience": r.get("audience") or "team", "author_id": r.get("user_id")}, viewer)]
+        seen = [r for r in same if memory_context.visible(_gate(r), viewer)]
         if seen:
             row = seen[0]
             models.confirm_ask_fact(restaurant_id, row["id"], confirmed_by=author_label or who["label"],
@@ -399,7 +518,7 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
             return {"fact": row["fact"], "kind": row.get("kind") or "context", "evicted": 0, "evicted_facts": [],
                     "audience": row.get("audience") or "team", "valid_until": row.get("valid_until"),
                     "due_on": row.get("due_on"), "id": row["id"], "similar": [], "replaced": None,
-                    "confirmed": True}
+                    "confirmed": True, "private_default": False}
     for r in same:
         audience = _narrower(audience, r.get("audience") or "team")
     saved = models.remember_ask_fact(
@@ -416,12 +535,12 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
         similar = similar_facts(restaurant_id, text, kind=kind, subject=subject, user=user,
                                 exclude_ids=[saved.get("id")], db_path=db_path)
     evicted_seen = [{"fact": e["fact"]} for e in saved.get("evicted_facts") or []
-                    if memory_context.visible({"audience": e.get("audience") or "team",
-                                               "author_id": e.get("user_id")}, viewer)]
+                    if memory_context.visible(_gate(e), viewer)]
     expire(restaurant_id, today=today, db_path=db_path)
     invalidate(restaurant_id)
     return {"fact": saved["fact"], "kind": saved["kind"], "evicted": saved.get("evicted", 0),
             "evicted_facts": evicted_seen, "audience": saved.get("audience") or audience,
+            "private_default": private_default,
             "valid_until": until.isoformat() if until else None, "due_on": due.isoformat() if due else None,
             "id": saved.get("id"), "similar": similar, "replaced": replaced, "confirmed": False}
 
@@ -493,6 +612,35 @@ def forget(restaurant_id, fact, user=None, db_path=None) -> dict:
         models.delete_ask_facts(restaurant_id, [row["id"]], db_path=db_path or models.DB_PATH)
     invalidate(restaurant_id)
     return {"forgotten": row["fact"]}
+
+
+def set_audience(restaurant_id, fact_id, audience, user=None, db_path=None) -> dict:
+    """The one-tap change beside a fact in Account (memory re-audit
+    PEOPLE-10): personnel and money default to the account holders, and the
+    person who may edit the fact (its author or an account holder — _may_edit)
+    can share it with the team, or keep it to the owners or themselves. A
+    delegate cannot hand a fact to "principals" it did not write, and an
+    "author" fact stays its author's. {"ok": True, "audience"} | {"error"}."""
+    import models
+    if audience not in ("team", "principals", "author"):
+        return {"error": "Pick who reads it: team, principals or author."}
+    try:
+        fid = int(fact_id)
+    except (TypeError, ValueError):
+        return {"error": "Which fact?"}
+    rows = facts_for(restaurant_id, viewer=user, db_path=db_path, include_expired=True)
+    row = next((r for r in rows if r.get("id") == fid), None)
+    if row is None:
+        return {"error": "No fact like that.", "status": 404}
+    if not _may_edit(row, user):
+        return {"error": "Only the person who added it or an owner can change who reads it.", "status": 403}
+    if audience == "author" and row.get("user_id") is not None and user is not None \
+            and row.get("user_id") != user.get("id"):
+        return {"error": "Only the person who added it can keep it to themselves.", "status": 403}
+    if not models.set_ask_fact_audience(restaurant_id, fid, audience, db_path=db_path or models.DB_PATH):
+        return {"error": "No fact like that.", "status": 404}
+    invalidate(restaurant_id)
+    return {"ok": True, "audience": audience, "kind": row.get("kind") or "context"}
 
 
 # ── preferences read off the owner's own ratings (ask_feedback) ─────────────
@@ -821,7 +969,20 @@ def mark_used(restaurant_id, fact_ids, db_path=None) -> int:
 # ── the read path ───────────────────────────────────────────────────────────
 
 def _modules_of(row):
-    return {m for m in str(row.get("modules") or "").split(",") if m}
+    return {m.strip() for m in str(row.get("modules") or "").split(",") if m.strip()}
+
+
+def _module_gate(row) -> dict:
+    """_gate's module half only: for a read whose audience rule is applied
+    elsewhere (the archive's SQL filter)."""
+    return dict(_gate(row), audience="team")
+
+
+def _gate(row) -> dict:
+    """The fields memory_context.visible reads off a stored fact (live or
+    archived): who may read it, who wrote it, and every module it is about."""
+    return {"audience": row.get("audience") or "team", "author_id": row.get("user_id"),
+            "modules": sorted(_modules_of(row))}
 
 
 def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, db_path=None,
@@ -843,9 +1004,13 @@ def facts_for(restaurant_id, viewer=None, surface=None, kinds=None, today=None, 
     authority = memory_context._authority(user)
     want = SURFACE_MODULES.get(surface, None) if surface else None
     out = []
+    cache = {}
     for r in rows:
-        line = {"audience": r.get("audience") or "team", "author_id": r.get("user_id")}
-        if not memory_context.visible(line, user, authority):
+        # The same gate the prompt path applies (_line): audience, author and
+        # EVERY module the fact is about — Account's list and forget's
+        # "remembered" showed a food note to a login without Food Cost
+        # (memory re-audit INVENTORY-4 / PROMPTS-7).
+        if not memory_context.visible(_gate(r), user, authority, cache):
             continue
         mods = _modules_of(r)
         if want is not None and mods and not (mods & want):
@@ -945,7 +1110,9 @@ def _line(row, weight_bonus=0.0):
             "weight": _KIND_WEIGHT.get(kind, 1.0) + weight_bonus, "trusted": False,
             "who": who, "until": row.get("valid_until"), "audience": row.get("audience") or "team",
             "author_id": row.get("user_id"), "module": mods[0] if len(mods) == 1 else None,
-            "kind": kind, "fact_id": row.get("id")}
+            # Every module, so a fact about two of them keeps both gates
+            # (memory_context.visible needs the view of each — PROMPTS-7).
+            "modules": mods, "kind": kind, "fact_id": row.get("id")}
 
 
 # The kinds an account holder states as a rule the model must follow
@@ -1002,6 +1169,10 @@ def constraint_lines(req):
     today = _local_today(req.restaurant_id)
     out = []
     for r in rows:
+        if r.get("origin") == "ratings" and surface not in (None, "ask"):
+            # A preference read off one login's own ratings steers that
+            # login's Ask answers and nothing else (memory re-audit QUALITY-9).
+            continue
         if is_owner_rule(r):
             continue                     # the owner's own rule: rule_lines
         if r.get("kind") == "followup":
@@ -1047,7 +1218,7 @@ def goal_lines(req):
         out.append({"text": "Goal — " + goals.summarise(g), "date": str(g.get("created_at") or "") or None,
                     "source": "system", "trusted": True, "subject": base,
                     "weight": 3.0 if state in ("moving_wrong_way", "missed", "flat") else 2.0,
-                    "who": f"set by {who}" if who else None, "module": _METRIC_MODULE.get(base)})
+                    "who": f"set by {who}" if who else None, "module": _goal_module(base)})
     for g in proposed:
         if not _wanted(g.get("metric")):
             continue
@@ -1056,7 +1227,7 @@ def goal_lines(req):
                else labels.get(g.get("created_by")) or "a teammate")
         out.append({"text": f"Proposed goal, waiting for the owner to confirm — {goals.describe_target(g)}",
                     "date": str(g.get("created_at") or "") or None, "source": "system", "trusted": True,
-                    "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _METRIC_MODULE.get(base),
+                    "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _goal_module(base),
                     "audience": "principals", "author_id": g.get("created_by")})
     if surface in (None, "ask", "brief", "weekly_plan", "dsr_narrative", "digest"):
         for r in facts_for(req.restaurant_id, viewer=None, surface=surface, kinds=["goal"], db_path=req.db_path):
@@ -1362,7 +1533,13 @@ def _archive_row_for(restaurant_id, archive_id, user, db_path=None):
     rows = models.get_ask_memory_archive(restaurant_id, limit=1, db_path=db_path or models.DB_PATH,
                                          archive_id=archive_id, viewer_id=(user or {}).get("id"),
                                          principal=None if user is None else _principal(user))
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    # ...and every module it names, as Account's list gates it (INVENTORY-4).
+    import memory_context
+    if user is not None and not memory_context.visible(_module_gate(rows[0]), memory_context.viewer_user(user)):
+        return None
+    return rows[0]
 
 
 def _may_restore(row, user) -> bool:
@@ -1416,7 +1593,8 @@ def restore(restaurant_id, archive_id, user=None, valid_until=None, due_on=None,
         return {"error": "No fact like that.", "status": 404}
     invalidate(restaurant_id)
     merged = dict(row, **over)
-    return {"fact": fact, "valid_until": merged.get("valid_until"), "due_on": merged.get("due_on")}
+    return {"fact": fact, "valid_until": merged.get("valid_until"), "due_on": merged.get("due_on"),
+            "kind": merged.get("kind") or "context", "audience": merged.get("audience") or "team"}
 
 
 def dismiss(restaurant_id, archive_id, user=None, db_path=None) -> dict:
@@ -1429,7 +1607,7 @@ def dismiss(restaurant_id, archive_id, user=None, db_path=None) -> dict:
     if not _may_restore(row, user):
         return {"error": "Only the owner or the person who added it can dismiss it.", "status": 403}
     models.delete_ask_archive_rows(restaurant_id, [row["id"]], db_path=db_path or models.DB_PATH)
-    return {"dismissed": row["fact"]}
+    return {"dismissed": row["fact"], "kind": row.get("kind") or "context", "audience": row.get("audience") or "team"}
 
 
 def pin(restaurant_id, fact_id, user=None, pinned=True, db_path=None) -> dict:
@@ -1519,11 +1697,21 @@ def account_view(restaurant_id, user, db_path=None, archive_before=None, archive
                                          viewer_id=(user or {}).get("id"),
                                          principal=None if user is None else principal, before_id=archive_before)
     more = len(page) > limit
+    # The audience is filtered in SQL (before the page is cut, with the
+    # archive's own rules — a departed author's note reaches the account
+    # holders); every module a fact names is gated here, as the prompt path
+    # gates it (_module_gate — memory re-audit INVENTORY-4 / PROMPTS-7).
+    import memory_context
+    _viewer = memory_context.viewer_user(user)
+    _cache = {}
     for a in page[:limit]:
+        if not memory_context.visible(_module_gate(a), _viewer, None, _cache):
+            continue
         label = _REASON_LABELS.get(a.get("reason"), a.get("reason"))
         if a.get("reason") == "expired" and a.get("origin") == "audit":
             label = "its review date passed — put it back if it still holds"
         archived.append({"id": a["id"], "fact": a["fact"], "kind": a.get("kind") or "context",
+                         "audience": a.get("audience") or "team",
                          "author": a.get("author_label") or a.get("source"), "reason": a.get("reason"),
                          "reason_label": label,
                          "archived_on": _mdy(str(a.get("archived_at") or "")[:10]),

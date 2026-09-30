@@ -610,7 +610,11 @@ def _memory_context(restaurant_id, viewer=None):
     # user=None — owner-only lines must not reach a shared artifact
     # (memory_context.SHARED_SURFACES; docs wave 9/29/26).
     if getattr(viewer, "_ask_memory_viewer", None) == "team":
-        user = memory_context.TEAM
+        # The Monday plan brings its own memory block (strategy_jobs.
+        # plan_memory, surface "weekly_plan", read as the team): one block
+        # per call, not the same constraints, goals and claims paid for
+        # twice under two viewers (memory re-audit PROMPTS-14).
+        return ""
     block = memory_context.memory_context(restaurant_id, "ask", viewer=user,
                                           budget_chars=ASK_MEMORY_BUDGET_CHARS)
     if block.empty:
@@ -820,6 +824,13 @@ def _commitments_context(restaurant_id, viewer=None):
             own_only = None if (who.get("is_admin") or is_principal(who)) else who.get("id")
         except Exception:
             own_only = who.get("id")
+        if own_only is None and not who.get("is_admin"):
+            import memory_context as _mc_cm
+            if _mc_cm.is_team(who):
+                # The team (the Monday plan's viewer) is no login: it reads
+                # no one's own proposals — with id None it read everyone's
+                # (memory re-audit PROMPTS-8). 0 matches no login.
+                own_only = 0
     open_since = (_dt.utcnow() - _td(days=PROPOSAL_OPEN_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     # A proposal that was never confirmed or dismissed is still open, and that
     # is the interesting state — but the same action appears twice (proposed,
@@ -1985,11 +1996,17 @@ def _feedback_context(restaurant_id, viewer=None):
     (memory audit 9/29/26, ask_feedback). Aggregate, the depth that has not
     been landing, and their own notes on unhelpful answers fenced as text
     someone wrote, not instructions. "" until something has been rated. No
-    model call. `viewer` None (an unattended caller) reads the restaurant."""
+    model call. No login (an unattended caller): "" — no one's ratings."""
     user = getattr(viewer, "_ask_dsr_user", None) if viewer is not None and not isinstance(viewer, dict) else viewer
     # Through view-as, support's own ratings — never the owner's notes (PEOPLE-20).
     from permissions import acting_login_id
     uid = acting_login_id(user) if isinstance(user, dict) else None
+    if uid is None:
+        # Unattended (no login: the weekly plan, a scheduled read) — there
+        # is no "this person", and every login's ratings read as "the
+        # owner's" were a manager's steering the owner's output (memory
+        # re-audit PROMPTS-18). The section is said only to the rater.
+        return ""
     try:
         from models import ask_feedback_summary
         from ai_guard import wrap_untrusted
@@ -1998,7 +2015,7 @@ def _feedback_context(restaurant_id, viewer=None):
         return ""
     if not fb.get("rated"):
         return ""
-    whose = "this person's own ratings" if uid is not None else "the owner's own ratings"
+    whose = "this person's own ratings"
     lines = [f"ANSWER FEEDBACK ({whose}, last {fb.get('days', 90)} days): "
              f"{fb['helpful']} of {fb['rated']} answers rated helpful."]
     for d in fb.get("by_depth") or []:
@@ -2172,6 +2189,18 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # the team's, on a copy so the caller's restaurant is never stamped.
     if action == "weekly_plan":
         import dataclasses as _dc
+        if user is None:
+            # Everything the plan reads — the snapshot's decisions (owner-
+            # only answers), last night's report (the budget), commitments
+            # and every read tool — as the team the plan's items reach: a
+            # manager's view plus the food-cost view its own prompt needs
+            # (memory_context.team_viewer("weekly_plan")). Items drawing on
+            # food cost are filed with that module (strategy_jobs.
+            # plan_item_modules) so the issue list hides them from a login
+            # without it. Only memory_context was read as the team before
+            # (memory re-audit PROMPTS-8 / PEOPLE-14).
+            import memory_context as _mc_wp
+            restaurant = tools.viewer_restaurant(restaurant, _mc_wp.team_viewer("weekly_plan"))
         _extra = {k: v for k, v in vars(restaurant).items() if k.startswith("_ask_")}
         restaurant = _dc.replace(restaurant)
         for _k, _v in _extra.items():

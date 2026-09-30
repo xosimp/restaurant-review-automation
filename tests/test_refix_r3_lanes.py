@@ -130,5 +130,7 @@ def test_an_owners_evicted_rule_outlives_the_archive_window_until_dismissed(db_p
     assert "Rule 0: never cut the host" in left, "the owner's evicted rule is kept"
     assert "A manager rule, evicted" not in left
     out = owner_memory.dismiss(rid, left["Rule 0: never cut the host"]["id"], user=_owner(rid))
-    assert out == {"dismissed": "Rule 0: never cut the host"}
+    # (R1 merge) the result also names its type and audience, for the
+    # activity log, which never carries the fact's words (PEOPLE-1).
+    assert out["dismissed"] == "Rule 0: never cut the host"
     assert models.get_ask_memory_archive(rid) == []

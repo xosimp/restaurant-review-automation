@@ -267,7 +267,7 @@ def last_answer_tools(restaurant_id, conversation_id, viewer_id=None, db_path=No
         try:
             row = conn.execute(
                 "SELECT tools_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
-                "AND role='assistant' AND (? IS NULL OR user_id IS NULL OR user_id=?) "
+                "AND role='assistant' AND (? IS NULL OR user_id=?) "
                 "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
         finally:
             conn.close()
@@ -297,7 +297,7 @@ def last_answer_read_public(restaurant_id, conversation_id, viewer_id=None, db_p
         try:
             row = conn.execute(
                 "SELECT meta_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
-                "AND role='assistant' AND (? IS NULL OR user_id IS NULL OR user_id=?) "
+                "AND role='assistant' AND (? IS NULL OR user_id=?) "
                 "ORDER BY id DESC LIMIT 1", (restaurant_id, conversation_id, viewer_id, viewer_id)).fetchone()
         finally:
             conn.close()

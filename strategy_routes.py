@@ -154,11 +154,14 @@ def _do_issues_list(u):
     # A loss issue names the manager who approved the comps; only a login
     # with LOSS_VIEW reads it (re-audit A-8). Web and mobile share this body.
     loss = issues.viewer_sees_loss(u)
-    rows = issues.list_issues(_rid(u), status=status, sees_loss=loss)
+    # ...and an issue built from a module this login may not open (a plan
+    # item on food cost) is not theirs either (memory re-audit PEOPLE-14).
+    hide = issues.hidden_modules(u)
+    rows = issues.list_issues(_rid(u), status=status, sees_loss=loss, hide_modules=hide)
     if status == "unresolved":
         # What Home renders from this list: its covers are shown there.
         present_covers(_rid(u), rows[:HOME_ISSUES_SHOWN], "home", user_id=u.get("id"))
-    return {"ok": True, "issues": rows, "summary": issues.summary(_rid(u), sees_loss=loss)}, 200
+    return {"ok": True, "issues": rows, "summary": issues.summary(_rid(u), sees_loss=loss, hide_modules=hide)}, 200
 
 
 def _do_issue_create(u):
@@ -188,7 +191,9 @@ def _issue_hidden(u, issue_id) -> bool:
     the id does not confirm one exists (the list's rule, re-audit A-8)."""
     import issues
     row = issues.get_issue(_rid(u), issue_id)
-    return bool(row) and row.get("kind") == "loss" and not issues.viewer_sees_loss(u)
+    # The list's rules, by id: loss, and a module this login may not open
+    # (issues.viewer_sees_issue — memory re-audit PEOPLE-14).
+    return bool(row) and not issues.viewer_sees_issue(u, row)
 
 
 def _do_issue_resolve(u, issue_id):
@@ -1462,7 +1467,13 @@ def _do_memory_add(u):
                                       scope="org" if b.get("scope") == "org" else None)
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
-    log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
+    # The log every console login reads carries the fact's type and who may
+    # read it, never its words (memory re-audit PEOPLE-1).
+    _kind = saved.get("kind") if isinstance(saved, dict) else kind
+    _aud = saved.get("audience") if isinstance(saved, dict) else None
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail=owner_memory.activity_detail(_kind, _aud),
+                      extra={"memory": {"kind": _kind, "audience": _aud or "team"}})
     # `similar`: the notes this one may replace ("does this replace …?" —
     # post again with `replaces`); `replaced`: the one it did; `confirmed`:
     # someone had already said it, and this login's words were stamped on
@@ -1471,7 +1482,10 @@ def _do_memory_add(u):
             "kind": saved.get("kind"), "audience": saved.get("audience"),
             "evicted": saved.get("evicted", 0), "evicted_facts": saved.get("evicted_facts") or [],
             "similar": saved.get("similar") or [], "replaced": saved.get("replaced"),
-            "confirmed": bool(saved.get("confirmed"))}, 200
+            "confirmed": bool(saved.get("confirmed")),
+            # Owners only because it is about someone's job or pay (said on
+            # save, with the one-tap "Share with the team" beside the fact).
+            "private_default": bool(saved.get("private_default"))}, 200
 
 
 def _do_memory_scope(u):
@@ -3360,8 +3374,27 @@ def _do_memory_forget(u):
     out = owner_memory.forget(_rid(u), fact, user=u)
     if out.get("error"):
         return {"ok": False, "error": out["error"]}, 403
-    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
+    log_account_event(_rid(u), "memory_forgotten", current_user=u,
+                      detail=owner_memory.activity_detail(row.get("kind"), row.get("audience")),
+                      extra={"memory": {"kind": row.get("kind") or "context", "audience": row.get("audience") or "team",
+                                        "fact_id": row.get("id")}})
     return {"ok": True}, 200
+
+
+def _do_memory_audience(u):
+    """Who reads one fact — the one-tap change Account shows beside it
+    (owner_memory.set_audience; memory re-audit PEOPLE-10). Logged like any
+    memory change: its type and audience, never its words."""
+    import owner_memory
+    from client_api import log_account_event
+    b = _body()
+    out = owner_memory.set_audience(_rid(u), b.get("id"), (b.get("audience") or "").strip(), user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, int(out.get("status") or 400)
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail="Now " + owner_memory.activity_detail(out.get("kind"), out["audience"]),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out["audience"], "changed": True}})
+    return {"ok": True, "audience": out["audience"]}, 200
 
 
 # ── preferences: the login's own, the location's, the organisation's ─────────
@@ -3485,7 +3518,9 @@ def _do_memory_restore(u):
     if out.get("error"):
         return {"ok": False, "error": out["error"]}, out.get("status", 400)
     fact = out["fact"]
-    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
+    log_account_event(_rid(u), "memory_added", current_user=u,
+                      detail="Put back: " + owner_memory.activity_detail(out.get("kind"), out.get("audience")),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out.get("audience"), "restored": True}})
     return {"ok": True, "fact": fact, "valid_until": out.get("valid_until"), "due_on": out.get("due_on")}, 200
 
 
@@ -3501,7 +3536,9 @@ def _do_memory_dismiss(u):
     out = owner_memory.dismiss(_rid(u), aid, user=u)
     if out.get("error"):
         return {"ok": False, "error": out["error"]}, out.get("status", 400)
-    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=f"dismissed: {out['dismissed'][:108]}")
+    log_account_event(_rid(u), "memory_forgotten", current_user=u,
+                      detail="Let go: " + owner_memory.activity_detail(out.get("kind"), out.get("audience")),
+                      extra={"memory": {"kind": out.get("kind"), "audience": out.get("audience"), "dismissed": True}})
     return {"ok": True}, 200
 
 
@@ -5281,6 +5318,7 @@ _ROUTES = [
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
     ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/memory/audience", ["POST"], _do_memory_audience, "memory_audience"),
     ("/account/memory/dismiss", ["POST"], _do_memory_dismiss, "memory_dismiss"),
     ("/account/memory/pin", ["POST"], _do_memory_pin, "memory_pin"),
     ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),

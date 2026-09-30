@@ -142,6 +142,15 @@ struct AccountMemoryView: View {
                     if viewModel.busyId == fact.id {
                         CavnarShimmerLine(color: .cavnarRed).frame(width: 28)
                     } else {
+                        // Personnel and money default to owners only; one
+                        // tap shares it with the team (memory re-audit
+                        // PEOPLE-10, /account/memory/audience).
+                        if fact.audience == "principals" {
+                            AccountActionChip(symbol: "person.2",
+                                              accessibilityLabel: "Share with the team: \(fact.fact)") {
+                                Task { await viewModel.share(fact) }
+                            }
+                        }
                         AccountActionChip(symbol: "xmark", tone: .cavnarRed,
                                           accessibilityLabel: "Forget: \(fact.fact)") {
                             Task { await viewModel.forget(fact) }
@@ -542,9 +551,17 @@ final class AccountMemoryViewModel {
         let ok: Bool
         let error: String?
         var evicted: Int? = nil
+        /// True when the fact went to owners only because it is about
+        /// someone's job or pay (owner_memory.is_private).
+        var privateDefault: Bool? = nil
+        enum CodingKeys: String, CodingKey {
+            case ok, error, evicted
+            case privateDefault = "private_default"
+        }
     }
     private struct FactBody: Encodable { let fact: String }
     private struct IdBody: Encodable { let id: Int }
+    private struct AudienceBody: Encodable { let id: Int; let audience: String }
 
     var memory: AccountMemory?
     var isLoading = false
@@ -603,8 +620,13 @@ final class AccountMemoryViewModel {
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return }
             Haptic.success()
             draft = Draft()
-            posted = (r.evicted ?? 0) > 0 ? "Remembered \u{2014} the oldest of its kind moved to the archive"
-                                          : "Remembered"
+            if r.privateDefault == true {
+                posted = "Remembered for owners only \u{2014} it is about someone\u{2019}s job or pay. "
+                    + "Share it from its row to tell the team."
+            } else {
+                posted = (r.evicted ?? 0) > 0 ? "Remembered \u{2014} the oldest of its kind moved to the archive"
+                                              : "Remembered"
+            }
             await load()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
@@ -628,6 +650,28 @@ final class AccountMemoryViewModel {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn\u{2019}t forget that."
+        }
+    }
+
+    /// Who reads one fact, changed to the whole team — the one-tap change
+    /// beside an owners-only fact.
+    func share(_ fact: MemoryFact) async {
+        guard busyId == nil else { return }
+        busyId = fact.id
+        errorMessage = nil
+        defer { busyId = nil }
+        do {
+            let r: APIClient.OKResponse = try await client.send("/mobile/api/account/memory/audience", method: .post,
+                                                                body: AudienceBody(id: fact.id, audience: "team"),
+                                                                retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t share that."; return }
+            Haptic.success()
+            posted = "Shared with the team"
+            await load()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn\u{2019}t share that."
         }
     }
 

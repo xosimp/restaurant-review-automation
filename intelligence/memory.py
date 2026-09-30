@@ -217,8 +217,13 @@ def restaurant_memory(restaurant_id, db_path=DB_PATH) -> dict:
     }
 
 
-def lines(mem: dict) -> list:
-    """Short, dated, own-data-only lines for a prompt."""
+def lines(mem: dict, record=True) -> list:
+    """Short, dated, own-data-only lines for a prompt. `record=False` leaves
+    out the advice record (what worked, what was declined): Ask reads that
+    from memory_context's "what_worked" section instead, gated by the
+    viewer's modules, loss view and owner-only rules — this copy named food
+    kinds and declined subjects to every login (memory re-audit PEOPLE-11 /
+    QUALITY-16). own_record stays the engine's."""
     out = []
     bd = mem.get("busiest_days") or {}
     if bd.get("available"):
@@ -228,7 +233,7 @@ def lines(mem: dict) -> list:
         src = f"; from {se['sources']}" if se.get("sources") else ""
         out.append(f"Seasonal peak months: {', '.join(se['peak'])}; trough: {', '.join(se['trough'])} "
                    f"(index vs own annual mean{src}).")
-    rec = mem.get("record") or {}
+    rec = (mem.get("record") or {}) if record else {}
     detail = rec.get("worked_detail")
     if detail:
         out.append("Recommendation kinds most often followed by a measured improvement here (before and after, "
