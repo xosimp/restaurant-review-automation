@@ -144,9 +144,26 @@ def facts_uncached(restaurant_id, db_path=DB_PATH, critical_low=None) -> dict:
 
 
 def _parts(sig):
-    """("labor", "day", "tuesday") from "labor:day:tuesday", else None."""
+    """("labor", "day", "tuesday") from "labor:day:tuesday", else None. A
+    directed staffing signature ("labor:day:tuesday:hold") is read without
+    its direction — _direction says it (CROSSMODULE-1)."""
+    try:
+        import insight_store
+        sig = insight_store.base_signature(sig)
+    except Exception:
+        pass
     bits = str(sig or "").split(":", 2)
     return tuple(bits) if len(bits) == 3 else None
+
+
+def _direction(sig):
+    """"hold" / "add" for staffing advice that keeps or adds people, else
+    None (a cut, or undirected)."""
+    try:
+        import insight_store
+        return insight_store.split_signature(sig)[1]
+    except Exception:
+        return None
 
 
 LIVE_DAYS = 7
@@ -173,7 +190,16 @@ def live_cards(restaurant_id, exclude=(), db_path=DB_PATH) -> list:
     finally:
         conn.close()
     skip = set(exclude or ())
-    return [{"key": r["key"], "title": r["title"], "advice_signature": r["signature"], "other": True}
+    try:
+        import insight_store
+        _now_sig = insight_store._row_signature
+    except Exception:
+        def _now_sig(_k, _t, stored):
+            return stored
+    # An episode stored before its signature carried a direction is read
+    # with the direction it has now: a hold link is no trim (CROSSMODULE-1).
+    return [{"key": r["key"], "title": r["title"], "advice_signature": _now_sig(r["key"], r["title"], r["signature"]),
+             "other": True}
             for r in rows if r["key"] not in skip]
 
 
@@ -191,9 +217,12 @@ def find(cards, fx=None, others=()) -> list:
     for c, s in sigs:
         p = _parts(s)
         if p and p[1] == "day":
-            by_day.setdefault(p[2], []).append((c, p[0]))
+            by_day.setdefault(p[2], []).append((c, p[0], _direction(s)))
     for day, group in by_day.items():
-        trims = [c for c, fam in group if fam == "labor"]
+        # Only a cut pulls against a fill: advice to hold or add people on
+        # the night a campaign fills AGREES with it (CROSSMODULE-1).
+        trims = [c for c, fam, d in group if fam == "labor" and d is None]
+        group = [(c, fam) for c, fam, _d in group]
         fills = [c for c, fam in group if fam in ("guest_outreach", "marketing")]
         for t in trims:
             for f in fills:

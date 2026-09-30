@@ -472,7 +472,7 @@ def answered_signatures(restaurant_id, db_path=DB_PATH) -> dict:
         return {}
     try:
         rows = conn.execute(
-            "SELECT signature, key, silenced_until FROM rec_instances WHERE restaurant_id=? "
+            "SELECT signature, key, title, silenced_until FROM rec_instances WHERE restaurant_id=? "
             "AND signature IS NOT NULL AND signature != '' "
             "AND status IN ('completed','dismissed','accepted','implemented') "
             "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
@@ -485,7 +485,10 @@ def answered_signatures(restaurant_id, db_path=DB_PATH) -> dict:
         conn.close()
     out = {}
     for r in rows:
-        o = out.setdefault(r["signature"], {"until": r["silenced_until"], "keys": set()})
+        # An answer stored before its signature carried a direction is read
+        # with the direction it has now (CROSSMODULE-1).
+        o = out.setdefault(_row_signature(r["key"], r["title"], r["signature"]),
+                           {"until": r["silenced_until"], "keys": set()})
         o["until"] = max(o["until"], r["silenced_until"])
         o["keys"].add(r["key"])
     return out
@@ -629,6 +632,105 @@ def _named_subject(text, subjects, family):
     return None
 
 
+# ── the direction of a staffing lever (re-audit 9/29/26, CROSSMODULE-1) ─────
+#
+# "Trim Tuesday" and "hold any cut to Tuesday while the campaign runs" were
+# one signature, labor:day:tuesday, so a "not for us" to the trim silenced the
+# one piece of advice that agreed with the owner, and a "not for us" to the
+# hold silenced Labor's trim for a year. A labor signature now carries its
+# direction when it is not a cut: "labor:day:tuesday:hold" (keep the crew — a
+# fill campaign is aimed at it) and "labor:day:friday:add" (one more person —
+# complaints or no-shows on it). A cut, and labor advice whose direction its
+# key and words do not name, keep the plain "labor:day:tuesday": every
+# stored cut signature and every surface that compares them reads as before.
+# A decline carries only to advice in the same direction; the owner's answer
+# to one side is evidence FOR the other side (decisions memory reads the two
+# as related — decisions.pick_relevant — and the one-thing hero says it
+# agrees: business_intelligence.pick_one_thing), never a silence of it.
+DIRECTIONS = ("hold", "add")
+_DIRECTED_FAMILIES = ("labor",)
+# Kinds (or "link:<kind>") whose advice is one direction by definition.
+_KIND_DIRECTION = {"link:marketing_x_labor": "hold", "link:reviews_x_labor": "add", "link:dsr_x_reviews": "add",
+                   "coverage": "add", "cover": "add", "standby": "add", "callout": "add", "staff_add": "add"}
+# Kinds that are cuts by definition: their words never turn them into a hold
+# ("Trim Tuesday — hold the Friday crew" is still Tuesday's trim).
+_CUT_KINDS = ("trim_day", "schedule_to_target", "optimizer", "labor_over", "labor", "pulse_cut", "intraday_pulse",
+              "overtime", "overtime_move")
+_HOLD_RE = re.compile(r"\b(?:hold(?:ing)? (?:off )?(?:on )?(?:any |the |a )?(?:cuts?|trims?|staffing cuts?)|"
+                      r"hold (?:the |your )?(?:crew|staff\w*|line|schedule)|don'?t (?:cut|trim)|do not (?:cut|trim)|"
+                      r"no (?:cuts?|trims?)|keep (?:the |your )?(?:crew|staff\w*|schedule|headcount|servers?|cooks?))\b")
+_ADD_RE = re.compile(r"\b(?:add(?:ing)? (?:a|an|one|two|another|\d+)|another (?:server|cook|bartender|host|busser|"
+                     r"runner|dishwasher|person|body|closer|opener)|one more|an extra|extra (?:server|cook|bartender|"
+                     r"host|busser|runner|dishwasher|person|hands?|coverage)|bring in|call in|staff up|on call|"
+                     r"more (?:staff|servers?|cooks?|hands|people|coverage)|increase (?:staff\w*|coverage|headcount)|"
+                     r"understaff\w*|short[- ]staff\w*|short[- ]handed)\b")
+_CUTWORD_RE = re.compile(r"\b(?:cut\w*|trim\w*|reduc\w*|drop\w*|fewer|one less|send \w+ home|overstaff\w*|"
+                         r"shorten\w*|tighten\w*)\b")
+
+
+def _kind_direction(key):
+    parts = str(key or "").split(":")
+    kind = parts[0]
+    if kind in ("link", "dsr_action") and len(parts) > 1:
+        d = _KIND_DIRECTION.get(f"{kind}:{parts[1]}")
+        if d:
+            return d
+        if kind == "dsr_action" and parts[1] == "control_hours":
+            return "cut"
+    if kind in _CUT_KINDS:
+        return "cut"
+    return _KIND_DIRECTION.get(kind)
+
+
+def _text_direction(text):
+    low = " ".join(str(text or "").lower().split())
+    if not low:
+        return None
+    if _HOLD_RE.search(low):
+        return "hold"
+    add, cut = _ADD_RE.search(low), _CUTWORD_RE.search(low)
+    if add and (not cut or add.start() < cut.start()):
+        return "add"
+    return None
+
+
+def advice_direction(key, text=None):
+    """"hold" / "add" for staffing advice that keeps or adds people, else
+    None (a cut, or no direction named): the key's kind first, then its
+    words (CROSSMODULE-1)."""
+    d = _kind_direction(key)
+    if d:
+        return None if d == "cut" else d
+    return _text_direction(text)
+
+
+def split_signature(sig):
+    """(base, direction) of an advice signature: ("labor:day:tuesday",
+    "hold") for "labor:day:tuesday:hold"; (sig, None) for an undirected
+    one."""
+    s = str(sig or "")
+    base, _, last = s.rpartition(":")
+    if base and last in DIRECTIONS and base.split(":", 1)[0] in _DIRECTED_FAMILIES:
+        return base, last
+    return s, None
+
+
+def base_signature(sig):
+    return split_signature(sig)[0]
+
+
+def _row_signature(key, title, stored):
+    """The signature a stored episode stands for today: its stored one,
+    unless that is an undirected staffing signature its key or words now
+    give a direction to (an answer stored before CROSSMODULE-1 — "not for
+    us" to a hold link was labor:day:tuesday, the trim's own signature)."""
+    if stored and split_signature(stored)[1] is None and str(stored).split(":", 1)[0] in _DIRECTED_FAMILIES:
+        now = advice_signature(key, title)
+        if now and split_signature(now)[1]:
+            return now
+    return stored or advice_signature(key, title)
+
+
 def advice_signature(key, text=None, subjects=None):
     """"<family>:<subject>" — what one recommendation is about, the same for
     the same advice on every surface (trim_day:Tuesday and a DSR action to
@@ -637,7 +739,11 @@ def advice_signature(key, text=None, subjects=None):
     bare lever ("labor"): declining one Tuesday cut is not declining all
     staffing advice. `subjects` (known_subjects) lets a line's words name an
     item or a dish of this restaurant's — "Cut the salmon order" is
-    cut_waste:Salmon's advice (memory audit 9/29/26, "signatures")."""
+    cut_waste:Salmon's advice (memory audit 9/29/26, "signatures").
+
+    Staffing advice that keeps or adds people carries its direction —
+    "labor:day:tuesday:hold", "labor:day:friday:add" — so a "not for us" to
+    a trim never silences the advice that agrees with it (CROSSMODULE-1)."""
     try:
         import rec_ledger
         tags = rec_ledger.tags_for(key)
@@ -654,6 +760,10 @@ def advice_signature(key, text=None, subjects=None):
         family = _text_topic(text) or family
     family = family or _text_topic(text)
     subject = next((t for t in tags if t.startswith(("day:", "item:", "dish:", "category:"))), None)
+    # A staffing link names a complaint theme AND a weekday: the weekday is
+    # what the staffing advice is about (a Friday add is not a Saturday add).
+    if family in _DIRECTED_FAMILIES:
+        subject = next((t for t in tags if t.startswith("day:")), subject)
     # A whole-schedule recommendation names a weekday only as where to
     # START ("…to your 30% target, starting with Tuesday"): it is not that
     # day's trim. Its subject is the whole schedule, so declining Tuesday's
@@ -665,6 +775,10 @@ def advice_signature(key, text=None, subjects=None):
         subject = _named_subject(text, subjects, family)
     if not family or not subject:
         return None
+    if family in _DIRECTED_FAMILIES and subject != "schedule:whole":
+        direction = advice_direction(key, text)
+        if direction:
+            return f"{family}:{subject}:{direction}"
     return f"{family}:{subject}"
 
 
@@ -710,7 +824,7 @@ def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
         conn.close()
     out = set()
     for r in rows:
-        sig = r["signature"] if r["signature"] else advice_signature(r["key"], r["title"])
+        sig = _row_signature(r["key"], r["title"], r["signature"])
         if sig:
             out.add(sig)
     return out
@@ -741,7 +855,7 @@ def declines_by_signature(restaurant_id, db_path=DB_PATH) -> dict:
         conn.close()
     out = {}
     for r in rows:
-        sig = r["signature"] if r["signature"] else advice_signature(r["key"], r["title"])
+        sig = _row_signature(r["key"], r["title"], r["signature"])
         if sig and (sig not in out or str(r["at"]) > str(out[sig]["on"])):
             out[sig] = {"on": r["at"], "title": r["title"]}
     return out
