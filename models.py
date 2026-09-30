@@ -1161,6 +1161,20 @@ def ensure_columns(db_path: str = DB_PATH):
         # Which archive layout stored the day (pos_archive.ARCHIVE_VERSION): a
         # day stored before a table joined the archive is stored again.
         ("pos_archive_days", "version", "INTEGER NOT NULL DEFAULT 1"),
+        # The raw fields every POS read derives from (archive layout 3,
+        # 9/29/26): with them a closed day is read from the archive by the
+        # very code that reads RPOWER, instead of being downloaded again by
+        # each nightly reader.
+        ("pos_ticket_lines", "sales_type_id", "TEXT"),
+        ("pos_ticket_lines", "voided", "REAL NOT NULL DEFAULT 0"),
+        ("pos_ticket_lines", "mgr_id", "TEXT"),
+        ("pos_ticket_lines", "void_mgr_id", "TEXT"),
+        ("pos_ticket_lines", "reason_id", "TEXT"),
+        ("pos_ticket_lines", "shift", "TEXT"),
+        ("pos_tickets", "type_sale", "REAL NOT NULL DEFAULT 0"),
+        ("pos_tickets", "type_discnt", "REAL NOT NULL DEFAULT 0"),
+        ("pos_tickets", "type_promo", "REAL NOT NULL DEFAULT 0"),
+        ("pos_tickets", "type_comp", "REAL NOT NULL DEFAULT 0"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.

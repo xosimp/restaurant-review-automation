@@ -428,9 +428,26 @@ def sales_types(restaurant_id: int) -> dict:
     every food cost percentage computed against it is wrong by whatever the
     restaurant comps in a week.
     """
+    hit = _sales_type_cache.get(restaurant_id)
+    if hit and time.monotonic() - hit[0] < SALES_TYPE_CACHE_SECONDS:
+        return hit[1]
     token, base = _ctx(restaurant_id)
     rows = _paged(token, "salestype/getbycg", {"cg": base["cg"]})
-    return {str(r.get("mid")): r for r in rows if r.get("mid")}
+    out = {str(r.get("mid")): r for r in rows if r.get("mid")}
+    _sales_type_cache[restaurant_id] = (time.monotonic(), out)
+    return out
+
+
+# Read once per this many seconds: every sales read consults the list, and
+# the nightly jobs read several days in a row (9/29/26).
+SALES_TYPE_CACHE_SECONDS = 600
+_sales_type_cache = {}
+
+
+def clear_caches():
+    """Every per-restaurant list this module caches (the test setup calls it)."""
+    for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache):
+        c.clear()
 
 
 def _counts_as_revenue(row: dict, types: dict) -> bool:
@@ -466,18 +483,23 @@ def fetch_business_days(restaurant_id: int, start_date, end_date) -> dict:
     Built from `ticketsales` rather than `closeday` because closeday records
     the close event (from/thru date and shift) and not the money.
     """
+    return _business_days(restaurant_id, start_date, end_date)
+
+
+def _business_days(restaurant_id: int, start_date, end_date, use_archive: bool = True) -> dict:
     token, base = _ctx(restaurant_id)
     types = sales_types(restaurant_id)
     out = {}
-    for chunk_start, chunk_end in _chunk_range(start_date, end_date):
-        rows = _paged(token, "ticketsales/getbybusinessdate", {
-            **base, "startdate": _d(chunk_start), "enddate": _d(chunk_end),
-            "sortorder": "date"})
-        for row in rows:
-            day = _biz_date(row.get("date"))
-            if not day or not _counts_as_revenue(row, types):
-                continue
-            out[day] = round(out.get(day, 0.0) + float(row.get("sales") or 0), 2)
+    rows = (_day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", start_date, end_date)
+            if use_archive else
+            [r for cs, ce in _chunk_range(start_date, end_date)
+             for r in _paged(token, "ticketsales/getbybusinessdate",
+                             {**base, "startdate": _d(cs), "enddate": _d(ce), "sortorder": "date"})])
+    for row in rows:
+        day = _biz_date(row.get("date"))
+        if not day or not _counts_as_revenue(row, types):
+            continue
+        out[day] = round(out.get(day, 0.0) + float(row.get("sales") or 0), 2)
     return out
 
 
@@ -570,22 +592,18 @@ def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
         log.warning("[rpower] manager names unavailable for %s: %s", restaurant_id, e)
         names = {}
     out = []
-    for chunk_start, chunk_end in _chunk_range(start_date, end_date):
-        rows = _paged(token, "ticketsales/getbybusinessdate", {
-            **base, "startdate": _d(chunk_start), "enddate": _d(chunk_end),
-            "sortorder": "date"})
-        for row in rows:
-            kind = _loss_kind(row, types)
-            if not kind:
-                continue
-            approver = row.get("voidmgr_mid") if kind == "void" else row.get("mgr_mid")
-            approver = str(approver).strip() if approver not in (None, "", 0, "0") else None
-            rmid = str(row.get("voidrsn_mid") or "").strip()
-            out.append({"business_date": _biz_date(row.get("date")), "kind": kind,
-                        "amount": _loss_amount(row), "approver": approver,
-                        "approver_name": names.get(approver) if approver else None,
-                        "reason": reasons.get(rmid) or None, "reason_id": rmid or None,
-                        "shift": row.get("shift")})
+    for row in _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", start_date, end_date):
+        kind = _loss_kind(row, types)
+        if not kind:
+            continue
+        approver = row.get("voidmgr_mid") if kind == "void" else row.get("mgr_mid")
+        approver = str(approver).strip() if approver not in (None, "", 0, "0") else None
+        rmid = str(row.get("voidrsn_mid") or "").strip()
+        out.append({"business_date": _biz_date(row.get("date")), "kind": kind,
+                    "amount": _loss_amount(row), "approver": approver,
+                    "approver_name": names.get(approver) if approver else None,
+                    "reason": reasons.get(rmid) or None, "reason_id": rmid or None,
+                    "shift": row.get("shift")})
     return out
 
 
@@ -606,8 +624,7 @@ def fetch_order_selections(restaurant_id: int, business_date) -> list:
     token, base = _ctx(restaurant_id)
     types = sales_types(restaurant_id)
     day = _d(business_date)
-    rows = _paged(token, "ticketsales/getbybusinessdate", {
-        **base, "startdate": day, "enddate": day, "sortorder": "date"})
+    rows = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", day, day)
 
     by_item = {}
     for row in rows:
@@ -810,16 +827,11 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
     token, base = _ctx(restaurant_id)
     day = _d(business_date)
     types = sales_types(restaurant_id)
-    lines = _paged(token, "ticketsales/getbybusinessdate", {
-        **base, "startdate": day, "enddate": day, "sortorder": "date"})
-    tickets = _paged(token, "ticket/getbybusinessdate", {
-        **base, "startdate": day, "enddate": day, "sortorder": "date"})
-    menu = {str(r.get("mid")): r for r in _paged(token, "menuitem/getbycg", {"cg": base["cg"], "sortorder": "name"})
-            if r.get("mid")}
-    cats = {str(r.get("mid")): r for r in _paged(token, "salescategory/getbycg", {"cg": base["cg"], "sortorder": "name"})
-            if r.get("mid")}
-    deps = {str(r.get("mid")): r for r in _paged(token, "salesdepartment/getbycg", {"cg": base["cg"], "sortorder": "name"})
-            if r.get("mid")}
+    lines = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", day, day)
+    tickets = _day_rows(restaurant_id, token, base, "ticket/getbybusinessdate", day, day)
+    menu = _catalog(restaurant_id, "menuitem/getbycg")
+    cats = _catalog(restaurant_id, "salescategory/getbycg")
+    deps = _catalog(restaurant_id, "salesdepartment/getbycg")
 
     def department(item):
         cat = cats.get(str((item or {}).get("slscat_mid"))) or {}
@@ -1153,7 +1165,8 @@ def fetch_sales_today(restaurant_id: int, business_date) -> float:
     agree. Raises when nothing has posted yet: "no sales yet" and "RPOWER
     has not answered" are not the same as $0 (pos.fetch_sales_today)."""
     day = _d(business_date)
-    value = (fetch_business_days(restaurant_id, business_date, business_date) or {}).get(day)
+    # An open day by definition: straight from RPOWER, no archive question.
+    value = (_business_days(restaurant_id, business_date, business_date, use_archive=False) or {}).get(day)
     if value is None:
         raise RPowerError(f"RPOWER has no sales posted for {day} yet")
     return float(value)
@@ -1530,6 +1543,11 @@ def _catalog(restaurant_id: int, path: str, by_store: bool = False) -> dict:
     return out
 
 
+def _raw(value):
+    """A reference kept exactly as RPOWER sent it (as text), None only when absent."""
+    return None if value is None else str(value)
+
+
 def _id(value):
     """An RPOWER reference, or None for its empty forms ("", 0, "0")."""
     v = str(value if value is not None else "").strip()
@@ -1614,7 +1632,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "line_id": str(r["rid"]), "ticket_id": tid, "business_date": iso,
             "item_id": item, "item_name": (menu.get(item) or {}).get("name") if item else None,
             "item_kind": (menu.get(item) or {}).get("kind") if item else None,
-            "kind": kind, "qty": _num(r.get("qty"), 1.0), "sales": sales,
+            "kind": kind, "qty": _num(r.get("qty"), 0.0), "sales": sales,
             "price": round(_num(r.get("price")), 2), "regular_price": round(_num(r.get("regular_price")), 2),
             "loss_amount": _loss_amount(r) if kind in ("comp", "void", "refund") else None,
             "reason": reasons.get(reason) if reason else None, "approver_id": approver,
@@ -1622,7 +1640,12 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "mealtime": _name(meals, _id(r.get("mealtime_mid"))),
             "profit_center": _name(centers, _id(r.get("pcenter_mid"))),
             "price_level_id": _id(r.get("prclvl_mid")),
-            "source_stamp": str(r.get("time_stamp") or "")[:19] or None})
+            "source_stamp": str(r.get("time_stamp") or "")[:19] or None,
+            # Raw, exactly as RPOWER sent them: _raw_from_archive rebuilds the
+            # line from these for the readers that derive from raw rows.
+            "sales_type_id": _raw(r.get("slstype_mid")), "voided": _num(r.get("voided")),
+            "mgr_id": _raw(r.get("mgr_mid")), "void_mgr_id": _raw(r.get("voidmgr_mid")),
+            "reason_id": _raw(r.get("voidrsn_mid")), "shift": _raw(r.get("shift"))})
     tickets = []
     for t in raw_tickets:
         if _biz_date(t.get("date")) != iso or not t.get("rid"):
@@ -1648,7 +1671,8 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "mealtime": _name(meals, _id(t.get("mealtime_mid"))),
             "profit_center": _name(centers, _id(t.get("pcenter_mid"))),
             "cancelled": 1 if t.get("is_cancelled") else 0,
-            "source_stamp": str(t.get("time_stamp") or "")[:19] or None})
+            "source_stamp": str(t.get("time_stamp") or "")[:19] or None,
+            **{k: round(_num(t.get(k)), 2) for k in ("type_sale", "type_discnt", "type_promo", "type_comp")}})
     start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
     end = start + timedelta(days=1)
     raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
@@ -1797,3 +1821,101 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
                     "guests": int(_num(t.get("guest_count"))), "ticket_no": _id(t.get("ticket")),
                     "net_sales": round(_num(t.get("items")), 2)})
     return out
+
+
+# ── reading a closed day from the archive (9/29/26) ─────────────────────────
+#
+# The same day's ticketsales were downloaded by four readers every night —
+# the nightly report (fetch_day_sales), stock depletion
+# (fetch_order_selections), comps and voids (fetch_loss_lines) and daily net
+# (fetch_business_days) — plus the catalogs each time. Now each asks
+# _day_rows: a closed day the archive holds (pos_archive.ready_dates — it
+# archives a closed day on first ask and re-stores a recent day RPOWER
+# re-posted) is rebuilt from the archive with RPOWER's own field names, and
+# the reader's own code runs on it unchanged; any other day is read from
+# RPOWER as before.
+
+CLOSED_CACHE_SECONDS = 600
+_closed_cache = {}
+
+
+def day_closed_cached(restaurant_id: int, business_date) -> bool:
+    """fetch_day_closed, remembered: a closed day forever (it stays closed),
+    an open one for CLOSED_CACHE_SECONDS."""
+    key = (restaurant_id, _d(business_date))
+    hit = _closed_cache.get(key)
+    if hit and (hit[1] or time.monotonic() - hit[0] < CLOSED_CACHE_SECONDS):
+        return hit[1]
+    closed = bool(fetch_day_closed(restaurant_id, business_date))
+    _closed_cache[key] = (time.monotonic(), closed)
+    return closed
+
+
+def _stamp_raw(value):
+    """An archived local time back in RPOWER's form, or None."""
+    return value if value else None
+
+
+def _raw_from_archive(restaurant_id: int, path: str, dates: list) -> list:
+    """Archived rows for `dates` in the shape `path` returns from RPOWER —
+    only the fields the readers use (see _day_rows)."""
+    from models import get_conn
+    if not dates:
+        return []
+    marks = ",".join("?" for _ in dates)
+    conn = get_conn()
+    try:
+        if path == "ticketsales/getbybusinessdate":
+            rows = conn.execute(
+                f"SELECT line_id, ticket_id, business_date, item_id, qty, sales, price, regular_price, item_at, "
+                f"sales_type_id, voided, mgr_id, void_mgr_id, reason_id, shift FROM pos_ticket_lines "
+                f"WHERE restaurant_id=? AND provider='rpower' AND business_date IN ({marks})",
+                (restaurant_id, *dates)).fetchall()
+            return [{"rid": r["line_id"], "ticket_rid": r["ticket_id"], "date": f"{r['business_date']}T00:00:00",
+                     "menuitem_mid": r["item_id"], "qty": r["qty"], "sales": r["sales"], "price": r["price"],
+                     "regular_price": r["regular_price"], "item_dttm": _stamp_raw(r["item_at"]),
+                     "slstype_mid": r["sales_type_id"], "voided": r["voided"], "mgr_mid": r["mgr_id"],
+                     "voidmgr_mid": r["void_mgr_id"], "voidrsn_mid": r["reason_id"], "shift": r["shift"]}
+                    for r in rows]
+        if path == "ticket/getbybusinessdate":
+            rows = conn.execute(
+                f"SELECT ticket_id, business_date, opened_at, cancelled, guest_count, tax, type_sale, type_discnt, "
+                f"type_promo, type_comp FROM pos_tickets WHERE restaurant_id=? AND provider='rpower' "
+                f"AND business_date IN ({marks})", (restaurant_id, *dates)).fetchall()
+            return [{"rid": r["ticket_id"], "date": f"{r['business_date']}T00:00:00",
+                     "open_dttm": _stamp_raw(r["opened_at"]), "is_cancelled": r["cancelled"],
+                     "guest_count": r["guest_count"], "tax": r["tax"], "type_sale": r["type_sale"],
+                     "type_discnt": r["type_discnt"], "type_promo": r["type_promo"], "type_comp": r["type_comp"]}
+                    for r in rows]
+    finally:
+        conn.close()
+    raise ValueError(f"no archived form for {path}")
+
+
+def _day_rows(restaurant_id: int, token: str, base: dict, path: str, start_date, end_date) -> list:
+    """`path`'s rows (ticketsales or ticket getbybusinessdate) over a
+    business-date range: every closed day the archive holds from the archive,
+    the rest from RPOWER in the usual week-sized requests."""
+    days = []
+    d = start_date if hasattr(start_date, "toordinal") else date.fromisoformat(_d(start_date))
+    end = end_date if hasattr(end_date, "toordinal") else date.fromisoformat(_d(end_date))
+    while d <= end:
+        days.append(d)
+        d += timedelta(days=1)
+    try:
+        import pos_archive
+        ready = pos_archive.ready_dates(restaurant_id, "rpower", days)
+    except Exception as e:                       # the archive is an optimisation, never a dependency
+        log.warning("[rpower] archive not consulted for %s: %s", restaurant_id, e)
+        ready = set()
+    rows = _raw_from_archive(restaurant_id, path, sorted(ready)) if ready else []
+    run = []
+    for d in days + [None]:
+        if d is not None and d.isoformat() not in ready:
+            run.append(d)
+            continue
+        if run:
+            for cs, ce in _chunk_range(run[0], run[-1]):
+                rows.extend(_paged(token, path, {**base, "startdate": _d(cs), "enddate": _d(ce), "sortorder": "date"}))
+            run = []
+    return rows

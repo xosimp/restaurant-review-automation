@@ -34,8 +34,9 @@ log = logging.getLogger("pos_archive")
 
 # The archive's layout. Raise it when a table joins the archive: every day
 # stored under an older layout counts as not archived and the backfill stores
-# it again (2: payments and payouts, 9/29/26).
-ARCHIVE_VERSION = 2
+# it again (2: payments and payouts; 3: the raw fields the POS reads derive
+# from, so they read a closed day from here — both 9/29/26).
+ARCHIVE_VERSION = 3
 
 BACKFILL_DAYS = 90
 BACKFILL_DAYS_PER_NIGHT = 7
@@ -45,10 +46,12 @@ FIRST_CHANGE_LOOKBACK_HOURS = 48
 _TICKET_COLS = ("ticket_id", "business_date", "ticket_no", "opened_at", "closed_at", "fired_at", "bumped_at",
                 "need_at", "server_id", "server_name", "table_id", "table_name", "room_name", "is_bar",
                 "guest_count", "entree_count", "bev_count", "net_sales", "discount", "tip", "grat", "tax",
-                "mealtime", "profit_center", "cancelled", "source_stamp")
+                "mealtime", "profit_center", "cancelled", "source_stamp", "type_sale", "type_discnt", "type_promo",
+                "type_comp")
 _LINE_COLS = ("line_id", "ticket_id", "business_date", "item_id", "item_name", "item_kind", "kind", "qty",
               "sales", "price", "regular_price", "loss_amount", "reason", "approver_id", "item_at", "mealtime",
-              "profit_center", "price_level_id", "source_stamp")
+              "profit_center", "price_level_id", "source_stamp", "sales_type_id", "voided", "mgr_id",
+              "void_mgr_id", "reason_id", "shift")
 _PUNCH_COLS = ("punch_id", "business_date", "employee_id", "employee_name", "job_id", "role", "clock_in",
                "clock_out", "reg_hours", "ot_hours", "dt_hours", "reg_rate", "ot_rate", "pay", "ot_pay", "tips",
                "tips_net", "grats", "break_minutes", "meal_minutes", "rest_minutes", "edited_by", "edited_at",
@@ -351,3 +354,111 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
         except Exception as e:
             log.warning("pos_archive: price change not logged rid=%s: %s", restaurant_id, e)
     return {"ok": True, "tracked": len(rows), "changes": len(changes), "logged": logged}
+
+
+# ── the archive as the readers' source (9/29/26) ────────────────────────────
+#
+# rpower._day_rows asks here which days it may read from the archive instead
+# of downloading them again. A day qualifies when the store's archive has
+# started, the day is closed, and it is stored under the current layout —
+# archived on the spot if not (ON_DEMAND_MAX a call). The last FRESH_DAYS are
+# re-checked against the POS's change feed once RECHECK_MINUTES after they
+# were stored, so a re-post after close (a tab closed at 2am) is picked up
+# before the next reader, not the next night.
+
+ON_DEMAND_MAX = 7
+FRESH_DAYS = 3
+RECHECK_MINUTES = 30
+CHANGE_MEMO_SECONDS = 300
+_change_memo = {}
+
+
+def archive_started(restaurant_id, provider, db_path=DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT 1 FROM pos_archive_days WHERE restaurant_id=? AND provider=? LIMIT 1",
+                            (restaurant_id, provider)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _business_today(restaurant_id):
+    from models import get_restaurant
+    from time_utils import restaurant_now, business_date
+    r = get_restaurant(restaurant_id)
+    return business_date(r, restaurant_now(r, naive=True))
+
+
+def _changed_since(restaurant_id, mod, since_utc, now_utc):
+    """The provider's changed business dates since `since_utc`, remembered
+    for CHANGE_MEMO_SECONDS so four readers in a row ask once."""
+    import time as _t
+    hit = _change_memo.get(restaurant_id)
+    if hit and _t.monotonic() - hit[0] < CHANGE_MEMO_SECONDS and hit[1] <= since_utc:
+        return hit[2]
+    out = set(mod.changed_business_dates(restaurant_id, since_utc, now_utc))
+    _change_memo[restaurant_id] = (_t.monotonic(), since_utc, out)
+    return out
+
+
+def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None) -> set:
+    """ISO dates among `dates` the archive can answer for, archiving closed
+    days it lacks (ON_DEMAND_MAX per call) and re-storing a recent day the POS
+    changed. An empty set means "read the POS", never an error."""
+    import os
+    if os.getenv("POS_ARCHIVE_READS", "1").strip() in ("0", "false", "off", "no"):
+        return set()                 # the switch: every reader goes to the POS, as before 9/29/26
+    name, mod = provider_for(restaurant_id)
+    if mod is None or name != provider or not archive_started(restaurant_id, provider, db_path):
+        return set()
+    now_utc = now_utc or datetime.now(timezone.utc)
+    today = _business_today(restaurant_id)
+    conn = get_conn(db_path)
+    try:
+        stored = {r[0]: r[1] for r in conn.execute(
+            "SELECT business_date, archived_at FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
+            "AND COALESCE(version, 1) >= ?", (restaurant_id, provider, ARCHIVE_VERSION)).fetchall()}
+    finally:
+        conn.close()
+    closed_fn = getattr(mod, "day_closed_cached", None)
+    ready, todo = set(), []
+    for d in dates:
+        iso = d.isoformat()
+        if d >= today:
+            try:
+                if not (callable(closed_fn) and closed_fn(restaurant_id, d)):
+                    continue
+            except Exception:
+                continue
+        if iso in stored:
+            ready.add(iso)
+        else:
+            todo.append(d)
+    recent_floor = (today - timedelta(days=FRESH_DAYS)).isoformat()
+    stale = {}
+    for iso in ready:
+        if iso < recent_floor:
+            continue
+        try:
+            at = datetime.fromisoformat(stored[iso]).replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        if now_utc - at > timedelta(minutes=RECHECK_MINUTES):
+            stale[iso] = at
+    if stale and callable(getattr(mod, "changed_business_dates", None)):
+        try:
+            changed = _changed_since(restaurant_id, mod, min(stale.values()), now_utc)
+        except Exception as e:
+            log.warning("pos_archive: change read failed for %s: %s", restaurant_id, e)
+            changed = set()
+        for iso, at in stale.items():
+            if iso in changed:
+                ready.discard(iso)
+                todo.append(date.fromisoformat(iso))
+    for d in sorted(todo, reverse=True)[:ON_DEMAND_MAX]:
+        try:
+            archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
+            ready.add(d.isoformat())
+        except Exception as e:
+            log.warning("pos_archive: on-demand archive of %s %s failed: %s", restaurant_id, d, e)
+    return ready

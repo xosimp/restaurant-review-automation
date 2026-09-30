@@ -107,6 +107,18 @@ def _reset_ai_rate_limiter():
 
 
 @pytest.fixture(autouse=True)
+def _reset_rpower_caches():
+    """rpower caches its lists (sales types, menu, void reasons, people,
+    tables and rooms, the closed-day answer) per restaurant id for minutes;
+    every test's fresh database reuses ids, so one test's stubbed list would
+    be another's answer."""
+    import rpower
+    rpower.clear_caches()
+    yield
+    rpower.clear_caches()
+
+
+@pytest.fixture(autouse=True)
 def _reset_labor_note_cache():
     """labor._NOTE_CACHE is keyed by restaurant id and data fingerprint; a
     fresh database per test reuses ids, so one test's stubbed note would be
