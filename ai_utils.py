@@ -2350,6 +2350,25 @@ _AI_OPS_DDL = (
         paged          INTEGER NOT NULL DEFAULT 0
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ai_health_created ON ai_health_events(created_at, vendor)",
+    # How much memory each prompt surface carries, per section and day, and
+    # what the budget cut or a provider lost (memory re-audit 9/29/26,
+    # PROMPTS-2/-10/-16): memory_context aggregates in-process and adds its
+    # counts here every few minutes, so every process and every deploy lands
+    # in one history the AI page reads. Pruned at AI_MEMORY_SIZES_RETAIN_DAYS
+    # by prune_ai_ops. `day` is the UTC day.
+    """CREATE TABLE IF NOT EXISTS ai_memory_sizes (
+        day            TEXT NOT NULL,
+        surface        TEXT NOT NULL,
+        section        TEXT NOT NULL,
+        calls          INTEGER NOT NULL DEFAULT 0,
+        chars          INTEGER NOT NULL DEFAULT 0,
+        max_chars      INTEGER NOT NULL DEFAULT 0,
+        dropped        INTEGER NOT NULL DEFAULT 0,
+        cut_calls      INTEGER NOT NULL DEFAULT 0,
+        errors         INTEGER NOT NULL DEFAULT 0,
+        updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (day, surface, section)
+    )""",
     # The history the 120-day prune used to delete (#70): one row per UTC
     # day, restaurant, vendor, action and model, rebuilt from the raw rows
     # while they exist and never pruned. rid_key is restaurant_id with 0 for
@@ -2827,6 +2846,9 @@ def quality_counts(days=1, surface=None, kind=None, db_path=None):
 # ── AI health: events, paging, the status the public page shows (#104) ───────
 AI_PAGE_COOLDOWN_MINUTES = int(os.getenv("AI_PAGE_COOLDOWN_MINUTES", "60"))
 AI_HEALTH_RETAIN_DAYS = int(os.getenv("AI_HEALTH_RETAIN_DAYS", "365"))
+# memory_context's per-surface section sizes (ai_memory_sizes): a year and a
+# month, so a surface's memory can be compared with the same month last year.
+AI_MEMORY_SIZES_RETAIN_DAYS = int(os.getenv("AI_MEMORY_SIZES_RETAIN_DAYS", "400"))
 
 
 def record_health_event(vendor, event, scope=None, restaurant_id=None, detail=None, paged=False, db_path=None):
@@ -3204,7 +3226,9 @@ def prune_ai_ops(db_path=None):
                 ("DELETE FROM ai_health_events WHERE created_at < datetime('now', ?)",
                  (f"-{AI_HEALTH_RETAIN_DAYS} days",), "ai_health_events"),
                 ("DELETE FROM ai_rate_events WHERE expires_at < ?", (time.time(),), "ai_rate_events"),
-                ("DELETE FROM ai_rate_hits WHERE day < date('now', '-180 days')", (), "ai_rate_hits")):
+                ("DELETE FROM ai_rate_hits WHERE day < date('now', '-180 days')", (), "ai_rate_hits"),
+                ("DELETE FROM ai_memory_sizes WHERE day < date('now', ?)",
+                 (f"-{max(35, AI_MEMORY_SIZES_RETAIN_DAYS)} days",), "ai_memory_sizes")):
             try:
                 cur = conn.execute(sql, args)
                 if cur.rowcount and cur.rowcount > 0:

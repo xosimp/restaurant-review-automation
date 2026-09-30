@@ -50,6 +50,7 @@ SURFACE_MODULES = {
     "reply_drafter": {"reviews"},
     "marketing": {"marketing", "guests"},
     "competitor_read": {"intel", "marketing"},
+    "marketing_read": {"marketing", "guests"},
     "dsr_narrative": None, "brief": None, "digest": None, "weekly_plan": None,
 }
 # Follow-ups are for the surfaces an owner reads a to-do on.
@@ -63,6 +64,7 @@ SURFACE_METRICS = {
     "schedule": ("labor_pct", "overtime_hours", "weekday_sales", "sales"),
     "food_read": ("food_cost_pct", "weekly_waste"),
     "marketing": ("sales", "weekday_sales", "avg_rating"),
+    "marketing_read": ("sales", "weekday_sales", "avg_rating"),
     # The Reviews read lists goals (memory_context.SURFACE_SECTIONS) and the
     # owner's rating or response-time goal is what it judges against; it
     # read none (INT wiring audit, 9/29/26).
@@ -936,7 +938,9 @@ def _line(row, weight_bonus=0.0):
     who = _who(row)
     if row.get("from_location") is not None:
         who = f"{who or 'the owner'}, for every location"
-    return {"text": text, "date": str(row.get("created_at") or "")[:10] or None, "source": "owner",
+    # The whole stamp, not its first ten characters: created_at is UTC, and
+    # memory_context dates it by the restaurant's day (PROMPTS-15).
+    return {"text": text, "date": str(row.get("created_at") or "") or None, "source": "owner",
             "subject": row.get("subject") or (mods[0] if len(mods) == 1 else None),
             "weight": _KIND_WEIGHT.get(kind, 1.0) + weight_bonus, "trusted": False,
             "who": who, "until": row.get("valid_until"), "audience": row.get("audience") or "team",
@@ -944,12 +948,51 @@ def _line(row, weight_bonus=0.0):
             "kind": kind, "fact_id": row.get("id")}
 
 
+# The kinds an account holder states as a rule the model must follow
+# (memory re-audit 9/29/26, PROMPTS-1). Context and follow-ups are
+# information; goals are measured (goal_lines).
+RULE_KINDS = ("constraint", "preference")
+
+
+def is_owner_rule(row) -> bool:
+    """A fact the model obeys: a constraint or preference stated by an
+    account holder (authority 'principal' at write time). A manager's, a
+    support login's (view-as: 'admin'), a seeded or an audit fact is
+    information, however it is worded."""
+    return (row.get("kind") in RULE_KINDS
+            and str(row.get("authority") or "").strip().lower() == "principal")
+
+
+def rule_lines(req):
+    """memory_context provider ("owner_rules"): the account holders' own
+    constraints and preferences for req.surface, as rules — rendered in
+    OWNER_RULE markers the prompt obeys, not the guest fence it discounts
+    (PROMPTS-1), dated and with who set each. Every one of them for the
+    surface's modules is a candidate for the assembler's count floor
+    (PROMPTS-2). A rule about this surface's modules outranks a general
+    one; a constraint outranks a preference."""
+    surface = getattr(req, "surface", None)
+    rows = facts_for(req.restaurant_id, viewer=None, surface=surface, kinds=list(RULE_KINDS), db_path=req.db_path)
+    want = SURFACE_MODULES.get(surface) if surface else None
+    out = []
+    for r in rows:
+        if not is_owner_rule(r):
+            continue
+        bonus = 0.5 if (want and (_modules_of(r) & want)) else 0.0
+        line = _line(r, bonus)
+        line["rule"] = True
+        out.append(line)
+    return out
+
+
 def constraint_lines(req):
-    """memory_context provider: the owner's and the team's facts for
-    req.surface — constraints, context, preferences, and on the owner's
-    own reading surfaces the follow-ups coming due — fenced, dated, with
-    who said each. A fact about this surface's modules outranks a general
-    one. Goal-kind facts (aims no metric reads) go with the goals."""
+    """memory_context provider: the team's facts for req.surface —
+    constraints, context, preferences, and on the owner's own reading
+    surfaces the follow-ups coming due — fenced, dated, with who said each;
+    and the account holders' context facts (information, not rules). An
+    account holder's constraints and preferences are rule_lines', not
+    here. A fact about this surface's modules outranks a general one.
+    Goal-kind facts (aims no metric reads) go with the goals."""
     surface = getattr(req, "surface", None)
     kinds = ["constraint", "context", "preference"]
     if surface in FOLLOWUP_SURFACES or surface is None:
@@ -959,6 +1002,8 @@ def constraint_lines(req):
     today = _local_today(req.restaurant_id)
     out = []
     for r in rows:
+        if is_owner_rule(r):
+            continue                     # the owner's own rule: rule_lines
         if r.get("kind") == "followup":
             due = _parse_day(r.get("due_on"))
             # A follow-up is said from a week before it is due.
@@ -999,7 +1044,7 @@ def goal_lines(req):
         base = str(g.get("metric") or "").split(":", 1)[0]
         state = g.get("state")
         who = labels.get(g.get("created_by"))
-        out.append({"text": "Goal — " + goals.summarise(g), "date": str(g.get("created_at") or "")[:10] or None,
+        out.append({"text": "Goal — " + goals.summarise(g), "date": str(g.get("created_at") or "") or None,
                     "source": "system", "trusted": True, "subject": base,
                     "weight": 3.0 if state in ("moving_wrong_way", "missed", "flat") else 2.0,
                     "who": f"set by {who}" if who else None, "module": _METRIC_MODULE.get(base)})
@@ -1010,7 +1055,7 @@ def goal_lines(req):
         who = ("the sales audit" if g.get("source") == "audit"
                else labels.get(g.get("created_by")) or "a teammate")
         out.append({"text": f"Proposed goal, waiting for the owner to confirm — {goals.describe_target(g)}",
-                    "date": str(g.get("created_at") or "")[:10] or None, "source": "system", "trusted": True,
+                    "date": str(g.get("created_at") or "") or None, "source": "system", "trusted": True,
                     "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _METRIC_MODULE.get(base),
                     "audience": "principals", "author_id": g.get("created_by")})
     if surface in (None, "ask", "brief", "weekly_plan", "dsr_narrative", "digest"):

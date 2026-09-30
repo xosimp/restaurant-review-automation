@@ -953,9 +953,10 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
                 import memory_context as _mc
                 _mt = _mc.memory_context(restaurant_id, "competitor_read", subjects=("intel",)).text
                 if _mt:
+                    from ai_guard import MEMORY_FENCE_NOTE as _MFN
                     memory_ctx = ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context, not evidence: a "
                                   "recommendation the owner already answered is not made again, and nothing here "
-                                  "is a competitor fact:\n" + _mt)
+                                  "is a competitor fact. " + _MFN + "\n" + _mt)
             except Exception as _me:
                 print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
 

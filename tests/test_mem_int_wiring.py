@@ -96,6 +96,10 @@ def _seed(monkeypatch):
                                        module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1))
     # constraints: the owner's standing note, about the whole business.
     owner_memory.remember(rid, "The patio stays closed on weekdays", kind="constraint", user=OWNER)
+    # The owner's constraint is an owner rule (memory re-audit 9/29/26,
+    # PROMPTS-1: section "owner_rules"); the team's note is the
+    # "constraints" section's.
+    owner_memory.remember(rid, "The walk-in door sticks on humid days", kind="context", user=MANAGER)
     # goals: the owner's labor goal.
     goals.set_goal(rid, "labor_pct", 27, user_id=11, authority="principal")
     goals.set_goal(rid, "food_cost_pct", 29, user_id=11, authority="principal")
@@ -181,12 +185,10 @@ SUBJECTS = {"schedule": ["labor", "schedule", "labor:day:friday"],
             "ask_conversation": ["conversation:0"]}
 
 # A section a surface lists whose provider says nothing there, on purpose.
-SILENT = {
-    # The nightly report's own last actions and how they held are its
-    # YESTERDAY'S PRIORITIES block (dsr.narrative.own_record); other
-    # surfaces' claims reach it only by subject, and it asks by date.
-    ("dsr_narrative", "last_claim"),
-}
+# ("dsr_narrative", "last_claim") was here: the report asked by date and no
+# claim is filed by date, so the section could never fill. It now reads the
+# latest claims of every other surface (memory re-audit 9/29/26, QUALITY-13).
+SILENT = set()
 
 
 def _sections(rid, viewer):
@@ -226,7 +228,10 @@ def test_the_silent_pairs_are_silent_by_the_providers_own_rule(monkeypatch):
         assert "marketing" not in memory_context.SURFACE_SECTIONS[surface]
         assert marketing.memory_lines(memory_context.MemoryRequest(rid, surface)) == []
     assert marketing.memory_lines(memory_context.MemoryRequest(rid, "ask")), "Ask still hears marketing"
-    assert "surface != 'dsr_narrative'" in inspect.getsource(ai_reads.claim_lines)
+    # The report never reads its own claims back (its YESTERDAY'S PRIORITIES
+    # block does); it reads every other surface's (QUALITY-13).
+    assert "dsr_narrative" in ai_reads.CLAIM_CROSS_READERS
+    assert "surface != ?" in inspect.getsource(ai_reads.claim_lines)
 
 
 def test_a_manager_is_not_left_without_claims_by_the_owners_newest():

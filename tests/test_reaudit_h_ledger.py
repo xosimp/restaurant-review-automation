@@ -573,9 +573,12 @@ def test_h18_decisions_read_the_ledger_snoozes_and_dates(db_path):
     assert rows["reprice:Carbonara"]["answer"] == "not for us"
     assert rows["rating_drop"]["answer"] == "snoozed"
     text = decisions.context(rid, db_path=db_path)
-    from time_utils import mdy
-    assert f"({mdy(datetime.utcnow().date())})" in text
-    assert datetime.utcnow().date().isoformat() not in text
+    # The restaurant's own day, not UTC's (memory re-audit 9/29/26,
+    # PROMPTS-15): this asserted the UTC day, which is the bug after 7pm.
+    from time_utils import mdy, restaurant_now_by_id
+    local = restaurant_now_by_id(rid).date()
+    assert f"({mdy(local)})" in text
+    assert local.isoformat() not in text
 
 
 # ── H-19 the monthly review follows the viewer's permissions ────────────────
