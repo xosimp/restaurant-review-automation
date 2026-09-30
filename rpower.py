@@ -1703,3 +1703,22 @@ def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: d
         if day and stamp and stamp > lo:
             out.add(day)
     return out
+
+
+def fetch_employee_jobs(restaurant_id: int) -> list:
+    """Every active job each employee holds at this store:
+    [{"external_id", "role", "rate", "primary", "salaried"}] —
+    employeejob/getbystore (RPower endpoint audit, 9/29/26, High ROI #5).
+    Who can work which job: 83 of Simple EJ's current staff hold two or
+    more. RPOWER keeps job rows active for people long gone (429 employees
+    held jobs, 105 were current), so the caller keeps only people it knows."""
+    token, base = _ctx(restaurant_id)
+    jobs = (_people_cached(restaurant_id).get("jobs") or {})
+    out = []
+    for r in _paged(token, "employeejob/getbystore", {**base, "isinactive": 0, "sortorder": "mid"}):
+        emp, job = _id(r.get("emp_mid")), _id(r.get("job_mid"))
+        if not emp or not job or r.get("is_inactive") or not jobs.get(job):
+            continue
+        out.append({"external_id": emp, "role": jobs[job], "rate": round(_num(r.get("reg_rate")), 2),
+                    "primary": bool(r.get("is_primary")), "salaried": bool(r.get("is_salary"))})
+    return out

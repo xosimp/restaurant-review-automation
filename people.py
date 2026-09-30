@@ -2353,11 +2353,14 @@ def _person_for(conn, restaurant_id, name):
 
 
 def add_role(restaurant_id, name, role, since=None, primary=False, created_by=None, source="owner",
-             db_path=None, user=None) -> dict:
+             db_path=None, user=None, record=True) -> dict:
     """A role this person holds — "trained on bar from 9/1" — that every
     reader of who-can-work-what sees (staff_settings.roles_for, the
     replacement picker, the roster's role when `primary`: a promotion). A
-    second primary role replaces the first as primary."""
+    second primary role replaces the first as primary. `record=False` for a
+    POS's own job list mirrored in (pos_archive.sync_roles): not a roster
+    change anyone made, so no change_log row — outcomes read roster changes
+    as concurrent changes to labor."""
     role = " ".join(str(role or "").split())[:60]
     if not role:
         raise PeopleError("Name the role.")
@@ -2388,6 +2391,8 @@ def add_role(restaurant_id, name, role, since=None, primary=False, created_by=No
         raise
     finally:
         conn.close()
+    if not record:
+        return {"name": display, "role": role, "since": since_iso, "primary": bool(primary)}
     try:
         import change_log
         after = {"role": role, "since": since_iso, "primary": bool(primary)}
@@ -2401,7 +2406,7 @@ def add_role(restaurant_id, name, role, since=None, primary=False, created_by=No
     return {"name": display, "role": role, "since": since_iso, "primary": bool(primary)}
 
 
-def remove_role(restaurant_id, name, role, db_path=None, user=None) -> bool:
+def remove_role(restaurant_id, name, role, db_path=None, user=None, record=True) -> bool:
     role = " ".join(str(role or "").split())
     conn = _conn(db_path)
     try:
@@ -2412,7 +2417,7 @@ def remove_role(restaurant_id, name, role, db_path=None, user=None) -> bool:
         done = (cur.rowcount or 0) > 0
     finally:
         conn.close()
-    if done:
+    if done and record:
         try:
             import change_log
             change_log.record(restaurant_id, "roster", "role", {"role": role}, None, subject=_clean(name),

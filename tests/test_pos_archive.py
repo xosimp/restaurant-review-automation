@@ -149,3 +149,42 @@ def test_rpower_archive_rows_names_everything_and_drops_the_null_date(db_path, m
     (p,) = out["punches"]
     assert (p["employee_name"], p["role"], p["pay"], p["tips"], p["edited_by"]) == ("Dana Reyes", "Server PM", 14.91, 88.0, None)
     assert out["max_stamp"] == "2026-09-29T04:00:00"
+
+
+# ── who can work which job (High ROI #5) ─────────────────────────────────────
+
+def _person(db_path, rid, name, ext):
+    import people
+    conn = models.get_conn(db_path)
+    pid = conn.execute("INSERT INTO people (restaurant_id, display_name, name_key) VALUES (?,?,?)",
+                       (rid, name, people._nk(name))).lastrowid
+    conn.execute("INSERT INTO person_aliases (person_id, restaurant_id, source, external_id, name_key, display_name) "
+                 "VALUES (?,?,?,?,?,?)", (pid, rid, "rpower", ext, people._nk(name), name))
+    conn.commit()
+    conn.close()
+
+
+def test_pos_jobs_become_roles_for_known_people_only_and_never_override_the_owner(db_path, monkeypatch):
+    import people
+    rid = _rid(db_path)
+    _person(db_path, rid, "Dana Reyes", "E1")
+    _person(db_path, rid, "Bo Park", "E2")
+    people.add_role(rid, "Bo Park", "Server PM", primary=True, db_path=db_path)        # the owner's own
+    jobs = [{"external_id": "E1", "role": "Server PM", "primary": True},
+            {"external_id": "E1", "role": "Bartender PM", "primary": False},
+            {"external_id": "E2", "role": "Host PM", "primary": True},                  # POS says primary
+            {"external_id": "GONE", "role": "Server AM", "primary": True}]            # a former employee
+    fake = type("P", (), {"fetch_employee_jobs": staticmethod(lambda r: list(jobs)),
+                          "archive_rows": staticmethod(lambda r, d: None)})
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    before = _count(db_path, "change_log")
+    out = pos_archive.sync_roles(rid, db_path=db_path)
+    assert (out["people"], out["added"], out["removed"]) == (2, 3, 0)
+    held = {(h["name"], h["role"], h["primary"], h["source"]) for h in people.held_roles(rid, db_path=db_path)}
+    assert held == {("Dana Reyes", "Server PM", True, "sync"), ("Dana Reyes", "Bartender PM", False, "sync"),
+                    ("Bo Park", "Server PM", True, "owner"), ("Bo Park", "Host PM", False, "sync")}
+    assert _count(db_path, "change_log") == before                 # a POS mirror is not a roster change
+    jobs[:] = [j for j in jobs if j["role"] != "Bartender PM"]    # the POS drops a job
+    out = pos_archive.sync_roles(rid, db_path=db_path)
+    assert out["removed"] == 1 and ("Dana Reyes", "Bartender PM") not in {
+        (h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)}

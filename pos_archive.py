@@ -181,5 +181,62 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
             failed.append(d.isoformat())
     if callable(changed) and not failed:
         _set_changes_checked_to(restaurant_id, name, now_utc, db_path)
+    roles = None
+    try:
+        roles = sync_roles(restaurant_id, db_path=db_path)
+    except Exception as e:                           # the archive stands; roles try again tomorrow
+        log.warning("pos_archive: role sync failed for %s: %s", restaurant_id, e)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
-            "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name}
+            "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles}
+
+
+# ── who can work which job (RPower endpoint audit, High ROI #5) ─────────────
+
+ROLE_SOURCE = "sync"
+
+
+def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
+    """Mirror the POS's job list into people.person_roles, the table every
+    who-can-work-what reader uses (the replacement picker, the roster, the
+    schedule engine). Only for people Cavnar AI already knows by their POS id
+    (person_aliases); roles an owner added are never touched; a POS role
+    never overrides a primary role the owner set. A job the POS no longer
+    lists is removed only if the POS put it there. No change_log rows."""
+    import people
+    name, mod = provider_for(restaurant_id)
+    fn = getattr(mod, "fetch_employee_jobs", None) if mod else None
+    if not callable(fn):
+        return {"ok": False, "reason": "the POS does not share job assignments"}
+    rows = fn(restaurant_id)
+    conn = get_conn(db_path)
+    try:
+        known = {str(r[0]): r[1] for r in conn.execute(
+            "SELECT a.external_id, p.display_name FROM person_aliases a JOIN people p ON p.id = a.person_id "
+            "WHERE a.restaurant_id=? AND a.source=? AND a.external_id IS NOT NULL AND p.merged_into IS NULL",
+            (restaurant_id, name)).fetchall()}
+    finally:
+        conn.close()
+    want = {}
+    for r in rows:
+        person = known.get(str(r["external_id"]))
+        if person:
+            want.setdefault(person, {})[r["role"]] = bool(r.get("primary"))
+    held = people.held_roles(restaurant_id, db_path=db_path)
+    has_primary = {h["key"] for h in held if h["primary"]}
+    mine = {(h["name"], h["role"]) for h in held if h["source"] == ROLE_SOURCE}
+    everyone = {(h["key"], h["role"].lower()) for h in held}
+    added = removed = 0
+    for person, roles in want.items():
+        key = people._nk(person)
+        for role, primary in roles.items():
+            if (key, role.lower()) in everyone:
+                continue
+            people.add_role(restaurant_id, person, role, primary=primary and key not in has_primary,
+                            source=ROLE_SOURCE, db_path=db_path, record=False)
+            if primary and key not in has_primary:
+                has_primary.add(key)
+            added += 1
+    for person, role in mine:
+        if role not in (want.get(person) or {}):
+            removed += 1 if people.remove_role(restaurant_id, person, role, db_path=db_path, record=False) else 0
+    return {"ok": True, "people": len(want), "added": added, "removed": removed}
