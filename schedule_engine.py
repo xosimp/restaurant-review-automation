@@ -3293,6 +3293,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"] = _rules.summarize(_viols)
             result["review"]["fixes"] = _fixes
             result["review"]["unfixed"] = _unfixed
+            # A staffing rule the owner set that the code could not read is
+            # named, so the owner checks the draft against it — the model was
+            # asked to follow it, and nothing else checked (memory re-audit
+            # 9/29/26, PROMPTS-1).
+            _unchecked = list(getattr(_constraints, "owner_rules_unchecked", None) or [])
+            result["review"]["owner_rules_unchecked"] = _unchecked
+            for _txt in _unchecked[:3]:
+                result["review"]["lines"].append(
+                    f"Your rule \u201c{_txt[:120]}\u201d isn't one Cavnar AI can check automatically — check this "
+                    f"draft against it")
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
