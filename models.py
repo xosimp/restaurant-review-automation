@@ -1273,6 +1273,15 @@ def ensure_columns(db_path: str = DB_PATH):
         # SAME card (re-audit F1-7, F1-8).
         ("ask_cavnar_actions", "surface", "TEXT"),
         ("ask_cavnar_actions", "target", "TEXT"),
+        # Whose answer an Ask confirm/dismiss is (permissions.answer_authority
+        # — memory re-audit 9/29/26, PLATFORM-3): an admin's (view-as) never
+        # reaches pooled learning; `acting_admin_id` names the admin behind it.
+        ("ask_cavnar_actions", "authority", "TEXT"),
+        ("ask_cavnar_actions", "acting_admin_id", "INTEGER"),
+        # A chat an admin held through view-as is support's own thread, filed
+        # under the admin's id and marked 'view_as' (PEOPLE-7): never the
+        # owner's history, notes or "often asks".
+        ("ask_cavnar_conversations", "via", "TEXT"),
         # Weekly competitor-movement alert, on by default (#48).
         ("restaurants", "alert_competitor_move", "INTEGER DEFAULT 1"),
         # The nightly DSR: fiscal calendar and switches (dsr/).
@@ -2686,6 +2695,12 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE intel_rec_events ADD COLUMN review_derived INTEGER",
         "ALTER TABLE intel_rec_events ADD COLUMN google_data INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE intel_rec_events ADD COLUMN trust_version INTEGER",
+        # Whose answer a row carries (memory re-audit 9/29/26, PLATFORM-4):
+        # feedback.sync files only the restaurant's own answers
+        # (rec_ledger.counts_for_restaurant) — 'principal', a delegate's
+        # accept or Done ('delegate'), NULL for a system answer. Never an
+        # admin's, never a delegate's decline.
+        "ALTER TABLE intel_rec_events ADD COLUMN authority TEXT",
         # The bounded confidence fill reads only recently derived rows.
         "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_created ON intel_rec_events(created_at)",
         # The confidence log per trust version (only support-score
@@ -6653,6 +6668,15 @@ def init_staff_capabilities(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_cap_rest "
                  "ON staff_capabilities(restaurant_id, attribute)")
+    # Whose judgement a rating is (memory re-audit 9/29/26, PEOPLE-15): the
+    # login (the admin behind a view-as, never the owner it views as), its
+    # permissions.answer_authority and 'view_as' when it came through one.
+    # An admin's rating is kept and shown, and never counted in the
+    # Operational Score (get_operational_scores).
+    have = {r[1] for r in conn.execute("PRAGMA table_info(staff_capabilities)").fetchall()}
+    for col, decl in (("updated_by_user_id", "INTEGER"), ("authority", "TEXT"), ("via", "TEXT")):
+        if col not in have:
+            conn.execute(f"ALTER TABLE staff_capabilities ADD COLUMN {col} {decl}")
     conn.commit()
     conn.close()
 
@@ -6661,14 +6685,37 @@ class CapabilityError(ValueError):
     """A capability write that would store something meaningless."""
 
 
+def _write_attribution(user=None) -> dict:
+    """{"user_id", "authority", "via"} for a write made now: `user` (a login
+    dict) when given, else the request's signed-in login
+    (change_log.actor_context), else nobody (a script, a seed). The admin
+    behind a view-as is the one named, never the owner it views as
+    (PEOPLE-15). Never raises."""
+    try:
+        from permissions import acting_login_id, acting_via, answer_authority
+        if isinstance(user, dict):
+            via = "view_as" if (user.get("acting_admin_id") or user.get("acting_admin_role")) else None
+            return {"user_id": acting_login_id(user), "authority": answer_authority(user), "via": via}
+        import change_log
+        ctx = change_log.actor_context()
+        return {"user_id": ctx.get("actor_user_id"), "authority": ctx.get("authority"),
+                "via": "view_as" if acting_via() else None}
+    except Exception:
+        return {"user_id": None, "authority": None, "via": None}
+
+
 def set_capability(restaurant_id: int, employee_name: str, attribute: str = "overall",
                    score=None, flag=None, notes: str = None, updated_by: str = None,
-                   db_path: str = DB_PATH) -> dict:
+                   db_path: str = DB_PATH, user=None) -> dict:
     """Set one attribute for one employee. Raises CapabilityError on junk.
 
     Passing score=None for a score attribute CLEARS the rating rather than
     storing a zero — "not rated yet" and "rated 1" are different facts and
     the scheduler treats them differently.
+
+    Whose judgement it is (`user`, else the request's login —
+    _write_attribution) is stored with it: updated_by_user_id, authority
+    and via (PEOPLE-15).
     """
     spec = CAPABILITY_ATTRIBUTES.get(attribute)
     if not spec:
@@ -6702,18 +6749,23 @@ def set_capability(restaurant_id: int, employee_name: str, attribute: str = "ove
     # empty string is how you clear one deliberately.
     notes_given = notes is not None
     clean_notes = (notes or "").strip()[:500] or None
+    who = _write_attribution(user)
     conn = get_conn(db_path)
     try:
         conn.execute("""
             INSERT INTO staff_capabilities
-                (restaurant_id, employee_name, attribute, score, flag, notes, updated_by, updated_at)
-            VALUES (?,?,?,?,?,?,?,datetime('now'))
+                (restaurant_id, employee_name, attribute, score, flag, notes, updated_by, updated_at,
+                 updated_by_user_id, authority, via)
+            VALUES (?,?,?,?,?,?,?,datetime('now'),?,?,?)
             ON CONFLICT(restaurant_id, employee_name, attribute) DO UPDATE SET
                 score=excluded.score, flag=excluded.flag,
                 notes=CASE WHEN ? THEN excluded.notes ELSE staff_capabilities.notes END,
-                updated_by=excluded.updated_by, updated_at=datetime('now')
+                updated_by=excluded.updated_by, updated_at=datetime('now'),
+                updated_by_user_id=excluded.updated_by_user_id, authority=excluded.authority,
+                via=excluded.via
         """, (restaurant_id, name, attribute, score, flag,
               clean_notes, (updated_by or "").strip()[:120] or None,
+              who["user_id"], who["authority"], who["via"],
               1 if notes_given else 0))
         conn.commit()
     finally:
@@ -6748,7 +6800,7 @@ def get_capabilities(restaurant_id: int, attribute: str = None,
                      db_path: str = DB_PATH) -> dict:
     """{employee_name: {attribute: {...}}} for one restaurant."""
     conn = get_conn(db_path)
-    sql = ("SELECT employee_name, attribute, score, flag, notes, updated_by, updated_at "
+    sql = ("SELECT employee_name, attribute, score, flag, notes, updated_by, updated_at, authority, via "
            "FROM staff_capabilities WHERE restaurant_id=?")
     args = [restaurant_id]
     if attribute:
@@ -6764,6 +6816,10 @@ def get_capabilities(restaurant_id: int, attribute: str = None,
             "notes": r["notes"],
             "updated_by": r["updated_by"],
             "updated_at": r["updated_at"],
+            # Whose judgement it is (PEOPLE-15): an admin's (support, view-as)
+            # is shown, and not counted in the Operational Score.
+            "authority": r["authority"],
+            "via": r["via"],
         }
     return out
 
@@ -6827,10 +6883,14 @@ def rename_capability_holder(restaurant_id: int, old_name: str, new_name: str, d
 
 def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{employee_name: 1-5} for everyone who has been rated. Absent means
-    NOT RATED, which is deliberately different from a low rating."""
+    NOT RATED, which is deliberately different from a low rating. A rating
+    an admin set (support, or anyone through view-as) is not the owner's
+    judgement and does not count until someone at the restaurant rates them
+    (memory re-audit 9/29/26, PEOPLE-15)."""
     caps = get_capabilities(restaurant_id, attribute="overall", db_path=db_path)
     return {n: c["overall"]["score"] for n, c in caps.items()
-            if c.get("overall", {}).get("score") is not None}
+            if c.get("overall", {}).get("score") is not None
+            and c.get("overall", {}).get("authority") != "admin"}
 
 
 def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH) -> dict:
@@ -7501,6 +7561,12 @@ def init_capability_changes(db_path: str = DB_PATH):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_capability_changes_rest "
                  "ON capability_changes(restaurant_id, changed_at)")
+    # Who made the change, as data (PEOPLE-15): the login id (the admin
+    # behind a view-as), its authority and 'view_as' when through one.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(capability_changes)").fetchall()}
+    for col, decl in (("changed_by_user_id", "INTEGER"), ("authority", "TEXT"), ("via", "TEXT")):
+        if col not in have:
+            conn.execute(f"ALTER TABLE capability_changes ADD COLUMN {col} {decl}")
     conn.commit()
     conn.close()
 
@@ -7520,16 +7586,18 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
         _via = None
     if _via:
         changed_by = f"support:{_via.get('admin') or _via.get('admin_id')} (as {changed_by or 'the owner'})"
+    # ...and as data: the login id, its authority and 'view_as' (PEOPLE-15).
+    who = _write_attribution()
     try:
         conn = get_conn(db_path)
         conn.execute(
             "INSERT INTO capability_changes "
-            "(restaurant_id, kind, subject, before_json, after_json, changed_by) "
-            "VALUES (?,?,?,?,?,?)",
+            "(restaurant_id, kind, subject, before_json, after_json, changed_by, changed_by_user_id, "
+            "authority, via) VALUES (?,?,?,?,?,?,?,?,?)",
             (restaurant_id, str(kind)[:40], (str(subject)[:160] if subject else None),
              _j.dumps(before) if before is not None else None,
              _j.dumps(after) if after is not None else None,
-             (changed_by or "").strip()[:120] or None))
+             (changed_by or "").strip()[:120] or None, who["user_id"], who["authority"], who["via"]))
         conn.commit()
         conn.close()
     except Exception as exc:
@@ -13698,12 +13766,26 @@ def _evict_ask_conversations(conn, ids):
         conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (cid,))
 
 
-def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH) -> int:
+def _request_view_as() -> str:
+    """'view_as' when this request is an admin acting through view-as, else
+    None (permissions.acting_via). Never raises."""
+    try:
+        from permissions import acting_via
+        return "view_as" if acting_via() else None
+    except Exception:
+        return None
+
+
+def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH, via=None) -> int:
+    """A new chat for `user_id` — for a view-as request the admin behind it
+    (client_api._ask_uid), marked `via` 'view_as' (derived from the request
+    when not given): support's own thread (PEOPLE-7)."""
+    via = via or _request_view_as()
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO ask_cavnar_conversations (restaurant_id, user_id) VALUES (?,?)",
-            (restaurant_id, user_id)
+            "INSERT INTO ask_cavnar_conversations (restaurant_id, user_id, via) VALUES (?,?,?)",
+            (restaurant_id, user_id, via)
         )
         # Keep the history list bounded — THIS login's oldest chats fall off
         # past _ASK_CONVERSATIONS_KEEP (and anyone's past the restaurant
@@ -13973,7 +14055,7 @@ def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str
 
 
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
-                     conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None) -> int:
+                     conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None, via=None) -> int:
     """Appends a turn and returns the conversation it landed in.
 
     With no conversation_id, the turn goes into THIS login's current chat
@@ -13990,7 +14072,7 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
     if conversation_id is None:
         conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=user_id)
     if conversation_id is None:
-        conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
+        conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path, via=via)
     # An assistant turn keeps the tool calls it made (names and arguments,
     # so a follow-up can re-read the same data) and its meta (depth, tools,
     # modules, verdict, confidence, topic — what a rating of it is about).
@@ -14112,7 +14194,7 @@ def clear_ask_history(restaurant_id, db_path: str = DB_PATH, viewer_id=None):
 
 def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="proposed",
                    user_id=None, proposal_id=None, reason=None, surface=None, target=None,
-                   db_path: str = DB_PATH):
+                   db_path: str = DB_PATH, authority=None, acting_admin_id=None):
     """Audit trail for anything the assistant proposed.
 
     Written at proposal time and again at confirm/dismiss, so "did the
@@ -14127,18 +14209,34 @@ def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="prop
     buttons, which never become a Still-open item); `target` the path ids
     the proposal's route carries ({"request_id": 12}), stored so a reopen
     rebuilds the same card.
+
+    `authority` is whose answer a confirm/dismiss is
+    (permissions.answer_authority; derived from the request's login when not
+    given — rec_ledger.request_authority), `acting_admin_id` the admin behind
+    a view-as: an admin's answer never reaches pooled learning and a
+    delegate's decline is not the restaurant's (memory re-audit 9/29/26,
+    PLATFORM-3). NULL is a system row, read as the principal's.
     """
     import json as _json
+    if authority is None and outcome in ("confirmed", "dismissed"):
+        try:
+            import rec_ledger as _rl_auth
+            authority, _via = _rl_auth.request_authority()
+            if _via and acting_admin_id is None:
+                acting_admin_id = _via.get("admin_id")
+        except Exception:
+            authority = None
+    authority = authority if authority in ("principal", "delegate", "admin") else None
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO ask_cavnar_actions (restaurant_id, user_id, action, summary, body, outcome, "
-            "proposal_id, reason, surface, target) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "proposal_id, reason, surface, target, authority, acting_admin_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, action, summary,
              _json.dumps(body) if body else None, outcome, proposal_id,
              (str(reason).strip()[:300] or None) if reason else None,
              (str(surface)[:20] if surface else None),
-             _json.dumps(target) if target else None)
+             _json.dumps(target) if target else None, authority, acting_admin_id)
         )
         conn.commit()
         return cur.lastrowid

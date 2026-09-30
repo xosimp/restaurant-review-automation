@@ -399,7 +399,14 @@ def visible(line, user, authority=None, _cache=None) -> bool:
         return True
     if is_team(user):
         return False                             # a shared output reads no one's private line
-    uid = user.get("id")
+    # Through view-as the reader is the admin behind it, never the owner it
+    # views as: support does not read the owner's author-only lines
+    # (permissions.acting_login_id — PEOPLE-20).
+    try:
+        from permissions import acting_login_id
+        uid = acting_login_id(user)
+    except Exception:
+        uid = None
     if audience == "author":
         return line.get("author_id") is not None and uid is not None and int(line["author_id"]) == int(uid)
     if audience == "principals":
