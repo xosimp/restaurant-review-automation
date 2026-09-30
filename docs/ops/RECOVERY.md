@@ -523,3 +523,14 @@ Record the date of the last successful drill here:
   What this did NOT prove: unredaction of OAuth tokens — the local database
   holds no `gmb_refresh_token` at all, so "0 kept" is not evidence either
   way. Superseded by the production drill above.
+
+## The outside monitor (cavnar-watchdog)
+
+`workers/watchdog/` is a Cloudflare Worker on the same Cloudflare account as cavnar.ai, deployed from that folder with
+`npx wrangler deploy` (9/29/26). It is the one check that lives outside Railway:
+- **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
+  the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
+- **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
+- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row emails `will@cavnar.ai` once (Resend,
+  the Worker's own `RESEND_API_KEY` secret), and once more when it recovers. State is in the Worker's KV namespace.
+- To rotate the token: `npx wrangler secret put PING_TOKEN`, then update `HEALTHCHECK_PING_URL` on Railway.

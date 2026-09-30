@@ -1,0 +1,13 @@
+// The outside-Railway monitor (heartbeat + /health). Deploy from this folder:
+//   npx wrangler deploy
+// Secrets (not in git): RESEND_API_KEY, PING_TOKEN — `npx wrangler secret put <NAME>`.
+// Railway's HEALTHCHECK_PING_URL = https://cavnar-watchdog.<workers subdomain>/ping/<PING_TOKEN>
+{
+  "name": "cavnar-watchdog",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "kv_namespaces": [{ "binding": "WATCH", "id": "9f54918ddba548b8b74943b8ecad66e5" }],
+  "vars": { "ALERT_FROM": "will@cavnar.ai", "ALERT_TO": "will@cavnar.ai" }
+}
