@@ -126,7 +126,17 @@ def _seed(monkeypatch):
          "modules": ["reviews", "food_cost"], "headline": "Friday carries the service complaints and 40% of waste",
          "category": "service", "mentions": 6},
         {"kind": "marketing_x_reviews", "subject": "reviews_up", "modules": ["marketing", "reviews"],
-         "headline": "6 posts went out and reviews rose 40%"}])
+         "headline": "6 posts went out and reviews rose 40%"},
+        # The review diagnosis reads its staffing links, and the schedule what
+        # an ended fill campaign's night measured (re-audit 9/29/26,
+        # CROSSMODULE-9 / -12).
+        {"kind": "dsr_x_reviews", "day": "Friday", "subject": bi._link_subject("service", "Friday"),
+         "modules": ["reviews", "dsr"], "headline": "6 service complaints on Friday, no-shows on 3 of 6 Fridays"},
+        {"kind": "marketing_x_labor", "day": "Tuesday", "subject": bi._link_subject("fill", "Tuesday"),
+         "modules": ["marketing", "labor"], "headline": "A text to fill Tuesday went out"}])
+    link_memory.end(rid, bi.link_key({"kind": "marketing_x_labor", "subject": bi._link_subject("fill", "Tuesday")}),
+                    "measured", headline="The Tuesday campaign night measured +4% sales against a typical Tuesday",
+                    detail={"outcome": "The Tuesday campaign night measured +4% sales against a typical Tuesday"})
     # events: a recurring measured effect, and one on a date in every window.
     for k, lift in enumerate((22.0, 20.0, 25.0)):
         d = TODAY - timedelta(weeks=k + 2)

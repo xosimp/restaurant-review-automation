@@ -323,6 +323,77 @@ def observe(restaurant_id, links, consulted=None, today=None, db_path=None) -> l
     return links
 
 
+def _local_day(restaurant_id, stamp):
+    """A UTC event stamp's restaurant-local day (ISO). rec_events.at is UTC,
+    and its date part is tomorrow every evening in the Americas — which
+    pushed a link's resolved day, and so its reopening, a day late."""
+    if not stamp:
+        return None
+    try:
+        from time_utils import parse_stamp, restaurant_now_by_id
+        at = parse_stamp(stamp)
+        tz = restaurant_now_by_id(restaurant_id).tzinfo
+        if at and tz:
+            return at.astimezone(tz).date().isoformat()
+    except Exception:
+        pass
+    return str(stamp)[:10]
+
+
+def _answer(conn, restaurant_id, key, since):
+    """The owner's answer to a link's recommendation since `since`:
+    'done', 'implemented', 'not_for_us', or None, with its date."""
+    ev = conn.execute(
+        "SELECT event, at, meta FROM rec_events WHERE restaurant_id=? AND key=? AND at>=? AND event IN "
+        "('completed','implemented','dismissed') ORDER BY at DESC, id DESC LIMIT 1",
+        (restaurant_id, key, since)).fetchone()
+    if ev is None:
+        return None, None
+    if ev["event"] == "dismissed":
+        try:
+            meta = json.loads(ev["meta"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        if meta.get("kind") != "not_for_us":
+            return None, None
+        return DECLINED, _local_day(restaurant_id, ev["at"])
+    return ("done" if ev["event"] == "completed" else "implemented"), _local_day(restaurant_id, ev["at"])
+
+
+def settle(restaurant_id, today=None, db_path=None) -> dict:
+    """The nightly pass (learning_memory): resolve the links the owner
+    answered, and the ones a later read no longer found (GONE_DAYS). Never
+    raises. {"answered", "gone"}."""
+    today = today or _today(restaurant_id)
+    out = {"answered": 0, "gone": 0}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM bi_links WHERE restaurant_id=? AND resolved_at IS NULL", (restaurant_id,)).fetchall()]
+        for r in rows:
+            since = r.get("recurred_at") or r.get("first_seen")
+            by, at = _answer(conn, restaurant_id, r["link_key"], str(since)[:10])
+            if by:
+                conn.execute("UPDATE bi_links SET resolved_at=?, resolved_by=? WHERE restaurant_id=? AND link_key=?",
+                             (at, by, restaurant_id, r["link_key"]))
+                out["answered"] += 1
+                continue
+            last, missed = _day(r.get("last_seen")), _day(r.get("last_missed"))
+            if last and missed and (today - last).days >= GONE_DAYS and (missed - last).days >= GONE_DAYS:
+                conn.execute("UPDATE bi_links SET resolved_at=?, resolved_by='gone' WHERE restaurant_id=? "
+                             "AND link_key=?", (today.isoformat(), restaurant_id, r["link_key"]))
+                out["gone"] += 1
+        conn.commit()
+    except Exception as e:
+        log.warning("link_memory: not settled for rid=%s: %s", restaurant_id, e)
+    finally:
+        conn.close()
+    return out
+
+
 def _lift_answer(conn, restaurant_id, key):
     """End the ledger silence a Done (or the change made) put on a link's
     key, on the caller's connection — never a decline's. Never raises."""
@@ -375,70 +446,6 @@ def end(restaurant_id, key, by, headline=None, detail=None, today=None, db_path=
         return False
     finally:
         conn.close()
-
-
-def _answer(conn, restaurant_id, key, since):
-    """The owner's answer to a link's recommendation since `since`:
-    'done', 'implemented', 'not_for_us', or None, with its date."""
-    ev = conn.execute(
-        "SELECT event, at, meta FROM rec_events WHERE restaurant_id=? AND key=? AND at>=? AND event IN "
-        "('completed','implemented','dismissed') ORDER BY at DESC, id DESC LIMIT 1",
-        (restaurant_id, key, since)).fetchone()
-    if ev is None:
-        return None, None
-    # The restaurant's own day of the answer (time_utils.local_iso): the
-    # ledger stamps UTC, and every date this table compares against is the
-    # restaurant's — an evening Done read as tomorrow's, so "still found 28
-    # days after you marked it done" came a day late.
-    try:
-        from time_utils import local_iso
-        tzr = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        on = local_iso(ev["at"], tz=(tzr[0] if tzr else None) or None)
-    except Exception:
-        on = str(ev["at"])[:10]
-    if ev["event"] == "dismissed":
-        try:
-            meta = json.loads(ev["meta"] or "{}") or {}
-        except (TypeError, ValueError):
-            meta = {}
-        if meta.get("kind") != "not_for_us":
-            return None, None
-        return DECLINED, on
-    return ("done" if ev["event"] == "completed" else "implemented"), on
-
-
-def settle(restaurant_id, today=None, db_path=None) -> dict:
-    """The nightly pass (learning_memory): resolve the links the owner
-    answered, and the ones a later read no longer found (GONE_DAYS). Never
-    raises. {"answered", "gone"}."""
-    today = today or _today(restaurant_id)
-    out = {"answered": 0, "gone": 0}
-    try:
-        conn = get_conn(db_path)
-    except Exception:
-        return out
-    try:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM bi_links WHERE restaurant_id=? AND resolved_at IS NULL", (restaurant_id,)).fetchall()]
-        for r in rows:
-            since = r.get("recurred_at") or r.get("first_seen")
-            by, at = _answer(conn, restaurant_id, r["link_key"], str(since)[:10])
-            if by:
-                conn.execute("UPDATE bi_links SET resolved_at=?, resolved_by=? WHERE restaurant_id=? AND link_key=?",
-                             (at, by, restaurant_id, r["link_key"]))
-                out["answered"] += 1
-                continue
-            last, missed = _day(r.get("last_seen")), _day(r.get("last_missed"))
-            if last and missed and (today - last).days >= GONE_DAYS and (missed - last).days >= GONE_DAYS:
-                conn.execute("UPDATE bi_links SET resolved_at=?, resolved_by='gone' WHERE restaurant_id=? "
-                             "AND link_key=?", (today.isoformat(), restaurant_id, r["link_key"]))
-                out["gone"] += 1
-        conn.commit()
-    except Exception as e:
-        log.warning("link_memory: not settled for rid=%s: %s", restaurant_id, e)
-    finally:
-        conn.close()
-    return out
 
 
 def active(restaurant_id, kinds=None, within_days=ACTIVE_DAYS, today=None, db_path=None) -> list:
