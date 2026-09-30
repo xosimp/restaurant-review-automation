@@ -4857,6 +4857,11 @@ def scheduler_loop():
                 # still picture the room.
                 from strategy_jobs import run_closing_summary
                 _ops.run_job("closing_summary", run_closing_summary, restaurants=_slot, claim="intraday")
+                # Task sheets: today's issued from the published schedule, a
+                # critical line past due texts the manager, an ended shift
+                # closes (task_sheets.py).
+                import task_sheets as _task_sheets
+                _ops.run_job("task_sheets", _task_sheets.run_job, restaurants=_slot, claim="intraday")
                 # A quiet night two days out, once a week — the one area of
                 # the product that produced no notification at all.
                 from strategy_jobs import run_demand_opportunity

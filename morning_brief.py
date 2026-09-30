@@ -456,6 +456,13 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                       "text": f"From last night's report: {a['text'].rstrip('.')}.",
                       "why": a.get("why"),
                       "ask": f"Walk me through this from last night's report: {a['text']}"})
+    # ── yesterday's task sheets ── a sheet left unfinished at shift end, for
+    # the openers to hear about (task_sheets.yesterday_line; plan phase 3).
+    if "labor" not in denied:
+        import task_sheets
+        ts_line = _safe(task_sheets.yesterday_line, restaurant_id, today=today, db_path=db_path)
+        if ts_line:
+            lines.append(ts_line)
     if y and y.get("available"):
         # "Typical" rests on this restaurant's own same-weekday median, and
         # how many nights it is said (NS4 L5: three samples, unshown).

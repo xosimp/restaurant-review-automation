@@ -888,6 +888,8 @@ MODELS = {
     # memory audit 9/29/26): short structured notes, validated per line.
     "ask_summary":         ("ASK_SUMMARY_MODEL",      HAIKU),
     "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET),
+    # A starter task sheet the owner accepts line by line (task_sheets.starter_lines).
+    "task_sheets":         ("TASK_SHEET_MODEL",       SONNET),
 }
 
 

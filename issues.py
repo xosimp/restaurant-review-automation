@@ -416,7 +416,8 @@ def _fall_back(r, who, reason, db_path=DB_PATH):
 
 
 _KIND_MODULE = {"review": "reviews", "stock": "food", "labor": "labor", "coverage": "labor",
-                "no_show": "labor", "checklist": "ops", "plan": "ops", "loss": "ops"}
+                "no_show": "labor", "checklist": "ops", "plan": "ops", "loss": "ops",
+                "task_missed": "labor", "task_sheet": "labor", "task_pattern": "labor"}
 
 
 def _issue_key(r):
@@ -426,7 +427,7 @@ def _issue_key(r):
 # Issues that are not a problem surfacing: a weekly plan item and a single
 # guest's review routed to a manager (no recommendation could precede one
 # review) — everything else is checked for a recommendation first.
-_NOT_A_MISS = ("plan", "review")
+_NOT_A_MISS = ("plan", "review", "task_missed", "task_sheet", "task_pattern")   # a skipped duty is not a detection Cavnar AI missed
 
 
 def _note_missed(restaurant_id, kind, key, title, db_path=DB_PATH):
@@ -1079,6 +1080,17 @@ def open_from_checklists(restaurant_id, db_path=DB_PATH, now_local=None):
     the manager's issue. Nothing watched these before."""
     from datetime import date as _date
     if "manager" not in get_routing(restaurant_id, db_path):
+        return []
+    # A restaurant on task sheets is watched by task_sheets.evaluate (critical
+    # lines past due, unfinished sheets at shift end): this flat-list check
+    # would report the same work twice.
+    conn = get_conn(db_path)
+    try:
+        on_sheets = conn.execute("SELECT 1 FROM task_sheets WHERE restaurant_id=? AND active=1 LIMIT 1",
+                                 (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if on_sheets:
         return []
     from models import get_restaurant, get_todays_tasks
     r = get_restaurant(restaurant_id)

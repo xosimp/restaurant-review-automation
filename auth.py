@@ -4170,6 +4170,10 @@ _MODULE_PREFIXES = (
     # One person record (people.py, Friction #25): the team as Labor sees it.
     ("/api/people",                 "labor"),
     ("/mobile/api/people",          "labor"),
+    # Task sheets by job code and shift (task_sheets.py): the owner's editor,
+    # the day's bird's-eye view and the consistency report.
+    ("/api/task-sheets",            "labor"),
+    ("/mobile/api/task-sheets",     "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),

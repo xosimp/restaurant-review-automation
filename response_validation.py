@@ -202,6 +202,8 @@ SURFACES = (
     "review_diagnosis", "food_diagnosis",
     "digest", "dsr", "weekly_plan", "schedule_note", "email_personalise",
     "reply_public", "guest_sms", "social_post", "calendar_idea",
+    # A starter task-sheet line the owner accepts one by one (task_sheets.starter_lines).
+    "task_draft",
 )
 AUDIENCES = ("owner", "manager", "guest_public", "internal")
 DELIVERIES = ("interactive", "unattended")

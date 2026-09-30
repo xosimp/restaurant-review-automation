@@ -17,6 +17,14 @@ import emails as _emails
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 admin_bp = Blueprint('admin', __name__)
+
+
+@admin_bp.app_template_filter("format_phone")
+def _format_phone_filter(value):
+    """"(334) 568-9292" (auth.display_phone) on any app this blueprint is
+    registered on — the client-settings page renders it."""
+    from auth import display_phone
+    return display_phone(value)
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(admin_bp)

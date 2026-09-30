@@ -22,6 +22,14 @@ from auth import login_required
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 client_bp = Blueprint('client', __name__)
+
+
+@client_bp.app_template_filter("format_phone")
+def _format_phone_filter(value):
+    """"(334) 568-9292" (auth.display_phone) on any app this blueprint is
+    registered on — the dashboard renders it."""
+    from auth import display_phone
+    return display_phone(value)
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(client_bp)
@@ -11520,6 +11528,67 @@ def tasks_add_template(current_user):
 @login_required
 def tasks_remove_template(current_user):
     return _m("mobile_remove_task_template")(current_user)
+
+
+# Task sheets: the web twins of mobile_api's (one body each).
+@client_bp.route("/api/task-sheets")
+@login_required
+def task_sheets_list(current_user):
+    return _m("mobile_task_sheets")(current_user)
+
+
+@client_bp.route("/api/task-sheets", methods=["POST"])
+@login_required
+def task_sheets_create(current_user):
+    return _m("mobile_task_sheet_create")(current_user)
+
+
+@client_bp.route("/api/task-sheets/<int:sheet_id>", methods=["POST"])
+@login_required
+def task_sheets_update(sheet_id, current_user):
+    return _m("mobile_task_sheet_update")(sheet_id, current_user=current_user)
+
+
+@client_bp.route("/api/task-sheets/<int:sheet_id>/lines", methods=["POST"])
+@login_required
+def task_sheets_add_line(sheet_id, current_user):
+    return _m("mobile_task_sheet_add_line")(sheet_id, current_user=current_user)
+
+
+@client_bp.route("/api/task-sheets/lines/<int:line_id>", methods=["POST"])
+@login_required
+def task_sheets_update_line(line_id, current_user):
+    return _m("mobile_task_sheet_update_line")(line_id, current_user=current_user)
+
+
+@client_bp.route("/api/task-sheets/<int:sheet_id>/order", methods=["POST"])
+@login_required
+def task_sheets_order(sheet_id, current_user):
+    return _m("mobile_task_sheet_order")(sheet_id, current_user=current_user)
+
+
+@client_bp.route("/api/task-sheets/<int:sheet_id>/starter", methods=["POST"])
+@login_required
+def task_sheets_starter(sheet_id, current_user):
+    return _m("mobile_task_sheet_starter")(sheet_id, current_user=current_user)
+
+
+@client_bp.route("/api/task-sheets/day")
+@login_required
+def task_sheets_day(current_user):
+    return _m("mobile_task_sheet_day")(current_user)
+
+
+@client_bp.route("/api/task-sheets/report")
+@login_required
+def task_sheets_report(current_user):
+    return _m("mobile_task_sheet_report")(current_user)
+
+
+@client_bp.route("/api/task-sheets/photo/<token>")
+@login_required
+def task_sheets_photo(token, current_user):
+    return _m("mobile_task_sheet_photo")(token, current_user=current_user)
 
 
 @client_bp.route("/api/labor/schedule/score", methods=["POST"])

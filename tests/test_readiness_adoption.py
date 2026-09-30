@@ -21,6 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # onboarding personalisation and guest SMS (the audit's list), and the two
 # competitor menu extractions, which read only the document handed in.
 NOT_APPLICABLE_SITES = {
+    ("task_sheets.py", "starter_lines"): "a starter task sheet from general restaurant practice and the owner's profile, accepted line by line",
     ("drafter.py", "draft_response"): "a reply to one review, written from that review",
     ("marketing.py", "generate_content"): "a social post drafted from the owner's topic",
     ("marketing.py", "get_content_calendar_ideas"): "calendar ideas from the profile and holidays",

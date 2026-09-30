@@ -1954,6 +1954,37 @@ def _read_service_performance(restaurant_id, days=28, _viewer=None):
     return out
 
 
+def _read_task_sheets(restaurant_id, date=None, days=14):
+    """The task sheets (task_sheets.py): one business day's every sheet —
+    who was on it, each line done or not, by whom, when, late or out of
+    range — and the consistency report over `days`: per job code and per
+    person, completion and on-time rates, critical misses, the managers side
+    by side. From the completions; never a judgement of who was lazy."""
+    from datetime import date as _date
+    import task_sheets
+    from time_utils import mdy
+    day = None
+    if date:
+        try:
+            day = _date.fromisoformat(str(date)[:10])
+        except ValueError:
+            return {"error": "date must be YYYY-MM-DD"}
+    view = task_sheets.day_view(restaurant_id, day)
+    if not view["has_sheets"]:
+        return {"available": False, "reason": "no task sheets written yet (Labor → Task sheets)"}
+    rep = task_sheets.report(restaurant_id, days=max(7, min(int(days or 14), 90)))
+    sheets = [{"title": a["title"], "shift": a["shift_label"], "assignees": a["assignees"] or ["no one scheduled"],
+               "done": a["done"], "total": a["total"], "status": a["status"],
+               "skipped": [l["label"] for l in a["lines"] if not l["done"]][:_MAX_ROWS],
+               "late": [l["label"] for l in a["lines"] if l["late"]][:_MAX_ROWS],
+               "out_of_range": [{"line": l["label"], "value": l["proof_value"]} for l in a["lines"] if l["flagged"]]}
+              for a in view["sheets"]]
+    return {"day": view["date_label"], "sheets": sheets, "signoffs": view["signoffs"],
+            "report": {"window": rep["window_label"], "by_job_code": rep["by_job_code"][:_MAX_ROWS],
+                       "by_person": rep["by_person"][:_MAX_ROWS], "managers": rep["managers"],
+                       "rates_need_sheets": rep["min_sheets"]}}
+
+
 def _read_target_history(restaurant_id, as_of=None, _viewer=None):
     """Which targets applied on a date, and every change to them (Will,
     9/29/26): "what was my food cost target in August?", "when did we
@@ -3027,6 +3058,25 @@ TOOLS = [
                 "account holder's. days: the window, default 28, at most 90."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "days": {"type": "integer", "description": "How far back. Default 28, at most 90."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_task_sheets,
+        "module": "module_labor",
+        "spec": {
+            "name": "read_task_sheets",
+            "description": (
+                "THE OPENING AND CLOSING TASK SHEETS by job code: for one business day, every sheet, who the "
+                "published schedule put on it, which lines were done, by whom and when, which were late, "
+                "numbers out of their allowed range (temperatures, counts) and the manager's sign-off; plus "
+                "the consistency report — per job code and per person, completion and on-time rates and "
+                "critical misses, with the managers side by side. Call it for 'who closed Tuesday and what "
+                "did they skip', 'are my managers doing their opening duties', 'who misses the safe count'. "
+                "date: YYYY-MM-DD (default today); days: the report's window, default 14."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "Business date, YYYY-MM-DD. Default today."},
+                "days": {"type": "integer", "description": "Report window in days. Default 14, at most 90."}}},
         },
     },
     {

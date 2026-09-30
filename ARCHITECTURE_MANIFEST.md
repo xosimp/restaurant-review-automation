@@ -268,6 +268,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `review_intelligence` | 2 | the reviews consultant layer and diagnosis; the diagnosis prompt carries the complaint slice (`slice_context`: shifts, people, schedule edits, events and closers' notes on the slice's days), what was already tried (`tried_on_theme`) and memory; each diagnosis kept and its claim scored through `ai_reads` |
 | `review_signals` | 2 | what the review layer did not capture (memory audit 9/29/26): owner re-tags (`review_retags`: the review takes the correction, a re-analysis keeps it, the analyser reads recent ones as this restaurant's examples), the menu as the analyser's dish vocabulary (a guest's dish mapped to the one menu dish it names), and review requests matched to the reviews they produced (by the guest's name, one-to-one) with the request conversion |
 | `rpower` / `rpower_routes` | 2 / 3 | RPOWER provider / bootstrap and status routes |
+| `task_sheets` | 2 | opening and closing task sheets by job code: issued from the published schedule, ticked by staff, read by the owner, misses as issues (`task_sheets.run_job`; Ask `read_task_sheets`) |
 | `service_performance` | 2 | each server, room, daypart and the kitchen measured from the POS archive (owner-only; Ask `read_service_performance`) |
 | `pos_archive` | 2 | the ticket-level POS archive: one day stored whole, restated days re-stored, bounded backfill (`strategy_jobs.run_pos_archive`) |
 | `sales_audit_cheatsheet` | 2 | the in-person pitch cheat-sheet (deterministic) |

@@ -248,6 +248,14 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
                          "days": 180}
     except Exception:
         out["covers"] = None
+    # Their task sheets over 30 days (task_sheets.py): sheets, lines done,
+    # late ticks, critical misses and the last few misses — beside the
+    # operational score, where "who is reliable" is already decided.
+    try:
+        import task_sheets
+        out["task_record"] = task_sheets.person_record(restaurant_id, name, days=30, db_path=db)
+    except Exception:
+        out["task_record"] = None
     try:
         from datetime import date as _d_pm, timedelta as _td_pm
         _since_pm = (_d_pm.today() - _td_pm(days=PERSON_MENTION_DAYS)).isoformat()

@@ -6734,6 +6734,11 @@ def init_task_management(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_task_tpl_role ON "
                  "task_templates(restaurant_id, role, is_active)")
+    # Task sheets by job code and shift (task_sheets.py, 9/30/26), and the
+    # flat lists above carried over as All day sheets, once.
+    import task_sheets as _ts
+    _ts.init_schema(conn)
+    _ts.migrate_templates(conn)
     conn.commit()
     conn.close()
 

@@ -764,55 +764,161 @@ def _valid_task_date(value, restaurant_id=None):
     return parsed.isoformat()
 
 
+def _job_roles(rid, membership, name):
+    """Every job code this person works: their job role, then the roles the
+    POS and the owner keep for them (people.person_roles — 43 of Simple EJ's
+    staff are cross-trained). Decides which unassigned sheets are theirs."""
+    roles = []
+    primary = _employee_job_role(rid, membership)
+    if primary:
+        roles.append(primary)
+    try:
+        import staff_settings as _ss
+        from models import get_conn
+        conn = get_conn()
+        try:
+            roles += [r[0] for r in conn.execute(
+                "SELECT role FROM person_roles WHERE restaurant_id=? AND employee_key=? AND removed_at IS NULL",
+                (rid, _ss.name_key(name)))]
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return list(dict.fromkeys(r for r in roles if r))
+
+
+def _legacy_tasks(view):
+    """The flat list an older app reads (role, tasks[{id, label, done}]):
+    every line of this person's own sheets, id = the line's id."""
+    out = []
+    for a in view["sheets"]:
+        for l in a["lines"]:
+            out.append({"id": l["line_id"], "role": a["job_code"], "label": l["label"], "done": l["done"],
+                        "completed_by": l["completed_by"], "completed_at": l["completed_at"]})
+    return out
+
+
 @staff_bp.route("/api/tasks")
 @staff_login_required
 def api_tasks(current_user):
-    """The checklist for this employee's own role."""
-    rid, _name = _staff_context(current_user)
+    """This employee's sheets for today (task_sheets.staff_view): the ones
+    the published schedule puts them on, or an unassigned sheet on their job
+    code, with due times and proof. A manager also gets the floor and may
+    sign a shift off. `role` and `tasks` keep the old flat shape for apps
+    that predate sheets."""
+    rid, name = _staff_context(current_user)
     membership = get_membership(current_user["id"], rid) or {}
-    role = _employee_job_role(rid, membership)
-    if not role:
-        return jsonify(ok=True, role=None, tasks=[])
-    from models import get_todays_tasks
-    raw = (request.args.get("date") or "").strip()
-    date = _valid_task_date(raw, rid)
-    if raw and not date:
+    roles = _job_roles(rid, membership, name)
+    import task_sheets as ts
+    try:
+        view = ts.staff_view(rid, name, roles)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="staff_task_sheets", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Could not load your sheets."), 500
+    return jsonify(ok=True, role=(roles[0] if roles else None), tasks=_legacy_tasks(view), **view)
+
+
+def _tick(current_user, data, media_id=None):
+    rid, name = _staff_context(current_user)
+    # The day is the server's (the business day the sheet was issued for);
+    # an older app still sends task_date, and one outside today ± 1 is
+    # refused as before (F-07) rather than silently ignored.
+    if "task_date" in data and not _valid_task_date(str(data.get("task_date") or ""), rid):
         return jsonify(ok=False, error="That date isn't one you can check off."), 400
-    # The day the list is for goes back with it, so a check-off is recorded
-    # against the restaurant's day, not the phone's (CLIENT-61).
-    task_date = date or _task_today(rid).isoformat()
-    return jsonify(ok=True, role=role, task_date=task_date,
-                   tasks=get_todays_tasks(rid, role, task_date=task_date))
+    membership = get_membership(current_user["id"], rid) or {}
+    roles = _job_roles(rid, membership, name)
+    import task_sheets as ts
+    try:
+        line_id = int(data.get("line_id") or data.get("template_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="line_id required"), 400
+    assignment_id = data.get("assignment_id")
+    if not assignment_id:
+        # An older app sends only the line (template_id): the sheet is this
+        # person's sheet for today that carries that line.
+        view = ts.staff_view(rid, name, roles)
+        hit = next((a for a in view["sheets"] for l in a["lines"] if l["line_id"] == line_id), None)
+        if not hit:
+            return jsonify(ok=False, error="That task isn't on your list."), 403
+        assignment_id = hit["id"]
+    try:
+        out = ts.complete_line(rid, int(assignment_id), line_id, done=bool(data.get("done", True)),
+                               employee_name=name, job_roles=roles, user_id=current_user.get("id"),
+                               value=data.get("value"), media_id=media_id)
+    except ts.TaskSheetError as e:
+        return jsonify(ok=False, error=str(e)), 403 if "isn't yours" in str(e) else 400
+    return jsonify(ok=True, **out), 200
 
 
 @staff_bp.route("/api/tasks/complete", methods=["POST"])
 @staff_login_required
 def api_complete_task(current_user):
-    """Check off a task. Only tasks belonging to this employee's own job role
-    at this restaurant — a template_id from any other role or restaurant is
-    refused rather than trusted."""
+    """Tick or un-tick one line of this employee's own sheet today:
+    {assignment_id, line_id, done, value?}. A number line needs the reading,
+    a note line the note; a photo line goes through /api/tasks/photo."""
+    return _tick(current_user, request.get_json(silent=True) or {})
+
+
+@staff_bp.route("/api/tasks/photo", methods=["POST"])
+@staff_login_required
+def api_task_photo(current_user):
+    """Tick a photo line with its photo: multipart (file, assignment_id,
+    line_id), or JSON with image_b64 (the iPhone app)."""
+    rid, _name = _staff_context(current_user)
+    import task_sheets as ts
+    if request.files.get("file"):
+        f = request.files["file"]
+        raw, mime, data = f.read(), f.mimetype or "", request.form.to_dict()
+    else:
+        import base64
+        data = request.get_json(silent=True) or {}
+        try:
+            raw = base64.b64decode(str(data.get("image_b64") or ""), validate=False)
+        except Exception:
+            raw = b""
+        mime = str(data.get("mime") or "image/jpeg")
+    try:
+        media_id = ts.store_photo(rid, raw, mime)
+    except ts.TaskSheetError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    data = dict(data)
+    data["done"] = True
+    return _tick(current_user, data, media_id=media_id)
+
+
+@staff_bp.route("/api/tasks/signoff", methods=["POST"])
+@staff_login_required
+def api_task_signoff(current_user):
+    """The manager on duty signs a shift's sheets off, as they stand."""
     rid, name = _staff_context(current_user)
     membership = get_membership(current_user["id"], rid) or {}
-    role = _employee_job_role(rid, membership)
+    roles = _job_roles(rid, membership, name)
+    import task_sheets as ts
+    if not ts.staff_view(rid, name, roles)["manager"]:
+        return jsonify(ok=False, error="Only the manager on duty signs a shift off."), 403
     data = request.get_json(silent=True) or {}
     try:
-        template_id = int(data.get("template_id"))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="template_id required"), 400
-    raw_date = (data.get("task_date") or "").strip()
-    if not raw_date:
-        return jsonify(ok=False, error="task_date required"), 400
-    task_date = _valid_task_date(raw_date, rid)
-    if not task_date:
-        return jsonify(ok=False, error="That date isn't one you can check off."), 400
+        return jsonify(ok=True, **ts.sign_off(rid, data.get("shift_kind") or "", name, user_id=current_user.get("id"),
+                                              note=data.get("note"))), 200
+    except ts.TaskSheetError as e:
+        return jsonify(ok=False, error=str(e)), 400
 
-    from models import get_task_templates, set_task_completion
-    mine = {t["id"] for t in get_task_templates(rid, role=role)} if role else set()
-    if template_id not in mine:
-        return jsonify(ok=False, error="That task isn't on your list."), 403
-    ok = set_task_completion(rid, template_id, task_date, bool(data.get("done")),
-                             completed_by=name)
-    return (jsonify(ok=True), 200) if ok else (jsonify(ok=False, error="Not found"), 404)
+
+@staff_bp.route("/api/tasks/photo/<token>")
+@staff_login_required
+def api_task_photo_file(token, current_user):
+    """A proof photo on this restaurant's sheets, for a signed-in employee."""
+    import io
+    import task_sheets as ts
+    from flask import send_file
+    rid, _name = _staff_context(current_user)
+    found = ts.get_photo(rid, token)
+    if not found:
+        return jsonify(ok=False, error="Not found"), 404
+    resp = send_file(io.BytesIO(found[0]), mimetype=found[1] or "image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @staff_bp.route("/api/pin", methods=["POST"])

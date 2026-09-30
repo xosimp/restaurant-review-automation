@@ -63,8 +63,8 @@ def test_the_setup_rows_are_one_quiet_team_and_rules_disclosure():
     s = _src()
     team = s[s.index('<details class="hb-results lb2-team" id="lb2-team">'):]
     team = team[:team.index("</details>")]
-    for marker, cls, fn in (('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),
-                            ('<div class="lb2-subsection-title">Daily Tasks</div>', "s3", "toggleTasksPanel")):
+    # Daily Tasks left this list for its own Task sheets section (9/30/26).
+    for marker, cls, fn in (('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),):
         i = team.index(marker)
         around = team[max(0, i - 300):i + 300]
         assert f'<div class="lb2-srow {cls}">' in around, marker

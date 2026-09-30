@@ -1844,6 +1844,7 @@ _TOOL_LABELS = {
     "read_upcoming": "Checking what's coming up",
     "read_target_history": "Checking which targets applied",
     "read_service_performance": "Reading the POS's service record",
+    "read_task_sheets": "Checking the task sheets",
     "read_forecast_record": "Checking how the forecasts have held up",
     "read_closeouts": "Reading the close-outs",
     "read_marketing_results": "Checking what your marketing did",
@@ -2549,6 +2550,7 @@ _UNTAGGED_MODULE = {
     "read_closeouts": "daily report",
     "read_target_history": "target history",
     "read_service_performance": "service record",
+    "read_task_sheets": "task sheets",
 }
 
 

@@ -61,6 +61,31 @@
   .pbar{height:6px;border-radius:999px;background:var(--paper3);overflow:hidden;margin:-4px 0 12px}
   .pbar i{display:block;height:100%;border-radius:999px;background:var(--green)}
 
+  /* Your sheets today (task_sheets.py): one card per sheet, lines in order,
+     due times, the proof a line asks for. */
+  .tsheet{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 14px 6px;margin-bottom:14px}
+  .thead{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+  .ttitle{font-size:16.5px;font-weight:700}
+  .tmeta{font-size:13px;color:var(--ink3);margin-top:3px}
+  .tcount{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:var(--ink2);white-space:nowrap}
+  .tsheet .pbar{margin:10px 0 4px}
+  .tclosed{font-size:13.5px;color:var(--ink3);margin:6px 0}
+  .tsec{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:10px 0 2px}
+  .tline{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-top:1px solid var(--line)}
+  .tbox{width:26px;height:26px;flex-shrink:0;border-radius:50%;border:2px solid var(--ink3);background:transparent;cursor:pointer;padding:0;margin-top:-2px}
+  .tline.done .tbox,.tline.done .tdot{background:var(--green);border-color:var(--green)}
+  .tline.over .tbox,.tline.over .tdot{border-color:var(--red)}
+  .tdot{width:18px;height:18px;flex-shrink:0;border-radius:50%;border:2px solid var(--ink3);margin:1px 4px 0}
+  .tbody{flex:1;min-width:0}
+  .tlabel{font-size:15.5px;line-height:1.4}
+  .tline.done .tlabel{color:var(--ink3)}
+  .tsub{font-size:12.5px;color:var(--ink3);margin-top:3px}
+  .ttag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:1px 7px;border-radius:999px;border:1px solid currentColor;margin-left:6px;vertical-align:1px}
+  .ttag.bad{color:var(--red)}.ttag.warn{color:var(--amber)}.ttag.crit{color:var(--ember2)}
+  .tproof{display:flex;gap:8px;margin-top:9px;align-items:center}
+  .tproof input{flex:1;min-width:0;background:var(--paper2);border:1px solid var(--line);border-radius:9px;color:var(--ink);font:inherit;font-size:15px;padding:9px 11px}
+  .tphoto{cursor:pointer}
+  .tsign{width:100%;margin-top:8px}
   .row{background:var(--card);border:1px solid var(--line);border-radius:10px;
        padding:13px 15px;margin-bottom:8px;display:flex;justify-content:space-between;
        align-items:center;gap:10px}
@@ -129,6 +154,7 @@
   .sr-row .act{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
   .sr-row.open-shift{border-left:3px solid var(--ember2)}
   .sr-msg{font-size:13.5px;margin-top:6px;color:var(--red)}
+  .sr-msg.ok{color:var(--ink2)}
   .sr-row .kind{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-right:6px}
   /* Swap with a colleague: a small picker under the shift */
   .shift .brk{font-size:13px;color:var(--ink3);margin-top:3px}
@@ -693,64 +719,163 @@
   }
   loadTimeOff();
 
-  // ── Tasks ───────────────────────────────────────────────────────────────
+  // ── Tasks: your sheets today (task_sheets.py) ─────────────────────────────
+  // Each sheet the published schedule puts you on (the opener's, the
+  // closer's), in order, with due times; a line that needs a reading, a note
+  // or a photo asks for it. A manager also sees the floor and signs a shift off.
+  var tsData = null, tsMsgText = '';
+  function tsClock(iso){
+    if (!iso || iso.length < 16) return '';
+    var h = parseInt(iso.slice(11, 13), 10), m = iso.slice(14, 16), ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return h + (m === '00' ? '' : ':' + m) + ap;
+  }
+  function tsKind(k){ return {opening: 'Opening', closing: 'Closing', mid: 'Mid', any: 'All day'}[k] || k; }
+  function tsLine(a, l, open){
+    var cls = 'tline' + (l.done ? ' done' : '') + (l.overdue ? ' over' : '');
+    var tags = (l.critical ? '<span class="ttag crit">Critical</span>' : '') + (l.overdue ? '<span class="ttag bad">Overdue</span>' : '')
+             + (l.late ? '<span class="ttag warn">Late</span>' : '') + (l.flagged ? '<span class="ttag bad">Out of range</span>' : '');
+    var sub = '';
+    if (l.done) {
+      sub = esc(l.completed_by || '') + ' · <span class="num">' + esc(tsClock(l.completed_at)) + '</span>'
+          + (l.proof_value ? ' · ' + esc(l.proof_label ? l.proof_label + ': ' : '') + '<span class="num">' + esc(l.proof_value) + '</span>' : '')
+          + (l.photo ? ' · photo added' : '');
+    } else if (l.due_at) {
+      sub = 'Due <span class="num">' + esc(tsClock(l.due_at)) + '</span>';
+    }
+    var proof = l.proof || 'none', h = '<div class="' + cls + '">';
+    if (!open) {
+      h += '<span class="tdot" aria-hidden="true"></span>';
+    } else if (proof === 'none' || l.done) {
+      h += '<button type="button" class="tbox" data-tick="1" data-a="' + a.id + '" data-l="' + l.line_id + '" data-done="' + (l.done ? '0' : '1')
+         + '" aria-pressed="' + (l.done ? 'true' : 'false') + '" aria-label="' + (l.done ? 'Mark not done: ' : 'Mark done: ') + esc(l.label) + '"></button>';
+    } else {
+      h += '<span class="tdot" aria-hidden="true"></span>';
+    }
+    h += '<div class="tbody"><div class="tlabel">' + esc(l.label) + tags + '</div>' + (sub ? '<div class="tsub">' + sub + '</div>' : '');
+    if (open && !l.done && proof === 'number') {
+      h += '<div class="tproof"><input type="number" step="any" inputmode="decimal" id="tv-' + a.id + '-' + l.line_id + '" placeholder="' + esc(l.proof_label || 'Reading') + '" aria-label="' + esc(l.proof_label || 'Reading') + '">'
+         + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-proof="number" data-a="' + a.id + '" data-l="' + l.line_id + '">Save</button></div>';
+    } else if (open && !l.done && proof === 'note') {
+      h += '<div class="tproof"><input type="text" maxlength="300" id="tv-' + a.id + '-' + l.line_id + '" placeholder="' + esc(l.proof_label || 'Your note') + '" aria-label="' + esc(l.proof_label || 'Your note') + '">'
+         + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-proof="note" data-a="' + a.id + '" data-l="' + l.line_id + '">Save</button></div>';
+    } else if (open && !l.done && proof === 'photo') {
+      h += '<div class="tproof"><label class="cbtn cbtn-primary cbtn-sm tphoto">Add photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" data-photo="1" data-a="' + a.id + '" data-l="' + l.line_id + '" hidden></label></div>';
+    }
+    return h + '</div></div>';
+  }
+  function tsSheet(a){
+    var open = a.status === 'open';
+    var when = a.shift_start ? tsClock(a.shift_start) + '–' + tsClock(a.shift_end) : '';
+    var h = '<div class="tsheet"><div class="thead"><div><div class="ttitle">' + esc(a.title) + '</div><div class="tmeta">'
+          + (when ? '<span class="num">' + esc(when) + '</span>' : '') + (a.unassigned ? (when ? ' · ' : '') + 'no schedule published — yours if you’re on it' : '')
+          + (a.assignees.length > 1 ? ' · with ' + esc(a.assignees.join(', ')) : '') + '</div></div>'
+          + '<div class="tcount"><span class="num">' + a.done + '</span>/<span class="num">' + a.total + '</span></div></div>'
+          + '<div class="pbar"><i style="width:' + (a.total ? Math.round(a.done / a.total * 100) : 0) + '%"></i></div>';
+    if (!open) h += '<div class="tclosed">This sheet closed at the end of the shift.</div>';
+    var sec = null;
+    for (var i = 0; i < a.lines.length; i++) {
+      var l = a.lines[i];
+      if (l.section && l.section !== sec) h += '<div class="tsec">' + esc(l.section) + '</div>';
+      sec = l.section || null;
+      h += tsLine(a, l, open);
+    }
+    return h + '</div>';
+  }
+  function tsFloor(d){
+    if (!d.manager) return '';
+    var h = '<h2>The floor · today</h2>';
+    if (!d.floor.length) h += '<div class="empty">No other sheets went out today.</div>';
+    for (var i = 0; i < d.floor.length; i++) {
+      var a = d.floor[i];
+      h += '<div class="row"><span class="k">' + esc(a.title) + '<br><span style="font-size:12.5px">' + esc(a.unassigned ? 'Unassigned' : a.assignees.join(', ')) + '</span></span>'
+         + '<span class="v"><span class="num">' + a.done + '/' + a.total + '</span>' + (a.overdue ? ' <span class="ttag bad">' + a.overdue + ' overdue</span>' : '') + '</span></div>';
+    }
+    var signed = {};
+    for (i = 0; i < (d.signoffs || []).length; i++) signed[d.signoffs[i].shift_kind] = d.signoffs[i];
+    for (i = 0; i < (d.can_sign_off || []).length; i++) {
+      var k = d.can_sign_off[i];
+      h += signed[k]
+        ? '<div class="empty">' + esc(tsKind(k)) + ' signed off by ' + esc(signed[k].signed_by || '') + '.</div>'
+        : '<button type="button" class="cbtn cbtn-secondary tsign" data-signoff="' + esc(k) + '">Sign off the ' + esc(tsKind(k).toLowerCase()) + ' shift</button>';
+    }
+    return h;
+  }
   function loadTasks(){
     fetch('/staff/api/tasks').then(function(r){ return r.json(); }).then(function(d){
       var el = $('tasks-body');
-      if (!d.ok) { el.className = 'err'; el.textContent = d.error || 'Could not load your tasks.'; return; }
+      if (!d.ok) { el.className = 'err'; el.textContent = d.error || 'Could not load your sheets.'; return; }
       el.className = '';
+      tsData = d;
       taskDate = d.task_date || '';
-      if (!d.role) {
-        el.innerHTML = '<div class="empty">Your job role isn’t set yet, so there’s no checklist to show. '
-                     + 'A manager can set it from the dashboard.</div>';
-        return;
+      var sheets = d.sheets || [], done = 0, total = 0, i;
+      for (i = 0; i < sheets.length; i++) { done += sheets[i].done; total += sheets[i].total; }
+      hero.tasks = {done: done, total: total}; renderHero();
+      var left = total - done, tt = $('tasks-tab');
+      if (tt) tt.textContent = !total ? 'Tasks' : (left ? 'Tasks · ' + left + ' left' : 'Tasks ✓');
+      var html = '<div class="sr-msg' + (tsMsgBad ? '' : ' ok') + '" id="task-msg" role="status">' + esc(tsMsgText) + '</div>';
+      tsMsgText = '';
+      if (!sheets.length) {
+        html += '<div class="empty">No task sheet is yours today. Your sheets show here on the days the schedule puts you on a shift that has one.</div>';
       }
-      if (!d.tasks.length) {
-        el.innerHTML = '<div class="empty">Nothing on the ' + esc(d.role) + ' checklist today.</div>';
-        return;
-      }
-      var done = 0;
-      for (var i = 0; i < d.tasks.length; i++) if (d.tasks[i].done) done++;
-      hero.tasks = {done: done, total: d.tasks.length}; renderHero();
-      var left = d.tasks.length - done, tt = $('tasks-tab');
-      if (tt) tt.textContent = left ? 'Tasks · ' + left + ' left' : 'Tasks ✓';
-      var html = '<h2>' + esc(d.role) + ' · today</h2>'
-               + '<div class="progress"><span class="num">' + done + '</span> of <span class="num">' + d.tasks.length + '</span> done</div>'
-               + '<div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="' + d.tasks.length + '" aria-valuenow="' + done + '"><i style="width:' + Math.round(done / d.tasks.length * 100) + '%"></i></div>'
-               + '<div class="sr-msg" id="task-msg" role="status"></div>';
-      for (var j = 0; j < d.tasks.length; j++) {
-        var t = d.tasks[j];
-        html += '<label class="task' + (t.done ? ' done' : '') + '">'
-              + '<input type="checkbox" data-task="' + t.id + '"' + (t.done ? ' checked' : '') + '>'
-              + '<span>' + esc(t.label) + '</span></label>';
-      }
+      for (i = 0; i < sheets.length; i++) html += tsSheet(sheets[i]);
+      html += tsFloor(d);
       el.innerHTML = html;
     }).catch(function(){
       $('tasks-body').className = 'err';
-      $('tasks-body').textContent = 'Could not load your tasks.';
+      $('tasks-body').textContent = 'Could not load your sheets.';
     });
   }
   loadTasks();
 
+  // A message outlives the redraw that follows a save (it sits inside the list).
+  var tsMsgBad = false;
+  function tsSay(text, bad){ tsMsgText = text; tsMsgBad = !!bad; var m = $('task-msg'); if (m) { m.textContent = text; m.className = 'sr-msg' + (bad ? '' : ' ok'); } }
+  function tsSend(url, body){
+    return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+      .then(function(r){ return r.json(); }).then(function(d){
+        if (!d.ok) { tsSay(d.error || 'That didn’t save — try again.', true); return d; }
+        if (d.flagged) tsSay('Saved — that reading is outside its limits, so your manager will see it flagged.', true);
+        else if (d.late) tsSay('Saved, after its due time.');
+        loadTasks();
+        return d;
+      }).catch(function(){ tsSay('That didn’t save — check your connection.', true); });
+  }
+
+  document.addEventListener('click', function(ev){
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-tick],[data-proof],[data-signoff]') : null;
+    if (!t) return;
+    if (t.hasAttribute('data-tick')) {
+      t.disabled = true;
+      tsSend('/staff/api/tasks/complete', {assignment_id: +t.getAttribute('data-a'), line_id: +t.getAttribute('data-l'),
+                                           done: t.getAttribute('data-done') === '1'});
+    } else if (t.hasAttribute('data-proof')) {
+      var inp = $('tv-' + t.getAttribute('data-a') + '-' + t.getAttribute('data-l'));
+      var val = inp ? inp.value : '';
+      if (!String(val).replace(/\s+/g, '')) { tsSay('Enter it first, then Save.', true); return; }
+      t.disabled = true;
+      tsSend('/staff/api/tasks/complete', {assignment_id: +t.getAttribute('data-a'), line_id: +t.getAttribute('data-l'), done: true, value: val});
+    } else if (t.hasAttribute('data-signoff')) {
+      var note = window.prompt('Anything to note about this shift? (optional)', '');
+      if (note === null) return;
+      t.disabled = true;
+      tsSend('/staff/api/tasks/signoff', {shift_kind: t.getAttribute('data-signoff'), note: note});
+    }
+  });
+
   document.addEventListener('change', function(ev){
     var el = ev.target;
-    if (!el || !el.getAttribute) return;
-    var id = el.getAttribute('data-task');
-    if (id === null) return;
-    var want = el.checked;
-    function refused(text){
-      /* Put the box back the way the server has it, and say why. */
-      el.checked = !want;
-      var m = $('task-msg'); if (m) m.textContent = text;
-    }
-    fetch('/staff/api/tasks/complete', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({template_id: parseInt(id, 10), task_date: today(), done: want})
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if (!d.ok) { refused(d.error || 'That didn\u2019t save \u2014 try again.'); return; }
+    if (!el || !el.getAttribute || el.getAttribute('data-photo') === null || !el.files || !el.files[0]) return;
+    var fd = new FormData();
+    fd.append('file', el.files[0]);
+    fd.append('assignment_id', el.getAttribute('data-a'));
+    fd.append('line_id', el.getAttribute('data-l'));
+    tsSay('Uploading your photo…');
+    fetch('/staff/api/tasks/photo', {method: 'POST', body: fd}).then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok) { tsSay(d.error || 'That photo didn’t upload.', true); return; }
+      tsSay('Photo saved.');
       loadTasks();
-    }).catch(function(){ refused('That didn\u2019t save \u2014 check your connection.'); });
+    }).catch(function(){ tsSay('That photo didn’t upload — check your connection.', true); });
   });
 
   // ── Profile ─────────────────────────────────────────────────────────────

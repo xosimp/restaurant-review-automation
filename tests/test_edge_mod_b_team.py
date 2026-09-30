@@ -406,19 +406,21 @@ class _FakeDate(date):
 
 
 def test_the_checklist_with_no_date_uses_the_restaurants_local_date(db_path, rid, staff_app, monkeypatch):
-    """A4 #44 / MOD-EMP-5 — 8pm in Chicago is 01:00 UTC tomorrow. A task the
-    iPhone ticked for tonight must still read as done on the refetch."""
+    """A4 #44 / MOD-EMP-5 — 8pm in Chicago is 01:00 UTC tomorrow. The sheet a
+    tick is filed under is the restaurant's own day, never the server's UTC
+    one (task sheets, 9/30/26: the server picks the business day itself)."""
     import datetime as _dtmod
+    import task_sheets as ts
     uid, _ = _staff(db_path, rid)
     models.add_manual_team_member(rid, "Jordan P.", role="Server", db_path=db_path)
-    t = models.add_task_template(rid, "Server", "Roll silverware", db_path=db_path)
-    models.set_task_completion(rid, t["id"], "2026-09-21", True, completed_by="Jordan P.", db_path=db_path)
+    s = ts.create_sheet(rid, "Server", "any", db_path=db_path)
+    ts.add_line(rid, s["id"], {"label": "Roll silverware"}, db_path=db_path)
     monkeypatch.setattr(_dtmod, "date", _FakeDate)                     # the server's date: 9/22 (UTC)
     _frozen_utc(monkeypatch, time_utils, datetime(2026, 9, 22, 1, 0, tzinfo=timezone.utc))
     client = staff_app.test_client()
     client.set_cookie("staff_session", create_staff_session(uid, rid, db_path=db_path))
     body = client.get("/staff/api/tasks").get_json()
-    assert [x["done"] for x in body["tasks"]] == [True]
+    assert body["task_date"] == "2026-09-21" and [x["label"] for x in body["tasks"]] == ["Roll silverware"]
 
 
 def _swift_staff_portal():
@@ -427,31 +429,28 @@ def _swift_staff_portal():
             / "Staff" / "StaffPortalView.swift").read_text()
 
 
-def test_the_ios_checklist_refetch_names_the_date_it_completed_on():
-    """A4 #44 / MOD-EMP-5 — the iOS half: every GET of /staff/api/tasks
-    carries the same local date the completion was filed under."""
+def test_the_ios_checklist_never_names_a_date_of_its_own():
+    """A4 #44 / MOD-EMP-5, as task sheets settle it (9/30/26): the day a sheet
+    belongs to is the server's business day, so the phone sends none — a
+    device clock or calendar can no longer file a tick under the wrong day."""
     import re
     src = _swift_staff_portal()
     gets = re.findall(r'authed\("(/staff/api/tasks[^"]*)"\)', src)
     assert gets, "no task fetch found"
-    assert all("date=" in g for g in gets), gets
-
-
-def test_the_ios_task_date_formatter_is_pinned_to_a_gregorian_posix_locale():
-    """A4 #44 / MOD-EMP-5 — on a non-Gregorian device calendar the year the
-    server receives is not the Gregorian one, and the 400 is swallowed."""
-    src = _swift_staff_portal()
-    assert "en_US_POSIX" in src
+    assert not any("date=" in g for g in gets), gets
+    assert "func taskDay" not in src
 
 
 def test_a_server_role_spelled_in_lower_case_still_sees_the_server_checklist(db_path, rid, staff_app):
-    """A4 #45 / MOD-EMP-6 — the job says 'server ', the template says 'Server'."""
+    """A4 #45 / MOD-EMP-6 — the job says 'server ', the sheet says 'Server'."""
+    import task_sheets as ts
     uid, _ = _staff(db_path, rid)
     models.add_manual_team_member(rid, "Jordan P.", role="server ", db_path=db_path)
-    models.add_task_template(rid, "Server", "Roll silverware", db_path=db_path)
+    s = ts.create_sheet(rid, "Server", "any", db_path=db_path)
+    ts.add_line(rid, s["id"], {"label": "Roll silverware"}, db_path=db_path)
     client = staff_app.test_client()
     client.set_cookie("staff_session", create_staff_session(uid, rid, db_path=db_path))
-    body = client.get(f"/staff/api/tasks?date={date.today().isoformat()}").get_json()
+    body = client.get("/staff/api/tasks").get_json()
     assert [x["label"] for x in body["tasks"]] == ["Roll silverware"]
 
 

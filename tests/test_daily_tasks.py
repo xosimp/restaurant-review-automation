@@ -241,27 +241,22 @@ def _dashboard_html():
     return open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
 
 
-def test_the_labor_tab_has_a_daily_tasks_panel():
+def test_the_labor_tab_has_the_task_sheets_section_in_place_of_daily_tasks():
+    """The flat Daily Tasks row became Task sheets (task_sheets.py, 9/30/26):
+    the owner reads the day and edits the sheets; nobody ticks on this page."""
     html = _dashboard_html()
-    assert 'id="tasks-panel"' in html
-    assert "Daily Tasks" in html
-    assert "toggleTasksPanel()" in html
-    assert "renderTaskRoleTabs" in html
+    assert 'id="tasks-panel"' not in html and "toggleTasksPanel" not in html
+    sec = html[html.index('<section class="hb-card ts-sec" id="ts-sec" data-nav="labor/tasks"'):]
+    sec = sec[:sec.index("</section>")]
+    for view in ("day", "report", "edit"):
+        assert f'data-ts-view="{view}"' in sec
 
 
-def test_the_panel_talks_to_the_real_endpoints():
+def test_the_section_talks_to_the_task_sheet_endpoints_and_never_ticks():
     html = _dashboard_html()
-    assert "'/api/tasks?role='" in html
-    assert "'/api/tasks/complete'" in html
-    assert "'/api/tasks/templates'" in html
-    assert "'/api/tasks/templates/remove'" in html
-
-
-def test_opening_the_panel_reuses_operational_scores_role_list():
-    """Roles are derived once (_rolesFromTeam, already covers Manager and
-    Shift Supervisor as always-offered) — the task panel piggybacks on the
-    same load instead of fetching its own separate roster."""
-    html = _dashboard_html()
-    i = html.index("function loadTeamPanel()")
-    j = html.index("\n}", i)
-    assert "renderTaskRoleTabs" in html[i:j]
+    js = html[html.index("// ── Task sheets (task_sheets.py, 9/30/26)"):html.index("function renderTeamCoverage(cov) {")]
+    for url in ("'/api/task-sheets/day'", "'/api/task-sheets/report?days='", "'/api/task-sheets'",
+                "'/api/task-sheets/lines/'", "'/order'", "'/starter'"):
+        assert url in js, url
+    assert "/api/tasks/complete" not in js and 'type="checkbox" data-task' not in js
+    assert "if(n==='labor'&&window.tsOpen){tsOpen();}" in html

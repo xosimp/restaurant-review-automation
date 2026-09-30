@@ -9259,9 +9259,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-subsection-title{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .lb2-subsection-chip{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:500;color:var(--ink3);margin-left:4px}
 .lb2-subsection-toggle{font-size:14.5px;font-weight:700}
-/* The schedule block is one ember container. Employee Availability,
-   Operational Score and Daily Tasks are three rows inside it, each a
-   deeper shade than the last, and the whole row is the click target — the
+/* The Team & rules rows (Roster, Operational Score and the rest; the old
+   Daily Tasks row became the Task sheets section, 9/30/26) — the whole row
+   is the click target — the
    button is the label of that click, not the only place it works. No
    dash bars on these titles: the container and the rows carry the brand. */
 /* Density round #28: the schedule container is the plain card surface
@@ -9517,6 +9517,60 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-pairs .kd.prefer{background:var(--green-bg);color:var(--hb-good)}
 .lb2-pairs .kd.avoid{background:var(--red-bg);color:var(--hb-bad)}
 .lb2-form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px}
+/* Task sheets (task_sheets.py, 9/30/26; DESIGN_SYSTEM.md "Task sheets").
+   The owner reads - no tick boxes on this page. */
+.ts-sec{margin-top:22px;--hb-inner:var(--sf-recess);--hb-amber:var(--amber);--hb-good2:var(--green)}   /* the stat tiles' tone tokens (Home defines them; Labor did not) */
+.ts-hd{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.ts-hd h2{margin:6px 0 0;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26px;letter-spacing:-.01em;color:var(--ink)}
+.ts-daynav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.ts-daynav .d{font-size:16.5px;font-weight:600;color:var(--ink);min-width:110px;text-align:center}
+.ts-note{font-size:15px;line-height:1.5;color:var(--ink2);padding:12px 14px;border-radius:10px;background:var(--sf-recess);border:1px solid var(--hb-line2);margin:12px 0}
+.ts-note.warn{border-color:var(--hb-warn)}
+.ts-note b{color:var(--ink)}
+.ts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-top:14px}
+.ts-card{border:1px solid var(--hb-line2);border-radius:14px;background:var(--sf-recess);padding:16px 16px 10px;min-width:0}
+.ts-card .t{font-size:16px;font-weight:700;color:var(--ink);display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.ts-card .t .n{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:var(--ink2);white-space:nowrap}
+.ts-card .m{font-size:13.5px;color:var(--ink3);margin-top:4px;line-height:1.45}
+.ts-bar{height:6px;border-radius:999px;background:var(--hb-line2);overflow:hidden;margin:11px 0 6px}
+.ts-bar i{display:block;height:100%;background:var(--hb-good);border-radius:999px}
+.ts-card.bad .ts-bar i{background:var(--hb-bad)}.ts-card.warn .ts-bar i{background:var(--hb-warn)}
+.ts-line{display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;padding:9px 0;border-top:1px solid var(--hb-line2);font-size:14.5px;line-height:1.4;color:var(--ink)}
+.ts-line .st{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--ink3);margin-top:2px;box-sizing:border-box}
+.ts-line.done .st{background:var(--hb-good);border-color:var(--hb-good)}
+.ts-line.over .st{border-color:var(--hb-bad);background:var(--hb-tint)}
+.ts-line.done .l{color:var(--ink2)}
+.ts-line .by{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.ts-sec-lbl{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:10px 0 2px}
+.ts-tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-left:6px;vertical-align:1px;border:1px solid currentColor}
+.ts-tag.bad{color:var(--hb-bad)}.ts-tag.warn{color:var(--hb-warn)}.ts-tag.crit{color:var(--ember2)}.ts-tag.quiet{color:var(--ink3)}
+.ts-photo{display:inline-block;margin-top:6px}
+.ts-photo img{width:92px;height:69px;object-fit:cover;border-radius:8px;border:1px solid var(--hb-line2);display:block}
+.ts-mgr{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:10px 0 18px}
+.ts-tbl{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:6px}
+.ts-tbl th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:8px 10px 8px 0;border-bottom:1px solid var(--hb-line)}
+.ts-tbl td{padding:10px 10px 10px 0;border-bottom:1px solid var(--hb-line2);color:var(--ink);vertical-align:top}
+.ts-tbl td.n,.ts-tbl th.n{text-align:right;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ts-tbl-wrap{overflow-x:auto}
+.ts-ed{display:grid;grid-template-columns:280px minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:860px){.ts-ed{grid-template-columns:1fr}}
+.ts-list{display:flex;flex-direction:column;gap:6px}
+.ts-list .grp{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin:10px 0 2px}
+.ts-list .it{display:flex;justify-content:space-between;gap:8px;align-items:center;text-align:left;width:100%;height:auto;min-height:0;padding:10px 12px;font-weight:500;border-radius:10px;border:1px solid var(--hb-line2);background:var(--sf-recess);color:var(--ink);font:inherit;font-size:14.5px;cursor:pointer}
+.ts-list .it[aria-current="true"]{border-color:var(--ember);background:var(--hb-tint)}
+.ts-list .it .n{font-family:'Space Grotesk',sans-serif;color:var(--ink3);font-size:13px}
+.ts-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end;margin:6px 0 12px}
+.ts-days{display:flex;gap:6px;flex-wrap:wrap}
+.ts-days .cbtn[aria-pressed="true"]{border-color:var(--ember);color:var(--ember);background:var(--hb-tint)}
+.ts-eline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--hb-line2)}
+.ts-eline .l{font-size:15px;color:var(--ink)}
+.ts-eline .x{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.ts-eline .a{display:flex;gap:4px;align-items:center}
+.ts-edit{padding:12px 14px;border-radius:12px;border:1px solid var(--hb-line);background:var(--sf-recess);margin:8px 0}
+.ts-check{display:flex;gap:8px;align-items:center;font-size:14.5px;color:var(--ink2)}
+.ts-check input{width:18px;height:18px;accent-color:var(--ember)}
+.ts-sugg{border:1px dashed var(--hb-line);border-radius:12px;padding:6px 14px;margin:12px 0}
+.ts-empty{font-size:15px;color:var(--ink3);line-height:1.55;padding:6px 0}
 .lb2-form .ac-field{min-width:120px}
 .lb2-form .ac-field.w{min-width:200px;flex:1}
 .lb2-form .ac-field.n{min-width:88px;max-width:110px}
@@ -10430,13 +10484,29 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {# Team & rules and History sat inside the old schedule card; they keep a
      wrapper of their own at the column width, closed where that card was. #}
   <div class="lb2-sched-rest">
+  {# Task sheets (task_sheets.py, 9/30/26): opening and closing sheets by
+     job code, owed by whoever the published schedule puts on that shift.
+     The owner READS the day - every sheet, every line, who ticked it and
+     when - and edits the sheets; staff tick them in the staff portal. #}
+  <section class="hb-card ts-sec" id="ts-sec" data-nav="labor/tasks" aria-labelledby="ts-h">
+    <div class="ts-hd">
+      <div><div class="hb-kicker">Opening &amp; closing</div><h2 id="ts-h">Task sheets</h2></div>
+      <div class="dr-views" role="group" aria-label="Task sheets view">
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="day" aria-pressed="true">The day</button>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="report" aria-pressed="false">Consistency</button>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-view="edit" aria-pressed="false">Edit sheets</button>
+      </div>
+    </div>
+    <div id="ts-body" aria-live="polite"><div class="dr-pulse wide" role="status" aria-label="Loading task sheets"><i></i></div></div>
+  </section>
+
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
   <details class="hb-results lb2-team" id="lb2-team">
-    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says, daily tasks</span></summary>
+    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
        nights per day, under 18. Each change is one POST and one toast. -->
@@ -10694,40 +10764,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     </div>
   </div>
 
-  <!-- Daily Tasks — a role-scoped morning checklist. Erik's own words:
-       "each role can view their Task sheet every morning." Reuses the same
-       role vocabulary the Operational Score panel already established. -->
-  <div class="lb2-srow s3">
-    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleTasksPanel)">
-      <div class="lb2-subsection-title">Daily Tasks</div>
-      <button onclick="toggleTasksPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="tasks-toggle-btn">Open ↓</button>
-    </div>
-    <div id="tasks-panel" style="display:none">
-      <div class="lb2-avail">
-        <div class="lb2-intro">Pick a role for today's checklist; it resets each morning.</div>
-        <div id="tasks-role-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
-        <div id="tasks-list" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Pick a role above to get started.</div>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
-          <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Add a task</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-            <div>
-              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role</div>
-              <select id="task-add-role" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></select>
-            </div>
-            <div>
-              <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Task</div>
-              <input id="task-add-label" type="text" placeholder="e.g. Wipe down the bar" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit;width:220px">
-            </div>
-            <button type="button" onclick="addTaskTemplate()" class="cbtn cbtn-soft cbtn-sm">+ Add task</button>
-          </div>
-          <div id="task-add-error" style="font-size:12.5px;color:var(--red);margin-top:6px"></div>
-        </div>
-      </div>
-    </div>
-  </div>
 
   </details>
 
@@ -16853,6 +16889,7 @@ function switchTab(n,btn){
   if(n==='home'&&typeof hbRefresh==='function'){hbRefresh();}
   if(n==='reviews'){var _rvA=document.getElementById('rv-panel-analytics');if(!_rvA||_rvA.open)_rvLoadAnalytics();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
+  if(n==='labor'&&window.tsOpen){tsOpen();}
   if(n==='inventory'){switchFcTab('analytics');}
   if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();if(typeof in2LoadMoves==='function'&&cavStale('intel-moves'))in2LoadMoves();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
@@ -21717,7 +21754,6 @@ function loadTeamPanel() {
     renderTeamCoverage(d.coverage);
     loadUnmatchedRatings();
     loadShiftProfiles();
-    if (typeof renderTaskRoleTabs === 'function') renderTaskRoleTabs();
   }).catch(function(){
     list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load your team.</div>';
   });
@@ -21741,156 +21777,463 @@ function _rolesFromTeam(rows) {
   return out;
 }
 
-// ── Daily Tasks ──────────────────────────────────────────────────────────
-var _tasksOpen = false;
-var _tasksRole = null;
-var _tasksItems = [];
+// ── Task sheets (task_sheets.py, 9/30/26) ───────────────────────────────────
+// The owner's three views: the day (every sheet, every line, who ticked it
+// and when - read-only, owners do not tick), the consistency report, and the
+// editor. Staff tick in the staff portal.
+var _ts = {view: 'day', day: null, loaded: false, sheets: null, codes: [], kinds: [], canEdit: false,
+           sel: null, editLine: null, reportDays: 14, sugg: null, note: ''};
+var TS_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+var TS_PROOF = {none: 'No proof', photo: 'A photo', number: 'A number', note: 'A note'};
 
-function toggleTasksPanel() {
-  _tasksOpen = !_tasksOpen;
-  var p = document.getElementById('tasks-panel');
-  var btn = document.getElementById('tasks-toggle-btn');
-  if (p) p.style.display = _tasksOpen ? '' : 'none';
-  if (btn) btn.textContent = _tasksOpen ? 'Close ↑' : 'Open ↓';
-  if (_tasksOpen) {
-    if (_teamRoles.length) renderTaskRoleTabs();
-    else loadTeamPanel();
-  }
+window.tsOpen = function () {
+  if (_ts.loaded) return;
+  _ts.loaded = true;
+  tsShow(_ts.view);
+};
+
+function tsBody() { return document.getElementById('ts-body'); }
+function tsE(s) { return _escHtml(s == null ? '' : String(s)); }
+function tsA(s) { return _escAttr(s == null ? '' : String(s)); }
+function tsPost(url, body) {
+  return fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                     body: JSON.stringify(body || {})}).then(apiJson);
+}
+function tsClock(iso) {
+  if (!iso || iso.length < 16) return '';
+  var h = parseInt(iso.slice(11, 13), 10), m = iso.slice(14, 16), ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return h + (m === '00' ? '' : ':' + m) + ap;
+}
+function tsIsoShift(iso, days) {
+  var d = new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + days);
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function tsFail(d) {
+  var b = tsBody();
+  if (b) b.innerHTML = '<div class="ts-note warn">' + tsE((d && d.error) || 'Task sheets couldn’t be read just now. Try again in a moment.') + '</div>';
+}
+function tsLoading() {
+  var b = tsBody();
+  if (b) b.innerHTML = '<div class="dr-pulse wide" role="status" aria-label="Loading task sheets"><i></i></div>';
+}
+function tsShow(v) {
+  _ts.view = v;
+  var btns = document.querySelectorAll('#ts-sec [data-ts-view]');
+  for (var i = 0; i < btns.length; i++) btns[i].setAttribute('aria-pressed', btns[i].getAttribute('data-ts-view') === v ? 'true' : 'false');
+  if (v === 'report') tsLoadReport();
+  else if (v === 'edit') tsLoadSheets();
+  else tsLoadDay();
 }
 
-function renderTaskRoleTabs() {
-  var wrap = document.getElementById('tasks-role-tabs');
-  var sel = document.getElementById('task-add-role');
-  if (!wrap) return;
-  if (!_teamRoles.length) {
-    wrap.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No roles yet — add an employee or a shift first.</div>';
+// ── the day ──────────────────────────────────────────────────────────────
+function tsLoadDay() {
+  tsLoading();
+  fetch('/api/task-sheets/day' + (_ts.day ? '?date=' + encodeURIComponent(_ts.day) : ''), {credentials: 'same-origin'})
+    .then(apiJson).then(function (d) {
+      if (!d || !d.ok) { tsFail(d); return; }
+      _ts.day = d.date;
+      tsRenderDay(d);
+    }).catch(function () { tsFail(null); });
+}
+
+function tsStat(label, value, sub, tone) {
+  return '<div class="hb-stat' + (tone ? ' ' + tone : '') + '"><div class="k">' + tsE(label) + '</div><div class="v">' + value + '</div>'
+    + (sub ? '<div class="s">' + tsE(sub) + '</div>' : '') + '</div>';
+}
+
+function tsRenderDay(d) {
+  var sm = d.summary || {}, h = '';
+  h += '<div class="ts-daynav">'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="day-prev" aria-label="The day before">&lsaquo;</button>'
+    + '<span class="d">' + (d.is_today ? 'Today · ' : '') + '<span class="hb-num">' + tsE(d.date_label) + '</span></span>'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="day-next" aria-label="The day after"' + (d.is_today ? ' disabled' : '') + '>&rsaquo;</button>'
+    + (d.is_today ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ts-act="day-today">Back to today</button>')
+    + '</div>';
+  if (!d.has_sheets) {
+    h += '<div class="ts-empty">No task sheets yet. Write one for each job code and shift \u2014 an opening bartender sheet, a closing manager sheet \u2014 and each person sees theirs when they sign in to the staff portal.</div>'
+      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-ts-act="goto-edit">Write the first sheet</button>';
+    tsBody().innerHTML = h;
     return;
   }
-  if (!_tasksRole || _teamRoles.indexOf(_tasksRole) === -1) _tasksRole = _teamRoles[0];
-  var html = '';
-  for (var i = 0; i < _teamRoles.length; i++) {
-    var r = _teamRoles[i];
-    var on = r === _tasksRole;
-    html += '<button type="button" data-task-role="' + _escAttr(r) + '" class="cbtn ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm">' + _escHtml(r) + '</button>';
-  }
-  wrap.innerHTML = html;
-  if (sel) sel.innerHTML = _teamRoles.map(function(r) { return '<option value="' + _escAttr(r) + '">' + _escHtml(r) + '</option>'; }).join('');
-  loadTasksForRole(_tasksRole);
-}
-
-document.addEventListener('click', function(ev) {
-  var btn = ev.target.closest ? ev.target.closest('[data-task-role]') : null;
-  if (!btn) return;
-  _tasksRole = btn.getAttribute('data-task-role');
-  renderTaskRoleTabs();
-});
-
-function loadTasksForRole(role) {
-  var list = document.getElementById('tasks-list');
-  if (!list || !role) return;
-  list.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading tasks"><i></i></div>';
-  var today = _tasksToday();
-  fetch('/api/tasks?role=' + encodeURIComponent(role) + '&date=' + today).then(apiJson).then(function(d) {
-    if (!d.ok) { list.innerHTML = '<div style="font-size:13.5px;color:var(--red)">Could not load tasks.</div>'; return; }
-    _tasksItems = d.tasks || [];
-    renderTasksList();
-  }).catch(function() { list.innerHTML = '<div style="font-size:13.5px;color:var(--red)">Could not load tasks.</div>'; });
-}
-
-function _tasksToday() {
-  var d = new Date();
-  var m = ('0' + (d.getMonth() + 1)).slice(-2);
-  var day = ('0' + d.getDate()).slice(-2);
-  return d.getFullYear() + '-' + m + '-' + day;
-}
-
-function renderTasksList() {
-  var list = document.getElementById('tasks-list');
-  if (!list) return;
-  if (!_tasksItems.length) {
-    list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No tasks for ' + _escHtml(_tasksRole) + ' yet — add one below.</div>';
+  if (!d.sheets.length) {
+    h += '<div class="ts-empty">No sheets went out ' + (d.is_today ? 'today' : 'this day') + ' \u2014 nobody on the published schedule worked a job code that has a sheet.</div>';
+    tsBody().innerHTML = h;
     return;
   }
-  var doneCount = 0;
-  for (var k = 0; k < _tasksItems.length; k++) if (_tasksItems[k].done) doneCount++;
-  var html = '<div style="font-size:12.5px;color:var(--ink3);margin-bottom:2px">' + doneCount + ' of ' + _tasksItems.length + ' done</div>';
-  for (var i = 0; i < _tasksItems.length; i++) {
-    var t = _tasksItems[i];
-    html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px">'
-         + '<label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;user-select:none">'
-         + '<input type="checkbox" data-task-id="' + t.id + '"' + (t.done ? ' checked' : '') + ' style="width:16px;height:16px;flex-shrink:0">'
-         + '<span style="font-size:15px;color:var(--ink);' + (t.done ? 'text-decoration:line-through;color:var(--ink3)' : '') + '">' + _escHtml(t.label) + '</span>'
-         + '</label>'
-         + (t.done && t.completed_by ? '<span style="font-size:11.5px;color:var(--ink3);white-space:nowrap">' + _escHtml(t.completed_by) + '</span>' : '')
-         + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" data-task-remove="' + t.id + '" title="Remove" aria-label="Remove">✕</button>'
-         + '</div>';
+  h += '<div class="hb-stats">'
+    + tsStat('Sheets finished', '<span class="hb-num">' + sm.complete + '</span><small>of ' + sm.sheets + '</small>', '', sm.complete === sm.sheets ? 'good' : '')
+    + tsStat('Lines done', '<span class="hb-num">' + sm.done + '</span><small>of ' + sm.lines + '</small>', '', '')
+    + (d.is_today ? tsStat('Overdue now', '<span class="hb-num">' + sm.overdue + '</span>', sm.critical_open ? sm.critical_open + ' critical still open' : '', sm.overdue ? 'bad' : 'good') : '')
+    + tsStat('Late ticks', '<span class="hb-num">' + sm.late + '</span>', 'ticked after their due time', sm.late ? 'warn' : '')
+    + tsStat('Out of range', '<span class="hb-num">' + sm.flagged + '</span>', 'a reading outside its limits', sm.flagged ? 'bad' : '')
+    + '</div>';
+  if (d.schedule_published === false) {
+    h += '<div class="ts-note warn"><b>No schedule was published for this day</b>, so every sheet went out unassigned \u2014 anyone who signed in on that job code could tick it, and nobody owned it. Publishing the week names the opener and the closer.</div>';
+  } else if (sm.unassigned) {
+    h += '<div class="ts-note warn">' + sm.unassigned + ' sheet' + (sm.unassigned === 1 ? '' : 's') + ' went out unassigned \u2014 no published schedule covered them.</div>';
   }
-  list.innerHTML = html;
+  var signed = {}, i;
+  for (i = 0; i < (d.signoffs || []).length; i++) {
+    var so = d.signoffs[i];
+    signed[so.shift_kind] = 1;
+    h += '<div class="ts-note"><b>' + tsE(tsKindLabel(so.shift_kind)) + ' signed off</b> by ' + tsE(so.signed_by || 'a manager')
+      + ' at <span class="hb-num">' + tsE(tsClock(String(so.signed_at || '').replace(' ', 'T'))) + '</span> UTC'
+      + (so.note ? ' \u2014 &ldquo;' + tsE(so.note) + '&rdquo;' : '') + '</div>';
+  }
+  for (i = 0; i < (d.signoff_needed || []).length; i++) {
+    if (!signed[d.signoff_needed[i]]) h += '<div class="ts-note warn">The ' + tsE(tsKindLabel(d.signoff_needed[i]).toLowerCase()) + ' shift isn’t signed off yet.</div>';
+  }
+  h += '<div class="ts-grid">';
+  for (i = 0; i < d.sheets.length; i++) h += tsCard(d.sheets[i], d.is_today);
+  h += '</div>';
+  tsBody().innerHTML = h;
 }
 
-document.addEventListener('change', function(ev) {
-  var el = ev.target;
-  if (!el || !el.getAttribute) return;
-  var id = el.getAttribute('data-task-id');
-  if (id === null) return;
-  setTaskDone(parseInt(id, 10), el.checked);
+function tsKindLabel(k) {
+  return {opening: 'Opening', closing: 'Closing', mid: 'Mid', any: 'All day'}[k] || k;
+}
+
+function tsCard(a, isToday) {
+  var tone = '';
+  if (a.status === 'missed' || a.status === 'partial' || a.overdue) tone = 'bad';
+  else if (a.status === 'open' && a.done < a.total && isToday) tone = '';
+  var who = a.unassigned ? 'Unassigned \u2014 no schedule published' : (a.assignees.length ? a.assignees.join(', ') : 'No one scheduled');
+  var when = a.shift_start ? tsClock(a.shift_start) + '–' + tsClock(a.shift_end) : '';
+  var state = a.status === 'done' ? 'Finished' : (a.status === 'open' ? (a.done === a.total ? 'All done' : 'In progress') : 'Left unfinished');
+  var h = '<div class="ts-card ' + tone + '"><div class="t"><span>' + tsE(a.title) + '</span><span class="n">' + a.done + '/' + a.total + '</span></div>'
+    + '<div class="m">' + (when ? '<span class="hb-num">' + tsE(when) + '</span> · ' : '') + tsE(who) + ' · ' + tsE(state) + '</div>'
+    + '<div class="ts-bar"><i style="width:' + (a.total ? Math.round(100 * a.done / a.total) : 0) + '%"></i></div>';
+  var lastSec = null;
+  for (var j = 0; j < a.lines.length; j++) {
+    var l = a.lines[j];
+    if ((l.section || '') !== (lastSec || '') && l.section) h += '<div class="ts-sec-lbl">' + tsE(l.section) + '</div>';
+    lastSec = l.section || '';
+    var tags = (l.critical ? '<span class="ts-tag crit">Critical</span>' : '')
+      + (l.overdue ? '<span class="ts-tag bad">Overdue</span>' : '')
+      + (l.late ? '<span class="ts-tag warn">Late</span>' : '')
+      + (l.flagged ? '<span class="ts-tag bad">Out of range</span>' : '');
+    var by = '';
+    if (l.done) {
+      by = tsE(l.completed_by || 'Someone') + ' · <span class="hb-num">' + tsE(tsClock(l.completed_at)) + '</span>';
+      if (l.proof_value) by += ' · ' + tsE(l.proof_label ? l.proof_label + ': ' : '') + '<span class="hb-num">' + tsE(l.proof_value) + '</span>';
+    } else if (l.due_at) {
+      by = 'Due <span class="hb-num">' + tsE(tsClock(l.due_at)) + '</span>';
+    }
+    h += '<div class="ts-line' + (l.done ? ' done' : (l.overdue ? ' over' : '')) + '"><span class="st" aria-hidden="true"></span><div><div class="l">'
+      + tsE(l.label) + tags + '<span class="sr-only">' + (l.done ? ' \u2014 done' : ' \u2014 not done') + '</span></div>'
+      + (by ? '<div class="by">' + by + '</div>' : '')
+      + (l.photo ? '<a class="ts-photo" href="/api/task-sheets/photo/' + tsA(l.photo) + '" target="_blank" rel="noopener"><img src="/api/task-sheets/photo/' + tsA(l.photo) + '" alt="Proof photo for ' + tsA(l.label) + '"></a>' : '')
+      + '</div></div>';
+  }
+  return h + '</div>';
+}
+
+// ── the consistency report ────────────────────────────────────────────────
+function tsLoadReport() {
+  tsLoading();
+  fetch('/api/task-sheets/report?days=' + _ts.reportDays, {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { tsFail(d); return; }
+    tsRenderReport(d);
+  }).catch(function () { tsFail(null); });
+}
+
+function tsPct(p, enough, sheets, min) {
+  if (!enough) return '<span class="ink3" title="Rates after ' + min + ' sheets">—</span>';
+  return p == null ? '—' : '<span class="hb-num">' + p + '%</span>';
+}
+
+function tsRenderReport(d) {
+  var h = '<div class="ts-daynav"><div class="dr-views" role="group" aria-label="How far back">', opts = [7, 14, 28, 90], i;
+  for (i = 0; i < opts.length; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="rep-days" data-days="' + opts[i] + '" aria-pressed="' + (opts[i] === _ts.reportDays ? 'true' : 'false') + '">' + opts[i] + ' days</button>';
+  h += '</div><span class="ink3" style="font-size:14px"><span class="hb-num">' + tsE(d.window_label) + '</span> · sheets whose shift has closed</span></div>';
+  if (!d.sheets) {
+    tsBody().innerHTML = h + '<div class="ts-empty">Nothing to compare yet. The report reads each sheet once its shift has closed; the first ones land after tonight.</div>';
+    return;
+  }
+  if (d.managers && d.managers.length) {
+    h += '<div class="hb-kicker" style="margin-top:6px">Your managers, side by side</div><div class="ts-mgr">';
+    for (i = 0; i < d.managers.length; i++) {
+      var m = d.managers[i];
+      h += '<div class="hb-stat' + (m.enough && m.completion_pct != null ? (m.completion_pct >= 90 ? ' good' : (m.completion_pct < 70 ? ' bad' : ' warn')) : '') + '">'
+        + '<div class="k">' + tsE(m.name) + '</div><div class="v">' + (m.enough ? '<span class="hb-num">' + (m.completion_pct == null ? '—' : m.completion_pct + '%') + '</span><small>done</small>' : '<span class="hb-num">' + m.sheets + '</span><small>sheet' + (m.sheets === 1 ? '' : 's') + '</small>') + '</div>'
+        + '<div class="s">' + (m.enough ? (m.on_time_pct == null ? 'no timed lines' : '<span class="hb-num">' + m.on_time_pct + '%</span> on time') + ' · ' : 'rates after ' + d.min_sheets + ' sheets · ')
+        + '<span class="hb-num">' + m.critical_missed + '</span> critical missed · <span class="hb-num">' + m.sheets + '</span> sheets</div></div>';
+    }
+    h += '</div>';
+  }
+  if (d.signoffs_expected) {
+    h += '<div class="ts-note' + (d.signoffs_missed ? ' warn' : '') + '"><span class="hb-num">' + d.signoffs_missed + '</span> of <span class="hb-num">' + d.signoffs_expected + '</span> shifts that need a sign-off went unsigned.</div>';
+  }
+  h += '<div class="hb-kicker" style="margin-top:14px">By person</div><div class="ts-tbl-wrap"><table class="ts-tbl"><thead><tr><th>Person</th><th>Job codes</th><th class="n">Sheets</th><th class="n">Lines done</th><th class="n">Completion</th><th class="n">On time</th><th class="n">Critical missed</th></tr></thead><tbody>';
+  for (i = 0; i < d.by_person.length; i++) {
+    var p = d.by_person[i];
+    h += '<tr><td>' + tsE(p.name) + '</td><td class="ink3">' + tsE(p.job_code || '') + '</td><td class="n">' + p.sheets + '</td><td class="n">' + p.done + ' / ' + p.lines + '</td><td class="n">'
+      + tsPct(p.completion_pct, p.enough, p.sheets, d.min_sheets) + '</td><td class="n">' + tsPct(p.on_time_pct, p.enough, p.sheets, d.min_sheets) + '</td><td class="n">' + p.critical_missed + '</td></tr>';
+  }
+  h += '</tbody></table></div><div class="hb-kicker" style="margin-top:18px">By job code</div><div class="ts-tbl-wrap"><table class="ts-tbl"><thead><tr><th>Job code</th><th class="n">Sheets</th><th class="n">Finished</th><th class="n">Completion</th><th class="n">On time</th><th class="n">Critical missed</th></tr></thead><tbody>';
+  for (i = 0; i < d.by_job_code.length; i++) {
+    var c = d.by_job_code[i];
+    h += '<tr><td>' + tsE(c.name) + '</td><td class="n">' + c.sheets + '</td><td class="n">' + c.complete_sheets + '</td><td class="n">' + tsPct(c.completion_pct, c.enough, c.sheets, d.min_sheets)
+      + '</td><td class="n">' + tsPct(c.on_time_pct, c.enough, c.sheets, d.min_sheets) + '</td><td class="n">' + c.critical_missed + '</td></tr>';
+  }
+  h += '</tbody></table></div><div class="ink3" style="font-size:13px;margin-top:10px">Rates show once a person or job code has ' + d.min_sheets + ' closed sheets; below that, the counts. Counted from the ticks themselves \u2014 never a judgement.</div>';
+  tsBody().innerHTML = h;
+}
+
+// ── the editor ───────────────────────────────────────────────────────────
+function tsLoadSheets(keepSel) {
+  if (!keepSel) tsLoading();
+  fetch('/api/task-sheets', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { tsFail(d); return; }
+    _ts.sheets = d.sheets || [];
+    _ts.codes = d.job_codes || [];
+    _ts.kinds = d.shift_kinds || [];
+    _ts.canEdit = !!d.can_edit;
+    if (_ts.sel !== 'new' && !tsFind(_ts.sel)) _ts.sel = _ts.sheets.length ? _ts.sheets[0].id : 'new';
+    tsRenderEdit();
+  }).catch(function () { tsFail(null); });
+}
+
+function tsFind(id) {
+  for (var i = 0; i < (_ts.sheets || []).length; i++) if (_ts.sheets[i].id === id) return _ts.sheets[i];
+  return null;
+}
+
+function tsKindOptions(sel) {
+  var h = '';
+  for (var i = 0; i < _ts.kinds.length; i++) h += '<option value="' + tsA(_ts.kinds[i].key) + '"' + (_ts.kinds[i].key === sel ? ' selected' : '') + '>' + tsE(_ts.kinds[i].label) + '</option>';
+  return h;
+}
+
+function tsCodeList() {
+  var h = '<datalist id="ts-codes">';
+  for (var i = 0; i < _ts.codes.length; i++) h += '<option value="' + tsA(_ts.codes[i]) + '">';
+  return h + '</datalist>';
+}
+
+function tsRenderEdit() {
+  var h = tsCodeList() + '<div class="ts-ed"><div class="ts-list">';
+  if (_ts.canEdit) h += '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-ts-act="sel" data-id="new">+ New sheet</button>';
+  var last = null, i;
+  for (i = 0; i < _ts.sheets.length; i++) {
+    var s = _ts.sheets[i];
+    if (s.job_code !== last) { h += '<div class="grp">' + tsE(s.job_code) + '</div>'; last = s.job_code; }
+    h += '<button type="button" class="cbtn cbtn-secondary it" data-ts-act="sel" data-id="' + s.id + '" aria-current="' + (s.id === _ts.sel ? 'true' : 'false') + '"><span>'
+      + tsE(s.shift_label) + (s.days_of_week.length ? ' · ' + tsE(s.days_label) : '') + '</span><span class="n">' + s.lines.length + ' line' + (s.lines.length === 1 ? '' : 's') + '</span></button>';
+  }
+  if (!_ts.sheets.length) h += '<div class="ts-empty">No sheets yet.</div>';
+  h += '</div><div>';
+  if (_ts.sel === 'new') h += tsNewForm();
+  else {
+    var sh = tsFind(_ts.sel);
+    h += sh ? tsSheetEditor(sh) : '';
+  }
+  h += '</div></div>';
+  tsBody().innerHTML = h;
+}
+
+function tsNewForm() {
+  if (!_ts.canEdit) return '<div class="ts-empty">Only a login that manages the team writes sheets.</div>';
+  return '<div class="hb-kicker">New sheet</div><h3 style="margin:6px 0 4px;font-size:19px;color:var(--ink)">Which job code, which shift?</h3>'
+    + '<div class="ink3" style="font-size:14.5px;line-height:1.5;max-width:62ch">The opening sheet goes to whoever the published schedule has starting first on that job code; the closing sheet to whoever finishes last; all day to everyone on it. Spell the job code the way your schedule does.</div>'
+    + '<div class="ts-form"><div class="ac-field"><label for="ts-new-code">Job code</label><input class="ac-input" id="ts-new-code" list="ts-codes" placeholder="Bartender"></div>'
+    + '<div class="ac-field"><label for="ts-new-kind">Shift</label><select class="ac-select" id="ts-new-kind">' + tsKindOptions('opening') + '</select></div>'
+    + '<div><button type="button" class="cbtn cbtn-primary" data-ts-act="create">Create sheet</button></div></div>'
+    + '<div class="ts-note" id="ts-msg" hidden></div>';
+}
+
+function tsDueLabel(kind) {
+  return kind === 'closing' ? 'Due, minutes before the shift ends' : 'Due, minutes after the shift starts';
+}
+
+function tsLineForm(p, l, kind) {
+  l = l || {};
+  var proof = l.proof || 'none', h = '<div class="ts-form">'
+    + '<div class="ac-field" style="grid-column:1/-1"><label for="' + p + 'label">What needs doing</label><input class="ac-input" id="' + p + 'label" value="' + tsA(l.label) + '" maxlength="240" placeholder="Log the walk-in temperature"></div>'
+    + '<div class="ac-field"><label for="' + p + 'section">Section <small class="ink3">optional</small></label><input class="ac-input" id="' + p + 'section" value="' + tsA(l.section) + '" placeholder="Bar"></div>'
+    + '<div class="ac-field"><label for="' + p + 'due">' + tsE(tsDueLabel(kind)) + '</label><input class="ac-input" id="' + p + 'due" type="number" min="0" max="1080" inputmode="numeric" value="' + (l.due_offset_min == null ? '' : l.due_offset_min) + '" placeholder="Any time"></div>'
+    + '<div class="ac-field"><label for="' + p + 'proof">Proof</label><select class="ac-select" id="' + p + 'proof">';
+  for (var k in TS_PROOF) if (TS_PROOF.hasOwnProperty(k)) h += '<option value="' + k + '"' + (k === proof ? ' selected' : '') + '>' + TS_PROOF[k] + '</option>';
+  h += '</select></div>'
+    + '<div class="ac-field"><label for="' + p + 'plabel">What to record <small class="ink3">for a number or note</small></label><input class="ac-input" id="' + p + 'plabel" value="' + tsA(l.proof_label) + '" placeholder="Walk-in °F"></div>'
+    + '<div class="ac-field"><label for="' + p + 'min">Lowest allowed</label><input class="ac-input" id="' + p + 'min" type="number" step="any" value="' + (l.min_value == null ? '' : l.min_value) + '"></div>'
+    + '<div class="ac-field"><label for="' + p + 'max">Highest allowed</label><input class="ac-input" id="' + p + 'max" type="number" step="any" value="' + (l.max_value == null ? '' : l.max_value) + '"></div>'
+    + '<label class="ts-check"><input type="checkbox" id="' + p + 'crit"' + (l.critical ? ' checked' : '') + '> Critical \u2014 text the manager if it’s not done by its due time</label>'
+    + '</div>';
+  return h;
+}
+
+function tsLineValues(p) {
+  function v(id) { var el = document.getElementById(p + id); return el ? el.value : ''; }
+  var crit = document.getElementById(p + 'crit');
+  return {label: v('label'), section: v('section'), due_offset_min: v('due'), proof: v('proof'), proof_label: v('plabel'),
+          min_value: v('min'), max_value: v('max'), critical: !!(crit && crit.checked)};
+}
+
+function tsLineMeta(l, kind) {
+  var bits = [];
+  if (l.section) bits.push(tsE(l.section));
+  if (l.due_offset_min != null) bits.push('due ' + l.due_offset_min + ' min ' + (kind === 'closing' ? 'before close of shift' : 'into the shift'));
+  if (l.proof && l.proof !== 'none') bits.push(tsE(TS_PROOF[l.proof]) + (l.proof_label ? ': ' + tsE(l.proof_label) : '')
+    + (l.min_value != null || l.max_value != null ? ' (' + (l.min_value == null ? '…' : l.min_value) + '–' + (l.max_value == null ? '…' : l.max_value) + ')' : ''));
+  return bits.join(' · ');
+}
+
+function tsSheetEditor(s) {
+  var ro = !_ts.canEdit, i;
+  var h = '<div class="hb-kicker">' + tsE(s.job_code) + '</div><h3 style="margin:6px 0 4px;font-size:21px;color:var(--ink)">' + tsE(s.shift_label) + ' sheet</h3>'
+    + '<div class="ink3" style="font-size:13.5px">' + s.lines.length + ' line' + (s.lines.length === 1 ? '' : 's') + ' · ' + tsE(s.days_label)
+    + (s.updated_by ? ' · last edited by ' + tsE(s.updated_by) + ' <span class="hb-num">' + tsE(window.mdyAt ? mdyAt(s.updated_at) : '') + '</span>' : '') + '</div>';
+  if (s.carried_over && s.shift_kind === 'any') {
+    h += '<div class="ts-note warn">Carried over from your old checklist as an <b>All day</b> sheet, so it goes to everyone on ' + tsE(s.job_code)
+      + '. Set it to Opening or Closing and it goes to just the opener or the closer.</div>';
+  }
+  if (ro) h += '<div class="ts-note">Only a login that manages the team edits sheets.</div>';
+  else {
+    h += '<div class="ts-form" style="margin-top:14px"><div class="ac-field"><label for="ts-s-code">Job code</label><input class="ac-input" id="ts-s-code" list="ts-codes" value="' + tsA(s.job_code) + '"></div>'
+      + '<div class="ac-field"><label for="ts-s-kind">Shift</label><select class="ac-select" id="ts-s-kind">' + tsKindOptions(s.shift_kind) + '</select></div>'
+      + '<div class="ac-field" style="grid-column:1/-1"><span class="ac-lbl">Days <small class="ink3">none picked = every day</small></span><div class="ts-days" id="ts-s-days">';
+    for (i = 0; i < 7; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="day-toggle" data-day="' + i + '" aria-pressed="' + (s.days_of_week.indexOf(i) >= 0 ? 'true' : 'false') + '">' + TS_DAYS[i] + '</button>';
+    h += '</div></div><label class="ts-check" style="grid-column:1/-1"><input type="checkbox" id="ts-s-sign"' + (s.requires_signoff ? ' checked' : '') + '> The manager on duty signs this shift off</label>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="save-sheet">Save settings</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-danger cbtn-sm" data-ts-act="remove-sheet">Remove sheet</button></div></div>';
+  }
+  h += '<div class="ts-note" id="ts-msg"' + (_ts.note ? '' : ' hidden') + '>' + tsE(_ts.note) + '</div>';
+  _ts.note = '';
+  h += '<div class="hb-kicker" style="margin-top:16px">Lines, in the order the work is done</div>';
+  if (!s.lines.length) h += '<div class="ts-empty">No lines yet \u2014 add the first below, or have Cavnar AI draft some.</div>';
+  for (i = 0; i < s.lines.length; i++) {
+    var l = s.lines[i];
+    if (_ts.editLine === l.id && !ro) {
+      h += '<div class="ts-edit">' + tsLineForm('tse-', l, s.shift_kind)
+        + '<div style="display:flex;gap:8px"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ts-act="save-line" data-id="' + l.id + '">Save line</button>'
+        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="cancel-edit">Cancel</button></div></div>';
+      continue;
+    }
+    h += '<div class="ts-eline"><div><div class="l">' + tsE(l.label) + (l.critical ? '<span class="ts-tag crit">Critical</span>' : '') + '</div>'
+      + '<div class="x">' + (tsLineMeta(l, s.shift_kind) || 'Any time in the shift · no proof') + '</div></div>';
+    if (!ro) {
+      h += '<div class="a"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm" data-ts-act="up" data-id="' + l.id + '" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>&uarr;</button>'
+        + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm" data-ts-act="down" data-id="' + l.id + '" aria-label="Move down"' + (i === s.lines.length - 1 ? ' disabled' : '') + '>&darr;</button>'
+        + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ts-act="edit" data-id="' + l.id + '">Edit</button>'
+        + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" data-ts-act="remove-line" data-id="' + l.id + '" aria-label="Remove ' + tsA(l.label) + '">&times;</button></div>';
+    }
+    h += '</div>';
+  }
+  if (!ro) {
+    h += '<div class="ts-edit"><div class="hb-kicker">Add a line</div>' + tsLineForm('tsa-', null, s.shift_kind)
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-ts-act="add-line">Add line</button>'
+      + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ts-act="draft">Draft lines with Cavnar AI</button></div></div>';
+    if (_ts.sugg && _ts.sugg.sheet === s.id) {
+      h += '<div class="ts-sugg"><div class="hb-kicker" style="margin-top:8px">Cavnar AI’s draft \u2014 add the ones you want</div>';
+      if (!_ts.sugg.lines.length) h += '<div class="ts-empty">Nothing new to suggest for this sheet.</div>';
+      for (i = 0; i < _ts.sugg.lines.length; i++) {
+        var g = _ts.sugg.lines[i];
+        h += '<div class="ts-eline"><div><div class="l">' + tsE(g.label) + (g.critical ? '<span class="ts-tag crit">Critical</span>' : '') + '</div><div class="x">'
+          + (tsLineMeta(g, s.shift_kind) || 'Any time in the shift') + '</div></div><div class="a"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-ts-act="add-sugg" data-i="' + i + '">Add</button></div></div>';
+      }
+      h += '</div>';
+    }
+  }
+  return h;
+}
+
+function tsMsg(text) {
+  var el = document.getElementById('ts-msg');
+  if (!el) return;
+  el.textContent = text;
+  el.hidden = !text;
+}
+
+function tsSimilarNote(d) {
+  if (d && d.similar && d.similar.length) {
+    var names = [];
+    for (var i = 0; i < d.similar.length; i++) names.push('“' + d.similar[i].label + '”');
+    return 'Nearly the same as ' + names.join(', ') + ' on this sheet \u2014 worth keeping only one.';
+  }
+  return '';
+}
+
+function tsAfter(btn, promise, onOk) {
+  var done = cbtnBusy ? cbtnBusy(btn) : function () {};
+  promise.then(function (d) {
+    done();
+    if (!d || !d.ok) { tsMsg((d && d.error) || 'That didn’t save.'); return; }
+    onOk(d);
+  }).catch(function () { done(); tsMsg('That didn’t save \u2014 check your connection.'); });
+}
+
+document.addEventListener('click', function (ev) {
+  var t = ev.target && ev.target.closest ? ev.target.closest('#ts-sec [data-ts-view], #ts-sec [data-ts-act]') : null;
+  if (!t) return;
+  var view = t.getAttribute('data-ts-view');
+  if (view) { tsShow(view); return; }
+  var act = t.getAttribute('data-ts-act'), id = parseInt(t.getAttribute('data-id'), 10), s = tsFind(_ts.sel), ids, i, pos;
+  if (act === 'day-prev' || act === 'day-next') { _ts.day = tsIsoShift(_ts.day, act === 'day-prev' ? -1 : 1); tsLoadDay(); return; }
+  if (act === 'day-today') { _ts.day = null; tsLoadDay(); return; }
+  if (act === 'goto-edit') { _ts.sel = 'new'; tsShow('edit'); return; }
+  if (act === 'rep-days') { _ts.reportDays = parseInt(t.getAttribute('data-days'), 10) || 14; tsLoadReport(); return; }
+  if (act === 'sel') { _ts.sel = t.getAttribute('data-id') === 'new' ? 'new' : id; _ts.editLine = null; tsRenderEdit(); return; }
+  if (act === 'day-toggle') { t.setAttribute('aria-pressed', t.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); return; }
+  if (act === 'create') {
+    var code = (document.getElementById('ts-new-code') || {}).value || '', kind = (document.getElementById('ts-new-kind') || {}).value || 'opening';
+    tsAfter(t, tsPost('/api/task-sheets', {job_code: code, shift_kind: kind}), function (d) { _ts.sel = d.sheet.id; tsLoadSheets(true); });
+    return;
+  }
+  if (!s) return;
+  if (act === 'save-sheet') {
+    var days = [], btns = document.querySelectorAll('#ts-s-days [data-day]');
+    for (i = 0; i < btns.length; i++) if (btns[i].getAttribute('aria-pressed') === 'true') days.push(parseInt(btns[i].getAttribute('data-day'), 10));
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id, {job_code: document.getElementById('ts-s-code').value, shift_kind: document.getElementById('ts-s-kind').value,
+                                                   days_of_week: days, requires_signoff: document.getElementById('ts-s-sign').checked}),
+            function () { _ts.note = 'Saved. Today’s sheets keep what they went out with; the change applies from tomorrow.'; tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'remove-sheet') {
+    if (!window.confirm('Remove the ' + s.shift_label.toLowerCase() + ' sheet for ' + s.job_code + '? It stops going out; every past day stays on record.')) return;
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id, {active: false}), function () { _ts.sel = null; tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'edit') { _ts.editLine = id; tsRenderEdit(); return; }
+  if (act === 'cancel-edit') { _ts.editLine = null; tsRenderEdit(); return; }
+  if (act === 'save-line') {
+    tsAfter(t, tsPost('/api/task-sheets/lines/' + id, tsLineValues('tse-')), function (d) { _ts.editLine = null; _ts.note = tsSimilarNote(d); tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'remove-line') {
+    if (!window.confirm('Remove this line? Every day it was ticked stays on record.')) return;
+    tsAfter(t, tsPost('/api/task-sheets/lines/' + id, {active: false}), function () { tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'up' || act === 'down') {
+    ids = [];
+    for (i = 0; i < s.lines.length; i++) ids.push(s.lines[i].id);
+    pos = ids.indexOf(id);
+    var to = act === 'up' ? pos - 1 : pos + 1;
+    if (pos < 0 || to < 0 || to >= ids.length) return;
+    ids[pos] = ids[to]; ids[to] = id;
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id + '/order', {line_ids: ids}), function () { tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'add-line') {
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id + '/lines', tsLineValues('tsa-')), function (d) { _ts.note = tsSimilarNote(d); tsLoadSheets(true); });
+    return;
+  }
+  if (act === 'draft') {
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id + '/starter', {}), function (d) { _ts.sugg = {sheet: s.id, lines: d.lines || []}; tsRenderEdit(); });
+    return;
+  }
+  if (act === 'add-sugg') {
+    var n = parseInt(t.getAttribute('data-i'), 10), g = _ts.sugg && _ts.sugg.lines[n];
+    if (!g) return;
+    tsAfter(t, tsPost('/api/task-sheets/' + s.id + '/lines', g), function (d) {
+      _ts.sugg.lines.splice(n, 1);
+      _ts.note = tsSimilarNote(d);
+      tsLoadSheets(true);
+    });
+  }
 });
-
-function setTaskDone(templateId, done) {
-  var item = null;
-  for (var i = 0; i < _tasksItems.length; i++) if (_tasksItems[i].id === templateId) item = _tasksItems[i];
-  if (!item) return;
-  var previous = item.done;
-  item.done = done;
-  renderTasksList();
-  fetch('/api/tasks/complete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({template_id: templateId, task_date: _tasksToday(), done: done})
-  }).then(apiJson).then(function(d) {
-    if (d.ok) loadTasksForRole(_tasksRole);
-    else { item.done = previous; renderTasksList(); }
-  }).catch(function() { item.done = previous; renderTasksList(); });
-}
-
-document.addEventListener('click', function(ev) {
-  var btn = ev.target;
-  if (!btn || btn.tagName !== 'BUTTON') return;
-  var id = btn.getAttribute('data-task-remove');
-  if (id === null) return;
-  removeTaskTemplate(parseInt(id, 10));
-});
-
-function removeTaskTemplate(templateId) {
-  if (!window.confirm('Remove this task from the checklist? Past completions stay on record.')) return;
-  fetch('/api/tasks/templates/remove', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({template_id: templateId})
-  }).then(apiJson).then(function(d) {
-    if (d.ok) loadTasksForRole(_tasksRole);
-  });
-}
-
-function addTaskTemplate() {
-  var roleEl = document.getElementById('task-add-role');
-  var labelEl = document.getElementById('task-add-label');
-  var errEl = document.getElementById('task-add-error');
-  var role = roleEl ? roleEl.value : '';
-  var label = (labelEl && labelEl.value || '').replace(/^\s+|\s+$/g, '');
-  if (errEl) errEl.textContent = '';
-  if (!role || !label) { if (errEl) errEl.textContent = 'Pick a role and describe the task.'; return; }
-  fetch('/api/tasks/templates', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({role: role, label: label})
-  }).then(apiJson).then(function(d) {
-    if (!d.ok) { if (errEl) errEl.textContent = d.error || 'Could not add that task.'; return; }
-    if (labelEl) labelEl.value = '';
-    _tasksRole = role;
-    renderTaskRoleTabs();
-  }).catch(function() { if (errEl) errEl.textContent = 'Could not add that task.'; });
-}
 
 function renderTeamCoverage(cov) {
   var chip = document.getElementById('team-coverage-chip');

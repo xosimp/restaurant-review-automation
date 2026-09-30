@@ -5081,6 +5081,179 @@ def mobile_add_task_template(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 500
 
 
+# ── Task sheets (task_sheets.py): the owner's editor, the day's
+#    bird's-eye view, the consistency report. Owners and managers read;
+#    only a login that may manage the team edits. Nobody here ticks — the
+#    staff portal is where the work is checked off.
+
+def _ts_who(current_user):
+    return current_user.get("username") or current_user.get("email") or "owner"
+
+
+def _ts_error(e):
+    import task_sheets as ts
+    if isinstance(e, ts.TaskSheetError):
+        # Our own words (TaskSheetError is only ever raised with a sentence
+        # for the owner), never a library's exception text.
+        return jsonify(ok=False, error=e.args[0] if e.args else "That didn't save."), 400
+    return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/task-sheets")
+@mobile_login_required
+def mobile_task_sheets(current_user):
+    import task_sheets as ts
+    rid = current_user["restaurant_id"]
+    try:
+        return jsonify(ok=True, sheets=ts.list_sheets(rid), job_codes=ts.job_codes(rid),
+                       shift_kinds=[{"key": k, "label": ts.SHIFT_KIND_LABEL[k]} for k in ts.SHIFT_KINDS],
+                       proof_kinds=list(ts.PROOF_KINDS), can_edit=bool(_may_manage_team(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_create(current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify(ok=True, sheet=ts.create_sheet(current_user["restaurant_id"], d.get("job_code"),
+                                                      d.get("shift_kind") or "any", d.get("title"),
+                                                      d.get("days_of_week"), bool(d.get("requires_signoff")),
+                                                      who=_ts_who(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/<int:sheet_id>", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_update(sheet_id, current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    d = request.get_json(silent=True) or {}
+    fields = {k: d[k] for k in ("job_code", "shift_kind", "title", "days_of_week", "requires_signoff", "active") if k in d}
+    try:
+        return jsonify(ok=True, sheet=ts.update_sheet(current_user["restaurant_id"], sheet_id, fields,
+                                                      who=_ts_who(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/<int:sheet_id>/lines", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_add_line(sheet_id, current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify(ok=True, **ts.add_line(current_user["restaurant_id"], sheet_id, d, who=_ts_who(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/lines/<int:line_id>", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_update_line(line_id, current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify(ok=True, **ts.update_line(current_user["restaurant_id"], line_id, d, who=_ts_who(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/<int:sheet_id>/order", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_order(sheet_id, current_user):
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify(ok=True, sheet=ts.reorder_lines(current_user["restaurant_id"], sheet_id, d.get("line_ids"),
+                                                       who=_ts_who(current_user))), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/<int:sheet_id>/starter", methods=["POST"])
+@mobile_login_required
+def mobile_task_sheet_starter(sheet_id, current_user):
+    """Cavnar AI's draft lines for this sheet — returned, never saved; the
+    owner adds the ones he wants (plan principle 5)."""
+    if not _may_manage_team(current_user):
+        return _refuse_team_write()
+    import task_sheets as ts
+    rid = current_user["restaurant_id"]
+    try:
+        sheet = ts.get_sheet(rid, sheet_id)
+        lines = ts.starter_lines(rid, sheet["job_code"], sheet["shift_kind"],
+                                 existing=[l["label"] for l in sheet["lines"]])
+        return jsonify(ok=True, lines=lines), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+def _ts_day_arg():
+    from datetime import date as _date
+    raw = (request.args.get("date") or "").strip()
+    if not raw:
+        return None
+    try:
+        return _date.fromisoformat(raw[:10])
+    except ValueError:
+        return False
+
+
+@mobile_bp.route("/task-sheets/day")
+@mobile_login_required
+def mobile_task_sheet_day(current_user):
+    """Every sheet for one business day — read-only (owners do not tick)."""
+    import task_sheets as ts
+    day = _ts_day_arg()
+    if day is False:
+        return jsonify(ok=False, error="date must be YYYY-MM-DD"), 400
+    try:
+        return jsonify(ok=True, **ts.day_view(current_user["restaurant_id"], day)), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/report")
+@mobile_login_required
+def mobile_task_sheet_report(current_user):
+    import task_sheets as ts
+    days = request.args.get("days", 14, type=int) or 14
+    days = max(7, min(int(days), ts.REPORT_MAX_DAYS))
+    try:
+        return jsonify(ok=True, **ts.report(current_user["restaurant_id"], days=days)), 200
+    except Exception as e:
+        return _ts_error(e)
+
+
+@mobile_bp.route("/task-sheets/photo/<token>")
+@mobile_login_required
+def mobile_task_sheet_photo(token, current_user):
+    """A proof photo — this restaurant's only, for a signed-in viewer."""
+    import io
+    import task_sheets as ts
+    from flask import send_file
+    found = ts.get_photo(current_user["restaurant_id"], token)
+    if not found:
+        return jsonify(ok=False, error="Not found"), 404
+    data, mime = found
+    resp = send_file(io.BytesIO(data), mimetype=mime or "image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
+
+
 @mobile_bp.route("/tasks/templates/remove", methods=["POST"])
 @mobile_login_required
 def mobile_remove_task_template(current_user):

@@ -437,6 +437,7 @@ KEEP_COLUMNS = {
     ("marketing_links", "token"): "a public tracked-link id in a published post",
     ("marketing_media", "token"): "a public media link id",
     ("schedule_shares", "token"): "a schedule link staff already hold; the data is in the copy anyway",
+    ("task_proof_media", "token"): "a task sheet proof photo's id — served only to a signed-in login of the same restaurant, and the photo is in the copy anyway",
     ("sales_audit_shares", "token"): "the SHA-256 of an audit share link (sales_audits._hash_token), not the link",
     ("sales_audit_shares", "token_hint"): "the link's last four characters, which open nothing",
     ("push_outbox", "device_token_id"): "an id into device_tokens, which is emptied",

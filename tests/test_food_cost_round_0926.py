@@ -70,7 +70,7 @@ def test_the_waste_row_is_one_size_of_control_and_no_rule():
     assert load.count("fc2-ctl") >= 3 and "fc2-ctl-btn" in load and 'style="max-width:90px"' not in load
     css = SRC[SRC.index(".fc2-waste-log{"):SRC.index(".fc2-waste-log{") + 400]
     assert "border-top" not in css.split("}")[0]
-    assert "height:42px" in SRC[SRC.index(".fc2-block .fc2-ctl,#panel-inventory .fc2-ctl{"):][:300]
+    assert "height:42px" in SRC[SRC.index(".fc2-block .fc2-ctl,#panel-inventory .fc2-ctl,#mkt-tab-analytics .fc2-ctl{"):][:300]
     assert "::-webkit-inner-spin-button{margin-left:10px}" in SRC
 
 

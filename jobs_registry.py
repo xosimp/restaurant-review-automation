@@ -391,6 +391,10 @@ JOBS = {
         cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Pre-shift nudge", description="The pre-shift notes before service",
         target=("strategy_jobs", "run_preshift_nudge"), claim="intraday", max_minutes=10),
+    "task_sheets": dict(
+        cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
+        label="Task sheets", description="Issue today's sheets from the published schedule, open critical-miss issues, close ended shifts",
+        target=("task_sheets", "run_job"), claim="intraday", max_minutes=10),
     "closing_summary": dict(
         cadence="every 20 minutes (after close)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Closing summary", description="How tonight went, once the doors are shut",

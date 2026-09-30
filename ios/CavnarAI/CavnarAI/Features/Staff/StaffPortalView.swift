@@ -238,38 +238,12 @@ struct StaffPortalView: View {
     @ViewBuilder
     private var tasksSection: some View {
         if let tasks {
-            if tasks.role == nil {
-                emptyCard("Your job role isn't set yet, so there's no checklist to show.")
-            } else if (tasks.tasks ?? []).isEmpty {
-                emptyCard("Nothing on the \(tasks.role ?? "") checklist today.")
-            } else {
-                let items = tasks.tasks ?? []
-                sectionLabel("\((tasks.role ?? "").uppercased()) · TODAY")
-                Text("\(items.filter(\.done).count) of \(items.count) done")
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
-                ForEach(items) { task in
-                    Button {
-                        Haptic.light()
-                        Task { await toggle(task) }
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20))
-                                .foregroundStyle(task.done ? Color.cavnarEmber : Color.cavnarInk3)
-                            Text(task.label)
-                                .font(.cavnarBody(15.5))
-                                .strikethrough(task.done)
-                                .foregroundStyle(task.done ? Color.cavnarInk3 : Color.cavnarInk)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(13)
-                        .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 10))
-                    }
-                }
+            // Your sheets today (task_sheets.py), with due times and proof.
+            StaffTaskSheetsSection(response: tasks) {
+                self.tasks = try? await staff.authed("/staff/api/tasks")
             }
         } else {
-            loadingCard("Loading your tasks")
+            loadingCard("Loading your sheets")
         }
     }
 
@@ -339,43 +313,11 @@ struct StaffPortalView: View {
     private func reload() async {
         async let me: StaffProfileResponse? = try? staff.authed("/staff/api/me")
         async let sh: StaffShiftsResponse? = try? staff.authed("/staff/api/shifts")
-        async let tk: StaffTasksResponse? = try? staff.authed("/staff/api/tasks?date=\(Self.taskDay())")
+        async let tk: StaffTasksResponse? = try? staff.authed("/staff/api/tasks")
         let (meResp, shResp, tkResp) = await (me, sh, tk)
         profile = meResp?.employee
         shifts = shResp
         tasks = tkResp
         if meResp == nil { loadError = "Could not load your portal." }
-    }
-
-    private func toggle(_ task: StaffTask) async {
-        struct Body: Encodable {
-            let templateID: Int
-            let taskDate: String
-            let done: Bool
-            enum CodingKeys: String, CodingKey {
-                case templateID = "template_id"
-                case taskDate = "task_date"
-                case done
-            }
-        }
-        // One day for the tick and the re-read: the refetch used to send no
-        // date and read the server's UTC day, so a task ticked at 8pm in
-        // Chicago came back unticked (MOD-EMP-5).
-        let day = Self.taskDay()
-        let body = Body(templateID: task.id, taskDate: day, done: !task.done)
-        _ = try? await staff.authed("/staff/api/tasks/complete", method: .post, body: body) as StaffOKResponse
-        tasks = try? await staff.authed("/staff/api/tasks?date=\(day)")
-    }
-
-    /// The phone's own calendar day, written the way the server reads it:
-    /// Gregorian and POSIX, so a device set to another calendar or locale
-    /// still sends this year's ISO date.
-    private static func taskDay(_ date: Date = Date()) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
     }
 }

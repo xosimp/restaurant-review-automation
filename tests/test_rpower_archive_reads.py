@@ -125,7 +125,9 @@ def test_a_closed_day_not_yet_archived_is_archived_on_first_ask_then_shared(db_p
 
 def test_a_recent_day_the_pos_changed_is_stored_again_before_it_is_read(db_path, monkeypatch):
     rid = _rid(db_path)
-    recent = date.today() - timedelta(days=1)
+    # Two days back: before 5am the calendar's yesterday is still the current
+    # business day (possibly open), which is read live, not from the archive.
+    recent = date.today() - timedelta(days=2)
     routes = _routes(recent.isoformat())
     calls = _stub(monkeypatch, routes)
     pos_archive.archive_day(rid, recent)

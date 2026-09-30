@@ -120,6 +120,18 @@ struct StaffTasksResponse: Decodable {
     /// The employee's JOB role ("Bartender"), not their authorization role.
     let role: String?
     let tasks: [StaffTask]?
+    /// Today's sheets that are this person's (task_sheets.staff_view), and
+    /// for a manager the floor and the shifts they may sign off.
+    let sheets: [StaffSheet]?
+    let manager: Bool?
+    let floor: [StaffSheet]?
+    let canSignOff: [String]?
+    let signoffs: [StaffSignoff]?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, role, tasks, sheets, manager, floor, signoffs
+        case canSignOff = "can_sign_off"
+    }
 }
 
 struct StaffProfile: Decodable, Hashable {

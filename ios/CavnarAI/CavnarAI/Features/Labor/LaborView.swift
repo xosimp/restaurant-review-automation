@@ -43,6 +43,8 @@ struct LaborView: View {
     // What was sent, reachable from Labor itself — it lived only under
     // Account → More (friction audit #50).
     @State private var showingScheduleHistory = false
+    /// Task sheets (task_sheets.py): the day read-only, the report, the editor.
+    @State private var showingTaskSheets = false
     /// A drafted week opened from Waiting on you — its own send sheet.
     @State private var draftToSend: DraftToSend?
     /// A shift whose times are being changed, or a new one being added.
@@ -301,6 +303,22 @@ struct LaborView: View {
             cavnarToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Haptic.light()
+                    showingTaskSheets = true
+                } label: {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarToolbarIconGlass()
+                }
+                .buttonStyle(.plain)
+                .tint(nil)
+                .accessibilityLabel("Task sheets")
+            }
+        }
+        .toolbar {
+            cavnarToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Haptic.light()
                     showingScheduleHistory = true
                 } label: {
                     Image(systemName: "clock.arrow.circlepath")
@@ -315,6 +333,9 @@ struct LaborView: View {
         }
         .sheet(isPresented: $showingScheduleHistory) {
             ScheduleHistoryView()
+        }
+        .sheet(isPresented: $showingTaskSheets) {
+            TaskSheetsScreen()
         }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .overview, secondaryTab: .analytics)
         .task {

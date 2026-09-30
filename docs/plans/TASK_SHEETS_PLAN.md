@@ -1,4 +1,6 @@
-# Task sheets by job code — the plan (no code yet)
+# Task sheets by job code — the plan
+
+**Built 9/30/26, all five phases** (`task_sheets.py`; MODULE_OVERVIEW.md → Task sheets). One change from the plan at Will's direction: owners never tick — the owner's view is a read-only bird's-eye of every sheet for the day. Kept here as the design record.
 
 Erik's problem, in his words: the other two managers do not do their
 opening and closing responsibilities consistently, so he ends up doing it

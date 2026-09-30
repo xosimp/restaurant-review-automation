@@ -63,12 +63,10 @@ def _new_token() -> str:
     return secrets.token_urlsafe(18)
 
 
-def store_image(restaurant_id: int, raw: bytes, mime: str = "", db_path: str = DB_PATH) -> dict:
-    """Downscale, re-encode as JPEG, store, and return the row.
-
-    Everything comes back out as JPEG regardless of what went in — HEIC
-    straight off an iPhone is the common case and Meta will not fetch it.
-    """
+def encode_jpeg(raw: bytes, mime: str = "", max_edge: int = MAX_EDGE):
+    """(jpeg bytes, width, height): the checks, the EXIF turn and the
+    downscale every stored photo goes through (a marketing photo, a task
+    sheet's proof photo). Raises MediaError in words the uploader can act on."""
     if not raw:
         raise MediaError("That file was empty.")
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -95,33 +93,43 @@ def store_image(restaurant_id: int, raw: bytes, mime: str = "", db_path: str = D
     try:
         if img.format == "JPEG":
             # Decode a JPEG at a reduced scale when it is bigger than needed.
-            img.draft("RGB", (MAX_EDGE * 2, MAX_EDGE * 2))
+            img.draft("RGB", (max_edge * 2, max_edge * 2))
         # EXIF orientation, or every photo shot in portrait arrives sideways.
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
     except Exception as e:
         raise MediaError("That file didn't open as a photo.") from e
 
-    img.thumbnail((MAX_EDGE, MAX_EDGE), Image.LANCZOS)
+    img.thumbnail((max_edge, max_edge), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
     data = buf.getvalue()
 
+    return data, img.width, img.height
+
+
+def store_image(restaurant_id: int, raw: bytes, mime: str = "", db_path: str = DB_PATH) -> dict:
+    """Downscale, re-encode as JPEG, store, and return the row.
+
+    Everything comes back out as JPEG regardless of what went in — HEIC
+    straight off an iPhone is the common case and Meta will not fetch it.
+    """
+    data, width, height = encode_jpeg(raw, mime)
     token = _new_token()
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO marketing_media (restaurant_id, token, mime, data, width, height, size_bytes) "
             "VALUES (?,?,?,?,?,?,?)",
-            (restaurant_id, token, "image/jpeg", data, img.width, img.height, len(data)),
+            (restaurant_id, token, "image/jpeg", data, width, height, len(data)),
         )
         conn.commit()
         media_id = cur.lastrowid
     finally:
         conn.close()
 
-    return {"id": media_id, "token": token, "width": img.width,
-            "height": img.height, "size_bytes": len(data)}
+    return {"id": media_id, "token": token, "width": width,
+            "height": height, "size_bytes": len(data)}
 
 
 def get_image(token: str, db_path: str = DB_PATH):
