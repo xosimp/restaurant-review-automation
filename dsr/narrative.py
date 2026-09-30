@@ -2078,8 +2078,10 @@ def _issues(ctx):
     from time_utils import mdy
     import issues
     out = []
+    # Read as the team (a manager's view): no food-cost plan item either
+    # (memory re-audit PEOPLE-14).
     for r in issues.list_issues(ctx.restaurant_id, status="unresolved", limit=MAX_ISSUES, sees_loss=False,
-                                db_path=ctx.db_path):
+                                db_path=ctx.db_path, hide_modules=issues.hidden_modules(NARRATIVE_MEMORY_VIEWER)):
         out.append(f"- {' '.join(str(r.get('title') or '').split())[:140]} ({r.get('kind') or 'issue'}, "
                    f"{r.get('severity') or 'normal'}, {r.get('status')}, opened {mdy(str(r.get('created_at') or '')[:10])})")
     return out
@@ -2210,8 +2212,14 @@ def _write(ctx, facts):
     try:
         import decisions
         # One narrative serves the owner's and the manager's view: no loss
-        # signal or loss issue reaches it (they name the approving manager).
-        decisions_text = decisions.context(rid, db_path=ctx.db_path, sees_loss=False)
+        # signal or loss issue reaches it (they name the approving manager),
+        # and it is redacted as the team reads it (NARRATIVE_MEMORY_VIEWER,
+        # the memory block's own viewer) — no owner-only or food-cost
+        # decision either; with no viewer it was the owner's unredacted
+        # history (memory re-audit PROMPTS-8). The memory block carries no
+        # second copy (memory_context.SURFACE_SECTIONS, PROMPTS-14).
+        decisions_text = decisions.context(rid, db_path=ctx.db_path, sees_loss=False,
+                                           viewer=NARRATIVE_MEMORY_VIEWER)
     except Exception as e:
         _capture(e, rid, "decisions.context")
     declined = _declined(rid, ctx.db_path)

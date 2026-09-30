@@ -191,7 +191,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     try:
         import issues
         for i in issues.list_issues(restaurant_id, status="unresolved", limit=10, db_path=db_path,
-                                    sees_loss=issues.viewer_sees_loss(viewer)):   # A-8
+                                    sees_loss=issues.viewer_sees_loss(viewer),    # A-8
+                                    hide_modules=issues.hidden_modules(viewer)):  # PEOPLE-14
             waiting = i["status"] == "open"
             add(f"issue:{i['id']}", "issue", i["title"],
                 "critical" if (waiting and i["severity"] == "high") else

@@ -587,8 +587,12 @@ def _plan_cause_anchors(restaurant_id, db_path=DB_PATH) -> list:
 PLAN_MODULES = (
     ("reviews", "module_reviews", r"\b(?:reviews?|rating|stars?|guests?\s+(?:said|wrote|complain\w*))\b"),
     ("labor", "module_labor", r"\b(?:labou?r|staff\w*|schedul\w*|shifts?|overtime|servers?|cooks?|payroll)\b"),
+    # Prices, margins and recipes are food-cost figures too: an item about
+    # repricing a dish is filed as food cost (plan_item_modules) and held
+    # with it (memory re-audit PEOPLE-14).
     ("food_cost", "module_inventory", r"\b(?:food\s+cost|waste|inventory|orders?|prep|portions?|suppliers?|"
-                                       r"invoices?|counts?|stock)\b"),
+                                       r"invoices?|counts?|stock|(?:re)?pric\w*|margins?|recipes?|"
+                                       r"plate\s+costs?|cogs)\b"),
     ("marketing", "module_marketing", r"\b(?:posts?|instagram|facebook|marketing|social|campaigns?|reach)\b"),
 )
 
@@ -617,6 +621,21 @@ def plan_item_held(item, holds) -> str | None:
         if module in (holds or {}) and re.search(pat, text, re.I):
             return module
     return None
+
+
+# PLAN_MODULES' names as permissions.MODULE_VIEW_PERMISSIONS keys.
+_PLAN_VIEW_MODULE = {"reviews": "reviews", "labor": "labor", "food_cost": "inventory", "marketing": "marketing"}
+
+
+def plan_item_modules(item) -> list:
+    """Every module a plan item is about (PLAN_MODULES, the holds' own
+    reading), as view-module keys. Filed on the issue (meta["modules"]) so
+    a login without that module's view never reads it: the plan is written
+    with the owner's food-cost view, but its items are issues every console
+    login lists (memory re-audit PEOPLE-14 / PROMPTS-8)."""
+    import re
+    text = f"{(item or {}).get('title') or ''}. {(item or {}).get('why') or ''}"
+    return sorted({_PLAN_VIEW_MODULE[m] for m, _flag, pat in PLAN_MODULES if re.search(pat, text, re.I)})
 
 
 def _plan_context(restaurant_id=None, anchors=(), guest_texts=(), meta=None, data_state=None):
@@ -959,7 +978,8 @@ def run_weekly_plan(db_path=DB_PATH):
                 issues.create_issue(
                     r.id, "plan", item["title"],
                     detail=f"{item['why']} Owner: {item['owner']}. Due in {item['due_days']} days.",
-                    severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path)
+                    severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path,
+                    meta={"modules": plan_item_modules(item)})
                 filed += 1
         except Exception as e:
             tally["failed"] += 1
