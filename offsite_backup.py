@@ -47,6 +47,8 @@ log = logging.getLogger("offsite_backup")
 # Connect / read timeouts for the object store (scripts/check_timeouts.py):
 # a snapshot upload is one long body, so the read allowance is generous.
 S3_TIMEOUT = (10, 600)
+# The bucket's lifecycle rule is one small XML document.
+S3_LIFECYCLE_TIMEOUT = (10, 30)
 # A single PUT carries at most this much (S3's and R2's single-part limit).
 S3_MAX_SINGLE_PUT = 5 * 1024 ** 3
 
@@ -206,6 +208,71 @@ def download_file(key, dest, cfg=None, full_key=False):
                     h.update(block)
                     n += len(block)
     return {"sha256": h.hexdigest(), "meta_sha256": meta, "bytes": n}
+
+
+def lifecycle_days(cfg=None) -> dict:
+    """{"days", "rule", "error"} — how many days the object store keeps a
+    backup copy before its own lifecycle rule deletes it: the shortest
+    Expiration of any ENABLED rule whose prefix covers BACKUP_S3_PREFIX, or
+    days None (no rule; the store keeps every copy forever) with why.
+    Memory re-audit 9/29/26 (FORGET-9): the expiry the recovery runbook
+    relies on was a manual bucket setting nothing in code ever read. One
+    signed GET ?lifecycle, with a timeout. Never raises."""
+    import requests
+    import xml.etree.ElementTree as ET
+    cfg = cfg or s3_config()
+    if not cfg:
+        return {"days": None, "rule": None, "error": "object storage is not configured (BACKUP_S3_*)"}
+    now = _dt.datetime.now(_dt.timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    empty = hashlib.sha256(b"").hexdigest()
+    path = f"/{cfg['bucket']}"
+    host = urllib.parse.urlparse(cfg["endpoint"]).netloc
+    headers = {"host": host, "x-amz-date": amz_date, "x-amz-content-sha256": empty}
+    auth = sign("GET", path, headers, empty, cfg["access_key"], cfg["secret_key"], cfg["region"], amz_date,
+                query={"lifecycle": ""})
+    send = {k: v for k, v in headers.items() if k != "host"}
+    send["Authorization"] = auth
+    try:
+        resp = requests.get(cfg["endpoint"] + _uri_encode(path, True) + "?lifecycle=", headers=send,
+                            timeout=S3_LIFECYCLE_TIMEOUT)
+    except Exception as e:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: {e}"}
+    if resp.status_code == 404:
+        return {"days": None, "rule": None, "error": "no lifecycle rule on the bucket"}
+    if resp.status_code != 200:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: HTTP {resp.status_code}"}
+    try:
+        root = ET.fromstring(resp.content or b"")
+    except ET.ParseError as e:
+        return {"days": None, "rule": None, "error": f"lifecycle unreadable: {e}"}
+
+    def _local(tag):
+        return tag.rsplit("}", 1)[-1]
+    prefix = cfg.get("prefix") or ""
+    best = None
+    for rule in (el for el in root.iter() if _local(el.tag) == "Rule"):
+        fields = {}
+        for el in rule.iter():
+            name = _local(el.tag)
+            if name in ("ID", "Status", "Prefix", "Days") and name not in fields:
+                fields[name] = (el.text or "").strip()
+        if fields.get("Status", "").lower() != "enabled":
+            continue
+        if not any(_local(el.tag) == "Expiration" for el in rule.iter()):
+            continue
+        rule_prefix = fields.get("Prefix", "")
+        if rule_prefix and not prefix.startswith(rule_prefix):
+            continue
+        try:
+            days = int(fields.get("Days") or "")
+        except ValueError:
+            continue
+        if best is None or days < best[0]:
+            best = (days, fields.get("ID") or None)
+    if best is None:
+        return {"days": None, "rule": None, "error": "no enabled expiration rule covers the backup prefix"}
+    return {"days": best[0], "rule": best[1], "error": None}
 
 
 # ── the credential scrub registry (#102) ────────────────────────────────────

@@ -948,7 +948,7 @@ function growthChart(s){
 const ISSUE_CAT = {billing:'Billing', canceled:'Billing', contract:'Billing', signed_unpaid:'Billing', paused:'Billing', modules_mismatch:'Billing', stripe_mismatch:'Billing',
   int:'Integration', source:'Data', stale:'Data', nodata:'Data', unconf:'Setup', fetch_behind:'Data', urgent:'Reviews', stalled_reviews:'AI', stalled:'AI',
   email:'Messages', suppressed:'Messages', push:'Messages', posts:'Messages', onboarding:'Onboarding', inactive:'Account', churn_risk:'Account', dup:'Account',
-  ai_spike:'AI', ai_cost:'AI', ai_failures:'AI', ai_budget:'AI', ai_anomaly:'AI', deletion:'Offboarding', job:'Platform', job_overdue:'Platform', scheduler:'Platform', platform:'Platform',
+  ai_spike:'AI', ai_cost:'AI', ai_failures:'AI', ai_budget:'AI', ai_anomaly:'AI', deletion:'Offboarding', cancelled_data:'Offboarding', job:'Platform', job_overdue:'Platform', scheduler:'Platform', platform:'Platform',
   webhook:'Platform', webhook_stale:'Platform', metrics:'Platform', learning:'AI'};
 function issueCat(i){ const c = i.category; if(c && ISSUE_CAT[c]) return ISSUE_CAT[c]; const k = i.key||''; return /billing|canceled|contract/.test(k)?'Billing':/int:/.test(k)?'Integration':/stale|nodata|unconf/.test(k)?'Data':/email|push|posts/.test(k)?'Messages':/^job|^scheduler|^fleet|^platform/.test(k)?'Platform':/onboarding/.test(k)?'Onboarding':/urgent|review/.test(k)?'Reviews':'Account'; }
 // The action an issue carries, as the server says to do it (#62): POST its

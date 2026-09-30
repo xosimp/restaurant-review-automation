@@ -1865,6 +1865,9 @@ def _storm_cap_view(row):
 
 
 DELETION_DUE_DAYS = 30
+# A cancelled account's operational data is deleted within this many days of
+# the cancellation (public/privacy.html section 07; FORGET-9).
+CANCELLED_DATA_DAYS = 30
 
 
 def _deletion_for(r):
@@ -2078,6 +2081,27 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         at = _newest(ev.get("customer.subscription.deleted"), hist.get("churned"), hist.get("canceled"))
         add("canceled", "Subscription canceled", "warning", at, "Open billing", None, zone="UTC",
             action_kind="link", action_href=billing_tab)
+        # The privacy policy (section 07) promises a cancelled account's
+        # operational data is deleted within 30 days (memory re-audit 9/29/26,
+        # FORGET-9): only an admin's delete ever ran, and a cancellation in
+        # Stripe set no deletion request, so an account cancelled for
+        # non-payment kept its whole history. Raised here, never auto-deleted:
+        # the admin works the offboarding checklist, or resolves the issue
+        # with why the data is kept (the owner is returning, a legal hold).
+        # An open deletion request is its own issue above.
+        ended = _parse_utc(at, "UTC") if at else None
+        if ended and not deletion and not r.get("is_demo"):
+            due = ended + timedelta(days=CANCELLED_DATA_DAYS)
+            left = (due - _utcnow()).days
+            due_label = _mdy(due.strftime(_ZFMT), "UTC")
+            add("cancelled_data",
+                (f"Cancelled account's data overdue for deletion by {-left} days (due {due_label})" if left < 0
+                 else f"Cancelled account's data due for deletion by {due_label}"),
+                "critical" if left < 0 else "warning", at, "Open offboarding", None,
+                f"Cancelled {_mdy(ended.strftime(_ZFMT), 'UTC')}. The privacy policy promises operational data is "
+                f"deleted within {CANCELLED_DATA_DAYS} days of cancellation: finish the offboarding and delete the "
+                "account, or resolve this with why the data is kept.",
+                zone="UTC", action_kind="link", action_href=f"{client}?tab=offboarding")
     # A hold only an admin lifts (H, #114): a chargeback, a full refund, or
     # an admin's own. The action is H's lift-hold (a note is required).
     hold = billing.get("pause_reason") if billing.get("pause_reason") in ("dispute", "refund") else None

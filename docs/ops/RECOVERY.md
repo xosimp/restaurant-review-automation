@@ -429,9 +429,18 @@ way.
   `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (`BACKUP_S3_REGION`
   defaults to `auto` for R2). Give the key read and write on that one bucket
   only (the drill downloads), and add a lifecycle rule expiring objects after
-  about 35 days. A single object is at most 5 GB (no multipart yet).
+  about 35 days. A single object is at most 5 GB (no multipart yet). The
+  rule is checked weekly (`offsite_lifecycle`, `scheduler.run_offsite_lifecycle_check`
+  → `offsite_backup.lifecycle_days`, one signed `GET ?lifecycle`): no
+  enabled expiration rule covering `BACKUP_S3_PREFIX`, or one longer than
+  `BACKUP_OFFSITE_MAX_DAYS` (35), fails the run and pages
+  (`backup_lifecycle`, weekly cooldown). The key needs
+  `GetBucketLifecycleConfiguration` for it (memory re-audit 9/29/26).
 - **Email**: skipped above `BACKUP_EMAIL_MAX_BYTES` (25 MB of encrypted
-  file); the skip is in the run's `offsite_error`.
+  file); the skip is in the run's `offsite_error`. An emailed copy has no
+  expiry the code can enforce: `BACKUP_EMAIL_MODE=fallback` sends it only
+  on a night the object-storage copy was not made (the default, `always`,
+  sends it every night beside object storage).
 - **Re-run**: `/admin` → Operations → Jobs → `backup_db` → Run now.
 
 ---
