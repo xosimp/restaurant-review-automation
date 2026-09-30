@@ -2430,8 +2430,8 @@ _RETENTION_KNOWN_GAPS = {
     ("job_runs", "platform_monitor._last_run"): "the quarterly restore drill's last run is pruned at 45 days",
     ("alert_log", "scheduler.send_while_away_nudges"): "reads everything since the owner's last sign-in, uncapped",
     ("email_log", "client_api._do_upload_data"): "the 'first upload ever' check re-fires after 365 days",
-    ("login_history", "admin_ops._load_with"): "owner sign-ins and team last-seen read all rows kept 90 days; "
-                                               "engagement_monthly holds the months before",
+    ("login_history", "admin_ops._load_with"): "team last-seen reads the staff sign-ins kept 90 days (the owners' "
+                                               "last console sign-in falls back to engagement_monthly's months)",
 }
 # Past this many rows in one table in one pass, the rest waits a night.
 RETENTION_PASS_MAX_ROWS = int(os.getenv("RETENTION_PASS_MAX_ROWS", "200000"))

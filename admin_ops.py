@@ -43,7 +43,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
 from models import get_restaurant
@@ -839,6 +839,24 @@ def _load_with(conn):
                                  AND COALESCE(l.device_type,'') NOT IN ('staff_pin','admin-view-as')
                                  AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
                                GROUP BY l.restaurant_id""", label="login_history")
+    # Before login_history's 90 days (memory re-audit 9/29/26, INVENTORY-12):
+    # engagement_monthly (history_rollups.roll_engagement) keeps each login's
+    # sign-ins per month, so an owner who has not signed in for three months
+    # still shows the month of their last console sign-in — the last day of
+    # it, flagged `from_month` — instead of none. Raw rows win when present.
+    for r in _rows_dict(conn, f"""SELECT e.restaurant_id AS restaurant_id, MAX(e.month) AS month
+                                  FROM engagement_monthly e JOIN users u ON u.id = e.user_id
+                                  WHERE COALESCE(e.logins, 0) > 0 AND COALESCE(u.is_admin,0) = 0 AND {_OWNER_ROLE_SQL}
+                                  GROUP BY e.restaurant_id""", label="engagement_monthly", optional=True):
+        if r["restaurant_id"] in owner_logins or not r.get("month"):
+            continue
+        try:
+            y, m = int(r["month"][:4]), int(r["month"][5:7])
+            last_day = (date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)).isoformat()
+        except (TypeError, ValueError):
+            continue
+        owner_logins[r["restaurant_id"]] = {"restaurant_id": r["restaurant_id"], "last_at": f"{last_day} 23:59:59",
+                                            "n": None, "from_month": r["month"]}
     team_seen = per_rid("SELECT restaurant_id, datetime(MAX(julianday(created_at))) AS last_at FROM login_history "
                         "WHERE event='staff_login' GROUP BY restaurant_id", label="login_history")
     s_cols = _columns(conn, "sessions")
