@@ -1051,6 +1051,15 @@ def employee_display_name(emp: dict) -> str:
     """"First Last" from an RPOWER employee record: fname + lname, else the
     `name` field ("LAST, FIRST" is turned around), else ''."""
     first, last = _tidy_name(emp.get("fname")), _tidy_name(emp.get("lname"))
+    middle = _tidy_name(emp.get("mname"))
+    # Entered in the wrong boxes: the LAST name in First, the first name in
+    # Middle, a middle initial in Last (Simple EJ's new hires, 9/30/26:
+    # "Royer · Katie · M" read "Royer M" for Katie Royer; "Benedict ·
+    # Danielle · J", "GORDON · KAILEY · I"). A one-letter last name beside a
+    # middle name is that pattern: Middle + First — the same name the record
+    # gives once it is corrected in RPOWER, so a fix there renames nobody.
+    if middle and len(last.replace(".", "")) == 1 and first and len(first) > 1:
+        return f"{middle} {first}"
     if first or last:
         return f"{first} {last}".strip()
     name = str(emp.get("name") or "")

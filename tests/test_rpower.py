@@ -911,3 +911,16 @@ def test_dish_sales_are_backfilled_for_days_the_nightly_job_never_saw(db_path, m
     assert c.execute("SELECT COUNT(*) FROM ingredient_stock_events WHERE restaurant_id=?", (rid,)).fetchone()[0] == 0
     c.close()
     assert inventory_ledger.backfill_item_sales(rid, days=10)["days"] == 0     # nothing left to fill
+
+
+def test_a_name_entered_in_the_wrong_boxes_reads_as_the_person():
+    """Simple EJ's new hires, 9/30/26: RPOWER held "Royer · Katie · M"
+    (last name in First, first in Middle, an initial in Last) and the team
+    read "Royer M". A one-letter last name beside a middle name reads
+    Middle + First — the name the record gives once it is corrected."""
+    d = rpower.employee_display_name
+    assert d({"fname": "Royer", "mname": "Katie", "lname": "M"}) == "Katie Royer"
+    assert d({"fname": "GORDON", "mname": "KAILEY", "lname": "I"}) == "Kailey Gordon"
+    assert d({"fname": "Katie", "mname": "", "lname": "Royer"}) == "Katie Royer"        # corrected: the same
+    assert d({"fname": "Ann", "mname": "Marie", "lname": "Boska"}) == "Ann Boska"
+    assert d({"fname": "J", "mname": "R", "lname": "T"}) == "J T"
