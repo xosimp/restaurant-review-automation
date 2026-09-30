@@ -60,10 +60,11 @@ import models as _models_mod
 from models import DB_PATH
 
 EVENTS = ("shown", "opened", "evidence_viewed", "accepted", "dismissed", "snoozed",
-          "completed", "outcome", "expired", "implemented", "superseded", "checkin", "abandoned")
+          "completed", "outcome", "expired", "implemented", "superseded", "checkin", "abandoned", "reopened")
 TERMINAL = {"accepted": "accepted", "completed": "completed", "dismissed": "dismissed", "expired": "expired"}
 # Events only the server writes: a client may not post them to /recs/event.
-SERVER_ONLY_EVENTS = ("shown", "expired", "outcome", "implemented", "superseded", "checkin", "abandoned")
+SERVER_ONLY_EVENTS = ("shown", "expired", "outcome", "implemented", "superseded", "checkin", "abandoned",
+                      "reopened")
 # Statuses an owner's answer can leave an episode in (taken or declined).
 TAKEN_STATUSES = ("accepted", "completed", "implemented")
 # Why an owner said no — one tap, every surface the same six. Stored on the
@@ -92,6 +93,47 @@ MODULES = ("reviews", "labor", "schedule", "food", "marketing", "intel", "guests
 SURFACES = ("home", "brief_email", "brief_push", "weekly_email", "alert_sms", "alert_email", "alert_push",
             "queue", "ask", "schedule_review", "labor", "reviews", "food", "marketing", "intel", "issue_sms",
             "digest", "monthly_email", "ios", "web", "auto", "unknown", "dsr", "dsr_email")
+# Surfaces that only DELIVER (memory re-audit 9/29/26, LOOPS-10): an email
+# counts its items shown when the send succeeded, not when anyone opened it.
+# An episode shown only here and never opened (a tracked link click is an
+# `opened`), answered or shown anywhere else was never seen — unanswered, it
+# is `unseen` (rec_learning), never `ignored`: it sits in no acceptance or
+# fatigue denominator and casts no quiet-kind vote. A push and a text show
+# their words on the phone itself, so they count as seen.
+DELIVERY_ONLY_SURFACES = ("brief_email", "weekly_email", "alert_email", "digest", "monthly_email", "dsr_email")
+# Events that say a person looked at (or answered) an episode.
+SEEN_EVENTS = ("opened", "evidence_viewed", "accepted", "completed", "dismissed", "snoozed", "implemented",
+               "checkin")
+
+
+def seen_sql(alias="i") -> str:
+    """A SQL expression, true unless the episode `alias` is known unseen:
+    false only when it was shown, every showing on an email
+    (DELIVERY_ONLY_SURFACES), and it was never opened, viewed or answered.
+    An episode with no showing on record (a row from before the trail) and
+    a showing with no surface count as seen — the old reading."""
+    only = ",".join(f"'{x}'" for x in DELIVERY_ONLY_SURFACES)
+    evs = ",".join(f"'{x}'" for x in SEEN_EVENTS)
+    return (f"NOT (EXISTS (SELECT 1 FROM rec_events _sd WHERE _sd.rec_id = {alias}.rec_id AND _sd.event = 'shown' "
+            f"AND _sd.surface IN ({only})) AND NOT EXISTS (SELECT 1 FROM rec_events _se WHERE "
+            f"_se.rec_id = {alias}.rec_id AND (_se.event IN ({evs}) OR (_se.event = 'shown' AND "
+            f"COALESCE(_se.surface, '') NOT IN ({only})))))")
+
+
+def episode_seen(events) -> bool:
+    """seen_sql over an episode's loaded events (dicts with event, surface):
+    False only when it was shown, only ever on an email, and never opened,
+    viewed or answered."""
+    emailed = False
+    for e in events or ():
+        ev = e.get("event")
+        if ev in SEEN_EVENTS or (ev == "shown" and (e.get("surface") or "") not in DELIVERY_ONLY_SURFACES):
+            return True
+        if ev == "shown":
+            emailed = True
+    return not emailed
+
+
 # What each surface is called where a person reads it (the admin console's
 # "by surface" breakdown). Every surface has one; a test holds them in step.
 SURFACE_LABELS = {
@@ -233,6 +275,14 @@ def answer_silence(key, event, kind=None, reason_code=None, reason=None):
     k = kind_of(key)
     effect = reason_effect(reason_code, reason)
     days, rule = None, None
+    if k == KIND_HOLD_KIND and (event == "completed" or (event == "dismissed" and effect == "taken")):
+        # "Keep suggesting it" keeps the kind proposed for KIND_HOLD_KEEP_DAYS
+        # (rec_learning.kept_hold_kinds); its question holds exactly as
+        # long, so when the keep runs out and the record still says stop,
+        # the owner is asked again — a Done's year-long silence dropped the
+        # kind's cards for six months with no question (memory re-audit
+        # 9/29/26, LOOPS-6).
+        return KIND_HOLD_KEEP_DAYS, "kind_hold_keep"
     if event == "dismissed" and effect == "defer":
         days, rule = BAD_TIMING_DAYS, "bad_timing"
     elif event == "dismissed" and effect == "distrust":
@@ -285,6 +335,8 @@ def silence_message(key, event, kind=None, reason_code=None, reason=None):
         return f"Noted — Cavnar AI will bring it back in {days // 7} weeks"
     if rule == "distrust":
         return "Noted — held until the data behind it is re-verified in Data Health"
+    if rule == "kind_hold_keep":
+        return f"Noted — Cavnar AI will keep suggesting it, and asks again in {days // 30} months"
     if rule == "situational_done":
         return f"Done — hidden unless it comes back (at most {days} days)"
     if rule in ("recurring_done", "recurring_decline", "hide"):
@@ -294,6 +346,12 @@ def silence_message(key, event, kind=None, reason_code=None, reason=None):
                 f"for a year")
     return None
 
+
+# "Keep suggesting this kind?" (rec_learning.hold_ask, key kind_hold:<kind>):
+# a keep holds the kind — and silences the question — this long. Read by
+# rec_learning.kept_hold_kinds too, so the two cannot drift apart.
+KIND_HOLD_KIND = "kind_hold"
+KIND_HOLD_KEEP_DAYS = 180
 
 # An accepted or completed recommendation is not re-asked while its outcome
 # is being measured.
@@ -313,7 +371,8 @@ IMPLEMENT_ATTACH_DAYS = 28
 # Events that describe an episode someone already saw and never begin one:
 # a tracker's verdict, an alert opened, the evidence read. An outcome with
 # no episode behind it is an episode nobody was shown (H-5).
-NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "superseded", "checkin", "abandoned")
+NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "superseded", "checkin", "abandoned",
+               "reopened")
 # Keys the ledger holds as bookkeeping rather than as advice an owner was
 # shown: the moment a quiet kind was restored (decisions.restore_kind), the
 # quality weights applied, an on-call ask sent. They stay in the trail —
@@ -494,6 +553,10 @@ def init_rec_ledger(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, surface, day)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_rank_builds_at ON rec_rank_builds(built_at)")
+        # The build's holdout arm (rec_learning.apply_holdout, memory
+        # re-audit 9/29/26 LOOPS-3): "learned" or "holdout"; NULL before.
+        if "arm" not in {r[1] for r in conn.execute("PRAGMA table_info(rec_rank_builds)")}:
+            conn.execute("ALTER TABLE rec_rank_builds ADD COLUMN arm TEXT")
         cap_recurring_silences(conn)
         cap_answer_silences(conn)
         conn.commit()
@@ -934,6 +997,27 @@ def is_stale(row, now=None, days=EXPIRE_AFTER_DAYS) -> bool:
 def _latest(conn, rid, key):
     return conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND key=? ORDER BY created_at DESC, rowid DESC "
                         "LIMIT 1", (rid, key)).fetchone()
+
+
+def _latest_taken(conn, rid, key, untracked=False, within_days=None):
+    """The key's latest TAKEN episode (accepted, done or the change made —
+    implemented_at set), or None: the one a measured result or a tracker
+    belongs to (memory re-audit 9/29/26, LOOPS-7). Resolving by key alone
+    took the newest episode, so a card shown again after it was accepted
+    got the verdict measured on the accepted one and the taken episode
+    never did. `untracked` keeps only one no tracker is tied to yet;
+    `within_days` only one taken (its last event) that recently."""
+    where = ["restaurant_id=?", "key=?",
+             f"(status IN ({','.join(repr(x) for x in TAKEN_STATUSES)}) OR implemented_at IS NOT NULL)"]
+    args = [rid, key]
+    if untracked:
+        where.append("tracker_id IS NULL")
+    if within_days is not None:
+        where.append("COALESCE(implemented_at, closed_at, last_event_at) >= ?")
+        args.append((datetime.utcnow() - timedelta(days=int(within_days))).strftime("%Y-%m-%d %H:%M:%S"))
+    return conn.execute(f"SELECT * FROM rec_instances WHERE {' AND '.join(where)} "
+                        "ORDER BY COALESCE(implemented_at, closed_at, created_at) DESC, created_at DESC, rowid DESC "
+                        "LIMIT 1", args).fetchone()
 
 
 def _episode_at(conn, rid, key, at):
@@ -1412,8 +1496,9 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                 # rec_learning.rank_meta. 288 shown events carried no weight.
                 rank = it.get("rank")
                 if isinstance(rank, dict) and rank:
+                    # `arm`: the build's holdout arm (rec_learning.apply_holdout).
                     meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "prior_rung", "rung",
-                                                             "version")
+                                                             "version", "arm")
                                     if rank.get(k) not in (None, [], "", {})}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
@@ -1439,12 +1524,14 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     return out
 
 
-def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH) -> bool:
+def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH,
+                   arm=None) -> bool:
     """One compact row per restaurant, surface and local day with what a
     build ranked (memory audit 9/29/26, "rank_log"): the cards shown and
     the top candidates NOT shown, each {key, base, score, weight, rung,
-    version}. The latest build of the day wins. Acceptance can only be
-    corrected for exposure when the alternatives are known. Never raises."""
+    version}, and the build's holdout `arm` (rec_learning.apply_holdout).
+    The latest build of the day wins. Acceptance can only be corrected for
+    exposure when the alternatives are known. Never raises."""
     if not restaurant_id or not surface:
         return False
 
@@ -1453,7 +1540,7 @@ def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None,
         for it in items or ():
             if not isinstance(it, dict) or not it.get("key"):
                 continue
-            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung")
+            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung", "arm")
                         if it.get(k) not in (None, "")})
         return json.dumps(out)[:6000]
     try:
@@ -1462,11 +1549,12 @@ def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None,
         return False
     try:
         day = local_day(conn, restaurant_id)
-        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at) "
-                     "VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
+        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at, "
+                     "arm) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
                      "version=excluded.version, shown=excluded.shown, not_shown=excluded.not_shown, "
-                     "built_at=excluded.built_at",
-                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now()))
+                     "built_at=excluded.built_at, arm=excluded.arm",
+                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now(),
+                      arm if arm in ("learned", "holdout") else None))
         conn.commit()
         return True
     except Exception as e:
@@ -1760,6 +1848,10 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
             # it answered was never logged, and it cannot answer what
             # the owner has been shown since.
             return False
+    elif event == "outcome":
+        # A measured result belongs to the episode that was taken (LOOPS-7),
+        # not to a newer showing of the same advice nobody has answered.
+        row = _latest_taken(conn, restaurant_id, key) or _latest(conn, restaurant_id, key)
     else:
         row = _latest(conn, restaurant_id, key)
     if row is not None and event == "implemented" and not rec_id and not _may_implement(row, when):
@@ -1942,8 +2034,10 @@ def implemented(restaurant_id, keys, surface, user_id=None, role=None, source_re
 
 def link_tracker(restaurant_id, key, tracker_id, db_path=DB_PATH) -> bool:
     """Tie a tracker (recommendation_outcomes.id) to the episode it measures
-    — the latest episode of `key` — for good. A no-op when the episode is
-    already linked or there is none. Never raises."""
+    — the key's latest episode taken in the last IMPLEMENT_ATTACH_DAYS with
+    no tracker yet (the change a tracker measures was taken on it; memory
+    re-audit 9/29/26, LOOPS-7), else the key's latest — for good. A no-op
+    when the episode is already linked or there is none. Never raises."""
     key = str(key or "").strip()[:160]
     try:
         tracker_id = int(tracker_id)
@@ -1956,7 +2050,8 @@ def link_tracker(restaurant_id, key, tracker_id, db_path=DB_PATH) -> bool:
     except Exception:
         return False
     try:
-        row = _latest(conn, restaurant_id, key)
+        row = (_latest_taken(conn, restaurant_id, key, untracked=True, within_days=IMPLEMENT_ATTACH_DAYS)
+               or _latest(conn, restaurant_id, key))
         if row is None:
             return False
         n = conn.execute("UPDATE rec_instances SET tracker_id=? WHERE rec_id=? AND tracker_id IS NULL",
@@ -2251,17 +2346,36 @@ def episode_tags(row) -> list:
     return tags_for(row["key"], row["module"], row["kind"])
 
 
-def unsilence(restaurant_id, key, db_path=DB_PATH, subject_id=None) -> bool:
-    """The owner took an answer back ("Use again"): the key can be shown.
-    With `subject_id`, that login's own silence on the key goes too."""
+def unsilence(restaurant_id, key, db_path=DB_PATH, subject_id=None, user_id=None, authority=None,
+              surface=None) -> bool:
+    """The owner took an answer back ("Use again", or restoring a quiet
+    kind): the key can be shown. With `subject_id`, that login's own silence
+    on the key goes too.
+
+    The reversal is kept in the trail (memory re-audit 9/29/26, QUALITY-1):
+    a `reopened` event, with who took it back (`authority`), on every
+    episode of the key an answer had closed as a decline or silenced. Lifting
+    only the silence left the "not for us" in every other reader — Ask's
+    "do not re-propose", decisions.history's WHAT THE OWNER DECIDED, the
+    ranker and what worked — so the owner asked for the advice back and
+    every prompt kept steering away from it. Those readers now read a
+    decline followed by a principal's `reopened` as taken back
+    (reopened_after)."""
     try:
         conn = get_conn(db_path)
     except Exception:
         return False
     try:
         k = str(key or "")[:160]
+        touched = [r["rec_id"] for r in conn.execute(
+            "SELECT rec_id FROM rec_instances WHERE restaurant_id=? AND key=? AND (status='dismissed' "
+            "OR silenced_until IS NOT NULL OR snoozed_until IS NOT NULL)", (restaurant_id, k)).fetchall()]
         n = conn.execute("UPDATE rec_instances SET silenced_until=NULL, snoozed_until=NULL WHERE restaurant_id=? AND key=?",
                          (restaurant_id, k)).rowcount
+        auth = authority if authority in AUTHORITIES else None
+        for rec_id in touched:
+            _add_event(conn, rec_id, restaurant_id, k, "reopened", surface=known_surface(surface, None),
+                       user_id=user_id, authority=auth, meta={"via": "unsilence"})
         if subject_id is not None:
             try:
                 n += conn.execute("DELETE FROM rec_silences WHERE restaurant_id=? AND subject_id=? AND key=?",
@@ -2274,7 +2388,7 @@ def unsilence(restaurant_id, key, db_path=DB_PATH, subject_id=None) -> bool:
         conn.close()
 
 
-def unsilence_login(restaurant_id, key, subject_id, db_path=DB_PATH) -> bool:
+def unsilence_login(restaurant_id, key, subject_id, db_path=DB_PATH, authority=None) -> bool:
     """A delegate (or support, through view-as) took back their own answer:
     only that login's silence on the key goes."""
     if subject_id is None:
@@ -2284,8 +2398,20 @@ def unsilence_login(restaurant_id, key, subject_id, db_path=DB_PATH) -> bool:
     except Exception:
         return False
     try:
+        k = str(key or "")[:160]
         n = conn.execute("DELETE FROM rec_silences WHERE restaurant_id=? AND subject_id=? AND key=?",
-                         (restaurant_id, int(subject_id), str(key or "")[:160])).rowcount
+                         (restaurant_id, int(subject_id), k)).rowcount
+        # The login's reversal is kept in the trail too (QUALITY-1): on each
+        # episode that login declined, under its own authority — so the
+        # decline it read back as its own is read as taken back, and the
+        # owner's record is untouched (reopened_after reads a principal's
+        # reversal only against the owner's declines).
+        auth = authority if authority in ("delegate", "admin") else "delegate"
+        for r in conn.execute("SELECT DISTINCT rec_id FROM rec_events WHERE restaurant_id=? AND key=? "
+                              "AND event IN ('dismissed','snoozed') AND user_id=?",
+                              (restaurant_id, k, int(subject_id))).fetchall():
+            _add_event(conn, r["rec_id"], restaurant_id, k, "reopened", user_id=int(subject_id), authority=auth,
+                       meta={"via": "unsilence_login"})
         conn.commit()
         return bool(n)
     except Exception as e:

@@ -890,12 +890,36 @@ def score_due(restaurant_id, today=None, db_path=None) -> dict:
                 out["unmeasurable"] += 1
                 continue
             verdict = source = None
-            if tracker and tracker.get("status") == "evaluated" and state == "taken":
+            discounted = None
+            if tracker and state == "taken":
+                # A tracker measures this advice: its reading decides, and a
+                # result it discounts is never re-read from the raw window
+                # (memory re-audit 9/29/26, LOOPS-9). "I didn't make the
+                # change" is untested; a result tied to other changes (or
+                # read against the trigger's own bad stretch) is not
+                # measurable. The window scored both HELD or NOT_HELD, and
+                # fed that back to the next read and the confidence check.
                 import rec_learning
-                lv = rec_learning.learned_verdict(tracker.get("verdict"), tracker)
-                if lv in ("improved", "worsened", "no_clear_change"):
-                    verdict, source = (HELD if lv == "improved" else NOT_HELD), "tracker"
+                import rec_ledger as _rl_ck
+                ck = _rl_ck.latest_checkin(restaurant_id, tracker_id=tracker.get("id"), db_path=db_path) \
+                    if tracker.get("id") else None
+                if isinstance(ck, dict) and ck.get("did_it") == "no":
+                    discounted = (UNTESTED, "the owner said the change wasn't made")
+                elif isinstance(ck, dict) and ck.get("conditions_changed"):
+                    discounted = (UNMEASURABLE, "the owner said something else changed in those weeks")
+                elif tracker.get("status") == "evaluated":
+                    lv = rec_learning.learned_verdict(tracker.get("verdict"), tracker, ck)
+                    if lv in ("improved", "worsened", "no_clear_change"):
+                        verdict, source = (HELD if lv == "improved" else NOT_HELD), "tracker"
+                    else:
+                        discounted = (UNMEASURABLE, "the measured result couldn't be separated from other "
+                                                    "changes in those weeks")
             before, after, cmp = _window_reading(restaurant_id, r, db_path=db_path)
+            if discounted is not None:
+                updates.append((discounted[0], before, after, f"{discounted[1]} ({CAVEAT})", "tracker", state,
+                                tracker.get("id"), r["id"]))
+                out["scored" if discounted[0] == UNTESTED else "unmeasurable"] += 1
+                continue
             if verdict is None and cmp is None:
                 if (today - _day(r["horizon_date"])).days > UNSCORABLE_AFTER_DAYS:
                     updates.append((UNMEASURABLE, before, after,
@@ -1198,10 +1222,32 @@ def claim_lines(req):
             if not surface:
                 return []
             queries.append((base + ["surface=?"], base_args + [surface]))
+        # The newest four the viewer may read (memory_context.visible on the
+        # claim's surface scope): an owner-level claim is dropped BEFORE the
+        # cut, so a manager (or a shared output, memory_context.TEAM) is not
+        # left with nothing because the four newest were the owner's (INT).
+        # Both the viewer's surfaces and the latest claim per subject are
+        # chosen in SQL, before each LIMIT (memory re-audit 9/29/26,
+        # INVENTORY-13): the LIMIT was a cut too, so 40 newest owner-level
+        # claims left a manager's Ask with no LAST READ at all.
+        viewer = getattr(req, "viewer", None)
+        if viewer is not None:
+            import memory_context as _mc
+            user = _mc.viewer_user(viewer)
+            if user is not None:
+                known = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT surface FROM ai_claims WHERE restaurant_id=?", (rid,)).fetchall()]
+                mine = [sf for sf in known if _mc.visible(dict(line_scope(sf), text="x"), user)]
+                if not mine:
+                    return []
+                vis = f"surface IN ({','.join('?' for _ in mine)})"
+                queries = [(w + [vis], a + mine) for w, a in queries]
         rows, seen_ids = [], set()
         for where, args in queries:
-            for r in conn.execute(f"SELECT * FROM ai_claims WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 40",
-                                  args).fetchall():
+            for r in conn.execute(
+                    f"SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY surface, subject ORDER BY id DESC) "
+                    f"AS _rn FROM ai_claims WHERE {' AND '.join(where)}) WHERE _rn = 1 ORDER BY id DESC LIMIT 40",
+                    args).fetchall():
                 r = dict(r)
                 if r["id"] not in seen_ids:
                     seen_ids.add(r["id"])
@@ -1210,17 +1256,7 @@ def claim_lines(req):
         latest = {}
         for r in rows:
             latest.setdefault((r["surface"], r["subject"]), r)
-        # The newest four the viewer may read (memory_context.visible on the
-        # claim's surface scope): an owner-level claim is dropped BEFORE the
-        # cut, so a manager (or a shared output, memory_context.TEAM) is not
-        # left with nothing because the four newest were the owner's (INT).
-        viewer = getattr(req, "viewer", None)
         pool = sorted(latest.values(), key=lambda r: -r["id"])
-        if viewer is not None:
-            import memory_context as _mc
-            user = _mc.viewer_user(viewer)
-            if user is not None:
-                pool = [r for r in pool if _mc.visible(dict(line_scope(r["surface"]), text="x"), user)]
         picked = pool[:4]
         for i, r in enumerate(picked):
             weight = 10.0 - i

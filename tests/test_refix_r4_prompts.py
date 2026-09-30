@@ -93,7 +93,12 @@ def test_the_owners_constraint_is_an_owner_rule_and_a_managers_stays_in_the_gues
 def test_support_through_view_as_never_writes_an_owner_rule():
     rid = _rid()
     owner_memory.remember(rid, "Never cut the host", kind="constraint", user=ADMIN)
-    text = mc.memory_context(rid, "schedule").text
+    # Merged with R5 (PROMPTS-12): support's fact is for the account holders
+    # (audience principals), so a team-assembled output such as the schedule
+    # draft does not carry it at all; the owner's own Ask reads it — as
+    # support's words, never an owner rule.
+    assert "Never cut the host" not in mc.memory_context(rid, "schedule").text
+    text = mc.memory_context(rid, "ask").text
     assert ai_guard.OWNER_RULE_OPEN not in text and "Never cut the host" in text
 
 

@@ -1236,11 +1236,26 @@ all-types patterns are served (`patterns.active(None)`; the admin view is
 (billing), `admin_home` (every login on it is internal), `test_name` (a
 word such as "test", "demo", "qa", "preview" or "admin" standing alone in
 the name, or "Cavnar AI"). The admin's `learning_override='include'` wins
-over the three automatic rules. It governs every learner, the restaurant's
-own and the platform's, and every admin learning check. Test and internal
-accounts used to be excluded only when an admin ticked the flag, so the
-internal rid 1 counted as live. The admin console shows the status beside
-the override (`models.learning_status`).
+over the three automatic rules. It governs every POOLED learner and every
+admin learning check. Test and internal accounts used to be excluded only
+when an admin ticked the flag, so the internal rid 1 counted as live. The
+admin console shows the status beside the override (`models.learning_status`).
+
+**Two flags, not one (memory re-audit 9/29/26, INVENTORY-1 / PLATFORM-8).**
+A restaurant's OWN learners — its ranking (`rec_learning.effectiveness`),
+reply and marketing voice, re-tag examples, standing schedule patterns and
+the draft's patterns, order and reprice corrections, event memory, measured
+campaign lifts and the nightly learning pass — follow
+`models.learns_for_itself`: off only for a demo (`is_demo`) or an account an
+admin excluded (`learning_override='exclude'` / `exclude_from_learning`),
+with the same `learning_since` floor. A test-named, internal-billing or
+admin-home account learns for itself and stays out of every pooled reader
+(`learning_filter_sql`, `learning_ineligible_ids` — unchanged). A paying
+account the name rule caught raises an admin issue (`learning:test_name`)
+instead of silently losing its learning; `run_learning_memory` counts the
+restaurants it skips; and including an account with a billing history
+(`models.learning_billing_history`) keeps its history unless the save says
+`learning_history: false`.
 
 Since the memory re-audit (9/29/26, PLATFORM-14) there is no second,
 narrower definition: `jobs.seeded_restaurant_ids` (and so

@@ -962,11 +962,13 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
     {learned, confirmed, overridden, retired, dormant, woke}."""
     import schedule_intel as _si
     stats = {"learned": 0, "confirmed": 0, "overridden": 0, "retired": 0, "dormant": 0, "woke": 0}
-    # A learner: a demo, test or internal restaurant teaches nothing, not
-    # even its own draft (models.learning_eligible, SHARED_MEM).
+    # A learner of its own: a demo (or an admin-excluded account) learns
+    # nothing, not even its own draft (models.learns_for_itself — memory
+    # re-audit 9/29/26 INVENTORY-1; patterns_for_draft holds the same line,
+    # LOOPS-16). A test-named or internal account learns for itself.
     try:
         import models as _m_elig
-        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+        if not _m_elig.learns_for_itself(_m_elig.get_restaurant(restaurant_id, db_path)):
             return dict(stats, skipped="not_eligible")
     except Exception:
         return dict(stats, skipped="not_eligible")
@@ -1186,8 +1188,19 @@ def patterns_for_draft(restaurant_id, db_path=DB_PATH) -> tuple:
     dismissed, less what a standing row holds back (`suppressed`: retired
     without newer evidence, ruled, dormant) and less any pair two editors
     pull opposite ways — those are `conflicts`, for the owner to settle,
-    never the model to guess."""
+    never the model to guess.
+
+    A restaurant that does not learn for itself (a demo, or an account an
+    admin excluded — models.learns_for_itself) gets none: the standing rows
+    were gated and the live window's patterns were not, so a demo's own
+    draft still learned from its edits (memory re-audit 9/29/26, LOOPS-16)."""
     import schedule_intel as _si
+    try:
+        import models as _m_elig
+        if not _m_elig.learns_for_itself(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return [], []
+    except Exception:
+        return [], []
     gone = _si.dismissed_patterns(restaurant_id, db_path)
     standing = {s_["key"]: s_ for s_ in standing_patterns(restaurant_id, db_path=db_path)}
     live = [p for p in learned_patterns(restaurant_id, db_path=db_path)

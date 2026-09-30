@@ -554,6 +554,13 @@ def _before_learning(restaurant_id, week_start, since):
     return before_learning(restaurant_id, week_start, since)
 
 
+def _sample_order(restaurant_id):
+    """A restaurant's place in the readout's sample: a stable hash of its id
+    (the same restaurants every week, spread across sign-up dates)."""
+    import hashlib
+    return hashlib.sha256(f"experiment-readout:{int(restaurant_id)}".encode()).hexdigest()
+
+
 def _capped(rows, per=MAX_WEEKS_PER_RESTAURANT):
     """Each restaurant's `per` most recent weeks (by week start, then id)."""
     by = {}
@@ -576,11 +583,30 @@ def readout(db_path=DB_PATH) -> dict:
     since = _learning_since(db_path)
     conn = get_conn(db_path)
     try:
+        # Eligibility and the demo-era floor in SQL, BEFORE the LIMIT (memory
+        # re-audit 9/29/26, PLATFORM-12): demo and test churn filled the
+        # 20,000-row window before the filter ran, so eligible restaurants'
+        # older weeks fell out. The Python check below stays as the same
+        # rule's second reading.
+        where = []
+        if excluded:
+            where.append(f"restaurant_id NOT IN ({','.join(str(int(i)) for i in sorted(excluded))})")
+        try:
+            import models as _m_rows
+            where.append(_m_rows.learning_rows_sql("schedule_experiment_weeks.restaurant_id",
+                                                   "schedule_experiment_weeks.week_start"))
+        except Exception as e:
+            print(f"[experiments] demo-era floor not applied in SQL: {e}")
         rows = conn.execute("SELECT history_id, restaurant_id, experiment, arm, week_start, pinned, quality_score, "
-                            "solver_applied FROM schedule_experiment_weeks ORDER BY history_id DESC LIMIT 20000").fetchall()
+                            "solver_applied FROM schedule_experiment_weeks "
+                            + (f"WHERE {' AND '.join(where)} " if where else "")
+                            + "ORDER BY history_id DESC LIMIT 20000").fetchall()
         rows = [dict(r) for r in rows if r["restaurant_id"] not in excluded
                 and not _before_learning(r["restaurant_id"], r["week_start"], since)]
-        rids = sorted({r["restaurant_id"] for r in rows if not r["pinned"]})[:READOUT_MAX_RESTAURANTS]
+        # Past READOUT_MAX_RESTAURANTS, a stable hash chooses the sample —
+        # never the lowest ids, which read only the earliest customers.
+        rids = sorted({r["restaurant_id"] for r in rows if not r["pinned"]},
+                      key=_sample_order)[:READOUT_MAX_RESTAURANTS]
         in_scope = set(rids)
         pins = [dict(r) for r in conn.execute(
             "SELECT p.restaurant_id, p.experiment, p.arm, p.pinned_by, p.created_at, r.name AS restaurant "

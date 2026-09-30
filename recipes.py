@@ -266,16 +266,25 @@ def confirmed_examples(restaurant_id, kind, exclude_item_id=None, items=None) ->
         print(f"[recipes] confirmed examples unavailable for {restaurant_id}: {e}")
         return []
     rank = {"owner": 0, "draft_edited": 1, "draft_accepted": 2}
+
+    def best(m):
+        return min((rank.get(x, 3) for x in src.get(m.get("id")) or ()), default=3)
     picked = [m for m in menu if m.get("id") != exclude_item_id and _recipe_of(m)
               and dish_type(m.get("name")) == kind]
-    picked.sort(key=lambda m: (min((rank.get(x, 3) for x in src.get(m.get("id")) or ()), default=3),
-                               str(m.get("name") or "").lower()))
+    # A draft accepted as drafted is the model's own text: it is an example
+    # only when no recipe of the kind the owner typed or edited exists, and
+    # then it is labelled as what it is (memory re-audit 9/29/26, PROMPTS-12
+    # — it was shown as "the owner's confirmed recipes", feeding the model
+    # its own drafts back as the owner's portions).
+    if any(best(m) < 2 for m in picked):
+        picked = [m for m in picked if best(m) < 2]
+    picked.sort(key=lambda m: (best(m), str(m.get("name") or "").lower()))
     out = []
     for m in picked[:RECIPE_EXAMPLES]:
         lines = [(str(r.get("ingredient_name") or ""), float(r.get("qty_per_unit") or 0), str(r.get("unit") or ""))
                  for r in _recipe_of(m)[:RECIPE_EXAMPLE_LINES] if r.get("ingredient_name")]
         if lines:
-            out.append({"dish": str(m.get("name") or ""), "lines": lines})
+            out.append({"dish": str(m.get("name") or ""), "lines": lines, "accepted_draft": best(m) >= 2})
     return out
 
 
@@ -285,9 +294,15 @@ def _examples_block(examples) -> str:
     from ai_guard import wrap_untrusted
     body = "\n".join(f"{e['dish']}: " + "; ".join(f"{n} {q:g} {u}".strip() for n, q, u in e["lines"])
                      for e in examples)
-    return ("The owner's confirmed recipes for similar dishes here, per plate — their portions, fenced; use them "
-            "as the guide to how much this kitchen puts on a plate, never as ingredients to add that this dish "
-            "would not have:\n" + wrap_untrusted(body) + "\n\n")
+    if all(e.get("accepted_draft") for e in examples):
+        head = ("Accepted drafts for similar dishes here, per plate — earlier drafts the owner kept as drafted "
+                "(not recipes they wrote), fenced; a weak guide to this kitchen's portions, never ingredients to "
+                "add that this dish would not have:\n")
+    else:
+        head = ("The owner's confirmed recipes for similar dishes here, per plate — their portions, fenced; use "
+                "them as the guide to how much this kitchen puts on a plate, never as ingredients to add that this "
+                "dish would not have:\n")
+    return head + wrap_untrusted(body) + "\n\n"
 
 
 def _prompt(item_name, ingredients, context, examples=None):

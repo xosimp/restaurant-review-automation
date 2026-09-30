@@ -245,11 +245,41 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
 
 # ── what the generators read ────────────────────────────────────────────────
 
-def _principal_rows(conn, restaurant_id, channel, limit=40):
+# How far back the OWNER'S EDITS line reads edited pieces (memory re-audit
+# 9/29/26, LOOPS-4 — reply_edits' rule): the edits that taught a lesson,
+# not the newest pieces of any kind, which pushed them out once the
+# generator followed them.
+NOTE_DAYS = 365
+
+
+def _voice_sql():
+    """Whose sent pieces are the restaurant's voice: the account holder's, or
+    a login holding the marketing-voice grant (permissions.MARKETING_VOICE,
+    read at the time of use — a revoke takes them back out; memory re-audit
+    9/29/26, LOOPS-15); never a piece sent through view-as."""
+    return ("COALESCE(via, '') != 'view_as' AND (authority='principal' OR (authority='delegate' AND user_id IN "
+            "(SELECT g.user_id FROM permission_grants g WHERE g.restaurant_id=marketing_edits.restaurant_id "
+            "AND g.permission='marketing.voice')))")
+
+
+def _principal_rows(conn, restaurant_id, channel, limit=40, edited_only=False, days=None):
+    """The pieces sent on `channel` in the restaurant's voice (_voice_sql),
+    newest first. `edited_only` keeps the ones the owner changed or wrote
+    (the style line and the examples); `days` bounds how far back."""
+    where = ["restaurant_id=?", "channel=?"]
+    args = [restaurant_id, channel]
+    try:
+        conn.execute("SELECT 1 FROM permission_grants LIMIT 1")
+        where.append(_voice_sql())
+    except Exception:                           # a database without the auth schema
+        where.append("authority='principal' AND COALESCE(via, '') != 'view_as'")
+    if edited_only:
+        where.append("edit_category IN ('light','heavy','rewrite','written')")
+    if days:
+        where.append(f"created_at >= datetime('now', '-{int(days)} days')")
     return [dict(r) for r in conn.execute(
-        "SELECT * FROM marketing_edits WHERE restaurant_id=? AND channel=? AND authority='principal' "
-        "AND COALESCE(via, '') != 'view_as' ORDER BY id DESC LIMIT ?",
-        (restaurant_id, channel, int(limit))).fetchall()]
+        f"SELECT * FROM marketing_edits WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
+        (*args, int(limit))).fetchall()]
 
 
 def style_note(rows, channel) -> str:
@@ -290,12 +320,19 @@ def style_note(rows, channel) -> str:
 
 
 def examples(rows, limit=EXAMPLES) -> list:
-    """Up to `limit` pieces the owner sent in their own words: once any was
-    edited, only edited ones (an unedited piece is the model's text), else
-    what they sent as drafted; newest first."""
+    """Up to `limit` pieces the owner sent in their own words — edited or
+    written from blank — newest first. Never a piece sent as drafted: that is
+    the model's own text, and offering it as "the owner's own words" fed the
+    generator its own style back (memory re-audit 9/29/26, QUALITY-18); those
+    count only as approvals (approved_as_drafted)."""
     edited = [r for r in rows if r.get("edit_category") in ("light", "heavy", "rewrite", "written")]
-    pool = edited or rows
-    return [str(r["final_body"])[:EXAMPLE_CHARS] for r in pool[:limit]]
+    return [str(r["final_body"])[:EXAMPLE_CHARS] for r in edited[:limit]]
+
+
+def approved_as_drafted(rows) -> int:
+    """How many of `rows` went out exactly as drafted — an approval signal,
+    never an example of the owner's voice."""
+    return sum(1 for r in rows if r.get("edit_category") == "unchanged")
 
 
 def regenerated(conn, restaurant_id, channel, days=DRAFTS_KEEP_DAYS) -> list:
@@ -344,18 +381,20 @@ def voice_block(restaurant_id, channel, db_path=None) -> str:
     up to three pieces they sent in their own words (fenced — their voice,
     never a source for an offer, a date or a price), and what the drafts
     they threw away had in common. "" when nothing is known yet — and for a
-    restaurant that may not teach a learner (models.learning_eligible: a
-    demo, test or internal account). Never raises."""
+    restaurant that does not learn for itself (models.learns_for_itself: a
+    demo, or an account an admin excluded). Never raises."""
     if not restaurant_id or channel not in CHANNELS:
         return ""
     try:
         import models
-        if not models.learning_eligible(restaurant_id):
+        if not models.learns_for_itself(restaurant_id):
             return ""
         from ai_guard import wrap_untrusted
         conn = get_conn(db_path)
         try:
             rows = _principal_rows(conn, restaurant_id, channel)
+            edited = _principal_rows(conn, restaurant_id, channel, limit=reply_edits.NOTE_WINDOW,
+                                     edited_only=True, days=NOTE_DAYS)
             thrown = regenerated(conn, restaurant_id, channel)
         finally:
             conn.close()
@@ -363,15 +402,20 @@ def voice_block(restaurant_id, channel, db_path=None) -> str:
         print(f"[marketing_voice] voice unreadable for {restaurant_id}/{channel}: {e}")
         return ""
     parts = []
-    note = style_note(rows, channel)
+    note = style_note(edited, channel)
     if note:
         parts.append(note)
-    ex = examples(rows)
+    ex = examples(edited)
+    noun = CHANNEL_NOUN.get(channel, "pieces")
     if ex:
-        noun = CHANNEL_NOUN.get(channel, "pieces")
         parts.append(f"{len(ex)} {noun} the owner sent in their own words — their voice to match, not text to "
                      "reuse: never copy an offer, a price, a date or an event from them:\n"
                      + "\n".join(wrap_untrusted(e) for e in ex))
+    kept = approved_as_drafted(rows)
+    if kept:
+        # Approval, not voice: the drafts themselves are never shown back.
+        parts.append(f"The owner sent {kept} of the recent {noun} as drafted (approved as drafted — the "
+                     "style of those drafts is acceptable to them).")
     regen = regenerated_note(thrown, [r["final_body"] for r in rows], channel)
     if regen:
         parts.append(regen)
@@ -405,7 +449,8 @@ def summary_lines(restaurant_id, db_path=None) -> list:
         conn = get_conn(db_path)
         try:
             for ch in CHANNELS:
-                note = style_note(_principal_rows(conn, restaurant_id, ch), ch)
+                note = style_note(_principal_rows(conn, restaurant_id, ch, limit=reply_edits.NOTE_WINDOW,
+                                                  edited_only=True, days=NOTE_DAYS), ch)
                 if note:
                     out.append(note)
         finally:

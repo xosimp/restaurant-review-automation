@@ -166,8 +166,23 @@ REASON_STEP, REASON_CAP = 0.05, 0.15
 REASON_HALF_LIFE_DAYS = 90
 # The states an episode can be in that count in no rate: replaced, still
 # live, snoozed, put off for timing ("bad timing"), or answered only by a
-# delegate the owner has not answered (from the owner's side).
-UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated")
+# delegate the owner has not answered (from the owner's side). And (memory
+# re-audit 9/29/26):
+#   distrusted  "don't trust the data" (silence_rule distrust / verified) —
+#               a question about the feed, not a "no" to the advice; every
+#               other reader (insight_store, decisions.declined_subjects)
+#               already treated it so, while the ranker and the fatigue
+#               throttle counted it a rejection (LOOPS-11).
+#   reopened    a decline the owner took back ("Use again", restoring a
+#               quiet kind — rec_ledger.unsilence's `reopened` event): the
+#               owner asked for the advice back, so the decline no longer
+#               teaches (QUALITY-1).
+#   unseen      went unanswered, but only ever DELIVERED where nobody may
+#               have looked — an email that was never opened
+#               (rec_ledger.DELIVERY_ONLY_SURFACES) — never on a screen, a
+#               push, a text or a click: not "ignored", in no denominator
+#               (LOOPS-10).
+UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated", "distrusted", "reopened", "unseen")
 
 
 def _stamp(d):
@@ -397,7 +412,9 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         return []
     evs = {}
     shown = set()
+    seen_shown = set()
     ids = [r["rec_id"] for r in rows]
+    only = ",".join(f"'{x}'" for x in rec_ledger.DELIVERY_ONLY_SURFACES)
     for i in range(0, len(ids), 400):
         chunk = ids[i:i + 400]
         marks = ",".join("?" for _ in chunk)
@@ -405,9 +422,12 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
-            for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
-                                  f"AND event = 'shown'", chunk).fetchall():
+            for e in conn.execute(f"SELECT rec_id, MAX(CASE WHEN COALESCE(surface, '') NOT IN ({only}) "
+                                  f"THEN 1 ELSE 0 END) AS on_screen FROM rec_events WHERE rec_id IN ({marks}) "
+                                  f"AND event = 'shown' GROUP BY rec_id", chunk).fetchall():
                 shown.add(e["rec_id"])
+                if e["on_screen"]:
+                    seen_shown.add(e["rec_id"])
         else:
             for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN "
                                   f"({marks}) ORDER BY at, id", chunk).fetchall():
@@ -424,6 +444,13 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         es = evs.get(r["rec_id"], [])
         r["events"] = es
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
+        # Whether anyone could have seen it (LOOPS-10): an episode only an
+        # unopened email carried is `unseen`, not ignored (_state).
+        if lean:
+            emailed_only = r["rec_id"] in shown and r["rec_id"] not in seen_shown
+            r["seen"] = not emailed_only or any(e["event"] in rec_ledger.SEEN_EVENTS for e in es)
+        else:
+            r["seen"] = rec_ledger.episode_seen(es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
         r["state"] = _state(r, now, perspective, viewer_id=viewer_id)
@@ -445,6 +472,26 @@ def _authority(e) -> str:
     or admin."""
     a = (e or {}).get("authority")
     return a if a in ("delegate", "admin") else "principal"
+
+
+def reopened_after(events, perspective="principal", viewer_id=None) -> bool:
+    """Whether the latest decline in `events` (an episode's, oldest first)
+    was taken back afterwards (rec_ledger.unsilence's `reopened`) by the
+    same side — the owner's reversal for the owner's decline, a delegate's
+    for their own (with `viewer_id`, that login's own only). An admin's
+    view-as reversal takes nothing back."""
+    last_decline = last_reopen = None
+    for i, e in enumerate(events or ()):
+        if perspective == "delegate":
+            if not _own_delegate_event(e, viewer_id):
+                continue
+        elif _authority(e) != "principal":
+            continue
+        if e["event"] == "dismissed":
+            last_decline = (str(e.get("at") or ""), i)
+        elif e["event"] == "reopened":
+            last_reopen = (str(e.get("at") or ""), i)
+    return bool(last_decline and last_reopen and last_reopen > last_decline)
 
 
 def _own_delegate_event(e, viewer_id=None) -> bool:
@@ -485,6 +532,12 @@ def _state(r, now, perspective="principal", viewer_id=None):
         return "implemented"
     if st == "dismissed" and str(r.get("silence_rule") or "") == "bad_timing":
         return "deferred"
+    if st == "dismissed" and str(r.get("silence_rule") or "") in ("distrust", "verified"):
+        return "distrusted"
+    # The closing decline is the owner's, so the owner's reversal decides —
+    # whichever side is reading.
+    if st == "dismissed" and reopened_after(r.get("events") or ()):
+        return "reopened"
     if st in ("accepted", "completed", "implemented", "dismissed", "superseded"):
         return st
     if st == "expired":
@@ -497,12 +550,15 @@ def _state(r, now, perspective="principal", viewer_id=None):
         base = "open"
     if base in ("ignored", "open"):
         if perspective == "delegate":
-            # The delegate's own view: their own decline, never a teammate's.
+            # The delegate's own view: their own decline, never a
+            # teammate's — and their own taking it back (QUALITY-1).
             if _delegate_declined(r, viewer_id):
-                return "dismissed"
-            return base
-        if _delegate_declined(r):
+                return ("reopened" if reopened_after(r.get("events") or (), "delegate", viewer_id)
+                        else "dismissed")
+        elif _delegate_declined(r):
             return "delegated" if base == "ignored" else base
+    if base == "ignored" and r.get("seen") is False:
+        return "unseen"
     return base
 
 
@@ -864,6 +920,76 @@ def timeline(restaurant_id, limit=30, before=None, viewer=None, db_path=DB_PATH)
 
 # ── the effectiveness model the rankers read ────────────────────────────────
 
+# ── the holdout (memory re-audit 9/29/26, LOOPS-3) ──────────────────────────
+#
+# Nothing measured whether learning helps: rank_learning compared weight
+# buckets, and a kind accepted before is accepted again whatever its rank,
+# so "raised beat lowered" held for a ranker with no effect at all. A small
+# deterministic holdout is the counterfactual: on HOLDOUT_PCT of
+# (restaurant, day) builds of a surface, Home and the one thing rank on the
+# neutral model (every weight 1.0 — what the owner is ASKED, a kind held
+# back, and every figure are unchanged); on the same share of reply drafts
+# (by review) the style note is left out; on the same share of order days
+# the owner's order corrections are not applied. Each arm is logged (the
+# shown rank meta, rec_rank_builds.arm) or reproducible from its unit, and
+# the admin readouts compare arms (admin_ops.rank_learning,
+# learning_holdouts) — never an owner-facing figure. LEARNING_HOLDOUT_PCT
+# overrides the share (0 turns it off; the test suite runs with 0).
+HOLDOUT_DEFAULT_PCT = 10
+HOLDOUT_MAX_PCT = 50
+# The day arms began: a readout counts only units from here on.
+HOLDOUT_SINCE = "2026-09-30"
+ARMS = ("learned", "holdout")
+
+
+def holdout_pct() -> int:
+    """The holdout share in percent (LEARNING_HOLDOUT_PCT, else
+    HOLDOUT_DEFAULT_PCT), bounded to 0–HOLDOUT_MAX_PCT."""
+    import os
+    try:
+        pct = int(os.getenv("LEARNING_HOLDOUT_PCT", str(HOLDOUT_DEFAULT_PCT)))
+    except (TypeError, ValueError):
+        pct = HOLDOUT_DEFAULT_PCT
+    return max(0, min(HOLDOUT_MAX_PCT, pct))
+
+
+def holdout_arm(restaurant_id, unit, surface) -> str:
+    """"holdout" or "learned" for one unit of a surface — a (restaurant,
+    day) build, a review's draft, an order day — by a stable hash, so the
+    same unit is always in the same arm and a readout can recompute it."""
+    pct = holdout_pct()
+    if pct <= 0 or not restaurant_id or unit in (None, ""):
+        return "learned"
+    import hashlib
+    h = int(hashlib.sha256(f"{int(restaurant_id)}:{surface}:{unit}".encode()).hexdigest()[:8], 16) % 100
+    return "holdout" if h < pct else "learned"
+
+
+def apply_holdout(learned, restaurant_id, surface, day=None):
+    """Put a ranking model in its arm for today's (or `day`'s) build of
+    `surface`: in the holdout arm its weights read neutral (Effectiveness.
+    weight / explain) and say so in the rank meta. Returns `learned`."""
+    if learned is None:
+        return None
+    if not day:
+        # The restaurant's own day — the same one its rank build is logged
+        # under (rec_ledger.log_rank_build).
+        try:
+            conn = get_conn(getattr(learned, "db_path", None) or DB_PATH)
+            try:
+                day = rec_ledger.local_day(conn, restaurant_id)
+            finally:
+                conn.close()
+        except Exception:
+            day = datetime.utcnow().date().isoformat()
+    day = str(day)[:10]
+    try:
+        learned.arm = holdout_arm(restaurant_id, day, surface)
+    except Exception as e:
+        print(f"[rec_learning] holdout arm unavailable for {restaurant_id}: {e}")
+    return learned
+
+
 class Effectiveness:
     """This restaurant's learned weight for a recommendation — see the
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
@@ -896,6 +1022,7 @@ class Effectiveness:
         self.perspective = perspective
         self.viewer_id = viewer_id
         self.version = EFFECTIVENESS_VERSION
+        self.arm = "learned"           # apply_holdout: "holdout" ranks on neutral weights
         self._priors = {}
         self._cold = {}
         self._rungs = {}
@@ -1131,6 +1258,8 @@ class Effectiveness:
         return W_ACCEPT * (acc - acc_p) + W_SUCCESS * (suc - suc_p)
 
     def weight(self, key, kind=None, tags=None):
+        if getattr(self, "arm", "learned") == "holdout":
+            return 1.0, []
         key = str(key or "")
         kind = kind or rec_ledger.kind_of(key)
         tags = rec_ledger.tags_for(key, kind=kind) if tags is None else tags
@@ -1208,6 +1337,9 @@ class Effectiveness:
         "cold/<rung>" when similar restaurants' results ranked it, else
         "none". `title` lets a model line's words name its advice signature
         (its sig: tag), which its hash key cannot."""
+        if getattr(self, "arm", "learned") == "holdout":
+            return {"weight": 1.0, "why": [], "prior_rung": None, "rung": "holdout", "version": self.version,
+                    "arm": "holdout"}
         kind = kind or rec_ledger.kind_of(str(key or ""))
         if tags is None:
             tags = rec_ledger.tags_for(str(key or ""), kind=kind)
@@ -1222,7 +1354,7 @@ class Effectiveness:
         else:
             rung = "none"
         return {"weight": d["weight"], "why": list((d.get("why") or [])[:3]), "prior_rung": pr, "rung": rung,
-                "version": d.get("version")}
+                "version": d.get("version"), "arm": getattr(self, "arm", "learned")}
 
     def ceiling(self, learned, kind=None):
         """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
@@ -1301,8 +1433,10 @@ class Effectiveness:
 # The owner's answer to "keep suggesting this kind?" (kind_hold:<kind>): a
 # yes (Done / Track) keeps the kind proposed for this long; a "not for us"
 # leaves it stopped.
-KIND_HOLD_PREFIX = "kind_hold"
-KIND_HOLD_KEEP_DAYS = 180
+KIND_HOLD_PREFIX = rec_ledger.KIND_HOLD_KIND
+# The keep's length lives in rec_ledger, which silences the question for
+# exactly as long (answer_silence; memory re-audit 9/29/26, LOOPS-6).
+KIND_HOLD_KEEP_DAYS = rec_ledger.KIND_HOLD_KEEP_DAYS
 
 
 def kept_hold_kinds(restaurant_id, db_path=DB_PATH, now=None) -> set:
@@ -1449,18 +1583,20 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     answer still outranks theirs. An admin's view-as answer teaches neither
     (memory audit 9/29/26, who_answered / view_as). `viewer_id` (a
     delegate's login) keeps a manager's view to their own declines
-    (LOOPS-14 / PEOPLE-16). A demo, test or internal
-    account (models.learning_eligible) ranks on the neutral model."""
+    (LOOPS-14 / PEOPLE-16). A demo, or an account an admin excluded
+    (models.learns_for_itself), ranks on the neutral model; a test-named or
+    internal account learns for itself (memory re-audit 9/29/26,
+    INVENTORY-1) and stays out of pooled learning."""
     now = now or datetime.utcnow()
     cohort, profile = None, None
     try:
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
-            # No demo, test or internal account teaches a learner, its own
-            # included (models.learning_eligible, memory audit 9/29/26):
-            # its ranking is the neutral model.
-            if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
+            # A demo, or an account an admin excluded, learns nothing — its
+            # own ranking included (models.learns_for_itself, memory
+            # re-audit 9/29/26 INVENTORY-1): its ranking is the neutral model.
+            if hasattr(_models_mod, "learns_for_itself") and not _models_mod.learns_for_itself(restaurant):
                 return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
                                      perspective=perspective, viewer_id=viewer_id)
             # Only a type and a partition the owner SET: a guess reads no
@@ -1549,7 +1685,7 @@ def rank_meta(item, base_score, learned_info) -> dict:
                                                                            or item.get("score") or 0), 2),
             "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2],
             "prior_rung": ({k: pr.get(k) for k in ("acceptance", "success", "cold")} if pr else None),
-            "rung": li.get("rung"), "version": li.get("version")}
+            "rung": li.get("rung"), "version": li.get("version"), "arm": li.get("arm")}
 
 
 def viewer_of(user):

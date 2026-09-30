@@ -3693,8 +3693,15 @@ def _do_cross_module(u):
         _ctx = rec_trust.Context(_rid(u))
     except Exception as e:
         print(f"[cross-module] trust context unavailable rid={_rid(u)}: {e}")
+    # The day's one-thing rank log is the OWNER's Home hero (CROSSMODULE-13):
+    # a manager's view, without Food Cost, picks from another candidate set.
+    try:
+        from permissions import answer_authority as _aa_rank
+        _log_rank = _aa_rank(u) == "principal"
+    except Exception:
+        _log_rank = False
     # The login's own answers leave its links too (CROSSMODULE-2).
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u)
+    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.

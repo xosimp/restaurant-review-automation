@@ -619,8 +619,10 @@ def test_the_team_list_shows_each_managers_access_and_brief(team_app, db_path):
     body = team_app.get("/mobile/api/account/team", headers=oh).get_json()
     row = next(m for m in body["members"] if m["id"] == gm)
     assert row["access_grantable"] and row["access"] == [] and row["morning_brief"] is False
-    # "Writes replies in our voice" (memory audit 9/29/26, reply_voice) is the third grant.
-    assert {o["key"] for o in body["access_options"]} == {"foodcost.view", "loss.view", "reviews.voice"}
+    # "Writes replies in our voice" (memory audit 9/29/26, reply_voice) is the third grant;
+    # "Writes posts in our voice" (memory re-audit 9/29/26, LOOPS-15) the fourth.
+    assert {o["key"] for o in body["access_options"]} == {"foodcost.view", "loss.view", "reviews.voice",
+                                                          "marketing.voice"}
     assert body["can_edit_access"] is True
 
 

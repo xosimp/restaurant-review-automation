@@ -137,10 +137,10 @@ def measured_campaign_lift(restaurant_id, db_path=DB_PATH):
     forecast read event_memory's measurement of the night itself. Staffing,
     the forecast and the campaign's own result now read the one figure. A
     demo, test or internal restaurant's nights teach nothing
-    (models.learning_eligible)."""
+    (models.learns_for_itself: its own learning)."""
     try:
         import models as _m_elig
-        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+        if not _m_elig.learns_for_itself(_m_elig.get_restaurant(restaurant_id, db_path)):
             return None
     except Exception:
         return None
@@ -345,7 +345,7 @@ def _campaign_measured(restaurant_id, db_path=DB_PATH):
     measured_campaign_lift (a learning-eligible restaurant only), or None."""
     try:
         import models as _m_elig
-        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+        if not _m_elig.learns_for_itself(_m_elig.get_restaurant(restaurant_id, db_path)):
             return None
         import event_memory
         return event_memory.campaign_effect(restaurant_id, db_path=db_path)
@@ -360,11 +360,12 @@ def _post_measured(restaurant_id, signal, db_path=DB_PATH, _cache=None):
     — {"lift_pct", "n", "group", "verdict"} for a group of
     MIN_GROUP_POSTS+ measured posts whose own verdicts say it moved sales
     (lifted or dropped), else None: an unmeasured post adds no lift
-    (CROSSMODULE-7). A demo, test or internal restaurant teaches nothing.
+    (CROSSMODULE-7). A restaurant that does not learn for itself (a demo, or
+    an admin's exclusion — models.learns_for_itself) teaches nothing.
     Never raises."""
     try:
         import models as _m_elig
-        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+        if not _m_elig.learns_for_itself(_m_elig.get_restaurant(restaurant_id, db_path)):
             return None
         cache = _cache if _cache is not None else {}
         if "summary" not in cache:

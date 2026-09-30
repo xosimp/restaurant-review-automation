@@ -325,7 +325,7 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
     if restaurant_id:
         try:
             import review_signals
-            prompt += review_signals.analyser_block(restaurant_id)
+            prompt += review_signals.analyser_block(restaurant_id, rating=rating)
             menu = review_signals.menu_dishes(restaurant_id)
         except Exception as e:
             print(f"    [{review_id}] restaurant corrections unavailable: {e}")

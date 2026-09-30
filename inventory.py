@@ -2236,6 +2236,21 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
     except Exception as e:
         print(f"[inventory] order corrections unavailable for {restaurant_id}: {e}")
         corrections, apply_order_correction = {}, None
+    # The order-day holdout (rec_learning.holdout_arm, memory re-audit
+    # 9/29/26 LOOPS-3): on the held-out share of days a line the owner's
+    # corrections would have moved keeps the formula's quantity and says so
+    # (`correction_held_out`, the factor not applied — kept with the draft
+    # the owner sends), so how far the owner moves a line with and without
+    # a correction can be compared (admin_ops.learning_holdouts).
+    held_out = {}
+    try:
+        import rec_learning as _rl_hold
+        from datetime import datetime as _dt_hold
+        if corrections and _rl_hold.holdout_arm(restaurant_id, _dt_hold.utcnow().date().isoformat(),
+                                                "order_corrections") == "holdout":
+            held_out, corrections = corrections, {}
+    except Exception as e:
+        print(f"[inventory] order holdout unavailable for {restaurant_id}: {e}")
 
     # critical_low first — same order the UI shows them in — then
     # reorder_soon, skipping anything already picked up.
@@ -2271,6 +2286,8 @@ def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
             fix = corrections.get(item.get("ingredient_id")) if item.get("ingredient_id") else None
             if fix and apply_order_correction:
                 line = apply_order_correction(line, fix)
+            elif item.get("ingredient_id") and held_out.get(item.get("ingredient_id")):
+                line["correction_held_out"] = held_out[item["ingredient_id"]]["factor"]
             ordered.append(line)
 
     # One group per ADDRESS (MOD-FC-3). Keyed on (name, email) it made two

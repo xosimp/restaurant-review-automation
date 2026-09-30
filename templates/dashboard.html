@@ -30164,8 +30164,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // ── Team / export / bug ──
   // What an access option does, where its label alone doesn't say
-  // (memory round 9/29/26: reviews.voice).
-  var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.'};
+  // (memory round 9/29/26: reviews.voice; re-audit 9/29/26: marketing.voice).
+  var ACCESS_HELP={'reviews.voice':'Their approved replies teach Cavnar AI your voice.','marketing.voice':'Their posts, emails and texts teach Cavnar AI your voice.'};
   window.loadTeam=function(){
     var el=document.getElementById('acct-team-list');if(!el)return;
     jget('/api/account/team',function(d){

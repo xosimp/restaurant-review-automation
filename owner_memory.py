@@ -499,6 +499,11 @@ def remember(restaurant_id, fact, kind="context", modules=None, subject=None, va
         # team" — audience_chosen) makes such a fact the team's.
         audience = "principals"
         private_default = True
+    if who["authority"] == "admin" and audience == "team":
+        # Said by Cavnar AI support through view-as: for the account
+        # holders only (memory re-audit 9/29/26, PROMPTS-12) — support's
+        # words never reach the whole team as the restaurant's.
+        audience = "principals"
     if isinstance(modules, str):
         modules = [m.strip() for m in modules.split(",")]
     if scope == "org" and not may_set_org(restaurant_id, user, db_path=db_path):

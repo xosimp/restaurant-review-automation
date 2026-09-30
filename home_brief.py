@@ -273,7 +273,7 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     return out
 
 
-def undismiss(rid, key, _card=True, subject_id=None, own=True):
+def undismiss(rid, key, _card=True, subject_id=None, own=True, authority=None):
     """"Use again": the Home row goes, and so does the ledger's silence, so
     the key can be said on every surface again. The critically-low card is
     answered for every item on it (dismiss), so "Use again" on the card
@@ -285,13 +285,14 @@ def undismiss(rid, key, _card=True, subject_id=None, own=True):
             quiet = _stock_quiet(rid)
             for k in _current_stock_keys(rid):
                 if k != key and k in quiet:
-                    undismiss(rid, k, _card=False, subject_id=subject_id, own=own)
+                    undismiss(rid, k, _card=False, subject_id=subject_id, own=own, authority=authority)
         except Exception as e:
             print(f"[home] stock card restore incomplete: {e}")
     if not own:
         try:
             import rec_ledger
-            n = 1 if rec_ledger.unsilence_login(rid, (key or "").strip()[:160], subject_id) else 0
+            n = 1 if rec_ledger.unsilence_login(rid, (key or "").strip()[:160], subject_id,
+                                                authority=authority) else 0
         except Exception as e:
             print(f"[home] login unsilence failed: {e}")
             n = 0
@@ -303,7 +304,10 @@ def undismiss(rid, key, _card=True, subject_id=None, own=True):
     conn.commit(); conn.close()
     try:
         import rec_ledger
-        if rec_ledger.unsilence(rid, (key or "").strip()[:160], subject_id=subject_id):
+        # The reversal is recorded as the owner's (`reopened`, QUALITY-1),
+        # so every reader of the decline reads it as taken back.
+        if rec_ledger.unsilence(rid, (key or "").strip()[:160], subject_id=subject_id, user_id=subject_id,
+                                authority="principal", surface="home"):
             n = n or 1
     except Exception as e:
         print(f"[home] ledger unsilence failed: {e}")
@@ -2441,6 +2445,10 @@ def _build(current_user, present=True):
         learned = rec_learning.effectiveness(rid, restaurant=restaurant,
                                              perspective=rec_learning.perspective_of(current_user),
                                              viewer_id=rec_learning.viewer_of(current_user))
+        # The day's holdout arm (memory re-audit 9/29/26, LOOPS-3): on a
+        # held-out day the cards rank on neutral weights, so the admin can
+        # compare what learning did against what it would have been.
+        learned = rec_learning.apply_holdout(learned, rid, "home")
     except Exception as e:
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
@@ -2567,7 +2575,7 @@ def _build(current_user, present=True):
         try:
             rec_ledger.log_rank_build(rid, "home", shown=[dict(r.get("rank") or {}, key=r["key"]) for r in recs],
                                       not_shown=[dict(r.get("rank") or {}, key=r["key"]) for r in _unshown],
-                                      version=getattr(learned, "version", None))
+                                      version=getattr(learned, "version", None), arm=getattr(learned, "arm", None))
         except Exception as e:
             print(f"[home] rank log unavailable for {rid}: {e}")
 

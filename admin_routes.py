@@ -3552,7 +3552,15 @@ def admin_set_brand(restaurant_id, current_user):
         # the override already stored must not move learning_since forward
         # and drop the history it has been teaching from since.
         already = str(getattr(stored, "learning_override", "") or "").strip().lower() == "include"
-        if ov == "include" and not already and not data.get("learning_history"):
+        # Its history teaches too when the save says so — and, unsaid, for
+        # an account with a billing history (models.learning_billing_history,
+        # memory re-audit 9/29/26 PLATFORM-8): a paying restaurant the name
+        # rule caught lost every month it had recorded by default.
+        keep_history = data.get("learning_history")
+        if keep_history is None:
+            from models import learning_billing_history as _lbh
+            keep_history = _lbh(stored)
+        if ov == "include" and not already and not keep_history:
             from time_utils import utc_stamp as _us_lo
             updates["learning_since"] = _us_lo()
     if not updates:
