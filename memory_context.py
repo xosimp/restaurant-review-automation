@@ -879,8 +879,16 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
         for n, _lines in gathered:
             if n in RULE_FLOOR_SECTIONS:
                 spent += try_add(n, pools[n], None, max_lines=RULE_FLOOR_COUNT)
+        # The shares are of what the floor left, so the rules' cost is taken
+        # from every section alike rather than from the last ones in line.
+        rest = max(0, budget - spent)
+        if spent:
+            total_share = sum(SECTION_SHARES.get(n, DEFAULT_SHARE) for n, _ in gathered
+                              if n not in RULE_FLOOR_SECTIONS) or total_share
         for n, _lines in gathered:
-            allowance = min(budget * SECTION_SHARES.get(n, DEFAULT_SHARE) / total_share, budget - spent)
+            if spent and n in RULE_FLOOR_SECTIONS:
+                continue                   # past its floor, a rules section takes what is left over
+            allowance = min(rest * SECTION_SHARES.get(n, DEFAULT_SHARE) / total_share, budget - spent)
             if allowance <= 0:
                 continue
             spent += try_add(n, pools[n], int(allowance))
