@@ -1704,6 +1704,11 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
 
 # ── Pairings ───────────────────────────────────────────────────────────────
 
+# What one preferred pair split across a shift costs the Pairings score
+# (a kept-apart pair on together costs 45).
+PAIR_SPLIT_COST = 20
+
+
 def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     """Two people the owner keeps apart are not on together; two the owner
     likes together are. Real in every kitchen and invisible to a rating."""
@@ -1714,19 +1719,30 @@ def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     on = {n.lower(): n for n in ctx.people}
     clashes = [p for p in avoid if all(x in on for x in p)]
     matches = [p for p in prefer if all(x in on for x in p)]
-    if not clashes and not matches and not any(any(x in on for x in p) for p in avoid | prefer):
+    # A pair the owner likes together with one of them on and the other not
+    # (owner, 9/30/26: Erik's "prefer" pairs moved nothing - only a clash
+    # ever cost a point, so a preferred pair was text in the prompt and no
+    # pass could see it). A split costs less than a clash: preferring is a
+    # wish, keeping apart is a rule.
+    splits = [p for p in prefer if sum(1 for x in p if x in on) == 1]
+    if not clashes and not matches and not splits:
         return None
-    score = max(0, SCORE_MAX - 45 * len(clashes))
+    score = max(0, SCORE_MAX - 45 * len(clashes) - PAIR_SPLIT_COST * len(splits))
     res = DimensionResult(key="pairings", label="Pairings", score=score,
                           weight=DEFAULT_WEIGHTS["pairings"],
                           facts={"clashes": [sorted(on[x] for x in p) for p in clashes],
-                                 "matches": [sorted(on[x] for x in p) for p in matches]})
+                                 "matches": [sorted(on[x] for x in p) for p in matches],
+                                 "splits": [sorted(x for x in p) for p in splits]})
     for p in clashes[:2]:
         a, b = sorted(on[x] for x in p)
         res.weaknesses.append(f"{a} and {b} are on together, and you asked to keep them apart.")
     for p in matches[:2]:
         a, b = sorted(on[x] for x in p)
         res.strengths.append(f"{a} and {b} are on together, as you prefer.")
+    for p in splits[:2]:
+        here = next(on[x] for x in p if x in on)
+        other = next(x for x in p if x not in on)
+        res.weaknesses.append(f"{here} is on without {other.title()}, and you prefer them together.")
     return res
 
 

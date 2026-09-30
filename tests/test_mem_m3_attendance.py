@@ -170,3 +170,22 @@ def test_the_nightly_people_job_records_last_weeks_nights_with_the_standard_coun
     assert out["failed"] == 0 and out["attendance"] >= 2
     assert {e["employee_name"]: e["outcome"] for e in attendance.events(rid)} == {"Maria G.": "no_show",
                                                                                "Ana B.": "on_time"}
+
+
+def test_a_preferred_pair_split_across_a_shift_costs_the_pairings_score():
+    """Owner, 9/30/26: Erik's "prefer" pairs moved nothing - only a clash
+    ever cost a point. One of a preferred pair on without the other now
+    costs PAIR_SPLIT_COST; both on is a strength; a kept-apart pair on
+    together still costs more."""
+    def ctx(*names, pairs):
+        rows = [{"employee": n, "role": "Server", "shift_start": "4:00pm", "shift_end": "11:00pm",
+                 "date": "2026-10-03"} for n in names]
+        return shift_quality.ShiftContext(date="2026-10-03", daypart="night", rows=rows, pairs=pairs)
+    prefer = {"prefer": {frozenset({"emily meredith", "kailey gordon"})}}
+    split = shift_quality.dim_pairings(ctx("Emily Meredith", "Ana B.", pairs=prefer))
+    assert split.score == 100 - shift_quality.PAIR_SPLIT_COST and "without Kailey Gordon" in split.weaknesses[0]
+    both = shift_quality.dim_pairings(ctx("Emily Meredith", "Kailey Gordon", pairs=prefer))
+    assert both.score == 100 and both.strengths
+    assert shift_quality.dim_pairings(ctx("Ana B.", pairs=prefer)) is None
+    apart = {"avoid": {frozenset({"ana b.", "bo c."})}}
+    assert shift_quality.dim_pairings(ctx("Ana B.", "Bo C.", pairs=apart)).score == 55

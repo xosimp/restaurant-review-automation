@@ -9621,6 +9621,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .rul-ov{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 2px 0 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ink);font-size:12.5px;font-weight:600;white-space:nowrap}
 .rul-ov .hb-num{color:var(--ember)}
 .rul-add{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rul-add[hidden]{display:none}
 .rul-add .ac-select{width:auto;padding:5px 8px;font-size:13px}
 /* Events & reservations */
 .dsg-tbl .kd{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
@@ -31692,27 +31693,49 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // on this screen (owner, 9/26/26).
     var WD={monday:1,tuesday:1,wednesday:1,thursday:1,friday:1,saturday:1,sunday:1};
     function add(r){r=String(r||'').trim();if(!r||WD[r.toLowerCase()]||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
-    for(k in floors)if(floors.hasOwnProperty(k))add(k);
-    var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{},(_rules&&_rules.role_cross_training)||{}],x;
-    for(x=0;x<extra.length;x++)for(k in extra[x])if(extra[x].hasOwnProperty(k))add(k);
-    var lists=[(_rules&&_rules.foh_roles)||[],(_rules&&_rules.patio_roles)||[]];
-    for(x=0;x<lists.length;x++)for(i=0;i<lists[x].length;i++)add(lists[x][i]);
-    var tr=window._teamRoles||[];for(i=0;i<tr.length;i++)add(tr[i]);
-    var rs=(_roster&&_roster.roster)||[];for(i=0;i<rs.length;i++)add(rs[i].role);
+    // The roles people actually hold (the roster, the draft), then any role
+    // a rule is saved on. The fallbacks - the default "Server" front of
+    // house, the team screen's always-offered Manager - only when there is
+    // no roster to read: at Simple EJ's they put a "Server" and a "Manager"
+    // beside Server AM / Server PM that nobody holds (owner, 9/30/26).
+    var rs=(_roster&&_roster.roster)||[],x;for(i=0;i<rs.length;i++)add(rs[i].role);
     var rows=window._schedRows||[];for(i=0;i<rows.length;i++)add(rows[i].role);
+    var hasPeople=out.length>0;
+    function saved(v){if(v===null||v===undefined||v==='')return false;if(typeof v==='object'){for(var q in v)if(v.hasOwnProperty(q)&&saved(v[q]))return true;return false;}return true;}
+    for(k in floors)if(floors.hasOwnProperty(k)&&saved(floors[k]))add(k);
+    var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{},(_rules&&_rules.role_cross_training)||{}];
+    for(x=0;x<extra.length;x++)for(k in extra[x])if(extra[x].hasOwnProperty(k)&&saved(extra[x][k]))add(k);
+    if(!hasPeople){
+      var lists=[(_rules&&_rules.foh_roles)||[],(_rules&&_rules.patio_roles)||[]];
+      for(x=0;x<lists.length;x++)for(i=0;i<lists[x].length;i++)add(lists[x][i]);
+      var tr=window._teamRoles||[];for(i=0;i<tr.length;i++)add(tr[i]);
+    }
     return out;
   }
   function _rulOvChip(day,part,n,ro){
     return '<span class="rul-ov" data-ov-day="'+esc(day)+'" data-ov-part="'+esc(part)+'" data-ov-n="'+(+n||0)+'">'+esc(day)+' '+esc(part)+' <span class="hb-num">'+(+n||0)+'</span>'
       +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-ov-x="1" title="Remove" aria-label="Remove this day">✕</button>')+'</span>';
   }
+  // A role named for its daypart (Server AM, Bartender PM - RPOWER job
+  // codes) is asked for that daypart only: "Server AM, night" is not a
+  // shift (owner, 9/30/26). The other daypart's saved value rides along
+  // hidden, so a save never drops it.
+  function _rulPart(role){return /\bAM$/i.test(role)?'morning':(/\bPM$/i.test(role)?'night':null);}
   function _rulFloorHtml(role,f,ro){
-    var days=f.days||{},ovs='',dy,part;
+    var days=f.days||{},ovs='',dy,part,only=_rulPart(role);
     for(dy in days)if(days.hasOwnProperty(dy)&&days[dy])for(part in days[dy])if(days[dy].hasOwnProperty(part))ovs+=_rulOvChip(dy,part,days[dy][part],ro);
+    function inp(p){
+      var v=f[p]==null?'':esc(f[p]);
+      if(only&&only!==p)return '<input type="hidden" data-floor="'+p+'" value="'+v+'">';
+      return '<span class="lbl">'+(only?'people':p)+'</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="'+p+'" value="'+v+'" placeholder="0" aria-label="'+esc(role)+' '+(p==='morning'?'mornings':'nights')+'"'+(ro?' disabled':'')+'>';
+    }
+    var partCtl=only?'<input type="hidden" data-ov-newpart value="'+only+'">'
+      :'<select class="ac-select" data-ov-newpart aria-label="Shift"><option value="morning">morning</option><option value="night" selected>night</option></select>';
     return '<div class="rul-floor" data-floor-role="'+esc(role)+'"><span class="role">'+esc(role)+'</span>'
-      +'<span class="lbl">morning</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="morning" value="'+(f.morning==null?'':esc(f.morning))+'" placeholder="0" aria-label="'+esc(role)+' mornings"'+(ro?' disabled':'')+'>'
-      +'<span class="lbl">night</span><input type="number" min="0" max="20" step="1" class="ac-input ac-num" data-floor="night" value="'+(f.night==null?'':esc(f.night))+'" placeholder="0" aria-label="'+esc(role)+' nights"'+(ro?' disabled':'')+'>'
-      +'<span class="ovs">'+ovs+(ro?'':'<span class="rul-add"><select class="ac-select" data-ov-newday aria-label="Day">'+_lbOpts(_RV_DAYS,'Saturday')+'</select><select class="ac-select" data-ov-newpart aria-label="Shift"><option value="morning">morning</option><option value="night" selected>night</option></select><input type="number" class="ac-input ac-num" data-ov-newn min="0" max="20" step="1" placeholder="n" aria-label="How many" style="width:56px"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-ov-add="1">+ day</button></span>')+'</span></div>';
+      +inp('morning')+inp('night')
+      +'<span class="ovs">'+ovs+(ro?'':'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ov-open="1">+ a day</button>'
+        +'<span class="rul-add" hidden><select class="ac-select" data-ov-newday aria-label="Day">'+_lbOpts(_RV_DAYS,'Saturday')+'</select>'+partCtl
+        +'<input type="number" class="ac-input ac-num" data-ov-newn min="0" max="20" step="1" placeholder="people" aria-label="How many" style="width:84px"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-ov-add="1">Add</button></span>')+'</span></div>';
   }
   function _rulClosedChip(iso,ro){
     return '<span class="rul-ov" data-cdate="'+esc(iso)+'">'+mdy(iso)
@@ -31851,15 +31874,24 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var day=fl.querySelector('[data-ov-newday]').value,part=fl.querySelector('[data-ov-newpart]').value,n=fl.querySelector('[data-ov-newn]').value;
     if(n===''){toast('How many for that day?','error');return;}
     var old=fl.querySelector('.rul-ov[data-ov-day="'+day+'"][data-ov-part="'+part+'"]');if(old)old.parentNode.removeChild(old);
-    fl.querySelector('.rul-add').insertAdjacentHTML('beforebegin',_rulOvChip(day,part,+n,false));
+    fl.querySelector('[data-ov-open]').insertAdjacentHTML('beforebegin',_rulOvChip(day,part,+n,false));
     fl.querySelector('[data-ov-newn]').value='';
+    fl.querySelector('.rul-add').hidden=true;
+  });
+  // "+ a day" opens the one-day override in its row; the controls stay out
+  // of sight until someone wants one (owner, 9/30/26).
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('[data-ov-open]'):null;if(!t)return;
+    var fl=t.closest('.rul-floor'),add=fl?fl.querySelector('.rul-add'):null;if(!add)return;
+    add.hidden=!add.hidden;if(!add.hidden){var d=add.querySelector('[data-ov-newday]');if(d)d.focus();}
   });
   window.saveRules=function(btn){
     var rules={},floors={},ins=document.querySelectorAll('#rules-body [data-rule]'),i;
     for(i=0;i<ins.length;i++){var v=ins[i].value.trim();rules[ins[i].getAttribute('data-rule')]=v===''?null:(ins[i].getAttribute('data-rule')==='minor_latest_end'?v:+v);}
     var fls=document.querySelectorAll('#rules-body .rul-floor');
     for(i=0;i<fls.length;i++){
-      var role=fls[i].getAttribute('data-floor-role'),m=fls[i].querySelector('[data-floor="morning"]').value,nn=fls[i].querySelector('[data-floor="night"]').value,spec={},days={},j;
+      var mEl=fls[i].querySelector('[data-floor="morning"]'),nEl=fls[i].querySelector('[data-floor="night"]');
+      var role=fls[i].getAttribute('data-floor-role'),m=mEl?mEl.value:'',nn=nEl?nEl.value:'',spec={},days={},j;
       if(m!=='')spec.morning=+m;if(nn!=='')spec.night=+nn;
       var chips=fls[i].querySelectorAll('.rul-ov');
       for(j=0;j<chips.length;j++){var dy=chips[j].getAttribute('data-ov-day'),pt=chips[j].getAttribute('data-ov-part');days[dy]=days[dy]||{};days[dy][pt]=+chips[j].getAttribute('data-ov-n')||0;}
