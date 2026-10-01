@@ -430,3 +430,21 @@ def test_over_a_starting_target_is_amber_never_red():
                                 access.MANAGER)
     assert owned["tone"] == "bad" and "the 30% target" in owned["sub"][0]
     assert ".bt-gauge.soft .gv{stroke:var(--hb-warn)}" in SRC
+
+
+def test_the_weeks_pace_reads_real_nights(db, monkeypatch):
+    """The first live read (9/30/26) raised on the last-year step: the
+    measured nights are ISO strings, the calendar days are dates."""
+    from dsr import store as _store
+    r = types.SimpleNamespace(id=1)
+    first = DAY - timedelta(days=2)
+    monkeypatch.setattr(_store, "baselines_net", lambda rid, days, **k: {
+        (d.isoformat() if hasattr(d, "isoformat") else str(d)): (1000.0, "dsr") for d in days})
+    monkeypatch.setattr(_store, "night_budget", lambda rid, d, **k: {"net": 1100.0, "source": "budget"})
+    monkeypatch.setattr(_store, "last_year_day", lambda rest, d: d - timedelta(days=364))
+    import demand
+    monkeypatch.setattr(demand, "forecast_net", lambda rid, d, **k: {"available": True, "typical_sales": 1050.0})
+    p = kpis._span_pace(r, first, first + timedelta(days=6), DAY, db)
+    assert p["net"] == 3000.0 and p["nights_measured"] == 3 and p["budget_vs"] == -300.0
+    assert p["budget_per_night_needed"] == round((7700 - 3000) / 4, 2) and p["typical_per_night"] == 1050.0
+    assert p["last_year"] == 3000.0 and p["last_year_pct"] == 0.0

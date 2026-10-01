@@ -517,7 +517,7 @@ def _span_pace(restaurant, first, last, through, db_path=None, ahead=True):
             out.update(budget_total=total, budget_left=round(total - wtd, 2))
             if ahead and out["nights_left"]:
                 out["budget_per_night_needed"] = round((total - wtd) / out["nights_left"], 2)
-    ly_days = {x.isoformat(): store.last_year_day(restaurant, x) for x in measured}
+    ly_days = {x.isoformat(): store.last_year_day(restaurant, x) for x in done if x.isoformat() in measured}
     ly = store.baselines_net(rid, [v for v in ly_days.values() if v], db_path=db_path) if db_path \
         else store.baselines_net(rid, [v for v in ly_days.values() if v])
     ly_vals = [(ly.get(v.isoformat()) or (None, None))[0] for v in ly_days.values() if v]
