@@ -394,6 +394,13 @@ measurement is drawn as a gap, never as zero.
 
 ---
 
+**Reports (9/30/26).** The top-level Reports tab, beside Home, opens the
+daily report panel on its list (`#dsr/list`): one `.dr-list-row` per night
+(weekday and M/D/YY, the scorecard verdict and score in its tone, net, the
+status pill, the lead clamped to two lines), newest first, 30 at a time
+with "Load older reports". Night, Week and Period sit beside "All reports"
+in the panel's `.dr-views`.
+
 ## 7. Forms
 
 **Web**: `.ac-field` (label + control, 5px gap) with `.ac-input`,

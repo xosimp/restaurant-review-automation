@@ -2199,6 +2199,10 @@ function pastDueFix(btn) {
 {% endif %}
 <div class="tabs" role="tablist" aria-label="Dashboard sections">
     <button class="tab active" id="tab-home" onclick="switchTab('home',this)">Home</button>
+    {# Every report in one place (owner, 9/30/26: "a spot called Reports
+       where owners can easily view all reports instead of always going to
+       the home page"): the daily report panel, opened on its list. #}
+    {% if restaurant.dsr_enabled is none or restaurant.dsr_enabled %}<button class="tab" role="tab" id="tab-reports" onclick="if(window.dsrOpen)dsrOpen('list')">Reports</button>{% endif %}
     {# Badge = every review still actionable in the inbox: ones with a
        drafted reply ready to approve AND ones with no draft yet that still
        need a manual "Draft a reply" click. It used to be awaiting_approval
@@ -6354,6 +6358,21 @@ svg:hover .hb-xh{opacity:1}
 .dr-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
 .dr-views{display:inline-flex;gap:6px;flex-wrap:wrap}
 .dr-views .cbtn[aria-pressed="true"]{border-color:var(--ember);color:var(--ember);background:var(--hb-tint)}
+/* The Reports tab's list: one row per night, the 3-second status of each. */
+.dr-list{padding:6px 0!important}
+#panel-dsr .dr-list-row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 18px;align-items:center;justify-content:stretch;width:100%;height:auto;min-height:0;text-align:left;white-space:normal;line-height:1.35;padding:14px 22px;background:none;border:0;border-radius:0;box-shadow:none;border-top:1px solid var(--hb-line2);color:var(--ink);font-weight:400;font-size:inherit}
+#panel-dsr .dr-list-row:first-child{border-top:none}
+#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{background:var(--hb-tint)}
+.dr-list-d{display:flex;flex-direction:column;gap:2px}
+.dr-list-d b{font-size:15px}
+.dr-list-d span{font-size:13px;color:var(--ink3)}
+.dr-list-m{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.dr-list-v{font-size:14px;font-weight:600}
+.dr-list-v.good{color:var(--hb-good)}.dr-list-v.warn{color:var(--hb-warn)}.dr-list-v.bad{color:var(--hb-bad)}
+.dr-list-n{font-size:16px;font-weight:600}
+.dr-list-n small{font-size:12px;font-weight:400;color:var(--ink3)}
+.dr-list-l{grid-column:1/-1;font-size:14px;line-height:1.45;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media (max-width:640px){#panel-dsr .dr-list-row{grid-template-columns:1fr}.dr-list-m{justify-content:flex-start}}
 .dr-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap}
 .dr-head>div:first-child{flex:1 1 420px;min-width:0}
 .dr-head .hb-h1{margin:8px 0 6px}
@@ -6616,6 +6635,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="dr-nav">
     <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="home">&larr; Home</button>
     <div class="dr-views" role="group" aria-label="Report view">
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="list" aria-pressed="false">All reports</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="night" aria-pressed="false">Night</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="week" aria-pressed="false">Week</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="period" aria-pressed="false">Period</button>
@@ -6698,7 +6718,7 @@ svg:hover .hb-xh{opacity:1}
     var ps=document.querySelectorAll('.panel');for(var i=0;i<ps.length;i++)ps[i].classList.remove('active');
     var p=el('panel-dsr');if(p)p.classList.add('active');
     var ts=document.querySelectorAll('.tab');for(var j=0;j<ts.length;j++){ts[j].classList.remove('active');ts[j].setAttribute('aria-selected','false');}
-    var home=el('tab-home');if(home){home.classList.add('active');home.setAttribute('aria-selected','true');if(typeof _moveTabIndicator==='function')_moveTabIndicator(home);}
+    var home=el('tab-reports')||el('tab-home');if(home){home.classList.add('active');home.setAttribute('aria-selected','true');if(typeof _moveTabIndicator==='function')_moveTabIndicator(home);}
     if(typeof stopMetricsPoller==='function')stopMetricsPoller();
   }
   function active(){var p=el('panel-dsr');return !!(p&&p.classList.contains('active'));}
@@ -6734,11 +6754,42 @@ svg:hover .hb-xh{opacity:1}
     if(window.cavHistory)cavHistory(h,opts.replace);
     else if(window.location.hash!==h&&window.history&&history.pushState){if(opts.replace)history.replaceState(null,null,h);else history.pushState(null,null,h);}
     show();setViews(kind);window.scrollTo(0,0);
+    if(kind==='list')return loadList(null);
     if(kind==='week'||kind==='period')return loadGrid(kind,date);
     return loadNight(date,st.version);
   };
+  // ── every report, newest first (the Reports tab, owner 9/30/26) ─────────
+  function listRow(r){
+    var d=r.business_date,dt=new Date(d+'T00:00:00'),wd=isNaN(dt)?'':['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()];
+    var pill=r.status==='final'?'<span class="dr-pill final">Final</span>':(r.provisional?'<span class="dr-pill provisional">Provisional</span>':'<span class="dr-pill">'+esc(r.status||'')+'</span>');
+    var verdict=r.verdict?'<span class="dr-list-v '+esc(r.tone||'')+'">'+esc(r.verdict)+(r.overall!=null?' <b class="hb-num">'+esc(r.overall)+'</b>':'')+'</span>':'';
+    return '<button type="button" class="cbtn cbtn-text dr-list-row" data-dr="open" data-kind="night" data-date="'+esc(d)+'">'
+      +'<span class="dr-list-d"><b>'+esc(wd)+'</b><span class="hb-num">'+esc(r.label||(window.mdy?window.mdy(d):d))+'</span></span>'
+      +'<span class="dr-list-m">'+verdict+(r.net!=null?'<span class="dr-list-n hb-num">$'+Math.round(r.net).toLocaleString()+'<small> net</small></span>':'')+pill+'</span>'
+      +(r.lead?'<span class="dr-list-l">'+esc(r.lead)+'</span>':'')+'</button>';
+  }
+  function loadList(before){
+    var tk=st.token,b=body();if(!b)return;
+    if(!before)b.innerHTML=loading('Loading your reports');
+    return get('/api/dsr?limit=30'+(before?'&before='+encodeURIComponent(before):'')).then(function(d){
+      if(tk!==st.token)return;
+      if(!d||!d.ok){loadFailed(b,d);return;}
+      var rows=d.reports||[],h='',i;
+      if(!before&&!rows.length){b.innerHTML=noneYet(d);return;}
+      for(i=0;i<rows.length;i++)h+=listRow(rows[i]);
+      var more=rows.length===30?'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr-older="'+esc(rows[rows.length-1].business_date)+'">Load older reports</button></div>':'';
+      if(!before){b.innerHTML='<div class="dr-head"><div><div class="hb-kicker">Reports</div><h1 class="hb-h1">Every night\u2019s report</h1>'
+        +'<div class="dr-meta">Newest first. Open one for the whole night, or switch to Week or Period above.</div></div></div>'
+        +'<section class="hb-card dr-list" id="dr-list">'+h+'</section>'+more;}
+      else{var box=el('dr-list');if(box)box.insertAdjacentHTML('beforeend',h);var ob=b.querySelector('[data-dr-older]');if(ob)ob.parentNode.outerHTML=more||'';}
+    }).catch(function(){if(tk===st.token)loadFailed(b,null);});
+  }
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-dr-older]'):null;if(!t)return;
+    e.preventDefault();t.disabled=true;loadList(t.getAttribute('data-dr-older'));
+  });
   function route(){
-    var m=/^#dsr(?:\/(week|period))?(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(window.location.hash||'');
+    var m=/^#dsr(?:\/(week|period|list))?(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(window.location.hash||'');
     if(!m)return false;
     var kind=m[1]||'night',date=m[2]||null;
     if(active()&&st.kind===kind&&st.date===date)return true;
@@ -6752,7 +6803,7 @@ svg:hover .hb-xh{opacity:1}
   // tick finds the page inactive).
   if(window.cavNavRegister)cavNavRegister('dsr',function(p){
     var r=p.rest.slice(0),kind='night',date=null;
-    if(r[0]==='week'||r[0]==='period'||r[0]==='night')kind=r.shift();
+    if(r[0]==='week'||r[0]==='period'||r[0]==='night'||r[0]==='list')kind=r.shift();
     if(r[0]&&/^\d{4}-\d{2}-\d{2}$/.test(r[0]))date=r[0];
     if(active()&&st.kind===kind&&st.date===date)return true;
     window.dsrOpen(kind,date);return true;
@@ -7732,7 +7783,7 @@ svg:hover .hb-xh{opacity:1}
     var t=e.target&&e.target.closest?e.target.closest('[data-dr]'):null;if(!t||t.disabled||t.tagName==='SELECT')return;
     var a=t.getAttribute('data-dr');
     if(a==='open'||a==='view'){e.preventDefault();var k=t.getAttribute('data-kind')||'night';
-      window.dsrOpen(k,t.getAttribute('data-date')||(a==='view'?viewDate(k):null));}
+      window.dsrOpen(k,t.getAttribute('data-date')||(a==='view'&&k!=='list'?viewDate(k):null));}
     else if(a==='home'){e.preventDefault();stopPoll();var hb=el('tab-home');if(hb&&typeof switchTab==='function')switchTab('home',hb);}
     else if(a==='close'){e.preventDefault();closeDay(t);}
     else if(a==='rerun-ask'){e.preventDefault();rerunAsk(t);}
