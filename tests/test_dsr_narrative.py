@@ -674,7 +674,7 @@ def test_not_for_us_is_never_re_proposed(monkeypatch, rest, db_path):
     assert out2["ok"]
     assert key not in [a["key"] for a in out2["narrative"]["actions_tomorrow"]]
     d = next(d for d in _dropped(out2) if d.get("key") == key)
-    assert d["why"] == "the owner said not for us to this"
+    assert d["why"] == "the owner passed on this"
     _sys, user = _prompt(client)
     assert "ALREADY DECLINED" in user and "- control_hours about labor" in user
     assert "Cut one server from Tuesday dinner" in user          # the decision itself, in the fenced history

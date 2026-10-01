@@ -430,7 +430,7 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertEqual(page.items[0].answerLabel, "Made the change")
         XCTAssertTrue(page.items[0].wasTaken)
         XCTAssertEqual(page.items[0].trackerId, 7)
-        XCTAssertEqual(page.items[1].answerLabel, "Not for us")
+        XCTAssertEqual(page.items[1].answerLabel, "Pass")
         XCTAssertEqual(page.items[1].reasonLine, "Too costly \u{2014} tried it in spring")
         XCTAssertFalse(page.items[1].wasTaken)
         XCTAssertEqual(page.items[2].answerLabel, "Went unanswered")

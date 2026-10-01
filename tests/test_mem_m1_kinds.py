@@ -177,7 +177,7 @@ def test_three_not_for_us_in_six_months_name_the_subjects(db_path):
     assert d and d[0]["kind"] == "trim_day" and d[0]["n"] == 3
     assert {"tuesday", "saturday", "sunday"} <= {x.lower() for x in d[0]["subjects"]}
     lines = memory.lines({"record": {"declined_detail": d}})
-    assert any("not for us" in l and "tuesday" in l.lower() for l in lines)
+    assert any("passed on" in l and "tuesday" in l.lower() for l in lines)
     # A timing answer or "already doing it" is not a no; neither is an old one.
     rid2 = _rid(db_path, "Old Co")
     for day in ("Monday", "Tuesday", "Friday"):
@@ -213,7 +213,7 @@ def test_the_plan_never_files_declined_answered_or_still_open_advice(db_path):
     rl.present(rid, "trim_day:Tuesday", "labor", "home", title="Trim Tuesday staffing", db_path=db_path)
     rl.record(rid, "trim_day:Tuesday", "dismissed", meta={"kind": "not_for_us"}, db_path=db_path)
     item = {"title": "Trim Tuesday dinner by one server", "why": "Tuesday labor ran 34%"}
-    assert sj.plan_item_repeat(rid, item, history=[], db_path=db_path) == "the owner said not for us to this advice"
+    assert sj.plan_item_repeat(rid, item, history=[], db_path=db_path) == "the owner passed on this advice"
     # An item named in the plan's words is read from the restaurant's own
     # ingredients (insight_store.known_subjects).
     _sql(db_path, "INSERT INTO ingredients (restaurant_id, name, unit) VALUES (?, 'Salmon', 'lb')", rid)

@@ -534,7 +534,7 @@ def history(restaurant_id, db_path=None) -> list:
     return rows
 
 
-_STATUS_WORDS = {DECLINED: "you said not for us", "done": "you marked it done", "implemented": "the change was made",
+_STATUS_WORDS = {DECLINED: "you passed on it", "done": "you marked it done", "implemented": "the change was made",
                  "gone": "no longer found", "measured": "its night was measured",
                  "window_closed": "its night passed with nothing measured"}
 

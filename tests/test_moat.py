@@ -66,7 +66,7 @@ def test_history_joins_the_four_tables_into_one_record_per_decision(db_path):
     rows = decisions.history(rid, db_path=db_path)
     by_key = {r["key"]: r for r in rows}
     d = by_key["trim_day:Monday"]
-    assert d["answer"] == "not for us" and d["times_hidden"] == 2 and d["title"] == "Trim Monday"
+    assert d["answer"] == "passed" and d["times_hidden"] == 2 and d["title"] == "Trim Monday"
     assert d["reason"] == "Monday is our delivery day"
     o = by_key["cut_waste:Salmon"]
     assert o["answer"] == "tracking" and o["outcome"]["metric"] == "weekly_waste" and o["outcome"]["status"] == "tracking"
@@ -87,7 +87,7 @@ def test_the_context_section_is_empty_for_an_empty_restaurant_and_dated_otherwis
     # The owner's reason is fenced — what they said, never data (memory
     # audit 9/29/26, "unfenced"); the answer and the date stay plain.
     from ai_guard import wrap_untrusted
-    assert "Add brunch: not for us" in text and "because: " + wrap_untrusted("no Sunday staff") in text
+    assert "Add brunch: passed" in text and "because: " + wrap_untrusted("no Sunday staff") in text
     # home_dismissals.dismissed_at defaults to datetime('now'), which is UTC.
     # This test used to expect the UTC day — the bug itself: after 7pm
     # Chicago the owner read tomorrow's date. It is dated by the restaurant's
@@ -97,7 +97,7 @@ def test_the_context_section_is_empty_for_an_empty_restaurant_and_dated_otherwis
     local = restaurant_now_by_id(rid).date()
     assert f"({mdy(local)})" in text
     assert local.isoformat() not in text
-    assert "Do not re-propose something marked 'not for us'" in text
+    assert "Do not re-propose something marked 'passed'" in text
 
 
 def test_ask_reads_decisions_as_a_tool_and_as_context(db_path, monkeypatch):

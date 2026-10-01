@@ -164,9 +164,14 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
     conn = demand_signals.get_conn(db_path)
     added, moved, removed, new_past = 0, 0, 0, []
     try:
+        # Only copies inside the window are the sync's to move or drop: a game
+        # older than PAST_DAYS stays, measured — deleting it re-recorded the
+        # night unflagged and erased last season's lift (audit 10/1/26).
+        lo, hi = (today - timedelta(days=PAST_DAYS)).isoformat(), (today + timedelta(days=AHEAD_DAYS)).isoformat()
         have = {r["ref"]: dict(r) for r in conn.execute(
-            "SELECT id, date, label, ref FROM demand_signals WHERE restaurant_id=? AND source=?",
-            (rid, SIGNAL_SOURCE)).fetchall() if r["ref"]}
+            "SELECT id, date, label, ref FROM demand_signals WHERE restaurant_id=? AND source=? AND "
+            "((date >= ? AND date <= ?) OR ref IN (SELECT 'event:' || id FROM catalog_events WHERE "
+            "event_date >= ? AND event_date <= ?))", (rid, SIGNAL_SOURCE, lo, hi, lo, hi)).fetchall() if r["ref"]}
         for ref, row in have.items():
             if ref not in want or (row["date"], row["label"]) != want[ref]:
                 conn.execute("DELETE FROM demand_signals WHERE id=?", (row["id"],))
@@ -307,7 +312,13 @@ def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
             if x["event_date"] < before and x["id"] != e.get("id")]
     outs = _outcomes(restaurant_id, [x["event_date"] for x in rows], db_path,
                      series_word=e.get("short_name") or e.get("series_name"))
-    got = [{"event": x, "outcome": outs[x["event_date"]]} for x in rows if x["event_date"] in outs]
+    # One night, one game: a doubleheader's two events share one outcome row
+    # and would count it twice toward a segment's floor (audit 10/1/26).
+    seen, got = set(), []
+    for x in rows:
+        if x["event_date"] in outs and x["event_date"] not in seen:
+            seen.add(x["event_date"])
+            got.append({"event": x, "outcome": outs[x["event_date"]]})
     return sorted(got, key=lambda g: g["event"]["event_date"], reverse=True)
 
 

@@ -1279,7 +1279,7 @@ _SCREEN_KEY_RE = re.compile(r"^[A-Za-z0-9:_\-.]{1,120}$")
 
 
 _REC_STATE_WORDS = {"open": "not answered yet", "accepted": "answered Accept", "completed": "answered Done",
-                    "implemented": "done — the change was made", "dismissed": "answered Not for us",
+                    "implemented": "done — the change was made", "dismissed": "passed on it",
                     "expired": "went unanswered", "superseded": "replaced by a newer version"}
 
 

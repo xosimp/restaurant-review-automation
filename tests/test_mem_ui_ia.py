@@ -231,15 +231,16 @@ def test_the_activity_payload_is_read_with_its_changes():
     assert "changes = response.changes?.items ?? []" in src
 
 
-# ── the decline reads "Not for us" everywhere on iOS ─────────────────────────
+# ── the decline reads "Pass" everywhere on iOS ──────────────────────────────
+# Owner, 10/1/26: the decline reads "Pass" everywhere again (it was "Not for us" from 9/29/26).
 
-def test_no_ios_control_says_pass():
+def test_no_ios_control_says_not_for_us():
     for rel, src in _all_swift().items():
-        for m in re.finditer(r'"(Pass|Passed)"', src):
+        for m in re.finditer(r'"Not for us[^"]*"', src):
             line = src[:m.start()].count("\n") + 1
             ctx = src.splitlines()[line - 1]
             assert ctx.strip().startswith("//"), f'{rel}:{line} still says {m.group(0)}'
-    assert 'case .notForUs:  return "Not for us"' in _swift("DesignSystem/RecAnswerRow.swift")
+    assert 'case .notForUs:  return "Pass"' in _swift("DesignSystem/RecAnswerRow.swift")
 
 
 # ── the house rules the new screens must keep ───────────────────────────────

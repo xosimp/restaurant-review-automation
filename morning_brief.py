@@ -310,26 +310,20 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
     return out[:BRIEF_MEMORY_LINES]
 
 
-def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH):
-    """event_intel.playbook.alert for this viewer. On game day a measured
-    effect the today line already applied is not said twice."""
+def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH, carry=None):
+    """event_intel.playbook.alert for this viewer. What the report's carried
+    today line already says about the game (the first four of its Tomorrow
+    items, the ones that line shows) is left out of this one."""
     from event_intel import playbook
     sees = "labor" not in denied
     marketing = bool(getattr(restaurant, "module_marketing", 0)) and "marketing" not in denied
-    line = playbook.alert(restaurant_id, today, sees_sales=sees, sees_labor=sees, marketing=marketing,
-                          db_path=db_path)
-    if not line:
-        return None
-    applied = any(l.get("key") == "today" and "measured" in str(l.get("text") or "") for l in lines)
-    if applied and str(line["text"]).startswith("Today:"):
-        # The forecast line already carries the effect: keep the game's
-        # name, staffing and rush, drop the repeated measurement.
-        from event_intel import engine, store
-        e = store.event_by_id(line["event_id"], db_path=db_path)
-        eff = engine.effect_for(restaurant_id, e, db_path=db_path) if e else None
-        if eff:
-            line["text"] = line["text"].replace(eff["basis"][0].upper() + eff["basis"][1:] + ". ", "")
-    return line
+    shown = (carry or {}).get("items") or []
+    carried_line = any(l.get("key") == "today" and l.get("source") == "dsr" for l in lines)
+    effect_said = any(l.get("key") == "today" and l.get("source") != "dsr" and "measured" in str(l.get("text") or "")
+                      for l in lines)
+    return playbook.alert(restaurant_id, today, sees_sales=sees, sees_labor=sees, marketing=marketing,
+                          db_path=db_path, carried=shown[:4] if carried_line else None,
+                          effect_said_today=effect_said)
 
 
 def _record_read(restaurant_id, brief, view=None, db_path=DB_PATH):
@@ -786,7 +780,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # around kickoff where measured, and a game-day campaign to start. The
     # dollars and the staffing follow the forecast's own gate (the Labor
     # view); the game itself and the campaign do not.
-    game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path)
+    game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path, carry)
     if game:
         lines.append(game)
 

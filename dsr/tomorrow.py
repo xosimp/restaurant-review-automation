@@ -76,6 +76,43 @@ def _catalog_context(rid, signal, db_path):
         return None
 
 
+GAMES_AHEAD_DAYS = 2      # beyond the day after: a game shows on the three reports before it
+
+
+def _games_ahead(rid, tmr, db_path):
+    """[{"kind": "event_ahead", "text", "event_id"}] — the followed games
+    on the GAMES_AHEAD_DAYS after the day after, each with what games like it
+    did here (measured) or the last one as one night."""
+    try:
+        from event_intel import engine, store
+        kw = {"db_path": db_path} if db_path else {}
+        followed = store.follows(rid, **kw)
+        skip = store.dismissed(rid, **kw)
+        rows = store.events_for([f["series_id"] for f in followed], tmr + timedelta(days=1),
+                                tmr + timedelta(days=GAMES_AHEAD_DAYS), **kw)
+    except Exception:
+        return []
+    out = []
+    for e in rows:
+        if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
+            continue
+        day = date.fromisoformat(e["event_date"])
+        gap = (day - tmr).days + 1
+        text = f"{day.strftime('%A')}: {engine.describe(e, with_date=False)} — {gap} days out"
+        try:
+            eff = engine.effect_for(rid, e, **kw)
+            last = None if eff else engine.last_like(rid, e, **kw)
+        except Exception:
+            eff = last = None
+        if eff:
+            text += f". {eff['basis']}"
+        elif last and last.get("lift_pct") is not None:
+            text += (f". The last {'home' if e.get('home_away') == 'home' else 'road'} game ran "
+                     f"{float(last['lift_pct']):+.0f}% against its usual weekday — one night, not a pattern yet")
+        out.append({"kind": "event_ahead", "tone": "warn" if eff else None, "text": text, "event_id": e["id"]})
+    return out
+
+
 def _game_staffing(rid, event, db_path):
     """event_intel.playbook.staffing for a catalog game, else None."""
     if not event or event.get("category") != "sports":
@@ -434,7 +471,8 @@ def confidence(forecast, track, wx=None, scheduled=None, keeps_events=False) -> 
     pct = None
     if not has_range:
         track_line = (f"Only {samples} {wd}{'s' if samples != 1 else ''} on file — the forecast states a range, "
-                      f"and a confidence in it, from {FULL_HISTORY_FOR_RANGE}")
+                      f"and a confidence in it, from {FULL_HISTORY_FOR_RANGE} {wd}s"
+                      + (f" ({FULL_HISTORY_FOR_RANGE - samples} more to go)" if FULL_HISTORY_FOR_RANGE > samples else ""))
     elif ranged >= TRACK_MIN and isinstance(inside, (int, float)):
         pct = int(round(inside))
         held = int(round(inside * ranged / 100.0))
@@ -511,6 +549,11 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
             prep = _game_prep(rid, (ctx or {}).get("event"), db_path)
             if prep:
                 items.append(dict(prep, kind="game_prep", event_id=(ctx or {}).get("event", {}).get("id")))
+
+    # A followed game two or three days out (owner, 10/1/26: "it should show
+    # up at least 2 nights before, probably 3"): tomorrow's own game is the
+    # event item above; these give the nights before it time to plan.
+    items += _games_ahead(rid, tmr, db_path)
 
     food = blocks.get("food") or {}
     crit = (((food.get("detail") or {}).get("stock") or {}).get("critical") or []) \

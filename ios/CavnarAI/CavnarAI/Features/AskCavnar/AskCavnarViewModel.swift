@@ -151,9 +151,9 @@ struct AskEvidence: Decodable, Hashable {
         let n = declinedRepeats.count
         guard n > 0 else { return nil }
         if n == 1, let on = declinedRepeats[0].declinedOn {
-            return "1 suggestion here is one you said not for us to on \(on) \u{2014} marked in the answer."
+            return "1 suggestion here is one you passed on, on \(on) \u{2014} marked in the answer."
         }
-        return "\(n) suggestion\(n == 1 ? " here is one" : "s here are ones") you said not for us to before \u{2014} each marked in the answer."
+        return "\(n) suggestion\(n == 1 ? " here is one" : "s here are ones") you passed on before \u{2014} each marked in the answer."
     }
 }
 

@@ -232,6 +232,31 @@ def _apply_overrides(conn, series_id, external_id):
     conn.execute(f"UPDATE catalog_events SET {sets} WHERE id=?", args + [row["id"]])
 
 
+_FILE_KEY = {"event_date": "date", "kickoff_local": "kickoff", "broadcast": "broadcast", "status": "status",
+             "result": "result"}
+
+
+def _season_values(slug, external_id) -> dict | None:
+    """The season file's own values for one game ({EDITABLE field: value}),
+    or None when no bundled file carries it."""
+    if not os.path.isdir(SEASONS_DIR):
+        return None
+    for fn in sorted(os.listdir(SEASONS_DIR)):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(SEASONS_DIR, fn), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if (data.get("series") or {}).get("slug") != slug:
+            continue
+        for e in data.get("events") or []:
+            if e.get("external_id") == external_id:
+                return {f: (e.get(k) if f != "status" else (e.get(k) or "scheduled")) for f, k in _FILE_KEY.items()}
+    return None
+
+
 def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
     """An admin's correction to one game: `changes` {field: value} over
     EDITABLE, `clear` the fields to hand back to the season file (they
@@ -256,6 +281,24 @@ def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
             over.pop(k, None)
         conn.execute("UPDATE catalog_events SET overrides_json=?, updated_at=datetime('now') WHERE id=?",
                      (json.dumps(over) if over else None, row["id"]))
+        # A cleared field takes the season file's value NOW: the daily load
+        # never moves a status back to scheduled nor a result back to empty,
+        # so a cleared "cancelled" used to stand for good (audit 10/1/26).
+        cleared = [k for k in (clear or ()) if k not in clean]
+        if cleared:
+            s = conn.execute("SELECT slug FROM event_series WHERE id=?", (row["series_id"],)).fetchone()
+            file_vals = _season_values(s["slug"] if s else None, row["external_id"]) or {}
+            sets = {k: file_vals.get(k) for k in cleared if k in file_vals}
+            if "status" in sets and sets["status"] == "scheduled" and row["event_date"] and \
+                    (file_vals.get("event_date") or row["event_date"]) < datetime.utcnow().strftime("%Y-%m-%d"):
+                sets["status"] = "completed"       # a past game the file still calls scheduled was played
+            if sets:
+                cols = ", ".join(f"{k}=?" for k in sets)
+                args = list(sets.values())
+                if "kickoff_local" in sets:
+                    cols += ", is_primetime=?"
+                    args.append(1 if is_primetime(sets["kickoff_local"]) else 0)
+                conn.execute(f"UPDATE catalog_events SET {cols} WHERE id=?", args + [row["id"]])
         _apply_overrides(conn, row["series_id"], row["external_id"])
         conn.commit()
         after_row = conn.execute("SELECT * FROM catalog_events WHERE id=?", (row["id"],)).fetchone()

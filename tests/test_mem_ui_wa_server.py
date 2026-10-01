@@ -191,7 +191,7 @@ def test_a_confirm_cards_dates_read_mdy_and_the_body_stays_iso():
 def test_the_server_rendered_answer_row_says_not_for_us():
     import client_api
     html = client_api.rec_controls_html("insight_intel:a", "intel", "intel")
-    assert ">Not for us<" in html and ">Pass<" not in html
+    assert ">Pass<" in html and ">Not for us<" not in html      # owner, 10/1/26
 
 
 # ── targets: the goal that applies, and who set each ─────────────────────────

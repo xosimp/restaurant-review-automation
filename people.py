@@ -1048,6 +1048,10 @@ def _looks_like_name(name, external_id=None) -> bool:
     n = _clean(name)
     if not n or not any(ch.isalpha() for ch in n) or n.lower() in ("unknown", "staff"):
         return False
+    # A labelled string is never a name: "Gideon Kopalchick · overall" (a
+    # rating log's old subject) or a code like "can_close" (10/1/26).
+    if "·" in n or "_" in n:
+        return False
     if external_id is not None and n.strip().lower() == str(external_id).strip().lower():
         return False
     if " " not in n and any(ch.isdigit() for ch in n) and n.upper() == n:
@@ -2218,6 +2222,70 @@ def stamp_person_ids(restaurant_id, db_path=None, create=True) -> dict:
     finally:
         conn.close()
     return stamped
+
+
+def repair_labelled_people(db_path=None) -> dict:
+    """Undo the phantom people a labelled name made (owner, 10/1/26): the
+    rating log's subject was "Name · attribute", and stamp_person_ids read it
+    as a new person — 109 at Simple EJ's, each with same-person questions
+    ("Is Antonio Corona Martinez · overall the same person as Antonio Corona
+    Martinez?"). A person counts as one only when its name carries " · ", it
+    was created from that store, and no other store points at it. Its open
+    questions and aliases go, the log rows are un-stamped, and the log is
+    re-stamped against the real people. Idempotent; at boot."""
+    import models
+    models.init_capability_changes(db_path or models.DB_PATH)
+    conn = _conn(db_path)
+    out = {"people": 0, "questions": 0, "restaurants": []}
+    try:
+        if not {"people", "person_questions", "capability_changes"} <= _tables(conn):
+            return out
+        rows = conn.execute("SELECT id, restaurant_id FROM people WHERE created_via='store:capability_changes' "
+                            "AND instr(display_name, ' · ') > 0").fetchall()
+        if not rows:
+            return out
+        have = _tables(conn)
+        others = [s["table"] for s in NAME_STORES if s["table"] != "capability_changes" and s["table"] in have
+                  and not s.get("no_person_id") and "person_id" in _cols(conn, s["table"])]
+        ids, rids = [], set()
+        for r in rows:
+            pid = r[0]
+            if any(conn.execute(f"SELECT 1 FROM {t} WHERE person_id=? LIMIT 1", (pid,)).fetchone() for t in others):
+                continue
+            ids.append(pid)
+            rids.add(r[1])
+        if not ids:
+            return out
+        marks = ",".join("?" for _ in ids)
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(f"DELETE FROM person_questions WHERE status='open' AND (person_a IN ({marks}) "
+                           f"OR person_b IN ({marks}))", ids + ids)
+        out["questions"] = cur.rowcount or 0
+        if "person_aliases" in have:
+            conn.execute(f"DELETE FROM person_aliases WHERE person_id IN ({marks})", ids)
+        conn.execute(f"UPDATE capability_changes SET person_id=NULL WHERE person_id IN ({marks})", ids)
+        cur = conn.execute(f"DELETE FROM people WHERE id IN ({marks})", ids)
+        out["people"] = cur.rowcount or 0
+        conn.commit()
+        out["restaurants"] = sorted(rids)
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        _log.warning("[people] labelled-name repair skipped: %s", e)
+        return out
+    finally:
+        conn.close()
+    for rid in out["restaurants"]:
+        try:
+            stamp_person_ids(rid, db_path=db_path)
+        except Exception as e:
+            _log.warning("[people] re-stamp after repair skipped restaurant %s: %s", rid, e)
+    if out["people"]:
+        _log.warning("[people] removed %s phantom people from labelled names (%s questions)", out["people"],
+                     out["questions"])
+    return out
 
 
 def backfill_people(db_path=None, max_seconds=20.0) -> int:

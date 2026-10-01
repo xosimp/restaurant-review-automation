@@ -4036,12 +4036,12 @@ def admin_api_event_catalog_edit(event_id, current_user):
     try:
         got = _evs.edit_event(event_id, changes, clear=clear)
     except LookupError as e:
-        return jsonify(ok=False, error=str(e)), 404
+        return jsonify(ok=False, error=e.args[0] if e.args else "No such game in the catalog."), 404
     except ValueError as e:
         admin_events.record_admin_action(current_user, "event_catalog.edit", target=("catalog_event", event_id),
                                          after={"changes": changes, "clear": clear}, result="refused",
                                          summary=f"Event catalog edit refused: {e}")
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=e.args[0] if e.args else "That correction isn't valid."), 400
     synced, failed = 0, 0
     for rid in _evs.followers(got["series_id"]):
         try:

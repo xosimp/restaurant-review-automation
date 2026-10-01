@@ -44,9 +44,14 @@ def test_a_hovered_row_is_an_opaque_lifted_tile_past_the_card_edge():
     assert "overflow:hidden}" not in SRC[SRC.index(".dr-list{padding:0"):][:40]
     hov = SRC[SRC.index("#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{"):]
     hov = hov[:hov.index("}")]
-    for part in ("background-color:var(--surface)", "box-shadow:var(--dr-lift)",
+    # Owner, 10/1/26: fully opaque in the brand's ember from the first frame
+    # (an opaque colour-mix over the surface), and the background never
+    # transitions - fading it in let the row behind show through.
+    for part in ("background-color:color-mix(in srgb,var(--ember) 30%,var(--surface))", "box-shadow:var(--dr-lift)",
                  "scale(1.025)", "border-radius:14px"):
         assert part in hov, part
+    rest = SRC[SRC.index("#panel-dsr .dr-list-row{position:relative"):]
+    assert "background-color" not in rest[:rest.index("}")]
     assert "#panel-dsr .dr-list-row:hover+.dr-list-row" in SRC
     assert ("@media (prefers-reduced-motion:reduce){ #panel-dsr .dr-list-row,"
             "#panel-dsr .dr-list-row:hover") in SRC

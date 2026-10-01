@@ -245,13 +245,13 @@ def lines(mem: dict, record=True) -> list:
         out.append("Recommendation kinds most often followed by a measured improvement here: "
                    + ", ".join(rec["worked"]) + ".")
     if rec.get("declined_detail"):
-        out.append("Advice this owner has said 'not for us' to at least 3 times in 180 days — do not re-propose "
+        out.append("Advice this owner has passed on at least 3 times in 180 days — do not re-propose "
                    "these subjects without new evidence: "
                    + "; ".join(f"{d['label']} ({', '.join(d['subjects']) or 'any subject'}; {d['n']} times since "
                                f"{d['since']})" for d in rec["declined_detail"]) + ".")
     elif rec.get("ignored"):
         # A record built before declined_detail: the kinds, no subjects.
-        out.append("Kinds this owner has said 'not for us' to repeatedly: " + ", ".join(rec["ignored"])
+        out.append("Kinds this owner has passed on repeatedly: " + ", ".join(rec["ignored"])
                    + " — do not re-propose without new evidence.")
     for k, s in (mem.get("slopes") or {}).items():
         if s["slope_per_week"] and abs(s["slope_per_week"]) >= slope_threshold(k, s.get("weeks")):

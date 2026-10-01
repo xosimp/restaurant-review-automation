@@ -2490,10 +2490,14 @@ cavNavRegister('action', function (p) {
    prompt, ready for the owner to press Create — nothing is drafted or sent
    on arrival (the morning brief's game alert, Event Intelligence phase 2).
    Any other marketing address opens as before. */
-cavNavRegister('marketing', function (p) {
+cavNavRegister('marketing', function (p, opts) {
   if (p.rest[0] !== 'campaigns') return false;
   cavNavOpenModule('marketing');
   if (window.switchMktTab) window.switchMktTab('campaigns');
+  /* Back, Forward or a reload onto the link's address only opens the
+     Studio: re-filling it reset the owner's draft (audit 10/1/26). A send
+     in flight is never interrupted either. */
+  if ((opts && opts.fromPop) || (window._cp && _cp.sending)) return true;
   var goal = String((p.query || {}).goal || '').slice(0, 200);
   if (goal) {
     if (typeof cpResetDraft === 'function') cpResetDraft();
@@ -2503,6 +2507,7 @@ cavNavRegister('marketing', function (p) {
       if (!inp && tries++ < 15) { setTimeout(fill, 200); return; }
       if (!inp) return;
       inp.value = goal;
+      if (window._cp) _cp.hintGoal = goal;
       /* When to send it (a starting rule from kickoff, said as one). */
       var send = String((p.query || {}).send || '').slice(0, 120), hint = document.getElementById('cp-send-hint');
       if (!hint && send) {
@@ -2513,6 +2518,7 @@ cavNavRegister('marketing', function (p) {
       if (hint) {
         hint.hidden = !send;
         var safe = send.replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+        safe = safe.replace(/(\d+(?::\d+)?\s?(?:am|pm)?|\d+)/gi, '<span class="hb-num">$1</span>');
         hint.innerHTML = send ? 'Best sent <b>' + safe + '</b> — a starting rule from kickoff, not yet measured here.' : '';
       }
       if (inp.scrollIntoView) inp.scrollIntoView({behavior: 'smooth', block: 'center'});
@@ -4823,7 +4829,7 @@ svg:hover .hb-xh{opacity:1}
     // Done | Not for us, then Ask; the answers are built here, appended later.
     var fAns='';
     if(ff&&ff.rec_key&&ff.answerable&&typeof recControlsHtml==='function')fAns=recControlsHtml(ff.rec_key,'home','home');
-    else if(!ff&&!att.length&&!clear&&recs.length&&lead===recs[0].title)fAns='<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="done" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(recs[0].title)+'">Not for us</button></span>';
+    else if(!ff&&!att.length&&!clear&&recs.length&&lead===recs[0].title)fAns='<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="done" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(recs[0].title)+'">Pass</button></span>';
     // One lead, one action (density fix #23): the focus card holds the one
     // thing and nothing else. When the lead IS the most urgent attention
     // item its action is here, the page's one primary (#24); when a finding
@@ -4969,7 +4975,7 @@ svg:hover .hb-xh{opacity:1}
       // observed outcome when the card names a metric - the same thing
       // Track this does - so acting on a recommendation without pressing
       // Track no longer leaves the value ledger empty.
-      +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(r.title)+'">Not for us</button></span></div>'
+      +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(r.title)+'">Pass</button></span></div>'
       +((more||moreActs)?'<details class="hb-rec-more"><summary>Details</summary>'+more+(moreActs?'<div class="ft">'+moreActs+'</div>':'')+'</details>':'')
       +'</div>';
   }
@@ -6425,8 +6431,12 @@ svg:hover .hb-xh{opacity:1}
    the whole row edge to edge, past the card's 1px border (owner, 9/30/26). */
 #panel-dsr{--dr-lift:0 0 0 1px rgba(200,75,47,.20),0 2px 6px rgba(14,12,10,.08),0 22px 40px -18px rgba(14,12,10,.30)}
 [data-theme="dark"] #panel-dsr{--dr-lift:0 0 0 1px rgba(212,88,58,.30),0 2px 6px rgba(0,0,0,.32),0 24px 44px -18px rgba(0,0,0,.62)}
-#panel-dsr .dr-list-row{position:relative;z-index:1;transform-origin:50% 50%;transition:transform .26s cubic-bezier(.22,.61,.36,1),box-shadow .26s cubic-bezier(.22,.61,.36,1),background-color .18s ease,border-radius .26s ease,border-color .18s ease}
-#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{z-index:3;background-color:var(--surface);background-image:linear-gradient(var(--hb-tint2),var(--hb-tint2));border-radius:14px;border-top-color:transparent;box-shadow:var(--dr-lift);transform:translateY(-3px) scale(1.025)}
+#panel-dsr .dr-list-row{position:relative;z-index:1;transform-origin:50% 50%;transition:transform .26s cubic-bezier(.22,.61,.36,1),box-shadow .26s cubic-bezier(.22,.61,.36,1),border-radius .26s ease,border-color .18s ease}
+/* The hovered tile is fully opaque from its first frame, in the brand's
+   ember (owner, 10/1/26): the background used to fade in from transparent
+   while the row was already scaling over its neighbours, so the row
+   behind showed through for a moment. Only the lift animates now. */
+#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{z-index:3;background-color:color-mix(in srgb,var(--ember) 30%,var(--surface));background-image:linear-gradient(120deg,color-mix(in srgb,var(--ember) 40%,var(--surface)) 0%,color-mix(in srgb,var(--ember) 24%,var(--surface)) 100%);border-radius:14px;border-top-color:transparent;box-shadow:var(--dr-lift);transform:translateY(-3px) scale(1.025)}
 #panel-dsr .dr-list-row:hover+.dr-list-row,#panel-dsr .dr-list-row:focus-visible+.dr-list-row{border-top-color:transparent}
 #panel-dsr .dr-list-row:active{transform:translateY(-1px) scale(1.01);transition-duration:.08s}
 @media (prefers-reduced-motion:reduce){ #panel-dsr .dr-list-row,#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible,#panel-dsr .dr-list-row:active{transform:none;transition:none}}
@@ -6638,7 +6648,6 @@ svg:hover .hb-xh{opacity:1}
 .hx-plot{margin-top:2px;padding-top:30px;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .hx-in{position:relative}
 .hx-svg{display:block;width:100%;height:auto;overflow:visible}
-.hx-svg .hm{fill:var(--ember);animation:drFade .9s ease backwards;animation-delay:calc(var(--i) * 30ms)}
 .hx-svg .gl{stroke:var(--hb-line);stroke-width:1;stroke-dasharray:2 5}
 .hx-svg .yt{font-family:'Space Grotesk',sans-serif;font-size:11.5px;fill:var(--ink3)}
 .hx-svg .xt{font-family:'Space Grotesk',sans-serif;font-size:12px;fill:var(--ink3)}
@@ -6697,13 +6706,22 @@ svg:hover .hb-xh{opacity:1}
 @media (max-width:760px){.hx{padding:22px 18px 20px}.hx-in{min-width:560px}.hx-plot{padding-top:44px}.hx-peak{padding:8px 12px 9px}.hx-peak .v{font-size:16px}.hx-call-g{grid-template-columns:1fr}.hx-leg{justify-content:flex-start;max-width:none}.hx-story{font-size:15px}}
 @media (prefers-reduced-motion:reduce){.hx *,.hx-svg .hb.pk{animation:none!important}.hx-svg .hx-col{transition:none}}
 /* Today's score: the report's hero card carries the brand (owner, 10/1/26
-   "less flat") - an ember wash from the top corner, a warm glow at the
-   far corner, a hairline of ember along the top. */
-#panel-dsr .dr-score{border-color:var(--hb-tint2);
-  background:radial-gradient(70% 120% at 0% 0%,var(--hb-glow) 0%,transparent 58%),radial-gradient(55% 90% at 100% 100%,var(--hb-halo) 0%,transparent 62%),linear-gradient(135deg,var(--surface) 25%,var(--hb-tint) 100%),var(--surface);
+   "less flat"; "way smoother", 10/1/26). Banding had two causes, fixed the
+   way the sign-in background fixes them (static/cavnar-field.js): each
+   wash was two straight-line stops, and the eye reads every kink in a
+   falloff as a ring - each is now one smooth eased curve through 15 stops;
+   and 8-bit colour on a dark ground steps a level every few dozen pixels -
+   a static grain (an SVG noise tile) dithers each step finer than the eye
+   resolves. The ember edge is a ring that follows the radius all the way
+   round (::before, masked to the border) - the old hairline was a straight
+   2px line across the top that faded out before the corners. */
+#panel-dsr .dr-score{border-color:transparent;isolation:isolate;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 26.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 21.75%,transparent) 7.1%,color-mix(in srgb,var(--ember) 17.90%,transparent) 14.3%,color-mix(in srgb,var(--ember) 14.47%,transparent) 21.4%,color-mix(in srgb,var(--ember) 11.45%,transparent) 28.6%,color-mix(in srgb,var(--ember) 8.83%,transparent) 35.7%,color-mix(in srgb,var(--ember) 6.60%,transparent) 42.9%,color-mix(in srgb,var(--ember) 4.74%,transparent) 50.0%,color-mix(in srgb,var(--ember) 3.24%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.06%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.19%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.58%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.22%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.04%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 14.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 11.71%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 9.64%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 7.79%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 6.17%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 4.76%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 3.55%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 2.55%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.11%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 0.64%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.31%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.12%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.02%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.04%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.19%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.47%,transparent) 43.8%,color-mix(in srgb,var(--ember) 0.89%,transparent) 50.0%,color-mix(in srgb,var(--ember) 1.46%,transparent) 56.2%,color-mix(in srgb,var(--ember) 2.18%,transparent) 62.5%,color-mix(in srgb,var(--ember) 3.06%,transparent) 68.8%,color-mix(in srgb,var(--ember) 4.10%,transparent) 75.0%,color-mix(in srgb,var(--ember) 5.31%,transparent) 81.2%,color-mix(in srgb,var(--ember) 6.70%,transparent) 87.5%,color-mix(in srgb,var(--ember) 8.26%,transparent) 93.8%,color-mix(in srgb,var(--ember) 10.00%,transparent) 100.0%),var(--surface);
   box-shadow:inset 0 1px 0 var(--hb-sheen),0 2px 6px rgba(14,12,10,.06),0 34px 80px -36px var(--hb-glow)}
-[data-theme="dark"] #panel-dsr .dr-score{background:radial-gradient(70% 120% at 0% 0%,var(--hb-glow) 0%,transparent 58%),radial-gradient(55% 90% at 100% 100%,var(--hb-halo) 0%,transparent 62%),linear-gradient(135deg,transparent 25%,var(--hb-tint2) 100%),var(--surface-glass),var(--surface);box-shadow:var(--elev-2),0 34px 80px -36px var(--hb-glow)}
-#panel-dsr .dr-score::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--ember) 30%,var(--ember2) 70%,transparent);opacity:.8;z-index:1}
+[data-theme="dark"] #panel-dsr .dr-score{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 26.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 21.75%,transparent) 7.1%,color-mix(in srgb,var(--ember) 17.90%,transparent) 14.3%,color-mix(in srgb,var(--ember) 14.47%,transparent) 21.4%,color-mix(in srgb,var(--ember) 11.45%,transparent) 28.6%,color-mix(in srgb,var(--ember) 8.83%,transparent) 35.7%,color-mix(in srgb,var(--ember) 6.60%,transparent) 42.9%,color-mix(in srgb,var(--ember) 4.74%,transparent) 50.0%,color-mix(in srgb,var(--ember) 3.24%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.06%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.19%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.58%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.22%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.04%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 14.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 11.71%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 9.64%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 7.79%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 6.17%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 4.76%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 3.55%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 2.55%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.11%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 0.64%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.31%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.12%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.02%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.04%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.19%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.47%,transparent) 43.8%,color-mix(in srgb,var(--ember) 0.89%,transparent) 50.0%,color-mix(in srgb,var(--ember) 1.46%,transparent) 56.2%,color-mix(in srgb,var(--ember) 2.18%,transparent) 62.5%,color-mix(in srgb,var(--ember) 3.06%,transparent) 68.8%,color-mix(in srgb,var(--ember) 4.10%,transparent) 75.0%,color-mix(in srgb,var(--ember) 5.31%,transparent) 81.2%,color-mix(in srgb,var(--ember) 6.70%,transparent) 87.5%,color-mix(in srgb,var(--ember) 8.26%,transparent) 93.8%,color-mix(in srgb,var(--ember) 10.00%,transparent) 100.0%),var(--surface-glass),var(--surface);box-shadow:var(--elev-2),0 34px 80px -36px var(--hb-glow)}
+#panel-dsr .dr-score::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.5px;pointer-events:none;z-index:1;
+  background:conic-gradient(from 210deg at 30% 30%,var(--ember2),var(--ember) 25%,color-mix(in srgb,var(--ember) 45%,transparent) 50%,color-mix(in srgb,var(--ember) 30%,transparent) 62%,var(--ember) 85%,var(--ember2));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);opacity:.85}
 #panel-dsr .dr-score .hb-stat{background:var(--hb-field);border:1px solid var(--hb-line2);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .dr-split-g h3,.dr-loss-g h3{margin:22px 0 12px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .dr-split-g h3 small,.dr-loss-g h3 small{font-weight:500;letter-spacing:0;text-transform:none}
@@ -7403,7 +7421,7 @@ svg:hover .hb-xh{opacity:1}
     if(!vf||!isNum(vf.checked))return '';
     var dl=(vf.dropped instanceof Array)?vf.dropped:[],dAns=0,left=[];
     for(var di=0;di<dl.length;di++){var dd=dl[di];if(!dd)continue;
-      if(/owner|already answered|same action|not for us/i.test(String(dd.why||'')))dAns++;
+      if(/owner|already answered|same action|not for us|passed on/i.test(String(dd.why||'')))dAns++;
       else if(dd.key&&dd.why)left.push(dd);}
     var dropped=(dl.length||(isNum(vf.dropped)?vf.dropped:0))-dAns-left.length,est=vf.estimated!=null?vf.estimated:vf.estimates;
     if(isNum(vf.failed_check))dropped=vf.failed_check;
@@ -7823,11 +7841,10 @@ svg:hover .hb-xh{opacity:1}
     var step=hxNice(mx*1.05),top=step*4;lmx=Math.max(1,Math.ceil(lmx*1.15));
     var y=function(v){return pt+ph-(v/top)*ph;},yl=function(v){return pt+ph-(v/lmx)*ph*0.9;},cx=function(k){return pl+k*cw+cw/2;};
     var cs=hxCallouts(rows,peak,wd),mark={};for(i=0;i<cs.list.length;i++)mark[cs.list[i].i]={no:i+1,tone:cs.list[i].tone};
-    var g='',hm='',bars='',ax='',strip='',cols='',up=[],lp=[],mk='';
+    var g='',bars='',ax='',strip='',cols='',up=[],lp=[],mk='';
     for(i=0;i<=4;i++){var gy=y(step*i);g+='<line class="gl" x1="'+pl+'" x2="'+(W-pr)+'" y1="'+gy.toFixed(1)+'" y2="'+gy.toFixed(1)+'"/><text class="yt" x="'+(pl-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end">'+(i?hxK(step*i):'$0')+'</text>';}
     if(D.labor)g+='<text class="yt r" x="'+(W-pr+10)+'" y="'+(yl(lmx)+4).toFixed(1)+'">'+lmx+'</text><text class="yt r" x="'+(W-pr+10)+'" y="'+(yl(0)+4).toFixed(1)+'">0</text>';
     for(i=0;i<n;i++){var r=rows[i],x=pl+i*cw,bw=Math.min(cw*0.6,34),bx=x+(cw-bw)/2,yt=y(r.net),yb=pt+ph,rr=Math.min(7,bw/2),hgt=Math.max(0,yb-yt),isPk=r===peak,heat=peak.net>0?r.net/peak.net:0;
-      hm+='<rect class="hm" x="'+x.toFixed(1)+'" y="'+pt+'" width="'+cw.toFixed(1)+'" height="'+ph+'" style="fill-opacity:'+(0.015+0.11*heat*heat).toFixed(3)+';--i:'+i+'"/>';
       if(hgt>0.5){var d=hgt>rr?'M'+bx.toFixed(1)+','+yb+' L'+bx.toFixed(1)+','+(yt+rr).toFixed(1)+' Q'+bx.toFixed(1)+','+yt.toFixed(1)+' '+(bx+rr).toFixed(1)+','+yt.toFixed(1)+' L'+(bx+bw-rr).toFixed(1)+','+yt.toFixed(1)+' Q'+(bx+bw).toFixed(1)+','+yt.toFixed(1)+' '+(bx+bw).toFixed(1)+','+(yt+rr).toFixed(1)+' L'+(bx+bw).toFixed(1)+','+yb+' Z'
         :'M'+bx.toFixed(1)+','+yb+' h'+bw.toFixed(1)+' v-'+hgt.toFixed(1)+' h-'+bw.toFixed(1)+' Z';
         bars+='<path class="hb'+(isPk?' pk':'')+'" d="'+d+'" fill="url(#'+(isPk?'hxp':'hxb')+')" style="--i:'+i+'"/>';}
@@ -7844,7 +7861,7 @@ svg:hover .hb-xh{opacity:1}
     var svg='<svg class="hx-svg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Net sales by hour'+(D.typical?' against a usual night':'')+(D.labor?', with people on the clock':'')+'">'
       +'<defs><linearGradient id="hxb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".28"/></linearGradient>'
       +'<linearGradient id="hxp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember2)"/><stop offset=".45" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".5"/></linearGradient></defs>'
-      +'<g class="hms">'+hm+'</g>'+g+'<g class="bars">'+bars+'</g>'+ul+ll+dots+mk+'<g class="ax">'+ax+'</g><g class="strip">'+strip+'</g>'+cols+'</svg>';
+      +g+'<g class="bars">'+bars+'</g>'+ul+ll+dots+mk+'<g class="ax">'+ax+'</g><g class="strip">'+strip+'</g>'+cols+'</svg>';
     var pd=isNum(peak.usual)&&peak.usual>0?Math.round((peak.net/peak.usual-1)*100):null;
     var card='<div class="hx-peak" style="left:'+Math.max(14,Math.min(86,cx(rows.indexOf(peak))/W*100)).toFixed(2)+'%;top:'+(y(peak.net)/H*100).toFixed(2)+'%"><div class="k">Peak hour</div><div class="v">'+hn(esc(hourLabel(peak.hour,true)))+'<span>'+hn(money(peak.net))+'</span></div>'
       +(pd!==null?'<div class="d '+(pd>=0?'good':'bad')+'">'+(pd>=0?'↑ ':'↓ ')+hn(Math.abs(pd)+'%')+' vs usual</div>':'')+'</div>';
@@ -7862,6 +7879,7 @@ svg:hover .hb-xh{opacity:1}
   function hxShow(col){
     var box=col.closest?col.closest('.hx-in'):null;if(!box)return;var tip=box.querySelector('.hx-tip');if(!tip)return;
     var d=col.getAttribute('data-d'),prev=box.querySelector('.hx-col.on');if(prev&&prev!==col)prev.classList.remove('on');col.classList.add('on');
+    var fa=document.activeElement;if(fa&&fa!==col&&fa.classList&&fa.classList.contains('hx-col')&&fa.blur)fa.blur();
     tip.innerHTML='<div class="h">'+esc(col.getAttribute('data-h'))+'</div><div class="v">'+hn(esc(col.getAttribute('data-net')))+'</div>'
       +(col.getAttribute('data-usual')?'<div class="r"><span>Usual</span><b>'+hn(esc(col.getAttribute('data-usual')))+'</b>'+(d!==''?'<em class="'+(+d>=0?'good':'bad')+'">'+(+d>=0?'+':'−')+hn(Math.abs(+d)+'%')+'</em>':'')+'</div>':'')
       +(col.getAttribute('data-hrs')?'<div class="r"><span>Labor hours</span><b>'+hn(esc(col.getAttribute('data-hrs')))+'</b></div>':'')
@@ -7869,7 +7887,10 @@ svg:hover .hb-xh{opacity:1}
     var x=+col.getAttribute('data-x');tip.style.left=Math.max(10,Math.min(90,x))+'%';tip.style.top=col.getAttribute('data-y')+'%';
     tip.className='hx-tip'+(x>70?' left':(x<30?' right':''));tip.hidden=false;
   }
-  function hxHide(box){if(!box)return;var t=box.querySelector('.hx-tip');if(t)t.hidden=true;var o=box.querySelector('.hx-col.on');if(o)o.classList.remove('on');}
+  // Leaving the chart clears the hover AND a column a click focused: its
+  // focus style used to keep the tint after the pointer left (10/1/26).
+  function hxHide(box){if(!box)return;var t=box.querySelector('.hx-tip');if(t)t.hidden=true;var o=box.querySelector('.hx-col.on');if(o)o.classList.remove('on');
+    var a=document.activeElement;if(a&&a.classList&&a.classList.contains('hx-col')&&box.contains(a)&&a.blur)a.blur();}
   document.addEventListener('mouseover',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
   document.addEventListener('focusin',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
   document.addEventListener('click',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
@@ -8267,9 +8288,10 @@ svg:hover .hb-xh{opacity:1}
   };
   function drGameSide(k,title,x){
     if(!x||!isNum(x.net))return '';
-    var lift=isNum(x.lift_pct)?x.lift_pct:null,h='<div class="dr-game-c"><div class="k">'+esc(k)+'</div><div class="t">'+esc(title)+'</div>'
+    var lift=isNum(x.lift_pct)?Math.round(x.lift_pct):null;if(lift===0)lift=0;
+    var h='<div class="dr-game-c"><div class="k">'+esc(k)+'</div><div class="t">'+prose(title)+'</div>'
       +'<div class="v hb-num">'+esc(money(x.net))+'</div>'
-      +(lift!==null?'<div class="dr-game-l'+(lift<0?' neg':'')+'">'+hn((lift>0?'+':'')+Math.round(lift)+'%')+' <span class="u">vs a usual '+esc(x.weekday||'night')+(isNum(x.usual)?' · '+hn(money(x.usual)):'')+'</span></div>':'<div class="dr-game-l dim"><span class="u">No usual night to compare yet</span></div>');
+      +(lift!==null?'<div class="dr-game-l'+(lift<0?' neg':'')+'">'+hn((lift>0?'+':(lift<0?'\u2212':''))+Math.abs(lift)+'%')+' <span class="u">vs a usual '+esc(x.weekday||'night')+(isNum(x.usual)?' · '+hn(money(x.usual)):'')+'</span></div>':'<div class="dr-game-l dim"><span class="u">No usual night to compare yet</span></div>');
     var bits=[];
     if(isNum(x.guests))bits.push(hn(cnt(x.guests))+' guests');
     if(isNum(x.headcount))bits.push(hn(cnt(x.headcount))+' on the clock');
@@ -8279,12 +8301,15 @@ svg:hover .hb-xh{opacity:1}
   }
   function drGameHtml(g){
     var t=g.tonight||{},l=g.last,side=g.side==='home'?'home':'road';
+    // Nothing until tonight's own net is in: one card under a "compared
+    // to" header, or "the first one measured here" with no tonight, misled.
+    if(!isNum(t.net))return '';
     var h='<div class="dr-game"><div class="dr-game-h">Compared to your last '+esc(side)+' game</div><div class="dr-game-g">'
       +drGameSide('Tonight',g.describe||'',t.net!=null?{net:t.net,lift_pct:t.lift_pct,usual:t.usual,weekday:g.weekday||null,guests:t.guests,headcount:t.headcount,labor_pct:t.labor_pct}:null);
     if(l)h+=drGameSide('Last '+side+' game',l.describe||'',l);
     else h+='<div class="dr-game-c dim"><div class="k">Last '+esc(side)+' game</div><div class="t">The first one measured here.</div></div>';
     h+='</div>';
-    if(g.basis)h+=note(esc(cap(g.basis)));
+    if(g.basis)h+=note(prose(cap(g.basis)));
     return h+'</div>';
   }
   function hours(list){
@@ -12655,7 +12680,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     var box=document.getElementById('so-game');if(!box)return;
     fetch('/api/food-cost/game-week').then(apiJson).then(function(d){
       var g=d&&d.ok&&d.game;if(!g){box.hidden=true;box.innerHTML='';return;}
-      var h='<div class="ev-week-k">Game this week</div><div class="ev-week-t"><b>'+_mmEsc(g.describe||'')+'</b></div><div class="ev-week-x">'+_mmEsc(g.text||'')+'</div>';
+      var nm=function(v){return window.num?window.num(v||''):_mmEsc(v||'');};
+      var h='<div class="ev-week-k">Game this week</div><div class="ev-week-t"><b>'+nm(g.describe)+'</b></div><div class="ev-week-x">'+nm(g.text)+'</div>';
       var ls=(g.order&&g.order.lines)||[];
       if(ls.length){h+='<div class="ev-week-l">';for(var i=0;i<ls.length&&i<6;i++)h+='<span><b class="hb-num">+'+_mmEsc(ls[i].extra)+'</b> '+_mmEsc(ls[i].unit||'')+' '+_mmEsc(ls[i].ingredient)+'</span>';h+='</div>';}
       if(g.basis)h+='<div class="ev-week-b">'+_mmEsc(g.basis.charAt(0).toUpperCase()+g.basis.slice(1))+'.</div>';
@@ -17077,14 +17103,14 @@ function recControlsHtml(key,surface,module,opts){
   // advice but an answer to Cavnar AI's own question.
   var lb=(opts&&opts.labels)||{};
   return '<span class="rec-ans">'+b+'data-rec-event="completed">'+recEsc(lb.completed||'Done')+'</button>'
-    +b+'data-rec-event="dismissed" data-rec-kind="not_for_us"'+(opts&&opts.noWhy?' data-rec-nowhy="1"':'')+'>'+recEsc(lb.not_for_us||'Not for us')+'</button>'
+    +b+'data-rec-event="dismissed" data-rec-kind="not_for_us"'+(opts&&opts.noWhy?' data-rec-nowhy="1"':'')+'>'+recEsc(lb.not_for_us||'Pass')+'</button>'
     +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b.replace('type="button"','type="button" title="Cavnar AI checks this number before and after you act, and tells you whether it moved"')+'data-rec-event="accepted">Measure it</button>':'')+'</span>';
 }
 /* A lone "Not for us" for a line whose own button is its yes (an overtime
    move, a content idea, a roadmap card): the same attributes, the same
    handler, the same reason picker. */
 function recNotForUsHtml(key,surface,module){
-  return '<span class="rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button></span>';
+  return '<span class="rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button></span>';
 }
 /* ── What was said before, cautions, and advice that pulls against advice ──
    (memory round, 9/29/26). One set of pieces every surface draws the same
@@ -17228,7 +17254,7 @@ function recReasonPicker(after,opts){
   // answer, so a close after a pick is the save landing: say so (owner,
   // 9/25/26 - the picker just vanished). Cancel closes with nothing picked.
   box.close=function(){if(box.parentNode)box.parentNode.removeChild(box);
-    if(box._picked!==undefined&&!box._toasted&&typeof toast==='function'){box._toasted=1;toast(box._picked?'Got it \u2014 your reason is saved':'Got it \u2014 not for us','success');}};
+    if(box._picked!==undefined&&!box._toasted&&typeof toast==='function'){box._toasted=1;toast(box._picked?'Got it \u2014 your reason is saved':'Got it \u2014 passed','success');}};
   function pick(code){var note=(inp.value||'').replace(/^\s+|\s+$/g,'');box._picked=code||'';lock();if(opts.onPick)opts.onPick(code,note,box);}
   box.addEventListener('click',function(e){
     var b=e.target&&e.target.closest?e.target.closest('button'):null;if(!b||b.disabled||!box.contains(b))return;
@@ -21159,9 +21185,9 @@ function renderQualityWarnings(quality) {
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
       + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', cls: 'on-dark'}) : '') + '</span>'
-      + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'not for us') + '</span>'
+      + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'passed') + '</span>'
             : '<span class="acts">' + (/^Fill the gap on /.test(rec) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-rec-fill="' + _escAttr(rec) + '">Fill it</button>' : '') + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
-              + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Not for us" aria-label="Not for us" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
+              + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Pass" aria-label="Pass" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
       + '</div>';
   }
   if (hidden.length) {
@@ -29015,7 +29041,7 @@ document.addEventListener('click',function(ev){
         // What this owner usually does (M6 food_corrections): their usual
         // share of the rise, offered beside the full one.
         if(x.typical_price!=null&&x.owner_ratio&&+x.typical_price!==+x.suggested_price)act+=' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.typical_price+'">Set '+_fcMoney(x.typical_price)+'</button>';
-        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>';
+        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>';
         var notes='';
         if(guarded)notes+='<div class="mem-ln warn">'+(window.memNum?memNum(x.guard.text):_fcEsc(x.guard.text))+'</div>';
         if(x.value_note)notes+='<div class="mem-ln warn">'+(window.memNum?memNum(x.value_note):_fcEsc(x.value_note))+'</div>';
@@ -29696,7 +29722,10 @@ function cpResetDraft() {
   if (img) img.style.backgroundImage = ''; if (pl) pl.textContent = 'Add a photo';
   if (_cp.media) cpPaintThumbs();
   var tag = _cpEl('cp-aud-k'); if (tag) tag.textContent = '';
-  var sh = _cpEl('cp-send-hint'); if (sh) { sh.hidden = true; sh.innerHTML = ''; }
+  /* The send-time hint stays with its own goal: Create keeps it beside the
+     draft; any other prompt (a new goal, an idea, Use again) clears it. */
+  var sh = _cpEl('cp-send-hint'), pr = _cpEl('cp-prompt');
+  if (sh && !(pr && _cp.hintGoal && pr.value === _cp.hintGoal)) { sh.hidden = true; sh.innerHTML = ''; _cp.hintGoal = null; }
   cpCreateIdle();
 }
 window.cpCreate = function(rewrite) {
@@ -30058,7 +30087,7 @@ function loadWinback() {
     box.innerHTML = '<div class="k">Cavnar AI suggests</div>'
       + '<div class="t">Bring back <span class="hb-num">' + (+w.segment_size || 0) + '</span> guest' + (w.segment_size === 1 ? '' : 's') + ' ' + recEsc((w.segment_label || '').toLowerCase()) + '</div>'
       + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-winback-use="' + w.id + '">Use this</button>'
-      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="' + w.id + '">Not for us</button>';
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="' + w.id + '">Pass</button>';
     box.hidden = false;
   }).catch(function() {});
 }
@@ -33145,9 +33174,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     for(var i=0;i<list.length;i++){var f=list[i];
       h+='<div class="ev-follow'+(f.following?'':' off')+'"><div class="ev-follow-t"><b>'+esc(f.name)+'</b>'
         +'<span>'+(isFinite(f.distance_km)&&f.distance_km!==null?'<span class="hb-num">'+esc(Math.round(f.distance_km*0.621371))+'</span> mi away':'')
-        +(f.following&&f.next?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Next: '+esc(f.next):'')
+        +(f.following&&f.next?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Next: '+(window.num?window.num(f.next):esc(f.next)):'')
         +(!f.following?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Not followed — its games aren\u2019t planned for':'')+'</span>'
-        +(f.season&&f.season.text?'<span class="ev-follow-s" title="'+esc(f.season.basis||'')+'">'+esc(f.season.text)+'</span>':'')+'</div>'
+        +(f.season&&f.season.text?'<span class="ev-follow-s" title="'+esc(f.season.basis||'')+'">'+(window.num?window.num(f.season.text):esc(f.season.text))+'</span>':'')+'</div>'
         +'<button type="button" class="cbtn '+(f.following?'cbtn-text':'cbtn-secondary')+' cbtn-sm" onclick="evFollowSet('+(+f.series_id)+','+(f.following?'false':'true')+',this)">'+(f.following?'Stop following':'Follow')+'</button></div>';}
     return h+'</div>';
   }

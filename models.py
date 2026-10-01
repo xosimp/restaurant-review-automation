@@ -3976,6 +3976,11 @@ def init_db(db_path: str = DB_PATH):
     init_attendance(db_path)
     import people as _people_boot
     _people_boot.init_people(db_path)
+    # The phantom people a "Name · attribute" rating subject made (10/1/26).
+    try:
+        _people_boot.repair_labelled_people(db_path=db_path)
+    except Exception as e:
+        print(f"[people] labelled-name repair skipped: {e}")
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -8206,16 +8211,25 @@ def init_capability_changes(db_path: str = DB_PATH):
     # Who made the change, as data (PEOPLE-15): the login id (the admin
     # behind a view-as), its authority and 'view_as' when through one.
     have = {r[1] for r in conn.execute("PRAGMA table_info(capability_changes)").fetchall()}
-    for col, decl in (("changed_by_user_id", "INTEGER"), ("authority", "TEXT"), ("via", "TEXT")):
+    for col, decl in (("changed_by_user_id", "INTEGER"), ("authority", "TEXT"), ("via", "TEXT"),
+                      ("attribute", "TEXT")):
         if col not in have:
             conn.execute(f"ALTER TABLE capability_changes ADD COLUMN {col} {decl}")
+    # A rating's subject is the PERSON (owner, 10/1/26): it used to be
+    # written "Name · attribute", and the people stitcher reads this column
+    # as a name store (people.NAME_STORES) - every "Gideon Kopalchick ·
+    # overall" became a person of its own and a same-person question. The
+    # attribute has its own column; old rows are split once, here.
+    conn.execute("UPDATE capability_changes SET attribute=substr(subject, instr(subject, ' · ') + 3), "
+                 "subject=trim(substr(subject, 1, instr(subject, ' · ') - 1)) "
+                 "WHERE kind='rating' AND attribute IS NULL AND instr(subject, ' · ') > 1")
     conn.commit()
     conn.close()
 
 
 def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
                              before=None, after=None, changed_by: str = None,
-                             db_path: str = DB_PATH):
+                             db_path: str = DB_PATH, attribute: str = None):
     """Append one change. Never raises — an audit row failing to write must
     not stop an owner setting a target."""
     import json as _j
@@ -8235,11 +8249,12 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
         conn.execute(
             "INSERT INTO capability_changes "
             "(restaurant_id, kind, subject, before_json, after_json, changed_by, changed_by_user_id, "
-            "authority, via) VALUES (?,?,?,?,?,?,?,?,?)",
+            "authority, via, attribute) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, str(kind)[:40], (str(subject)[:160] if subject else None),
              _j.dumps(before) if before is not None else None,
              _j.dumps(after) if after is not None else None,
-             (changed_by or "").strip()[:120] or None, who["user_id"], who["authority"], who["via"]))
+             (changed_by or "").strip()[:120] or None, who["user_id"], who["authority"], who["via"],
+             (str(attribute)[:60] if attribute else None)))
         conn.commit()
         conn.close()
     except Exception as exc:
@@ -8272,6 +8287,11 @@ def get_capability_changes(restaurant_id: int, limit: int = 100,
                 d[side] = _j.loads(raw) if raw else None
             except Exception:
                 d[side] = None
+        # The log still reads "Name · attribute" to whoever shows it; the
+        # person is its own key.
+        if d.get("attribute"):
+            d["person"] = d.get("subject")
+            d["subject"] = f"{d.get('subject') or ''} · {d['attribute']}"
         out.append(d)
     return out
 

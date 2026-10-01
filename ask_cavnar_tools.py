@@ -1343,7 +1343,7 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
             "links": _link_history(restaurant_id, denied),
             "note": "This restaurant's own history only.",
             "links_note": ("What two modules pointed at together, when it was found and how it ended — a link "
-                           "marked 'you said not for us' is never re-proposed as new; say it was declined and "
+                           "marked 'you passed on it' is never re-proposed as new; say it was declined and "
                            "when.")}
 
 
@@ -2028,7 +2028,7 @@ def _read_target_history(restaurant_id, as_of=None, _viewer=None):
     return out
 
 
-def _read_events(restaurant_id, days=21, past=4):
+def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     """The Event Intelligence catalog for this restaurant (event_intel): the
     teams and events it follows, the next games with what games like each
     did here (measured, never assumed), the last game of the same kind and
@@ -2108,6 +2108,24 @@ def _read_events(restaurant_id, days=21, past=4):
     from event_intel import gameday
     out["season_so_far"] = [sv for sv in (gameday.season_value(restaurant_id, f["series_id"], today=today)
                                           for f in store.follows(restaurant_id)) if sv]
+    # What this login may read (audit 10/1/26): the dollars, staffing and the
+    # item mix follow the Labor view as the brief's do, the ordering bump the
+    # Food Cost view, the guest-text timing Marketing.
+    denied = _denied(_viewer)
+    if "labor" in denied:
+        for item in ahead:
+            for k in ("last_like_it", "staffing", "rush", "items_sold", "order_more", "measured_here"):
+                item.pop(k, None)
+        for r in recent:
+            for k in ("net", "usual_same_weekday", "lift_pct", "covers"):
+                r.pop(k, None)
+        out.pop("season_so_far", None)
+    if "inventory" in denied:
+        for item in ahead:
+            item.pop("order_more", None)
+    if "marketing" in denied:
+        for item in ahead:
+            item.pop("reach_guests", None)
     out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
                     "weeks before (event_memory); a game night with no sales on file is not measured")
     return out
@@ -3190,6 +3208,7 @@ TOOLS = [
         "kind": "read",
         "fn": _read_events,
         "module": None,
+        "wants_viewer": True,
         "spec": {
             "name": "read_events",
             "description": (

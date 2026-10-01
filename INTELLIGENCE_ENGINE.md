@@ -931,7 +931,7 @@ modules) equal the horizon.
   and is never the one thing (`home_brief.order_recommendations`,
   `business_intelligence.pick_one_thing`); Home asks instead — "Keep
   suggesting …?" (`rec_learning.hold_ask`, key `kind_hold:<kind>`). Done or
-  Track keeps the kind proposed for `KIND_HOLD_KEEP_DAYS` (180); Not for us
+  Track keeps the kind proposed for `KIND_HOLD_KEEP_DAYS` (180); Pass
   leaves it stopped. Nothing else is dropped.
 
 The owner's own record of the same trail — what they followed by module,
@@ -965,7 +965,7 @@ re-derived on the client:
   "72% confidence · data through 9/23/26" — the K1 label and the stalest
   source's date.
 
-"Not for us" is read by advice signature (`insight_store.advice_signature`)
+"Pass" is read by advice signature (`insight_store.advice_signature`)
 on the AI-read lines, Shift Quality items, Ask suggestions, the digest's
 move and the quiet-night push, as it already was on Home, the one thing,
 the DSR and Reviews' Do today. A whole-schedule recommendation

@@ -341,14 +341,14 @@ def test_ask_reads_the_link_history_labelled_and_by_module_view():
     _decline(rid, bi.link_key(lab))
     lm.settle(rid)
     hist = {h["kind"]: h for h in lm.history_lines(rid)}
-    assert hist["reviews_x_labor"]["status"] == "you said not for us" and hist["reviews_x_labor"]["resolved_on"]
+    assert hist["reviews_x_labor"]["status"] == "you passed on it" and hist["reviews_x_labor"]["resolved_on"]
     assert hist["reviews_x_food_cost"]["status"] == "open" and hist["reviews_x_food_cost"]["first_found"] == "9/7/26"
     assert [h["kind"] for h in lm.history_lines(rid, denied={"inventory"})] == ["reviews_x_labor"]
     assert "reviews_x_labor" not in [h["kind"] for h in lm.history_lines(rid, denied={"labor"})]
     got = act._read_restaurant_memory(rid)
-    assert {h["kind"]: h["status"] for h in got["links"]} == {"reviews_x_labor": "you said not for us",
+    assert {h["kind"]: h["status"] for h in got["links"]} == {"reviews_x_labor": "you passed on it",
                                                                "reviews_x_food_cost": "open"}
-    assert "not for us" in got["links_note"]
+    assert "you passed on it" in got["links_note"]
 
 
 # ── CROSSMODULE-16 ───────────────────────────────────────────────────────────

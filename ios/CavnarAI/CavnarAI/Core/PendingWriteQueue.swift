@@ -313,7 +313,7 @@ struct QueuedWrite: Equatable {
         if body.event == RecAnswer.completed.event {
             label = "Mark a recommendation done"
         } else if body.event == RecAnswer.notForUs.event, body.kind == RecAnswer.notForUs.kind {
-            label = "Not for us on a recommendation"
+            label = "Pass on a recommendation"
         } else {
             return nil
         }

@@ -59,7 +59,7 @@ def test_owner_words_in_the_decision_memory_verify_no_figure_and_anchor_no_cause
     bare = _strip_untrusted(ctx)
     # Outside the fences: only the structure (the answer, the date).
     assert "construction" not in bare and "24%" not in bare and "689" not in bare
-    assert "not for us" in bare
+    assert "passed" in bare
     anchors = ask_cavnar._cause_anchors([ctx])
     assert not [a for a in anchors if "construction" in a["text"]]
     from ai_guard import figure_claims
@@ -185,7 +185,7 @@ def test_memory_context_serves_the_decisions_section_on_every_surface_that_needs
     rl.present(rid, "trim_day:Friday", "labor", "home", title="Trim Friday", db_path=db_path)
     rl.record(rid, "trim_day:Friday", "dismissed", meta={"kind": "not_for_us", "reason": "no"}, db_path=db_path)
     block = mc.memory_context(rid, "competitor_read")
-    assert "decisions" in block.sections and "not for us" in block.text
+    assert "decisions" in block.sections and "passed" in block.text
     assert not re.search(r"\d{4}-\d{2}-\d{2}", block.text)
 
 

@@ -7,24 +7,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
 
 
-def test_no_on_screen_not_for_us_label():
-    """9/25/26 renamed the decline "Pass"; the memory round (M1, 9/29/26)
-    names it "Not for us" again, on web and iOS. UI wave B's surfaces (the
-    schedule review's ✕, the reprice table, the win-back card) carry it;
-    UI wave A renames Home's and the shared recControlsHtml. So the label
-    this test once kept off the page is now the one it must find."""
-    assert 'title="Not for us" aria-label="Not for us" data-rec-action="dismissed"' in SRC
-    assert 'data-rec-kind="not_for_us">Not for us</button>' in SRC
-    assert 'data-winback-dismiss="\' + w.id + \'">Not for us</button>' in SRC
+def test_the_on_screen_decline_is_pass():
+    """9/25/26 named the decline "Pass"; the memory round (9/29/26) renamed
+    it "Not for us"; the owner (10/1/26) wants "Pass" everywhere."""
+    assert 'title="Pass" aria-label="Pass" data-rec-action="dismissed"' in SRC
+    assert 'data-rec-kind="not_for_us">Pass</button>' in SRC
+    assert 'data-winback-dismiss="\' + w.id + \'">Pass</button>' in SRC
 
 
-def test_the_decline_reads_not_for_us_never_pass():
-    # 9/25/26 the on-screen decline was "Pass"; the memory round (9/29/26,
-    # M1 "silences") renamed it back to "Not for us" on web and iOS - the
-    # answer now says what it does for a year, and "Pass" read as "skip it
-    # for now". Pinned the new way round, so "Pass" can't come back.
-    assert ">Pass<" not in SRC and 'aria-label="Pass"' not in SRC
-    assert ">Not for us<" in SRC or "'Not for us')+'</button>'" in SRC
+def test_the_decline_reads_pass_never_not_for_us():
+    assert ">Not for us<" not in SRC and 'aria-label="Not for us"' not in SRC
 
 
 def test_focus_card_puts_the_primary_beside_could_also_be_and_answers_after():

@@ -42,11 +42,12 @@ def _between(start, end, src=SRC):
 
 # ── the decline reads "Not for us", everywhere ──────────────────────────────
 
-def test_the_decline_is_not_for_us_on_every_answer_row():
-    assert ">Pass<" not in SRC and 'aria-label="Pass"' not in SRC and 'title="Pass"' not in SRC
+def test_the_decline_is_pass_on_every_answer_row():
+    # Owner, 10/1/26: "Pass" everywhere (it read "Not for us" from 9/29/26).
+    assert ">Not for us<" not in SRC and 'aria-label="Not for us"' not in SRC and 'title="Not for us"' not in SRC
     for name in ("hbRecCard", "renderFocus", "recNotForUsHtml"):
-        assert ">Not for us</button>" in _fn(name), name
-    assert "recEsc(lb.not_for_us||'Not for us')" in _fn("recControlsHtml")
+        assert ">Pass</button>" in _fn(name), name
+    assert "recEsc(lb.not_for_us||'Pass')" in _fn("recControlsHtml")
 
 
 def test_home_says_what_the_answer_does_in_the_servers_words():
@@ -393,7 +394,7 @@ def test_a_kind_hold_answer_row_uses_its_own_words_without_the_picker():
     assert ">Keep suggesting it<" in h and ">Stop suggesting it<" in h and 'data-rec-nowhy="1"' in h
     assert "Measure it" not in h
     plain = _run_shared("recControlsHtml('trim_day:Tuesday','home','labor')")
-    assert ">Done<" in plain and ">Not for us<" in plain and "data-rec-nowhy" not in plain
+    assert ">Done<" in plain and ">Pass<" in plain and "data-rec-nowhy" not in plain
 
 
 def test_the_undo_question_uses_the_servers_options_and_route():

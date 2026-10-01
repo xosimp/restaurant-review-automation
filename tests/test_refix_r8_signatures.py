@@ -130,7 +130,7 @@ def test_a_hold_on_a_fill_night_is_not_a_trim_against_the_fill():
 
 def test_the_decline_of_one_side_is_decisions_memory_for_the_other():
     import decisions
-    rows = [{"key": "trim_day:Tuesday", "title": "Trim Tuesday staffing", "answer": "not for us",
+    rows = [{"key": "trim_day:Tuesday", "title": "Trim Tuesday staffing", "answer": "passed",
              "signature": "labor:day:tuesday", "reason_code": "doesnt_fit"}]
     picked = decisions.pick_relevant(rows, subjects=["labor:day:tuesday:hold"])
     assert picked and picked[0]["weight"] >= 100, "the owner's no to the trim is about the hold advice too"

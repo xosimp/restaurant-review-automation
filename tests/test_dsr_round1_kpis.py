@@ -515,7 +515,10 @@ def test_a_quiet_flat_night_says_nothing_it_cannot_prove():
 
 def test_the_hour_chart_is_one_hybrid_story():
     js = SRC[SRC.index("  function hourHtml(p){"):SRC.index("  function hxSkeleton(){")]
-    for part in ('class="hm"', "'hxp':'hxb'", 'class="ll"', 'class="lg"', 'class="ul"', "hx-peak", "hx-tip",
+    # No full-height heat columns behind the bars: they read as hovers that
+    # had not cleared (owner, 10/1/26); the heat strip carries it.
+    assert 'class="hm"' not in js
+    for part in ("'hxp':'hxb'", 'class="ll"', 'class="lg"', 'class="ul"', "hx-peak", "hx-tip",
                  "What stood out", "hx-story", 'class="hs"'):
         assert part in js, part
     assert "The hour-by-hour story appears once the POS sends" in js      # the empty state
@@ -525,5 +528,9 @@ def test_the_hour_chart_is_one_hybrid_story():
 
 
 def test_todays_score_carries_the_brand_gradient():
-    assert "#panel-dsr .dr-score{border-color:var(--hb-tint2);" in SRC
-    assert "#panel-dsr .dr-score::before{" in SRC
+    # Smooth (owner, 10/1/26): eased many-stop washes and a grain dither, the
+    # sign-in background's two fixes; the ember ring follows the radius.
+    css = SRC[SRC.index("#panel-dsr .dr-score{border-color:transparent;"):SRC.index("#panel-dsr .dr-score .hb-stat{")]
+    assert css.count("color-mix(in srgb,var(--ember)") >= 28 and "feTurbulence" in css
+    ring = css[css.index("#panel-dsr .dr-score::before{"):]
+    assert "inset:0;border-radius:inherit" in ring and "mask-composite" in ring and "transparent)" not in ring[:60]

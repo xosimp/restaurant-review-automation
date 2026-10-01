@@ -33,7 +33,7 @@ final class PlatformNativeTests: XCTestCase {
         let body = APIClient.recEventBody(key: "reviews:k1", answer: .notForUs, surface: "home",
                                           module: "reviews", reasonCode: "too_costly")
         let write = try XCTUnwrap(QueuedWrite.recAnswer(body))
-        XCTAssertEqual(write.label, "Not for us on a recommendation")
+        XCTAssertEqual(write.label, "Pass on a recommendation")
         let sent = try json(write.bodyJSON)
         XCTAssertEqual(sent["event"] as? String, "dismissed")
         XCTAssertEqual(sent["kind"] as? String, "not_for_us")

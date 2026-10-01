@@ -649,12 +649,12 @@ struct DSRVerification: Decodable, Hashable {
         var isLeftOut: Bool {
             guard let why, !why.isEmpty, key != nil else { return false }
             if why.range(of: "chose the other advice", options: .caseInsensitive) != nil { return true }
-            return why.range(of: "not for us|already answered|same action",
+            return why.range(of: "not for us|passed on|already answered|same action",
                              options: [.regularExpression, .caseInsensitive]) == nil
         }
         var isAnswered: Bool {
             guard let why else { return false }
-            return why.range(of: "owner|already answered|same action|not for us",
+            return why.range(of: "owner|already answered|same action|not for us|passed on",
                              options: [.regularExpression, .caseInsensitive]) != nil
         }
     }

@@ -1108,7 +1108,7 @@ CLAIM_CROSS_READERS = ("dsr_narrative",)
 _NON_CLAIM_SUBJECTS = ("date:", "dsr:")
 
 _STATE_WORDS = {"taken": "the advice was taken", "taken_late": "the advice was taken after the check window",
-                "declined": "the owner said not for us", "hidden": "the owner hid it",
+                "declined": "the owner passed on it", "hidden": "the owner hid it",
                 "ignored": "it was left unanswered", "open": "not answered yet", "replaced": "it was replaced",
                 "none": None}
 
@@ -1128,7 +1128,7 @@ def _live_state(conn, restaurant_id, rec_key):
     if ev is None:
         return "not answered yet" if ep["status"] in ("open", "superseded") else "left unanswered"
     word = {"accepted": "answered Track", "completed": "answered Done", "implemented": "the change was made",
-            "dismissed": "answered Not for us"}.get(ev["event"], ev["event"])
+            "dismissed": "passed on it"}.get(ev["event"], ev["event"])
     if ev["event"] == "dismissed" and (_loads(ev["meta"], {}) or {}).get("kind") != "not_for_us":
         word = "hidden"
     return f"{word} ({_mdy(ev['at'])})"
@@ -1483,7 +1483,7 @@ def summaries(restaurant_id, surfaces=None, db_path=None) -> list:
 # ── what was already tried on a subject ──────────────────────────────────────
 
 _ANSWER_WORDS = {"accepted": "Tracked", "completed": "Done", "implemented": "the change was made",
-                 "dismissed": "Not for us"}
+                 "dismissed": "Pass"}
 _VERDICT_WORDS = {"improved": "measured better after", "worsened": "measured worse after",
                   "no_clear_change": "no clear change measured", "unknown": "not measurable"}
 
@@ -1569,8 +1569,9 @@ def tried_block(restaurant_id, keys=(), signatures=(), db_path=None) -> str:
     for t in rows:
         said = t["title"] + (f" (reason: {t['reason']})" if t.get("reason") else "")
         tail = f" — {_VERDICT_WORDS.get(t['result'], t['result'])} ({CAVEAT})" if t.get("result") else ""
-        lines.append(f"- {_mdy(t['at'])}: answered {t['answer']} to " + wrap_untrusted(said) + tail)
+        verb = "passed on" if t["answer"] == "Pass" else f"answered {t['answer']} to"
+        lines.append(f"- {_mdy(t['at'])}: {verb} " + wrap_untrusted(said) + tail)
     out = "\n".join(lines)
     if any(t["declined"] for t in rows):
-        out += "\nDo NOT recommend again anything the owner answered Not for us above, in those words or any others."
+        out += "\nDo NOT recommend again anything the owner passed on above, in those words or any others."
     return out

@@ -214,7 +214,7 @@ def test_the_push_goes_once_the_afternoon_before_to_the_labor_view_only(db, monk
     sent = []
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: sent.append((a, k)))
     monkeypatch.setattr(notify, "briefing_allowed", lambda *a, **k: True)
-    monkeypatch.setattr(morning_brief, "recipients", lambda rid, db_path=None: [
+    monkeypatch.setattr(morning_brief, "recipients", lambda rid, db_path=None, include_opted_out=False: [
         {"id": 1, "role": "owner"}, {"id": 2, "role": "employee"}])
     monkeypatch.setattr(strategy_jobs, "deliverable_audience", lambda rid, ids, db_path=None: set(ids))
     claims = set()
@@ -264,3 +264,95 @@ def test_the_game_week_route_is_the_food_views(db):
     with app.test_request_context("/food-cost/game-week"):
         body, status = strategy_routes._do_game_week({"restaurant_id": r.id, "role": "manager", "id": 2})
     assert status == 403
+
+
+# ── blind audit, 10/1/26 ───────────────────────────────────────────────────
+
+def test_a_game_older_than_the_sync_window_keeps_its_measured_night(db, monkeypatch):
+    import demand_signals
+    import event_memory
+    calls = []
+    monkeypatch.setattr(event_memory, "record_night", lambda rid, d, db_path=None: calls.append(d) or {"recorded": 0})
+    r = _restaurant(db)
+    engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
+    before = [s for s in demand_signals.upcoming(r.id, "2026-08-15", "2026-08-15", db_path=db) if s.get("ref")]
+    calls.clear()
+    engine.sync_restaurant(r, today=date(2027, 9, 25), db_path=db)          # 8/15/26 is 406 days back
+    after = [s for s in demand_signals.upcoming(r.id, "2026-08-15", "2026-08-15", db_path=db) if s.get("ref")]
+    assert before and after == before and "2026-08-15" not in calls
+
+
+def test_clearing_a_correction_restores_the_season_files_status_and_result(db):
+    s = store.series_by_slug("nfl-chicago-bears", db_path=db)
+    wk6 = [e for e in store.events_for([s["id"]], "2026-10-18", "2026-10-18", db_path=db)][0]
+    store.edit_event(wk6["id"], {"status": "cancelled", "result": "W 30-3"}, db_path=db)
+    got = store.edit_event(wk6["id"], {}, clear=["status", "result"], db_path=db)
+    assert got["after"]["result"] is None and got["after"]["status"] in ("scheduled", "completed")
+    store.load_bundled(db_path=db)
+    again = store.event_by_id(wk6["id"], db_path=db)
+    assert again["status"] != "cancelled" and again["result"] is None
+
+
+def test_twelve_hour_shift_times_are_read(db):
+    assert [playbook._minutes(t) for t in ("15:50", "4:00pm", "04:00 PM", "9:00", "12:15am", "bad")] == \
+        [950, 960, 960, 540, 15, None]
+
+
+def test_a_rush_pattern_needs_the_games_own_peaks_within_an_hour(db, monkeypatch):
+    r = _restaurant(db)
+    _world(db, r.id)
+    real = playbook._hourly
+
+    def shifted(rid, iso, db_path):
+        got = real(rid, iso, db_path)
+        if iso == GAMES[1] and got:                       # the second game peaks two hours later
+            return {10: 300, 11: 500, 12: 900, 13: 1900, 17: 700}
+        return got
+    monkeypatch.setattr(playbook, "_hourly", shifted)
+    ru = playbook.rush(r.id, _saints(db), db_path=db)
+    assert ru["pattern_offset"] is None
+
+
+def test_ask_gives_a_manager_without_food_cost_no_ordering_and_without_labor_no_dollars(db, monkeypatch):
+    import ask_cavnar_tools as tools
+    r = _restaurant(db)
+    _world(db, r.id)
+    _mix_world(db, r.id)
+    _recipe(db, r.id, "Wings", "Chicken wings", "lb", 0.5)
+    monkeypatch.setattr(tools, "_local_today_of", lambda rid: date(2026, 11, 20))
+
+    class V:
+        _ask_denied = frozenset({"inventory"})
+    out = tools._read_events(r.id, days=7, _viewer=V())
+    saints = [u for u in out["upcoming"] if "Saints" in u["what"]][0]
+    assert "order_more" not in saints and saints["staffing"]["plan"]
+    V._ask_denied = frozenset({"labor", "inventory"})
+    out = tools._read_events(r.id, days=7, _viewer=V())
+    saints = [u for u in out["upcoming"] if "Saints" in u["what"]][0]
+    assert not {"staffing", "rush", "items_sold", "last_like_it"} & set(saints) and "season_so_far" not in out
+
+
+def test_the_brief_does_not_repeat_what_the_reports_carried_line_already_said(db):
+    r = _restaurant(db)
+    _world(db, r.id)
+    _mix_world(db, r.id)
+    eid = _saints(db)["id"]
+    carried = [{"kind": "event", "event_id": eid}, {"kind": "game_staffing", "event_id": eid},
+               {"kind": "game_prep", "event_id": eid}]
+    line = playbook.alert(r.id, date(2026, 11, 22), carried=carried, db_path=db)
+    assert "Staff above" not in line["text"] and "Prep for" not in line["text"] and "have run" not in line["text"]
+    assert line["text"].startswith("Today: Bears vs New Orleans Saints")
+
+
+def test_the_seasons_money_leaves_out_postponed_games_and_mixed_nights(db):
+    r = _restaurant(db)
+    sid = store.series_by_slug("nfl-chicago-bears", db_path=db)["id"]
+    _outcome(db, r.id, "2026-09-28", 106.1, net=11031.0, base=5351.0)
+    _outcome(db, r.id, "2026-09-20", 20.0, net=9600.0, base=8000.0)
+    conn = models.get_conn(db)
+    conn.execute("UPDATE event_outcomes SET confounded=1 WHERE restaurant_id=? AND business_date='2026-09-20'", (r.id,))
+    conn.commit()
+    conn.close()
+    sv = gameday.season_value(r.id, sid, today=date(2026, 10, 1), db_path=db)
+    assert sv["measured"] == 1 and sv["mixed"] == 1 and sv["incremental"] == 5680.0
+    assert sv["text"].endswith("; 1 left out with something else on that night.")

@@ -154,7 +154,7 @@ final class MemoryRoundIATests: XCTestCase {
                        "Done — hidden for 60 days. Measuring labor % until 10/21/26")
         XCTAssertEqual(HomeFollowThroughViewModel.answerLine(kind: "snooze", message: nil, trackerLine: nil, evaluateOn: nil),
                        "Not today \u{2014} it\u{2019}s back tomorrow")
-        XCTAssertEqual(RecAnswer.notForUs.label, "Not for us")
+        XCTAssertEqual(RecAnswer.notForUs.label, "Pass")
     }
 
     // MARK: - The brief
@@ -244,9 +244,9 @@ final class MemoryRoundIATests: XCTestCase {
         let ev = AskEvidence(declinedRepeats: meta.declinedRepeats)
         XCTAssertFalse(ev.isEmpty)
         XCTAssertEqual(ev.declinedLine,
-                       "1 suggestion here is one you said not for us to on 8/12/26 \u{2014} marked in the answer.")
+                       "1 suggestion here is one you passed on, on 8/12/26 \u{2014} marked in the answer.")
         let two = AskEvidence(declinedRepeats: [.init(text: "a"), .init(text: "b")])
-        XCTAssertEqual(two.declinedLine, "2 suggestions here are ones you said not for us to before \u{2014} each marked in the answer.")
+        XCTAssertEqual(two.declinedLine, "2 suggestions here are ones you passed on before \u{2014} each marked in the answer.")
         let event = try decode(APIClient.SSEEvent.self, #"""
         {"type": "answer", "answer": "…", "declined_repeats": [{"text": "Cut a Friday closer", "declined_on": "8/12/26"}]}
         """#)

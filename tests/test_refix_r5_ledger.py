@@ -69,7 +69,7 @@ def test_restoring_a_kind_is_honoured_by_every_reader():
     rid = _rid()
     _decline_three(rid)
     assert [d["kind"] for d in decisions.declined_subjects(rid)] == ["trim_day"]
-    assert {r["answer"] for r in decisions.history(rid) if r["key"].startswith("trim_day:")} == {"not for us"}
+    assert {r["answer"] for r in decisions.history(rid) if r["key"].startswith("trim_day:")} == {"passed"}
     assert decisions.restore_kind(rid, "trim_day", user_id=1, authority="principal")
     # 1. the reversal is in the trail, with its authority
     rows = _q("SELECT key, authority FROM rec_events WHERE restaurant_id=? AND event='reopened'", rid)
@@ -99,7 +99,7 @@ def test_use_again_on_one_card_takes_back_that_decline_only():
     home_brief.undismiss(rid, "trim_day:friday", subject_id=1)
     hist = {r["key"]: r["answer"] for r in decisions.history(rid)}
     assert hist["trim_day:friday"] == "asked to see it again"
-    assert hist["trim_day:saturday"] == "not for us"
+    assert hist["trim_day:saturday"] == "passed"
     # two answers left: below the three a kind needs to be named declined
     assert decisions.declined_subjects(rid) == []
 
@@ -112,7 +112,7 @@ def test_a_decline_after_the_reversal_counts_again():
     decisions.restore_kind(rid, "trim_day", user_id=1, authority="principal")
     _decline_three(rid)
     assert [d["kind"] for d in decisions.declined_subjects(rid)] == ["trim_day"]
-    assert {r["answer"] for r in decisions.history(rid) if r["key"].startswith("trim_day:")} == {"not for us"}
+    assert {r["answer"] for r in decisions.history(rid) if r["key"].startswith("trim_day:")} == {"passed"}
     assert rec_ledger.silenced(rid, "trim_day:friday")
 
 
@@ -294,7 +294,7 @@ def test_an_old_reasoned_decline_survives_many_newer_answers():
     conn.commit()
     conn.close()
     hist = {r["key"]: r for r in decisions.history(rid)}
-    assert hist["trim_day:Monday"]["answer"] == "not for us"
+    assert hist["trim_day:Monday"]["answer"] == "passed"
     assert hist["trim_day:Monday"]["reason"] == "We need the cover"
 
 

@@ -229,7 +229,7 @@ struct ScheduleReviewPanel: View {
                                 decliningMove = move
                                 showingDeclineWhy = true
                             } label: {
-                                Text("Not for us")
+                                Text("Pass")
                                     .font(.cavnarBody(12.5, weight: 600))
                                     .foregroundStyle(Color.cavnarInk3)
                             }

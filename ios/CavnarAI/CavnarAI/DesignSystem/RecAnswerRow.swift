@@ -46,7 +46,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
         // "Not for us" everywhere (memory round 9/29/26, M1 "silences"):
         // "Pass" read as "skip it for now", and the answer silences the
         // advice for a year.
-        case .notForUs:  return "Not for us"
+        case .notForUs:  return "Pass"
         case .accepted:  return "Measure it"
         }
     }

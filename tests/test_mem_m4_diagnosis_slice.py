@@ -133,7 +133,7 @@ def test_what_was_tried_is_dated_fenced_and_a_decline_is_never_repeated():
     rec_ledger.record(rid, "diag_review:service", "dismissed", surface="reviews",
                       meta={"kind": "not_for_us", "reason_code": "too_costly"})
     text = ri.tried_on_theme(rid, "service")
-    assert "answered Not for us to" in text and "Add a Friday dinner server." in text and "too costly" in text
+    assert "passed on" in text and "Add a Friday dinner server." in text and "too costly" in text
     assert ai_guard.UNTRUSTED_OPEN in text and "Do NOT recommend again" in text
     assert "Nothing answered" in ri.tried_on_theme(rid, "wait_time")
 

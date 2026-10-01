@@ -391,10 +391,11 @@ def test_hidden_schedule_kinds_say_when_they_are_tried_again(page):
 
 def test_the_decline_reads_not_for_us_in_this_waves_regions(page):
     rq = page[page.index("function renderQualityWarnings"):page.index("var _recState")]
-    assert 'title="Pass"' not in rq and "'passed'" not in rq and 'aria-label="Not for us"' in rq
+    # Owner, 10/1/26: "Pass" everywhere (it read "Not for us" from 9/29/26).
+    assert 'aria-label="Pass"' in rq and 'aria-label="Not for us"' not in rq
     reprice = page[page.index("fetch('/api/food-cost/reprice'"):page.index("var _fcInv=null")]
-    assert ">Pass</button>" not in reprice and ">Not for us</button>" in reprice
-    assert 'data-winback-dismiss="\' + w.id + \'">Not for us</button>' in page
+    assert ">Not for us</button>" not in reprice and ">Pass</button>" in reprice
+    assert 'data-winback-dismiss="\' + w.id + \'">Pass</button>' in page
 
 
 def test_labor_reads_capability_history_the_trend_and_the_over_target_margin(page):

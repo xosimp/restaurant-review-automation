@@ -570,7 +570,7 @@ def test_h18_decisions_read_the_ledger_snoozes_and_dates(db_path):
                       db_path=db_path)
     home_brief.dismiss(rid, "rating_drop", kind="snooze")
     rows = {r["key"]: r for r in decisions.history(rid, db_path=db_path)}
-    assert rows["reprice:Carbonara"]["answer"] == "not for us"
+    assert rows["reprice:Carbonara"]["answer"] == "passed"
     assert rows["rating_drop"]["answer"] == "snoozed"
     text = decisions.context(rid, db_path=db_path)
     # The restaurant's own day, not UTC's (memory re-audit 9/29/26,

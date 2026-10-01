@@ -918,7 +918,7 @@ def plan_item_repeat(restaurant_id, item, history=None, db_path=DB_PATH):
                                              subjects=insight_store.known_subjects(restaurant_id, db_path=db_path))
         if sig:
             if sig in insight_store.declined_signatures(restaurant_id, db_path=db_path):
-                return "the owner said not for us to this advice"
+                return "the owner passed on this advice"
             if sig in insight_store.answered_signatures(restaurant_id, db_path=db_path):
                 return "the owner already answered this advice"
     except Exception as e:

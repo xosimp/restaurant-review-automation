@@ -1157,7 +1157,7 @@ def rec_controls_html(key, surface, module):
     track = (b + 'data-rec-event="accepted" title="Cavnar AI checks this number before and after you act, and tells you whether it moved">Measure it</button>') if (module or surface) in REC_TRACK_METRICS else ''
     return ('<span class="rec-ans">'
             + b + 'data-rec-event="completed">Done</button>'
-            + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
+            + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>'
             + track
             + '</span>')
 

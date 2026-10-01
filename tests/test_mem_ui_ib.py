@@ -177,11 +177,12 @@ def test_the_draft_shows_soft_requirements_applied_or_not():
     assert "conflictsBlock" in notes and "Self.targetLine" in notes
 
 
-def test_the_schedule_panels_say_not_for_us():
+def test_the_schedule_panels_say_pass():
+    # Owner, 10/1/26: "Pass" everywhere.
     for rel in ("Features/Labor/ScheduleReviewPanel.swift", "Features/Labor/ShiftQualityPanel.swift"):
         src = _swift(rel)
-        assert '"Not for us"' in src
-        assert 'Text("Pass")' not in src and 'label: "Pass"' not in src
+        assert 'Text("Pass")' in src or 'label: "Pass"' in src
+        assert 'Text("Not for us")' not in src and 'label: "Not for us"' not in src
 
 
 def test_older_diagnoses_lose_their_controls():

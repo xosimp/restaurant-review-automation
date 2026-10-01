@@ -4866,7 +4866,9 @@ def mobile_set_rating(current_user):
                         if current_user.get("acting_admin_id") else who),
             user=current_user,
         )
-        record_capability_change(rid, "rating", subject=f"{name} · {attribute}",
+        # The subject is the person; the attribute has its own column (a
+        # "Name · attribute" subject became a phantom person, 10/1/26).
+        record_capability_change(rid, "rating", subject=name, attribute=attribute,
                                  before=before, after=out, changed_by=who)
         return jsonify(ok=True, **out), 200
     except CapabilityError as ce:

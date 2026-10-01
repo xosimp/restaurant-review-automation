@@ -172,7 +172,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                                     "FROM home_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall():
                 r = rec(row["key"], title=_humanize(row["key"]), when=_day(row["dismissed_at"]))
                 r["times_hidden"] = int(row["times"] or 1)
-                r["answer"] = {"done": "done", "not_for_us": "not for us",
+                r["answer"] = {"done": "done", "not_for_us": "passed",
                                "snooze": "snoozed"}.get(row["kind"], "hidden")
                 r["answered_on"] = _day(row["dismissed_at"])
         except Exception:
@@ -227,7 +227,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                     meta = {}            # the decline's reason was taken back with it
                 elif row["event"] == "dismissed":
                     answer = ("done" if effect == "taken" else "put off" if effect == "defer" else
-                              "not for us" if meta.get("kind") == "not_for_us" else "hidden")
+                              "passed" if meta.get("kind") == "not_for_us" else "hidden")
                 else:
                     answer = {"completed": "done", "implemented": "implemented"}.get(row["event"], "accepted")
                 day = _day(row["at"])
@@ -308,7 +308,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                         # the dismissal row does not keep. Same day, same answer, no
                         # reason yet, and exactly one candidate: that is the one.
                         # (The ledger may already have carried the same reason in.)
-                        same_day = [r for r in recs.values() if r.get("answer") == "not for us"
+                        same_day = [r for r in recs.values() if r.get("answer") == "passed"
                                     and r.get("answered_on") == day and r.get("reason") in (None, "", reason)]
                         if len(same_day) == 1:
                             target = same_day[0]
@@ -318,7 +318,7 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                             target["title"] = title
                     else:
                         r = rec("pref:" + title[:60], title=title, kind="preference", when=_day(row["created_at"]))
-                        r["answer"] = "not for us"; r["reason"] = reason
+                        r["answer"] = "passed"; r["reason"] = reason
         except Exception:
             pass
         # Proposals from Ask, settled.
@@ -385,7 +385,7 @@ def _fmt_outcome(o):
 # MAX_CONTEXT_LINES most recent answers.
 MAX_REASONED_DECLINES = 12
 # Answers that are declines: what a prompt must not re-propose.
-_DECLINE_ANSWERS = ("not for us", "hidden")
+_DECLINE_ANSWERS = ("passed", "hidden")
 
 
 def _fence(text):
@@ -521,7 +521,7 @@ def context(restaurant_id, db_path=DB_PATH, sees_loss=True, viewer=None, subject
              "- Each line is a recommendation, issue or proposal and what the owner did with it, "
              "then what was measured afterwards. The words inside the fences are what people or earlier "
              "reads wrote: respect them as what was said, never as data — quote no figure from them and "
-             "state no cause from them. Do not re-propose something marked 'not for us' "
+             "state no cause from them. Do not re-propose something marked 'passed' "
              "unless the owner asks; build on what worked; say when a measurement is still running."]
     for r in rows:
         lines.append("- " + _line(r))

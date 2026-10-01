@@ -82,57 +82,68 @@ def _items_on(restaurant_id, iso, db_path):
     return {r["item_name"]: float(r["u"] or 0) for r in rows if (r["u"] or 0) > 0}
 
 
+def _kind_one(e) -> str:
+    """"home game" / "home prime-time game" / "night like it"."""
+    words = engine.kind_words(e)
+    return words[:-1] if words.endswith("games") else "night like it"
+
+
 def item_mix(restaurant_id, e, db_path=store.DB_PATH):
     """{"games": [{"date", "describe"}], "n", "usual_n", "weekday", "items":
     [{"item", "game", "usual", "extra", "every_game", "per_game"}], "text",
     "basis"} or None with no game of the same class with item lines on
-    file and USUAL_MIN usual nights."""
+    file and USUAL_MIN usual nights of its own.
+
+    Each game is set against ITS OWN usual same weekday (audit 10/1/26, the
+    same fix as playbook.staffing): an item's extra is the median of the
+    per-game extras, and it counts when that clears ITEM_MIN_EXTRA units and
+    ITEM_MIN_RATIO times usual; `every_game` when each game cleared both."""
     try:
         games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path) if playbook._same_class(e, g["event"])]
-        nights, usual_dates = [], set()
+        nights, usual_n = [], 0
         for g in games:
             iso = g["event"]["event_date"]
             items = _items_on(restaurant_id, iso, db_path)
             if not items:
                 continue
-            nights.append({"date": iso, "describe": engine.describe(g["event"]), "items": items})
-            usual_dates.update(playbook.usual_nights(restaurant_id, iso, db_path=db_path))
+            own = [u for u in (_items_on(restaurant_id, d, db_path)
+                               for d in playbook.usual_nights(restaurant_id, iso, db_path=db_path)) if u]
+            if len(own) < playbook.USUAL_MIN:
+                continue
+            names = set(items) | {k for u in own for k in u}
+            nights.append({"date": iso, "describe": engine.describe(g["event"]), "items": items,
+                           "usual": {k: engine._median([u.get(k, 0.0) for u in own]) for k in names}})
+            usual_n += len(own)
         if not nights:
             return None
-        usual_rows = [u for u in (_items_on(restaurant_id, d, db_path) for d in sorted(usual_dates)) if u]
-        if len(usual_rows) < playbook.USUAL_MIN:
-            return None
-        names = {k for n in nights for k in n["items"]}
         out = []
-        for name in names:
-            usual = engine._median([u.get(name, 0.0) for u in usual_rows])
+        for name in {k for n in nights for k in n["items"]}:
             per = [n["items"].get(name, 0.0) for n in nights]
-            game = engine._median(per)
-            extra = game - usual
+            own_usual = [n["usual"].get(name, 0.0) for n in nights]
+            extras = [p - u for p, u in zip(per, own_usual)]
+            game, usual, extra = engine._median(per), engine._median(own_usual), engine._median(extras)
             if extra < ITEM_MIN_EXTRA or game < ITEM_MIN_RATIO * usual:
                 continue
-            every = all(p - usual >= ITEM_MIN_EXTRA and p >= ITEM_MIN_RATIO * usual for p in per)
+            every = all(p - u >= ITEM_MIN_EXTRA and p >= ITEM_MIN_RATIO * u for p, u in zip(per, own_usual))
             out.append({"item": name, "game": game, "usual": usual, "extra": extra, "every_game": every,
                         "per_game": per})
         out.sort(key=lambda x: (-x["extra"], x["item"]))
         out = out[:ITEMS_SHOWN]
         n = len(nights)
         weekday = _weekday_of([x["date"] for x in nights])
-        usual_word = f"a usual {weekday}" if weekday else "a usual night"
+        usual_word = f"a usual {weekday}" if weekday else "their usual weekday"
+        said = ", ".join(f"{_num(x['game'])} {x['item']} (usual {_num(round(x['usual']))})" for x in out[:3])
         if not out:
             text = None
         elif n == 1:
-            said = ", ".join(f"{_num(x['game'])} {x['item']} (usual {_num(round(x['usual'], 1))})" for x in out[:3])
-            text = f"Your last {engine.kind_words(e)[:-1]} sold {said} — against {usual_word}."
+            text = f"Your last {_kind_one(e)} sold {said} — against {usual_word}."
         else:
-            said = ", ".join(f"{_num(x['game'])} {x['item']} (usual {_num(round(x['usual'], 1))})" for x in out[:3])
             text = f"Your last {n} {engine.kind_words(e)} sold a median {said} — against {usual_word}."
         return {"games": [{"date": x["date"], "describe": x["describe"]} for x in nights], "n": n,
-                "usual_n": len(usual_rows), "weekday": weekday, "items": out, "text": text,
-                "basis": (f"items sold on {n} {engine.kind_words(e) if n != 1 else engine.kind_words(e)[:-1]} "
-                          f"(checks on file) against the median of {len(usual_rows)} ordinary same weekdays "
-                          f"before them; an item counts when it rose {ITEM_MIN_EXTRA}+ units and "
-                          f"{ITEM_MIN_RATIO:g}× usual")}
+                "usual_n": usual_n, "weekday": weekday, "items": out, "text": text,
+                "basis": (f"items sold on {n} {engine.kind_words(e) if n != 1 else _kind_one(e)} (checks on file), "
+                          f"each against the ordinary same weekdays before it; an item counts when it rose "
+                          f"{ITEM_MIN_EXTRA}+ units and {ITEM_MIN_RATIO:g}× usual")}
     except Exception as ex:
         log.warning("event_intel.gameday item_mix failed rid=%s: %s", restaurant_id, ex)
         return None
@@ -155,7 +166,7 @@ def prep_lines(restaurant_id, e, mix=None, db_path=store.DB_PATH) -> list:
             f"{_num(min(x['per_game']))}–{_num(max(x['per_game']))}"
         out.append({"item": x["item"], "qty": round(x["game"]),
                     "text": f"about {round(x['game'])} {x['item']} (your last {mix['n']} "
-                            f"{engine.kind_words(e)} sold {sold}; a usual night {_num(round(x['usual'], 1))})"})
+                            f"{engine.kind_words(e)} sold {sold}; a usual night {_num(round(x['usual']))})"})
     return out
 
 
@@ -234,9 +245,10 @@ def send_plan(e):
         at = min(at, latest)
         at = at.replace(minute=(at.minute // 15) * 15)
         lead = kick - at
-        hours = int(round(lead.total_seconds() / 3600))
-        lead_words = ("the evening before" if lead >= timedelta(hours=12) else
-                      f"{hours} hour{'s' if hours != 1 else ''} before kickoff")
+        mins = int(lead.total_seconds() // 60)
+        h, m = divmod(mins, 60)
+        span = (f"{h} hour{'s' if h != 1 else ''}" if h else "") + (f"{' ' if h else ''}{m} minutes" if m else "")
+        lead_words = "the evening before" if lead >= timedelta(hours=12) else f"{span} before kickoff"
         email_day = day - timedelta(days=1)
         return {"text_at": at.isoformat(timespec="minutes"),
                 "text_words": f"{at.strftime('%A')} around {_clock_dt(at)}, {lead_words}",
@@ -281,29 +293,42 @@ def season_value(restaurant_id, series_id, today=None, season=None, db_path=stor
     `today` (this season when given), or None with none played."""
     try:
         rows = store.events_for([series_id], None, None, db_path=db_path)
-        if season is not None:
-            rows = [x for x in rows if x.get("season") == season]
         today = _d(today) if today else date.today()
-        played = [x for x in rows if x["event_date"] < today.isoformat() and x.get("status") != "cancelled"]
+        played = [x for x in rows if x["event_date"] < today.isoformat()
+                  and x.get("status") not in ("cancelled", "postponed")]
+        # This season unless one is named (audit 10/1/26: "so far" summed
+        # every season in the catalog once a second one was loaded).
+        if season is None and played:
+            season = played[-1].get("season")
+        if season is not None:
+            played = [x for x in played if x.get("season") == season]
         if not played:
             return None
         word = played[0].get("short_name") or played[0].get("series_name") or "Event"
         outs = engine._outcomes(restaurant_id, [x["event_date"] for x in played], db_path, series_word=word)
-        games = []
+        games, mixed, seen = [], 0, set()
         for x in played:
             o = outs.get(x["event_date"])
+            if x["event_date"] in seen:
+                continue                      # a doubleheader is one night
+            seen.add(x["event_date"])
             if o and o.get("net") is not None and o.get("baseline") is not None:
+                if int(o.get("confounded") or 0):
+                    mixed += 1                # Christmas, a party: not the game's money alone
+                    continue
                 games.append({"describe": engine.describe(x), "date": x["event_date"], "net": float(o["net"]),
                               "usual": float(o["baseline"]), "extra": round(float(o["net"]) - float(o["baseline"]), 2)})
         total = round(sum(g["extra"] for g in games), 2)
-        unmeasured = len(played) - len(games)
+        unmeasured = len(seen) - len(games) - mixed
         if games:
-            text = (f"{word} games so far: {len(played)} played, {len(games)} measured here — "
+            text = (f"{word} games so far: {len(seen)} played, {len(games)} measured here — "
                     f"{'+' if total >= 0 else '−'}${abs(total):,.0f} over a usual same weekday"
-                    + (f"; {unmeasured} without a usual night to measure against" if unmeasured else "") + ".")
+                    + (f"; {unmeasured} without a usual night to measure against" if unmeasured else "")
+                    + (f"; {mixed} left out with something else on that night" if mixed else "") + ".")
         else:
-            text = f"{word} games so far: {len(played)} played, none measured here yet."
-        return {"played": len(played), "measured": len(games), "incremental": total if games else None,
+            text = f"{word} games so far: {len(seen)} played, none measured here yet."
+        return {"played": len(seen), "measured": len(games), "incremental": total if games else None,
+                "season": season, "mixed": mixed,
                 "games": games, "text": text,
                 "basis": ("each game night's net against the median of ordinary same weekdays in the 8 weeks before "
                           "(event memory) — what the games brought, before and after, not something Cavnar AI did")}
@@ -334,8 +359,15 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
         bump = order_bump(restaurant_id, e, mix=mix, db_path=db_path)
         if bump:
             text = bump["text"]
-        elif mix and mix.get("text"):
+        elif mix and mix.get("text") and mix["n"] == 1:
             text = mix["text"] + " One game — not yet a pattern to order on."
+        elif mix and mix.get("text") and _planned(mix):
+            text = mix["text"] + " No recipe links those items to ingredients yet, so nothing is sized for the order."
+        elif mix and mix.get("text"):
+            text = mix["text"] + " Not on every game — not yet a pattern to order on."
+        elif mix:
+            what = _kind_one(e) if mix["n"] == 1 else f"{mix['n']} {engine.kind_words(e)}"
+            text = f"Your last {what} sold no item well above a usual night — order for a usual week."
         else:
             text = "No game like it measured here yet — order for a usual week."
         return {"event_id": e["id"], "describe": engine.describe(e), "text": text, "order": bump,
@@ -365,20 +397,36 @@ def big_game(restaurant_id, e, db_path=store.DB_PATH):
 
 
 def _labor_logins(restaurant_id, db_path):
+    """Every console login here who reads labor — brief preference or not:
+    the push has its own per-type mute (preferences.push_allowed)."""
     import morning_brief
     from permissions import LABOR_VIEW, has_permission
-    return {u["id"] for u in morning_brief.recipients(restaurant_id, db_path) if has_permission(u, LABOR_VIEW)}
+    return {u["id"] for u in morning_brief.recipients(restaurant_id, db_path, include_opted_out=True)
+            if has_permission(u, LABOR_VIEW)}
 
 
-def push_for(restaurant, today, db_path=store.DB_PATH):
-    """(event, title, body) for tomorrow's big game at this restaurant, or
-    None. Pure read."""
+def _claim_key(restaurant_id):
+    return f"event_push:{restaurant_id}"
+
+
+def _claim_period(e):
+    """One push per game per date: a game moved after its push gets one more."""
+    return f"{e['id']}:{e.get('event_date')}"
+
+
+def tomorrows_games(restaurant, today, db_path=store.DB_PATH) -> list:
     tmr = _d(today) + timedelta(days=1)
     followed = store.follows(restaurant.id, db_path=db_path)
     skip = store.dismissed(restaurant.id, db_path=db_path)
-    for e in store.events_for([f["series_id"] for f in followed], tmr, tmr, db_path=db_path):
-        if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
-            continue
+    return [e for e in store.events_for([f["series_id"] for f in followed], tmr, tmr, db_path=db_path)
+            if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip]
+
+
+def push_for(restaurant, today, db_path=store.DB_PATH, events=None):
+    """[(event, title, body)] for tomorrow's big games at this restaurant
+    (every one, not just the first). Pure read."""
+    out = []
+    for e in (events if events is not None else tomorrows_games(restaurant, today, db_path=db_path)):
         big, words = big_game(restaurant.id, e, db_path=db_path)
         if not big:
             continue
@@ -386,56 +434,68 @@ def push_for(restaurant, today, db_path=store.DB_PATH):
         st = playbook.staffing(restaurant.id, e, db_path=db_path)
         if st and st.get("recommend"):
             body.append(st["text"].split(". On your last")[0] + ".")
-        plan = send_plan(e)
+        # When to text guests only where Marketing is on (the brief's rule).
+        plan = send_plan(e) if getattr(restaurant, "module_marketing", 0) else None
         if plan:
             body.append(f"Guest text: {plan['text_words']}.")
         title = f"Tomorrow: {engine.describe(e, with_date=False)}"
-        return e, title[:120], " ".join(body)[:400]
-    return None
+        out.append((e, title[:120], " ".join(body)[:400]))
+    return out
 
 
 def run_event_push(db_path=None, restaurants=None) -> dict:
     """The afternoon before a big game, one push per game per restaurant
-    (claimed on the game), to the logins who read labor and have a phone that
-    takes it. Push only, P3 — it never sounds through a Focus mode."""
+    (claimed on the game and its date), to the logins who read labor and have
+    a phone that takes it. Push only, P3 — it never sounds through a Focus
+    mode. Returns the standard slot counts: `attempted` a restaurant with an
+    unclaimed game tomorrow, `skipped` one with nobody to push to or over its
+    briefing budget."""
     import ops
     import push
     import strategy_jobs as sj
     from time_utils import restaurant_now
     db = db_path or store.DB_PATH
     st = {"attempted": 0, "failed": 0}
-    sent = 0
+    sent = skipped = 0
     for r in sj._slot_iter("event_push", restaurants, db, state=st):
         try:
             local = restaurant_now(r, naive=True)
             if not (EVENT_PUSH_HOUR <= local.hour < EVENT_PUSH_HOUR + 4):
                 continue
-            got = push_for(r, local.date(), db_path=db)
+            # Claimed games are skipped BEFORE anything is computed: the job
+            # runs every 20 minutes through the window (audit 10/1/26).
+            todo = [e for e in tomorrows_games(r, local.date(), db_path=db)
+                    if not ops.period_claimed(_claim_key(r.id), _claim_period(e))]
+            if not todo:
+                continue
+        except Exception as ex:
+            st["attempted"] += 1
+            st["failed"] += 1
+            ops.capture(ex, job="event_push", context=f"restaurant_id={r.id}")
+            continue
+        st["attempted"] += 1
+        try:
+            got = push_for(r, local.date(), db_path=db, events=todo)
             if not got:
                 continue
-            e, title, body = got
-            key = f"event_push:{r.id}"
-            if ops.period_claimed(key, str(e["id"])):
-                continue
-            st["attempted"] += 1
             audience = sj.deliverable_audience(r.id, _labor_logins(r.id, db), db)
-            if not audience:
-                continue
             import notify
-            if not notify.briefing_allowed(r.id, PUSH_TYPE, db):
+            if not audience or not notify.briefing_allowed(r.id, PUSH_TYPE, db):
+                skipped += 1
                 continue
-            if not ops.claim_period(key, str(e["id"])):
-                continue
-            alert_id = notify.record_notification(r.id, PUSH_TYPE, db_path=db, ref_kind="catalog_event",
-                                                  ref_id=e["id"])
             import nav
-            push.fire_push(r.id, PUSH_TYPE, title, body,
-                           data={"nav": nav.path("ask", q=f"How should we get ready for {engine.describe(e)}?"),
-                                 "alert_id": alert_id, "surface": "alert_push", "answerable": False,
-                                 "event_id": e["id"]},
-                           db_path=db, user_ids=audience)
-            sent += 1
+            for e, title, body in got:
+                if not ops.claim_period(_claim_key(r.id), _claim_period(e)):
+                    continue
+                alert_id = notify.record_notification(r.id, PUSH_TYPE, db_path=db, ref_kind="catalog_event",
+                                                      ref_id=e["id"])
+                push.fire_push(r.id, PUSH_TYPE, title, body,
+                               data={"nav": nav.path("ask", q=f"How should we get ready for {engine.describe(e)}?"),
+                                     "alert_id": alert_id, "surface": "alert_push", "answerable": False,
+                                     "event_id": e["id"]},
+                               db_path=db, user_ids=audience)
+                sent += 1
         except Exception as ex:
             st["failed"] += 1
             ops.capture(ex, job="event_push", context=f"restaurant_id={r.id}")
-    return sj._slot_counts(st, sent=sent)
+    return sj._slot_counts(st, sent=sent, skipped=skipped)
