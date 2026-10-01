@@ -10,12 +10,7 @@ for an old name finds an explanation instead of nothing.
 | `account-directions-2026-08/` | Three Claude Design directions for the Account screen (A grouped, B status-first, C editorial) | the shipped Account tab and `AccountSheetKit.swift` |
 | `brand-scratch/` | Claude Design canvases, the seal exploration page and font previews used while the brand was being drawn | `brand/assets/` (the sources) and `static/brand/` (the built outputs) |
 
-## Still open from the iOS audits
+## Open items from the iOS audits
 
-Sampled on 2026-09-21 while auditing the repository; each is a real gap
-in the app, not a documentation issue.
-
-- 3.2 `AskCavnarView` still computes the chat bubble's `userTextWidth` on every render.
-- 4.2 Foreground refresh exists only on Home and Labor.
-- 6.4 Reviews, Intel and Marketing have no read cache for offline opens; 6.5 Labor shows no staleness notice.
-- 7.4 Four charts written after the audit (`LaborRibbonChart`, `WeekRadarChart`, `WasteLedgerChart`, `RecoverableGaugeChart`) carry no accessibility labels; 7.7 `Color.cavnarInk3(_ contrast:)` is defined and never used.
+They moved to `ROADMAP.md` → *iOS gaps from the 9/3/26 audits* (9/30/26):
+this folder holds nothing live.

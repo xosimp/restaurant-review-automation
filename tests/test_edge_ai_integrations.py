@@ -12,7 +12,7 @@ as "synced"; a network blip must not tell the owner their Google connection
 is gone; 2,000 rows of a 2,500-row window must not be archived as complete;
 two staff called "Maria G." must not be one person with double hours.
 
-Audit: edge_audit/AI.md, findings AI-2, AI-3, AI-6, AI-22, AI-23 and the
+Audit: docs/audits/2026-09-22-edge-case-audit.md (the AI area), findings AI-2, AI-3, AI-6, AI-22, AI-23 and the
 "External Integrations" appendix items 15-19. A test that reproduces a
 confirmed defect asserts the correct behaviour and is marked
 xfail(strict=True), so it flips to a failure the day the fix lands and the

@@ -11,7 +11,7 @@ exploring code:
 | File | What it covers |
 |---|---|
 | `ARCHITECTURE_MANIFEST.md` | The map: folders, services and owners, layers and allowed imports, shared utilities, what stays separate, naming — read before adding a file |
-| `CAVNAR_AI_ENGINEERING_GUIDE.md` | How the system is built and why |
+| `README.md` | The way in: the business, running it locally, testing, deploying, how it is built and why (merged from `PROJECT_CONTEXT.md` and `CAVNAR_AI_ENGINEERING_GUIDE.md`, 9/30/26) |
 | `MODULE_OVERVIEW.md` | Every module, its files, its design stance |
 | `SYSTEM_ARCHITECTURE.md` | Processes, jobs, data flow |
 | `DATABASE_SCHEMA.md` | Tables and their invariants |
@@ -19,11 +19,14 @@ exploring code:
 | `PROMPT_LIBRARY.md` | Every model call: which model, what input, what guard |
 | `DESIGN_SYSTEM.md` | UI/UX: tokens, type, spacing, components, motion |
 | `TESTING.md` | How the suite is organised |
-| `PROJECT_CONTEXT.md` / `ROADMAP.md` | Product state and direction |
+| `ROADMAP.md` | Open work, recently shipped, deliberately not doing |
 | `INTELLIGENCE_ENGINE.md` | The cross-restaurant learning layer and its privacy rules |
-| `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md` | Controls, the emergency runbook, the deploy shape, the PIN pepper |
-| `docs/plans/` | Designs not yet built (task sheets, Back Office, the DSR engine, Postgres and more workers, the restaurant health row, the review-fetch queue, the nonce CSP) |
+| `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/ENVIRONMENT.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md` | Controls, the emergency runbook, every environment variable, the deploy shape, the PIN pepper |
+| `docs/plans/` | Designs, each opening with its status. Built: the DSR engine, task sheets. Not yet built: Back Office, Postgres and more workers, the restaurant health row, the review-fetch queue, the nonce CSP |
+| `docs/audits/` | Audit registers whose finding IDs tests still cite (the 9/22/26 edge-case audit: 39 strict `xfail`s) |
 | `docs/history/` | Superseded material kept for the record; nothing in it is live |
+| `docs/clients/`, `docs/integrations/`, `docs/app-store-submission.md` | Per-client config (Simple EJ's checklists and DSR config), vendor API collections (RPOWER), the App Store Connect entries |
+| `ios/CavnarAI/README.md`, `scripts/README.md` | The iOS project's setup; who runs each script |
 
 ---
 
@@ -73,7 +76,7 @@ This codebase is unusually good at hiding a live reference from a grep:
 - **Lazy imports inside functions.** Most cross-module calls here are
   `import x` *inside* the function body, so a module-level grep misses them.
 - **Registry-driven dispatch.** `ask_cavnar_tools.TOOLS`, `pos.PROVIDERS`,
-  `client_api._SETTABLE` and the `_do_*` handler lookups all reach code by
+  `ask_cavnar_tools._SETTABLE` and the `_do_*` handler lookups all reach code by
   string, not by symbol.
 - **Web/mobile twins.** Almost every route exists twice (`client_api.py` and
   `mobile_api.py`); deleting one half leaves the other calling a shared body.
@@ -152,7 +155,7 @@ A deletion is only "verified" when the trace is written down alongside it.
   a thread per click; a thread a request starts is `ai_utils.attributed(fn)`,
   so its model calls stay the requester's.
 - **Targeted tests by default — and before a push too.** The full suite
-  (~4-5 min) is NOT a pre-push step. Run it only after an audit or fix
+  (several minutes even in parallel) is NOT a pre-push step. Run it only after an audit or fix
   round, a big code change, a large batch of changes, or when asked — never
   after a few tweaks, never twice "to be sure" (Will, 9/15/26 and again
   9/28/26: "it stalls productivity"). When it does run, in parallel:

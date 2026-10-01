@@ -1,7 +1,8 @@
 """Memory re-audit fix round R4 (9/29/26): prompt assembly.
 
-Each test is a reviewer's failing case (memreaudit/prompts.md, inventory.md,
-quality.md) turned into a check:
+Each test is a reviewer's failing case from the memory re-audit of 9/29/26
+(its Prompts, Inventory and Quality lenses - published as an artifact, the
+per-lens files never committed) turned into a check:
 
   PROMPTS-1   the owner's rules reach prompts as rules (OWNER_RULE), never
               inside the guest fence; a manager's words stay fenced; the

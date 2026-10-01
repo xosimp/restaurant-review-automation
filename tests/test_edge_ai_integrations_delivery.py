@@ -9,7 +9,7 @@ every Home and Labor request pay two 10-second timeouts again and again.
 A push dropped because the pool is saturated must leave a trace against the
 alert it belonged to, not only a line in the failure digest.
 
-Audit: edge_audit/AI.md, findings AI-21, AI-27, AI-28, AI-29 and the
+Audit: docs/audits/2026-09-22-edge-case-audit.md (the AI area), findings AI-21, AI-27, AI-28, AI-29 and the
 "External Integrations" appendix items 12-14. Confirmed defects are asserted
 as the correct behaviour and marked xfail(strict=True). No test reaches the
 network: requests.post / requests.get are stubbed and time.sleep is instant.

@@ -394,25 +394,6 @@ measurement is drawn as a gap, never as zero.
 
 ---
 
-**Reports (9/30/26).** The top-level Reports tab, beside Home, opens the
-daily report panel on its list (`#dsr/list`): one `.dr-list-row` per night
-(weekday and M/D/YY, the scorecard verdict and score in its tone, net, the
-status pill, then a row of `.dr-st` figure chips — vs last week, vs
-forecast, labor %, guests, average check, overtime, from
-`dsr.access.list_stats`, only what the night measured, never the summary
-paragraph), newest first, 30 at a time with "Load older reports". The list
-card has no inner padding so a row's hover fills it edge to edge. Night,
-Week and Period sit beside "All reports" in the panel's `.dr-views`; there is
-no "Home" link (Home is the tab beside it). In the tab bar a 16px hairline
-(`.tab-sep`) sets Home and Reports apart from the modules.
-
-**Module pills (`.hb-chip`) catch light on their top edge**: an inset 1px
-highlight along the rim, an inset 1px shade along the bottom and a sheen
-fading over the upper half, all in the background and shadow stack so
-nothing sits over the text. On Home's status line a figure and its unit
-(`.nt`: "$6,150" + small "net") share one baseline, and the Report link sits
-on its own row (`.go`), never after a divider.
-
 ## 7. Forms
 
 **Web**: `.ac-field` (label + control, 5px gap) with `.ac-input`,
@@ -450,12 +431,6 @@ blooms, vignette and the card's own soft shadow — is a WebGL shader computed
 in float per device pixel and dithered ±1 level at the very last step
 (`cavnar-field.js` `GL_FS`); the card keeps only its 1px edge in CSS. Canvas
 2D (smooth 21-stop falloff, 0–2 level dither) is the fallback.
-
-**Passkey offer (9/30/26).** Right after a password sign-in, a login with no
-passkey is offered one: the browser's own quiet prompt where it supports
-conditional create, else one `so-modal` dialog — kicker "Faster sign-in",
-"Save a passkey for this device?", Not now / Save a passkey. "Not now" is
-remembered on that device; Account → Security can always add one.
 
 **An open section shows it is open.** A Team & rules row that is expanded
 becomes a card — `--sf-recess` fill, `--hb-line` outline, a 3px ember inner
@@ -983,6 +958,31 @@ it re-reads.
 Every block keeps its empty state; a quiet day is a short page.
 
 ## 12. Reusable components
+
+**Reports (9/30/26).** The top-level Reports tab, beside Home, opens the
+daily report panel on its list (`#dsr/list`): one `.dr-list-row` per night
+(weekday and M/D/YY, the scorecard verdict and score in its tone, net, the
+status pill, then a row of `.dr-st` figure chips — vs last week, vs
+forecast, labor %, guests, average check, overtime, from
+`dsr.access.list_stats`, only what the night measured, never the summary
+paragraph), newest first, 30 at a time with "Load older reports". The list
+card has no inner padding so a row's hover fills it edge to edge. Night,
+Week and Period sit beside "All reports" in the panel's `.dr-views`; there is
+no "Home" link (Home is the tab beside it). In the tab bar a 16px hairline
+(`.tab-sep`) sets Home and Reports apart from the modules.
+
+**Module pills (`.hb-chip`) catch light on their top edge**: an inset 1px
+highlight along the rim, an inset 1px shade along the bottom and a sheen
+fading over the upper half, all in the background and shadow stack so
+nothing sits over the text. On Home's status line a figure and its unit
+(`.nt`: "$6,150" + small "net") share one baseline, and the Report link sits
+on its own row (`.go`), never after a divider.
+
+**Passkey offer (9/30/26).** Right after a password sign-in, a login with no
+passkey is offered one: the browser's own quiet prompt where it supports
+conditional create, else one `so-modal` dialog — kicker "Faster sign-in",
+"Save a passkey for this device?", Not now / Save a passkey. "Not now" is
+remembered on that device; Account → Security can always add one.
 
 **Web** (all in `templates/dashboard.html` unless noted)
 

@@ -4,6 +4,40 @@ How Cavnar AI gets smarter every week as more restaurants use it — without
 one restaurant ever seeing another's data. Written before implementation
 (Sep 2026) and kept current with it. The code lives in `intelligence/`.
 
+**Contents.** The sections are grouped by topic (9/30/26); each one added by an audit says which, under its heading. Git holds the order they were written in.
+
+- **Part 1 — Rules and architecture**
+  - The rules everything below obeys
+  - Architecture
+  - Database changes (all in `models.init_db`)
+  - Services (the `intelligence/` package)
+  - Background jobs
+  - Performance impact
+  - Scalability to 100,000+ restaurants
+  - What this deliberately does not do yet
+- **Part 2 — Pipelines**
+  - The intelligence pipeline
+  - The recommendation pipeline (what changes for the reader)
+  - Pattern-discovery architecture
+  - Posts in the engine
+- **Part 3 — Confidence and learning**
+  - The confidence model
+  - Recommendation Confidence (`confidence_engine`, `rec_trust`, `data_freshness`)
+  - The per-restaurant effectiveness model (`rec_learning`)
+  - What a measured result is allowed to say
+- **Part 4 — Benchmarks, peers and prediction**
+  - The Benchmark Engine on the owner's screens
+  - The engine's own normal, eligibility, strength and serving
+  - Peer groups: the confirmed profile, the partition and the ladder
+  - Published figures, the checker, priors and the market
+  - Restaurant DNA, learning effects and prediction
+- **Part 5 — Privacy**
+  - Privacy safeguards
+  - Who may teach
+  - Google user data
+
+# Part 1 — Rules and architecture
+
 ## The rules everything below obeys
 
 1. **A restaurant's own data only ever serves that restaurant** (Level 1).
@@ -225,6 +259,47 @@ deleted restaurant's kept rows keep the labels they had.
   `ops.claim_period` (one runner), and each is a `jobs_registry.JOBS`
   entry. They only run on Railway, like every job.
 
+## Performance impact
+
+Features: ~12 small indexed queries per restaurant per night, bounded and
+resumable. Learning: reads one row per restaurant per cohort; ~20
+hypotheses × permutation (2,000 shuffles) ≈ 40k list operations per cohort,
+milliseconds at present scale, seconds at thousands. Request paths read
+only materialized rows (`intel_patterns`, `intel_benchmarks`,
+`intel_features` latest) — one indexed query each. The backfill is a
+separate 5am pass under its own wall clock, so a restaurant with a year of
+history is filled over several nights, never inside the feature pass.
+
+## Scalability to 100,000+ restaurants
+
+- Feature rows: 100k × 52 ≈ 5.2M rows/year at ~600 bytes — fine in
+  Postgres, and the pass is already resumable, so it can take several
+  nights per full sweep and still keep every restaurant within a week.
+- Discovery and benchmarks read the latest row per restaurant: 100k rows
+  per cohort pass. Cohorts are computed independently, so they shard
+  naturally by category, and the permutation count is a constant.
+- Nothing here needs a second process. The documented constraints stand:
+  SQLite with one gunicorn worker until the process-local dicts move; at
+  100k restaurants the platform's own move to Postgres carries this engine
+  unchanged because it only ever reads and writes through `get_conn`.
+
+## What this deliberately does not do yet
+
+- Weather effects across restaurants: the weather that actually happened
+  is now stored per restaurant and local day (`weather_daily`, kept by
+  `event_memory` from the nearest NWS station's observations — never a
+  forecast) and each restaurant's own event memory measures what rain and
+  events did to its nights, but no feature or hypothesis in this package
+  reads it yet.
+- Employee retention: staff rows have no start/end dates yet.
+- Promotion effectiveness beyond campaigns and specials cadence.
+- At present the platform has fewer than `MIN_COHORT` live restaurants, so
+  every cross-restaurant surface says so honestly. The engine is built for
+  the week that changes.
+
+
+# Part 2 — Pipelines
+
 ## The intelligence pipeline
 
 1. **Features** — one row per restaurant-week of ratios: review response
@@ -340,6 +415,59 @@ deleted restaurant's kept rows keep the labels they had.
   own, peer or published — for a login denied Labor or Food Cost (BM1-17).
 - Every event that answers a recommendation is already recorded; the sync
   turns it into learning. Future modules call `feedback.record` directly.
+
+## Pattern-discovery architecture
+
+Hypotheses are data (`patterns.HYPOTHESES`), not code: behaviour feature,
+split, outcome feature, direction, sentence template. Adding one is one
+dict. The test is a seeded two-sided permutation test on the difference of
+means (2,000 shuffles; exact enough at cohort sizes and free of SciPy),
+with Cohen's d as the effect floor and Benjamini–Hochberg across the
+night's hypotheses. Sentences say counts and effects and never a name.
+Every hypothesis compares restaurants' latest rows side by side — the
+behaviour and the outcome cover the SAME weeks — so a sentence says "at
+the same time as", never "over the following" ("Across 14 pizza on
+Cavnar, those replying to at least half their reviews within a day saw
+their rating move 0.30★ higher than those that did not, measured at the
+same time as the replying (not after it)"; BM1-16, BM4-5). A pattern found
+across every restaurant on Cavnar pools every type and carries
+`pooled_types`; `patterns.pooled_on_economics` keeps such a pattern about
+labor, food cost or waste out of `support_for` (the K1 pattern-support
+factor) and out of Ask's context, since a type difference would pass as a
+behaviour effect. A hypothesis's `rec_kinds` name real ledger kinds or
+`rec_ledger` TOPICS ("replies", "staffing", "posting" …), and
+`patterns.covers` matches a recommendation by its kind or its topic
+(`rec_ledger._topic_of`) — memory re-audit 9/29/26, PLATFORM-16: they
+named "reply", "schedule", "post", which no kind is, so a reply pattern
+could never support an `urgent_reviews` card; a test holds every entry to a
+real kind, topic or observed action.
+
+The groups are the owner-confirmed peer partitions the bands use, not the
+restaurant type (Benchmarking re-audit #21): each hypothesis runs inside
+the partition of its own metric family (`patterns.family_of` — a labor
+outcome among restaurants that staff alike, a food one within a menu
+family), over the members a band may have (`jobs.eligible_members`: live 8
+weeks, half its measures on file, one per Google listing, no test account),
+and a labor-cost outcome never counts a restaurant on the $26/hr default
+wage. A reader passes the viewer's groups (`patterns.viewer_cohorts` →
+`{family: partition key}`); with none — an unconfirmed profile — only the
+all-types patterns are served (`patterns.active(None)`; the admin view is
+`all_cohorts=True`).
+
+## Posts in the engine
+
+*From: the marketing gap review.*
+
+Published posts contribute `dish_posts_28d`, `offer_posts_28d`,
+`occasion_posts_28d`, `post_lift_median_28d`, `item_lift_median_28d` and
+`post_engagement_rate_28d` (from `marketing_tags` and the cached
+`marketing_attribution` rows). Four hypotheses read them: dish posts vs
+sales lift, occasion posts vs engagement, offer posts vs lift, weekly
+cadence vs lift. The former `specials_28d` feature is gone — it matched
+content types the generator never wrote.
+
+
+# Part 3 — Confidence and learning
 
 ## The confidence model
 
@@ -851,7 +979,9 @@ is shown beside the other as agreeing (`agrees_with` on the one thing) and
 read by decisions memory, never as a silence (re-audit 9/29/26,
 CROSSMODULE-1).
 
-## What a measured result is allowed to say (confidence audit, 9/24/26)
+## What a measured result is allowed to say
+
+*From: Confidence audit, 9/24/26.*
 
 Every rate the engine learns rests on `recommendation_outcomes`, so the
 measurement is held to these rules (outcomes.py, metrics.py; tests in
@@ -948,7 +1078,364 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
   not a probability" (R9): a composite percentage in a prompt came back as
   the model's own "I'm 62% sure".
 
-## Restaurant DNA, learning effects and prediction (Benchmarking audit, 9/24/26)
+
+# Part 4 — Benchmarks, peers and prediction
+
+## The Benchmark Engine on the owner's screens
+
+*From: Benchmarking audit, workstream O, 9/24/26.*
+
+Every comparison an owner sees on a screen now comes from `intelligence.engine`
+through `benchmark_views` (L2), which shapes and never compares:
+
+- **How you compare** (`benchmark_views.card`, `/api/benchmarks/card` + mobile
+  twin) on Labor, Food Cost, Reviews and Marketing, and a compact Home strip.
+  It says who (the engine's headline kind: peers → the restaurant's own
+  previous 13 weeks → the published figure), how many, as of when, the
+  comparison strength % (only for a band comparison; its Why? rows are the
+  engine's four strength dimensions), the standing per metric, and one Ask
+  action per metric the restaurant is behind on. Below the minimum it says
+  WHY, by the class of the engine's `why_not` (`benchmark_views.why_class`:
+  unconfirmed profile, concept unset, the default wage, spread too wide, too
+  few separate owners, the restaurant's own figure, too few restaurants),
+  then "— here's how you compare to your own last 13 weeks", carries the
+  engine's `why_not`, and for a profile reason a "Confirm your profile" action
+  with the engine's suggestion — the self benchmark is the headline until
+  peers clear their floors (#18). Fix round (9/25/26): a published figure the
+  engine marks `comparable: False` is a CONTEXT row on every metric (the
+  engine's `definition_note`, no standing, tone, "behind" or action, and never
+  on the Home strip — #2); a peer standing is read in outcome words ("in the
+  group's worst quarter — higher than 3 in 4"; `standing_key` keeps the
+  engine's word — #17); each row carries `own_as_of`, and when
+  `data_freshness` reads the metric's source `stale` the standing is withheld
+  ("Last measured M/D/YY" — #25); rows from different groups get a neutral
+  header and each row names its own group and strength (`tag` — #26). The
+  engine's "how far to a comparison" hint names the missing input for food
+  cost (two counts about 4 weeks apart with deliveries) and waste (weeks with
+  waste logged) once the sales days are there (#29).
+- **Location to location** (`benchmark_views.location_compare`, in the group
+  Home and the phone's locations sheet): the engine's `location` kind (the
+  siblings are the restaurant's `privacy.org_key` organisation, named by
+  `location_name`; a format or economics metric compares only locations in
+  the same confirmed partition, and a location on the $26/hr default or
+  with an irregular waste log is left out — "your locations serve
+  differently" when that leaves fewer than two; closed without a viewer), each
+  location first read against its own normal (the engine's `self`), then
+  against the median of the owner's other locations, a gap called only when
+  it is wider than the location's own noise band and the others' median one
+  combined. The group "strongest / weakest" (home_brief's group brief and
+  single-location portfolio line, reporter's group digest) is one rule,
+  `benchmark_views.rank_by_rating`: the platform's rating floor
+  (`thresholds.GROUP_RANK_MIN_REVIEWS` = `RATING_MIN_REVIEWS`), each location's
+  own-normal verdict, and a name only for a gap beyond 2 standard errors
+  (`thresholds.RATING_SIGMA`).
+- **Module helpers read the engine** (#48): `thresholds.labor_industry_benchmark`
+  and `cogs`'s food-cost band (`cogs._engine_industry_food_cost`, which also
+  feeds the dish colours `cogs.dish_reference`) read the engine's `industry`
+  comparison, and obey its `comparable` flag: a band measured differently is
+  context beside the label, never the label, a dish colour or a dollar gap
+  (re-audit #2); `review_intelligence.competitor_benchmark` reads Intel's market
+  definition (`competitor_intel_format`, the engine's `market` kind). The
+  waste label (`inventory.analyse_inventory`) is a read against the owner's
+  target, not a comparison with other restaurants, so the engine does not
+  apply there; it now reads "Under / Near / Over / Well over target". No old
+  helper was left without callers.
+- **The local market standing** (`competitor_intel_format.market_standing`,
+  #38): at least 3 rivals matched on cuisine and price, the widened-radius
+  fallback out of the average, one venue capped at 500 reviews of weight, n
+  and radius said, and a symmetric neutral tie inside one standard error.
+
+## The engine's own normal, eligibility, strength and serving
+
+*From: Re-audit, workstream A, 9/24/26.*
+
+- **Your normal** (`engine._self`, Top-50 #1, #39). A feature row is a
+  28-day window stored weekly, so neighbouring rows share three of their
+  four weeks; the old ±1·(1.4826·MAD) band over them called 45–54% of an
+  unchanged restaurant's weeks "better" or "worse than your normal". The
+  swing σ is now the pooled variance of rows a whole window apart
+  (`window_sigma`: rows grouped by weeks-back mod 4, so no two share a
+  day), from at least `SELF_MIN_POINTS` (7) baseline weeks and 3 degrees of
+  freedom; a verdict needs |gap| > t₀.₉₇₅(df)·σ + 1.25·σ/√n_eff (n_eff = the
+  independent windows the baseline spans), never under the metric's step —
+  a steady restaurant is called better/worse in ≤10% of weeks, pinned by a
+  simulation test. With a year of history (the same week 51–53 weeks back
+  and its own 13-week baseline) the normal is seasonal: the recent median
+  moved by how the same weeks moved last year, the threshold ×√2, labelled
+  "your own previous 13 weeks, adjusted for this time last year". The
+  payload carries `noise_band` (the threshold — `location_compare` reuses
+  it), `sigma`, `df` and `basis` (recent | seasonal).
+- **Own-figure eligibility** (`engine.own_eligible(restaurant, metric,
+  features_row) -> (ok, why_not)`, #11, #12): the restaurant's own figure
+  must pass what a band member passes. Labor-cost metrics
+  (`LABOR_COST_METRICS`) need a sourced labor cost
+  (`engine.labor_cost_sourced`): the owner's blended rate, a role-rate
+  `_default` or flat rate of the owner's, or role rates pricing at least
+  80% of the last 28 days' hours (`labor_rate_coverage`) — one priced role
+  is not enough. Waste % needs `features.waste_logging_regular`. An
+  ineligible figure is not ranked by peers, platform or location ("set your
+  pay rates to compare labor cost", "waste isn't logged regularly enough to
+  compare (2 of 8 weeks)"); the published figure stays as context with
+  `own_eligible` False; the labor self comparison stays (its own history is
+  on the same assumed wage) and says "on Cavnar's assumed $26/hr, not your
+  payroll"; an irregular waste % gets no self verdict, and irregular weeks
+  never enter a waste baseline. `compare()` returns `own.eligible` and
+  `own.why_not`. Band MEMBERS are still judged by
+  `thresholds.labor_cost_basis` (one priced role counts) in
+  `jobs.member_info` — a stricter viewer than member until that reads
+  `labor_cost_sourced` too.
+- **Standing** (#16): the "about the middle" margin is √(se_median² +
+  σ_own²) — the band median's uncertainty and the restaurant's own swing
+  (`_own_sigma`) — never under the step; a quartile word needs the figure
+  past the quartile by the whole margin, and with too little own history to
+  know σ_own the word stops at above/below the middle. Every band
+  comparison carries `outcome` (`engine.outcome_words`).
+- **Comparison strength** (#15): the group's size is a cap — 40% at 8
+  others, +3 a restaurant, so the 75% ranking level needs about 20, and
+  never above `STRENGTH_MAX` (95). Under the cap, the geometric mean of
+  freshness, `own` (THIS metric's own figure: reviews behind a review
+  measure against four times its floor, else how many of the previous four
+  weeks measured it, times its age), `similarity` (`engine.granularity`:
+  all types 0.6, service model 0.75, × bar-led 0.85, × menu family or
+  sales band 0.95, −5% a coarser ladder rung), `spread` (the IQR as a share
+  of the quality gate's ceiling, `metrics_registry.spread_ratio`) and
+  `orgs` (separate owners ÷ 10). A guessed type holds it at 0
+  (`INFERRED_TYPE_CAP`; `_peers` refuses a guessed type first, so this is
+  the rule restated, not a path taken).
+- **Counts** (#44): `measured` and `members` are counted after the viewer's
+  organisation is taken out (members from each band's server-side
+  `members_json`), so "measured at k of m" agrees with n.
+- **Serving** (#28): `payload_for` drops the metrics of modules the login
+  may not view before computing anything, reads every kind but `location`
+  through `compare(..., use_cache=True)` — a hit only when the row is under
+  36 hours old, `ENGINE_VERSION` matches and its `inputs_key` (a hash of
+  the profile, pay rates, targets and organisation) matches the
+  restaurant's current settings, so a saved profile or pay rate misses at
+  once — and computes `location` live once per request from one
+  sibling-scoped read (no platform-wide scan per metric). A cache miss
+  reads the feature history once for the remaining metrics; the band kinds
+  reuse the rows already read and the viewer's organisation hash once per
+  request.
+
+## Peer groups: the confirmed profile, the partition and the ladder
+
+*From: Benchmarking audit, workstream P, 9/24/26.*
+
+**Who a restaurant is compared with.** The owner confirms a restaurant
+profile in Account → Restaurant profile (web block, iOS sheet
+`AccountRestaurantProfileSheet`, admin brand modal; routes
+`/api/account-settings/restaurant-profile` and its mobile twin, owner-only):
+how it serves, its concept, bar-led, ownership and the year it opened. The
+save is the confirmation (`profile_source='set'`, `profile_confirmed_at`)
+and a `profile_changed` activity event records the old and new values. A
+type Cavnar guessed (`categories.infer_detail`: format words before cuisine,
+the name before the menu, the restaurant's own Google types, a confidence)
+only pre-fills "We think you're X — is that right?": it never joins a
+group, never counts toward a floor, and no published dollar figure is
+computed on it.
+
+**The partition** (`categories.partition_key`) is the hard split a band is
+read from: the service model for every format metric (rating, marketing
+rates, and behaviour metrics' like-for-like rung); × bar-led for labor
+metrics; × menu family (protein or starch, from the concept) for food cost
+and waste — a concept with no menu family (asian, family, fast casual, the
+bars, `other`) has NO food-cost group rather than a catch-all "mixed" one
+(`categories.food_family`, fix round #22); a staffing ratio also by sales
+band once the restaurant's own is measured. Only the owner moves a
+partition (fix round #38, R2-13): measured drift (alcohol share against
+bar-led) over `jobs.DRIFT_WEEKS` (4) CONSECUTIVE ISO weeks, a measured
+format that contradicts the profile (a counter at a $35+ ticket, a
+full-service room under $12) or a confirmation over a year old becomes
+`review` in the Account payload (`jobs.profile_review` →
+`categories.profile_review`: {kind, text, service_model, concept,
+bar_led}), a question the owner answers with a save. A change is logged as
+`comparison_group_changed`, which `confidence._recent_changes` counts.
+
+**The ladder** (`categories.partition_ladder`, read by `engine._peers`,
+`benchmarks.benchmark`, `staffing` and the ledger; fix round #34/#36): each
+member stands in every rung of its ladder, and a viewer reads the FINEST
+rung whose band clears every floor. Finest first: the confirmed partition
+narrowed by the coordinates the restaurant measures — the ticket band
+(`|t<n>`, every family), the volume band (`|v<n>`, labor and staffing) and
+the urbanity band (`|u<n>`, labor: the first proxy for a wage market; there
+is no state or wage index yet) — then with fewer of them, then the
+partition itself, then the service model alone (labor, food and staffing
+drop the bar-led split last; food keeps its menu family). Economics metrics
+stop there; a behaviour metric goes on to all of Cavnar (the `platform`
+kind), which LEADS the card's headline for a behaviour metric when no
+partition band exists (R3-27). The comparison carries `level` (0 = finest)
+of `levels`, and a group wider than the confirmed partition says so in its
+label ("… (a wider group — too few bar-led ones have this measured yet)").
+The labels name the coordinates ("with an average ticket of $20–35", "of
+similar sales volume", "in urban areas"). A DNA-weighted band inside each
+group (R4-12) is not built yet. Before any of it, the restaurant's own
+figure must clear its floor ("about N more measured days to a
+comparison"); the published figure for the confirmed type is quoted as
+context with its definition when it measures something else (the NRA labor
+median includes benefits, Cavnar's labor % is wages from shifts). The
+small-group blend toward a published median (`engine._blend`) is DORMANT:
+it needs a published figure measured the same way as Cavnar's and none is
+registered, so no band is blended today — candidate for future cleanup
+after additional verification.
+
+**The ledger** (`intel_peer_assignments`, `jobs.record_assignments`)
+records per family the rung the restaurant would be SHOWN (fix round #44,
+R2-19/R4-30): `peers` only when a band on its ladder passes
+`benchmarks.publish_row` for a metric it measures (n and organisations are
+that band's, its organisation out), `platform` only when an all-types
+behaviour band does, `published` only for a figure defined the same way as
+Cavnar's; `partition_key` stays the confirmed partition. Reaching a higher
+rung is logged as `benchmark_rung_up` (with the group reached). The
+comparison's `measured` and `members` counts are taken with the viewer's
+organisation out, like `n` (R1-15).
+
+**The nightly pass** (`jobs.run_learning`, fix round #40): each stage is
+guarded (`ops.capture`; a failure is recorded and the later stages still
+run), `benchmarks.compute` commits per metric, and this week's bands are
+written — and so frozen — only once the feature pass has reached every
+restaurant this ISO week (`jobs.features_sweep_complete`: the cursor is back
+at 0 and moved this week); until then the previous bands keep serving.
+
+**Structural features** (`features.STRUCTURAL_KEYS`, #43): `ticket_band`,
+`volume_band` and `daypart_mix` (one definition with DNA), `alcohol_share`
+(DSR categories, only where mapped), `delivery_share`, `weekly_open_hours`,
+`urbanity_band` — band indices and shares, never dollars, None when not
+measured. They are peer coordinates and the drift detector's input.
+
+**Targets and the labor cost basis** (#13, #14; re-audit #3, #10, #45): a
+target records where it came from (`thresholds.target_source`: set / seeded
+/ default), and every surface that judges a figure against one reads
+`thresholds.target_for(restaurant, kind)` → `{pct, source, label,
+alerts_allowed, phrase}` (kind `labor` | `food`) — the owner's ACTIVE goal
+on the metric first (source `goal`, "your goal of 28% by 12/1/26";
+`owner_memory.target_for`, memory audit 9/29/26 — a teammate's or an
+admin's goal is only proposed until an account holder confirms it), then the
+restaurant's own setting: the Food Cost label and
+dish colours (`cogs`), the digest's labor tag (`reporter.labor_tag`), Home's
+labor attention item, the group brief's labor issue and the value
+opportunity's label. On Cavnar's starting target nothing reads "Over" in
+red: tags, dish colours and severities cap at a watch and name the starting
+target; no over-target alert or issue fires (`alerts_allowed` False).
+`tests/test_targets_published_figures.py` ratchets bare target reads.
+Confirming a type seeds a target the owner has not set only from a
+PUBLISHED median measured the way Cavnar measures it
+(`metrics_registry.definition`) for the confirmed service model — none
+exists today (the NRA labor median includes benefits, the NRA food median
+counts non-alcohol beverages), so every confirmation keeps, and resets the
+value to, Cavnar's default. `models.backfill_seeded_targets` (boot, data
+only) puts any seed that no longer qualifies back to the default. An
+explicit save of any value — the admin form names the fields it saw
+touched — is the owner's, even 30%; an owner-entered $26/hr is theirs too
+(`restaurants.hourly_rate_source`). The labor cost basis
+(`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
+pos_wages reserved) withholds the gap-to-target dollars and a place in
+labor-cost bands while it is the $26/hr default. No "$ under industry" is
+computed at all (`labor_vs_industry_*` are sent as 0): the only published
+labor figure is not like for like.
+
+**Published figures** (`benchmark_registry`, re-audit #4, #32): every
+entry declares its `definition` (None when the source does not say what it
+counts; bands derived from the NRA food median inherit its definition), the
+`service_models` it describes, and a `max_age_years` counted from its data
+year. `lookup(metric, concept, published_only, definition, service_model)`
+is the one lookup the engine's `industry` kind, the blend, target seeding,
+the peer ledger and the sales audit share: an unknown definition is not
+comparable, a counter-service restaurant never gets a full-service figure,
+and an entry past its age limit is no entry. The sales audit sizes dollars
+only against a published figure or the owner's own target; a rule of thumb
+and the unsourced blended food + beverage band are shown as context.
+`benchmark_registry.facts` carries the shared fact keys (`metric`,
+`better`, `comparable`, `definition_note`, `inferred`, `own_value`,
+`standing`, `strength_pct`).
+
+## Published figures, the checker, priors and the market
+
+*From: Benchmarking re-audit, workstream V, 9/24/26.*
+
+**One road for published figures to a model** (#5). Ask's snapshot, the
+labor read, the food read's facts, the day-2 onboarding email and the admin
+client-settings hints read the engine's `industry` kind through
+`intelligence.industry_read(restaurant, metric)` → `{comparison, line,
+facts, comparable, definition_note, …}` — none of them call
+`benchmark_registry.for_restaurant` any more. A type Cavnar only guessed
+gets nothing (the engine refuses it). A figure measured differently from
+Cavnar's (the NRA labor median includes benefits; its food figure is food +
+non-alcohol beverage cost) comes with `intelligence.CONTEXT_ONLY_NOTE` in
+its prompt line and `source.comparable: False` + `definition_note` on its
+facts. Prime cost % stays a registry lookup in Ask: it is one
+all-restaurant operator target, the same for every type.
+
+**The checker** (response_validation B1 / P2, #6–#9, #19): a fact for a
+guessed type binds nothing; any positioning against a figure measured
+differently is dropped (a bare quote is caveated with its definition); the
+grammar knows the engine's own labels, "your peer group / cohort", "beats
+the group", "better than average", "one of the lowest", "among the best"
+and nearby competitors; a claim binds to the metric it names ("labor %" is
+not the hours band) and is dropped when it could be several metrics whose
+standings disagree; the side a sentence puts the restaurant on is resolved
+against the metric's better direction and the fact's standing; a
+contradicted ranking or an unbound peer claim is dropped on every surface.
+A numberless "restaurants like yours cut labor after …" needs a prediction
+fact for the same metric and recommendation kind. The contract keys it
+reads on a fact's source: `comparable`, `definition_note`, `inferred`,
+`standing`, `metric`, `better`, `strength_pct` (with a layer-0 fallback for
+`better`, pinned against `metrics_registry`).
+
+**Ask** (#18) has no "general industry knowledge" licence: with no
+comparison line, it says there is no fair comparison and why.
+`intelligence.context_lines` adds one "No fair comparison with other
+restaurants for <module> yet — <why_not>" line per visible module that has
+none.
+
+**The confirmed type** (#20): `categories.confirmed_type(restaurant)` is
+the one accessor for a type a cross-restaurant read may use — None unless
+the owner (or admin) set it. Recommendation priors (`rec_learning`, the
+concept rung of the prior ladder; the confirmed partition is the next
+rung), the kind-level confidence model's cohort (`confidence.score`) and
+the Ask tool's label read it; patterns read the confirmed partitions (#21,
+above). A row's `cohort` label is re-stamped whenever the confirmed type
+changes, NULL included (*Feedback*, above), so a withdrawn guess leaves
+the group.
+
+**Recommendation priors by organisation** (#14): `scoring.kind_stats` and
+`similar_prior` leave the asking restaurant's whole organisation out, need
+`privacy.MIN_ORGS` organisations as well as MIN_COHORT restaurants
+(`answered_orgs` / `measured_orgs`), and cap the share per organisation.
+The organisation is `privacy.org_map`'s everywhere — bands, priors
+(`scoring.org_map`, cached 300 seconds), the confidence log and predict's
+neighbours (`predict._orgs`) — so two emails behind one owner login, or
+one Stripe customer, are one organisation (memory audit PLATFORM-19; a
+restaurant with no row, a deleted one's kept rows, is its own). `rec_learning.kind_record` returns only the capped
+counts — `prior_measured_raw` / `prior_improved_raw` are gone.
+Since the memory re-audit (9/29/26, PLATFORM-9 / -10) the ACCEPTANCE prior
+is capped the same way — `acceptance_*_capped` (and
+`acceptance_*_decayed_capped`, which `rec_learning.Effectiveness.prior`
+reads first): each organisation held to `MAX_RESTAURANT_SHARE` of the
+denominator (`capped_counts`), over only the episodes shown in the first
+`scoring.POOLED_ACCEPT_MAX_POSITION` (3) places (`rec_instances.
+first_position`; an unknown position still counts) — a card nobody scrolled
+to is not a rejection, and without it a kind ranked high everywhere was
+accepted more, which raised its pooled prior, which ranked it higher
+everywhere. The raw figures stay beside them for the admin view.
+
+**Peer freshness** (#24): Data Health's "Peer benchmarks" source is dated
+by the restaurant's confirmed partition bands (the oldest family's newest
+band; the all-types band when it has none) and ages out at 56 days, the
+engine's `MAX_BAND_AGE_WEEKS` × 7.
+
+**One market comparison** (#30): the engine's `market` kind is Intel's
+matched-rival, review-weighted standing with its tie band
+(`competitor_intel_format.market_comparison`, rating only), and the Reviews
+read quotes it — "ahead / level / behind" in Intel's words — typed as a
+benchmark fact (`market_facts`), instead of its own unweighted median of
+every rival. The Reviews read's cross-location themes (#42) are scoped by
+organisation, shown only to a login that may switch locations (the read is
+cached per restaurant and per that), and worded as a share of each
+location's reviews.
+
+## Restaurant DNA, learning effects and prediction
+
+*From: Benchmarking audit, 9/24/26.*
 
 **Level 1 — the restaurant's own profile, live now.** `intelligence/dna.py`
 measures each restaurant, week by week, on the dimensions its own tables
@@ -1089,43 +1576,8 @@ organisations and norms once per pass and checks its wall clock before every
 `read_platform_intelligence` rests on it; Data Health labels it "Peer
 comparison".
 
-## Pattern-discovery architecture
 
-Hypotheses are data (`patterns.HYPOTHESES`), not code: behaviour feature,
-split, outcome feature, direction, sentence template. Adding one is one
-dict. The test is a seeded two-sided permutation test on the difference of
-means (2,000 shuffles; exact enough at cohort sizes and free of SciPy),
-with Cohen's d as the effect floor and Benjamini–Hochberg across the
-night's hypotheses. Sentences say counts and effects and never a name.
-Every hypothesis compares restaurants' latest rows side by side — the
-behaviour and the outcome cover the SAME weeks — so a sentence says "at
-the same time as", never "over the following" ("Across 14 pizza on
-Cavnar, those replying to at least half their reviews within a day saw
-their rating move 0.30★ higher than those that did not, measured at the
-same time as the replying (not after it)"; BM1-16, BM4-5). A pattern found
-across every restaurant on Cavnar pools every type and carries
-`pooled_types`; `patterns.pooled_on_economics` keeps such a pattern about
-labor, food cost or waste out of `support_for` (the K1 pattern-support
-factor) and out of Ask's context, since a type difference would pass as a
-behaviour effect. A hypothesis's `rec_kinds` name real ledger kinds or
-`rec_ledger` TOPICS ("replies", "staffing", "posting" …), and
-`patterns.covers` matches a recommendation by its kind or its topic
-(`rec_ledger._topic_of`) — memory re-audit 9/29/26, PLATFORM-16: they
-named "reply", "schedule", "post", which no kind is, so a reply pattern
-could never support an `urgent_reviews` card; a test holds every entry to a
-real kind, topic or observed action.
-
-The groups are the owner-confirmed peer partitions the bands use, not the
-restaurant type (Benchmarking re-audit #21): each hypothesis runs inside
-the partition of its own metric family (`patterns.family_of` — a labor
-outcome among restaurants that staff alike, a food one within a menu
-family), over the members a band may have (`jobs.eligible_members`: live 8
-weeks, half its measures on file, one per Google listing, no test account),
-and a labor-cost outcome never counts a restaurant on the $26/hr default
-wage. A reader passes the viewer's groups (`patterns.viewer_cohorts` →
-`{family: partition key}`); with none — an unconfirmed profile — only the
-all-types patterns are served (`patterns.active(None)`; the admin view is
-`all_cohorts=True`).
+# Part 5 — Privacy
 
 ## Privacy safeguards
 
@@ -1228,7 +1680,9 @@ all-types patterns are served (`patterns.active(None)`; the admin view is
 - Level 1 reads only `WHERE restaurant_id = ?`. The Ask context names the
   restaurant's own figures only to its own owner.
 
-## Who may teach (memory audit, 9/29/26)
+## Who may teach
+
+*From: Memory audit, 9/29/26.*
 
 **One predicate.** `models.learning_eligible(restaurant, since=None)` —
 `learning_exclusion` says why not: `demo`, `excluded` (an admin's
@@ -1336,7 +1790,9 @@ at the Ask action route) and carries the answer's authority onto
 rule, and so does every restaurant-level learner (`docs/ops/SECURITY.md` →
 *Who teaches the learners* lists them).
 
-## Google user data (memory audit, 9/29/26)
+## Google user data
+
+*From: Memory audit, 9/29/26.*
 
 Google's API Services User Data Policy (Limited Use), and
 `public/privacy.html`, allow data received through an owner's Google OAuth
@@ -1393,396 +1849,3 @@ disconnected keeps its stored reviews, so it stays out.
   predictions and review-hypothesis patterns — to be rebuilt that night.
 - `tests/test_mem_m8_google.py` pins the rule, including that every feature
   the reviews table can move is on the list.
-
-## Performance impact
-
-Features: ~12 small indexed queries per restaurant per night, bounded and
-resumable. Learning: reads one row per restaurant per cohort; ~20
-hypotheses × permutation (2,000 shuffles) ≈ 40k list operations per cohort,
-milliseconds at present scale, seconds at thousands. Request paths read
-only materialized rows (`intel_patterns`, `intel_benchmarks`,
-`intel_features` latest) — one indexed query each. The backfill is a
-separate 5am pass under its own wall clock, so a restaurant with a year of
-history is filled over several nights, never inside the feature pass.
-
-## Scalability to 100,000+ restaurants
-
-- Feature rows: 100k × 52 ≈ 5.2M rows/year at ~600 bytes — fine in
-  Postgres, and the pass is already resumable, so it can take several
-  nights per full sweep and still keep every restaurant within a week.
-- Discovery and benchmarks read the latest row per restaurant: 100k rows
-  per cohort pass. Cohorts are computed independently, so they shard
-  naturally by category, and the permutation count is a constant.
-- Nothing here needs a second process. The documented constraints stand:
-  SQLite with one gunicorn worker until the process-local dicts move; at
-  100k restaurants the platform's own move to Postgres carries this engine
-  unchanged because it only ever reads and writes through `get_conn`.
-
-## What this deliberately does not do yet
-
-- Weather effects across restaurants: the weather that actually happened
-  is now stored per restaurant and local day (`weather_daily`, kept by
-  `event_memory` from the nearest NWS station's observations — never a
-  forecast) and each restaurant's own event memory measures what rain and
-  events did to its nights, but no feature or hypothesis in this package
-  reads it yet.
-- Employee retention: staff rows have no start/end dates yet.
-- Promotion effectiveness beyond campaigns and specials cadence.
-- At present the platform has fewer than `MIN_COHORT` live restaurants, so
-  every cross-restaurant surface says so honestly. The engine is built for
-  the week that changes.
-
-## Posts in the engine (added after the marketing gap review)
-
-Published posts contribute `dish_posts_28d`, `offer_posts_28d`,
-`occasion_posts_28d`, `post_lift_median_28d`, `item_lift_median_28d` and
-`post_engagement_rate_28d` (from `marketing_tags` and the cached
-`marketing_attribution` rows). Four hypotheses read them: dish posts vs
-sales lift, occasion posts vs engagement, offer posts vs lift, weekly
-cadence vs lift. The former `specials_28d` feature is gone — it matched
-content types the generator never wrote.
-
-## The Benchmark Engine on the owner's screens (Benchmarking audit, workstream O, 9/24/26)
-
-Every comparison an owner sees on a screen now comes from `intelligence.engine`
-through `benchmark_views` (L2), which shapes and never compares:
-
-- **How you compare** (`benchmark_views.card`, `/api/benchmarks/card` + mobile
-  twin) on Labor, Food Cost, Reviews and Marketing, and a compact Home strip.
-  It says who (the engine's headline kind: peers → the restaurant's own
-  previous 13 weeks → the published figure), how many, as of when, the
-  comparison strength % (only for a band comparison; its Why? rows are the
-  engine's four strength dimensions), the standing per metric, and one Ask
-  action per metric the restaurant is behind on. Below the minimum it says
-  WHY, by the class of the engine's `why_not` (`benchmark_views.why_class`:
-  unconfirmed profile, concept unset, the default wage, spread too wide, too
-  few separate owners, the restaurant's own figure, too few restaurants),
-  then "— here's how you compare to your own last 13 weeks", carries the
-  engine's `why_not`, and for a profile reason a "Confirm your profile" action
-  with the engine's suggestion — the self benchmark is the headline until
-  peers clear their floors (#18). Fix round (9/25/26): a published figure the
-  engine marks `comparable: False` is a CONTEXT row on every metric (the
-  engine's `definition_note`, no standing, tone, "behind" or action, and never
-  on the Home strip — #2); a peer standing is read in outcome words ("in the
-  group's worst quarter — higher than 3 in 4"; `standing_key` keeps the
-  engine's word — #17); each row carries `own_as_of`, and when
-  `data_freshness` reads the metric's source `stale` the standing is withheld
-  ("Last measured M/D/YY" — #25); rows from different groups get a neutral
-  header and each row names its own group and strength (`tag` — #26). The
-  engine's "how far to a comparison" hint names the missing input for food
-  cost (two counts about 4 weeks apart with deliveries) and waste (weeks with
-  waste logged) once the sales days are there (#29).
-- **Location to location** (`benchmark_views.location_compare`, in the group
-  Home and the phone's locations sheet): the engine's `location` kind (the
-  siblings are the restaurant's `privacy.org_key` organisation, named by
-  `location_name`; a format or economics metric compares only locations in
-  the same confirmed partition, and a location on the $26/hr default or
-  with an irregular waste log is left out — "your locations serve
-  differently" when that leaves fewer than two; closed without a viewer), each
-  location first read against its own normal (the engine's `self`), then
-  against the median of the owner's other locations, a gap called only when
-  it is wider than the location's own noise band and the others' median one
-  combined. The group "strongest / weakest" (home_brief's group brief and
-  single-location portfolio line, reporter's group digest) is one rule,
-  `benchmark_views.rank_by_rating`: the platform's rating floor
-  (`thresholds.GROUP_RANK_MIN_REVIEWS` = `RATING_MIN_REVIEWS`), each location's
-  own-normal verdict, and a name only for a gap beyond 2 standard errors
-  (`thresholds.RATING_SIGMA`).
-- **Module helpers read the engine** (#48): `thresholds.labor_industry_benchmark`
-  and `cogs`'s food-cost band (`cogs._engine_industry_food_cost`, which also
-  feeds the dish colours `cogs.dish_reference`) read the engine's `industry`
-  comparison, and obey its `comparable` flag: a band measured differently is
-  context beside the label, never the label, a dish colour or a dollar gap
-  (re-audit #2); `review_intelligence.competitor_benchmark` reads Intel's market
-  definition (`competitor_intel_format`, the engine's `market` kind). The
-  waste label (`inventory.analyse_inventory`) is a read against the owner's
-  target, not a comparison with other restaurants, so the engine does not
-  apply there; it now reads "Under / Near / Over / Well over target". No old
-  helper was left without callers.
-- **The local market standing** (`competitor_intel_format.market_standing`,
-  #38): at least 3 rivals matched on cuisine and price, the widened-radius
-  fallback out of the average, one venue capped at 500 reviews of weight, n
-  and radius said, and a symmetric neutral tie inside one standard error.
-
-
-## The engine's own normal, eligibility, strength and serving (re-audit, workstream A, 9/24/26)
-
-- **Your normal** (`engine._self`, Top-50 #1, #39). A feature row is a
-  28-day window stored weekly, so neighbouring rows share three of their
-  four weeks; the old ±1·(1.4826·MAD) band over them called 45–54% of an
-  unchanged restaurant's weeks "better" or "worse than your normal". The
-  swing σ is now the pooled variance of rows a whole window apart
-  (`window_sigma`: rows grouped by weeks-back mod 4, so no two share a
-  day), from at least `SELF_MIN_POINTS` (7) baseline weeks and 3 degrees of
-  freedom; a verdict needs |gap| > t₀.₉₇₅(df)·σ + 1.25·σ/√n_eff (n_eff = the
-  independent windows the baseline spans), never under the metric's step —
-  a steady restaurant is called better/worse in ≤10% of weeks, pinned by a
-  simulation test. With a year of history (the same week 51–53 weeks back
-  and its own 13-week baseline) the normal is seasonal: the recent median
-  moved by how the same weeks moved last year, the threshold ×√2, labelled
-  "your own previous 13 weeks, adjusted for this time last year". The
-  payload carries `noise_band` (the threshold — `location_compare` reuses
-  it), `sigma`, `df` and `basis` (recent | seasonal).
-- **Own-figure eligibility** (`engine.own_eligible(restaurant, metric,
-  features_row) -> (ok, why_not)`, #11, #12): the restaurant's own figure
-  must pass what a band member passes. Labor-cost metrics
-  (`LABOR_COST_METRICS`) need a sourced labor cost
-  (`engine.labor_cost_sourced`): the owner's blended rate, a role-rate
-  `_default` or flat rate of the owner's, or role rates pricing at least
-  80% of the last 28 days' hours (`labor_rate_coverage`) — one priced role
-  is not enough. Waste % needs `features.waste_logging_regular`. An
-  ineligible figure is not ranked by peers, platform or location ("set your
-  pay rates to compare labor cost", "waste isn't logged regularly enough to
-  compare (2 of 8 weeks)"); the published figure stays as context with
-  `own_eligible` False; the labor self comparison stays (its own history is
-  on the same assumed wage) and says "on Cavnar's assumed $26/hr, not your
-  payroll"; an irregular waste % gets no self verdict, and irregular weeks
-  never enter a waste baseline. `compare()` returns `own.eligible` and
-  `own.why_not`. Band MEMBERS are still judged by
-  `thresholds.labor_cost_basis` (one priced role counts) in
-  `jobs.member_info` — a stricter viewer than member until that reads
-  `labor_cost_sourced` too.
-- **Standing** (#16): the "about the middle" margin is √(se_median² +
-  σ_own²) — the band median's uncertainty and the restaurant's own swing
-  (`_own_sigma`) — never under the step; a quartile word needs the figure
-  past the quartile by the whole margin, and with too little own history to
-  know σ_own the word stops at above/below the middle. Every band
-  comparison carries `outcome` (`engine.outcome_words`).
-- **Comparison strength** (#15): the group's size is a cap — 40% at 8
-  others, +3 a restaurant, so the 75% ranking level needs about 20, and
-  never above `STRENGTH_MAX` (95). Under the cap, the geometric mean of
-  freshness, `own` (THIS metric's own figure: reviews behind a review
-  measure against four times its floor, else how many of the previous four
-  weeks measured it, times its age), `similarity` (`engine.granularity`:
-  all types 0.6, service model 0.75, × bar-led 0.85, × menu family or
-  sales band 0.95, −5% a coarser ladder rung), `spread` (the IQR as a share
-  of the quality gate's ceiling, `metrics_registry.spread_ratio`) and
-  `orgs` (separate owners ÷ 10). A guessed type holds it at 0
-  (`INFERRED_TYPE_CAP`; `_peers` refuses a guessed type first, so this is
-  the rule restated, not a path taken).
-- **Counts** (#44): `measured` and `members` are counted after the viewer's
-  organisation is taken out (members from each band's server-side
-  `members_json`), so "measured at k of m" agrees with n.
-- **Serving** (#28): `payload_for` drops the metrics of modules the login
-  may not view before computing anything, reads every kind but `location`
-  through `compare(..., use_cache=True)` — a hit only when the row is under
-  36 hours old, `ENGINE_VERSION` matches and its `inputs_key` (a hash of
-  the profile, pay rates, targets and organisation) matches the
-  restaurant's current settings, so a saved profile or pay rate misses at
-  once — and computes `location` live once per request from one
-  sibling-scoped read (no platform-wide scan per metric). A cache miss
-  reads the feature history once for the remaining metrics; the band kinds
-  reuse the rows already read and the viewer's organisation hash once per
-  request.
-
-## Peer groups: the confirmed profile, the partition and the ladder (Benchmarking audit, workstream P, 9/24/26)
-
-**Who a restaurant is compared with.** The owner confirms a restaurant
-profile in Account → Restaurant profile (web block, iOS sheet
-`AccountRestaurantProfileSheet`, admin brand modal; routes
-`/api/account-settings/restaurant-profile` and its mobile twin, owner-only):
-how it serves, its concept, bar-led, ownership and the year it opened. The
-save is the confirmation (`profile_source='set'`, `profile_confirmed_at`)
-and a `profile_changed` activity event records the old and new values. A
-type Cavnar guessed (`categories.infer_detail`: format words before cuisine,
-the name before the menu, the restaurant's own Google types, a confidence)
-only pre-fills "We think you're X — is that right?": it never joins a
-group, never counts toward a floor, and no published dollar figure is
-computed on it.
-
-**The partition** (`categories.partition_key`) is the hard split a band is
-read from: the service model for every format metric (rating, marketing
-rates, and behaviour metrics' like-for-like rung); × bar-led for labor
-metrics; × menu family (protein or starch, from the concept) for food cost
-and waste — a concept with no menu family (asian, family, fast casual, the
-bars, `other`) has NO food-cost group rather than a catch-all "mixed" one
-(`categories.food_family`, fix round #22); a staffing ratio also by sales
-band once the restaurant's own is measured. Only the owner moves a
-partition (fix round #38, R2-13): measured drift (alcohol share against
-bar-led) over `jobs.DRIFT_WEEKS` (4) CONSECUTIVE ISO weeks, a measured
-format that contradicts the profile (a counter at a $35+ ticket, a
-full-service room under $12) or a confirmation over a year old becomes
-`review` in the Account payload (`jobs.profile_review` →
-`categories.profile_review`: {kind, text, service_model, concept,
-bar_led}), a question the owner answers with a save. A change is logged as
-`comparison_group_changed`, which `confidence._recent_changes` counts.
-
-**The ladder** (`categories.partition_ladder`, read by `engine._peers`,
-`benchmarks.benchmark`, `staffing` and the ledger; fix round #34/#36): each
-member stands in every rung of its ladder, and a viewer reads the FINEST
-rung whose band clears every floor. Finest first: the confirmed partition
-narrowed by the coordinates the restaurant measures — the ticket band
-(`|t<n>`, every family), the volume band (`|v<n>`, labor and staffing) and
-the urbanity band (`|u<n>`, labor: the first proxy for a wage market; there
-is no state or wage index yet) — then with fewer of them, then the
-partition itself, then the service model alone (labor, food and staffing
-drop the bar-led split last; food keeps its menu family). Economics metrics
-stop there; a behaviour metric goes on to all of Cavnar (the `platform`
-kind), which LEADS the card's headline for a behaviour metric when no
-partition band exists (R3-27). The comparison carries `level` (0 = finest)
-of `levels`, and a group wider than the confirmed partition says so in its
-label ("… (a wider group — too few bar-led ones have this measured yet)").
-The labels name the coordinates ("with an average ticket of $20–35", "of
-similar sales volume", "in urban areas"). A DNA-weighted band inside each
-group (R4-12) is not built yet. Before any of it, the restaurant's own
-figure must clear its floor ("about N more measured days to a
-comparison"); the published figure for the confirmed type is quoted as
-context with its definition when it measures something else (the NRA labor
-median includes benefits, Cavnar's labor % is wages from shifts). The
-small-group blend toward a published median (`engine._blend`) is DORMANT:
-it needs a published figure measured the same way as Cavnar's and none is
-registered, so no band is blended today — candidate for future cleanup
-after additional verification.
-
-**The ledger** (`intel_peer_assignments`, `jobs.record_assignments`)
-records per family the rung the restaurant would be SHOWN (fix round #44,
-R2-19/R4-30): `peers` only when a band on its ladder passes
-`benchmarks.publish_row` for a metric it measures (n and organisations are
-that band's, its organisation out), `platform` only when an all-types
-behaviour band does, `published` only for a figure defined the same way as
-Cavnar's; `partition_key` stays the confirmed partition. Reaching a higher
-rung is logged as `benchmark_rung_up` (with the group reached). The
-comparison's `measured` and `members` counts are taken with the viewer's
-organisation out, like `n` (R1-15).
-
-**The nightly pass** (`jobs.run_learning`, fix round #40): each stage is
-guarded (`ops.capture`; a failure is recorded and the later stages still
-run), `benchmarks.compute` commits per metric, and this week's bands are
-written — and so frozen — only once the feature pass has reached every
-restaurant this ISO week (`jobs.features_sweep_complete`: the cursor is back
-at 0 and moved this week); until then the previous bands keep serving.
-
-**Structural features** (`features.STRUCTURAL_KEYS`, #43): `ticket_band`,
-`volume_band` and `daypart_mix` (one definition with DNA), `alcohol_share`
-(DSR categories, only where mapped), `delivery_share`, `weekly_open_hours`,
-`urbanity_band` — band indices and shares, never dollars, None when not
-measured. They are peer coordinates and the drift detector's input.
-
-**Targets and the labor cost basis** (#13, #14; re-audit #3, #10, #45): a
-target records where it came from (`thresholds.target_source`: set / seeded
-/ default), and every surface that judges a figure against one reads
-`thresholds.target_for(restaurant, kind)` → `{pct, source, label,
-alerts_allowed, phrase}` (kind `labor` | `food`) — the owner's ACTIVE goal
-on the metric first (source `goal`, "your goal of 28% by 12/1/26";
-`owner_memory.target_for`, memory audit 9/29/26 — a teammate's or an
-admin's goal is only proposed until an account holder confirms it), then the
-restaurant's own setting: the Food Cost label and
-dish colours (`cogs`), the digest's labor tag (`reporter.labor_tag`), Home's
-labor attention item, the group brief's labor issue and the value
-opportunity's label. On Cavnar's starting target nothing reads "Over" in
-red: tags, dish colours and severities cap at a watch and name the starting
-target; no over-target alert or issue fires (`alerts_allowed` False).
-`tests/test_targets_published_figures.py` ratchets bare target reads.
-Confirming a type seeds a target the owner has not set only from a
-PUBLISHED median measured the way Cavnar measures it
-(`metrics_registry.definition`) for the confirmed service model — none
-exists today (the NRA labor median includes benefits, the NRA food median
-counts non-alcohol beverages), so every confirmation keeps, and resets the
-value to, Cavnar's default. `models.backfill_seeded_targets` (boot, data
-only) puts any seed that no longer qualifies back to the default. An
-explicit save of any value — the admin form names the fields it saw
-touched — is the owner's, even 30%; an owner-entered $26/hr is theirs too
-(`restaurants.hourly_rate_source`). The labor cost basis
-(`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
-pos_wages reserved) withholds the gap-to-target dollars and a place in
-labor-cost bands while it is the $26/hr default. No "$ under industry" is
-computed at all (`labor_vs_industry_*` are sent as 0): the only published
-labor figure is not like for like.
-
-**Published figures** (`benchmark_registry`, re-audit #4, #32): every
-entry declares its `definition` (None when the source does not say what it
-counts; bands derived from the NRA food median inherit its definition), the
-`service_models` it describes, and a `max_age_years` counted from its data
-year. `lookup(metric, concept, published_only, definition, service_model)`
-is the one lookup the engine's `industry` kind, the blend, target seeding,
-the peer ledger and the sales audit share: an unknown definition is not
-comparable, a counter-service restaurant never gets a full-service figure,
-and an entry past its age limit is no entry. The sales audit sizes dollars
-only against a published figure or the owner's own target; a rule of thumb
-and the unsourced blended food + beverage band are shown as context.
-`benchmark_registry.facts` carries the shared fact keys (`metric`,
-`better`, `comparable`, `definition_note`, `inferred`, `own_value`,
-`standing`, `strength_pct`).
-
-## Published figures, the checker, priors and the market (Benchmarking re-audit, workstream V, 9/24/26)
-
-**One road for published figures to a model** (#5). Ask's snapshot, the
-labor read, the food read's facts, the day-2 onboarding email and the admin
-client-settings hints read the engine's `industry` kind through
-`intelligence.industry_read(restaurant, metric)` → `{comparison, line,
-facts, comparable, definition_note, …}` — none of them call
-`benchmark_registry.for_restaurant` any more. A type Cavnar only guessed
-gets nothing (the engine refuses it). A figure measured differently from
-Cavnar's (the NRA labor median includes benefits; its food figure is food +
-non-alcohol beverage cost) comes with `intelligence.CONTEXT_ONLY_NOTE` in
-its prompt line and `source.comparable: False` + `definition_note` on its
-facts. Prime cost % stays a registry lookup in Ask: it is one
-all-restaurant operator target, the same for every type.
-
-**The checker** (response_validation B1 / P2, #6–#9, #19): a fact for a
-guessed type binds nothing; any positioning against a figure measured
-differently is dropped (a bare quote is caveated with its definition); the
-grammar knows the engine's own labels, "your peer group / cohort", "beats
-the group", "better than average", "one of the lowest", "among the best"
-and nearby competitors; a claim binds to the metric it names ("labor %" is
-not the hours band) and is dropped when it could be several metrics whose
-standings disagree; the side a sentence puts the restaurant on is resolved
-against the metric's better direction and the fact's standing; a
-contradicted ranking or an unbound peer claim is dropped on every surface.
-A numberless "restaurants like yours cut labor after …" needs a prediction
-fact for the same metric and recommendation kind. The contract keys it
-reads on a fact's source: `comparable`, `definition_note`, `inferred`,
-`standing`, `metric`, `better`, `strength_pct` (with a layer-0 fallback for
-`better`, pinned against `metrics_registry`).
-
-**Ask** (#18) has no "general industry knowledge" licence: with no
-comparison line, it says there is no fair comparison and why.
-`intelligence.context_lines` adds one "No fair comparison with other
-restaurants for <module> yet — <why_not>" line per visible module that has
-none.
-
-**The confirmed type** (#20): `categories.confirmed_type(restaurant)` is
-the one accessor for a type a cross-restaurant read may use — None unless
-the owner (or admin) set it. Recommendation priors (`rec_learning`, the
-concept rung of the prior ladder; the confirmed partition is the next
-rung), the kind-level confidence model's cohort (`confidence.score`) and
-the Ask tool's label read it; patterns read the confirmed partitions (#21,
-above). A row's `cohort` label is re-stamped whenever the confirmed type
-changes, NULL included (*Feedback*, above), so a withdrawn guess leaves
-the group.
-
-**Recommendation priors by organisation** (#14): `scoring.kind_stats` and
-`similar_prior` leave the asking restaurant's whole organisation out, need
-`privacy.MIN_ORGS` organisations as well as MIN_COHORT restaurants
-(`answered_orgs` / `measured_orgs`), and cap the share per organisation.
-The organisation is `privacy.org_map`'s everywhere — bands, priors
-(`scoring.org_map`, cached 300 seconds), the confidence log and predict's
-neighbours (`predict._orgs`) — so two emails behind one owner login, or
-one Stripe customer, are one organisation (memory audit PLATFORM-19; a
-restaurant with no row, a deleted one's kept rows, is its own). `rec_learning.kind_record` returns only the capped
-counts — `prior_measured_raw` / `prior_improved_raw` are gone.
-Since the memory re-audit (9/29/26, PLATFORM-9 / -10) the ACCEPTANCE prior
-is capped the same way — `acceptance_*_capped` (and
-`acceptance_*_decayed_capped`, which `rec_learning.Effectiveness.prior`
-reads first): each organisation held to `MAX_RESTAURANT_SHARE` of the
-denominator (`capped_counts`), over only the episodes shown in the first
-`scoring.POOLED_ACCEPT_MAX_POSITION` (3) places (`rec_instances.
-first_position`; an unknown position still counts) — a card nobody scrolled
-to is not a rejection, and without it a kind ranked high everywhere was
-accepted more, which raised its pooled prior, which ranked it higher
-everywhere. The raw figures stay beside them for the admin view.
-
-**Peer freshness** (#24): Data Health's "Peer benchmarks" source is dated
-by the restaurant's confirmed partition bands (the oldest family's newest
-band; the all-types band when it has none) and ages out at 56 days, the
-engine's `MAX_BAND_AGE_WEEKS` × 7.
-
-**One market comparison** (#30): the engine's `market` kind is Intel's
-matched-rival, review-weighted standing with its tie band
-(`competitor_intel_format.market_comparison`, rating only), and the Reviews
-read quotes it — "ahead / level / behind" in Intel's words — typed as a
-benchmark fact (`market_facts`), instead of its own unweighted median of
-every rival. The Reviews read's cross-location themes (#42) are scoped by
-organisation, shown only to a login that may switch locations (the read is
-cached per restaurant and per that), and worded as a share of each
-location's reviews.

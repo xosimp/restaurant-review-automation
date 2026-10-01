@@ -1,8 +1,9 @@
 """Memory re-audit fix round R1 (9/29/26) — privacy reads: nothing owner-only
 or out-of-permission reaches a teammate or a shared output.
 
-Each test is a reviewer's failing case (memreaudit/people.md, prompts.md,
-inventory.md, quality.md) turned around:
+Each test is a reviewer's failing case from the memory re-audit of 9/29/26
+(its People, Prompts, Inventory and Quality lenses - published as an
+artifact, the per-lens files never committed) turned around:
 
   * PEOPLE-1   the Account activity log never carries a memory fact's words.
   * PEOPLE-2   comps and voids goals and results (and item waste) need the

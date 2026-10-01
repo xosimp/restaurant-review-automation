@@ -101,7 +101,7 @@ Browser/iOS ──HTTPS──▶ gunicorn (Railway) ──▶ Flask app (hosted_
 
 Around every request, `http_layer` gives it an id (an inbound `X-Request-ID` / `X-Railway-Request-Id` of 8–128 safe characters is kept, else a new one), binds the id, route and method into the log context (`logging_setup.bind`), returns it as `X-Request-ID`, counts it into the in-process latency window and the per-minute rollup buffer, samples any 5xx, compresses and sets cache headers (`no-store` on `/api/`, `/mobile/api/`, `/admin`, `/audit/r/` and `/health`). gunicorn's access log writes the route RULE and the request id, never the raw path (paths carry tokens such as `/reset-password/<token>`).
 
-`client_api.py`'s `_m(name)` helper (`getattr(mobile_api, name)`, unwrapping the auth decorator) is the load-bearing pattern that keeps web and iOS from drifting into two different answers to the same question — see `PROJECT_CONTEXT.md`'s "delegation over duplication" rule.
+`client_api.py`'s `_m(name)` helper (`getattr(mobile_api, name)`, unwrapping the auth decorator) is the load-bearing pattern that keeps web and iOS from drifting into two different answers to the same question — see `README.md` → *API patterns* ("delegation over duplication") rule.
 
 ## Database
 
@@ -410,7 +410,7 @@ Railway runs `railway.json`'s `startCommand` (gunicorn, one worker, four threads
 
 ## Payments — Stripe
 
-`stripe_customer_id` lives on `restaurants`. `emails.create_stripe_checkout` builds a Checkout Session for the setup fee + retainer at signup (amounts always read from `pricing.TIERS`, never hardcoded — see `PROJECT_CONTEXT.md`). `webhook_routes.py` verifies inbound Stripe webhooks (`stripe.Webhook.construct_event`) against `STRIPE_WEBHOOK_SECRET`, read on every request — an empty secret is refused 401 and counted, a bad signature 400 — and de-dupes by event id via `stripe_events_seen` before acting, so a Stripe retry can never double-process a payment event; the ledger row (`admin_events`, one per event id) is written after the duplicate claim. The subscription itself is mirrored locally (`stripe_subscriptions`, `stripe_invoices`) — see *Billing lifecycle* above; the admin console reads the mirror, never Stripe, except the one client's "live" billing read.
+`stripe_customer_id` lives on `restaurants`. `emails.create_stripe_checkout` builds a Checkout Session for the setup fee + retainer at signup (amounts always read from `pricing.TIERS`, never hardcoded — see `README.md` → *Don't touch*). `webhook_routes.py` verifies inbound Stripe webhooks (`stripe.Webhook.construct_event`) against `STRIPE_WEBHOOK_SECRET`, read on every request — an empty secret is refused 401 and counted, a bad signature 400 — and de-dupes by event id via `stripe_events_seen` before acting, so a Stripe retry can never double-process a payment event; the ledger row (`admin_events`, one per event id) is written after the duplicate claim. The subscription itself is mirrored locally (`stripe_subscriptions`, `stripe_invoices`) — see *Billing lifecycle* above; the admin console reads the mirror, never Stripe, except the one client's "live" billing read.
 
 ## Intel module
 
@@ -421,7 +421,7 @@ Railway runs `railway.json`'s `startCommand` (gunicorn, one worker, four threads
 | Touching... | Read first |
 |---|---|
 | Any route in `client_api.py` | Check whether `mobile_api.py` already has the logic — delegate via `_m()` |
-| A new `restaurants` column | The "four-plus-one touch points" rule in `PROJECT_CONTEXT.md` |
+| A new `restaurants` column | The "4 touch points" rule in `CLAUDE.md` (dataclass, migration entry, `update_restaurant` whitelist, `get_restaurant` hydration) |
 | Labor / scheduling | `MODULE_OVERVIEW.md` Labor section + `shift_quality.py`'s module docstring |
 | Ask Cavnar | `ask_cavnar_tools.py`'s `TOOLS` registry (kind: read/action/write) |
 | Memory in a model call | *Memory in model calls* above and `memory_context.py`'s docstring — a new surface goes in `SURFACE_SECTIONS` and is classified shared (`SHARED_SURFACES`) or per login (`tests/test_mem_int_privacy.py`) |

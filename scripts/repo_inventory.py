@@ -8,6 +8,7 @@ instead of a figure that is stale within days.
 
     python3 scripts/repo_inventory.py            # everything but the test count
     python3 scripts/repo_inventory.py --tests    # also collect the test count (~2s)
+    python3 scripts/repo_inventory.py --env      # every environment variable read (docs/ops/ENVIRONMENT.md)
 
 Read-only. Importing the app boots it against a scratch volume; the real
 reviews.db is never opened.
@@ -66,7 +67,35 @@ def model_calls():
     return hits
 
 
+_ENV_RE = re.compile(r"os\.(?:getenv|environ\.get)\(\s*[\"']([A-Z0-9_]+)[\"']\s*(?:,\s*([^)]{0,60}))?\)"
+                     r"|os\.environ\[\s*[\"']([A-Z0-9_]+)[\"']\s*\]")
+
+
+def env_vars():
+    """{name: (default text or "", sorted reader files)} for every environment
+    variable the app and its scripts read - docs/ops/ENVIRONMENT.md's list
+    (tests/test_environment_doc.py holds the doc to it)."""
+    found, default = defaultdict(set), {}
+    for f in _py_files():
+        if f.startswith("ios/"):
+            continue
+        src = open(f, encoding="utf-8", errors="ignore").read()
+        for m in _ENV_RE.finditer(src):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            if "#" in src[line_start:m.start()]:
+                continue                  # quoted in a comment, not read
+            name = m.group(1) or m.group(3)
+            found[name].add(f)
+            if m.group(2) and name not in default:
+                default[name] = m.group(2).strip()
+    return {k: (default.get(k, ""), sorted(v)) for k, v in found.items()}
+
+
 def main():
+    if "--env" in sys.argv:
+        for k, (d, files) in sorted(env_vars().items()):
+            print(f"{k}\t{d}\t{', '.join(files)}")
+        return
     t = tables()
     print(f"tables: {len(t)}")
     print("  " + " ".join(t))

@@ -1,41 +1,125 @@
 # Roadmap — Cavnar AI
 
-A living list of what's open, what's next, and what's deliberately on hold. Update this file when a listed item ships or a new one is committed to — it should stay short enough to read in one pass, not become a second changelog.
+What's open, what's next and what's deliberately on hold. Update it when an
+item ships or a new one is committed to. Keep it short enough to read in one
+pass: it is not a changelog (git is).
+
+Last refreshed 9/30/26.
 
 ## Active client
 
-**Simple EJ's (Erik)** — first paying client, currently the primary test account (schema-identical to any other tenant; nothing special-cased). Still being refined on his real usage: labor thresholds per employee category (Erik to specify exact per-role targets); the RPOWER adapter is built and verified against the vendor's Postman collection — what remains is the static bearer token from Justin (paste in Admin → client → RPOWER token → Verify & save → Sync now) and the customer scope for guest matching; Back Office (Buyers Edge) needs sample exports from his team before the CSV import is built (`docs/plans/BACK_OFFICE_INTEGRATION.md`); the per-role task sheets he asked for are designed and waiting on his five answers (`docs/plans/TASK_SHEETS_PLAN.md`).
+**Simple EJ's (Erik Baylis)** is the first paying client: production
+restaurant 5; restaurant 4 is Will's demo copy.
+- **Live.**
+  - RPOWER (since 9/28/26), with the nightly Daily Sales Report on a
+    4-4-5 fiscal calendar from 12/31/25.
+  - Salaried staff (Erik, Jim Heflin, Anthony Abbott, Andrew Marola, Gabe
+    Huerta) in the owner's labor %.
+  - Task sheets on the staff app.
+- **Waiting on Erik.**
+  - Confirm the period start dates against Back Office.
+  - Send one Back Office export of each kind (items, a count, a recipe, a
+    week of invoices).
+  - Send the manager schedule with him and Jim on it.
+  - Confirm Danielle Benedict.
 
 ## Open / in progress
 
-- **App Store readiness** (audit Sep 7–8 2026): privacy manifest and in-app account-deletion request are done. Still open: final App Store Connect listing copy, a demo-login reviewer account, TestFlight build upload.
-- **Google OAuth verification**: three code-side issues already fixed; a Cloudflare bot-challenge in front of `cavnar.ai` still blocks Google's verification crawler — needs Will to adjust the Cloudflare rule (not a code fix).
-- **Brand identity refresh**: new seal + wordmark shipped across iOS/web/favicons. Still open: refreshed email header logo and Open Graph share image.
-- **Task sheets, phase 1** (`docs/plans/TASK_SHEETS_PLAN.md`): starts once Erik answers the open questions at the end of that plan.
-- **Back Office CSV import** (`docs/plans/BACK_OFFICE_INTEGRATION.md`): starts once his team sends one export each of items, a count, a recipe and a week of invoices.
-- **Repository cleanup, tiers 4–6** (from the Sep 21 architecture audit): the four assets that need an external check before removal, then the architecture items — DDL off request paths, the 34 hand-duplicated web/mobile route pairs, one config module, one model registry, the bound-import migration, the demo-seed and engine extractions.
-- **Apollo.io upgrade**: the hold is lifted — it waited on the Gia Mia follow-up, and Gia Mia is not going to be a client (9/25/26). Decide on its own merits.
+- **Google Business reviews API access.**
+  - Applied 9/30/26 (case 0-4962000041049); the quota is 0 until approved.
+  - Then: enable the Business Profile API (v4), Erik reconnects, and watch
+    the `[GMB]` logs.
+- **RPOWER schedule push.** The preview builds and checks the exact body
+  without sending. A live push needs Will's go-ahead and RPOWER's answers on
+  the open questions.
+- **App Store.** Privacy manifest and in-app account-deletion request done.
+  Still open: the App Store Connect listing copy, the reviewer demo login
+  and a TestFlight upload (`docs/app-store-submission.md`).
+- **Google OAuth verification.** A Cloudflare bot challenge in front of
+  `cavnar.ai` blocked Google's crawler. It needs a Cloudflare rule change,
+  not code (last checked 9/25/26).
+- **Messaging setup.**
+  - The staff-schedule Twilio A2P campaign is not registered yet; owner
+    alerts and sign-in codes are approved.
+  - `CAVNAR_POSTAL_ADDRESS` (a PO box for email footers) is unset.
+- **iPhone parity** for the web work of 9/28–9/30/26:
+  - the Reports tab;
+  - per-person pay rates;
+  - dining sections;
+  - the post-sign-in passkey offer, which needs the
+    `webcredentials:dashboard.cavnar.ai` entitlement (the site already
+    publishes it).
+- **iOS gaps from the 9/3/26 audits** (re-checked 9/30/26):
+  - 3.2: `AskCavnarView` computes `userTextWidth` on every render.
+  - 4.2: foreground refresh exists only on Home and Labor.
+  - 6.4 / 6.5: Reviews, Intel and Marketing have no read cache for offline
+    opens, and Labor shows no staleness notice.
+  - 7.4: four charts carry no accessibility labels (`LaborRibbonChart`,
+    `WeekRadarChart`, `WasteLedgerChart`, `RecoverableGaugeChart`).
+  - 7.7: `Color.cavnarInk3(_ contrast:)` is defined and never used.
+- **Designs written, not built** (`docs/plans/`):
+  - Postgres and more web workers;
+  - a materialised restaurant health row;
+  - the review fetch's AI work on its own queue;
+  - a nonce-based CSP.
+- **Repository cleanup.** The Sep 21 tiers 4–6 landed: `config.py`, one
+  model registry, `demo_seed.py`, and DDL at boot. Still open:
+  - the remaining module-level `from models import ... get_conn` imports
+    (34 modules; move each to a call-time `get_conn` as it is touched);
+  - the hand-duplicated web/mobile route pairs.
+- **Apollo.io upgrade.** No longer held for Gia Mia, who is not becoming a
+  client. Decide on its own merits.
 
-## Recently shipped (most recent first — trim entries older than ~2 months)
+## Recently shipped (newest first; trim entries older than ~2 months)
 
-- Sep 21: repository audit and cleanup tiers 0–3 — the monthly summary emailing daily (fixed), the Reviews diagnosis card that never rendered, the iOS retry-post route, the shadowed robots.txt, one job_cursors schema, the 3-star whitelist; then 111 unused imports, 17 dead names, 15 dead JS functions, 88 dead CSS rules, 7 unused Swift types, a 10 MB portrait, the unused DocuSign package; then six duplicated helper families folded into one definition each; then every reference doc corrected against the code.
-- Sep 21: the Intelligence Engine (`intelligence/`, three learning levels, MIN_COHORT privacy floor, admin Intelligence page, confidence on every Home recommendation); marketing intelligence (post tags, per-dish lift, beyond-sales attribution, the weakest-post read); RPOWER as a full `pos.py` provider (menu discovery, item sales, guest matching via `pos.supports`); Home reordered on web and iOS.
-- Sep 19–20: the moat audit's top 25 (decision records, automation with undo windows, trust switches, time off, covers, recipe drafts, the AI-visibility queries); the retention, automation and workflow audits; durable login throttling, account freeze, the support role, encrypted credentials at rest, the restore drill.
-- Sep 10–18: Account settings buildout (Face ID lock, sign-in history, 2FA backup codes, team invite/manage/re-role, data export, close-account flow, test digest, marketing opt-out, timezone, Help/FAQ on both platforms); the staff portal with PIN identity; APNs push delivery working in production.
-- Ask Cavnar: dynamic opening briefing (no model call), Shift Quality + team roster + alerts exposed to the assistant, durable cross-conversation memory (`remember`/`forget`), sibling-location awareness, data-freshness labeling, role-scoped answers and the cross-module business snapshot.
-- Labor module visual pass: removed redundant header text, fixed header-wrap alignment (word-spacing over margin, so a wrap never indents the status badge), widened the squeezed title column, moved schedule/upload actions to sit with the Schedule section, added a colored labor % badge, enlarged body text below the AI insight box, dark-mode small text realigned to iOS's sand tone.
-- Shift Quality Engine: built out fully (11 dimensions, confidence tracking, what-if swap evaluation, per-restaurant editable weights), audited twice, all findings from both passes closed.
-- Simple EJ's set up as the live test/demo account; manual + automatic contract-send confirmed working.
-- Sales-audit tool built for in-person pitches (`/admin/audits`).
-- DocuSign contract flow went live in production; full 1–4 module pricing ladder consolidated into `pricing.py` as the single source Stripe/DocuSign/the website all read.
-- `cavnar.ai` deploy bug fixed (was serving the source tree, never actually redeploying on push) and the reviews database moved onto the Railway persistent volume.
+- **9/30.**
+  - The Reports tab and a figure strip per night.
+  - Hourly pay per person: a $0 POS punch is costed at that person's own
+    rate.
+  - Labor % includes salaries for the owner; headcount is recorded per
+    night; covers come from POS guest counts.
+  - Passkeys and Sign in with Apple on the web.
+  - A WebGL sign-in background with no banding.
+  - Evening CI failures fixed at their root (UTC against local dates).
+- **9/29.**
+  - A ticket-level POS archive with payments, punches and prices.
+  - POS job lists mirrored into who can work what.
+  - The RPOWER schedule push preview.
+  - Memory and learning audits: 86 items, then a 77-item re-audit fix
+    round.
+- **9/28.**
+  - The admin console rebuilt into five areas (Overview, Operations,
+    Customers, Engineering, Analytics).
+  - Salaried staff; Campaign Studio (text, email and social from one goal).
+  - RPOWER live.
+  - The DSR's first nights at Simple EJ's.
+- **9/26–9/27.**
+  - Schedule Studio, a full-page scheduling app; overtime rebalancing.
+  - The notifications and messages redesign; owner-chosen draft and order
+    days.
+- **9/22–9/25.**
+  - The edge-case audit fix rounds.
+  - Recommendation ROI (the ledger learns, ranks and answers).
+  - The Benchmark Engine and peer groups.
+  - The Daily Sales Report engine (`dsr/`, phases 1–6).
+- **9/21.**
+  - Repository audit and cleanup.
+  - The Intelligence Engine (`intelligence/`).
+  - Recipes from the pasted menu.
+  - M/D/YY dates everywhere.
 
 ## Deliberately not doing (yet)
 
-- Self-serve account deletion — service is contract-based (DocuSign), so cancellation goes through Will, not a button.
-- A second LLM provider for anything but AI-visibility checks (Perplexity stays scoped to that one job).
-- A schema migration/version-table system — additive `ALTER TABLE` has been sufficient at current scale; revisit only if a destructive schema change becomes unavoidable.
+- **Self-serve account deletion.** Service is contract-based (DocuSign), so
+  cancelling goes through Will, not a button.
+- **A second LLM provider** for anything but the AI-visibility checks
+  (Perplexity stays scoped to that one job).
+- **A schema migration or version-table system.** Additive `ALTER TABLE`
+  is enough at this scale; revisit only if a destructive change becomes
+  unavoidable.
+- **More than one gunicorn worker**, until the process-local state in
+  `docs/plans/POSTGRES_AND_WORKERS_PLAN.md` moves into the database.
 
-## Reference docs this roadmap assumes you've read
+## Reference
 
-The index in `CLAUDE.md`.
+`README.md` is the way in. CLAUDE.md indexes every reference doc.

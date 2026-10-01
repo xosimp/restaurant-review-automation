@@ -18,6 +18,7 @@ Nothing here runs in the request path. Who runs each one:
 | `seed_simple_ejs_reviews.py` | one-off, kept for the record | the seed used for Simple EJ's review history |
 | `load_checklists.py` | by hand on production (railway ssh), after a client's `docs/clients/<client>/checklists.json` changes | loads its sheets onto that restaurant's staff checklists; dry run unless `--apply`, idempotent |
 | `loadtest_staff_signin.py` | by hand | load test for the staff PIN sign-in |
+| `schedule_eval.py` | by hand, before trusting any change to the Shift Quality scorer or the optimizer | replays saved schedules through today's scoring code (stored score vs today's; `--optimize` the repair loop, `--solve` the assignment solver); reads the local database only, no model call, nothing saved |
 | `rollback_employee_auth.py` | by hand, only if the employee-auth rollout has to be reversed | the rollback |
 
 `__init__.py` exists so `docusign_create_template.py` can import `build_contract_pdf`.

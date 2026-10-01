@@ -179,6 +179,76 @@ Two halves:
 
 ---
 
+## Daily Sales Report and Reports
+
+The nightly End-of-Day Closeout & Daily Sales Report (`dsr/`; design and
+build history in `docs/plans/DSR_ENGINE_PLAN.md`). **One pipeline, one fact
+snapshot, many views.** A trigger collects deterministic FACTS, block by
+block, each with a status and a source. One AI narrative reads only those
+facts. Every view renders from the same stored snapshot: owner, manager,
+the weekly grid, email, push, the morning brief and Ask.
+
+**The pipeline.**
+- `pipeline.py` is the nightly stage machine. `run_night` handles one
+  restaurant-night; `run_sweep` is the scheduler's entry, claimed per 10
+  minutes; `start_manual` is the "Close day" button. A night moves
+  scheduled → awaiting close → collecting → writing → final, or provisional
+  when a block is still awaiting at the deadline. A night completed later is
+  version 2, shown as "Updated".
+- `store.py` keeps the reports (one row per restaurant, business date and
+  version), their stages and facts, and the searchable `dsr_metrics`.
+- `common.py` holds the business date (a 1am close belongs to the night
+  before) and `local_bounds` / `utc_bounds`, because rows are stamped on two
+  clocks.
+
+**The blocks.** Each is `collect(ctx) -> block`, makes no model call, and
+reports a status instead of a zero:
+
+| Block | What it reads |
+|---|---|
+| `block_sales.py` | The POS night (`pos.fetch_day_sales`) against yesterday, last week, last year, the forecast and the budget |
+| `block_labor.py` | `labor_daily_history`, overtime, the evening split, attendance; salaried pay for the owner (`access._live_salaries`) |
+| `block_food.py` | Theoretical food cost from recipes × dishes sold, plus waste |
+| `block_reviews.py` | The night's reviews and what's owed; the guest score over the trailing 7 days |
+| `block_marketing.py` | What went out that night and what it did, where measured |
+| `block_intel.py` | Weather (an NWS forecast, labelled so), events, competitor moves |
+| `block_closeout.py` | The manager's own close-out, verbatim and attributed |
+
+**Around the blocks.**
+- `narrative.py` makes the one model call: `write(ctx, facts)` with the
+  prompt from `build_prompt`. Every figure is checked against the facts
+  (`PROMPT_LIBRARY.md`).
+- `scorecard.py` is "Did we win today?": a verdict, an overall score out of
+  100, wins and risks. Deterministic.
+- `kpis.py` sets each figure beside its direction, its best or worst in
+  weeks, its target and fair peers.
+- `predictions.py` and `tomorrow.py` are the next night's forecast and the
+  claims tomorrow's report will grade.
+- `access.py` is who sees what: one snapshot, an owner view and a manager
+  view (owner-only keys such as `salaried*` and the budget).
+  `access.summary` builds a list row's verdict, net and `list_stats` (the
+  Reports list's figures).
+- `deliver.py` sends one email and push per night, and holds pushes through
+  quiet hours.
+- `memory.py` covers Ask's `read_dsr` / `find_days` / `read_week` /
+  `read_period`, last night in Ask's context, and the morning brief's
+  "yesterday".
+- `rollup.py` builds the week and the fiscal period in the shape of Erik's
+  sheet, and `xlsx.py` exports it with no dependency.
+- `fiscal.py` is the restaurant's fiscal calendar (week start, Period 1 /
+  Week 1, a scheme of "4x13", "445", "454" or "544").
+- `backfill.py` fills past nights' figures from the POS for the days before
+  the report started. `history_import.py` brings Last Year in from the
+  owner's old workbooks.
+
+**Surfaces.**
+- On the web, the Reports tab beside Home (`#dsr/list`): every night newest
+  first, each with its verdict, net and a strip of figures (vs last week,
+  vs forecast, labor %, guests, average check, overtime). Night, Week and
+  Period views; Home's status line links to last night.
+- On iOS, the Daily Report.
+- Routes are in `API_REFERENCE.md` → *The nightly DSR*.
+
 ## Ask Cavnar
 
 **Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry — `len(TOOLS)` is the count), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing), `ask_conversations.py` (the rolling chat summary, past chats, what the last answer read), `owner_memory.py` (what the owner tells Cavnar AI, typed).

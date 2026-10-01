@@ -400,7 +400,8 @@ def test_a_manager_can_still_upload_shifts(world):
 
 # ── TripAdvisor / third-party review import (appendix #13) ──────────────────
 #
-# Found while writing these (not in SEC.md), both fixed with DATA-21:
+# Found while writing these (not in the audit's SEC area,
+# docs/audits/2026-09-22-edge-case-audit.md), both fixed with DATA-21:
 # reviews.platform's CHECK refused 'tripadvisor'/'doordash'/'ubereats', so
 # every imported row was rejected while the route answered ok=True
 # (models._migrate_reviews_platform_check widens it), and the route's

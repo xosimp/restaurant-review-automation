@@ -1,6 +1,6 @@
 # Testing — Cavnar AI
 
-About 160 test files and 3,400 tests (`python3 -m pytest --collect-only -q | tail -1` is the count; do not type one into a doc), about 3 minutes to run in full in parallel (well over 10 serially — never run it without `-n auto`). **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing 10+ minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need 1,900 tests re-run to prove it's safe.
+The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail -1` (or `python3 scripts/repo_inventory.py --tests`) is the count. A full run in parallel takes several minutes (about 8 on a laptop at 625 files, 9/30/26) and far longer serially — never run it without `-n auto`. **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing many minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need thousands of tests re-run to prove it's safe.
 
 ## Default verification (most tasks)
 
