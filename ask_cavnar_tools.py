@@ -2047,8 +2047,20 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
         item = {"what": u["describe"], "date": e["event_date"], "day": mdy(e["event_date"]),
                 "home_away": e.get("home_away"), "prime_time": bool(e.get("is_primetime")),
                 "kickoff": e.get("kickoff_local"), "season_type": e.get("season_type")}
+        # A frequent series' game this restaurant hasn't measured to matter
+        # (a Blackhawks or Bulls night) is context: on the calendar, never
+        # the night to plan around (engine.headline, phase 4).
+        if not engine.headline(restaurant_id, e):
+            item["context_only"] = True
         if u.get("effect"):
             item["measured_here"] = u["effect"]["basis"]
+        else:
+            # Other restaurants that follow the team, behind the privacy
+            # floor (event_intel.peers, phase 4): theirs, never this one's.
+            from event_intel import peers as _peers
+            pe = _peers.peer_effect(restaurant_id, e)
+            if pe:
+                item["other_restaurants"] = pe["text"]
         last = engine.last_like(restaurant_id, e)
         if last:
             item["last_like_it"] = {"what": last["describe"], "net": last["net"],
@@ -2108,13 +2120,21 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     from event_intel import gameday
     out["season_so_far"] = [sv for sv in (gameday.season_value(restaurant_id, f["series_id"], today=today)
                                           for f in store.follows(restaurant_id)) if sv]
+    # Service and wait complaints around game nights (phase 4): a lean by
+    # posted date, said only past its floors.
+    from event_intel import reviews as _ev_reviews
+    gr = _ev_reviews.game_night_reviews(restaurant_id, today=today)
+    if gr:
+        out["reviews_on_game_nights"] = {k: gr[k] for k in ("games", "game_reviews", "game_pct", "other_reviews",
+                                                            "other_pct", "lean", "text", "basis")}
     # What this login may read (audit 10/1/26): the dollars, staffing and the
     # item mix follow the Labor view as the brief's do, the ordering bump the
     # Food Cost view, the guest-text timing Marketing.
     denied = _denied(_viewer)
     if "labor" in denied:
         for item in ahead:
-            for k in ("last_like_it", "staffing", "rush", "items_sold", "order_more", "measured_here"):
+            for k in ("last_like_it", "staffing", "rush", "items_sold", "order_more", "measured_here",
+                      "other_restaurants"):
                 item.pop(k, None)
         for r in recent:
             for k in ("net", "usual_same_weekday", "lift_pct", "covers"):
@@ -2126,6 +2146,8 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     if "marketing" in denied:
         for item in ahead:
             item.pop("reach_guests", None)
+    if "reviews" in denied:
+        out.pop("reviews_on_game_nights", None)
     out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
                     "weeks before (event_memory); a game night with no sales on file is not measured")
     return out
@@ -3212,12 +3234,16 @@ TOOLS = [
         "spec": {
             "name": "read_events",
             "description": (
-                "GAMES AND EVENTS THIS RESTAURANT FEELS (the Event Intelligence catalog: the Chicago Bears and "
+                "GAMES AND EVENTS THIS RESTAURANT FEELS (the Event Intelligence catalog: the Bears, Blackhawks, Bulls, Fire, a White Sox playoff run and "
                 "any team, festival or local event it follows): the next ones with kickoff, home or road, prime "
                 "time and TV; what games like each one did HERE, measured; the last game of the same kind with "
                 "what that night sold, its covers, labor % and who was on the clock by role; and the recent "
-                "games' nights. Call it for 'is there a Bears game this week', 'should we add a bartender "
-                "Sunday', 'how did we do compared to our last Bears home game', 'what does a game do to us'."),
+                "games' nights. An item marked context_only is a frequent series' game (Blackhawks, Bulls) this "
+                "restaurant has not measured to matter: name it, never plan staff or stock around it. "
+                "reviews_on_game_nights is the share of service/wait reviews posted around game nights against "
+                "other days, by posted date — a lean, never proof. Call it for 'is there a Bears game this week', "
+                "'should we add a bartender Sunday', 'how did we do compared to our last Bears home game', 'what "
+                "does a game do to us', 'do game nights hurt our service reviews'."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "days": {"type": "integer", "description": "How far ahead. Default 21, at most 120."},
                 "past": {"type": "integer", "description": "Recent games per team to include. Default 4, at most 12."}}},

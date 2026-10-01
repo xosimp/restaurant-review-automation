@@ -388,7 +388,15 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
     if not ids:
         return []
     marks = ",".join("?" for _ in ids)
-    sql = (f"SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league FROM catalog_events e "
+    # `series_games`: the games in this one's series and season (a Bulls
+    # season ~85, a Bears season 20, a playoff run a handful). A date's
+    # events come preseason last, then rarest first (a Bears game before a
+    # Blackhawks game the same day), then home before road, then by start —
+    # so a reader taking a date's first event takes the one that matters
+    # (Event Intelligence phase 4).
+    sql = (f"SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league, "
+           f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season) "
+           f"AS series_games FROM catalog_events e "
            f"JOIN event_series s ON s.id=e.series_id WHERE e.series_id IN ({marks}) AND e.event_date IS NOT NULL")
     args = list(ids)
     if start:
@@ -399,7 +407,10 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
         args.append(str(end)[:10])
     conn = get_conn(db_path)
     try:
-        rows = [dict(r) for r in conn.execute(sql + " ORDER BY e.event_date, e.kickoff_local", args).fetchall()]
+        rows = [dict(r) for r in conn.execute(
+            sql + " ORDER BY e.event_date, CASE e.season_type WHEN 'preseason' THEN 1 ELSE 0 END, series_games, "
+                  "CASE e.home_away WHEN 'home' THEN 0 ELSE 1 END, "
+                  "e.kickoff_local", args).fetchall()]
     finally:
         conn.close()
     for r in rows:

@@ -248,13 +248,13 @@ def send_plan(e):
         mins = int(lead.total_seconds() // 60)
         h, m = divmod(mins, 60)
         span = (f"{h} hour{'s' if h != 1 else ''}" if h else "") + (f"{' ' if h else ''}{m} minutes" if m else "")
-        lead_words = "the evening before" if lead >= timedelta(hours=12) else f"{span} before kickoff"
+        lead_words = "the evening before" if lead >= timedelta(hours=12) else f"{span} before {engine.start_word(e)}"
         email_day = day - timedelta(days=1)
         return {"text_at": at.isoformat(timespec="minutes"),
                 "text_words": f"{at.strftime('%A')} around {_clock_dt(at)}, {lead_words}",
                 "email_by": email_day.isoformat(),
                 "email_words": f"{email_day.strftime('%A')} {_mdy(email_day.isoformat())}, the day before",
-                "basis": (f"a starting rule — the text {TEXT_LEAD_HOURS} hours before kickoff inside the "
+                "basis": (f"a starting rule — the text {TEXT_LEAD_HOURS} hours before {engine.start_word(e)} inside the "
                           f"{gm.guest_sms_window_label()} texting window, the email the day before; Cavnar AI "
                           f"hasn't measured send times here yet")}
     except Exception as ex:
@@ -351,7 +351,8 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
         skip = store.dismissed(restaurant_id, db_path=db_path)
         rows = [e for e in store.events_for([f["series_id"] for f in followed], today,
                                             today + timedelta(days=ORDER_WINDOW_DAYS), db_path=db_path)
-                if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip]
+                if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip
+                and engine.headline(restaurant_id, e, db_path=db_path)]
         if not rows:
             return None
         e = rows[0]
@@ -419,7 +420,8 @@ def tomorrows_games(restaurant, today, db_path=store.DB_PATH) -> list:
     followed = store.follows(restaurant.id, db_path=db_path)
     skip = store.dismissed(restaurant.id, db_path=db_path)
     return [e for e in store.events_for([f["series_id"] for f in followed], tmr, tmr, db_path=db_path)
-            if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip]
+            if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip
+            and engine.headline(restaurant.id, e, db_path=db_path)]
 
 
 def push_for(restaurant, today, db_path=store.DB_PATH, events=None):

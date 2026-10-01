@@ -216,6 +216,19 @@ deleted restaurant's kept rows keep the labels they had.
 | `jobs.py` | — | `run_features()` (bounded, cursor-resumable; writes the DNA row beside the features), `run_features_backfill()`, `run_learning()`; `excluded_learning_ids` / `learning_since_by_id` / `before_learning` / `learning_since_week` (who and what may teach); `learning_labels`; `purge_google_pooled` |
 | `provenance.py` | all | the Google user-data rule and its trace: `google_connected_ids`, `pooled_features`, `review_derived`, `review_metric`, `pooled_row_excluded` (the admin calibrations) |
 
+### Game effects across restaurants (`event_intel.peers`, 10/1/26)
+
+What a team's games did at OTHER restaurants that follow it, for a restaurant
+that has not measured games like the next one yet: each follower counted once
+by its own measured median for that side (home or road, preseason apart),
+only restaurants that may teach (`jobs.real_restaurant_ids`), the viewer's
+whole organisation left out (`privacy.org_map`), at least `MIN_COHORT`
+restaurants from `MIN_ORGS` organisations with none over `MAX_ORG_SHARE`,
+rounded to 5 points and passed through `assert_anonymous`. Computed on
+request (memoised an hour per series, side and viewer organisation), said
+as theirs in the brief's game alert and Ask's `read_events`, and never
+applied to a forecast, a staffing plan or a push.
+
 ## Background jobs
 
 - **`intelligence_features`** nightly at 3am server time: for each active

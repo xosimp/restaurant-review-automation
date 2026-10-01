@@ -69,7 +69,8 @@ def _same_class(e, g):
 
 def usual_nights(restaurant_id, day, db_path=store.DB_PATH) -> list:
     """ISO dates of the ordinary same weekdays in the BASELINE_WEEKS before
-    `day`: every night event_memory flags is left out."""
+    `day`: every night event_memory flags is left out, except a frequent
+    series' game it has not measured to matter (ordinary_nights)."""
     import event_memory
     day = _d(day)
     weeks = getattr(event_memory, "BASELINE_WEEKS", 8)
@@ -78,7 +79,11 @@ def usual_nights(restaurant_id, day, db_path=store.DB_PATH) -> list:
         flags = event_memory.flags_for(restaurant_id, same, db_path=db_path)
     except Exception:
         flags = {}
-    return [d.isoformat() for d in same if not (flags.get(d.isoformat()) or [])]
+    # Ordinary as event memory counts it: a frequent series' unmeasured game
+    # leaves its night in (event_memory.ordinary_nights, phase 4).
+    ok = event_memory.ordinary_nights(restaurant_id, {d.isoformat(): flags.get(d.isoformat()) for d in same},
+                                      db_path=db_path)
+    return [d.isoformat() for d in same if d.isoformat() in ok]
 
 
 def usual_net(restaurant_id, day, db_path=store.DB_PATH):
@@ -281,16 +286,16 @@ def _span(h):
     return f"{a.rstrip('apm') if a[-2:] == b[-2:] else a}–{b}"
 
 
-def _offset_words(off):
+def _offset_words(off, word="kickoff"):
     if off == 0:
-        return "the kickoff hour"
+        return f"the {word} hour"
     n = abs(off)
     count = "the hour" if n == 1 else f"{('two', 'three', 'four')[n - 2] if n <= 4 else n} hours"
-    return f"{count} {'before' if off < 0 else 'after'} kickoff"
+    return f"{count} {'before' if off < 0 else 'after'} {word}"
 
 
-def _offsets_words(lo, span):
-    return _offset_words(lo) if not span else f"{_offset_words(lo)} or {_offset_words(lo + span)}"
+def _offsets_words(lo, span, word="kickoff"):
+    return _offset_words(lo, word) if not span else f"{_offset_words(lo, word)} or {_offset_words(lo + span, word)}"
 
 
 def _hours_span(h1, h2):
@@ -343,10 +348,10 @@ def rush(restaurant_id, e, db_path=store.DB_PATH):
             text = None
         elif pattern is not None:
             text = (f"On your last {len(out)} {engine.kind_words(e)} the biggest jump over a usual night came "
-                    f"{_offsets_words(pattern, span)}.")
+                    f"{_offsets_words(pattern, span, engine.start_word(e))}.")
         else:
             text = (f"On {_mdy(last['date'])} the biggest jump over a usual {weekday} came {_span(last['peak_hour'])}, "
-                    f"{_offset_words(last['offset'])} ({engine._clock(last['kickoff'])}): {_money(last['game'])} "
+                    f"{_offset_words(last['offset'], engine.start_word(e))} ({engine._clock(last['kickoff'])}): {_money(last['game'])} "
                     f"against {_money(last['usual'])}.")
         return {"games": out, "n": len(out), "pattern_offset": pattern, "pattern_span": span, "text": text,
                 "basis": "checks on file by the hour they opened, against the median of the same hour on ordinary "
@@ -367,7 +372,8 @@ def game_night(restaurant_id, day, net=None, guests=None, labor_pct=None, db_pat
         sports = [c for c in engine.context_for(restaurant_id, day, db_path=db_path)
                   if c["event"].get("category") == "sports"
                   and c["event"].get("status") not in ("cancelled", "postponed")
-                  and c["event"]["id"] not in store.dismissed(restaurant_id, db_path=db_path)]
+                  and c["event"]["id"] not in store.dismissed(restaurant_id, db_path=db_path)
+                  and engine.headline(restaurant_id, c["event"], db_path=db_path)]
         if not sports:
             return None
         c = sports[0]
@@ -459,7 +465,8 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
         skip = store.dismissed(restaurant_id, db_path=db_path)
         rows = [e for e in store.events_for([f["series_id"] for f in followed], today,
                                             today + timedelta(days=ALERT_DAYS), db_path=db_path)
-                if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip]
+                if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip
+                and engine.headline(restaurant_id, e, db_path=db_path)]
         if not rows:
             return None
         e = rows[0]
@@ -488,6 +495,12 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                                  f"{_d(last['event']['event_date']).strftime('%A')} — one night, not enough to plan on.")
                 else:
                     parts.append(f"No {side} game measured here yet, so plan a usual {weekday}.")
+                # Other restaurants' nights, behind the privacy floor (phase
+                # 4): said as theirs, never planned on.
+                from event_intel import peers
+                pe = peers.peer_effect(restaurant_id, e, db_path=db_path)
+                if pe:
+                    parts.append(pe["text"] + ".")
         if sees_labor:
             st = staffing(restaurant_id, e, db_path=db_path)
             if st and st.get("recommend") and "staffing" not in said:
@@ -497,7 +510,7 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 kick = int(str(e["kickoff_local"])[:2])
                 lo, sp = rush_out["pattern_offset"], rush_out.get("pattern_span") or 0
                 parts.append(f"Expect the jump around {_hours_span(kick + lo, kick + lo + sp)} "
-                             f"({_offsets_words(lo, sp)}, as on your last {rush_out['n']}).")
+                             f"({_offsets_words(lo, sp, engine.start_word(e))}, as on your last {rush_out['n']}).")
         # Phase 3: what games like it sold (a prep plan past the floor, the
         # last one as a fact below it) and when to reach guests.
         from event_intel import gameday

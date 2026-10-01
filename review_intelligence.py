@@ -606,7 +606,17 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     if it were this restaurant's numbers is worse than saying nothing.
     """
     ctx = {"labor": None, "food_cost": None, "waste": None, "marketing": None, "guests": None,
-           "notes": []}
+           "games": None, "notes": []}
+
+    # Service and wait complaints against this restaurant's game nights
+    # (Event Intelligence phase 4): only a lean past its floors is evidence.
+    try:
+        from event_intel import reviews as _ev_rev
+        gr = _ev_rev.game_night_reviews(restaurant_id, db_path=db_path)
+        if gr and gr.get("lean"):
+            ctx["games"] = gr
+    except Exception:
+        pass
 
     # The guests the nightly reports measured (re-audit 9/29/26,
     # CROSSMODULE-18): "busier" and "worse" are told apart by a count, not
@@ -1199,7 +1209,7 @@ EVIDENCE RULES — these bound what you may claim:
 - `evidence_review_ids` MUST be ids listed above. Never write an id that is not on this page. An id you did not see is a fabricated citation.
 - State no figure — a dollar amount, a percentage, a count, a rating — that does not appear above.
 - Name a person, a dish, a role, a shift or a weekday ONLY if it appears above. If no dish is listed, your cause may not turn on a dish.
-- You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED" (the "Guests" line is module "guests") or to the "Shifts" (module "shifts"), "Worked" (module "worked") or "Nightly reports" (module "nightly") lines under "WHAT CHANGED ON THOSE SHIFTS" only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
+- You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED" (the "Guests" line is module "guests", the "Game nights" line module "games") or to the "Shifts" (module "shifts"), "Worked" (module "worked") or "Nightly reports" (module "nightly") lines under "WHAT CHANGED ON THOSE SHIFTS" only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
 - A schedule edit, an event, a guest text or a close-out note on the same shifts is something that moved WITH the complaints: say they coincide, never that one caused the other. Quote no figure from a close-out note.
 - Correlation in a 90-day window is not proof. If the reviews and a figure moved together, say they moved together; do not say one caused the other.
 - `confidence` is "high" only when the complaints are specific AND concentrated AND a figure from another system points the same way. It is "low" when you are reasoning mostly from the theme name.
@@ -1211,7 +1221,7 @@ Return this exact shape:
   "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
   "what_would_confirm": "one concrete thing the owner could check or observe this week that would tell the two apart, 1 sentence",
   "evidence_review_ids": [ids from above that this cause rests on, 2-6 of them],
-  "operational_evidence": [{{"module": "labor|food_cost|waste|marketing|guests|shifts|worked|nightly", "metric": "what it is", "value": "the figure exactly as given above"}}],
+  "operational_evidence": [{{"module": "labor|food_cost|waste|marketing|guests|games|shifts|worked|nightly", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
   "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
@@ -1322,6 +1332,18 @@ def _operational_lines(ctx) -> dict:
     g = ctx.get("guests")
     if g:
         lines["guests"] = guests_line(g)
+    gm = ctx.get("games")
+    if gm and gm.get("lean"):
+        lines["games"] = OperationalLine(
+            f"- Game nights: {gm['game_pct']}% of reviews posted on a game day or the {gm['window_days']} days "
+            f"after mention service or the wait, against {gm['other_pct']}% on other days ({gm['game_reviews']} "
+            f"and {gm['other_reviews']} reviews; posted dates, not visit dates)",
+            {"game_pct": op_field("service/wait share of game-night reviews", gm["game_pct"], "pct",
+                                  display=f"{gm['game_pct']}%"),
+             "other_pct": op_field("service/wait share of other days' reviews", gm["other_pct"], "pct",
+                                   display=f"{gm['other_pct']}%"),
+             "game_reviews": op_field("reviews around game nights", gm["game_reviews"], "count", evidence=False),
+             "other_reviews": op_field("reviews on other days", gm["other_reviews"], "count", evidence=False)})
     return lines
 
 
@@ -1370,7 +1392,9 @@ def _operational_block(ctx) -> str:
 # "worked": the shifts staff actually worked on the complaint's slice
 # (shift_facts), "nightly": the nightly reports' no-shows, late arrivals and
 # guests on the slice's nights (dsr_metrics) — CROSSMODULE-9.
-OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing", "shifts", "guests", "worked", "nightly")
+# "games": service and wait complaints around this restaurant's game nights
+# (event_intel.reviews, Event Intelligence phase 4).
+OPERATIONAL_MODULES = ("labor", "food_cost", "waste", "marketing", "shifts", "guests", "worked", "nightly", "games")
 
 
 # ── The complaint's own slice (memory audit 9/29/26, "diagnosis_slice") ────

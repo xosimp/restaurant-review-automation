@@ -72,6 +72,15 @@ def label_for(e) -> str:
     return e.get("opponent") or e.get("series_name") or short
 
 
+# What a game's start is called, by league ("two hours before puck drop").
+START_WORDS = {"NFL": "kickoff", "MLS": "kickoff", "NHL": "puck drop", "NBA": "tip-off", "WNBA": "tip-off",
+               "MLB": "first pitch"}
+
+
+def start_word(e) -> str:
+    return START_WORDS.get(str((e or {}).get("league") or "").upper(), "the start")
+
+
 def _clock(hhmm):
     if not hhmm:
         return None
@@ -101,6 +110,8 @@ def describe(e, with_date=True) -> str:
         bits.append(e["broadcast"])
     if (e.get("attributes") or {}).get("holiday"):
         bits.append(e["attributes"]["holiday"])
+    if (e.get("attributes") or {}).get("if_necessary"):
+        bits.append("if necessary")
     return " · ".join(bits)
 
 
@@ -359,6 +370,31 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH):
                     "low_pct": round(min(lifts), 1), "high_pct": round(max(lifts), 1), "confounded": mixed,
                     "dates": [g["event"]["event_date"] for g in use], "basis": basis}
     return None
+
+
+def headline(restaurant_id, e, db_path=store.DB_PATH) -> bool:
+    """Whether a game earns an owner's attention unasked — the brief's alert,
+    the report's games ahead, the game-night line, Food Cost's game week:
+    any game of a series smaller than event_memory.FREQUENT_SERIES_GAMES (a
+    Bears season, a playoff run), and a frequent series' game (the Bulls,
+    the Blackhawks: most winter nights) only once games like it measured
+    here past event_memory.EFFECT_FLOOR_PCT. Until then a frequent series'
+    game is context: it is on the calendar, Ask and the day's events, and it
+    is measured every night it happens (phase 4)."""
+    import event_memory
+    n = e.get("series_games")
+    if n is None:
+        conn = store.get_conn(db_path)
+        try:
+            r = conn.execute("SELECT COUNT(*) AS n FROM catalog_events WHERE series_id=? AND season=?",
+                             (e.get("series_id"), e.get("season"))).fetchone()
+            n = int(r["n"] or 0) if r else 0
+        finally:
+            conn.close()
+    if int(n or 0) < event_memory.FREQUENT_SERIES_GAMES:
+        return True
+    eff = effect_for(restaurant_id, e, db_path=db_path)
+    return bool(eff and abs(float(eff.get("median_lift_pct") or 0)) >= event_memory.EFFECT_FLOOR_PCT)
 
 
 def last_like(restaurant_id, e, db_path=store.DB_PATH):

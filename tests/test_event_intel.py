@@ -23,7 +23,7 @@ LOS_ANGELES = (34.0522, -118.2437)
 
 
 @pytest.fixture
-def db(db_path, monkeypatch):
+def db(db_path, monkeypatch, tmp_path):
     real = models.get_conn
 
     def conn(*a, **k):
@@ -37,7 +37,28 @@ def db(db_path, monkeypatch):
     import weather
     monkeypatch.setattr(weather, "forecast_for_day", lambda *a, **k: None)
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+    bears_only(db_path, monkeypatch, tmp_path / "seasons")
     return db_path
+
+
+def bears_only(db_path, monkeypatch, tmp_dir):
+    """These tests are about one series: the Bears. The other bundled seasons
+    (phase 4) are taken out of the catalog and the bundled folder."""
+    import os
+    import shutil
+    from event_intel import store as _st
+    keep = "nfl-chicago-bears-2026.json"
+    os.makedirs(str(tmp_dir), exist_ok=True)
+    shutil.copy(os.path.join(_st.SEASONS_DIR, keep), os.path.join(str(tmp_dir), keep))
+    monkeypatch.setattr(_st, "SEASONS_DIR", str(tmp_dir))
+    c = models.get_conn(db_path)
+    try:
+        c.execute("DELETE FROM catalog_events WHERE series_id IN (SELECT id FROM event_series WHERE slug != 'nfl-chicago-bears')")
+        c.execute("DELETE FROM event_follows WHERE series_id IN (SELECT id FROM event_series WHERE slug != 'nfl-chicago-bears')")
+        c.execute("DELETE FROM event_series WHERE slug != 'nfl-chicago-bears'")
+        c.commit()
+    finally:
+        c.close()
 
 
 def _restaurant(db, at=ST_CHARLES, name="EJ Co"):

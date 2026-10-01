@@ -543,7 +543,7 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
     conn = get_conn(db_path)
     try:
         try:
-            for r in conn.execute(f"SELECT date, kind, label, covers, lift_pct, source FROM demand_signals "
+            for r in conn.execute(f"SELECT date, kind, label, covers, lift_pct, source, ref FROM demand_signals "
                                   f"WHERE restaurant_id=? AND kind='event' AND date IN ({marks})",
                                   (restaurant_id, *isos)).fetchall():
                 if str(r["source"] or "") == "campaign":
@@ -559,7 +559,7 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
                 for lab in split_labels(r["label"]):
                     out[str(r["date"])[:10]].append({"kind": "event", "label": lab, "raw": r["label"],
                                                      "source": "demand_signals", "owner_lift_pct": r["lift_pct"],
-                                                     "covers": r["covers"]})
+                                                     "covers": r["covers"], "ref": r["ref"]})
         except Exception as e:
             log.warning("event_memory: events unreadable rid=%s: %s", restaurant_id, e)
         for d, msgs in _campaign_nights(conn, restaurant_id, isos[0], isos[-1]).items():
@@ -597,6 +597,69 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
             out[d].append({"kind": "payday", "label": lab, "raw": text, "source": "calendar",
                            "owner_lift_pct": None, "covers": None})
     return out
+
+
+# ── which flagged nights still count as ordinary ───────────────────────────
+
+# A frequent series (an NBA or NHL season: 40-odd home games and as many
+# road) flags most winter nights, and a baseline that leaves every flagged
+# night out ran out of ordinary nights (Event Intelligence phase 4). A
+# catalog game of a series with at least FREQUENT_SERIES_GAMES games in its
+# season leaves its night IN the baseline until this restaurant has measured
+# games like it to matter (measured_effect applies, past EFFECT_FLOOR_PCT);
+# from then on its nights are left out like any event. The Bears (17 games)
+# and every owner-listed event are left out as before.
+FREQUENT_SERIES_GAMES = 30
+
+
+def _series_sizes(refs, db_path=None) -> dict:
+    """{ref: games in that game's series and season, every type} for catalog refs
+    ("event:<id>"). Never raises."""
+    ids = []
+    for ref in refs:
+        try:
+            ids.append(int(str(ref).split(":", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    if not ids:
+        return {}
+    try:
+        conn = get_conn(db_path)
+        try:
+            marks = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"SELECT e.id, (SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id "
+                f"AND o.season=e.season) AS n "
+                f"FROM catalog_events e WHERE e.id IN ({marks})", ids).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    return {f"event:{r['id']}": int(r["n"] or 0) for r in rows}
+
+
+def ordinary_nights(restaurant_id, flags_by_day, db_path=None) -> set:
+    """The ISO dates in `flags_by_day` ({iso: flags}, flags_for) that count
+    as ordinary for a baseline: nothing flagged, or only games of a frequent
+    series this restaurant hasn't measured to matter. Never raises."""
+    refs = {f.get("ref") for fl in flags_by_day.values() for f in (fl or [])
+            if f.get("kind") == "event" and str(f.get("ref") or "").startswith("event:")}
+    sizes = _series_sizes(refs, db_path=db_path) if refs else {}
+    material = {}
+
+    def _matters(f):
+        raw = f.get("raw") or f.get("label")
+        if raw not in material:
+            eff = measured_effect(restaurant_id, raw, db_path=db_path)
+            material[raw] = bool(eff and eff.get("applies") and abs(eff.get("median_lift_pct") or 0) >= EFFECT_FLOOR_PCT)
+        return material[raw]
+
+    def _blocks(f):
+        if f.get("kind") != "event" or sizes.get(f.get("ref"), 0) < FREQUENT_SERIES_GAMES:
+            return True
+        return _matters(f)
+
+    return {d for d, fl in flags_by_day.items() if not any(_blocks(f) for f in (fl or []))}
 
 
 # ── recording a night ──────────────────────────────────────────────────────
@@ -673,8 +736,10 @@ def measure_night(restaurant_id, day, db_path=None, flags=None) -> dict:
     if not night or not night.get("net") or night["net"] <= 0:
         return {"reason": "no final net sales for the night"}
     fl = flags if flags is not None else flags_for(restaurant_id, [day] + same_days, db_path=db_path)
+    ordinary = ordinary_nights(restaurant_id, {d.isoformat(): fl.get(d.isoformat()) for d in same_days},
+                               db_path=db_path)
     base = [x["net"] for d, x in series.items() if d != iso and x.get("basis") == night.get("basis")
-            and x.get("net") and x["net"] > 0 and not (fl.get(d) or [])]
+            and x.get("net") and x["net"] > 0 and d in ordinary]
     if len(base) < BASELINE_MIN:
         return {"reason": f"only {len(base)} ordinary {day.strftime('%A')}s on the same basis in the "
                           f"{BASELINE_WEEKS} weeks before", "net": night["net"], "basis": night.get("basis"),

@@ -1,0 +1,120 @@
+{
+ "_about": "The 2026 Chicago White Sox postseason, from MLB's own published schedule (fetched 10/1/26): the AL Wild Card Series (won) and the AL Division Series against Cleveland. Games 3-5 have no start time yet; games 4-5 are played only if necessary. Later rounds are added when the Sox reach them.",
+ "sources": [
+  "https://www.mlb.com/whitesox/schedule",
+  "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=145&season=2026&gameType=F,D,L,W"
+ ],
+ "fetched": "2026-10-01",
+ "series": {
+  "slug": "mlb-chicago-white-sox",
+  "name": "Chicago White Sox",
+  "short_name": "White Sox",
+  "category": "sports",
+  "league": "MLB",
+  "metro": "Chicago",
+  "home_venue": "Rate Field",
+  "timezone": "America/Chicago",
+  "lat": 41.8299,
+  "lng": -87.6338,
+  "radius_km": 120,
+  "source_url": "https://www.mlb.com/whitesox/schedule",
+  "meta": {
+   "start_word": "first pitch"
+  }
+ },
+ "season": 2026,
+ "events": [
+  {
+   "external_id": "849849",
+   "season_type": "postseason",
+   "week": "AL Wild Card Series",
+   "date": "2026-09-29",
+   "kickoff": "16:00",
+   "home_away": "away",
+   "opponent": "Houston Astros",
+   "venue": "Daikin Park",
+   "broadcast": null,
+   "status": "completed",
+   "result": "W 6-3"
+  },
+  {
+   "external_id": "849846",
+   "season_type": "postseason",
+   "week": "AL Wild Card Series",
+   "date": "2026-09-30",
+   "kickoff": "16:00",
+   "home_away": "away",
+   "opponent": "Houston Astros",
+   "venue": "Daikin Park",
+   "broadcast": null,
+   "status": "completed",
+   "result": "W 7-3"
+  },
+  {
+   "external_id": "849829",
+   "season_type": "postseason",
+   "week": "AL Division Series",
+   "date": "2026-10-03",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Cleveland Guardians",
+   "venue": "Progressive Field",
+   "broadcast": null,
+   "status": "scheduled"
+  },
+  {
+   "external_id": "849834",
+   "season_type": "postseason",
+   "week": "AL Division Series",
+   "date": "2026-10-05",
+   "kickoff": "16:00",
+   "home_away": "away",
+   "opponent": "Cleveland Guardians",
+   "venue": "Progressive Field",
+   "broadcast": null,
+   "status": "scheduled"
+  },
+  {
+   "external_id": "849833",
+   "season_type": "postseason",
+   "week": "AL Division Series",
+   "date": "2026-10-07",
+   "kickoff": null,
+   "home_away": "home",
+   "opponent": "Cleveland Guardians",
+   "venue": "Rate Field",
+   "broadcast": null,
+   "status": "scheduled"
+  },
+  {
+   "external_id": "849832",
+   "season_type": "postseason",
+   "week": "AL Division Series",
+   "date": "2026-10-08",
+   "kickoff": null,
+   "home_away": "home",
+   "opponent": "Cleveland Guardians",
+   "venue": "Rate Field",
+   "broadcast": null,
+   "status": "scheduled",
+   "attributes": {
+    "if_necessary": true
+   }
+  },
+  {
+   "external_id": "849831",
+   "season_type": "postseason",
+   "week": "AL Division Series",
+   "date": "2026-10-10",
+   "kickoff": null,
+   "home_away": "away",
+   "opponent": "Cleveland Guardians",
+   "venue": "Progressive Field",
+   "broadcast": null,
+   "status": "scheduled",
+   "attributes": {
+    "if_necessary": true
+   }
+  }
+ ]
+}

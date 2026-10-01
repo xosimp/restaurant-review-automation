@@ -96,6 +96,13 @@ def _games_ahead(rid, tmr, db_path):
     for e in rows:
         if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
             continue
+        try:
+            # A frequent series' game it hasn't measured to matter is context,
+            # never an item (event_intel.engine.headline, phase 4).
+            if not engine.headline(rid, e, **kw):
+                continue
+        except Exception:
+            continue
         day = date.fromisoformat(e["event_date"])
         gap = (day - tmr).days + 1
         text = f"{day.strftime('%A')}: {engine.describe(e, with_date=False)} — {gap} days out"
