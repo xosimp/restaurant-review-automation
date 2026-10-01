@@ -329,7 +329,8 @@ def _plain(html):
 def test_the_owner_report_reads_score_first_then_the_actions():
     html = _render(_owner_night())
     order = [html.index(k) for k in ('’s score"><div class="hb-kicker">', 'aria-label="Executive summary"',
-                                     "’s wins", "’s priorities", "The day after</div><h2>Sunday", "Top KPIs",
+                                     # Key numbers sit above the day after (owner, 10/1/26).
+                                     "’s wins", "’s priorities", "Top KPIs", "The day after</div><h2>Sunday",
                                      "AI insights", "Block by block", "How the night was built")]
     assert order == sorted(order)
     # The score is the hero, with the night's net the biggest figure on it;

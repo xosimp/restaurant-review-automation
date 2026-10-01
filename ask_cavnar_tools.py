@@ -2028,6 +2028,53 @@ def _read_target_history(restaurant_id, as_of=None, _viewer=None):
     return out
 
 
+def _read_events(restaurant_id, days=21, past=4):
+    """The Event Intelligence catalog for this restaurant (event_intel): the
+    teams and events it follows, the next games with what games like each
+    did here (measured, never assumed), the last game of the same kind and
+    what that night sold, and the recent games' nights."""
+    from event_intel import engine, store
+    from time_utils import mdy
+    today = _local_today_of(restaurant_id)
+    out = {"following": [{"name": f["name"], "category": f["category"], "source": f["source"]}
+                         for f in store.follows(restaurant_id)]}
+    if not out["following"]:
+        out["note"] = "This restaurant follows no team or event yet."
+        return out
+    ahead = []
+    for u in engine.upcoming(restaurant_id, days=_days(days, 21, 120), today=today):
+        e = u["event"]
+        item = {"what": u["describe"], "date": e["event_date"], "day": mdy(e["event_date"]),
+                "home_away": e.get("home_away"), "prime_time": bool(e.get("is_primetime")),
+                "kickoff": e.get("kickoff_local"), "season_type": e.get("season_type")}
+        if u.get("effect"):
+            item["measured_here"] = u["effect"]["basis"]
+        last = engine.last_like(restaurant_id, e)
+        if last:
+            item["last_like_it"] = {"what": last["describe"], "net": last["net"],
+                                    "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
+                                    "covers": last["covers"], "labor_pct": last["labor_pct"],
+                                    "on_the_clock_by_role": last["headcount"]}
+        ahead.append(item)
+    out["upcoming"] = ahead
+    recent = []
+    for f in store.follows(restaurant_id):
+        rows = [x for x in store.events_for([f["series_id"]], None, today.isoformat())
+                if x["event_date"] < today.isoformat()][-max(1, min(int(past or 4), 12)):]
+        outs = engine._outcomes(restaurant_id, [x["event_date"] for x in rows], None,
+                                series_word=f.get("short_name"))
+        for x in reversed(rows):
+            o = outs.get(x["event_date"]) or {}
+            recent.append({"what": engine.describe(x), "result": x.get("result"),
+                           "net": o.get("net"), "usual_same_weekday": o.get("baseline"),
+                           "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
+                           "measured": bool(o)})
+    out["recent"] = recent
+    out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
+                    "weeks before (event_memory); a game night with no sales on file is not measured")
+    return out
+
+
 def _read_upcoming(restaurant_id, days=14, _viewer=None):
     """What is coming, by date, from what Cavnar AI holds: the owner's own
     events and reservations (demand_signals), the next night's DSR
@@ -3099,6 +3146,24 @@ TOOLS = [
                 "own calendar; leave it out for today's targets and the change list."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "as_of": {"type": "string", "description": "A date, YYYY-MM-DD."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_events,
+        "module": None,
+        "spec": {
+            "name": "read_events",
+            "description": (
+                "GAMES AND EVENTS THIS RESTAURANT FEELS (the Event Intelligence catalog: the Chicago Bears and "
+                "any team, festival or local event it follows): the next ones with kickoff, home or road, prime "
+                "time and TV; what games like each one did HERE, measured; the last game of the same kind with "
+                "what that night sold, its covers, labor % and who was on the clock by role; and the recent "
+                "games' nights. Call it for 'is there a Bears game this week', 'should we add a bartender "
+                "Sunday', 'how did we do compared to our last Bears home game', 'what does a game do to us'."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far ahead. Default 21, at most 120."},
+                "past": {"type": "integer", "description": "Recent games per team to include. Default 4, at most 12."}}},
         },
     },
     {

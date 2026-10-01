@@ -4527,6 +4527,12 @@ def scheduler_loop():
             # weather each day actually had, and the measured lift of every
             # listed event, holiday, rain night, payday and campaign, before
             # the morning briefs. Sends nothing; bounded and resumable.
+            # The Event Intelligence catalog first (event_intel): who follows
+            # which team or event, and each restaurant's copy of its games in
+            # demand_signals, so the nights below are measured with them.
+            if _due(now, 5) and _ops.claim_period("event_sync", str(today)):
+                from event_intel import engine as _event_engine
+                _ops.run_job("event_sync", _event_engine.run_event_sync)
             if _due(now, 5) and _ops.claim_period("event_memory", str(today)):
                 import event_memory as _event_memory
                 _ops.run_job("event_memory", _event_memory.run_event_memory)

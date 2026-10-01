@@ -170,6 +170,12 @@ JOBS = {
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Forecast scoring", description="Score every frozen forecast whose period has closed",
         target=("scheduler", "run_forecast_scoring"), max_minutes=60, retry=True),
+    "event_sync": dict(
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Event sync",
+        description=("The Event Intelligence catalog (event_intel): each restaurant's follows by distance and its "
+                     "copy of the followed games in demand_signals; past game nights measured (bounded, resumable)"),
+        target=("event_intel.engine", "run_event_sync"), max_minutes=15, retry=True),
     "event_memory": dict(
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Event memory",

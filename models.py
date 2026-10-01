@@ -3901,6 +3901,10 @@ def init_db(db_path: str = DB_PATH):
     # audit 9/29/26.
     from event_memory import init_event_memory
     init_event_memory(db_path)
+    # The Event Intelligence catalog (event_intel): series, events, follows,
+    # and the bundled seasons (the 2026 Chicago Bears first).
+    from event_intel import init_event_intel
+    init_event_intel(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.

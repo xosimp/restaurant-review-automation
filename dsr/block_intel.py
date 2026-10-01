@@ -94,8 +94,25 @@ def _events(ctx, gaps):
         # The owner's list couldn't be read: "Nothing listed" would be a
         # claim about a list nobody saw.
         return None
-    items = [{"label": s["label"], "kind": "event", "covers": s.get("covers"), "source": s.get("source")}
-             for s in rows if s.get("kind") == "event"]
+    items = []
+    for s in rows:
+        if s.get("kind") != "event":
+            continue
+        item = {"label": s["label"], "kind": "event", "covers": s.get("covers"), "source": s.get("source")}
+        # A catalog event (event_intel): the game itself and what games like
+        # it did here, so Erik's "Event or Sport" column names the opponent.
+        if str(s.get("ref") or "").startswith("event:"):
+            try:
+                from event_intel import engine
+                ev = engine.context_by_ref(ctx.restaurant_id, s["ref"], db_path=ctx.db_path)
+            except Exception:
+                ev = None
+            if ev:
+                item["label"] = ev["describe"]
+                item["event_id"] = ev["event"]["id"]
+                if ev.get("effect"):
+                    item["effect"] = {k: ev["effect"][k] for k in ("segment", "n", "median_lift_pct", "basis")}
+        items.append(item)
     if holiday:
         items.append({"label": holiday, "kind": "holiday", "covers": None, "source": "calendar"})
     booked = [s["covers"] for s in rows if s.get("kind") == "reservations" and s.get("covers") is not None]

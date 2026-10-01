@@ -65,6 +65,17 @@ def _events(rid, day, db_path):
         return []
 
 
+def _catalog_context(rid, signal, db_path):
+    """event_intel.engine.context_by_ref for a demand_signals row the
+    catalog wrote, else None."""
+    try:
+        from event_intel import engine
+        return engine.context_by_ref(rid, signal.get("ref"), db_path=db_path) if db_path \
+            else engine.context_by_ref(rid, signal.get("ref"))
+    except Exception:
+        return None
+
+
 def _keeps_events(rid, db_path):
     """Whether this restaurant keeps its events/reservations in Cavnar at
     all — an empty day then means "nothing listed", not "unknown"."""
@@ -444,7 +455,14 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
         if e.get("kind") == "reservations" and e.get("covers"):
             items.append({"kind": "reservations", "tone": None, "text": f"{e['covers']} covers on the books"})
         else:
-            items.append({"kind": "event", "tone": "warn", "text": str(e.get("label"))})
+            # A catalog event (event_intel: a Bears game) reads as the game —
+            # who, when, on what — with what games like it did here, measured.
+            ctx = _catalog_context(rid, e, db_path)
+            text = ctx["describe"] if ctx else str(e.get("label"))
+            if ctx and ctx.get("effect"):
+                text += f". {ctx['effect']['basis']}"
+            items.append({"kind": "event", "tone": "warn", "text": text,
+                          "event_id": (ctx or {}).get("event", {}).get("id")})
 
     food = blocks.get("food") or {}
     crit = (((food.get("detail") or {}).get("stock") or {}).get("critical") or []) \
