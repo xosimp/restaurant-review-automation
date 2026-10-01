@@ -417,6 +417,14 @@ boxes line up across the row. A select is always the branded one:
 control. A set of days to pick is `.lb2-days`: 44px toggles, ember outline
 and tint when checked, never bare checkboxes.
 
+**Pay is per person (owner, 9/30/26).** Account → Targets & pay rates →
+**Hourly pay** is one closed `details.co-more.tg-pay` whose summary counts
+the people, those paid from the POS and those without a rate. Each role
+row shows the range its people are paid (`$15–$17 an hour`) and opens to
+them; the POS's rate shows as text, a box only for someone with no rate
+(amber `.tg-need`: what they are costed at meanwhile). A role gets a rate
+box only when nobody in it has a rate.
+
 **An open section shows it is open.** A Team & rules row that is expanded
 becomes a card — `--sf-recess` fill, `--hb-line` outline, a 3px ember inner
 edge, its header ruled off from the content — and a section opened inside

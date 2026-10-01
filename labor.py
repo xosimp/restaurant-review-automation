@@ -1008,7 +1008,63 @@ def _covers_for_shifts(restaurant_id, shifts):
     return _covers.by_date(restaurant_id, dates[0], dates[-1])
 
 
-def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None) -> float:
+def _name_key(name) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def _punch_pay(shift) -> float:
+    try:
+        paid = float(shift.get("pay_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return paid if 0 < paid <= 500 else 0.0
+
+
+def rate_book(shifts: list, person_rates: dict = None) -> tuple:
+    """(people, roles): what each person and each role is paid an hour,
+    read from the punches themselves, for the punches that carry no pay.
+
+    RPOWER puts a person's rate on some punches and $0 on others - at Simple
+    EJ's every Host PM, Barback PM and most bartender job rows are $0 while
+    the same people's AM punches carry $15-17 (9/30/26) - and those hours
+    were costed at the $26 blended default. A person's rate is their latest
+    paid punch; the owner's own rate for them (models.person_rates) wins over
+    it. A role's typical rate is the median of the rates of the people who
+    worked it - what a host costs when one host has no rate anywhere."""
+    people = {}
+    for s in sorted(shifts or (), key=lambda x: str(x.get("date") or "")):
+        paid = _punch_pay(s)
+        if paid:
+            people[_name_key(s.get("employee"))] = round(paid, 2)
+    people.update(person_rates or {})
+    worked = {}
+    for s in shifts or ():
+        rate = people.get(_name_key(s.get("employee")))
+        if rate:
+            worked.setdefault((s.get("role") or "").strip().lower(), {})[_name_key(s.get("employee"))] = rate
+    roles = {}
+    for role, by_person in worked.items():
+        vals = sorted(by_person.values())
+        if role and vals:
+            mid = len(vals) // 2
+            roles[role] = round(vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0, 2)
+    return people, roles
+
+
+def person_rate_book(restaurant_id: int) -> tuple:
+    """rate_book over this restaurant's punches with the owner's own rates
+    for people on top - for pricing a drafted week (schedule_economics.
+    priced_cost). ({}, {}) when the shifts cannot be read."""
+    try:
+        from models import get_restaurant, person_rates
+        return rate_book(load_shifts_for_restaurant(restaurant_id) or [],
+                         person_rates(get_restaurant(restaurant_id)))
+    except Exception:
+        return {}, {}
+
+
+def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
+                role_typical: dict = None) -> float:
     """Return the hourly rate for a single shift based on role.
 
     Matched case- and whitespace-insensitively. The role names an owner
@@ -1021,16 +1077,14 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: di
     # pay_rate) is what the hour cost - it beats any rate set for the role.
     # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
     # $21-24 and servers at $9 on every punch (9/28/26).
-    try:
-        paid = float(shift.get("pay_rate") or 0)
-    except (TypeError, ValueError):
-        paid = 0.0
-    if 0 < paid <= 500:
+    paid = _punch_pay(shift)
+    if paid:
         return paid
-    # This person's own rate, where the owner set one (models.person_rates):
-    # the host or cook who makes more than the rest of their role.
+    # This person's own rate: the owner's for them (models.person_rates),
+    # else their pay on their other punches (rate_book) - a host's $0 PM
+    # punch costs what her AM punches pay.
     if person_rates:
-        own = person_rates.get(" ".join(str(shift.get("employee") or "").lower().split()))
+        own = person_rates.get(_name_key(shift.get("employee")))
         if own:
             return own
     default = role_rates.get("_default", fallback)
@@ -1041,6 +1095,9 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: di
     for name, rate in role_rates.items():
         if name != "_default" and (name or "").strip().lower() == key:
             return rate
+    # Nobody's rate and no rate set for the role: what the role's people make.
+    if role_typical and role_typical.get(key):
+        return role_typical[key]
     return default
 
 
@@ -1133,6 +1190,7 @@ def analyse_shifts(shifts: list[dict],
     (restaurant_thresholds "labor_over_day"); None reads the stated one."""
     if role_rates is None:
         role_rates = {"_default": hourly_rate}
+    person_rates, role_typical = rate_book(shifts, person_rates)
     covers_by_date = covers_by_date or {}
     from thresholds import LABOR_OVER_TARGET_PTS, STRONG_DAY_SALES_MULTIPLE
     LABOR_TARGET = labor_target
@@ -1223,7 +1281,7 @@ def analyse_shifts(shifts: list[dict],
         except (TypeError, ValueError):
             sched = 0.0
         actual = _shift_hours(s)
-        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates)
+        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates, role_typical)
 
         by_day[day]["scheduled"] += sched
         by_day[day]["actual"]    += actual
@@ -1269,7 +1327,7 @@ def analyse_shifts(shifts: list[dict],
             continue
         ot_hours = wk_hours - OVERTIME_THRESHOLD_HOURS
         overtime_hours_total += ot_hours
-        blended = (sum(_shift_hours(r) * _shift_rate(r, role_rates, hourly_rate, person_rates) for r in rows)
+        blended = (sum(_shift_hours(r) * _shift_rate(r, role_rates, hourly_rate, person_rates, role_typical) for r in rows)
                    / wk_hours) if wk_hours else hourly_rate
         premium = ot_hours * blended * (OVERTIME_MULTIPLIER - 1.0)
         overtime_premium += premium
@@ -1514,7 +1572,7 @@ def analyse_shifts(shifts: list[dict],
     for s in shifts:
         role = s.get("role", "Unknown")
         actual = _shift_hours(s)
-        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates)
+        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates, role_typical)
         by_role[role]["hours"] += actual
         by_role[role]["labor_cost"] += actual * rate
         by_role[role]["headcount"].add(s.get("employee", "Unknown"))

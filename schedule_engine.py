@@ -3152,7 +3152,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 try:
                     from models import get_role_rates as _grr
                     _rates = _grr(restaurant_id)
+                    import labor as _lab_book
+                    _ppl, _typ = _lab_book.person_rate_book(restaurant_id)
                     _priced = _econ.priced_cost(_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
+                                                person_rates=_ppl, role_typical=_typ,
                                                 # Overtime is priced from the 40h line
                                                 # (labor.OVERTIME_THRESHOLD_HOURS), never the
                                                 # owner's hours ceiling: a 35h ceiling priced

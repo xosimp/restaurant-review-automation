@@ -9972,9 +9972,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         {# Labor % is ALL-IN, salaries included, and the target judges it
            (owner, 9/30/26: "Erik only cares about that labor %, it's the
            real %"; this reverses 9/28's hourly headline). The shifts alone
-           and the salaries sit under it (labor.salaried_summary). #}
+           sit under it; the salaries total itself is not repeated here
+           (owner, 9/30/26). #}
         {% if labor_salaried and labor.includes_salaries %}
-        <div class="lb2-bn lb2-sal"><span class="l">Hourly only</span><span class="row"><span class="hb-num stat-n">${{ labor.hourly_costed_labor|int|format_num }}</span><span class="hb-num pct stat-n">{{ labor.hourly_labor_pct }}%</span><span class="lb2-vs" title="Each trading day carries its share of the salaries: annual pay &divide; 52 weeks &divide; the days you trade a week. Set in Settings &rarr; Salaried staff."><span class="hb-num">${{ labor_salaried.cost|int|format_num }}</span> salaries &middot; <span class="hb-num">{{ labor_salaried.people }}</span> {{ 'person' if labor_salaried.people == 1 else 'people' }}</span></span></div>
+        <div class="lb2-bn lb2-sal"><span class="l">Hourly only</span><span class="row"><span class="hb-num stat-n">${{ labor.hourly_costed_labor|int|format_num }}</span><span class="hb-num pct stat-n">{{ labor.hourly_labor_pct }}%</span></span></div>
         {% endif %}
       </div>
       {# Everything labor.py knows is incomplete about this upload. It has
@@ -13059,9 +13060,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .tg-role+.tg-role{border-top:1px solid var(--ac-line,var(--hb-line2))}
 .tg-role .tg-role-open{margin-left:10px;font-size:13px}
 .tg-people{margin:0 0 10px 14px;padding-left:12px;border-left:2px solid var(--ember)}
-.tg-people .tg-person .l span{font-size:14.5px;color:var(--ink2)}
+.tg-people .tg-person .l > span{font-size:14.5px;color:var(--ink2)}
 .tg-pos{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
 .tg-pos-l{font-size:12.5px;color:var(--ink3);margin-left:8px}
+.tg-pay{margin-top:16px}
+.tg-pay summary{font-size:15px;color:var(--ink)}
+.tg-pay #as-tg-roles{margin-top:8px}
+.tg-need{display:block;font-size:12.5px;color:var(--amber);margin-top:2px}
 #panel-account .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
 .ac-card-h p{margin:3px 0 0;font-size:13.5px;color:var(--ink3);line-height:1.5}
@@ -13521,13 +13526,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target" data-tg-pair="weekly_revenue_target"></div></div>
           <div class="ac-row"><div class="l"><b>Weekly revenue target</b><span>In dollars. Type either one and the other fills in &mdash; it&rsquo;s one target.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-weekly_revenue_target" min="0" step="100" style="width:130px" aria-label="Weekly revenue target" data-tg="weekly_revenue_target" data-tg-pair="monthly_revenue_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Blended hourly rate</b><span>What an hour costs when a role has no rate of its own.</span></div>
+          <div class="ac-row"><div class="l"><b>Blended hourly rate</b><span>What an hour costs when nobody in its role has a rate. Everyone else is costed at their own pay.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-hourly_rate" min="2" max="250" step="0.25" style="width:96px" aria-label="Blended hourly rate" data-tg="hourly_rate"></div></div>
           <div class="ac-row"><div class="l"><b>Payroll week starts</b><span>Overtime is counted over this week.</span></div>
             <div class="c"><select class="ac-select" id="as-tg-week_start_day" aria-label="Payroll week starts" data-tg="week_start_day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
         </div>
-        <div class="lb2-sub" style="margin-top:14px">Pay by role<small>per hour · blank uses the blended rate · open a role to give one person their own rate</small></div>
+        <!-- Hourly pay, per person (owner, 9/30/26): one closed section; each
+             role shows what its people are paid and opens to them. A rate
+             box appears only for someone the POS has no rate for. -->
+        <details class="co-more tg-pay" id="as-tg-pay"><summary>Hourly pay <small id="as-tg-pay-sum"></small></summary>
         <div id="as-tg-roles" class="ac-rows"></div>
+        </details>
         <!-- Salaried staff (owner, 9/28/26): paid a salary, not by the hour.
              Their punches leave hourly labor; Labor and the daily report show
              the salaries beside it. One person saves per add or remove. Shown
@@ -33508,33 +33517,46 @@ window.cavPalette = cavPalette;
     }
     tgPaintRevenue(t);
     tgNotes(t);
-    var roles = t.roles || [], rates = t.role_rates || {}, h = '', i;
-    if (!roles.length) h = '<div class="sr-note">No roles yet — they come from your shifts and the roster.</div>';
+    var roles = t.roles || [], rates = t.role_rates || {}, pay = t.role_pay || {}, h = '', i;
+    var nPpl = 0, nPos = 0, nNeed = 0;
+    if (!roles.length) h = '<div class="sr-note">No roles yet \u2014 they come from your shifts and the roster.</div>';
     for (i = 0; i < roles.length; i++) {
       var cur = null, rk;
       for (rk in rates) if (rates.hasOwnProperty(rk) && rk.toLowerCase() === roles[i].toLowerCase()) cur = rates[rk];
-      // Each role opens to its people (owner, 9/30/26: most hosts and cooks
-      // make the same, a few make more): what the POS pays someone shows as
-      // it is and wins; anyone else can have a rate of their own.
-      var ppl = (t.people_by_role || {})[roles[i]] || [], j, own = 0;
-      for (j = 0; j < ppl.length; j++) if (ppl[j].rate !== null && ppl[j].rate !== undefined) own++;
-      var roleRate = cur !== null ? cur : (t.hourly_rate || '');
+      // Pay is per person (owner, 9/30/26: "if this is per employee now, why
+      // the role box?"): the role line says what its people are paid and
+      // opens to them. What the POS pays someone shows as it is and wins;
+      // anyone it has no rate for gets a box, and the role itself gets one
+      // only when nobody in it has a rate.
+      var ppl = (t.people_by_role || {})[roles[i]] || [], j, rp = pay[roles[i]] || {};
+      var fb = rp.fallback || cur || t.hourly_rate || '';
+      var range = rp.low ? (tgRate(rp.low) + (rp.high && rp.high !== rp.low ? '\u2013' + tgRate(rp.high) : '')) : '';
+      nPpl += ppl.length; nNeed += rp.unrated || 0;
+      for (j = 0; j < ppl.length; j++) if (ppl[j].pos_rate) nPos++;
+      var meta = ppl.length + (ppl.length === 1 ? ' person' : ' people') + (rp.unrated ? ' \u00b7 ' + rp.unrated + ' without a rate' : '');
       h += '<div class="tg-role"><div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b>'
-        + (ppl.length ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm tg-role-open" data-tg-role-open aria-expanded="false">' + ppl.length + (ppl.length === 1 ? ' person' : ' people') + (own ? ' \u00b7 ' + own + ' with their own rate' : '') + ' \u2193</button>' : '')
-        + '</div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
+        + (ppl.length ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm tg-role-open" data-tg-role-open aria-expanded="false">' + meta + ' \u2193</button>' : '')
+        + '</div><div class="c">'
+        + (range ? '<span class="tg-pos hb-num">' + range + '</span><span class="tg-pos-l">an hour</span>'
+           : '<input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '>')
+        + '</div></div>';
       if (ppl.length) {
         h += '<div class="tg-people" hidden>';
         for (j = 0; j < ppl.length; j++) {
-          var pp = ppl[j];
-          h += '<div class="ac-row tg-person"><div class="l"><span>' + e(pp.name) + '</span></div><div class="c">'
-            + (pp.pos_rate ? '<span class="tg-pos hb-num">$' + e(Number(pp.pos_rate).toFixed(2)) + '</span><span class="tg-pos-l">from your POS</span>'
-               : '<input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-person="' + e(pp.name) + '" value="' + (pp.rate === null || pp.rate === undefined ? '' : e(pp.rate)) + '" placeholder="' + e(roleRate) + '" aria-label="' + e(pp.name) + ' hourly rate"' + (ro ? ' disabled' : '') + '>')
+          var pp = ppl[j], mine = pp.rate !== null && pp.rate !== undefined;
+          h += '<div class="ac-row tg-person"><div class="l"><span>' + e(pp.name) + '</span>'
+            + (!pp.pos_rate && !mine ? '<small class="tg-need">No rate on your POS \u00b7 costed at <span class="hb-num">' + tgRate(fb) + '</span> until you set one</small>' : '')
+            + '</div><div class="c">'
+            + (pp.pos_rate ? '<span class="tg-pos hb-num">' + tgRate(pp.pos_rate) + '</span><span class="tg-pos-l">from your POS</span>'
+               : '<input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-person="' + e(pp.name) + '" value="' + (mine ? e(pp.rate) : '') + '" placeholder="' + e(fb) + '" aria-label="' + e(pp.name) + ' hourly rate"' + (ro ? ' disabled' : '') + '>')
             + '</div></div>';
         }
         h += '</div>';
       }
       h += '</div>';
     }
+    var sum = $id('as-tg-pay-sum');
+    if (sum) sum.textContent = nPpl ? (nPpl + ' people \u00b7 ' + nPos + ' paid from your POS' + (nNeed ? ' \u00b7 ' + nNeed + ' without a rate' : '')) : 'per hour, by role';
     // Roles whose every person is salaried have no hourly rate (owner, 9/30/26).
     var salR = t.salaried_roles || [];
     if (salR.length) h += '<div class="sr-note">' + e(salR.join(', ')) + (salR.length === 1 ? ' isn\u2019t' : ' aren\u2019t') + ' listed: everyone in ' + (salR.length === 1 ? 'it' : 'them') + ' is salaried, set below.</div>';
@@ -33549,6 +33571,7 @@ window.cavPalette = cavPalette;
      targets.labor.goal / targets.food.goal), and the change log's last
      change to the field ("Set by the owner on 9/12/26" - set_notes). */
   function tgWords(x) { return window.num ? window.num(x) : e(x); }
+  function tgRate(v) { var n = +v; return '$' + (n % 1 ? n.toFixed(2) : String(n)); }
   function tgNotes(t) {
     var notes = t.set_notes || {}, goals = {labor_target_pct: (t.labor || {}).goal, food_cost_target: (t.food || {}).goal};
     var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
@@ -33633,8 +33656,11 @@ window.cavPalette = cavPalette;
     var rev = f === 'monthly_revenue_target' || f === 'weekly_revenue_target';
     if (f) body[f] = t.value === '' ? (f === 'waste_target_pct' ? null : (rev ? 0 : '')) : +t.value;
     else {
-      var boxes = document.querySelectorAll('#as-tg-roles [data-tg-role]'), rates = {}, i;
-      for (i = 0; i < boxes.length; i++) if (boxes[i].value !== '') rates[boxes[i].getAttribute('data-tg-role')] = +boxes[i].value;
+      // Only this role changes: a role whose box isn't on screen (its
+      // people all have rates) keeps the rate it has.
+      var rates = {}, rk2, prev = (_tg.targets || {}).role_rates || {};
+      for (rk2 in prev) if (prev.hasOwnProperty(rk2) && rk2.toLowerCase() !== role.toLowerCase()) rates[rk2] = prev[rk2];
+      if (t.value !== '') rates[role] = +t.value;
       body.role_rates = rates;
     }
     if (f && body[f] === '') { status('as-tg-status', 'Enter a number', true); return; }

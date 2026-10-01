@@ -5040,22 +5040,16 @@ def _targets_payload(rid):
     _nocl_low = {x.lower() for x in _nocl}
     roles = [x for x in roles if x.lower() not in _nocl_low]
     # Each role's people, for the per-person rates (owner, 9/30/26): what
-    # the POS pays them (their latest punch's pay_rate - it beats any rate
-    # set here) and their own rate where one is set.
+    # the POS pays them (their latest paid punch - labor.rate_book, which
+    # also costs their $0 punches) and their own rate where one is set.
     from models import person_rates as _prs, salaried_name_key as _snk
     _own = _prs(r)
-    _pos_pay = {}
+    _pos_pay, _typical = {}, {}
     try:
         import labor as _lab_pp
-        for sh in sorted(_lab_pp.load_shifts_for_restaurant(rid) or [], key=lambda x: str(x.get("date") or "")):
-            try:
-                pay = float(sh.get("pay_rate") or 0)
-            except (TypeError, ValueError):
-                pay = 0.0
-            if pay > 0:
-                _pos_pay[_snk(sh.get("employee"))] = round(pay, 2)
+        _pos_pay, _typical = _lab_pp.rate_book(_lab_pp.load_shifts_for_restaurant(rid) or [])
     except Exception:
-        _pos_pay = {}
+        _pos_pay, _typical = {}, {}
     _sal_keys = {_snk(x["name"]) for x in _sal}
     people_by_role = {}
     try:
@@ -5067,8 +5061,24 @@ def _targets_payload(rid):
                 {"name": nm, "pos_rate": _pos_pay.get(_snk(nm)), "rate": _own.get(_snk(nm))})
     except Exception:
         people_by_role = {}
-    for v in people_by_role.values():
-        v.sort(key=lambda x: x["name"].lower())
+    # One line per role (owner, 9/30/26: "if this is per employee now, why
+    # the role box?"): the range its people are paid, how many still have
+    # no rate, and what an hour of theirs costs meanwhile - the role's rate
+    # if one is set, else what the role's people make, else the blended rate.
+    rates_low = {k.lower(): v for k, v in rates.items()}
+    role_pay = {}
+    for role, ppl in people_by_role.items():
+        ppl.sort(key=lambda x: x["name"].lower())
+        paid = [p["pos_rate"] or p["rate"] for p in ppl if p["pos_rate"] or p["rate"]]
+        fallback = rates_low.get(role.lower()) or _typical.get(role.lower())
+        if not fallback and paid:
+            paid_sorted = sorted(paid)
+            fallback = paid_sorted[len(paid_sorted) // 2]
+        role_pay[role] = {"low": min(paid) if paid else None, "high": max(paid) if paid else None,
+                          "people": len(ppl), "unrated": len(ppl) - len(paid),
+                          "fallback": fallback or r.hourly_rate,
+                          "fallback_from": ("role" if rates_low.get(role.lower())
+                                            else "typical" if fallback else "blended")}
     return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
             # The same target by the week (models.weekly_revenue_target):
@@ -5077,7 +5087,7 @@ def _targets_payload(rid):
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
             "salaried_roles": sorted(_nocl, key=str.lower),
-            "people_by_role": people_by_role,
+            "people_by_role": people_by_role, "role_pay": role_pay,
             # Salaried people (models.salaried_staff): costed by salary beside
             # hourly labor, never by the hour. The owner's alone (_do_targets_get);
             # `names` fills the add box so a name matches the punches exactly.
@@ -5149,7 +5159,7 @@ def _do_targets_get(u):
     t = _targets_payload(_rid(u))
     if not _sees_pay(u):
         # Wages are the owner's and the schedule sender's (F2-20).
-        t["role_rates"], t["hourly_rate"], t["people_by_role"] = {}, None, {}
+        t["role_rates"], t["hourly_rate"], t["people_by_role"], t["role_pay"] = {}, None, {}, {}
         t["sources"].pop("hourly_rate", None)
     if not _principal(u):
         # Salaries are named people's pay: the owner's alone.

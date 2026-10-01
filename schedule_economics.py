@@ -66,7 +66,7 @@ def _daypart(r):
 
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
                 base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None,
-                salaried=None) -> dict:
+                salaried=None, person_rates=None, role_typical=None) -> dict:
     """Dollars for the week with every overtime hour at the multiplier.
 
     Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
@@ -83,7 +83,12 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     toward the weekly ceiling.
 
     salaried: names (models.salaried_name_key) paid the same whatever the
-    hours — their shifts add no hourly dollars and no overtime."""
+    hours — their shifts add no hourly dollars and no overtime.
+
+    person_rates / role_typical (labor.person_rate_book): what each person
+    is paid an hour, and a role's typical rate. A drafted cook's shift costs
+    his own $22, not the $26 blended rate a role with no rate set fell to;
+    the owner's role rate still beats the typical one."""
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
@@ -96,7 +101,9 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
         n = (r.get("employee") or "").strip()
         if not n or " ".join(n.lower().split()) in sal:
             continue
-        rate = rates.get((r.get("role") or "").strip().lower(), blended)
+        role = (r.get("role") or "").strip().lower()
+        rate = ((person_rates or {}).get(" ".join(n.lower().split())) or rates.get(role)
+                or (role_typical or {}).get(role) or blended)
         per_person.setdefault(n, []).append((r.get("date") or "", _minutes(r.get("shift_start", "")) or 0, _hours(r), rate))
     straight = premium = ot_hours = 0.0
     for n, items in per_person.items():
