@@ -83,8 +83,11 @@ restaurant 5; restaurant 4 is Will's demo copy.
   - Reviews: service and wait complaints posted around game nights against
     other days, a lean by posted date, as review-diagnosis evidence and in Ask.
   - What games did at other restaurants that follow the team, behind the
-    privacy floor (five restaurants from five owners, the viewer's out,
-    rounded to 5%), said as theirs and never planned on.
+    privacy floor (eight restaurants from five owners, the viewer's out,
+    rounded to 5%), said as theirs and never planned on. Blind-audited the same
+    day: praise no longer counts as strain, quiet games confound nothing, an
+    unplayed playoff game is never measured, note rules are owner-only and
+    read nothing that could mean something else.
   - Not built (each needs an events or sports API): concerts and festivals,
     road closures, the final whistle, watch-party searches.
 - **10/1 — Event Intelligence phase 3.**

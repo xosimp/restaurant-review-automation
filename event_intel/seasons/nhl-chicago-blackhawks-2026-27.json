@@ -1,5 +1,5 @@
 {
- "_about": "The 2026-27 Chicago Blackhawks schedule, preseason and regular season, from the NHL's own published club schedule (fetched 10/1/26). Start times are the league's, converted to Chicago time; TV is the US broadcasters listed. Playoff games are added when they are set.",
+ "_about": "The 2026-27 Chicago Blackhawks schedule, preseason and regular season, from the NHL's own published club schedule (fetched 10/1/26). Start times are the league's, converted to Chicago time; TV is the US broadcasters listed. Playoff games are added when they are set. A game the league lists as a Blackhawks home game but plays abroad (12/20 at PSD Bank Dome, Germany) is stored as a road game with neutral_site: for a Chicago restaurant it is a night on TV, not a United Center crowd.",
  "sources": [
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
@@ -503,11 +503,15 @@
    "week": null,
    "date": "2026-12-20",
    "kickoff": "07:00",
-   "home_away": "home",
+   "home_away": "away",
    "opponent": "Ottawa Senators",
    "venue": "PSD Bank Dome",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "scheduled",
+   "attributes": {
+    "neutral_site": true,
+    "listed_as": "home"
+   }
   },
   {
    "external_id": "2026020612",

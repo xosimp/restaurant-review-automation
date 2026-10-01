@@ -531,6 +531,20 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                           "text": f"{short}{f', high {hi}°' if hi is not None else ''}"})
 
     events = _events(rid, tmr, db_path)
+    # A quiet catalog game (a frequent series not measured to matter here)
+    # is no item, and the owner's own events and reservations come first,
+    # so three of them are never pushed out by team games (phase 4 audit).
+    try:
+        from event_intel import engine as _eng
+        kept = []
+        for e in events:
+            ctx = _catalog_context(rid, e, db_path) if str(e.get("ref") or "").startswith("event:") else None
+            if ctx and not _eng.headline(rid, ctx["event"], **({"db_path": db_path} if db_path else {})):
+                continue
+            kept.append(e)
+        events = sorted(kept, key=lambda e: 1 if str(e.get("ref") or "").startswith("event:") else 0)
+    except Exception:
+        pass
     for e in events[:3]:
         if e.get("kind") == "reservations" and e.get("covers"):
             items.append({"kind": "reservations", "tone": None, "text": f"{e['covers']} covers on the books"})

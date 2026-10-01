@@ -1551,9 +1551,23 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
             print(f"[outcomes] change log unreadable for {rid}: {ex}")
         if fam in _VOLUME_FAMILIES:
             try:
-                for ev in conn.execute("SELECT date, label FROM demand_signals WHERE restaurant_id=? "
-                                       "AND kind='event' AND date>=? AND date<=? ORDER BY date",
-                                       (rid, s, e)).fetchall():
+                evs = [dict(r) for r in conn.execute(
+                    "SELECT date, label, source, ref FROM demand_signals WHERE restaurant_id=? "
+                    "AND kind='event' AND date>=? AND date<=? ORDER BY date", (rid, s, e)).fetchall()]
+                # A quiet catalog game (a frequent series not measured to
+                # matter here — event_memory.quiet_flags) is no concurrent
+                # change: every winter read would carry a Bulls or Blackhawks
+                # night (Event Intelligence phase 4 audit).
+                cat = [{"kind": "event", "label": x["label"], "raw": x["label"], "ref": x["ref"], "_x": x}
+                       for x in evs if x.get("source") == "events" and str(x.get("ref") or "").startswith("event:")]
+                quiet = set()
+                if cat:
+                    import event_memory as _em
+                    q = _em.quiet_flags(rid, cat)
+                    quiet = {id(c["_x"]) for c in cat if id(c) in q}
+                for ev in evs:
+                    if id(ev) in quiet:
+                        continue
                     if _read(_iso(ev["date"])):
                         out.append({"kind": "event", "label": ev["label"], "date": _iso(ev["date"])})
             except Exception as ex:

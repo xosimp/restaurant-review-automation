@@ -68,7 +68,22 @@ def test_advanced_carries_the_budget_settings_and_mirrors_labor():
     page = _page()
     for el in ('id="ssa-trim"', 'id="ssa-cut"', 'id="ssa-sections"'):
         assert el in page
-    assert "mirror = ['rul-trim'" in page and "mirror = ['rul-sections'" in page
+    assert "mirror = 'rul-trim'" in page and "mirror = 'rul-sections'" in page
+    # One save at a time per field, and the Labor card gets what the server stored.
+    assert "if (_ssaBusy[id]) { _ssaPending[id] = true; return; }" in page and "var v = d[field]" in page
+    assert "_ssAdvLoaded" not in page
+
+
+def test_the_studio_tabs_never_show_stale_or_duplicate_state():
+    """Blind audit, 10/1/26."""
+    page = _page()
+    # The forecast re-reads when the labor target changes, and names its week.
+    assert "var key = ws + '|' + (tg ? tg.value : '');" in page and "function () { _ssFcKey = null; }" in page
+    assert "The week of <span class=\"hb-num\">' + _escHtml(mdy(d.week_start))" in page
+    # The AI tab: the newest request wins, the rule lands on the week shown,
+    # and a button can't be clicked twice while it saves.
+    assert "if (tok !== _snrTok) return;" in page and "week_start: _snr.week_of" in page
+    assert "btns[b].disabled = true" in page
 
 
 def test_the_studio_docks_where_the_tab_bar_ends():

@@ -86,6 +86,9 @@ def init_event_intel(db_path=DB_PATH):
             UNIQUE(series_id, external_id)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_catalog_events_date ON catalog_events(event_date)")
+        # events_for's per-row season count (phase 4 audit).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_catalog_events_series_season "
+                     "ON catalog_events(series_id, season, season_type)")
         conn.execute("""CREATE TABLE IF NOT EXISTS event_follows (
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
             series_id     INTEGER NOT NULL REFERENCES event_series(id),
@@ -116,9 +119,24 @@ def init_event_intel(db_path=DB_PATH):
     load_bundled(db_path=db_path)
 
 
-def is_primetime(kickoff_local) -> bool:
+# Prime time is a football idea: an NBA, NHL or MLS night game is every game
+# (phase 4 audit) and would split each segment for nothing.
+PRIMETIME_LEAGUES = ("NFL",)
+
+
+def is_primetime(kickoff_local, league="NFL") -> bool:
     k = str(kickoff_local or "")
+    if league and str(league).upper() not in PRIMETIME_LEAGUES:
+        return False
     return bool(k) and k[:5] >= PRIMETIME_FROM
+
+
+def _league_of(conn, series_id):
+    try:
+        r = conn.execute("SELECT league FROM event_series WHERE id=?", (series_id,)).fetchone()
+        return r["league"] if r else None
+    except Exception:
+        return None
 
 
 def upsert_series(s, db_path=DB_PATH) -> int:
@@ -148,6 +166,11 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
     moved replaces the old one (the next sync moves each restaurant's copy);
     nothing is ever deleted here — a cancelled game is a status."""
     written = changed = 0
+    _c = get_conn(db_path)
+    try:
+        league = _league_of(_c, series_id)
+    finally:
+        _c.close()
     conn = get_conn(db_path)
     try:
         for e in events or []:
@@ -156,7 +179,7 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
             vals = (series_id, e["external_id"], e.get("season", season), e.get("season_type") or "regular",
                     e.get("week"), e.get("date"), e.get("kickoff"), e.get("timezone") or timezone,
                     e.get("home_away"), e.get("opponent"), e.get("venue"), e.get("broadcast"),
-                    1 if is_primetime(e.get("kickoff")) else 0, e.get("status") or "scheduled", e.get("result"),
+                    1 if is_primetime(e.get("kickoff"), league) else 0, e.get("status") or "scheduled", e.get("result"),
                     json.dumps(e.get("attributes") or {}), e.get("source_url") or source_url)
             conn.execute(
                 "INSERT INTO catalog_events (series_id, external_id, season, season_type, week, event_date, "
@@ -228,7 +251,7 @@ def _apply_overrides(conn, series_id, external_id):
     args = list(over.values())
     if "kickoff_local" in over:
         sets += ", is_primetime=?"
-        args.append(1 if is_primetime(over["kickoff_local"]) else 0)
+        args.append(1 if is_primetime(over["kickoff_local"], _league_of(conn, series_id)) else 0)
     conn.execute(f"UPDATE catalog_events SET {sets} WHERE id=?", args + [row["id"]])
 
 
@@ -297,7 +320,7 @@ def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
                 args = list(sets.values())
                 if "kickoff_local" in sets:
                     cols += ", is_primetime=?"
-                    args.append(1 if is_primetime(sets["kickoff_local"]) else 0)
+                    args.append(1 if is_primetime(sets["kickoff_local"], _league_of(conn, row["series_id"])) else 0)
                 conn.execute(f"UPDATE catalog_events SET {cols} WHERE id=?", args + [row["id"]])
         _apply_overrides(conn, row["series_id"], row["external_id"])
         conn.commit()
@@ -388,15 +411,17 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
     if not ids:
         return []
     marks = ",".join("?" for _ in ids)
-    # `series_games`: the games in this one's series and season (a Bulls
-    # season ~85, a Bears season 20, a playoff run a handful). A date's
-    # events come preseason last, then rarest first (a Bears game before a
-    # Blackhawks game the same day), then home before road, then by start —
+    # `series_games`: the REGULAR-season games in this one's series and
+    # season (a Bulls season 80-odd, a Bears season 17, a playoff file none),
+    # so a playoff game added to a team's file never reads as one of 80. A
+    # date's events come postseason first and preseason last, then rarest
+    # first (a Bears game before a Blackhawks game the same day), then home
+    # before road, then by start —
     # so a reader taking a date's first event takes the one that matters
     # (Event Intelligence phase 4).
     sql = (f"SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league, "
-           f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season) "
-           f"AS series_games FROM catalog_events e "
+           f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season "
+           f"AND o.season_type='regular') AS series_games FROM catalog_events e "
            f"JOIN event_series s ON s.id=e.series_id WHERE e.series_id IN ({marks}) AND e.event_date IS NOT NULL")
     args = list(ids)
     if start:
@@ -408,7 +433,8 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
     conn = get_conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
-            sql + " ORDER BY e.event_date, CASE e.season_type WHEN 'preseason' THEN 1 ELSE 0 END, series_games, "
+            sql + " ORDER BY e.event_date, CASE e.season_type WHEN 'postseason' THEN 0 WHEN 'preseason' THEN 2 "
+                  "ELSE 1 END, series_games, "
                   "CASE e.home_away WHEN 'home' THEN 0 ELSE 1 END, "
                   "e.kickoff_local", args).fetchall()]
     finally:
@@ -490,8 +516,13 @@ def mark_past_completed(today, db_path=DB_PATH) -> int:
     when a source gives one, is kept or added later)."""
     conn = get_conn(db_path)
     try:
+        # An if-necessary playoff game with no result may never have been
+        # played: it stays scheduled (and unmeasured — engine.sync_restaurant)
+        # until a result or a cancellation is entered (phase 4 audit).
         cur = conn.execute("UPDATE catalog_events SET status='completed', updated_at=datetime('now') "
-                           "WHERE status='scheduled' AND event_date IS NOT NULL AND event_date < ?", (str(today)[:10],))
+                           "WHERE status='scheduled' AND event_date IS NOT NULL AND event_date < ? "
+                           "AND NOT (COALESCE(attributes_json, '') LIKE '%\"if_necessary\": true%' "
+                           "AND COALESCE(result, '') = '')", (str(today)[:10],))
         conn.commit()
         return cur.rowcount
     finally:

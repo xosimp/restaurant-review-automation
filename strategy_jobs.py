@@ -1910,7 +1910,9 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
             end += 24 * 60                       # closes past midnight
         if start <= cut < end:
             on_by_role.setdefault((x["role"] or "Staff").strip(), []).append({**x, "_start": start, "_end": end})
-    floors = _sr.role_floors(restaurant)
+    # Tonight's floors as the draft holds them: the owner's staffing rules
+    # and confirmed Studio note rules included (blind audit, 10/1/26).
+    floors = _sr.effective_role_floors(restaurant, local.date())
     minimums = _sr.role_minimums(restaurant)
     choices = []
     for role, people in on_by_role.items():

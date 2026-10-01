@@ -3227,6 +3227,13 @@ SCHEDULE_SCHEMA = {
 }
 
 
+# Where Cavnar AI's own staffing questions start inside the notes handed to
+# the draft (schedule_engine._sched_notes_with_findings): never the owner's
+# instructions, so never under ADDITIONAL SCHEDULING NOTES.
+SCHED_FINDINGS_HEADER = ("CAVNAR AI QUESTIONS (not the owner's words — questions to weigh for this draft, "
+                         "never instructions):")
+
+
 def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourly_rate: float,
                     yoy_context: list = None, projected_revenue_override: float = None,
                     monthly_revenue_target: float = 0.0) -> dict:
@@ -3242,13 +3249,16 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     # The target is stored monthly; ÷ 52/12 is exactly the weekly figure an
     # owner who plans by the week typed (models.monthly_from_weekly).
     projected_revenue = 0.0
+    revenue_basis = None
     if projected_revenue_override and float(projected_revenue_override) > 0:
+        revenue_basis = "override"
         # The restaurant's own weekly pattern (schedule_economics
         # .projected_weekly_revenue) beats a twelfth of a monthly target.
         projected_revenue = round(float(projected_revenue_override), 0)
     elif monthly_revenue_target and monthly_revenue_target > 0:
         from metrics import WEEKS_PER_MONTH as _WPM
         projected_revenue = round(monthly_revenue_target / _WPM, 0)  # monthly → weekly (one month definition)
+        revenue_basis = "monthly"
     elif yoy_context:
         yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
         # Only a WHOLE prior-year week projects a week: four days of last
@@ -3257,6 +3267,7 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
         # period below.
         if yoy_sales and len(yoy_sales) == len(yoy_context):
             projected_revenue = sum(yoy_sales)
+            revenue_basis = "last_year"
     if not projected_revenue:
         # Scale the synced period up to a week by CALENDAR days covered, not
         # by the count of days that happen to have shifts. A restaurant
@@ -3269,6 +3280,7 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
         _sales = analysis.get("total_sales", 0)
         if _period >= MIN_DAYS_TO_EXTRAPOLATE:
             projected_revenue = _sales * (7 / _period)
+            revenue_basis = "recent" if projected_revenue else None
         elif _period:
             projected_revenue = 0.0
     hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
@@ -3353,7 +3365,11 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
 
     return {"projected_revenue": projected_revenue, "hours_budget": hours_budget,
             "labor_budget_dollars": labor_budget_dollars, "daily_target_hours": _daily_target_map,
-            "daily_targets_text": _daily_targets}
+            "daily_targets_text": _daily_targets,
+            # Which source set the week's sales: "override" (the caller's —
+            # the owner's budget or the day-by-day projection), "monthly",
+            # "last_year", "recent", or None when nothing could.
+            "revenue_basis": revenue_basis}
 
 
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
@@ -3955,10 +3971,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # preferences (priority 5) and give way only to 1-4. A note the owner
         # confirmed as a rule is already a floor in SHIFT REQUIREMENTS
         # (schedule_note_rules), checked by code like any floor.
-        _sched_notes_block = ("\n\nADDITIONAL SCHEDULING NOTES (from management) — the owner's instructions for "
-                              "every draft. Follow each one; the only thing that may stop you is priorities 1-4 "
-                              "in the PRIORITIES list, and then say which note and why in the summary:\n"
-                              f"{sched_notes}")
+        # Cavnar AI's own questions (schedule_engine._sched_notes_with_findings)
+        # ride after SCHED_FINDINGS_HEADER and keep their own block: a
+        # question is never an owner's instruction (blind audit, 10/1/26).
+        _owner_notes, _, _findings = str(sched_notes).partition(SCHED_FINDINGS_HEADER)
+        if _owner_notes.strip():
+            _sched_notes_block = ("\n\nADDITIONAL SCHEDULING NOTES (from management) — the owner's instructions "
+                                  "for every draft. Follow each one; the only thing that may stop you is priorities "
+                                  "1-4 in the PRIORITIES list:\n" + _owner_notes.strip())
+        if _findings.strip():
+            _sched_notes_block += "\n\n" + SCHED_FINDINGS_HEADER + "\n" + _findings.strip()
 
     # A labor target is a CEILING, not a quota. This block used to tell the
     # model that landing under budget meant "the historical staffing data
@@ -4347,6 +4369,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "labor_budget_dollars": labor_budget_dollars,
         "labor_target": labor_target,
         "daily_target_hours": _daily_target_map,
+        "revenue_basis": _plan.get("revenue_basis"),
         # The staff list the prompt was actually built from, so the caller
         # can check the model's rows against it rather than trusting that
         # "use real employee names from the staff list" was obeyed.

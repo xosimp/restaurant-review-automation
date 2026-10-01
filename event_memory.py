@@ -601,20 +601,50 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
 
 # ── which flagged nights still count as ordinary ───────────────────────────
 
-# A frequent series (an NBA or NHL season: 40-odd home games and as many
-# road) flags most winter nights, and a baseline that leaves every flagged
-# night out ran out of ordinary nights (Event Intelligence phase 4). A
-# catalog game of a series with at least FREQUENT_SERIES_GAMES games in its
-# season leaves its night IN the baseline until this restaurant has measured
-# games like it to matter (measured_effect applies, past EFFECT_FLOOR_PCT);
-# from then on its nights are left out like any event. The Bears (17 games)
-# and every owner-listed event are left out as before.
+# A frequent series (an NBA, NHL or MLS season: 30+ regular-season games)
+# flags most nights of its season, and a baseline that left every flagged
+# night out ran out of ordinary nights (Event Intelligence phase 4). Its game
+# is QUIET (quiet_game) until this restaurant has measured games like it to
+# matter — the same test measured_effect uses to apply an effect (`applies`,
+# EFFECT_MIN_N nights) past EFFECT_FLOOR_PCT — and while quiet it:
+#   * leaves its night in other nights' baselines (ordinary_nights),
+#   * confounds no other label's night (record_night),
+#   * is no concurrent change to an outcome (outcomes.concurrent_changes),
+#   * earns no unasked surface (event_intel.engine.headline, the same test).
+# A playoff game and an infrequent series (the Bears) are never quiet. A
+# game's own baseline never holds its own series' or venue's nights, so a
+# series that does matter is not measured against itself (phase 4 audit).
 FREQUENT_SERIES_GAMES = 30
+_MATTERS_SECONDS = 60
+_matters_memo = {}
 
 
-def _series_sizes(refs, db_path=None) -> dict:
-    """{ref: games in that game's series and season, every type} for catalog refs
-    ("event:<id>"). Never raises."""
+def label_matters(restaurant_id, label, db_path=None) -> bool:
+    """Games like `label` measured here past EFFECT_FLOOR_PCT on enough
+    nights to apply (memoised a minute). Never raises."""
+    key = (restaurant_id, str(label or ""), db_path)
+    hit = _matters_memo.get(key)
+    import time as _t
+    if hit and _t.monotonic() - hit[0] < _MATTERS_SECONDS:
+        return hit[1]
+    eff = measured_effect(restaurant_id, label, db_path=db_path)
+    out = bool(eff and eff.get("applies") and abs(eff.get("median_lift_pct") or 0) >= EFFECT_FLOOR_PCT)
+    if len(_matters_memo) > 5000:
+        _matters_memo.clear()
+    _matters_memo[key] = (_t.monotonic(), out)
+    return out
+
+
+def quiet_game(restaurant_id, label, regular_games, season_type=None, db_path=None) -> bool:
+    """A frequent series' game this restaurant hasn't measured to matter."""
+    if season_type == "postseason" or int(regular_games or 0) < FREQUENT_SERIES_GAMES:
+        return False
+    return not label_matters(restaurant_id, label, db_path=db_path)
+
+
+def _catalog_info(refs, db_path=None) -> dict:
+    """{ref: {"regular", "season_type", "series_id", "venue", "home_away"}}
+    for catalog refs ("event:<id>"). Never raises."""
     ids = []
     for ref in refs:
         try:
@@ -628,38 +658,55 @@ def _series_sizes(refs, db_path=None) -> dict:
         try:
             marks = ",".join("?" for _ in ids)
             rows = conn.execute(
-                f"SELECT e.id, (SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id "
-                f"AND o.season=e.season) AS n "
-                f"FROM catalog_events e WHERE e.id IN ({marks})", ids).fetchall()
+                f"SELECT e.id, e.series_id, e.season_type, e.venue, e.home_away, "
+                f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season "
+                f"AND o.season_type='regular') AS n FROM catalog_events e WHERE e.id IN ({marks})", ids).fetchall()
         finally:
             conn.close()
     except Exception:
         return {}
-    return {f"event:{r['id']}": int(r["n"] or 0) for r in rows}
+    return {f"event:{r['id']}": {"regular": int(r["n"] or 0), "season_type": r["season_type"],
+                                 "series_id": r["series_id"], "venue": (r["venue"] or "").strip().lower(),
+                                 "home_away": r["home_away"]} for r in rows}
 
 
-def ordinary_nights(restaurant_id, flags_by_day, db_path=None) -> set:
+def quiet_flags(restaurant_id, flags, info=None, db_path=None) -> set:
+    """The ids (id(flag)) of the catalog flags in `flags` that are quiet."""
+    info = info if info is not None else _catalog_info(
+        {f.get("ref") for f in flags or [] if str(f.get("ref") or "").startswith("event:")}, db_path=db_path)
+    out = set()
+    for f in flags or []:
+        i = info.get(f.get("ref")) if f.get("kind") == "event" else None
+        if i and quiet_game(restaurant_id, f.get("raw") or f.get("label"), i["regular"], i["season_type"],
+                            db_path=db_path):
+            out.add(id(f))
+    return out
+
+
+def ordinary_nights(restaurant_id, flags_by_day, db_path=None, tonight=None) -> set:
     """The ISO dates in `flags_by_day` ({iso: flags}, flags_for) that count
-    as ordinary for a baseline: nothing flagged, or only games of a frequent
-    series this restaurant hasn't measured to matter. Never raises."""
-    refs = {f.get("ref") for fl in flags_by_day.values() for f in (fl or [])
+    as ordinary for a baseline: nothing flagged but quiet games — and, when
+    `tonight` (the measured night's flags) carries a catalog game, none of
+    that game's own series or a home game at its venue (a Bulls night is
+    never measured against other United Center nights). Never raises."""
+    refs = {f.get("ref") for fl in list(flags_by_day.values()) + [tonight or []] for f in (fl or [])
             if f.get("kind") == "event" and str(f.get("ref") or "").startswith("event:")}
-    sizes = _series_sizes(refs, db_path=db_path) if refs else {}
-    material = {}
+    info = _catalog_info(refs, db_path=db_path) if refs else {}
+    mine = [info[f["ref"]] for f in (tonight or []) if f.get("ref") in info]
+    series = {m["series_id"] for m in mine}
+    venues = {m["venue"] for m in mine if m["home_away"] == "home" and m["venue"]}
 
-    def _matters(f):
-        raw = f.get("raw") or f.get("label")
-        if raw not in material:
-            eff = measured_effect(restaurant_id, raw, db_path=db_path)
-            material[raw] = bool(eff and eff.get("applies") and abs(eff.get("median_lift_pct") or 0) >= EFFECT_FLOOR_PCT)
-        return material[raw]
+    def _kin(f):
+        i = info.get(f.get("ref"))
+        return bool(i) and (i["series_id"] in series or (i["home_away"] == "home" and i["venue"] in venues))
 
-    def _blocks(f):
-        if f.get("kind") != "event" or sizes.get(f.get("ref"), 0) < FREQUENT_SERIES_GAMES:
-            return True
-        return _matters(f)
-
-    return {d for d, fl in flags_by_day.items() if not any(_blocks(f) for f in (fl or []))}
+    out = set()
+    for d, fl in flags_by_day.items():
+        fl = fl or []
+        quiet = quiet_flags(restaurant_id, fl, info=info, db_path=db_path)
+        if all(id(f) in quiet and not _kin(f) for f in fl):
+            out.add(d)
+    return out
 
 
 # ── recording a night ──────────────────────────────────────────────────────
@@ -737,7 +784,7 @@ def measure_night(restaurant_id, day, db_path=None, flags=None) -> dict:
         return {"reason": "no final net sales for the night"}
     fl = flags if flags is not None else flags_for(restaurant_id, [day] + same_days, db_path=db_path)
     ordinary = ordinary_nights(restaurant_id, {d.isoformat(): fl.get(d.isoformat()) for d in same_days},
-                               db_path=db_path)
+                               db_path=db_path, tonight=fl.get(iso))
     base = [x["net"] for d, x in series.items() if d != iso and x.get("basis") == night.get("basis")
             and x.get("net") and x["net"] > 0 and d in ordinary]
     if len(base) < BASELINE_MIN:
@@ -782,7 +829,17 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
                 # One lift, one night: a night that carried two things is
                 # kept for each, marked confounded (QUALITY-4) — a label is
                 # measured on its own nights where it has enough of them.
-                marks = _confounding(flags)
+                # A quiet game (a frequent series not measured to matter)
+                # confounds no other label; it is itself confounded by
+                # anything else that happened (phase 4 audit).
+                quiet = quiet_flags(restaurant_id, flags, db_path=db_path)
+                loud = [f for f in flags if id(f) not in quiet]
+                marks = _confounding(loud)
+                for f in flags:
+                    if id(f) in quiet:
+                        others = sorted({o["label"] for o in flags
+                                         if o is not f and not _same_thing(o["label"], f["label"])})
+                        marks[f["label"]] = (1, json.dumps(others)) if others else (0, None)
                 seen = set()
                 for f in flags:
                     key = (f["kind"], f["label"])

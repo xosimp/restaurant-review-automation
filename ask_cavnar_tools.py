@@ -1161,7 +1161,9 @@ def _read_schedule_rules(restaurant_id):
         "rules_in_force": {k: v for k, v in comp.items() if v not in (None, "")},
         "jurisdiction_pack": ({"label": pack.get("label"), "starting_values": pack.get("applied"),
                                "notes": pack.get("notes")} if pack else None),
-        "role_floors": _sr.role_floors(r) if r else {},
+        # The floors as a draft is held to them this week: the owner's rules
+        # card, raised by their staffing rules and confirmed note rules.
+        "role_floors": _sr.effective_role_floors(r) if r else {},
         # A cut or send-home suggestion never leaves a role below its floor
         # above, or — for a role with none — below this many people
         # (schedule_rules.cut_floor). Not a staffing requirement.
@@ -2041,7 +2043,7 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     if not out["following"]:
         out["note"] = "This restaurant follows no team or event yet."
         return out
-    ahead = []
+    ahead, _planned = [], [0]
     for u in engine.upcoming(restaurant_id, days=_days(days, 21, 120), today=today):
         e = u["event"]
         item = {"what": u["describe"], "date": e["event_date"], "day": mdy(e["event_date"]),
@@ -2050,7 +2052,10 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
         # A frequent series' game this restaurant hasn't measured to matter
         # (a Blackhawks or Bulls night) is context: on the calendar, never
         # the night to plan around (engine.headline, phase 4).
-        if not engine.headline(restaurant_id, e):
+        try:
+            if not engine.headline(restaurant_id, e):
+                item["context_only"] = True
+        except Exception:
             item["context_only"] = True
         if u.get("effect"):
             item["measured_here"] = u["effect"]["basis"]
@@ -2067,7 +2072,10 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
                                     "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
                                     "covers": last["covers"], "labor_pct": last["labor_pct"],
                                     "on_the_clock_by_role": last["headcount"]}
-        if len(ahead) < 3:
+        if not item.get("context_only") and _planned[0] < 3:
+            # The full plan goes to the next three games that matter, never
+            # to a quiet Bulls or Blackhawks night ahead of them (phase 4 audit).
+            _planned[0] += 1
             # Who worked games like it by role, and where the night moved
             # around kickoff (event_intel.playbook, phase 2): a plan only
             # where measured, else what was staffed and when it got busy.
@@ -2146,7 +2154,7 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     if "marketing" in denied:
         for item in ahead:
             item.pop("reach_guests", None)
-    if "reviews" in denied:
+    if "reviews" in denied or not getattr(_viewer, "module_reviews", 1):
         out.pop("reviews_on_game_nights", None)
     out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
                     "weeks before (event_memory); a game night with no sales on file is not measured")

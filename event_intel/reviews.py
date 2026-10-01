@@ -3,8 +3,8 @@
 "Service strain shows up in reviews after busy games": the reviews posted on
 the day of one of this restaurant's games or the REVIEW_WINDOW_DAYS after it,
 against the reviews posted on every other day of the same period — the share
-of each that complains about service or the wait (the analyser's `service`
-and `wait_time` categories, an owner's re-tag included).
+of each that COMPLAINS about service or the wait (negative, or rated 2 or
+under, and tagged `service` or `wait_time`, an owner's re-tag included).
 
 A review's date is when it was posted, not when the guest came: the window
 catches most of a game night's reviews and some that are not, so the result
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 REVIEW_WINDOW_DAYS = 2          # the game day and the two days after it
 REVIEW_LOOKBACK_DAYS = 365
-REVIEW_MIN_EACH = 8             # reviews on each side before a share is said
+REVIEW_MIN_EACH = 20            # reviews on each side before a share is said (one review ≤5 points)
 REVIEW_GAP_POINTS = 10          # percentage points apart before it is a lean
 SERVICE_CATEGORIES = ("service", "wait_time")
 
@@ -63,7 +63,7 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
         conn = store.get_conn(db_path)
         try:
             rows = conn.execute(
-                f"SELECT substr({AXIS}, 1, 10) AS day, categories FROM reviews WHERE restaurant_id=? "
+                f"SELECT substr({AXIS}, 1, 10) AS day, categories, sentiment, rating FROM reviews WHERE restaurant_id=? "
                 f"AND deleted_at IS NULL AND processed=1 AND substr({AXIS}, 1, 10) >= ? AND substr({AXIS}, 1, 10) < ?",
                 (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
         finally:
@@ -72,7 +72,10 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
             return None
         g_n = g_s = o_n = o_s = 0
         for r in rows:
-            svc = bool(_cats(r["categories"]) & set(SERVICE_CATEGORIES))
+            # A complaint: the analyser tags a topic whatever the tone, so a
+            # 5-star "great service" review is never strain (phase 4 audit).
+            neg = r["sentiment"] == "negative" or (r["rating"] is not None and int(r["rating"]) <= 2)
+            svc = neg and bool(_cats(r["categories"]) & set(SERVICE_CATEGORIES))
             if r["day"] in window:
                 g_n += 1
                 g_s += svc
@@ -85,13 +88,13 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
         if g_pct is not None and o_pct is not None and abs(g_pct - o_pct) >= REVIEW_GAP_POINTS:
             lean = "more" if g_pct > o_pct else "fewer"
             text = (f"{g_pct}% of the reviews posted on a game day or the {REVIEW_WINDOW_DAYS} days after it "
-                    f"mention service or the wait, against {o_pct}% of the reviews posted on other days "
+                    f"complain about service or the wait, against {o_pct}% of the reviews posted on other days "
                     f"({g_n} and {o_n} reviews, the last {int(days)} days) — a lean, not proof: a review's "
                     f"date is when it was posted, not when the guest came")
         return {"games": len(games), "game_reviews": g_n, "game_service": g_s, "game_pct": g_pct,
                 "other_reviews": o_n, "other_service": o_s, "other_pct": o_pct, "lean": lean, "text": text,
                 "window_days": REVIEW_WINDOW_DAYS, "days": int(days),
-                "basis": (f"reviews tagged service or wait time, posted on the day of one of the {len(games)} "
+                "basis": (f"negative reviews tagged service or wait time, posted on the day of one of the {len(games)} "
                           f"followed games or the {REVIEW_WINDOW_DAYS} days after, against the rest of the period")}
     except Exception as ex:
         log.warning("event_intel.reviews failed rid=%s: %s", restaurant_id, ex)

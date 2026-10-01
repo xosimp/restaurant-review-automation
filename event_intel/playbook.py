@@ -81,8 +81,12 @@ def usual_nights(restaurant_id, day, db_path=store.DB_PATH) -> list:
         flags = {}
     # Ordinary as event memory counts it: a frequent series' unmeasured game
     # leaves its night in (event_memory.ordinary_nights, phase 4).
+    try:
+        tonight = event_memory.flags_for(restaurant_id, [day], db_path=db_path).get(day.isoformat())
+    except Exception:
+        tonight = None
     ok = event_memory.ordinary_nights(restaurant_id, {d.isoformat(): flags.get(d.isoformat()) for d in same},
-                                      db_path=db_path)
+                                      db_path=db_path, tonight=tonight)
     return [d.isoformat() for d in same if d.isoformat() in ok]
 
 
@@ -501,6 +505,7 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 pe = peers.peer_effect(restaurant_id, e, db_path=db_path)
                 if pe:
                     parts.append(pe["text"] + ".")
+                    claim = "computed"       # another restaurant's measured nights, not context
         if sees_labor:
             st = staffing(restaurant_id, e, db_path=db_path)
             if st and st.get("recommend") and "staffing" not in said:

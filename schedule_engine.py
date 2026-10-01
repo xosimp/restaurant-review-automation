@@ -72,6 +72,15 @@ def _week_monday(today, week_start=None):
     return today + _t(days=days_ahead)
 
 
+def revenue_source_words(basis, override_source=None):
+    """What set the week's projected sales, in words, from week_hours_plan's
+    `revenue_basis` — never a guess at which branch ran (blind audit)."""
+    return {"override": override_source or "your own weekly pattern",
+            "monthly": "monthly target ÷ 4.33",
+            "last_year": "the same week last year",
+            "recent": "recent sales scaled to a week"}.get(basis, "no sales on file to project the week from")
+
+
 def forecast_preview(restaurant_id, week_start=None) -> dict:
     """The chosen week's forecast before anything is drafted — the Studio's
     Forecast tab. The same inputs _build_schedule_result hands the draft
@@ -129,8 +138,7 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
         else:
             row["reason"] = fc.get("reason")
         days.append(row)
-    source = (revenue.get("source") if revenue.get("value") else
-              ("monthly target ÷ 4.33" if monthly else "recent sales scaled to a week"))
+    source = revenue_source_words(plan.get("revenue_basis"), revenue.get("source"))
     out = {"ok": True, "week_start": dates[0], "days": days, "projected_revenue": plan["projected_revenue"],
            "projected_revenue_source": source, "hours_budget": plan["hours_budget"],
            "labor_budget_dollars": plan["labor_budget_dollars"], "labor_target": target,
@@ -608,7 +616,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["outcomes_by_daypart"] = outcomes
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
-    result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    result["projected_revenue_source"] = revenue_source_words(result.get("revenue_basis"), revenue.get("source"))
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
@@ -2867,7 +2875,8 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
              + (" What it is not: " + l["not_a_cause"] if l.get("not_a_cause") else "")
              + (" What would confirm it: " + l["confirm_by"] if l.get("confirm_by") else "")
              for l in links[:2]]
-    return ((sched_notes or "").strip() + "\n" + "\n".join(lines)).strip()
+    from labor import SCHED_FINDINGS_HEADER
+    return ((sched_notes or "").strip() + "\n\n" + SCHED_FINDINGS_HEADER + "\n" + "\n".join(lines)).strip()
 
 
 def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool = True) -> list:

@@ -613,7 +613,9 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     try:
         from event_intel import reviews as _ev_rev
         gr = _ev_rev.game_night_reviews(restaurant_id, db_path=db_path)
-        if gr and gr.get("lean"):
+        # Only "more" is evidence of strain; "fewer" says nothing a
+        # complaint cluster can use (phase 4 audit).
+        if gr and gr.get("lean") == "more":
             ctx["games"] = gr
     except Exception:
         pass
@@ -1333,10 +1335,10 @@ def _operational_lines(ctx) -> dict:
     if g:
         lines["guests"] = guests_line(g)
     gm = ctx.get("games")
-    if gm and gm.get("lean"):
+    if gm and gm.get("lean") == "more":
         lines["games"] = OperationalLine(
             f"- Game nights: {gm['game_pct']}% of reviews posted on a game day or the {gm['window_days']} days "
-            f"after mention service or the wait, against {gm['other_pct']}% on other days ({gm['game_reviews']} "
+            f"after complain about service or the wait, against {gm['other_pct']}% on other days ({gm['game_reviews']} "
             f"and {gm['other_reviews']} reviews; posted dates, not visit dates)",
             {"game_pct": op_field("service/wait share of game-night reviews", gm["game_pct"], "pct",
                                   display=f"{gm['game_pct']}%"),
@@ -1566,10 +1568,21 @@ def slice_context(restaurant_id, cluster, db_path=DB_PATH, today=None) -> dict:
             print(f"[review_intelligence] slice edits unavailable for {restaurant_id}: {e}")
         # 3. Events and guest texts on those days.
         if days:
-            evs = _rows_raw(conn, "SELECT date, label, covers FROM demand_signals WHERE restaurant_id=? "
+            evs = _rows_raw(conn, "SELECT date, label, covers, source, ref FROM demand_signals WHERE restaurant_id=? "
                                   "AND kind='event' AND date >= ? AND date < ? ORDER BY date",
                             (restaurant_id, look_start.isoformat(), today.isoformat()))
-            evs = [e for e in evs if _weekday_of(e["date"]) in days]
+            evs = [dict(e) for e in evs if _weekday_of(e["date"]) in days]
+            # A quiet catalog game (a Bulls or Blackhawks night not measured
+            # to matter here) is not an event worth naming as evidence
+            # (event_memory.quiet_flags, Event Intelligence phase 4 audit).
+            try:
+                import event_memory as _em
+                cat = [dict(e, kind="event", raw=e["label"]) for e in evs if e.get("source") == "events"]
+                q = _em.quiet_flags(restaurant_id, cat, db_path=None if db_path == DB_PATH else db_path)
+                drop = {(c["date"], c["label"]) for c in cat if id(c) in q}
+                evs = [e for e in evs if (e["date"], e["label"]) not in drop]
+            except Exception:
+                pass
             if evs:
                 labels = "; ".join(f"{_mdy_safe(e['date'])}: {e['label']}" for e in evs[:6])
                 untrusted.append(labels)
@@ -2034,6 +2047,13 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     ctx = operational_context(restaurant_id, db_path=db_path)
     op_block = _operational_block(ctx)
     op_lines = _operational_lines(ctx)
+    # The game-night line is evidence only for a service or wait cluster
+    # (event_intel.reviews, phase 4 audit): a food-quality cluster never
+    # gets to cite it, nor have its confidence lifted by it.
+    from event_intel.reviews import SERVICE_CATEGORIES as _GAME_CATS
+    _ctx_no_games = dict(ctx, games=None)
+    op_block_no_games = _operational_block(_ctx_no_games)
+    op_lines_no_games = _operational_lines(_ctx_no_games)
     client = get_client()
     today = restaurant_now(restaurant).strftime("%B %d, %Y")
 
@@ -2065,7 +2085,8 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             # The complaint's own slice and what was already tried on it
             # (memory audit 9/29/26, "diagnosis_slice").
             sl = slice_context(restaurant_id, cluster, db_path=db_path)
-            cl_lines = dict(op_lines)
+            _games_ok = cluster["category"] in _GAME_CATS
+            cl_lines = dict(op_lines if _games_ok else op_lines_no_games)
             if sl.get("line") is not None:
                 cl_lines["shifts"] = sl["line"]
             # What was worked and what the nightly reports measured on the
@@ -2085,7 +2106,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                 concentration_block=concentration,
                 complaint_block=complaints,
                 excerpt_block=excerpts,
-                operational_block=op_block,
+                operational_block=op_block if _games_ok else op_block_no_games,
                 slice_label=sl.get("label") or "no single slice",
                 slice_block=sl.get("block") or ("(These complaints concentrate on no weekday, daypart or role, "
                                                  "so there is no slice to read.)"),

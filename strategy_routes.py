@@ -1816,15 +1816,17 @@ def _do_note_rules_get(u):
             "sentences": snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat()),
             "rules": snr.note_rules(_rid(u), week_start=week or week_of.isoformat()),
             "roles": snr.restaurant_roles(_rid(u)),
-            "can_edit": _may_draft(u)}, 200
+            "can_edit": _principal(u)}, 200
 
 
 def _do_note_rule_add(u):
     """{role, min, dayparts: ["morning"|"night"], days?: [weekday], scope:
     "every"|"week", week_start?, source_text?} — a note the owner confirmed
     as a rule the draft is built to and checked against."""
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not change the schedule's rules.")
+    # A note rule is a role floor: the owner's to set, as the rules card's
+    # floors and the notes themselves are (blind audit, 10/1/26).
+    if not _principal(u):
+        return _forbidden("Only the account owner can turn a note into a rule.")
     from client_api import log_account_event
     import schedule_note_rules as snr
     b = _body()
@@ -1834,18 +1836,20 @@ def _do_note_rule_add(u):
                             week_start=b.get("week_start"), source_text=b.get("source_text"), user=u)
     except ValueError as e:
         return {"ok": False, "error": e.args[0]}, 400
-    log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=rule["words"][:200])
+    if not rule.get("existing"):
+        log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=rule["words"][:200])
     return {"ok": True, "rule": rule}, 200
 
 
 def _do_note_rule_remove(u, rule_id):
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not change the schedule's rules.")
+    if not _principal(u):
+        return _forbidden("Only the account owner can remove a rule.")
     from client_api import log_account_event
     import schedule_note_rules as snr
-    if not snr.remove_rule(_rid(u), rule_id, user=u):
+    gone = snr.remove_rule(_rid(u), rule_id, user=u)
+    if not gone:
         return {"ok": False, "error": "That rule is already gone."}, 404
-    log_account_event(_rid(u), "schedule_note_rule_removed", current_user=u, detail=f"rule {int(rule_id)}")
+    log_account_event(_rid(u), "schedule_note_rule_removed", current_user=u, detail=gone["words"][:200])
     return {"ok": True}, 200
 
 

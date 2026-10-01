@@ -123,7 +123,12 @@ def test_a_frequent_series_is_context_until_measured(db):
         c.commit()
     finally:
         c.close()
+    event_memory._matters_memo.clear()
     assert engine.headline(r.id, hawks, db_path=db)
+    # The baselines agree: the same test keeps a measured series' nights out.
+    flag = {"kind": "event", "label": "blackhawks united center", "ref": f"event:{hawks['id']}",
+            "raw": "Blackhawks home game · United Center"}
+    assert event_memory.ordinary_nights(r.id, {"2027-04-10": [flag]}, db_path=db) == set()
 
 
 def test_an_unmeasured_frequent_game_leaves_its_night_in_the_baseline(db):
@@ -160,33 +165,53 @@ def test_an_if_necessary_game_says_so(db):
 
 # ── reviews against game nights ────────────────────────────────────────────
 
-def _review(db, rid, day, cats, n):
+def _review(db, rid, day, cats, n, sentiment="negative", rating=2):
     c = models.get_conn(db)
     try:
         for i in range(n):
             c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, rating, text, review_date, fetched_at, "
                       "processed, categories, sentiment) VALUES (?,?,?,?,?,?,?,1,?,?)",
-                      (rid, "google", f"{day}-{cats}-{i}", 2, "x", day, day, json.dumps(cats), "negative"))
+                      (rid, "google", f"{day}-{cats}-{sentiment}-{i}", rating, "x", day, day, json.dumps(cats), sentiment))
         c.commit()
     finally:
         c.close()
 
 
-def test_service_reviews_around_game_nights_are_a_lean_past_the_floors(db):
+def test_service_complaints_around_game_nights_are_a_lean_past_the_floors(db):
     from event_intel import reviews
     r = _restaurant(db)
     # 9/20 and 9/28 are Bears home games; 9/21 and 9/29 sit inside their windows.
-    _review(db, r.id, "2026-09-21", ["service"], 5)
-    _review(db, r.id, "2026-09-29", ["food_quality"], 5)
-    _review(db, r.id, "2026-09-03", ["food_quality"], 9)
-    _review(db, r.id, "2026-09-05", ["wait_time"], 1)
+    _review(db, r.id, "2026-09-21", ["service"], 10)
+    _review(db, r.id, "2026-09-29", ["food_quality"], 10)
+    _review(db, r.id, "2026-09-29", ["service"], 6, sentiment="positive", rating=5)   # praise is no strain
+    _review(db, r.id, "2026-09-03", ["food_quality"], 18)
+    _review(db, r.id, "2026-09-03", ["wait_time"], 2)
     out = reviews.game_night_reviews(r.id, today=date(2026, 10, 1), days=60, db_path=db)
-    assert out["game_reviews"] == 10 and out["game_pct"] == 50
-    assert out["other_reviews"] == 10 and out["other_pct"] == 10
-    assert out["lean"] == "more" and "a lean, not proof" in out["text"]
+    assert out["game_reviews"] == 26 and out["game_service"] == 10 and out["game_pct"] == 38
+    assert out["other_reviews"] == 20 and out["other_pct"] == 10
+    assert out["lean"] == "more" and "complain about service" in out["text"] and "a lean, not proof" in out["text"]
     # Under the floor on one side: shares withheld, nothing said.
     thin = reviews.game_night_reviews(r.id, today=date(2026, 9, 25), days=30, db_path=db)
     assert thin["game_pct"] is None and thin["text"] is None
+
+
+def test_praise_alone_is_never_strain(db):
+    from event_intel import reviews
+    r = _restaurant(db)
+    _review(db, r.id, "2026-09-21", ["service"], 25, sentiment="positive", rating=5)
+    _review(db, r.id, "2026-09-03", ["food_quality"], 25, sentiment="positive", rating=5)
+    out = reviews.game_night_reviews(r.id, today=date(2026, 10, 1), days=60, db_path=db)
+    assert out["game_pct"] == 0 and out["lean"] is None
+
+
+def test_the_game_line_is_evidence_only_for_service_clusters():
+    import inspect
+    import review_intelligence as ri
+    src = inspect.getsource(ri.diagnose)
+    assert "_games_ok = cluster[\"category\"] in _GAME_CATS" in src
+    lines = ri._operational_lines({"games": {"lean": "fewer", "game_pct": 5, "other_pct": 20, "window_days": 2,
+                                            "game_reviews": 30, "other_reviews": 40}})
+    assert "games" not in lines
 
 
 # ── what games do elsewhere, behind the privacy floor ─────────────────────
@@ -208,17 +233,71 @@ def _measured_bears_fan(db, i):
     return rid
 
 
-def test_peer_game_effect_needs_five_restaurants_from_five_owners(db, monkeypatch):
+def test_peer_game_effect_needs_eight_restaurants_from_five_owners(db, monkeypatch):
     from event_intel import peers
-    monkeypatch.setattr(peers, "_memo", {})
+    from intelligence.benchmarks import MIN_QUARTILE_N
+    peers.invalidate()
     viewer = _restaurant(db)
     game = _event(db, "nfl-chicago-bears", "2026-10-22")
-    for i in range(4):
+    for i in range(MIN_QUARTILE_N - 1):
         _measured_bears_fan(db, i)
     assert peers.peer_effect(viewer.id, game, db_path=db) is None
-    _measured_bears_fan(db, 4)
-    monkeypatch.setattr(peers, "_memo", {})
+    _measured_bears_fan(db, MIN_QUARTILE_N)
+    peers.invalidate()
     out = peers.peer_effect(viewer.id, game, db_path=db)
-    assert out and out["n"] == 5 and out["claim_kind"] == "peers"
+    assert out and out["n"] == MIN_QUARTILE_N and out["claim_kind"] == "computed"
     assert out["median_lift_pct"] % peers.PEER_STEP_PCT == 0
-    assert "not yours" in out["text"] and "Tap" not in out["text"]
+    assert "or more other restaurants" in out["text"] and "not yours" in out["text"] and "Tap" not in out["text"]
+    # An excluded restaurant leaves at once: the memo is dropped on any change.
+    models.update_restaurant(MIN_QUARTILE_N + 1, {"exclude_from_learning": 1}, db_path=db)
+    assert peers.peer_effect(viewer.id, game, db_path=db) is None
+
+
+# ── blind audit regressions (10/1/26) ─────────────────────────────────────
+
+def test_an_unplayed_if_necessary_game_is_never_completed_or_measured(db):
+    r = _restaurant(db)
+    store.mark_past_completed("2026-10-12", db_path=db)
+    sox = _event(db, "mlb-chicago-white-sox", "2026-10-08")
+    assert sox["status"] == "scheduled" and not sox.get("result")
+    engine.sync_restaurant(r, today=date(2026, 10, 12), db_path=db)
+    c = models.get_conn(db)
+    try:
+        refs = {row["ref"] for row in c.execute("SELECT ref FROM demand_signals WHERE restaurant_id=?", (r.id,))}
+    finally:
+        c.close()
+    assert f"event:{sox['id']}" not in refs
+
+
+def test_a_playoff_game_always_headlines_and_counts_only_regular_seasons(db):
+    r = _restaurant(db)
+    sox = _event(db, "mlb-chicago-white-sox", "2026-10-03")
+    assert sox["season_type"] == "postseason" and engine.headline(r.id, sox, db_path=db)
+    fire = _event(db, "mls-chicago-fire", "2026-10-06")
+    assert fire["series_games"] >= event_memory.FREQUENT_SERIES_GAMES
+
+
+def test_prime_time_is_football_only_and_a_game_abroad_is_a_road_night(db):
+    hawks = _event(db, "nhl-chicago-blackhawks", "2027-04-10")
+    assert not hawks["is_primetime"]
+    bears = _event(db, "nfl-chicago-bears", "2026-10-22")
+    assert bears["is_primetime"]
+    abroad = _event(db, "nhl-chicago-blackhawks", "2026-12-20")
+    assert abroad["home_away"] == "away" and abroad["attributes"].get("neutral_site")
+
+
+def test_a_quiet_game_confounds_nothing_and_is_no_concurrent_change(db, monkeypatch):
+    r = _restaurant(db)
+    bulls = _event(db, "nba-chicago-bulls", "2026-11-22")
+    bears = _event(db, "nfl-chicago-bears", "2026-11-22")
+    flags = [{"kind": "event", "label": "bears soldier field", "ref": f"event:{bears['id']}",
+              "raw": "Bears home game · Soldier Field"},
+             {"kind": "event", "label": "bulls united center" if bulls["home_away"] == "home" else "bulls road",
+              "ref": f"event:{bulls['id']}", "raw": engine.label_for(bulls)}]
+    quiet = event_memory.quiet_flags(r.id, flags, db_path=db)
+    assert id(flags[1]) in quiet and id(flags[0]) not in quiet
+    import inspect
+    import outcomes
+    assert "quiet_flags(rid, cat)" in inspect.getsource(outcomes)
+    src = inspect.getsource(event_memory)
+    assert "marks = _confounding(loud)" in src

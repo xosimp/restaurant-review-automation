@@ -504,6 +504,45 @@ def cut_floor(restaurant, role: str, day: str, daypart: str, floors: dict = None
     return max(1, cut_floor_default(restaurant))
 
 
+def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
+    """role_floors(restaurant) raised by the owner's staffing rules
+    (apply_owner_rules) and the Studio note rules in force for the week
+    containing `day` (default: the restaurant's today) — the floors a draft
+    is built and checked to. Every cut surface (Ask's A2 check, the weekly
+    plan, the pre-dinner pulse) reads these, so a confirmed "keep two cooks
+    on Friday lunch" is never advised away (blind audit, 10/1/26). Falls
+    back to the plain floors on any error."""
+    if not hasattr(restaurant, "role_floors_json"):
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant)
+    base = role_floors(restaurant)
+    try:
+        from datetime import date as _date, timedelta as _td
+        if day is None:
+            from time_utils import restaurant_now
+            day = restaurant_now(restaurant, naive=True).date()
+        day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
+        mon = day - _td(days=day.weekday())
+        c = Constraints(restaurant_id=restaurant.id, week_dates=[(mon + _td(days=i)).isoformat() for i in range(7)],
+                        week_days=list(DAYS))
+        c.role_floors = json.loads(json.dumps(base))
+        c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
+        try:
+            from models import get_close_times
+            c.close_times = get_close_times(restaurant.id, db_path) or {}
+        except Exception:
+            pass
+        try:
+            apply_owner_rules(c, restaurant.id, db_path=db_path)
+        except Exception:
+            pass
+        import schedule_note_rules
+        schedule_note_rules.apply_note_rules(c, restaurant.id, db_path=db_path)
+        return c.role_floors
+    except Exception:
+        return base
+
+
 def cut_policy(restaurant, text: str = "") -> dict:
     """The Response Validation Layer's A2 inputs for one restaurant, as
     ValidationContext.policy keys: {"role_floors": {role: floor},
@@ -520,7 +559,7 @@ def cut_policy(restaurant, text: str = "") -> dict:
         if restaurant is None:
             return {}
         from labor import note_floors
-        return {"role_floors": note_floors(text, role_floors(restaurant), role_minimums(restaurant)),
+        return {"role_floors": note_floors(text, effective_role_floors(restaurant), role_minimums(restaurant)),
                 "cut_floor_default": cut_floor_default(restaurant)}
     except Exception:
         return {}

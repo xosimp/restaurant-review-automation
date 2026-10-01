@@ -70,7 +70,7 @@ def test_two_roles_fit_and_the_owner_picks():
 @pytest.mark.parametrize("text,why", [
     ("No more than 4 servers on Monday", "maximum"),
     ("One more bartender on Fridays", "relative"),
-    ("Fewer servers after 9pm Sunday to Thursday", "relative"),
+    ("Fewer servers after 9pm Sunday to Thursday", "hour of the day"),
     ("Make sure the closers do side work", "doesn't name one of your roles"),
 ])
 def test_what_code_cannot_hold_says_so(text, why):
@@ -78,9 +78,42 @@ def test_what_code_cannot_hold_says_so(text, why):
     assert got["kind"] == "unchecked" and why in got["why"]
 
 
-def test_game_days_ask_for_the_days():
+def test_game_days_are_a_condition_not_a_standing_rule():
     got = snr.read_sentence("Open with a bartender on game days", ROLES)
-    assert got["kind"] == "rule" and got["rule"]["scope"] == "week" and "game or event days" in got["why"]
+    assert got["kind"] == "unchecked" and "depends on something" in got["why"]
+
+
+@pytest.mark.parametrize("text", [
+    "We don't need two line cooks on Monday lunch", "Don't need a host on Monday", "We can't afford 3 servers on Monday",
+    "We don't always need 2 servers at lunch", "2 servers is too many on Monday", "By 8 one server can go home",
+    "At 5 servers come in on Friday", "2 of our 5 servers should be closers", "We have 6 servers",
+    "Send 1 server home after 9pm", "Cut to 1 bartender after 10", "Keep 4 servers on 10/12",
+    "When the Bears play, 3 bartenders", "Mother's Day 6 servers", "Ideally 3 servers at lunch",
+    "Need a server and a bartender at lunch", "Lunch 1 server, dinner 3 servers", "Max 2 bartenders on Friday",
+    "If it rains, 2 servers on the patio", "We used to have 3 hosts",
+])
+def test_nothing_that_means_something_else_is_offered_as_a_rule(text):
+    """Blind audit, 10/1/26: each of these was offered as a minimum."""
+    assert snr.read_sentence(text, ROLES, ["Max Ruiz"])["kind"] in ("unchecked", "person")
+
+
+@pytest.mark.parametrize("text,days", [
+    ("Keep 2 servers Fri-Sun at dinner", ["Friday", "Saturday", "Sunday"]),
+    ("At least 2 bartenders Thursday through Saturday night", ["Thursday", "Friday", "Saturday"]),
+    ("Keep 3 servers every day except Monday at dinner", ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+                                                           "Sunday"]),
+    ("Keep 2 servers on Tues and Thurs at lunch", ["Tuesday", "Thursday"]),
+    ("Keep 2 servers Sun to Tue at dinner", ["Monday", "Tuesday", "Sunday"]),
+])
+def test_day_ranges_abbreviations_and_exceptions(text, days):
+    got = snr.read_sentence(text, ROLES)
+    assert got["kind"] == "rule" and got["rule"]["days"] == days
+
+
+def test_weeknights_are_dinners_monday_to_thursday_and_said_so():
+    got = snr.read_sentence("Keep 2 servers on weeknights", ROLES)
+    assert got["rule"]["dayparts"] == ["night"] and got["rule"]["days"] == ["Monday", "Tuesday", "Wednesday", "Thursday"]
+    assert "Monday to Thursday" in got["why"]
 
 
 def test_a_rule_about_one_person_goes_to_their_notes():
@@ -88,6 +121,8 @@ def test_a_rule_about_one_person_goes_to_their_notes():
     assert got["kind"] == "person" and got["person"] == "Marcus Lee"
     # "Will" opening a sentence is a verb, not Will Smith.
     assert snr.read_sentence("Will need two line cooks on lunch", ROLES, ["Will Smith"])["kind"] == "rule"
+    # Everyday words are never a single-name person (Max, May, Grant).
+    assert snr.read_sentence("Keep 2 servers on Saturday, servers may leave early", ROLES, ["May"])["kind"] != "person"
 
 
 def test_guidance_is_labelled_as_unchecked_guidance():
@@ -174,7 +209,7 @@ def test_the_routes(rid, db, monkeypatch):
     from flask import Flask
     import strategy_routes
     monkeypatch.setattr(strategy_routes, "_sees_labor", lambda u: True)
-    monkeypatch.setattr(strategy_routes, "_may_draft", lambda u: True)
+    monkeypatch.setattr(strategy_routes, "_principal", lambda u: True)
     import client_api
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
     models.update_restaurant(rid, {"sched_notes": "Keep two line cooks on Friday lunch."}, db_path=db)
@@ -193,6 +228,69 @@ def test_the_routes(rid, db, monkeypatch):
         assert strategy_routes._do_note_rule_add(u)[1] == 400
     with app.test_request_context("/labor/note-rules/1/remove", method="POST", json={}):
         assert strategy_routes._do_note_rule_remove(u, body["rule"]["id"] if "rule" in body else 1)[1] in (200, 404)
-    monkeypatch.setattr(strategy_routes, "_may_draft", lambda u: False)
+    # A manager who may draft still cannot set or remove the owner's floors.
+    monkeypatch.setattr(strategy_routes, "_principal", lambda u: False)
+    monkeypatch.setattr(strategy_routes, "_may_draft", lambda u: True)
     with app.test_request_context("/labor/note-rules", method="POST", json={}):
         assert strategy_routes._do_note_rule_add(u)[1] == 403
+    with app.test_request_context("/labor/note-rules/1/remove", method="POST", json={}):
+        assert strategy_routes._do_note_rule_remove(u, 1)[1] == 403
+
+
+# ── blind audit regressions (10/1/26) ─────────────────────────────────────
+
+def test_the_same_rule_twice_is_one_rule(rid, db):
+    a = snr.add_rule(rid, "Server", 2, ["night"], days=["Friday"], db_path=db)
+    b = snr.add_rule(rid, "Server", 2, ["night"], days=["Friday"], db_path=db)
+    assert b["id"] == a["id"] and b.get("existing")
+    with pytest.raises(ValueError, match="whole number"):
+        snr.add_rule(rid, "Server", 2.7, ["night"], db_path=db)
+
+
+def test_a_dinner_only_day_gets_no_lunch_floor(rid, db):
+    mon = _next_monday()
+    snr.add_rule(rid, "Host", 1, ["morning", "night"], source_text="Never cut the host", db_path=db)
+    c = _constraints(rid, mon)
+    c.open_times = {d: "16:00" for d in snr.DAYS}
+    snr.apply_note_rules(c, rid, db_path=db)
+    assert schedule_rules.floor_for(c.role_floors, "Host", "Friday", "morning") == 0
+    assert schedule_rules.floor_for(c.role_floors, "Host", "Friday", "night") == 1
+
+
+def test_a_rule_for_a_role_nobody_holds_is_named_not_a_floor(rid, db, monkeypatch):
+    snr.add_rule(rid, "Server", 2, ["night"], source_text="Keep two servers at dinner", db_path=db)
+    monkeypatch.setattr(snr, "restaurant_roles", lambda r, db_path=None: ["Bartender"])
+    c = _constraints(rid, _next_monday())
+    snr.apply_note_rules(c, rid, db_path=db)
+    assert schedule_rules.floor_for(c.role_floors, "Server", "Friday", "night") == 0
+    assert any("nobody on the roster is a Server" in x for x in c.owner_rules_unchecked)
+
+
+def test_a_one_week_rule_never_leaks_into_a_two_week_check(rid, db):
+    mon = _next_monday()
+    snr.add_rule(rid, "Bartender", 3, ["night"], scope="week", week_start=mon.isoformat(), db_path=db)
+    dates = [(mon + timedelta(days=i)).isoformat() for i in range(14)]
+    c = schedule_rules.Constraints(restaurant_id=rid, week_dates=dates, week_days=list(snr.DAYS))
+    snr.apply_note_rules(c, rid, db_path=db)
+    assert schedule_rules.floor_for(c.role_floors, "Bartender", "Friday", "night") == 0
+
+
+def test_every_cut_surface_reads_the_floors_with_the_note_rules(rid, db):
+    snr.add_rule(rid, "Line Cook", 2, ["morning"], days=["Friday"], db_path=db)
+    r = models.get_restaurant(rid, db_path=db)
+    floors = schedule_rules.effective_role_floors(r, _next_monday(), db_path=db)
+    assert schedule_rules.floor_for(floors, "Line Cook", "Friday", "morning") == 2
+    import ask_cavnar_tools
+    import strategy_jobs
+    assert "effective_role_floors(restaurant)" in inspect.getsource(schedule_rules.cut_policy)
+    assert "_sr.effective_role_floors(r)" in inspect.getsource(ask_cavnar_tools)
+    assert "_sr.effective_role_floors(restaurant, local.date())" in inspect.getsource(strategy_jobs.staffing_move)
+
+
+def test_cavnar_ais_questions_never_ride_as_the_owners_instructions():
+    import labor
+    import schedule_engine
+    src = inspect.getsource(labor.generate_optimized_schedule)
+    assert "partition(SCHED_FINDINGS_HEADER)" in src
+    assert "SCHED_FINDINGS_HEADER" in inspect.getsource(schedule_engine._sched_notes_with_findings)
+    assert "never instructions" in labor.SCHED_FINDINGS_HEADER

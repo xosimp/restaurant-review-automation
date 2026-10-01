@@ -24031,16 +24031,9 @@ function _swBar(label, val, max, target, cls, right) {
 function swFill(data) {
   _swData = data || null;
   var fc = document.getElementById('sw-forecast');
-  // The Forecast tab's own preview of the picked week wins once shown.
-  if (fc && data && !_ssFcShown) {
-    var tg = _swTargets(), days = _swDays(), mx = 0, j, h = '';
-    for (j = 0; j < days.length; j++) mx = Math.max(mx, +tg[days[j]] || 0);
-    for (j = 0; j < days.length; j++) if (tg[days[j]] != null) h += _swBar(_escHtml(_schedDayOf(days[j]).slice(0, 3)), +tg[days[j]] || 0, mx, null, '', '<span class="hb-num">' + _schedHrs(tg[days[j]]) + 'h</span>');
-    if (data.projected_revenue) h += '<div class="sw-kv" style="margin-top:8px"><span>Forecast sales</span><b class="hb-num">' + _schedMoney(data.projected_revenue) + '</b></div>';
-    if (data.projected_revenue_source) h += '<div class="sw-note">' + _escHtml(data.projected_revenue_source) + '.</div>';
-    var ddt = data.demand_data_through; if (ddt && ddt.blind) h += '<div class="sw-flag bad">No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>: the forecast cannot see recent weeks.</div>';
-    if (h) fc.innerHTML = '<div class="sw-note" style="margin-bottom:6px">Hours each day’s forecast calls for</div>' + h;
-  }
+  // The Forecast tab is the preview's (ssLoadForecast), which names its
+  // week; a new or reopened draft only makes it re-read (blind audit).
+  if (fc && data) _ssFcKey = null;
   var par = document.getElementById('sw-par');
   if (par && data && data.hours_budget) par.innerHTML = 'This week’s PAR: <span class="hb-num">' + _schedHrs(data.hours_budget) + 'h</span>' + (data.labor_budget_dollars ? ' · <span class="hb-num">' + _schedMoney(data.labor_budget_dollars) + '</span> at <span class="hb-num">' + _escHtml(String(data.labor_target || '')) + '%</span>' : '')
     // Whose target the budget was built against (M2 owner goals): "your goal
@@ -24171,8 +24164,8 @@ function _swSave(body, statusId, okText, then) {
 }
 document.addEventListener('change', function (ev) {
   var t = ev.target; if (!t || !t.id) return;
-  if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it'); }
-  else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these', ssLoadNoteRules);
+  if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it', function () { _ssFcKey = null; }); }
+  else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these', function () { ssLoadNoteRules(true); });
 });
 function swOpenTeam(which) {
   // The roster and rules editors live in Labor: leave the Studio for them.
@@ -24384,12 +24377,18 @@ function ssTab(tab) {
 // owner confirms — every week, or the picked week only — and from then on
 // code builds the draft to it and checks it (owner, 10/1/26: "I typed
 // something here and it didn't do what I said" must never happen).
-var _snr = null, _snrForms = {};
-function ssLoadNoteRules() {
+var _snr = null, _snrForms = {}, _snrKey = null, _snrTok = 0;
+// Read again only when the week changed or something was saved (force):
+// a tab visit never wipes a half-filled form. The newest request wins.
+function ssLoadNoteRules(force) {
   var el = document.getElementById('snr'); if (!el) return;
   var ws = _schedWeekStart() || '';
+  if (!force && _snrKey === ws && _snr) return;
+  _snrKey = ws;
+  var tok = ++_snrTok;
   fetch('/api/labor/note-rules' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), {credentials: 'same-origin'})
     .then(apiJson).then(function (d) {
+      if (tok !== _snrTok) return;
       if (!d || !d.ok) { el.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'Your notes could not be read.') + '</div>'; return; }
       _snr = d; _snrForms = {}; el.innerHTML = snrHtml(d);
     }).catch(function () { el.innerHTML = '<div class="sw-note">Your notes could not be read.</div>'; });
@@ -24413,7 +24412,7 @@ function _snrForm(i, rule, d) {
     + '<option value="both"' + (pv === 'both' ? ' selected' : '') + '>lunch and dinner</option></select>'
     + '<span>on</span><span class="chip-tog">' + _snrDays(rule.days) + '</span><span class="snr-s">none picked is every day</span></div>'
     + '<div class="snr-act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-add="' + i + '" data-scope="every">Make it a rule · every week</button>'
-    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-add="' + i + '" data-scope="week">Week of ' + _escHtml(mdy(d.week_of)) + ' only</button>'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-add="' + i + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button>'
     + '<span class="ac-status" data-snr-status="' + i + '"></span></div>';
   return o;
 }
@@ -24426,7 +24425,7 @@ function snrHtml(d) {
     var q = '<div class="snr-q">“' + _escHtml(x.text) + '”</div>';
     if (x.rule_id) {
       used[x.rule_id] = 1;
-      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _escHtml(x.enforced) + '</div>'
+      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(x.enforced) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Remove the rule</button></div>') + '</div>';
     } else if (x.kind === 'rule') {
       h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
@@ -24447,7 +24446,7 @@ function snrHtml(d) {
     h += '<div class="snr-h" style="margin-top:6px">Rules from earlier notes</div>';
     for (i = 0; i < rest.length; i++) {
       h += '<div class="snr-row ok">' + (rest[i].source_text ? '<div class="snr-q">“' + _escHtml(rest[i].source_text) + '”</div>' : '')
-        + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _escHtml(rest[i].words) + '</div>'
+        + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(rest[i].words) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + rest[i].id + '">Remove the rule</button></div>') + '</div>';
     }
   }
@@ -24469,7 +24468,7 @@ document.addEventListener('click', function (ev) {
     t.disabled = true;
     fetch('/api/labor/note-rules/' + encodeURIComponent(t.getAttribute('data-snr-remove')) + '/remove', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
       .then(apiJson).then(function (d) {
-        if (d && d.ok) { toast('Rule removed — the note is guidance again'); ssLoadNoteRules(); }
+        if (d && d.ok) { toast('Rule removed — the note is guidance again'); ssLoadNoteRules(true); }
         else { t.disabled = false; toast((d && d.error) || 'Could not remove that rule', 'error'); }
       }).catch(function () { t.disabled = false; toast('Could not remove that rule', 'error'); });
     return;
@@ -24481,25 +24480,31 @@ document.addEventListener('click', function (ev) {
   var sent = (_snr.sentences || [])[+i];
   var body = {role: f.querySelector('[data-snr-role]').value, min: +f.querySelector('[data-snr-min]').value,
               dayparts: part === 'both' ? ['morning', 'night'] : [part], days: days, scope: t.getAttribute('data-scope'),
-              week_start: _schedWeekStart() || '', source_text: sent ? sent.text : ''};
+              week_start: _snr.week_of || '', source_text: sent ? sent.text : ''};
   if (!body.role) { if (st) { st.textContent = 'Pick a role'; st.className = 'ac-status err'; } return; }
   if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
+  var btns = document.querySelectorAll('[data-snr-add="' + i + '"]'), b;
+  for (b = 0; b < btns.length; b++) btns[b].disabled = true;
+  function _snrFree() { for (var bb = 0; bb < btns.length; bb++) btns[bb].disabled = false; }
   fetch('/api/labor/note-rules', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .then(apiJson).then(function (d) {
-      if (d && d.ok) { toast('Rule made — every draft is checked against it'); ssLoadNoteRules(); }
-      else if (st) { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
-    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
+      if (d && d.ok) { toast('Rule made — every draft is checked against it'); ssLoadNoteRules(true); return; }
+      _snrFree();
+      if (st) { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
+    }).catch(function () { _snrFree(); if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
 });
 // The Advanced tab: how the draft fits itself to the budget — trim to
 // budget, the cut floor, dining sections. The Labor rules card edits the
 // same fields; each change here saves alone and mirrors into that card's
 // inputs, so its Save never writes back the value it loaded with.
-var _ssAdvLoaded = false;
+// Read fresh on every open (the Labor rules card edits the same fields),
+// except while one of its own saves is in flight.
+var _ssaBusy = {}, _ssaPending = {};
 function ssLoadAdvanced() {
-  var el = document.getElementById('ss-adv'); if (!el || _ssAdvLoaded) return;
-  _ssAdvLoaded = true;
+  var el = document.getElementById('ss-adv'), k; if (!el) return;
+  for (k in _ssaBusy) if (_ssaBusy.hasOwnProperty(k) && _ssaBusy[k]) return;
   fetch('/api/labor/rules', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
-    if (!d || !d.ok) { _ssAdvLoaded = false; el.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'These settings could not load.') + '</div>'; return; }
+    if (!d || !d.ok) { el.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'These settings could not load.') + '</div>'; return; }
     var ro = !d.can_edit, cutMax = d.cut_floor_max || 10, cutN = d.cut_floor_default == null ? 2 : d.cut_floor_default;
     var h = '<div class="rul-sw" style="border-top:0"><label class="ac-switch"><input type="checkbox" id="ssa-trim"' + (d.trim_to_budget ? ' checked' : '') + (ro ? ' disabled' : '') + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the PAR hours, Cavnar AI removes the lowest-value shifts until it fits. Off leaves the overage on the draft for you to see.</small></div></div>'
       + '<div class="rul-sw"><div class="t"><label for="ssa-cut">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="ssa-cut" min="1" max="' + cutMax + '" step="1" value="' + _escAttr(String(cutN)) + '"' + (ro ? ' disabled' : '') + '>people<small>For any role without its own floor: no trim or send-home suggestion leaves fewer than this on.</small></div></div>'
@@ -24507,49 +24512,66 @@ function ssLoadAdvanced() {
       + '<span class="ac-status" id="ssa-status"></span>'
       + (ro ? '<div class="sw-note">Only the account owner can change these.</div>' : '');
     el.innerHTML = h;
-  }).catch(function () { _ssAdvLoaded = false; el.innerHTML = '<div class="sw-note">These settings could not load.</div>'; });
+  }).catch(function () { el.innerHTML = '<div class="sw-note">These settings could not load.</div>'; });
 }
-document.addEventListener('change', function (ev) {
-  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections')) return;
-  var body = {}, mirror = null;
-  if (t.id === 'ssa-trim') { body.trim_to_budget = !!t.checked; mirror = ['rul-trim', 'checked', !!t.checked]; }
-  else if (t.id === 'ssa-cut') { if (t.value === '') return; body.cut_floor_default = +t.value; mirror = ['rul-cut-floor', 'value', t.value]; }
-  else { body.section_count = t.value === '' ? null : +t.value; mirror = ['rul-sections', 'value', t.value]; }
+// One save at a time per field, the latest value last, and the Labor rules
+// card mirrored with what the server stored — so neither screen can carry
+// an older value back (blind audit, 10/1/26).
+function _ssaSend(id) {
+  var t = document.getElementById(id); if (!t) return;
+  if (_ssaBusy[id]) { _ssaPending[id] = true; return; }
+  var body = {}, field, mirror;
+  if (id === 'ssa-trim') { body.trim_to_budget = !!t.checked; field = 'trim_to_budget'; mirror = 'rul-trim'; }
+  else if (id === 'ssa-cut') { if (t.value === '') return; body.cut_floor_default = +t.value; field = 'cut_floor_default'; mirror = 'rul-cut-floor'; }
+  else { body.section_count = t.value === '' ? null : +t.value; field = 'section_count'; mirror = 'rul-sections'; }
+  _ssaBusy[id] = true; _ssaPending[id] = false;
   var st = document.getElementById('ssa-status'); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
+  function done() { _ssaBusy[id] = false; if (_ssaPending[id]) _ssaSend(id); }
   fetch('/api/labor/rules', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .then(apiJson).then(function (d) {
       if (d && d.ok) {
-        var m = document.getElementById(mirror[0]); if (m) m[mirror[1]] = mirror[2];
+        var v = d[field], m = document.getElementById(mirror);
+        if (m) { if (field === 'trim_to_budget') m.checked = !!v; else m.value = v == null ? '' : String(v); }
         if (st) { st.textContent = 'Saved · the next draft uses it'; st.className = 'ac-status ok'; }
       } else if (st) { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
-    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
+      done();
+    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } done(); });
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections')) return;
+  _ssaSend(t.id);
 });
 // The Forecast tab: the picked week before anything is drafted — each
 // day's forecast sales and the hours the draft will be given, from the
 // same arithmetic the draft uses (/api/labor/schedule-forecast).
-var _ssFcKey = null, _ssFcShown = false;
+var _ssFcKey = null;
+function _numText(t) { return window.memNum ? memNum(t) : _escHtml(t); }
 function ssLoadForecast(force) {
   var fc = document.getElementById('sw-forecast'); if (!fc) return;
-  var ws = _schedWeekStart() || '';
-  if (!force && _ssFcKey === ws) return;
-  _ssFcKey = ws;
+  var ws = _schedWeekStart() || '', tg = document.getElementById('sw-target');
+  // Keyed by the week AND the labor target: a target saved on Basic changes
+  // PAR and every day's hours (blind audit, 10/1/26).
+  var key = ws + '|' + (tg ? tg.value : '');
+  if (!force && _ssFcKey === key) return;
+  _ssFcKey = key;
   fc.innerHTML = '<div class="dr-pulse" style="margin:14px 0"><i></i></div>';
   fetch('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), {credentials: 'same-origin'})
     .then(apiJson).then(function (d) {
-      if (_ssFcKey !== ws) return;
+      if (_ssFcKey !== key) return;
       if (!d || !d.ok) { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'The forecast could not load.') + '</div>'; return; }
       if (!d.available) { fc.innerHTML = '<div class="sw-note">' + _escHtml(d.reason || 'No forecast for this week yet.') + '</div>'; return; }
-      fc.innerHTML = ssForecastHtml(d); _ssFcShown = true;
+      fc.innerHTML = ssForecastHtml(d);
     }).catch(function () { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">The forecast could not load.</div>'; });
 }
 function ssForecastHtml(d) {
   var days = d.days || [], mx = 0, i, h = '', miss = [], why = '';
   for (i = 0; i < days.length; i++) mx = Math.max(mx, +days[i].hours || 0);
   var tgt = d.labor_target != null ? '<span class="hb-num">' + d.labor_target + '%</span>' : 'your target';
+  h += '<div class="sw-note" style="margin-bottom:8px">The week of <span class="hb-num">' + _escHtml(mdy(d.week_start)) + '</span>, before anything is drafted.</div>';
   h += '<div class="ssf-head">'
-    + '<div><div class="k">Forecast sales</div><div class="v">' + (d.projected_revenue ? _schedMoney(d.projected_revenue) : '—') + '</div><div class="n">' + _escHtml(d.projected_revenue_source || '') + '</div></div>'
+    + '<div><div class="k">Forecast sales</div><div class="v">' + (d.projected_revenue ? _schedMoney(d.projected_revenue) : '—') + '</div><div class="n">' + _numText(d.projected_revenue_source || '') + '</div></div>'
     + '<div><div class="k">PAR hours</div><div class="v">' + (d.hours_budget ? _schedHrs(d.hours_budget) + 'h' : '—') + '</div><div class="n">the ceiling the draft stays under</div></div>'
-    + '<div><div class="k">Labor budget</div><div class="v">' + (d.labor_budget_dollars ? _schedMoney(d.labor_budget_dollars) : '—') + '</div><div class="n">at ' + tgt + (d.labor_target_label ? ' — ' + _escHtml(d.labor_target_label) : '') + '</div></div>'
+    + '<div><div class="k">Labor budget</div><div class="v">' + (d.labor_budget_dollars ? _schedMoney(d.labor_budget_dollars) : '—') + '</div><div class="n">at ' + tgt + (d.labor_target_label ? ' — ' + _numText(d.labor_target_label) : '') + '</div></div>'
     + '</div>';
   h += '<div class="ssf-cols"><span>Day</span><span>Sales</span><span>Hours the forecast calls for</span><span>Hours</span></div>';
   for (i = 0; i < days.length; i++) {

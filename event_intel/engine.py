@@ -164,6 +164,9 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
     for e in events:
         if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
             continue
+        if (e.get("attributes") or {}).get("if_necessary") and not e.get("result") \
+                and str(e.get("event_date") or "") < today.isoformat():
+            continue        # may never have been played: never copied, never measured
         label, n = label_for(e), 1
         # Two games of one series on a date (a doubleheader) need two labels:
         # demand_signals keeps one row per date and label.
@@ -333,11 +336,13 @@ def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
     return sorted(got, key=lambda g: g["event"]["event_date"], reverse=True)
 
 
-def effect_for(restaurant_id, e, db_path=store.DB_PATH):
+def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
     """{"segment", "n", "median_lift_pct", "low_pct", "high_pct", "dates",
     "basis"} for games like this one at this restaurant, the most specific
     segment with SEGMENT_MIN_N nights; None before there are any."""
     games = past_games(restaurant_id, e, db_path=db_path)
+    if keep is not None:
+        games = [g for g in games if keep(g["event"]["event_date"])]
     if not games:
         return None
     side = e.get("home_away")
@@ -352,9 +357,13 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH):
         (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side and same_class(g)),
         (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side),
     ]
+    if exact:
+        # One segment, no fallback: same side, same season class, prime time
+        # ignored (a cross-restaurant figure — event_intel.peers).
+        segs = [segs[1]]
     short = e.get("short_name") or e.get("series_name") or ""
-    for words, keep in segs:
-        hits = [g for g in games if keep(g)]
+    for words, in_seg in segs:
+        hits = [g for g in games if in_seg(g)]
         # A night that carried something else too (a game on Christmas, on
         # a rainy payday) is left out while clean nights suffice; when it
         # has to count, the sentence says so.
@@ -374,27 +383,26 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH):
 
 def headline(restaurant_id, e, db_path=store.DB_PATH) -> bool:
     """Whether a game earns an owner's attention unasked — the brief's alert,
-    the report's games ahead, the game-night line, Food Cost's game week:
-    any game of a series smaller than event_memory.FREQUENT_SERIES_GAMES (a
-    Bears season, a playoff run), and a frequent series' game (the Bulls,
-    the Blackhawks: most winter nights) only once games like it measured
-    here past event_memory.EFFECT_FLOOR_PCT. Until then a frequent series'
-    game is context: it is on the calendar, Ask and the day's events, and it
-    is measured every night it happens (phase 4)."""
+    the report's games, the game-night line, Food Cost's game week, the
+    push: a playoff game, any game of a series with fewer than
+    event_memory.FREQUENT_SERIES_GAMES regular-season games (a Bears
+    season), and a frequent series' game (Bulls, Blackhawks, Fire) only once
+    games like it are measured to matter here — event_memory.quiet_game,
+    the one test the baselines use too (phase 4 audit). Until then it is
+    context: on the calendar and in Ask, and measured every night it
+    happens."""
     import event_memory
     n = e.get("series_games")
     if n is None:
         conn = store.get_conn(db_path)
         try:
-            r = conn.execute("SELECT COUNT(*) AS n FROM catalog_events WHERE series_id=? AND season=?",
-                             (e.get("series_id"), e.get("season"))).fetchone()
+            r = conn.execute("SELECT COUNT(*) AS n FROM catalog_events WHERE series_id=? AND season=? "
+                             "AND season_type='regular'", (e.get("series_id"), e.get("season"))).fetchone()
             n = int(r["n"] or 0) if r else 0
         finally:
             conn.close()
-    if int(n or 0) < event_memory.FREQUENT_SERIES_GAMES:
-        return True
-    eff = effect_for(restaurant_id, e, db_path=db_path)
-    return bool(eff and abs(float(eff.get("median_lift_pct") or 0)) >= event_memory.EFFECT_FLOOR_PCT)
+    return not event_memory.quiet_game(restaurant_id, label_for(e), int(n or 0), e.get("season_type"),
+                                       db_path=db_path)
 
 
 def last_like(restaurant_id, e, db_path=store.DB_PATH):
