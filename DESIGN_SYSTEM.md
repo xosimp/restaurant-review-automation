@@ -397,9 +397,21 @@ measurement is drawn as a gap, never as zero.
 **Reports (9/30/26).** The top-level Reports tab, beside Home, opens the
 daily report panel on its list (`#dsr/list`): one `.dr-list-row` per night
 (weekday and M/D/YY, the scorecard verdict and score in its tone, net, the
-status pill, the lead clamped to two lines), newest first, 30 at a time
-with "Load older reports". Night, Week and Period sit beside "All reports"
-in the panel's `.dr-views`.
+status pill, then a row of `.dr-st` figure chips — vs last week, vs
+forecast, labor %, guests, average check, overtime, from
+`dsr.access.list_stats`, only what the night measured, never the summary
+paragraph), newest first, 30 at a time with "Load older reports". The list
+card has no inner padding so a row's hover fills it edge to edge. Night,
+Week and Period sit beside "All reports" in the panel's `.dr-views`; there is
+no "Home" link (Home is the tab beside it). In the tab bar a 16px hairline
+(`.tab-sep`) sets Home and Reports apart from the modules.
+
+**Module pills (`.hb-chip`) catch light on their top edge**: an inset 1px
+highlight along the rim, an inset 1px shade along the bottom and a sheen
+fading over the upper half, all in the background and shadow stack so
+nothing sits over the text. On Home's status line a figure and its unit
+(`.nt`: "$6,150" + small "net") share one baseline, and the Report link sits
+on its own row (`.go`), never after a divider.
 
 ## 7. Forms
 

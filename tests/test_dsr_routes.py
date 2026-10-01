@@ -195,7 +195,10 @@ def test_the_list_and_the_status_checklist(client, db, monkeypatch):
                                 # Net against the night before (parity #9), so the
                                 # phone's Home card needs one call, not two.
                                 "vs_yesterday_pct": 12.5,
-                                "first_risk": None}]
+                                "first_risk": None,
+                                # The Reports list's figures (owner, 9/30/26):
+                                # only what this view's ready blocks measured.
+                                "stats": [{"key": "labor_pct", "value": "22.0%", "label": "labor", "tone": None}]}]
     assert rows["enabled"] is True and len(rows["tonight"]) == 10
     st = client.get("/api/dsr/2026-09-22/status").get_json()
     assert st["exists"] is True and st["status"] == "final"

@@ -200,11 +200,13 @@ console.log(JSON.stringify([
  hbStatusHtml({ok:true,tonight:'2026-09-20',reports:[{business_date:'2026-09-19',status:'final',net:null,missing:['Sales weren\\u2019t in']}]}),
  hbStatusHtml({ok:true,reports:[]})]));"""
     owner, manager, missing, none = _node(js)
-    text = re.sub(r"<[^>]+>", "", owner["html"])
+    text = " ".join(re.sub(r"<[^>]+>", " ", owner["html"]).split())
     assert owner["tone"] == "good"
     # No "Last night" kicker on the line (owner, 9/26/26); Report names the night.
     assert "Last night" not in text and "Good day 78/100" in text and "$8,420 net" in text and "+$420 vs budget" in text
-    t2 = re.sub(r"<[^>]+>", "", manager["html"])
+    t2 = " ".join(re.sub(r"<[^>]+>", " ", manager["html"]).split())
+    # the Report link on its own row, no divider beside the line (9/30/26)
+    assert 'class="go"' in owner["html"] and "rdiv" not in owner["html"]
     assert "$8,420 net" in t2 and "budget" not in t2 and "/100" not in t2 and manager["tone"] == ""
     assert "Sales weren" in missing["html"] and "$0" not in missing["html"]      # a missing net is never 0
     assert none is None

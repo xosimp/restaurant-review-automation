@@ -808,6 +808,10 @@ def summary(report, user, restaurant=None):
     stored = report.get("facts") or {}
     if view == OWNER and restaurant is not None:
         stored = _live_budget(stored, report, restaurant)
+        try:
+            stored = _live_salaries(stored, restaurant)
+        except Exception:
+            pass
     facts, hidden = redact(stored, user)
     sales = (facts.get("blocks") or {}).get("sales") or {}
     ready = sales.get("status") == dsr.READY
@@ -856,7 +860,44 @@ def summary(report, user, restaurant=None):
             "verdict": verdict, "tone": tone if tone in ("good", "warn", "bad") else None,
             "overall": overall, "vs_budget": round(float(vs_budget), 2) if vs_budget is not None else None,
             "vs_yesterday_pct": round(float(vs_yesterday), 1) if vs_yesterday is not None else None,
-            "first_risk": first_risk}
+            "first_risk": first_risk, "stats": list_stats(facts)}
+
+
+def _num(v):
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def list_stats(facts) -> list:
+    """The night in a few figures for the Reports list (owner, 9/30/26:
+    "instead of long paragraphs, show quick and informative stats"): each
+    {key, value, label, tone} from a block that is READY in this view, in a
+    fixed order, a figure the night lacks left out - never shown as 0.
+    Labor is the view's own (all-in for the owner, hourly for a manager)."""
+    blocks = facts.get("blocks") or {}
+    out = []
+
+    def ready(name):
+        b = blocks.get(name) or {}
+        return (b.get("metrics") or {}) if b.get("status") == dsr.READY else {}
+    s, lab = ready("sales"), ready("labor")
+    for key, label in (("vs_last_week_pct", "vs last week"), ("vs_forecast_pct", "vs forecast")):
+        v = _num(s.get(key))
+        if v is not None:
+            out.append({"key": key, "value": f"{v:+.0f}%", "label": label,
+                        "tone": "good" if v >= 0 else "bad"})
+    pct, tgt = _num(lab.get("pct")), _num(lab.get("target_pct"))
+    if pct is not None:
+        out.append({"key": "labor_pct", "value": f"{pct:.1f}%", "label": "labor",
+                    "tone": None if tgt is None else ("good" if pct <= tgt else "bad")})
+    g, t = _num(s.get("guests")), _num(s.get("avg_ticket"))
+    if g:
+        out.append({"key": "guests", "value": f"{g:,.0f}", "label": "guests", "tone": None})
+    if t:
+        out.append({"key": "avg_ticket", "value": f"${t:,.2f}", "label": "avg check", "tone": None})
+    ot = _num(lab.get("overtime_hours"))
+    if ot:
+        out.append({"key": "overtime_hours", "value": f"{ot:,.1f}h", "label": "overtime", "tone": "warn"})
+    return out
 
 
 NO_LEAD_FOR_VIEW = "The summary rests on figures outside your view"

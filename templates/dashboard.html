@@ -485,6 +485,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 /* --scrim: the one backdrop behind a modal (the explain card's tone). */
 :root{--cav-chrome:93px;--z-modal:10000;--scrim:rgba(14,12,10,.6)}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:sticky;top:56px;z-index:99}
+.tabs .tab-sep{flex:none;align-self:center;width:1px;height:16px;margin:0 10px;background:rgba(240,235,224,.18)}
 [data-nav]{scroll-margin-top:calc(var(--cav-chrome) + 16px)}
 /* A focused item arriving from a link: one ember ring that fades. */
 @keyframes cavFlash{0%{box-shadow:0 0 0 0 var(--ember)}30%{box-shadow:0 0 0 3px var(--ember)}100%{box-shadow:0 0 0 0 transparent}}
@@ -2203,6 +2204,9 @@ function pastDueFix(btn) {
        where owners can easily view all reports instead of always going to
        the home page"): the daily report panel, opened on its list. #}
     {% if restaurant.dsr_enabled is none or restaurant.dsr_enabled %}<button class="tab" role="tab" id="tab-reports" onclick="if(window.dsrOpen)dsrOpen('list')">Reports</button>{% endif %}
+    {# Home and Reports read across the modules; a hairline sets them apart
+       from the modules themselves (owner, 9/30/26). #}
+    <span class="tab-sep" aria-hidden="true"></span>
     {# Badge = every review still actionable in the inbox: ones with a
        drafted reply ready to approve AND ones with no draft yet that still
        need a manual "Draft a reply" click. It used to be awaiting_approval
@@ -2713,7 +2717,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-status .miss{color:var(--ink3)}
 .hb-status .cbtn-text{font-size:inherit}
 .hb-status .sep{color:var(--ink3);opacity:.5}
-.hb-status .rdiv{width:1px;height:16px;background:var(--hb-line);margin:0 2px}
+/* A figure and its unit share one baseline; the unit is smaller and quiet
+   so lowercase "net" doesn't read as sitting low beside cap-height digits. */
+.hb-status .nt{display:inline-flex;align-items:baseline;gap:5px}
+.hb-status .nt small{font-size:13.5px;color:var(--ink3)}
+.hb-status .go{flex:1 0 100%;display:flex;margin-top:2px}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
 .hb-top{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;flex-wrap:wrap}
@@ -2733,9 +2741,14 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
    same tone as the workspace canvas, so definition comes entirely from
    the shadow lifting it off the page (the way every other elevated
    container here works), not from an accent-colored outline. */
-.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid var(--bg-base);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));box-shadow:0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
-html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.8),rgba(255,255,255,.45))}
-.hb-chip:hover{transform:translateY(-1px);box-shadow:0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)}
+/* The pills at the top of every module catch light on their top edge
+   (owner, 9/30/26: "a bit of a pop on the tops"): a 1px inner highlight
+   along the rim and a soft sheen over the upper half, both in the
+   background stack so nothing sits over the text. */
+.hb-chip{display:inline-flex;align-items:center;gap:8px;padding:8px 13px 8px 11px;border-radius:999px;border:1px solid var(--bg-base);background:linear-gradient(180deg,rgba(255,255,255,.12) 0,rgba(255,255,255,.05) 46%,rgba(255,255,255,.02) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 -1px 0 rgba(0,0,0,.22),0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35);cursor:pointer;font-family:inherit;color:var(--ink);white-space:nowrap;transition:transform .12s ease,box-shadow .12s ease}
+html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(255,255,255,.98) 0,rgba(255,255,255,.72) 46%,rgba(255,255,255,.5) 100%);box-shadow:inset 0 1px 0 #fff,inset 0 -1px 0 rgba(14,12,10,.05),0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35)}
+.hb-chip:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(0,0,0,.22),0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)}
+html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset 0 -1px 0 rgba(14,12,10,.05),0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)}
 .hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;letter-spacing:-.01em}
 .hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:13px;font-weight:600;color:var(--ink2)}
@@ -5965,13 +5978,15 @@ svg:hover .hb-xh{opacity:1}
     if(running)bits.push('<span class="miss">the report is still coming in</span>');
     else{
       if(r.verdict)bits.push('<span class="vd"><i></i>'+esc(r.verdict)+(r.overall!=null?' <span class="hb-num">'+(+r.overall)+'/100</span>':'')+'</span>');
-      if(typeof r.net==='number'&&isFinite(r.net))bits.push('<span><span class="fig hb-num">$'+Math.round(r.net).toLocaleString('en-US')+'</span> net</span>');
+      if(typeof r.net==='number'&&isFinite(r.net))bits.push('<span class="nt"><span class="fig hb-num">$'+Math.round(r.net).toLocaleString('en-US')+'</span><small>net</small></span>');
       else bits.push('<span class="miss">'+esc((r.missing||[])[0]||(r.status==='failed'?'The report couldn’t finish':'Sales weren’t measured'))+'</span>');
       if(typeof r.vs_budget==='number'&&isFinite(r.vs_budget)){var vb=Math.round(r.vs_budget);
-        bits.push('<span><span class="fig hb-num '+(vb>=0?'up':'down')+'">'+(vb>0?'+':(vb<0?'−':''))+'$'+Math.abs(vb).toLocaleString('en-US')+'</span> vs budget</span>');}
+        bits.push('<span class="nt"><span class="fig hb-num '+(vb>=0?'up':'down')+'">'+(vb>0?'+':(vb<0?'−':''))+'$'+Math.abs(vb).toLocaleString('en-US')+'</span><small>vs budget</small></span>');}
     }
     return {tone:(!running&&r.tone)||'',html:bits.join('<span class="sep">·</span>')
-      +'<span class="rdiv" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button>'};
+      // The Report link on its own row under the line, never after a
+      // divider beside it (owner, 9/30/26).
+      +'<span class="go"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button></span>'};
   }
 // A confidence pill's tip opens above; in a card that clips its overflow
 // (the Reviews diagnosis) that cut it off. Measured on hover: when the
@@ -6359,7 +6374,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-views{display:inline-flex;gap:6px;flex-wrap:wrap}
 .dr-views .cbtn[aria-pressed="true"]{border-color:var(--ember);color:var(--ember);background:var(--hb-tint)}
 /* The Reports tab's list: one row per night, the 3-second status of each. */
-.dr-list{padding:6px 0!important}
+.dr-list{padding:0!important;overflow:hidden}
 #panel-dsr .dr-list-row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 18px;align-items:center;justify-content:stretch;width:100%;height:auto;min-height:0;text-align:left;white-space:normal;line-height:1.35;padding:14px 22px;background:none;border:0;border-radius:0;box-shadow:none;border-top:1px solid var(--hb-line2);color:var(--ink);font-weight:400;font-size:inherit}
 #panel-dsr .dr-list-row:first-child{border-top:none}
 #panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{background:var(--hb-tint)}
@@ -6369,9 +6384,12 @@ svg:hover .hb-xh{opacity:1}
 .dr-list-m{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
 .dr-list-v{font-size:14px;font-weight:600}
 .dr-list-v.good{color:var(--hb-good)}.dr-list-v.warn{color:var(--hb-warn)}.dr-list-v.bad{color:var(--hb-bad)}
-.dr-list-n{font-size:16px;font-weight:600}
-.dr-list-n small{font-size:12px;font-weight:400;color:var(--ink3)}
-.dr-list-l{grid-column:1/-1;font-size:14px;line-height:1.45;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dr-list-n{font-size:16px;font-weight:600;display:inline-flex;align-items:baseline;gap:4px}
+.dr-list-n small{font-size:12px;font-weight:400;color:var(--ink3);font-family:'Apfel Grotezk',sans-serif}
+.dr-list-s{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.dr-st{display:inline-flex;align-items:baseline;gap:5px;padding:4px 10px;border-radius:999px;background:var(--hb-line2);font-size:12.5px;color:var(--ink3);line-height:1.3}
+.dr-st b{font-size:13.5px;font-weight:600;color:var(--ink)}
+.dr-st.good b{color:var(--hb-good)}.dr-st.bad b{color:var(--hb-bad)}.dr-st.warn b{color:var(--hb-warn)}
 @media (max-width:640px){ #panel-dsr .dr-list-row{grid-template-columns:1fr}.dr-list-m{justify-content:flex-start}}
 .dr-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap}
 .dr-head>div:first-child{flex:1 1 420px;min-width:0}
@@ -6632,8 +6650,8 @@ svg:hover .hb-xh{opacity:1}
 @media (prefers-reduced-motion:reduce){.dr-hours .c i,.dr-bar .t i,.dr-wbars .c i{animation:none;transform:none}.dr-pulse i,.dr-pill.running i,.dr-step.now .ic:after{animation:none}.dr-pulse i{left:35%}}
 </style>
 <div class="dr-wrap" id="dr-root">
+  {# No "Home" link here: Reports is its own tab beside Home (owner, 9/30/26). #}
   <div class="dr-nav">
-    <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="home">&larr; Home</button>
     <div class="dr-views" role="group" aria-label="Report view">
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="list" aria-pressed="false">All reports</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="night" aria-pressed="false">Night</button>
@@ -6765,8 +6783,16 @@ svg:hover .hb-xh{opacity:1}
     var verdict=r.verdict?'<span class="dr-list-v '+esc(r.tone||'')+'">'+esc(r.verdict)+(r.overall!=null?' <b class="hb-num">'+esc(r.overall)+'</b>':'')+'</span>':'';
     return '<button type="button" class="cbtn cbtn-text dr-list-row" data-dr="open" data-kind="night" data-date="'+esc(d)+'">'
       +'<span class="dr-list-d"><b>'+esc(wd)+'</b><span class="hb-num">'+esc(r.label||(window.mdy?window.mdy(d):d))+'</span></span>'
-      +'<span class="dr-list-m">'+verdict+(r.net!=null?'<span class="dr-list-n hb-num">$'+Math.round(r.net).toLocaleString()+'<small> net</small></span>':'')+pill+'</span>'
-      +(r.lead?'<span class="dr-list-l">'+esc(r.lead)+'</span>':'')+'</button>';
+      +'<span class="dr-list-m">'+verdict+(r.net!=null?'<span class="dr-list-n hb-num">$'+Math.round(r.net).toLocaleString()+'<small>net</small></span>':'')+pill+'</span>'
+      +listStats(r.stats)+'</button>';
+  }
+  // The night in a few figures, never its paragraph (owner, 9/30/26) -
+  // dsr.access.list_stats decides which and in what order.
+  function listStats(stats){
+    if(!stats||!stats.length)return '';
+    var h='<span class="dr-list-s">',i,x;
+    for(i=0;i<stats.length;i++){x=stats[i];h+='<span class="dr-st'+(x.tone?' '+esc(x.tone):'')+'"><b class="hb-num">'+esc(x.value)+'</b> '+esc(x.label)+'</span>';}
+    return h+'</span>';
   }
   function loadList(before){
     var tk=st.token,b=body();if(!b)return;
