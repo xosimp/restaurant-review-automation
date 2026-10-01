@@ -50,3 +50,19 @@ def test_all_templates_parse():
         except Exception as e:
             failures.append(f"{name}: {e}")
     assert not failures, "Jinja parse errors:\n" + "\n".join(failures)
+
+
+def test_no_css_selector_opens_a_jinja_comment():
+    """`{#panel-dsr ...` inside a media query is Jinja's comment opener: on
+    9/30/26 it swallowed 2,100 lines of dashboard.html up to the next `#}`,
+    the `{% set %}`s with them, and every page load was a 500. A selector
+    after `{` takes a space."""
+    import glob
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bad = []
+    for path in glob.glob(os.path.join(root, "templates", "**", "*.html"), recursive=True):
+        src = open(path, encoding="utf-8").read()
+        for m in re.finditer(r"\{#[A-Za-z_.-]", src):
+            bad.append(f"{os.path.basename(path)}:{src.count(chr(10), 0, m.start()) + 1}")
+    assert not bad, bad
