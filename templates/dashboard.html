@@ -14066,6 +14066,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
               <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-secondary cbtn-sm" data-twofa-enable>Enable</button>{% endif %}</div></div>
             <div class="ac-row"><div class="l"><b>Password</b><span>Change it any time; every other device is signed out.</span></div>
               <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
+            {# Passkeys (owner, 9/30/26; passkeys.py): sign in with Face ID,
+               Touch ID or the device PIN - no password, no code. Adding one
+               asks for the password first. #}
+            <div class="ac-row" id="pk-row"><div class="l"><b>Passkeys</b><span id="pk-sub">Sign in with Face ID, Touch ID or your device&rsquo;s PIN &mdash; no password, no code.</span></div>
+              <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" type="button" id="pk-add-open" onclick="pkAddOpen()">Add a passkey</button></div></div>
+            <div id="pk-list" class="ac-list" hidden></div>
+            <div id="pk-add" class="ac-inline" style="margin-top:8px" hidden>
+              <input class="ac-input" id="pk-pw" type="password" autocomplete="current-password" placeholder="Your password, to add a passkey" aria-label="Your password">
+              <button class="cbtn cbtn-secondary cbtn-sm" type="button" id="pk-add-go" onclick="pkAdd(this)">Continue</button>
+            </div>
+            <div id="pk-status" class="ac-status" style="margin-top:6px;display:none"></div>
             <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></span></div></div>
           </div>
           <div class="ac-inline" style="margin-top:12px">
@@ -27750,6 +27761,56 @@ function revokeOtherSessions(btn){
   }).catch(function(){done();toast('Network error','error');});
 }
 
+// ── Passkeys (passkeys.py) ───────────────────────────────────────────────────
+function pkStatus(t,bad){var st=document.getElementById('pk-status');if(!st)return;st.style.display=t?'block':'none';st.style.color=bad?'var(--red)':'';st.textContent=t||'';}
+function pkB64(b){var u=new Uint8Array(b),s='',i;for(i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function pkBuf(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';var b=atob(s),o=new Uint8Array(b.length),i;for(i=0;i<b.length;i++)o[i]=b.charCodeAt(i);return o.buffer;}
+function pkLoad(){
+  var row=document.getElementById('pk-row');if(!row)return;
+  if(!(window.PublicKeyCredential&&navigator.credentials&&navigator.credentials.create)){
+    document.getElementById('pk-sub').textContent='This browser can\u2019t make passkeys. Safari, Chrome and Edge can.';
+    document.getElementById('pk-add-open').hidden=true;
+  }
+  fetch('/api/passkeys').then(apiJson).then(function(d){
+    var el=document.getElementById('pk-list');if(!el||!d.ok)return;
+    var rows=d.passkeys||[],h='',i;
+    for(i=0;i<rows.length;i++){
+      var p=rows[i];
+      h+='<div class="ac-row"><div class="l"><b>'+esc(p.name||'Passkey')+'</b><span>Added <span class="ac-num">'+esc(p.created||'')+'</span>'+(p.last_used?' &middot; last used <span class="ac-num">'+esc(p.last_used)+'</span>':' &middot; not used yet')+'</span></div>'
+        +'<div class="c"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" type="button" data-pk-rm="'+p.id+'">Remove</button></div></div>';
+    }
+    el.innerHTML=h;el.hidden=!rows.length;
+  }).catch(function(){});
+}
+function pkAddOpen(){var a=document.getElementById('pk-add');a.hidden=!a.hidden;if(!a.hidden)document.getElementById('pk-pw').focus();pkStatus('');}
+function pkAdd(btn){
+  var pw=document.getElementById('pk-pw').value;
+  if(!pw){pkStatus('Enter your password first.',true);return;}
+  var done=cbtnBusy(btn,'Waiting\u2026');
+  fetch('/api/passkeys/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})}).then(apiJson).then(function(d){
+    if(!d.ok){done();pkStatus(d.error||'Could not start.',true);return;}
+    var o=d.options,i,pub={challenge:pkBuf(o.challenge),rp:o.rp,user:{id:pkBuf(o.user.id),name:o.user.name,displayName:o.user.displayName},
+      pubKeyCredParams:o.pubKeyCredParams,timeout:o.timeout,attestation:o.attestation||'none',authenticatorSelection:o.authenticatorSelection,excludeCredentials:[]};
+    for(i=0;i<(o.excludeCredentials||[]).length;i++)pub.excludeCredentials.push({type:'public-key',id:pkBuf(o.excludeCredentials[i].id)});
+    return navigator.credentials.create({publicKey:pub}).then(function(c){
+      var r=c.response,body={credential:{id:c.id,rawId:pkB64(c.rawId),type:c.type,clientExtensionResults:{},
+        response:{clientDataJSON:pkB64(r.clientDataJSON),attestationObject:pkB64(r.attestationObject),transports:r.getTransports?r.getTransports():[]}}};
+      return fetch('/api/passkeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(v){
+        done();
+        if(v.ok){document.getElementById('pk-pw').value='';document.getElementById('pk-add').hidden=true;pkStatus('');toast('Passkey added. Use it next time you sign in.','success');pkLoad();}
+        else pkStatus(v.error||'Could not save the passkey.',true);
+      });
+    },function(e){done();pkStatus(e&&e.name==='InvalidStateError'?'This device already has a passkey for your login.':(e&&e.name==='NotAllowedError'?'Cancelled.':'The passkey was not made. Try again.'),!(e&&e.name==='NotAllowedError'));});
+  }).catch(function(){done();pkStatus('Network error.',true);});
+}
+document.addEventListener('click',function(ev){
+  var b=ev.target&&ev.target.closest?ev.target.closest('[data-pk-rm]'):null;if(!b)return;
+  if(!window.confirm('Remove this passkey? It won\u2019t sign you in any more.'))return;
+  fetch('/api/passkeys/'+b.getAttribute('data-pk-rm')+'/remove',{method:'POST'}).then(apiJson).then(function(d){
+    if(d.ok){toast('Passkey removed','success');pkLoad();}else toast(d.error||'Could not remove it','error');
+  }).catch(function(){toast('Network error','error');});
+});
+
 // ── Live status indicator ─────────────────────────────────────────────────────
 (function(){
   var DOT_COLORS = {operational:'#22c55e', degraded:'#f59e0b', outage:'#ef4444', maintenance:'#3b82f6'};
@@ -32718,7 +32779,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   var _lazyWired=false,_openedAt=0;
   window.acctOnOpen=function(){
     var now=Date.now();if(_openedAt&&now-_openedAt<5*60*1000){acctHealthRefresh();return;}_openedAt=now;
-    loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();
+    loadBillingInfo();loadSessions();pkLoad();loadAlertsSummary();loadAccountSettings();
     if(window._acctExtras)window._acctExtras();
     acctQuietHelp();
     if(window.cavDataHealth)cavDataHealth.fetch(false).then(acctApplyDataHealth);

@@ -3,11 +3,15 @@ hosted_dashboard so they can be tested without importing the whole app."""
 
 CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://static.cloudflareinsights.com; "
+    # appleid.*: Sign in with Apple's own script and popup on the login
+    # page (auth_routes.apple_web_signin, 9/30/26).
+    "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://static.cloudflareinsights.com "
+    "https://appleid.cdn-apple.com; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
     "font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
     "img-src 'self' data: https:; "
-    "connect-src 'self' https://api.anthropic.com; "
+    "connect-src 'self' https://api.anthropic.com https://appleid.apple.com; "
+    "frame-src 'self' https://appleid.apple.com; "
     "frame-ancestors 'none';"
 )
 

@@ -1448,3 +1448,275 @@ def login_not_me(token):
     return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
                    "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
                    "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (_esc_nm(email),))
+
+
+# ── Passkeys and Sign in with Apple on the web (owner, 9/30/26) ──────────────
+
+def _csrf_json_ok():
+    """The login page's double-submit token, sent in a JSON body (the form
+    pages' _csrf_ok reads a form field)."""
+    import hmac as _hmac_cj
+    cookie_val = request.cookies.get("csrf_token", "")
+    sent = str((request.get_json(silent=True) or {}).get("csrf_token") or "")
+    return bool(cookie_val and sent) and _hmac_cj.compare_digest(cookie_val, sent)
+
+
+def _json_sign_in(user, *, second_factor, via):
+    """A session for `user` from a sign-in that typed no password (a passkey,
+    Apple), as JSON {ok, redirect} with the cookie set. The same gates the
+    password and Google paths hold: an inactive login, a pending "This
+    wasn't me" reset, and - when this path is not itself a second factor -
+    a 2FA the login needs and no remembered device covers."""
+    from auth import is_internal_login, login_needs_second_factor, session_cookie_max_age, update_last_login
+    if not user or not user.get("is_active"):
+        return jsonify(ok=False, error="That login is turned off. Contact will@cavnar.ai."), 403
+    if user.get("must_reset_password"):
+        return jsonify(ok=False, error="This account needs a password reset before signing in. "
+                                       "Use Forgot password below."), 403
+    if not second_factor:
+        try:
+            from models import get_restaurant as _gr_js
+            rest = (_gr_js(user.get("restaurant_id"))
+                    if user.get("restaurant_id") and not is_internal_login(user) else None)
+            needs = login_needs_second_factor(user, rest)
+            device_ok = False
+            if needs:
+                from auth import remembered_device_ok
+                cookie = request.cookies.get("device_token_" + str(user.get("restaurant_id")), "")
+                device_ok = bool(cookie) and remembered_device_ok(user, cookie)
+            if needs and not device_ok:
+                return jsonify(ok=False, error="This login uses two-factor sign-in. Sign in with your "
+                                               "password once on this device, or use a passkey."), 403
+            second_factor = bool(needs and device_ok)
+        except Exception:
+            return jsonify(ok=False, error="Sign in with your password."), 403
+    ip, ua = _get_client_ip(), request.headers.get("User-Agent", "")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, restaurant_id=user.get("restaurant_id"),
+                           second_factor=second_factor)
+    update_last_login(user["id"])
+    _send_restaurant_login_alert(user, token, ip, ua)
+    from auth import cookies_require_secure
+    nxt = safe_next_url(str((request.get_json(silent=True) or {}).get("next") or ""),
+                        "/admin" if is_internal_login(user) else "/")
+    resp = jsonify(ok=True, redirect=nxt, via=via)
+    resp.set_cookie("session_token", token, max_age=session_cookie_max_age(user),
+                    httponly=True, secure=cookies_require_secure(), samesite="Lax")
+    return resp
+
+
+@auth_bp.route("/auth/passkey/options", methods=["POST"])
+def passkey_login_options():
+    import passkeys
+    ip = _get_client_ip()
+    if _is_rate_limited("passkey:" + ip):
+        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
+    if not _csrf_json_ok():
+        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+    try:
+        return jsonify(ok=True, options=passkeys.authentication_options(request.host))
+    except passkeys.PasskeyError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
+@auth_bp.route("/auth/passkey/verify", methods=["POST"])
+def passkey_login_verify():
+    """A passkey with user verification is two factors (the device, and the
+    face, finger or PIN that unlocked it), so it is this sign-in's second
+    factor. Not for an internal login: the admin console's second factor
+    is its own authenticator app (SECURITY-1), and stays so."""
+    import passkeys
+    from auth import get_user_by_id, is_internal_login
+    ip = _get_client_ip()
+    if _is_rate_limited("passkey:" + ip):
+        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
+    if not _csrf_json_ok():
+        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+    cred = (request.get_json(silent=True) or {}).get("credential")
+    if not isinstance(cred, dict):
+        return jsonify(ok=False, error="No passkey was sent."), 400
+    try:
+        uid = passkeys.finish_authentication(cred, request.host)
+    except passkeys.PasskeyError as e:
+        _record_failed_attempt("passkey:" + ip)
+        return jsonify(ok=False, error=str(e)), 401
+    user = get_user_by_id(uid)
+    if user and is_internal_login(user):
+        return jsonify(ok=False, error="Cavnar AI staff logins sign in with a password and their "
+                                       "authenticator app."), 403
+    _clear_attempts("passkey:" + ip)
+    return _json_sign_in(user, second_factor=True, via="passkey")
+
+
+def _passkey_password_ok(current_user, password):
+    from auth import get_user_by_id
+    u = get_user_by_id(current_user["id"]) or {}
+    return bool(password) and bool(verify_password(u.get("username") or "", password))
+
+
+@auth_bp.route("/api/passkeys", methods=["GET"])
+@login_required
+def passkeys_list(current_user):
+    import passkeys
+    from time_utils import mdy
+    rows = passkeys.list_passkeys(current_user["id"])
+    for r in rows:
+        r["created"] = mdy(r.get("created_at"))
+        r["last_used"] = mdy(r.get("last_used_at")) if r.get("last_used_at") else None
+    return jsonify(ok=True, passkeys=rows)
+
+
+@auth_bp.route("/api/passkeys/options", methods=["POST"])
+@csrf_required
+@login_required
+def passkeys_register_options(current_user):
+    """Adding a passkey asks for the password first: a session left open on
+    a shared computer must not be able to plant a way back in."""
+    import passkeys
+    from auth import get_user_by_id
+    if current_user.get("acting_admin"):
+        return jsonify(ok=False, error="Passkeys are added by the account holder, not in view-as."), 403
+    ip = _get_client_ip()
+    if _is_rate_limited("passkey-add:" + ip):
+        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
+    if not _passkey_password_ok(current_user, (request.get_json(silent=True) or {}).get("password")):
+        _record_failed_attempt("passkey-add:" + ip)
+        return jsonify(ok=False, error="That password isn't right."), 403
+    try:
+        return jsonify(ok=True, options=passkeys.registration_options(get_user_by_id(current_user["id"]),
+                                                                       request.host))
+    except passkeys.PasskeyError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
+@auth_bp.route("/api/passkeys", methods=["POST"])
+@csrf_required
+@login_required
+def passkeys_register(current_user):
+    import passkeys
+    from auth import get_user_by_id
+    cred = (request.get_json(silent=True) or {}).get("credential")
+    if not isinstance(cred, dict):
+        return jsonify(ok=False, error="No passkey was sent."), 400
+    try:
+        saved = passkeys.finish_registration(get_user_by_id(current_user["id"]), cred, request.host,
+                                             request.headers.get("User-Agent", ""))
+    except passkeys.PasskeyError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    try:
+        from client_api import log_account_event
+        log_account_event(current_user.get("restaurant_id"), "passkey_added", current_user, saved["name"])
+    except Exception:
+        pass
+    return jsonify(ok=True, passkey=saved)
+
+
+@auth_bp.route("/api/passkeys/<int:passkey_id>/remove", methods=["POST"])
+@csrf_required
+@login_required
+def passkeys_remove(current_user, passkey_id):
+    import passkeys
+    if not passkeys.remove_passkey(current_user["id"], passkey_id):
+        return jsonify(ok=False, error="That passkey isn't on this login."), 404
+    try:
+        from client_api import log_account_event
+        log_account_event(current_user.get("restaurant_id"), "passkey_removed", current_user, str(passkey_id))
+    except Exception:
+        pass
+    return jsonify(ok=True)
+
+
+def apple_web_services_id() -> str:
+    """The Services ID Sign in with Apple uses on the web (APPLE_WEB_SERVICES_ID,
+    e.g. "ai.cavnar.dashboard"), grouped with the app's primary App ID in
+    Apple's console so a person's Apple user id is the one the iOS app
+    already linked. Empty: the web button is not shown."""
+    return (os.getenv("APPLE_WEB_SERVICES_ID") or "").strip()
+
+
+@auth_bp.route("/auth/apple/web", methods=["POST"])
+def apple_web_signin():
+    """Sign in with Apple from the login page: Apple's JS opens its popup and
+    hands the page a signed identity token, which comes here. The token is
+    checked against Apple's keys for our Services ID and for the nonce this
+    page was issued (a_sso_nonce), then matched exactly as the app's sign-in
+    is (mobile_api.mobile_apple_signin): the Apple user id first, else an
+    email Apple says it verified."""
+    import hashlib
+    import hmac as _hmac_ap
+    from mobile_api import _verify_apple_identity_token
+    from auth import get_user_by_id
+    ip = _get_client_ip()
+    if _is_rate_limited("apple:" + ip):
+        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
+    if not _csrf_json_ok():
+        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+    sid = apple_web_services_id()
+    if not sid:
+        return jsonify(ok=False, error="Sign in with Apple isn't set up on the web yet."), 404
+    token = str((request.get_json(silent=True) or {}).get("id_token") or "")
+    try:
+        claims = _verify_apple_identity_token(token, sid)
+    except Exception:
+        _record_failed_attempt("apple:" + ip)
+        return jsonify(ok=False, error="Couldn't verify Sign in with Apple. Try again."), 401
+    nonce = request.cookies.get("a_sso_nonce", "")
+    want = hashlib.sha256(nonce.encode()).hexdigest() if nonce else ""
+    if not nonce or not _hmac_ap.compare_digest(str(claims.get("nonce") or ""), want):
+        return jsonify(ok=False, error="That sign-in expired. Try again."), 401
+    sub = str(claims.get("sub") or "")
+    email = str(claims.get("email") or "").lower().strip()
+    verified = str(claims.get("email_verified", "")).strip().lower() == "true"
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, apple_user_id FROM users WHERE apple_user_id=? AND is_active=1 LIMIT 1",
+                           (sub,)).fetchone() if sub else None
+        if not row and email and verified:
+            row = conn.execute("SELECT id, apple_user_id FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1",
+                               (email,)).fetchone()
+        if row and sub and not row["apple_user_id"]:
+            conn.execute("UPDATE users SET apple_user_id=? WHERE id=?", (sub, row["id"]))
+            conn.commit()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify(ok=False, error="No Cavnar AI login uses that Apple ID. Sign in with your password, "
+                                       "or email will@cavnar.ai."), 401
+    _clear_attempts("apple:" + ip)
+    resp = _json_sign_in(get_user_by_id(row["id"]), second_factor=False, via="apple")
+    resp.delete_cookie("a_sso_nonce")
+    return resp
+
+
+@auth_bp.route("/auth/apple/callback", methods=["GET", "POST"])
+def apple_web_callback():
+    """The return URL registered with Apple. The login page uses Apple's
+    popup, so nothing lands here in normal use; a browser that could not
+    open the popup is sent back to sign in."""
+    return redirect("/login")
+
+
+@auth_bp.app_context_processor
+def _sign_in_options():
+    """What the login page offers besides the password (login.html)."""
+    return {"apple_web_services_id": apple_web_services_id()}
+
+
+@auth_bp.route("/auth/apple/nonce", methods=["POST"])
+def apple_web_nonce():
+    """A fresh nonce for Apple's popup, fetched when the login page loads (a
+    popup opened after a network wait is blocked as unrequested). Apple signs
+    the hash it is handed into the token; the raw value stays in an httponly
+    cookie for apple_web_signin to check."""
+    import hashlib
+    import secrets as _sec_ap
+    if not apple_web_services_id():
+        return jsonify(ok=False), 404
+    raw = _sec_ap.token_urlsafe(32)
+    import config as _cfg_ap
+    resp = jsonify(ok=True, nonce=hashlib.sha256(raw.encode()).hexdigest(),
+                   client_id=apple_web_services_id(), redirect_uri=_cfg_ap.base_url() + "/auth/apple/callback",
+                   state=_sec_ap.token_hex(8))
+    from auth import cookies_require_secure
+    resp.set_cookie("a_sso_nonce", raw, httponly=True, samesite="Lax", max_age=600,
+                    secure=cookies_require_secure())
+    return resp

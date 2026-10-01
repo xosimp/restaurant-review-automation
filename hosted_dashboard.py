@@ -408,10 +408,12 @@ APPLE_APP_ID = "8DW8XL63K6.ai.cavnar.CavnarAI"
 
 
 def apple_app_site_association():
+    # webcredentials: the app may use this site's passkeys (passkeys.py)
+    # once it carries webcredentials:dashboard.cavnar.ai (9/30/26).
     return {"applinks": {"details": [{
         "appIDs": [APPLE_APP_ID],
         "components": [{"/": "/dashboard", "comment": "The dashboard, with ?nav=, ?review= or a #path"}],
-    }]}}
+    }]}, "webcredentials": {"apps": [APPLE_APP_ID]}}
 
 
 @app.route("/.well-known/apple-app-site-association")

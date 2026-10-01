@@ -14,30 +14,49 @@
 # 6.19.0, pillow 12.2.0 -> 12.3.0 — resolved with only those three upgraded
 # (every other pin held); the app uses Fernet, PdfReader page text and
 # Image/ImageOps, all unchanged across these versions.
+# 9/30/26: webauthn 3.0.1 added for passkeys (with cbor2, pyopenssl, pyasn1,
+# pyasn1-modules); every existing pin held.
 annotated-types==0.8.0
     # via pydantic
 anthropic==0.125.0
     # via -r requirements.in
 anyio==4.15.1
-    # via anthropic, httpx
+    # via
+    #   anthropic
+    #   httpx
 blinker==1.9.0
-    # via flask, sentry-sdk
+    # via
+    #   flask
+    #   sentry-sdk
+cbor2==6.1.4
+    # via webauthn
 certifi==2026.7.22
-    # via httpcore, httpx, requests, sentry-sdk
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+    #   sentry-sdk
 cffi==2.1.1
     # via cryptography
 charset-normalizer==3.5.1
-    # via reportlab, requests
+    # via
+    #   reportlab
+    #   requests
 click==8.5.0
     # via flask
 cryptography==50.0.1
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   pyopenssl
+    #   webauthn
 distro==1.9.0
     # via anthropic
 docstring-parser==0.18.0
     # via anthropic
 flask==3.1.3
-    # via -r requirements.in, sentry-sdk
+    # via
+    #   -r requirements.in
+    #   sentry-sdk
 gunicorn==23.0.0
     # via -r requirements.in
 h11==0.16.0
@@ -49,11 +68,16 @@ hpack==4.2.0
 httpcore==1.0.9
     # via httpx
 httpx[http2]==0.28.1
-    # via -r requirements.in, anthropic
+    # via
+    #   -r requirements.in
+    #   anthropic
 hyperframe==6.1.0
     # via h2
 idna==3.20
-    # via anyio, httpx, requests
+    # via
+    #   anyio
+    #   httpx
+    #   requests
 itsdangerous==2.2.0
     # via flask
 jinja2==3.1.6
@@ -61,11 +85,24 @@ jinja2==3.1.6
 jiter==0.17.0
     # via anthropic
 markupsafe==3.0.3
-    # via flask, jinja2, sentry-sdk, werkzeug
+    # via
+    #   flask
+    #   jinja2
+    #   sentry-sdk
+    #   werkzeug
 packaging==26.3
     # via gunicorn
 pillow==12.3.0
-    # via -r requirements.in, qrcode, reportlab
+    # via
+    #   -r requirements.in
+    #   qrcode
+    #   reportlab
+pyasn1==0.6.4
+    # via
+    #   pyasn1-modules
+    #   webauthn
+pyasn1-modules==0.4.2
+    # via webauthn
 pycparser==3.0
     # via cffi
 pydantic==2.13.5
@@ -74,6 +111,8 @@ pydantic-core==2.46.5
     # via pydantic
 pyjwt==2.15.1
     # via -r requirements.in
+pyopenssl==26.4.0
+    # via webauthn
 pypdf==6.19.0
     # via -r requirements.in
 python-dotenv==1.2.2
@@ -83,7 +122,10 @@ qrcode[pil]==8.2
 reportlab==4.5.1
     # via -r requirements.in
 requests==2.33.1
-    # via -r requirements.in, resend, stripe
+    # via
+    #   -r requirements.in
+    #   resend
+    #   stripe
 resend==2.48.0
     # via -r requirements.in
 schedule==1.2.2
@@ -95,10 +137,24 @@ sniffio==1.3.1
 stripe==11.6.0
     # via -r requirements.in
 typing-extensions==4.16.0
-    # via anthropic, anyio, pydantic, pydantic-core, resend, stripe, typing-inspection
+    # via
+    #   anthropic
+    #   anyio
+    #   pydantic
+    #   pydantic-core
+    #   pyopenssl
+    #   resend
+    #   stripe
+    #   typing-inspection
 typing-inspection==0.4.4
     # via pydantic
 urllib3==2.8.0
-    # via requests, sentry-sdk
+    # via
+    #   requests
+    #   sentry-sdk
+webauthn==3.0.1
+    # via -r requirements.in
 werkzeug==3.1.8
-    # via -r requirements.in, flask
+    # via
+    #   -r requirements.in
+    #   flask

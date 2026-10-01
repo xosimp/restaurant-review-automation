@@ -294,6 +294,34 @@ CREATE TABLE IF NOT EXISTS user_totp (
     activated_at        TEXT,
     updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Passkeys (owner, 9/30/26; passkeys.py): one row per WebAuthn credential a
+-- login registered. credential_id is the authenticator's id (base64url);
+-- public_key the COSE key it signs with - public, nothing here signs a
+-- thing. sign_count only ever rises (a lower one is a cloned key, refused).
+CREATE TABLE IF NOT EXISTS user_passkeys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    credential_id   TEXT    NOT NULL UNIQUE,
+    public_key      BLOB    NOT NULL,
+    sign_count      INTEGER NOT NULL DEFAULT 0,
+    transports      TEXT,
+    aaguid          TEXT,
+    backed_up       INTEGER NOT NULL DEFAULT 0,
+    name            TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_used_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_passkeys_user ON user_passkeys(user_id);
+
+-- One WebAuthn challenge per ceremony: single use, PASSKEY_CHALLENGE_MINUTES
+-- old at most; a sign-in's has no user (the passkey names the login).
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+    challenge   TEXT    PRIMARY KEY,
+    purpose     TEXT    NOT NULL,
+    user_id     INTEGER,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Indexes that reference columns added by the ALTER migrations below, so they
@@ -4226,7 +4254,7 @@ _UNGATED_PREFIXES = (
     # module; owner-only pieces check is_principal in the handler.
     "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/resend-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
     "/mobile/api/forgot-password", "/mobile/api/reset-password", "/mobile/api/logout", "/mobile/api/me",
-    "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions",
+    "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions", "/api/passkeys",
     "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
     "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
     "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",

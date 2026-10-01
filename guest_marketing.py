@@ -3379,8 +3379,16 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
         sent = sum(int(c.get("sent_count") or 0) for c in rows)
         return {"pct": round(sum(int(c.get(key) or 0) for c in rows) / sent * 100, 1), "campaigns": len(rows)} if sent else None
 
+    # The restaurant's own month: created_at is UTC, so a campaign sent the
+    # evening of the 30th read as next month's (and this month showed none).
+    from time_utils import local_iso as _liso_m
+    try:
+        from models import get_restaurant as _gr_m
+        _tz_m = getattr(_gr_m(restaurant_id, db_path), "timezone", None)
+    except Exception:
+        _tz_m = None
     month = f"{today.year:04d}-{today.month:02d}"
-    this_month = [c for c in hist if str(c.get("created_at") or "")[:7] == month]
+    this_month = [c for c in hist if _liso_m(c.get("created_at"), _tz_m)[:7] == month]
     m_sent = sum(int(c.get("sent_count") or 0) for c in this_month)
     m_failed = sum(int(c.get("failed_count") or 0) for c in this_month)
     last = hist[0] if hist else None

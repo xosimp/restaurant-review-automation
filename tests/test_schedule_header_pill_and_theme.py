@@ -922,5 +922,7 @@ def test_login_page_background_matches_the_dashboard_flat_bg_base():
     login_src = open(os.path.join(ROOT, "templates", "login.html"), encoding="utf-8").read()
     assert "background:#141110;" in login_src
     assert "background:#0c0c0c" not in login_src
-    assert "rgba(20,17,16," in login_src
+    # the vignette to that ground is painted by cavnar-field.js from the
+    # body's own background (no CSS gradient to band over the aurora)
+    assert '<div class="cf-vignette"' not in login_src
     assert 'content="#141110"' in login_src

@@ -32,3 +32,6 @@ pypdf==6.19.0
 qrcode[pil]==8.2
 httpx[http2]==0.28.1
 pillow==12.3.0
+# Passkeys (owner, 9/30/26): WebAuthn registration and sign-in verification
+# (webauthn_auth.py). Duo Labs' py_webauthn; attestation "none" only.
+webauthn==3.0.1

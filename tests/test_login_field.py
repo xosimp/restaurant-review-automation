@@ -52,7 +52,9 @@ def test_es5_only():
 def test_each_page_mounts_the_field_and_dropped_the_css_glows(name):
     t = _src(os.path.join(ROOT, "templates", name))
     assert '<canvas id="cf-aurora" class="cf-layer"' in t and '<canvas id="cf-sky" class="cf-layer"' in t
-    assert '<div class="cf-vignette"' in t
+    # the vignette is painted in the aurora canvas, under its dither
+    # (owner, 9/30/26: no banding) - no CSS gradient on top
+    assert '<div class="cf-vignette"' not in t and ".cf-vignette{" not in t
     assert '<script src="/static/cavnar-field.js"></script>' in t
     assert "window.cavnarField=CavnarField.mount({aurora:document.getElementById('cf-aurora'),sky:document.getElementById('cf-sky')})" in t
     assert "body::before" not in t and "body::after" not in t
@@ -66,4 +68,21 @@ def test_each_page_mounts_the_field_and_dropped_the_css_glows(name):
         assert "background:#0c0c0c;" not in t
     else:
         assert "background:#0c0c0c;" in t, "Paper (dark) under the field, matching iOS"
-    assert ".cf-vignette{position:fixed" in t and ".card{z-index:1}" in t
+    assert ".card{z-index:1}" in t
+
+
+def test_the_aurora_is_smooth():
+    """Owner, 9/30/26: "circular bands... needs to be ULTRA smooth, it's a
+    first impression". A five-stop linear falloff read as rings, a
+    quarter-resolution canvas stretched every 8-bit step 4x, and the CSS
+    vignette was a second banding gradient on top."""
+    js = _src(JS)
+    import json as _json
+    m = re.search(r"var FALLOFF = (\[[^\]]+\]);", js)
+    curve = _json.loads(m.group(1))
+    assert len(curve) >= 17 and curve[0] == 1.0 and curve[-1] == 0.0
+    assert all(a >= b for a, b in zip(curve, curve[1:])), "monotone - no ring"
+    assert abs(curve[-2] - curve[-1]) < 0.005, "flat at the rim - no edge"
+    assert "ascale = 1;" in js and "ascale = 0.25" not in js
+    assert "globalCompositeOperation = 'lighter'" in js and "ditherTile()" in js
+    assert "var VIGNETTE = " in js

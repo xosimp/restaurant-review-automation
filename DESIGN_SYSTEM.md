@@ -425,6 +425,16 @@ them; the POS's rate shows as text, a box only for someone with no rate
 (amber `.tg-need`: what they are costed at meanwhile). A role gets a rate
 box only when nobody in it has a rate.
 
+**The sign-in card (owner, 9/30/26).** Every field and button on
+`login.html` is one box: 46px tall, the Sign in button's radius
+(`--cb-radius-lg`, 11px), 15px Apfel Grotezk. A focus ring follows the
+control's own corners (never a fixed `border-radius` on `:focus-visible`).
+"Sign in with Google", "Sign in with Apple" (when set up) and "Sign in with a
+passkey" stack under "or continue with" as `.cbtn.cbtn-lg.sso` on the card's
+dark ground; small print is 12–14px, the legal links wrap rather than
+shrink. The living background paints with no banding: a smooth 21-stop
+falloff, full resolution, the vignette in the canvas, a 0–2 level dither.
+
 **An open section shows it is open.** A Team & rules row that is expanded
 becomes a card — `--sf-recess` fill, `--hb-line` outline, a 3px ember inner
 edge, its header ruled off from the content — and a section opened inside

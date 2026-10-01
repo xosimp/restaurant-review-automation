@@ -11,11 +11,23 @@
      3. Vignette — handled in CSS (a fixed gradient div to Paper), so the
         canvases only ever paint what moves.
    Frame budget: capped at 30fps like iOS (the drift is far too slow for
-   60 to look any different), the aurora is painted at quarter resolution
-   and scaled up by the compositor (its blooms are hundreds of px soft, so
-   the quantisation is invisible), the constellation at device resolution
+   60 to look any different); the constellation at device resolution
    capped at 2x. Frozen under prefers-reduced-motion, paused while the tab
-   is hidden, resized on the fly. ES5 only. */
+   is hidden, resized on the fly. ES5 only.
+
+   No banding (owner, 9/30/26: "circular bands... this needs to be ULTRA
+   smooth, it's a first impression"). Three causes, three fixes:
+     - each bloom was five straight-line stops, and the eye reads every
+       kink in a falloff as a ring (Mach bands) - FALLOFF is one smooth
+       monotone curve through the same five points, 21 stops, flat at the
+       rim so the bloom has no edge either;
+     - 8-bit colour on a dark ground steps one level every few dozen px,
+       and the quarter-resolution canvas stretched each step 4x - the
+       aurora now paints at CSS resolution, on the page's own ground, with
+       the vignette, and ends with a static 0-2 level dither (DITHER) that
+       turns each step into grain finer than the eye resolves;
+     - the CSS vignette was a second 8-bit gradient on top - it is drawn
+       here, under the dither, instead. */
 (function () {
   'use strict';
 
@@ -61,6 +73,29 @@
     { x: 0.50, y: 1.05, r: 0.75, c: EMBER,  a: 0.34, period: 9,  phase: 4.2 }
   ];
 
+  // The bloom's falloff, centre to rim: a monotone cubic through iOS's
+  // five stops (1, .55 at .22, .22 at .45, .06 at .68, 0), sampled at 21.
+  var FALLOFF = [1.0, 0.8946, 0.7866, 0.6816, 0.585, 0.4995, 0.4175, 0.3413, 0.2743, 0.22, 0.1745,
+                 0.1331, 0.098, 0.0712, 0.054, 0.0396, 0.0267, 0.0158, 0.0074, 0.0019, 0.0];
+  // The vignette to Paper, top to bottom (was .cf-vignette in CSS).
+  var VIGNETTE = [[0, 0], [0.45, 0.28], [1, 0.90]];
+
+  // A static tile of 0-2 levels added over the aurora: dither, not a
+  // texture - one level of grain is invisible, a one-level step is a ring.
+  var DITHER = 128;
+  function ditherTile() {
+    var c = document.createElement('canvas');
+    c.width = c.height = DITHER;
+    var x = c.getContext('2d'), img = x.createImageData(DITHER, DITHER), d = img.data, i, v;
+    for (i = 0; i < d.length; i += 4) {
+      v = Math.random() + Math.random();          // triangular: 0, 1 or 2, mostly 1
+      v = v < 0.5 ? 0 : (v < 1.5 ? 1 : 2);
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    }
+    x.putImageData(img, 0, 0);
+    return c;
+  }
+
   var COUNT = 36, LINK = 110, FIELD_H = 0.72;
   var points = (function () {
     var next = makeRng(0x9E3779B9, 0x7F4A7C15);
@@ -79,7 +114,12 @@
     if (!aurora || !sky || !aurora.getContext) return null;
     var actx = aurora.getContext('2d'), sctx = sky.getContext('2d');
     var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    var W = 0, H = 0, dpr = 1, ascale = 0.25;
+    var W = 0, H = 0, dpr = 1, ascale = 1;
+    var base = window.getComputedStyle ? window.getComputedStyle(document.body).backgroundColor : '';
+    if (!base || base === 'transparent' || base === 'rgba(0, 0, 0, 0)') base = '#141110';
+    var baseRGB = (base.match(/\d+/g) || [20, 17, 16]).slice(0, 3);
+    var grain = null;
+    try { grain = actx.createPattern(ditherTile(), 'repeat'); } catch (e) { grain = null; }
     var t0 = Date.now() / 1000, last = 0, raf = null, frames = 0, drawMs = 0;
 
     function size() {
@@ -94,21 +134,30 @@
     }
 
     function drawAurora(t, frozen) {
-      actx.clearRect(0, 0, W, H);
-      for (var i = 0; i < BLOOMS.length; i++) {
+      actx.globalCompositeOperation = 'source-over';
+      actx.fillStyle = base;
+      actx.fillRect(0, 0, W, H);
+      var i, k;
+      for (i = 0; i < BLOOMS.length; i++) {
         var b = BLOOMS[i], w = 2 * Math.PI / b.period;
         var dx = frozen ? 0 : Math.sin(t * w + b.phase) * W * 0.16;
         var dy = frozen ? 0 : Math.cos(t * w * 0.8 + b.phase) * H * 0.05;
         var breathe = frozen ? 1 : 0.82 + 0.18 * Math.sin(t * w * 1.3 + b.phase);
         var cx = b.x * W + dx, cy = b.y * H + dy, r = b.r * W, a = b.a * breathe;
         var g = actx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        g.addColorStop(0, rgba(b.c, a));
-        g.addColorStop(0.22, rgba(b.c, a * 0.55));
-        g.addColorStop(0.45, rgba(b.c, a * 0.22));
-        g.addColorStop(0.68, rgba(b.c, a * 0.06));
-        g.addColorStop(1, rgba(b.c, 0));
+        for (k = 0; k < FALLOFF.length; k++) g.addColorStop(k / (FALLOFF.length - 1), rgba(b.c, a * FALLOFF[k]));
         actx.fillStyle = g;
         actx.fillRect(cx - r, cy - r, r * 2, r * 2);
+      }
+      var v = actx.createLinearGradient(0, 0, 0, H);
+      for (k = 0; k < VIGNETTE.length; k++) v.addColorStop(VIGNETTE[k][0], rgba(baseRGB, VIGNETTE[k][1]));
+      actx.fillStyle = v;
+      actx.fillRect(0, 0, W, H);
+      if (grain) {
+        actx.globalCompositeOperation = 'lighter';
+        actx.fillStyle = grain;
+        actx.fillRect(0, 0, W, H);
+        actx.globalCompositeOperation = 'source-over';
       }
     }
 

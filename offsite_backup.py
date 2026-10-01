@@ -430,6 +430,8 @@ KEEP_COLUMNS = {
     ("staff_signups", "token_hash"): "the hash of a one-time link, not the link",
     ("ai_validation_log", "tokens"): "words from the model's own output, not credentials",
     ("push_deliveries", "device_token_id"): "an id",
+    ("user_passkeys", "credential_id"): "a passkey's public id (passkeys.py); its key is a public key, and "
+                                        "dropping it unlinks every passkey in a restored copy",
     ("guest_campaigns", "link_token"): "a public link id printed in a guest text",
     ("guest_contacts", "email_token"): "a guest's unsubscribe link id",
     ("guest_newsletter_recipients", "email_token"): "a guest's unsubscribe link id",
