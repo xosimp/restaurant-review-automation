@@ -442,7 +442,7 @@ removable chips (`.rul-ov`, M/D/YY), never a comma-separated text box.
 Each chip **saves the moment it is added or removed** (a change, not the whole list), and a
 date picked but not added is added by the section's Save rather than dropped. A time of day is an
 `.ac-select` of 15-minute steps (`cavTimeOptions`, unset reads "—"), never `<input type=time>`:
-Safari draws an empty one as a grey "12:30 PM" that reads as a value (owner, 9/28/26).
+Safari draws an empty one as a grey "12:30 PM" that reads as a value (owner, 9/28/26). An empty `type=date` box carries `.is-empty` (`cavDateEmpty`), which draws it blank until it is focused — Safari draws an empty date as today's in grey, and Simple EJ's unset Period 1 start read as 9/30/26 (9/30/26).
 
 **One figure in two units.** Where one stored value is thought of in two
 units (the revenue target by the month and by the week), each unit gets its

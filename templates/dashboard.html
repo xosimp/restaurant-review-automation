@@ -13002,6 +13002,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Every dropdown in Account settings is the size of the controls beside
    it — the bare selects rendered at the browser's default, far smaller. */
 #panel-account .ac-row .c .ac-select,#panel-account .ac-inline .ac-select{width:auto;min-width:200px}
+.ac-input[type=date].is-empty::-webkit-datetime-edit{color:transparent}
+.ac-input[type=date].is-empty:focus::-webkit-datetime-edit{color:inherit}
 /* Pay by role: each role opens to its people (owner, 9/30/26). */
 .tg-role+.tg-role{border-top:1px solid var(--ac-line,var(--hb-line2))}
 .tg-role .tg-role-open{margin-left:10px;font-size:13px}
@@ -25403,6 +25405,9 @@ function loadDsrSettings() {
     sel.innerHTML = h;
     document.getElementById('as-dsr-dow').value = String(s.fiscal_week_start_dow == null ? 0 : s.fiscal_week_start_dow);
     document.getElementById('as-dsr-year').value = s.fiscal_year_start || '';
+    cavDateEmpty(document.getElementById('as-dsr-year'));
+    cavDateEmpty(document.getElementById('as-dsr-ystart'));
+    if (!s.fiscal_year_start) { var _cal = document.getElementById('as-dsr-cal'); if (_cal) _cal.textContent = 'Not set yet \u2014 the report has no period numbers until it is. Leave it blank for weeks only.'; }
     _dsrShowScheme(s.fiscal_period_scheme || '4x13');
     var gb = document.getElementById('as-dsr-gross');
     if (gb) gb.value = s.dsr_gross_basis === 'all' ? 'all' : 'items';
@@ -25477,6 +25482,13 @@ document.addEventListener('click', function(e) {
   for (var i = 0; i < all.length; i++) if (all[i].start !== start) list.push(all[i]);
   _dsrSaveYears(list);
 });
+/* An empty date box in Safari is drawn as today's date in grey, which reads
+   as a saved value: Simple EJ's Period 1 start looked set to 9/30/26 and the
+   report said "no period set" (owner, 9/30/26). An empty one is drawn empty
+   (DESIGN_SYSTEM 7, the same trap as <input type=time>). */
+function cavDateEmpty(el) { if (el && el.classList) el.classList.toggle('is-empty', !el.value); }
+document.addEventListener('input', function (ev) { var t = ev.target; if (t && t.type === 'date') cavDateEmpty(t); });
+document.addEventListener('change', function (ev) { var t = ev.target; if (t && t.type === 'date') cavDateEmpty(t); });
 function _dsrCalLabel(label) {
   var el = document.getElementById('as-dsr-cal');
   if (el && label) el.textContent = 'Today falls in ' + label + '. Leave it blank for weeks only, with no period numbers.';
@@ -29963,9 +29975,10 @@ document.addEventListener('click', function(e) {
     for (var i = 0; i < teammates.length; i++) {
       var t = teammates[i], un = +t.unread || 0;
       var last = t.last_message ? (t.last_from_me ? 'You: ' : '') + t.last_message : '';
-      html += '<button type="button" class="cbtn cbtn-text tm-row' + (un ? ' is-unread' : '') + (last ? '' : ' is-new') + '" style="--i:' + Math.min(i, 10) + '" data-tm-open="' + t.user_id + '" data-tm-name="' + _escAttr(t.username) + '">'
-           + '<span class="hp-av" aria-hidden="true">' + _escHtml(_tmInitials(t.username)) + '</span>'
-           + '<span class="tm-tx"><span class="tm-top"><span class="tm-name">' + _escHtml(t.username) + '</span>'
+      var who = t.name || t.username;   /* the person's name, not the login's (9/30/26) */
+      html += '<button type="button" class="cbtn cbtn-text tm-row' + (un ? ' is-unread' : '') + (last ? '' : ' is-new') + '" style="--i:' + Math.min(i, 10) + '" data-tm-open="' + t.user_id + '" data-tm-name="' + _escAttr(who) + '">'
+           + '<span class="hp-av" aria-hidden="true">' + _escHtml(_tmInitials(who)) + '</span>'
+           + '<span class="tm-tx"><span class="tm-top"><span class="tm-name">' + _escHtml(who) + '</span>'
            + (t.last_at ? '<span class="tm-time">' + _escHtml(_tmAgo(t.last_at)) + '</span>' : '') + '</span>'
            + (last ? '<span class="tm-bot"><span class="tm-last">' + _escHtml(last) + '</span>'
              + (un ? '<span class="tm-count" aria-label="' + un + ' unread">' + (un > 9 ? '9+' : un) + '</span>' : '') + '</span>' : '')

@@ -6674,6 +6674,16 @@ def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> 
     mates = [m for m in get_team_members(restaurant_id, db_path=db_path) if m["id"] != user_id]
     conn = get_conn(db_path)
     try:
+        # The person's name, not the login's (owner, 9/30/26: "jheflin" is
+        # Jim Heflin): the membership's name, else the login.
+        names = {}
+        try:
+            for r in conn.execute("SELECT user_id, employee_name FROM memberships WHERE restaurant_id=? "
+                                  "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall():
+                if (r["employee_name"] or "").strip():
+                    names[int(r["user_id"])] = " ".join(r["employee_name"].split())
+        except Exception:
+            names = {}
         out = []
         for m in mates:
             last = conn.execute("""
@@ -6686,7 +6696,8 @@ def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> 
                 "WHERE restaurant_id=? AND sender_id=? AND recipient_id=? AND read_at IS NULL",
                 (restaurant_id, m["id"], user_id)).fetchone()
             out.append({
-                "user_id": m["id"], "username": m["username"], "role": m["role"],
+                "user_id": m["id"], "username": m["username"], "name": names.get(int(m["id"])) or m["username"],
+                "role": m["role"],
                 "last_message": last["body"] if last else None,
                 "last_from_me": bool(last and last["sender_id"] == user_id),
                 "last_at": last["created_at"] if last else None,
@@ -6697,7 +6708,7 @@ def get_team_inbox(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> 
         # Two stable sorts: username breaks ties, then last_at (descending)
         # decides order — "" (never messaged) sorts after every real
         # timestamp, so those teammates land at the bottom on their own.
-        out.sort(key=lambda x: x["username"])
+        out.sort(key=lambda x: x["name"].lower())
         out.sort(key=lambda x: x["last_at"] or "", reverse=True)
         return out
     finally:

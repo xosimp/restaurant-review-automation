@@ -262,3 +262,16 @@ def test_the_panel_talks_to_the_real_endpoints():
     assert "fetch('/api/team/inbox')" in html
     assert "fetch('/api/team/messages/'" in html
     assert "fetch('/api/team/messages'," in html
+
+
+def test_the_inbox_names_the_person_not_the_login(db_path):
+    """Owner, 9/30/26: Messages listed "jheflin" for Jim Heflin. The inbox
+    carries the membership's name, else the login."""
+    from auth import upsert_membership
+    rid = _restaurant(db_path)
+    erik, jim, ana = _user(db_path, rid, "erik"), _user(db_path, rid, "jheflin"), _user(db_path, rid, "ana")
+    upsert_membership(jim, rid, "client", employee_name="Jim  Heflin", db_path=db_path)
+    got = {x["username"]: x["name"] for x in models.get_team_inbox(rid, erik, db_path=db_path)}
+    assert got == {"jheflin": "Jim Heflin", "ana": "ana"}
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html"), encoding="utf-8").read()
+    assert "var who = t.name || t.username;" in src
