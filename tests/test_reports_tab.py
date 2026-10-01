@@ -84,3 +84,13 @@ def test_the_module_pills_catch_light_on_their_top_edge():
     rule = SRC[SRC.index(".hb-chip{display:inline-flex"):]
     rule = rule[:rule.index("}") + 1]
     assert "inset 0 1px 0 rgba(255,255,255," in rule and "linear-gradient(180deg,rgba(255,255,255,.12)" in rule
+
+
+def test_a_night_in_progress_names_its_stage_in_words():
+    # Owner, 9/30/26: the list row read "AWAITING_CLOSE".
+    row = SRC[SRC.index("  function listRow(r){"):SRC.index("  var LIST_STAGE=")]
+    assert "esc(r.status||'')" not in row and "LIST_STAGE[r.status]" in row
+    stages = SRC[SRC.index("  var LIST_STAGE="):SRC.index("  var LIST_STAGE=") + 400]
+    for key, word in (("scheduled", "Scheduled"), ("awaiting_close", "Waiting for close"),
+                      ("collecting", "Collecting"), ("writing", "Writing")):
+        assert f"{key}:['{word}'" in stages

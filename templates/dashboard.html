@@ -6421,6 +6421,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-pill.running{color:var(--ember);background:var(--hb-tint);border-color:transparent}
 .dr-pill.running i{width:7px;height:7px;border-radius:50%;background:var(--ember);animation:drBreath 1.8s ease-in-out infinite}
 .dr-pill.est{color:var(--ink3)}
+.dr-list-wait{font-size:13.5px;color:var(--ink3)}
 @keyframes drBreath{0%,100%{opacity:1}50%{opacity:.3}}
 /* The sliding ember pulse — quick loading, never a spinner. */
 .dr-pulse{display:block;position:relative;height:3px;width:180px;max-width:100%;border-radius:2px;background:var(--hb-tint2,var(--paper3));overflow:hidden}
@@ -6953,13 +6954,23 @@ svg:hover .hb-xh{opacity:1}
   // ── every report, newest first (the Reports tab, owner 9/30/26) ─────────
   function listRow(r){
     var d=r.business_date,dt=new Date(d+'T00:00:00'),wd=isNaN(dt)?'':['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()];
-    var pill=r.status==='final'?'<span class="dr-pill final">Final</span>':(r.provisional?'<span class="dr-pill provisional">Provisional</span>':'<span class="dr-pill">'+esc(r.status||'')+'</span>');
+    // A night still in progress names its stage in words (owner, 9/30/26:
+    // the row read "AWAITING_CLOSE"); a raw stage key never reaches the page.
+    var st=LIST_STAGE[r.status],pill=r.status==='final'?'<span class="dr-pill final">Final</span>'
+      :(r.provisional?'<span class="dr-pill provisional">Provisional</span>'
+      :(r.status==='failed'?'<span class="dr-pill failed">Couldn\u2019t finish</span>'
+      :'<span class="dr-pill running"><i></i>'+esc(st?st[0]:'In progress')+'</span>'));
+    var wait=st&&st[1]?'<span class="dr-list-s"><span class="dr-list-wait">'+esc(st[1])+'</span></span>':'';
     var verdict=r.verdict?'<span class="dr-list-v '+esc(r.tone||'')+'">'+esc(r.verdict)+(r.overall!=null?' <b class="hb-num">'+esc(r.overall)+'</b>':'')+'</span>':'';
     return '<button type="button" class="cbtn cbtn-text dr-list-row" data-dr="open" data-kind="night" data-date="'+esc(d)+'">'
       +'<span class="dr-list-d"><b>'+esc(wd)+'</b><span class="hb-num">'+esc(r.label||(window.mdy?window.mdy(d):d))+'</span></span>'
       +'<span class="dr-list-m">'+verdict+(r.net!=null?'<span class="dr-list-n hb-num">$'+Math.round(r.net).toLocaleString()+'<small>net</small></span>':'')+pill+'</span>'
-      +listStats(r.stats)+'</button>';
+      +(wait||listStats(r.stats))+'</button>';
   }
+  var LIST_STAGE={scheduled:['Scheduled','Starts after the night\u2019s service.'],
+    awaiting_close:['Waiting for close','Goes out once the POS closes the day.'],
+    collecting:['Collecting','Reading the night\u2019s sales, labor and checks.'],
+    writing:['Writing','Writing the summary.']};
   // The night in a few figures, never its paragraph (owner, 9/30/26) -
   // dsr.access.list_stats decides which and in what order.
   function listStats(stats){
