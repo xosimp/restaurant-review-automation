@@ -25,7 +25,8 @@ at least one more component are measured:
     sales   40   vs budget, else vs Cavnar's forecast, else vs last week
     labor   25   points vs the labor target
     food    15   points vs the food-cost target (an estimate — said so)
-    guests  20   the night's average rating (only at RATING_MIN_REVIEWS)
+    guests  20   the average rating of the 7 days ending that night (only at
+                 RATING_MIN_REVIEWS reviews; the night alone on older reports)
 
 Each component maps its gap to 0–100 on a stated curve (CURVES). The
 verdict reads Excellent at 85+, Good at 70+, Mixed at 55+, Tough below.
@@ -209,9 +210,15 @@ def _guests(rm, rdetail):
     if rm is None:
         return {"key": "guests", "label": "Guest experience", "measured": False, "value": None,
                 "why": "Reviews haven't synced for this night"}
-    avg, n = rm.get("avg_rating"), rm.get("received")
+    # The 7 days ending this night (block_reviews GUEST_WINDOW_DAYS, owner
+    # 9/30/26); a report written before the week's figures existed reads
+    # the night alone, as it did.
+    week = "avg_rating_7d" in rm or "reviews_7d" in rm
+    avg, n = (rm.get("avg_rating_7d"), rm.get("reviews_7d")) if week else (rm.get("avg_rating"), rm.get("received"))
     if not _num(avg):
-        why = rdetail.get("rating_note") or ("No new reviews" if not n else "Too few reviews to rate the night")
+        why = ((rdetail.get("rating_7d_note") or ("No reviews in the last 7 days" if not n else "Too few reviews to rate"))
+               if week else
+               (rdetail.get("rating_note") or ("No new reviews" if not n else "Too few reviews to rate the night")))
         return {"key": "guests", "label": "Guest experience", "measured": False, "value": None, "why": why,
                 "count": n}
     # Whole stars, rounded down unless within a quarter of the next (4.6 is
@@ -220,9 +227,10 @@ def _guests(rm, rdetail):
     n = int(n) if _num(n) else n
     return {"key": "guests", "label": "Guest experience", "measured": True,
             "value": "★" * stars + "☆" * (5 - stars), "stars": float(avg),
-            "detail": f"{float(avg):.1f} across {n} review{'' if n == 1 else 's'}",
+            "detail": f"{float(avg):.1f} across {n} review{'' if n == 1 else 's'}" + (", last 7 days" if week else ""),
             "tone": "good" if avg >= 4.5 else ("warn" if avg >= 3.5 else "bad"),
-            "score": curve("guests", float(avg)), "cites": ["reviews.avg_rating", "reviews.received"]}
+            "score": curve("guests", float(avg)),
+            "cites": ["reviews.avg_rating_7d", "reviews.reviews_7d"] if week else ["reviews.avg_rating", "reviews.received"]}
 
 
 def overall(components):

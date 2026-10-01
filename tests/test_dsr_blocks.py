@@ -658,3 +658,28 @@ def test_the_closeout_routes_take_the_new_fields_on_web_and_mobile(routes, db, m
                        headers={"Authorization": f"Bearer {token}"}).get_json()
     assert body["ok"] and body["closeout"]["influence"] == "Rain" and body["closeout"]["vip_guests"] == "Mayor Lee"
     assert routes.post("/mobile/api/closeout", json={"influence": "x"}).status_code == 401
+
+
+def test_the_guest_score_reads_the_seven_days_ending_the_night(db):
+    """Owner, 9/30/26: a night rarely gets 5 reviews (Simple EJ's gets about
+    5 a week), so Guest experience almost never scored, and lowering the
+    floor would let one review swing a night. The score reads the 7 days
+    ending the night, at the same 5-review floor."""
+    from dsr import scorecard
+    rid = _rid(db)
+    _live(db, rid, "2026-09-23T08:00:00")
+    for at, stars in (("2026-09-16T13:00:00", 4), ("2026-09-17T19:00:00", 5), ("2026-09-19T20:00:00", 5),
+                      ("2026-09-21T12:00:00", 4), ("2026-09-22T19:00:00", 2),
+                      ("2026-09-15T12:00:00", 1)):                 # 9/15 is outside the 7 days
+        _review(db, rid, at, stars)
+    b = block_reviews.collect(_ctx(db, rid))
+    m = b["metrics"]
+    assert m["avg_rating"] is None and (m["reviews_7d"], m["avg_rating_7d"]) == (5, 4.0)
+    g = scorecard._guests(m, b["detail"])
+    assert g["measured"] and g["detail"] == "4.0 across 5 reviews, last 7 days"
+    assert g["cites"] == ["reviews.avg_rating_7d", "reviews.reviews_7d"]
+    thin = scorecard._guests({"reviews_7d": 2, "avg_rating_7d": None},
+                             {"rating_7d_note": "2 reviews in the last 7 days — not rated (a rating needs 5)"})
+    assert not thin["measured"] and "last 7 days" in thin["why"]
+    old = scorecard._guests({"avg_rating": 4.6, "received": 6}, {})          # a report from before the window
+    assert old["measured"] and old["detail"] == "4.6 across 6 reviews"

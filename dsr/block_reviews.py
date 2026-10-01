@@ -80,6 +80,36 @@ def _sync_state(ctx, window_end_local):
     return ("delayed" if missed >= DELAYED_AFTER_MISSED_SLOTS else "current"), fetched_local
 
 
+GUEST_WINDOW_DAYS = 7
+
+
+def _week_ratings(ctx, axis, start, end):
+    """The star ratings of the GUEST_WINDOW_DAYS business days ending with
+    this night: from the start of the first of them to the end of this
+    one. A bare date stamp counts on its own calendar date."""
+    from datetime import datetime as _dtw
+    first_day = (start - timedelta(days=GUEST_WINDOW_DAYS - 1))
+    lo, hi = (first_day.date() - timedelta(days=1)).isoformat(), (end.date() + timedelta(days=1)).isoformat()
+    rows = _rows(ctx, f"SELECT rating, {axis} AS at FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                      f"AND rating IS NOT NULL AND substr({axis}, 1, 10) BETWEEN ? AND ?", (ctx.restaurant_id, lo, hi))
+    out = []
+    for rv in rows or []:
+        s = str(rv["at"] or "").strip()
+        if not s:
+            continue
+        if len(s) == 10:
+            inside = first_day.date().isoformat() <= s <= str(ctx.business_date)[:10]
+        else:
+            try:
+                at = _dtw.fromisoformat(s.replace("T", " ")[:19])
+            except ValueError:
+                continue
+            inside = first_day <= at < end
+        if inside:
+            out.append(int(rv["rating"]))
+    return out
+
+
 def collect(ctx):
     from models import REVIEW_TIME_AXIS_BARE as AXIS
     r = ctx.restaurant
@@ -128,10 +158,19 @@ def collect(ctx):
     # is stated and the rating is not.
     from thresholds import RATING_MIN_REVIEWS
     rated_enough = len(ratings) >= RATING_MIN_REVIEWS
+    # The guest score reads the 7 days ending tonight (owner, 9/30/26: a
+    # night rarely gets 5 reviews - Simple EJ's gets about 5 a week - so the
+    # night itself almost never scored, and scoring one or two would let a
+    # single review swing the night). Same floor, a week's reviews.
+    week = common.guard(ctx, "reviews", "week", lambda: _week_ratings(ctx, AXIS, start, end), gaps, default=None)
+    week_n = len(week) if week is not None else None
+    week_rated = bool(week) and week_n >= RATING_MIN_REVIEWS
     metrics = {
         "received": None if delayed else len(day),
         "avg_rating": (None if (delayed or not rated_enough)
                        else round(sum(ratings) / len(ratings), 2)),
+        "reviews_7d": None if delayed else week_n,
+        "avg_rating_7d": (None if (delayed or not week_rated) else round(sum(week) / len(week), 2)),
         "positive": None if delayed else sum(1 for rv in analysed if rv["sentiment"] == "positive"),
         "negative": None if delayed else sum(1 for rv in analysed if rv["sentiment"] == "negative"),
         "not_analysed": None if delayed else len(day) - len(analysed),
@@ -168,6 +207,9 @@ def collect(ctx):
                         f"{len(ratings)} review{'' if len(ratings) == 1 else 's'} — not rated "
                         f"(a rating needs {RATING_MIN_REVIEWS})"),
         "rating_min_reviews": RATING_MIN_REVIEWS,
+        "rating_7d_note": (None if delayed or week_rated or week_n is None else
+                           f"{week_n} review{'' if week_n == 1 else 's'} in the last 7 days — not rated "
+                           f"(a rating needs {RATING_MIN_REVIEWS})"),
     }
     if delayed:
         return dsr.block(dsr.AWAITING, source="google", block_name="reviews",
