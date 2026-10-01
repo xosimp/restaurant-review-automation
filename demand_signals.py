@@ -280,11 +280,22 @@ def parse_reservations_csv(text):
 def delete(restaurant_id, signal_id, db_path=DB_PATH) -> bool:
     conn = get_conn(db_path)
     try:
+        row = conn.execute("SELECT source, ref FROM demand_signals WHERE id=? AND restaurant_id=?",
+                           (int(signal_id), restaurant_id)).fetchone()
         cur = conn.execute("DELETE FROM demand_signals WHERE id=? AND restaurant_id=?", (int(signal_id), restaurant_id))
         conn.commit()
-        return cur.rowcount > 0
+        gone = cur.rowcount > 0
     finally:
         conn.close()
+    # A game from the catalog the owner removed stays removed (event_intel:
+    # the daily sync would otherwise write it back the next morning).
+    if gone and row and str(row["source"] or "") == "events" and str(row["ref"] or "").startswith("event:"):
+        try:
+            from event_intel import store as _ev_store
+            _ev_store.dismiss(restaurant_id, int(str(row["ref"]).split(":", 1)[1]), db_path=db_path)
+        except Exception:
+            pass
+    return gone
 
 
 def upcoming(restaurant_id, start=None, end=None, db_path=DB_PATH) -> list:
@@ -444,6 +455,18 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
             measured = _campaign_measured(restaurant_id, db_path=db_path)
         else:
             measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
+        # A game or event from the catalog (event_intel, source "events") is
+        # not the owner saying the night will be busy: until this restaurant
+        # has MEASURED nights like it past the floor it is context only —
+        # never an assumed-busier night, never a reason to hold a cut, never
+        # a label the schedule reads as the owner's (audit 10/1/26).
+        if s.get("kind") == "event" and str(s.get("source") or "") == "events" \
+                and not (measured and measured.get("applies")):
+            note = (f" (measured {measured['median_lift_pct']:+.0f}% here over {measured['n']} "
+                    f"night{'s' if measured['n'] != 1 else ''} so far, not enough to plan on)" if measured
+                    else " (no measured effect here yet)")
+            entry.setdefault("context", []).append(s["label"] + note)
+            continue
         if measured:
             entry.setdefault("measured", []).append({
                 "label": s["label"], "median_lift_pct": measured["median_lift_pct"], "n": measured["n"],
@@ -485,7 +508,15 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
             day = date.fromisoformat(d).strftime("%A")
         except Exception:
             day = ""
+        if not e.get("labels") and e.get("context"):
+            import ai_guard
+            from time_utils import mdy
+            lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted('; '.join(e['context']))} — a game or event "
+                         f"nearby, not the owner's; no measured effect to plan on: staff a usual {day}")
+            continue
         what = "; ".join(e["labels"])
+        if e.get("context"):
+            what += " (also nearby: " + "; ".join(e["context"]) + ")"
         lift = e.get("lift_pct")
         tail = ""
         if lift is not None:

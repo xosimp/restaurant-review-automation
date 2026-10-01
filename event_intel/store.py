@@ -96,6 +96,14 @@ def init_event_intel(db_path=DB_PATH):
             updated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, series_id)
         )""")
+        # A game the owner removed from their own list stays removed: the
+        # daily sync never writes it back (audit 10/1/26).
+        conn.execute("""CREATE TABLE IF NOT EXISTS event_dismissals (
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            event_id      INTEGER NOT NULL REFERENCES catalog_events(id),
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, event_id)
+        )""")
         conn.commit()
     finally:
         conn.close()
@@ -152,7 +160,11 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
                 "season_type=excluded.season_type, week=excluded.week, event_date=excluded.event_date, "
                 "kickoff_local=excluded.kickoff_local, timezone=excluded.timezone, home_away=excluded.home_away, "
                 "opponent=excluded.opponent, venue=excluded.venue, broadcast=excluded.broadcast, "
-                "is_primetime=excluded.is_primetime, status=excluded.status, "
+                "is_primetime=excluded.is_primetime, "
+                # a season file says "scheduled" for a game since played:
+                # a completed (or cancelled) game never goes back
+                "status=CASE WHEN excluded.status='scheduled' AND catalog_events.status<>'scheduled' "
+                "THEN catalog_events.status ELSE excluded.status END, "
                 "result=COALESCE(excluded.result, catalog_events.result), attributes_json=excluded.attributes_json, "
                 "source_url=excluded.source_url, updated_at=datetime('now')", vals)
             written += 1
@@ -293,3 +305,37 @@ def auto_follow(restaurant_id, series_id, distance_km, db_path=DB_PATH) -> bool:
 
 def now_iso():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def mark_past_completed(today, db_path=DB_PATH) -> int:
+    """A scheduled event whose date has passed is completed (its result,
+    when a source gives one, is kept or added later)."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE catalog_events SET status='completed', updated_at=datetime('now') "
+                           "WHERE status='scheduled' AND event_date IS NOT NULL AND event_date < ?", (str(today)[:10],))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def dismiss(restaurant_id, event_id, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO event_dismissals (restaurant_id, event_id) VALUES (?,?)",
+                     (restaurant_id, int(event_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def dismissed(restaurant_id, db_path=DB_PATH) -> set:
+    conn = get_conn(db_path)
+    try:
+        return {r["event_id"] for r in conn.execute("SELECT event_id FROM event_dismissals WHERE restaurant_id=?",
+                                                    (restaurant_id,)).fetchall()}
+    except Exception:
+        return set()
+    finally:
+        conn.close()

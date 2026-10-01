@@ -1075,9 +1075,14 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     month_start = today.replace(day=1)
     days_elapsed = (today - month_start).days + 1
     if days_elapsed < MIN_DAYS_FOR_PROJECTION:
-        return {"available": False,
+        # The same caveat every other answer carries (audit 10/1/26: the
+        # first days of each month returned no basis at all).
+        return {"available": False, "claim_kind": "forecast",
                 "reason": f"only {days_elapsed} days into the month — a run rate this early "
-                          f"is noise (needs {MIN_DAYS_FOR_PROJECTION})"}
+                          f"is noise (needs {MIN_DAYS_FOR_PROJECTION})",
+                "basis": ("Prime cost = COGS + labor, month to date, projected to month end at the current "
+                          "daily run rate. This is prime cost, not net profit — rent, utilities and overheads "
+                          "are not in this system.")}
 
     missing = []
     net_sales, sales_why = _cogs.net_sales_in_window(restaurant_id, month_start, today)

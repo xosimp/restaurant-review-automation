@@ -108,7 +108,7 @@ def _events(ctx, gaps):
             except Exception:
                 ev = None
             if ev:
-                item["label"] = ev["describe"]
+                item["label"] = ev["describe_short"]
                 item["event_id"] = ev["event"]["id"]
                 if ev.get("effect"):
                     item["effect"] = {k: ev["effect"][k] for k in ("segment", "n", "median_lift_pct", "basis")}
@@ -120,7 +120,8 @@ def _events(ctx, gaps):
         "summary": "; ".join(i["label"] for i in items) if items else "Nothing listed",
         "items": items,
         "reservations_covers": max(booked) if booked else None,
-        "basis": "events and reservations you entered for the date, and the holiday calendar",
+        "basis": ("events and reservations you entered for the date, the games and events Cavnar AI follows for "
+                  "this location, and the holiday calendar"),
     }
 
 

@@ -533,6 +533,8 @@ def test_a_projection_too_early_in_the_month_is_refused(db_path, monkeypatch):
 
 
 def test_the_projection_is_labelled_a_forecast(db_path, monkeypatch):
+    # Any day of the month (these failed on the 1st-6th, 10/1/26).
+    monkeypatch.setattr(fci, "MIN_DAYS_FOR_PROJECTION", 1)
     rid = _restaurant(db_path)
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (60000.0, None))
     monkeypatch.setattr(cogs, "build_food_cost_pct",
@@ -797,6 +799,8 @@ def test_the_projection_says_the_labor_share_came_from_another_period(db_path, m
     days being projected. That assumption is the weakest link in the whole
     projection, and an owner reading "prime cost 39%" is entitled to know
     which half of it was measured over these days."""
+    # Any day of the month (these failed on the 1st-6th, 10/1/26).
+    monkeypatch.setattr(fci, "MIN_DAYS_FOR_PROJECTION", 1)
     rid = _restaurant(db_path)
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (60000.0, None))
     monkeypatch.setattr(cogs, "build_food_cost_pct",

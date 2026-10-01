@@ -162,13 +162,16 @@ def test_the_effect_is_measured_here_most_specific_first(db, monkeypatch):
     jets = [c for c in engine.context_for(r.id, "2026-10-04", db_path=db)][0]
     assert jets["describe"] == "Bears vs New York Jets · Sun 10/4/26 · 12pm · FOX"
     eff = jets["effect"]
-    assert eff["segment"] == "Bears home games" and eff["n"] == 2 and eff["median_lift_pct"] == 15.0
+    # regular-season home day games: 9/20 (+20) and 9/28 (+93); the 8/15
+    # preseason game is kept apart while two regular nights exist
+    assert eff["segment"] == "Bears home games" and eff["n"] == 2 and eff["median_lift_pct"] == 56.5
     pats = [c for c in engine.context_for(r.id, "2026-10-22", db_path=db)][0]
-    # one prime-time home game is not a segment yet: home games, all three
-    assert pats["effect"]["segment"] == "Bears home games" and pats["effect"]["n"] == 3
+    # one prime-time home game is not a segment yet: regular-season home
+    # games (8/15 is preseason, kept apart while two regular nights exist)
+    assert pats["effect"]["segment"] == "Bears home games" and pats["effect"]["n"] == 2
     last = engine.last_like(r.id, pats["event"], db_path=db)
     assert last["event"]["event_date"] == "2026-09-28" and last["net"] == 11000.0
-    assert engine.effect_for(r.id, pats["event"], db_path=db)["basis"].startswith("Bears home games have run +20%")
+    assert engine.effect_for(r.id, pats["event"], db_path=db)["basis"].startswith("Bears home games have run +56%")
 
 
 def test_no_measurement_no_effect(db, monkeypatch):
@@ -186,12 +189,13 @@ def test_the_nightly_report_names_the_game(db, monkeypatch):
     engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
     from dsr import tomorrow
     items = [i for i in tomorrow.build(r, date(2026, 10, 3), facts={}, db_path=db)["items"] if i["kind"] == "event"]
-    assert items and items[0]["text"].startswith("Bears vs New York Jets · Sun 10/4/26 · 12pm · FOX")
+    # the day's own row already names the date (audit 10/1/26)
+    assert items and items[0]["text"].startswith("Bears vs New York Jets · 12pm · FOX")
     import dsr
     from dsr import block_intel
     ctx = dsr.Context(r, date(2026, 10, 4), db_path=db)
     ev = block_intel._events(ctx, [])
-    assert ev["items"][0]["label"].startswith("Bears vs New York Jets")
+    assert ev["items"][0]["label"] == "Bears vs New York Jets · 12pm · FOX"
 
 
 def test_ask_reads_the_games(db, monkeypatch):
@@ -216,3 +220,116 @@ def test_the_daily_job_is_registered_before_event_memory():
     assert jobs_registry.JOBS["event_sync"]["target"] == ("event_intel.engine", "run_event_sync")
     src = (Path(__file__).resolve().parent.parent / "scheduler.py").read_text()
     assert src.index('_ops.run_job("event_sync"') < src.index('_ops.run_job("event_memory"')
+
+
+# ── the audit (10/1/26) ─────────────────────────────────────────────────────
+
+def _synced(db, monkeypatch):
+    monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    r = _restaurant(db)
+    engine.ensure_follows(r, db_path=db)
+    engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
+    return r
+
+
+def test_an_unmeasured_catalog_game_is_context_never_an_assumed_busy_night(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    d = demand_signals.by_date(r.id, ["2026-10-04"], db_path=db)["2026-10-04"]
+    assert d["labels"] == [] and not d.get("assumed") and d["lift_pct"] is None
+    assert d["context"] == ["Bears home game · Soldier Field (no measured effect here yet)"]
+    block = demand_signals.prompt_block({"2026-10-04": d}, ["2026-10-04"])
+    assert "not the owner's" in block and "staff a usual Sunday" in block and "ASSUMED" not in block
+    # an owner's own event the same day is still theirs
+    demand_signals.save(r.id, [{"date": "2026-10-04", "kind": "event", "label": "Homecoming"}], db_path=db)
+    d2 = demand_signals.by_date(r.id, ["2026-10-04"], db_path=db)["2026-10-04"]
+    assert d2["labels"] == ["Homecoming"] and d2.get("assumed")
+
+
+def test_a_catalog_game_alone_never_holds_the_cut_pulse(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    import strategy_jobs
+    assert strategy_jobs._pulse_suppressed(r, date(2026, 10, 11), db_path=db) is None
+
+
+def test_a_measured_catalog_game_plans_like_any_measured_event(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    monkeypatch.setattr(demand_signals, "_measured", lambda rid, label, db_path=None: {
+        "median_lift_pct": 40.0, "n": 3, "last": date(2026, 9, 28), "applies": True})
+    d = demand_signals.by_date(r.id, ["2026-10-04"], db_path=db)["2026-10-04"]
+    assert d["lift_pct"] == 40 and d["lift_source"] == "measured" and not d.get("context")
+
+
+def test_an_owner_who_removes_a_game_keeps_it_removed(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    row = demand_signals.upcoming(r.id, "2026-10-11", "2026-10-11", db_path=db)[0]
+    assert demand_signals.delete(r.id, row["id"], db_path=db)
+    again = engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
+    assert again["added"] == 0 and demand_signals.upcoming(r.id, "2026-10-11", "2026-10-11", db_path=db) == []
+
+
+def test_a_played_game_never_goes_back_to_scheduled(db):
+    sid = _bears(db)["id"]
+    store.mark_past_completed(date(2026, 10, 5), db_path=db)
+    store.load_bundled(db_path=db)                       # the season file still says "scheduled"
+    conn = models.get_conn(db)
+    try:
+        st = conn.execute("SELECT status FROM catalog_events WHERE series_id=? AND event_date='2026-10-04'",
+                          (sid,)).fetchone()["status"]
+    finally:
+        conn.close()
+    assert st == "completed"
+
+
+def test_effects_leave_out_confounded_nights_and_never_cross_sides(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    _outcome(db, r.id, "2026-09-13", 5.0, label="bears road")
+    _outcome(db, r.id, "2026-09-20", 20.0)
+    _outcome(db, r.id, "2026-09-28", 30.0)
+    # a road game with one road night measured: not told what home games did
+    packers = engine.context_for(r.id, "2026-10-11", db_path=db)[0]
+    assert packers["effect"] is None
+    conn = models.get_conn(db)
+    try:
+        conn.execute("UPDATE event_outcomes SET confounded=1 WHERE restaurant_id=? AND business_date='2026-09-28'",
+                     (r.id,))
+        conn.commit()
+    finally:
+        conn.close()
+    eff = engine.context_for(r.id, "2026-10-04", db_path=db)[0]["effect"]
+    assert eff["n"] == 2 and eff["confounded"] and "something else on too" in eff["basis"]
+
+
+def test_a_doubleheader_gets_two_labels(db, monkeypatch):
+    monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    sid = store.upsert_series({"slug": "mlb-test", "name": "Test Nine", "short_name": "Nine", "category": "sports",
+                               "lat": ST_CHARLES[0], "lng": ST_CHARLES[1], "radius_km": 50}, db_path=db)
+    store.upsert_events(sid, [{"external_id": "g1", "date": "2026-10-10", "kickoff": "13:05", "home_away": "home",
+                               "opponent": "A", "venue": "Park"},
+                              {"external_id": "g2", "date": "2026-10-10", "kickoff": "18:05", "home_away": "home",
+                               "opponent": "A", "venue": "Park"}], db_path=db)
+    r = _restaurant(db)
+    engine.ensure_follows(r, db_path=db)
+    engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
+    labels = sorted(s["label"] for s in demand_signals.upcoming(r.id, "2026-10-10", "2026-10-10", db_path=db))
+    assert labels == ["Nine home game · Park", "Nine home game · Park · game 2"]
+
+
+def test_the_daily_job_runs_every_restaurant_in_service(db, monkeypatch):
+    monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    r = _restaurant(db)
+    import scheduler
+    monkeypatch.setattr(scheduler, "resumable_sweep", lambda key, ids, fn, secs, workers=1, job=None:
+                        ([fn(i) for i in ids], False))
+    monkeypatch.setattr(models, "in_service_sql", lambda: "1=1")
+    out = engine.run_event_sync(db_path=db)
+    assert out["ok"] >= 1 and out["failed"] == 0 and out["added"] >= 19
+    assert {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
+    assert store.follows(r.id, db_path=db)
+
+
+def test_catalog_games_dont_make_an_owner_look_like_they_keep_a_list(db, monkeypatch):
+    r = _synced(db, monkeypatch)
+    from dsr import tomorrow
+    assert tomorrow._keeps_events(r.id, db) is False
+    demand_signals.save(r.id, [{"date": "2026-10-20", "kind": "event", "label": "Trivia night"}], db_path=db)
+    assert tomorrow._keeps_events(r.id, db) is True

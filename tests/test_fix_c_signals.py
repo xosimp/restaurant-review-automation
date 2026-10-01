@@ -173,7 +173,7 @@ def test_bounce_rates_raise_and_bounces_are_not_sent(db_path):
     for i in range(60):
         status = "bounced" if i < 6 else ("complained" if i == 6 else "delivered")
         _sql(db_path, "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, status, sent_at) "
-                      "VALUES (?, 'digest', ?, 's', ?, datetime('now','-1 hours'))", (rid, f"a{i}@x.test", status))
+                      "VALUES (?, 'digest', ?, 's', ?, datetime('now'))", (rid, f"a{i}@x.test", status))
     e = admin_ops.emails()
     wk = e["rates"]["7d"]
     assert wk["accepted"] == 60 and wk["bounces"] == 6 and wk["bounce_rate"] == 10.0 and wk["enough"]

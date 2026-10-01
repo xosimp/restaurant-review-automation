@@ -82,7 +82,11 @@ def _keeps_events(rid, db_path):
     from dsr import store
     conn = store.get_conn(db_path)
     try:
-        r = conn.execute("SELECT 1 FROM demand_signals WHERE restaurant_id=? LIMIT 1", (rid,)).fetchone()
+        # The owner's own entries only: a game the event catalog copied in
+        # (event_intel, source "events") is not the owner keeping a list
+        # (audit 10/1/26).
+        r = conn.execute("SELECT 1 FROM demand_signals WHERE restaurant_id=? AND source<>'events' LIMIT 1",
+                         (rid,)).fetchone()
         return bool(r)
     except Exception:
         return False
@@ -458,7 +462,7 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
             # A catalog event (event_intel: a Bears game) reads as the game —
             # who, when, on what — with what games like it did here, measured.
             ctx = _catalog_context(rid, e, db_path)
-            text = ctx["describe"] if ctx else str(e.get("label"))
+            text = ctx["describe_short"] if ctx else str(e.get("label"))
             if ctx and ctx.get("effect"):
                 text += f". {ctx['effect']['basis']}"
             items.append({"kind": "event", "tone": "warn", "text": text,

@@ -79,8 +79,9 @@ def _clock(hhmm):
     return f"{(h % 12) or 12}{'' if m == 0 else f':{m:02d}'}{'am' if h < 12 else 'pm'}"
 
 
-def describe(e) -> str:
-    """One line a person reads: who, against whom, when, where it's shown."""
+def describe(e, with_date=True) -> str:
+    """One line a person reads: who, against whom, when, where it's shown.
+    `with_date` False where the date is already said (a day's own row)."""
     from time_utils import mdy
     short = e.get("short_name") or e.get("series_name") or ""
     if e.get("category") == "sports" and e.get("opponent"):
@@ -88,7 +89,9 @@ def describe(e) -> str:
     else:
         who = e.get("opponent") or e.get("series_name") or short
     bits = [who]
-    if e.get("event_date"):
+    if not with_date:
+        pass
+    elif e.get("event_date"):
         bits.append(f"{_d(e['event_date']).strftime('%a')} {mdy(e['event_date'])}")
     else:
         bits.append("date to be set")
@@ -145,8 +148,19 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
     followed = store.follows(rid, db_path=db_path)
     events = store.events_for([f["series_id"] for f in followed], today - timedelta(days=PAST_DAYS),
                               today + timedelta(days=AHEAD_DAYS), db_path=db_path)
-    want = {f"event:{e['id']}": (e["event_date"], label_for(e)) for e in events
-            if e.get("status") not in ("cancelled", "postponed")}
+    skip = store.dismissed(rid, db_path=db_path)
+    want, used = {}, set()
+    for e in events:
+        if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
+            continue
+        label, n = label_for(e), 1
+        # Two games of one series on a date (a doubleheader) need two labels:
+        # demand_signals keeps one row per date and label.
+        while (e["event_date"], label) in used:
+            n += 1
+            label = f"{label_for(e)} · game {n}"
+        used.add((e["event_date"], label))
+        want[f"event:{e['id']}"] = (e["event_date"], label)
     conn = demand_signals.get_conn(db_path)
     added, moved, removed, new_past = 0, 0, 0, []
     try:
@@ -157,6 +171,10 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
             if ref not in want or (row["date"], row["label"]) != want[ref]:
                 conn.execute("DELETE FROM demand_signals WHERE id=?", (row["id"],))
                 removed += 1
+                # A past night that loses its game is re-measured too, so
+                # its old label stops counting toward the game's effect.
+                if row["date"] < today.isoformat():
+                    new_past.append(row["date"])
         for ref, (day, label) in want.items():
             if ref in have and (have[ref]["date"], have[ref]["label"]) == (day, label):
                 continue
@@ -194,6 +212,9 @@ def run_event_sync(db_path=None, now=None) -> dict:
     import models
     db = db_path or store.DB_PATH
     store.load_bundled(db_path=db)
+    # Yesterday's games are played (the Central-time date is close enough
+    # for a catalog flag; each restaurant's own today drives its sync).
+    store.mark_past_completed(date.today() - timedelta(days=1), db_path=db)
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "added": 0, "recorded": 0}
     lock = threading.Lock()
     conn = store.get_conn(db)
@@ -298,23 +319,34 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH):
     if not games:
         return None
     side = e.get("home_away")
+    pre = lambda x: x.get("season_type") == "preseason"
+    same_class = lambda g: pre(g["event"]) == pre(e)
+    # Most specific first, and never across sides: a road game is never
+    # told what home games did. Preseason is kept apart while regular-season
+    # nights suffice (audit 10/1/26).
     segs = [
-        (kind_words(e), lambda g: g["event"].get("home_away") == side
+        (kind_words(e), lambda g: g["event"].get("home_away") == side and same_class(g)
          and bool(g["event"].get("is_primetime")) == bool(e.get("is_primetime"))),
+        (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side and same_class(g)),
         (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side),
-        ("games", lambda g: True),
     ]
     short = e.get("short_name") or e.get("series_name") or ""
     for words, keep in segs:
         hits = [g for g in games if keep(g)]
-        if len(hits) >= SEGMENT_MIN_N:
-            lifts = [float(g["outcome"]["lift_pct"]) for g in hits]
+        # A night that carried something else too (a game on Christmas, on
+        # a rainy payday) is left out while clean nights suffice; when it
+        # has to count, the sentence says so.
+        clean = [g for g in hits if not int(g["outcome"].get("confounded") or 0)]
+        use, mixed = (clean, False) if len(clean) >= SEGMENT_MIN_N else (hits, len(clean) < len(hits))
+        if len(use) >= SEGMENT_MIN_N:
+            lifts = [float(g["outcome"]["lift_pct"]) for g in use]
             med = _median(lifts)
-            return {"segment": f"{short} {words}".strip(), "n": len(hits), "median_lift_pct": round(med, 1),
-                    "low_pct": round(min(lifts), 1), "high_pct": round(max(lifts), 1),
-                    "dates": [g["event"]["event_date"] for g in hits],
-                    "basis": (f"{short} {words} have run {med:+.0f}% against a usual same weekday here "
-                              f"(median of {len(hits)}, {min(lifts):+.0f}% to {max(lifts):+.0f}%)")}
+            basis = (f"{short} {words} have run {med:+.0f}% against a usual same weekday here "
+                     f"(median of {len(use)}, {min(lifts):+.0f}% to {max(lifts):+.0f}%"
+                     + ("; some of those nights had something else on too" if mixed else "") + ")")
+            return {"segment": f"{short} {words}".strip(), "n": len(use), "median_lift_pct": round(med, 1),
+                    "low_pct": round(min(lifts), 1), "high_pct": round(max(lifts), 1), "confounded": mixed,
+                    "dates": [g["event"]["event_date"] for g in use], "basis": basis}
     return None
 
 
@@ -350,8 +382,16 @@ def context_for(restaurant_id, day, db_path=store.DB_PATH) -> list:
 
 
 def upcoming(restaurant_id, days=14, today=None, db_path=store.DB_PATH) -> list:
-    """The followed events in the next `days`, each with its effect."""
-    start = _d(today) if today else date.today()
+    """The followed events in the next `days`, each with its effect. Without
+    `today`, the restaurant's own local date (never the server's UTC one)."""
+    if today:
+        start = _d(today)
+    else:
+        try:
+            import models
+            start = _today(models.get_restaurant(restaurant_id, db_path=db_path))
+        except Exception:
+            start = date.today()
     followed = store.follows(restaurant_id, db_path=db_path)
     rows = store.events_for([f["series_id"] for f in followed], start, start + timedelta(days=int(days)),
                             db_path=db_path)
@@ -369,5 +409,5 @@ def context_by_ref(restaurant_id, ref, db_path=store.DB_PATH):
         return None
     if not e:
         return None
-    return {"event": e, "describe": describe(e), "label": label_for(e),
-            "effect": effect_for(restaurant_id, e, db_path=db_path)}
+    return {"event": e, "describe": describe(e), "describe_short": describe(e, with_date=False),
+            "label": label_for(e), "effect": effect_for(restaurant_id, e, db_path=db_path)}
