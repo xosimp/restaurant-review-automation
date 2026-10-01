@@ -1767,6 +1767,24 @@ def _do_game_week(u):
     return {"ok": True, "game": gameday.week_note(_rid(u))}, 200
 
 
+def _do_schedule_forecast(u):
+    """The Studio's Forecast tab before anything is drafted: each day of the
+    chosen week, its forecast sales and the hours the draft will be given
+    (schedule_engine.forecast_preview). `week_start`: any date in the week,
+    read as Generate reads it; none is next week."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the forecast.")
+    from flask import request
+    import schedule_engine
+    week, err = schedule_engine.check_week_start(_rid(u), request.args.get("week_start"))
+    if err:
+        return {"ok": False, "error": err}, 400
+    out = schedule_engine.forecast_preview(_rid(u), week)
+    if not out.get("ok"):
+        return {"ok": True, "available": False, "reason": out.get("reason")}, 200
+    return dict(out, available=True), 200
+
+
 def _do_demand_signals_save(u):
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
@@ -5502,6 +5520,7 @@ _ROUTES = [
     ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
     ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
     ("/food-cost/game-week", ["GET"], _do_game_week, "game_week"),
+    ("/labor/schedule-forecast", ["GET"], _do_schedule_forecast, "schedule_forecast"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),

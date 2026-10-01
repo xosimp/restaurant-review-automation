@@ -3227,6 +3227,135 @@ SCHEDULE_SCHEMA = {
 }
 
 
+def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourly_rate: float,
+                    yoy_context: list = None, projected_revenue_override: float = None,
+                    monthly_revenue_target: float = 0.0) -> dict:
+    """The week's money and hours before anything is drafted: the projected
+    sales, the PAR hours budget they buy at the labor target, its dollars,
+    and the hours each day's forecast calls for. One implementation for the
+    draft (generate_optimized_schedule) and the Studio's Forecast tab
+    (schedule_engine.forecast_preview), so the tab shows the numbers the
+    draft is then given. `week_dates` are the seven ISO dates from Monday."""
+    week_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    analysis = analysis or {}
+    # Compute PAR hours budget — the revenue target takes priority, then YoY sum, then recent.
+    # The target is stored monthly; ÷ 52/12 is exactly the weekly figure an
+    # owner who plans by the week typed (models.monthly_from_weekly).
+    projected_revenue = 0.0
+    if projected_revenue_override and float(projected_revenue_override) > 0:
+        # The restaurant's own weekly pattern (schedule_economics
+        # .projected_weekly_revenue) beats a twelfth of a monthly target.
+        projected_revenue = round(float(projected_revenue_override), 0)
+    elif monthly_revenue_target and monthly_revenue_target > 0:
+        from metrics import WEEKS_PER_MONTH as _WPM
+        projected_revenue = round(monthly_revenue_target / _WPM, 0)  # monthly → weekly (one month definition)
+    elif yoy_context:
+        yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
+        # Only a WHOLE prior-year week projects a week: four days of last
+        # year's sales summed as if they were seven understated the budget
+        # (re-audit B3#19). A partial week falls through to the recent
+        # period below.
+        if yoy_sales and len(yoy_sales) == len(yoy_context):
+            projected_revenue = sum(yoy_sales)
+    if not projected_revenue:
+        # Scale the synced period up to a week by CALENDAR days covered, not
+        # by the count of days that happen to have shifts. A restaurant
+        # closed on Mondays has 18 shift-days in 21 calendar days, and
+        # dividing by 18 overstated the weekly figure by ~17%. A period
+        # under a full week is not scaled up at all — one Saturday times
+        # seven is not a week of revenue, and it fed straight into the
+        # hours budget below.
+        _period = int(analysis.get("period_days") or 0)
+        _sales = analysis.get("total_sales", 0)
+        if _period >= MIN_DAYS_TO_EXTRAPOLATE:
+            projected_revenue = _sales * (7 / _period)
+        elif _period:
+            projected_revenue = 0.0
+    hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
+    labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
+
+    # Compute per-day hour targets scaled from YoY totals to hit PAR.
+    # _daily_target_map (date -> target hours) is the structured form of
+    # the same numbers, returned below for the deterministic top-up pass
+    # in client_api.py — the AI only ever sees the text block, but the
+    # top-up needs real per-day numbers to know which days to add to.
+    _daily_targets = ""
+    _daily_target_map: dict = {}
+    # A scale factor of budget/covered-hours hands the WHOLE week's budget
+    # to whichever days happen to carry history. With two of seven days
+    # covered, those two days were each told to absorb roughly triple their
+    # own hours. Scaling only happens when most of the week is represented;
+    # otherwise the covered days keep their own historical hours as targets
+    # and the block says the week is only partly covered.
+    _MIN_DAYS_COVERED_TO_SCALE = 5
+    if yoy_context:
+        _yoy_days = [r for r in yoy_context if float(r.get("yoy_hours") or 0) > 0]
+        _yoy_total = sum(float(r.get("yoy_hours") or 0) for r in _yoy_days)
+        if _yoy_total > 0:
+            _covered = len(_yoy_days)
+            _scale = (hours_budget / _yoy_total) if _covered >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
+            _day_lines = []
+            for _r in _yoy_days:
+                _target_h = round(float(_r["yoy_hours"]) * _scale, 1)
+                _day_lines.append(f"    {_r['next_week_dow']} {_r['next_week_date']}: {_target_h}h")
+                _daily_target_map[_r['next_week_date']] = _target_h
+            if _day_lines:
+                _hdr = ("\n  Per-day targets (YoY scaled to PAR):\n" if _covered >= _MIN_DAYS_COVERED_TO_SCALE else
+                        f"\n  Per-day targets — last year's own hours, NOT scaled to the weekly budget. Only "
+                        f"{_covered} of 7 days have prior-year data, so spreading the whole week's budget across "
+                        f"them would over-staff those days badly. Staff the uncovered days from TYPICAL HEADCOUNT "
+                        f"and do not try to hit the weekly hours total from these days alone:\n")
+                _daily_targets = _hdr + "\n".join(_day_lines)
+
+    # Fallback for a restaurant with no real YoY history yet (same-day-
+    # last-year data needs a full year on the platform — Gia Mia's 2-week
+    # seed history never has it, and this fallback was consistently
+    # missing every time this was tested live this session). Without it, a
+    # large PAR gap got a single abstract "hit 1314h somehow" instruction
+    # with no per-day breakdown at all — far easier to under-shoot than 7
+    # concrete numbers. Scales actual historical hours-by-weekday (same
+    # technique as the YoY branch above, just sourced from by_day instead
+    # of a prior year) up to the PAR total.
+    if not _daily_targets:
+        # Averaged per weekday occurrence, not summed. A period that
+        # happens to contain four Mondays and three Fridays weighted Monday
+        # a third heavier than it should have been purely because of where
+        # the period boundaries fell.
+        _hist_sum: dict = {}
+        _hist_n: dict = {}
+        for _date, _d in (analysis.get("by_day") or {}).items():
+            try:
+                _dow = datetime.strptime(_date, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                continue
+            _hist_sum[_dow] = _hist_sum.get(_dow, 0.0) + float(_d.get("actual") or 0)
+            _hist_n[_dow] = _hist_n.get(_dow, 0) + 1
+        _hist_by_dow = {k: (_hist_sum[k] / _hist_n[k]) for k in _hist_sum if _hist_n.get(k)}
+        _hist_total = sum(_hist_by_dow.values())
+        _covered2 = sum(1 for v in _hist_by_dow.values() if v > 0)
+        if _hist_total > 0:
+            _scale2 = (hours_budget / _hist_total) if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
+            _day_lines2 = []
+            for _wd, _wdate in zip(week_days, week_dates):
+                _h = _hist_by_dow.get(_wd, 0.0)
+                if _h:
+                    _target_h2 = round(_h * _scale2, 1)
+                    _day_lines2.append(f"    {_wd} {_wdate}: {_target_h2}h")
+                    _daily_target_map[_wdate] = _target_h2
+            if _day_lines2:
+                _hdr2 = ("\n  Per-day targets (this restaurant's own average hours for each weekday, scaled to "
+                         "the weekly budget — no YoY data available):\n"
+                         if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else
+                         f"\n  Per-day targets — this restaurant's own average hours per weekday, NOT scaled to "
+                         f"the weekly budget. Only {_covered2} of 7 weekdays appear in the synced history, so "
+                         f"scaling would pile the whole week onto them:\n")
+                _daily_targets = _hdr2 + "\n".join(_day_lines2)
+
+    return {"projected_revenue": projected_revenue, "hours_budget": hours_budget,
+            "labor_budget_dollars": labor_budget_dollars, "daily_target_hours": _daily_target_map,
+            "daily_targets_text": _daily_targets}
+
+
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
@@ -3635,41 +3764,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 "happen — an accurate 'no change' is more useful to the owner than a fabricated one."
             )
 
-    # Compute PAR hours budget — the revenue target takes priority, then YoY sum, then recent.
-    # The target is stored monthly; ÷ 52/12 is exactly the weekly figure an
-    # owner who plans by the week typed (models.monthly_from_weekly).
-    projected_revenue = 0.0
-    if projected_revenue_override and float(projected_revenue_override) > 0:
-        # The restaurant's own weekly pattern (schedule_economics
-        # .projected_weekly_revenue) beats a twelfth of a monthly target.
-        projected_revenue = round(float(projected_revenue_override), 0)
-    elif monthly_revenue_target and monthly_revenue_target > 0:
-        from metrics import WEEKS_PER_MONTH as _WPM
-        projected_revenue = round(monthly_revenue_target / _WPM, 0)  # monthly → weekly (one month definition)
-    elif yoy_context:
-        yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
-        # Only a WHOLE prior-year week projects a week: four days of last
-        # year's sales summed as if they were seven understated the budget
-        # (re-audit B3#19). A partial week falls through to the recent
-        # period below.
-        if yoy_sales and len(yoy_sales) == len(yoy_context):
-            projected_revenue = sum(yoy_sales)
-    if not projected_revenue:
-        # Scale the synced period up to a week by CALENDAR days covered, not
-        # by the count of days that happen to have shifts. A restaurant
-        # closed on Mondays has 18 shift-days in 21 calendar days, and
-        # dividing by 18 overstated the weekly figure by ~17%. A period
-        # under a full week is not scaled up at all — one Saturday times
-        # seven is not a week of revenue, and it fed straight into the
-        # hours budget below.
-        _period = int(analysis.get("period_days") or 0)
-        _sales = analysis.get("total_sales", 0)
-        if _period >= MIN_DAYS_TO_EXTRAPOLATE:
-            projected_revenue = _sales * (7 / _period)
-        elif _period:
-            projected_revenue = 0.0
-    hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
-    labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
+    # PAR, its dollars and each day's hours: one implementation, shared with
+    # the Studio's Forecast tab (week_hours_plan).
+    _plan = week_hours_plan(analysis, week_dates, labor_target, hourly_rate, yoy_context=yoy_context,
+                            projected_revenue_override=projected_revenue_override,
+                            monthly_revenue_target=monthly_revenue_target)
+    projected_revenue, hours_budget = _plan["projected_revenue"], _plan["hours_budget"]
+    labor_budget_dollars = _plan["labor_budget_dollars"]
+    _daily_target_map, _daily_targets = _plan["daily_target_hours"], _plan["daily_targets_text"]
 
     # Build role rates block
     role_rates_block = ""
@@ -3687,83 +3789,6 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     else:
         hours_block = ("\n\nShift timing: base start/end times on the patterns visible in the historical shift data. "
                        "Ensure prep staff (cooks) start before open and closers stay until service ends.")
-
-    # Compute per-day hour targets scaled from YoY totals to hit PAR.
-    # _daily_target_map (date -> target hours) is the structured form of
-    # the same numbers, returned below for the deterministic top-up pass
-    # in client_api.py — the AI only ever sees the text block, but the
-    # top-up needs real per-day numbers to know which days to add to.
-    _daily_targets = ""
-    _daily_target_map: dict = {}
-    # A scale factor of budget/covered-hours hands the WHOLE week's budget
-    # to whichever days happen to carry history. With two of seven days
-    # covered, those two days were each told to absorb roughly triple their
-    # own hours. Scaling only happens when most of the week is represented;
-    # otherwise the covered days keep their own historical hours as targets
-    # and the block says the week is only partly covered.
-    _MIN_DAYS_COVERED_TO_SCALE = 5
-    if yoy_context:
-        _yoy_days = [r for r in yoy_context if float(r.get("yoy_hours") or 0) > 0]
-        _yoy_total = sum(float(r.get("yoy_hours") or 0) for r in _yoy_days)
-        if _yoy_total > 0:
-            _covered = len(_yoy_days)
-            _scale = (hours_budget / _yoy_total) if _covered >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
-            _day_lines = []
-            for _r in _yoy_days:
-                _target_h = round(float(_r["yoy_hours"]) * _scale, 1)
-                _day_lines.append(f"    {_r['next_week_dow']} {_r['next_week_date']}: {_target_h}h")
-                _daily_target_map[_r['next_week_date']] = _target_h
-            if _day_lines:
-                _hdr = ("\n  Per-day targets (YoY scaled to PAR):\n" if _covered >= _MIN_DAYS_COVERED_TO_SCALE else
-                        f"\n  Per-day targets — last year's own hours, NOT scaled to the weekly budget. Only "
-                        f"{_covered} of 7 days have prior-year data, so spreading the whole week's budget across "
-                        f"them would over-staff those days badly. Staff the uncovered days from TYPICAL HEADCOUNT "
-                        f"and do not try to hit the weekly hours total from these days alone:\n")
-                _daily_targets = _hdr + "\n".join(_day_lines)
-
-    # Fallback for a restaurant with no real YoY history yet (same-day-
-    # last-year data needs a full year on the platform — Gia Mia's 2-week
-    # seed history never has it, and this fallback was consistently
-    # missing every time this was tested live this session). Without it, a
-    # large PAR gap got a single abstract "hit 1314h somehow" instruction
-    # with no per-day breakdown at all — far easier to under-shoot than 7
-    # concrete numbers. Scales actual historical hours-by-weekday (same
-    # technique as the YoY branch above, just sourced from by_day instead
-    # of a prior year) up to the PAR total.
-    if not _daily_targets:
-        # Averaged per weekday occurrence, not summed. A period that
-        # happens to contain four Mondays and three Fridays weighted Monday
-        # a third heavier than it should have been purely because of where
-        # the period boundaries fell.
-        _hist_sum: dict = {}
-        _hist_n: dict = {}
-        for _date, _d in (analysis.get("by_day") or {}).items():
-            try:
-                _dow = datetime.strptime(_date, "%Y-%m-%d").strftime("%A")
-            except (ValueError, TypeError):
-                continue
-            _hist_sum[_dow] = _hist_sum.get(_dow, 0.0) + float(_d.get("actual") or 0)
-            _hist_n[_dow] = _hist_n.get(_dow, 0) + 1
-        _hist_by_dow = {k: (_hist_sum[k] / _hist_n[k]) for k in _hist_sum if _hist_n.get(k)}
-        _hist_total = sum(_hist_by_dow.values())
-        _covered2 = sum(1 for v in _hist_by_dow.values() if v > 0)
-        if _hist_total > 0:
-            _scale2 = (hours_budget / _hist_total) if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
-            _day_lines2 = []
-            for _wd, _wdate in zip(week_days, week_dates):
-                _h = _hist_by_dow.get(_wd, 0.0)
-                if _h:
-                    _target_h2 = round(_h * _scale2, 1)
-                    _day_lines2.append(f"    {_wd} {_wdate}: {_target_h2}h")
-                    _daily_target_map[_wdate] = _target_h2
-            if _day_lines2:
-                _hdr2 = ("\n  Per-day targets (this restaurant's own average hours for each weekday, scaled to "
-                         "the weekly budget — no YoY data available):\n"
-                         if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else
-                         f"\n  Per-day targets — this restaurant's own average hours per weekday, NOT scaled to "
-                         f"the weekly budget. Only {_covered2} of 7 weekdays appear in the synced history, so "
-                         f"scaling would pile the whole week onto them:\n")
-                _daily_targets = _hdr2 + "\n".join(_day_lines2)
 
     # Section count — caps how many servers can work simultaneously
     _section_block = ""

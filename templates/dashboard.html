@@ -9954,6 +9954,26 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings .cbtn-text.cbtn-inline{font-size:15px}
 /* Redo some days: four columns, flush with the card's left edge, so the
    button sits directly under Thursday's pill. */
+/* Forecast tab, before a draft: the picked week day by day — forecast
+   sales, the hours the draft will be given, the events on its dates
+   (schedule_engine.forecast_preview). */
+.ssf-head{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:2px 0 14px}
+.ssf-head>div{padding:12px 14px;border-radius:12px;background:var(--sf-recess);min-width:0}
+.ssf-head .k{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.ssf-head .v{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;color:var(--ink);margin-top:4px}
+.ssf-head .n{font-size:12.5px;line-height:1.4;color:var(--ink3);margin-top:3px}
+.ssf-cols,.ssf-day{display:grid;grid-template-columns:104px 112px minmax(0,1fr) 64px;gap:14px;align-items:center}
+.ssf-cols{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:0 0 4px}
+.ssf-cols span:last-child,.ssf-day .h{text-align:right}
+.ssf-day{padding:7px 0;font-size:15px;color:var(--ink2)}
+.ssf-day .d b{color:var(--ink);font-weight:600;margin-right:6px}
+.ssf-day .s,.ssf-day .h{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink)}
+.ssf-day .s small{display:block;font-family:inherit;font-size:12px;color:var(--ink3)}
+.ssf-day .tr{height:8px;border-radius:99px;background:var(--sf-recess);position:relative;overflow:hidden}
+.ssf-day .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:linear-gradient(90deg,var(--ember),var(--ember2))}
+.ssf-day.closed{color:var(--ink3)}.ssf-day.closed .s,.ssf-day.closed .h{color:var(--ink3)}
+.ssf-ev{grid-column:2/-1;font-size:13px;line-height:1.4;color:var(--ember);margin-top:-4px}
+@media(max-width:640px){.ssf-head{grid-template-columns:minmax(0,1fr)}.ssf-cols,.ssf-day{grid-template-columns:72px 88px minmax(0,1fr) 48px;gap:10px}.ssf-day{font-size:14px}}
 #ss-settings .sched-redo{display:grid!important;grid-template-columns:repeat(4,minmax(0,176px));gap:10px;align-items:center;padding:0;border:0;margin-top:4px}
 #ss-settings .sched-redo .sr-k{grid-column:1/-1;margin:0 0 2px}
 #ss-settings .sched-redo .sp{display:none}
@@ -11167,13 +11187,26 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             {# The weekly automation where the work is (Friction #27): the same
                switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
             <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Cavnar AI drafts every <select id="lb2-autodraft-day" class="ac-select day-pick" onchange="lb2SaveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></span><span class="ac-status" id="lb2-autodraft-status"></span></span>
-            <label class="sw-lbl" for="sw-notes">Notes Cavnar AI follows on every draft</label>
-            <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Marcus only closes on weekends. Keep two cooks on Friday lunch."></textarea>
+            {# Two kinds of instruction, two homes (owner, 10/1/26: "what's the
+               difference?"): these notes are about the whole week and reach
+               every draft as management's notes (restaurants.sched_notes);
+               a rule about ONE person is a dated scheduling note
+               (/api/labor/staff-notes) the draft treats as a hard constraint
+               and the rules check. The placeholder used to show a person rule. #}
+            <label class="sw-lbl" for="sw-notes">How you like the week built</label>
+            <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Keep two cooks on Friday lunch. Open with a bartender on game days. Fewer servers after 9pm Sunday to Thursday."></textarea>
             <span class="ac-status" id="sw-notes-status"></span>
+            <div class="sw-note" style="margin-top:12px">These are about the whole restaurant, and every draft reads them. A rule about one person — “no Tuesdays”, “out 12/20–12/28”, “only closes on weekends” — belongs in that person’s scheduling notes: dated, ended on their own, and kept as a hard rule. <span id="sw-ai-people"></span></div>
+            <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('notes')">Scheduling notes for one person in Labor →</button>
           </section>
           <section class="sw-sec" data-ss-panel="advanced" hidden>
             <div class="sw-k">Advanced</div>
-            <div class="sw-note" id="ss-adv-empty">Redo some days appears here once a week is open: tick the days and Cavnar AI rewrites only those.</div>
+            {# How the draft fits itself to the budget and the floor — the same
+               settings as Labor → Scheduling rules (/api/labor/rules), each
+               saved on its own change (ssLoadAdvanced). #}
+            <div id="ss-adv" class="sw-body"><div class="dr-pulse" style="margin:14px 0"><i></i></div></div>
+            <div class="sw-sub">Redo some days</div>
+            <div class="sw-note" id="ss-adv-empty">Appears once a week is open: tick the days and Cavnar AI rewrites only those.</div>
             <!-- Redo some days: one checkbox per date, regenerated against the
                  same draft (POST /api/generate-schedule {dates, history_id}). -->
             <div id="sched-redo" class="sched-redo" style="display:none"></div>
@@ -23977,7 +24010,8 @@ function _swBar(label, val, max, target, cls, right) {
 function swFill(data) {
   _swData = data || null;
   var fc = document.getElementById('sw-forecast');
-  if (fc && data) {
+  // The Forecast tab's own preview of the picked week wins once shown.
+  if (fc && data && !_ssFcShown) {
     var tg = _swTargets(), days = _swDays(), mx = 0, j, h = '';
     for (j = 0; j < days.length; j++) mx = Math.max(mx, +tg[days[j]] || 0);
     for (j = 0; j < days.length; j++) if (tg[days[j]] != null) h += _swBar(_escHtml(_schedDayOf(days[j]).slice(0, 3)), +tg[days[j]] || 0, mx, null, '', '<span class="hb-num">' + _schedHrs(tg[days[j]]) + 'h</span>');
@@ -24090,6 +24124,12 @@ function swLoadLeft() {
     if (rul) rul.innerHTML = '<ul class="sw-list">' + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
     swRenderGrid();
   }).catch(function () { });
+  fetch('/api/labor/staff-notes', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    var el = document.getElementById('sw-ai-people'); if (!el || !d || !d.ok) return;
+    var n = 0, i, j, ns = d.notes || [];
+    for (i = 0; i < ns.length; i++) for (j = 0; j < (ns[i].parts || []).length; j++) if (!ns[i].parts[j].ended) n++;
+    el.innerHTML = n ? '<span class="hb-num">' + n + '</span> ' + (n === 1 ? 'is' : 'are') + ' in force now.' : 'None are set yet.';
+  }).catch(function () { });
   fetch('/api/account/targets', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
     if (!d || !d.ok) return;
     var t = d.targets || {}, tg = document.getElementById('sw-target'), nt = document.getElementById('sw-notes');
@@ -24117,7 +24157,7 @@ function swOpenTeam(which) {
   if (window.studioClose && window._ssOpen) studioClose();
   var det = document.getElementById('lb2-team'); if (det && !det.open) det.open = true;
   var p = document.getElementById(which + '-panel');
-  if (p && p.style.display === 'none') { if (which === 'roster' && window.toggleRosterPanel) toggleRosterPanel(); else if (which === 'rules' && window.toggleRulesPanel) toggleRulesPanel(); }
+  if (p && p.style.display === 'none') { if (which === 'roster' && window.toggleRosterPanel) toggleRosterPanel(); else if (which === 'rules' && window.toggleRulesPanel) toggleRulesPanel(); else if (which === 'notes' && window.toggleNotesPanel) toggleNotesPanel(); }
   var row = p ? p.parentNode : det; if (row && row.scrollIntoView) row.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 (function () {
@@ -24184,7 +24224,7 @@ function studioOpen(opts) {
   if (!_ssOpen) {
     _ssOpen = true; st.hidden = false;
     document.body.classList.add('ss-open');
-    ssTabOn(true);
+    ssTabOn(true); ssDock();
     if (!opts.fromBoot && !opts.fromPop && window.location.pathname !== '/schedule/studio' && window.history && history.pushState) {
       history.pushState({ss: 1}, '', '/schedule/studio'); _ssFromDash = true;
     }
@@ -24212,7 +24252,7 @@ function studioClose(opts) {
   if (!_ssOpen || !st) return;
   swCloseEdit(true); ssTipHide();
   _ssOpen = false; st.hidden = true;
-  document.body.classList.remove('ss-open');
+  document.body.classList.remove('ss-open'); ssDock();
   if (!opts.toTab) ssTabOn(false);
   if (!opts.fromPop && window.location.pathname === '/schedule/studio') {
     if (_ssFromDash) { _ssFromDash = false; history.back(); }
@@ -24245,7 +24285,24 @@ document.addEventListener('click', function (e) {
   if (!t || t.id === 'tab-schedule' || !window._ssOpen) return;
   studioClose({toTab: true});
 }, true);
-window.addEventListener('resize', function () { if (window._ssOpen) ssTabOn(true); });
+// The Studio sits under the tab bar where the tab bar actually ends: a
+// banner above the header (view-as, a notice) pushes it down, and the
+// header-plus-tabs height alone hid the Studio's own step bar under it
+// (owner, 10/1/26: "the header is getting clipped").
+function ssDock() {
+  var st = document.getElementById('studio'), t = document.querySelector('.tabs');
+  if (!st) return;
+  if (!window._ssOpen) { st.style.top = ''; return; }
+  var b = t ? Math.round(t.getBoundingClientRect().bottom) : 0;
+  st.style.top = b > 0 ? b + 'px' : '';
+}
+// A resize re-measures and re-points the indicator; it never re-runs
+// ssTabOn(true), which would forget the tab to return to.
+window.addEventListener('resize', function () {
+  if (!window._ssOpen) return;
+  ssDock();
+  var t = document.getElementById('tab-schedule'); if (t && window._moveTabIndicator) _moveTabIndicator(t);
+});
 // Back and Forward cross the Studio's address; the dashboard's one router
 // (cavRoute) asks this first, so there is still one popstate owner.
 function studioOnRoute() {
@@ -24296,7 +24353,91 @@ function ssTab(tab) {
   for (i = 0; i < ps.length; i++) ps[i].hidden = ps[i].getAttribute('data-ss-panel') !== tab;
   var em = document.getElementById('ss-adv-empty'), rd = document.getElementById('sched-redo');
   if (em) em.hidden = !!(rd && rd.style.display !== 'none' && rd.innerHTML);
+  if (tab === 'forecast') ssLoadForecast();
+  if (tab === 'advanced') ssLoadAdvanced();
 }
+// The Advanced tab: how the draft fits itself to the budget — trim to
+// budget, the cut floor, dining sections. The Labor rules card edits the
+// same fields; each change here saves alone and mirrors into that card's
+// inputs, so its Save never writes back the value it loaded with.
+var _ssAdvLoaded = false;
+function ssLoadAdvanced() {
+  var el = document.getElementById('ss-adv'); if (!el || _ssAdvLoaded) return;
+  _ssAdvLoaded = true;
+  fetch('/api/labor/rules', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { _ssAdvLoaded = false; el.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'These settings could not load.') + '</div>'; return; }
+    var ro = !d.can_edit, cutMax = d.cut_floor_max || 10, cutN = d.cut_floor_default == null ? 2 : d.cut_floor_default;
+    var h = '<div class="rul-sw" style="border-top:0"><label class="ac-switch"><input type="checkbox" id="ssa-trim"' + (d.trim_to_budget ? ' checked' : '') + (ro ? ' disabled' : '') + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the PAR hours, Cavnar AI removes the lowest-value shifts until it fits. Off leaves the overage on the draft for you to see.</small></div></div>'
+      + '<div class="rul-sw"><div class="t"><label for="ssa-cut">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="ssa-cut" min="1" max="' + cutMax + '" step="1" value="' + _escAttr(String(cutN)) + '"' + (ro ? ' disabled' : '') + '>people<small>For any role without its own floor: no trim or send-home suggestion leaves fewer than this on.</small></div></div>'
+      + '<div class="rul-sw"><div class="t"><label for="ssa-sections">Dining sections</label><input type="number" class="ac-input ac-num n" id="ssa-sections" min="1" max="30" step="1" placeholder="—" value="' + (d.section_count ? _escAttr(String(d.section_count)) : '') + '"' + (ro ? ' disabled' : '') + '><small>The most front-of-house people the draft puts on the floor at once. Blank is no cap.</small></div></div>'
+      + '<span class="ac-status" id="ssa-status"></span>'
+      + (ro ? '<div class="sw-note">Only the account owner can change these.</div>' : '');
+    el.innerHTML = h;
+  }).catch(function () { _ssAdvLoaded = false; el.innerHTML = '<div class="sw-note">These settings could not load.</div>'; });
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections')) return;
+  var body = {}, mirror = null;
+  if (t.id === 'ssa-trim') { body.trim_to_budget = !!t.checked; mirror = ['rul-trim', 'checked', !!t.checked]; }
+  else if (t.id === 'ssa-cut') { if (t.value === '') return; body.cut_floor_default = +t.value; mirror = ['rul-cut-floor', 'value', t.value]; }
+  else { body.section_count = t.value === '' ? null : +t.value; mirror = ['rul-sections', 'value', t.value]; }
+  var st = document.getElementById('ssa-status'); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
+  fetch('/api/labor/rules', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(apiJson).then(function (d) {
+      if (d && d.ok) {
+        var m = document.getElementById(mirror[0]); if (m) m[mirror[1]] = mirror[2];
+        if (st) { st.textContent = 'Saved · the next draft uses it'; st.className = 'ac-status ok'; }
+      } else if (st) { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
+    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
+});
+// The Forecast tab: the picked week before anything is drafted — each
+// day's forecast sales and the hours the draft will be given, from the
+// same arithmetic the draft uses (/api/labor/schedule-forecast).
+var _ssFcKey = null, _ssFcShown = false;
+function ssLoadForecast(force) {
+  var fc = document.getElementById('sw-forecast'); if (!fc) return;
+  var ws = _schedWeekStart() || '';
+  if (!force && _ssFcKey === ws) return;
+  _ssFcKey = ws;
+  fc.innerHTML = '<div class="dr-pulse" style="margin:14px 0"><i></i></div>';
+  fetch('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), {credentials: 'same-origin'})
+    .then(apiJson).then(function (d) {
+      if (_ssFcKey !== ws) return;
+      if (!d || !d.ok) { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">' + _escHtml((d && d.error) || 'The forecast could not load.') + '</div>'; return; }
+      if (!d.available) { fc.innerHTML = '<div class="sw-note">' + _escHtml(d.reason || 'No forecast for this week yet.') + '</div>'; return; }
+      fc.innerHTML = ssForecastHtml(d); _ssFcShown = true;
+    }).catch(function () { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">The forecast could not load.</div>'; });
+}
+function ssForecastHtml(d) {
+  var days = d.days || [], mx = 0, i, h = '', miss = [], why = '';
+  for (i = 0; i < days.length; i++) mx = Math.max(mx, +days[i].hours || 0);
+  var tgt = d.labor_target != null ? '<span class="hb-num">' + d.labor_target + '%</span>' : 'your target';
+  h += '<div class="ssf-head">'
+    + '<div><div class="k">Forecast sales</div><div class="v">' + (d.projected_revenue ? _schedMoney(d.projected_revenue) : '—') + '</div><div class="n">' + _escHtml(d.projected_revenue_source || '') + '</div></div>'
+    + '<div><div class="k">PAR hours</div><div class="v">' + (d.hours_budget ? _schedHrs(d.hours_budget) + 'h' : '—') + '</div><div class="n">the ceiling the draft stays under</div></div>'
+    + '<div><div class="k">Labor budget</div><div class="v">' + (d.labor_budget_dollars ? _schedMoney(d.labor_budget_dollars) : '—') + '</div><div class="n">at ' + tgt + (d.labor_target_label ? ' — ' + _escHtml(d.labor_target_label) : '') + '</div></div>'
+    + '</div>';
+  h += '<div class="ssf-cols"><span>Day</span><span>Sales</span><span>Hours the forecast calls for</span><span>Hours</span></div>';
+  for (i = 0; i < days.length; i++) {
+    var x = days[i], hrs = +x.hours || 0, pct = mx > 0 ? Math.round(hrs / mx * 100) : 0;
+    var sales = x.closed ? 'closed' : (x.sales != null ? _schedMoney(x.sales) + (x.samples ? '<small>from <span class="hb-num">' + x.samples + '</span> ' + _escHtml(x.weekday) + 's</small>' : '') : '—');
+    if (!x.closed && x.sales == null) { miss.push(_escHtml(String(x.weekday).slice(0, 3))); if (!why && x.reason) why = x.reason; }
+    h += '<div class="ssf-day' + (x.closed ? ' closed' : '') + '"><span class="d"><b>' + _escHtml(String(x.weekday).slice(0, 3)) + '</b><span class="hb-num">' + _escHtml(mdy(x.date)) + '</span></span>'
+      + '<span class="s">' + sales + '</span><span class="tr"><i style="width:' + (x.closed ? 0 : pct) + '%"></i></span>'
+      + '<span class="h">' + (x.closed || !hrs ? '—' : '<span class="hb-num">' + _schedHrs(hrs) + 'h</span>') + '</span></div>';
+    if (x.effects && x.effects.length) h += '<div class="ssf-day" style="padding:0"><span></span><span class="ssf-ev">' + _escHtml(x.effects.join(' · ')) + '</span></div>';
+  }
+  if (miss.length) h += '<div class="sw-note" style="margin-top:10px">No sales forecast for ' + miss.join(', ') + (why ? ' — ' + _escHtml(why) : '') + '.</div>';
+  var ddt = d.demand_data_through;
+  if (ddt && ddt.blind) h += '<div class="sw-flag bad">' + (ddt.date ? 'No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>' : 'No sales on file') + ': the forecast cannot see recent weeks.</div>';
+  return h;
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target; if (!t || (t.id !== 'sched-week-pick' && t.id !== 'sched-week-date')) return;
+  _ssFcKey = null;
+  var p = document.querySelector('[data-ss-panel="forecast"]');
+  if (p && !p.hidden) ssLoadForecast();
+});
 function ssRightTab(tab) {
   var r = document.getElementById('sw-right'); if (!r) return;
   r.setAttribute('data-tab', tab);

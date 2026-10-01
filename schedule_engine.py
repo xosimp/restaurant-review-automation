@@ -72,6 +72,82 @@ def _week_monday(today, week_start=None):
     return today + _t(days=days_ahead)
 
 
+def forecast_preview(restaurant_id, week_start=None) -> dict:
+    """The chosen week's forecast before anything is drafted — the Studio's
+    Forecast tab. The same inputs _build_schedule_result hands the draft
+    (the shift analysis, the labor target, the week's projected sales and
+    its source, last year's same days) through the same arithmetic
+    (labor.week_hours_plan), so the hours shown are the hours the draft is
+    then given. Each day adds its own forecast sales (demand.forecast_day,
+    the uncorrected figure the week's projection sums), the nights it rests
+    on and the measured events on its date. No model call.
+
+    {"ok": False, "reason"} when the restaurant has no live shift history,
+    the same refusal Generate gives."""
+    from datetime import timedelta as _td
+    import demand
+    import schedule_economics as _econ
+    from labor import analyse_shifts_for_restaurant, get_hourly_rate, week_hours_plan
+    from models import get_restaurant, get_yoy_schedule_context
+    import thresholds as _thr
+    from time_utils import restaurant_now
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return {"ok": False, "reason": "no such restaurant"}
+    analysis = analyse_shifts_for_restaurant(restaurant_id, with_salaries=False)
+    if not analysis.get("is_live"):
+        return {"ok": False, "reason": _no_shift_data_message(restaurant_id, restaurant)}
+    rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
+    # thresholds.target_for: the number notify's reader hands the draft,
+    # with the label that says whose target it is.
+    tgt = _thr.target_for(restaurant, "labor")
+    target = tgt["pct"]
+    monday = _week_monday(restaurant_now(restaurant, naive=True), week_start)
+    dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    monthly = float(getattr(restaurant, "monthly_revenue_target", 0) or 0)
+    revenue = {"value": None, "source": None}
+    try:
+        revenue = _econ.projected_weekly_revenue(restaurant_id, week_dates=dates)
+    except Exception as e:
+        _soft_fail("forecast_preview revenue", e, restaurant_id)
+    plan = week_hours_plan(analysis, dates, target, rate, yoy_context=get_yoy_schedule_context(restaurant_id, dates),
+                           projected_revenue_override=revenue.get("value"), monthly_revenue_target=monthly)
+    closed = _rules.closures(restaurant)
+    days = []
+    for d in dates:
+        wd = _date_of(d).strftime("%A")
+        row = {"date": d, "weekday": wd, "hours": plan["daily_target_hours"].get(d),
+               "closed": d in closed["closed_dates"] or wd in closed["closed_weekdays"]}
+        try:
+            fc = demand.forecast_day(restaurant_id, _date_of(d), calibrate=False)
+        except Exception:
+            fc = {}
+        if fc.get("available"):
+            row.update({"sales": fc["typical_sales"], "samples": fc.get("samples"),
+                        "low": fc.get("low"), "high": fc.get("high"),
+                        "effects": [e.get("label") for e in (fc.get("effects") or []) if e.get("label")]})
+        else:
+            row["reason"] = fc.get("reason")
+        days.append(row)
+    source = (revenue.get("source") if revenue.get("value") else
+              ("monthly target ÷ 4.33" if monthly else "recent sales scaled to a week"))
+    out = {"ok": True, "week_start": dates[0], "days": days, "projected_revenue": plan["projected_revenue"],
+           "projected_revenue_source": source, "hours_budget": plan["hours_budget"],
+           "labor_budget_dollars": plan["labor_budget_dollars"], "labor_target": target,
+           "hourly_rate": round(float(rate or 0), 2)}
+    out["labor_target_label"] = tgt.get("label")
+    try:
+        out["demand_data_through"] = _demand_data_through(restaurant_id)
+    except Exception:
+        out["demand_data_through"] = None
+    return out
+
+
+def _date_of(iso):
+    from datetime import date as _date
+    return _date.fromisoformat(str(iso)[:10])
+
+
 def check_week_start(restaurant_id, raw):
     """(week_start or None, error or None) for a Generate request. An
     unreadable date used to fall back silently to next Monday, and a week
