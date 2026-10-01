@@ -82,15 +82,16 @@ def _login(client, token, membership_id, pin):
 
 # ── sign in ────────────────────────────────────────────────────────────────
 
-def test_the_portal_link_lists_only_staff_with_a_pin(client, db_path):
+def test_the_staff_link_points_to_the_app_and_lists_no_one(client, db_path):
+    """No web portal for employees (owner, 9/30/26): the restaurant's link
+    names the restaurant and its join code for the app, and lists nobody."""
+    from auth import get_join_code
     rid = _restaurant(db_path)
     _staff(db_path, rid, username="jordan", name="Jordan P.", pin="8317")
-    _staff(db_path, rid, username="dana", name="Dana K.", pin=None)
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
-
     body = client.get(f"/staff/r/{token}").data.decode()
-    assert "Jordan P." in body
-    assert "Dana K." not in body
+    assert "Jordan P." not in body and "Cavnar AI app" in body
+    assert get_join_code(rid, db_path=db_path) in body
 
 
 def test_a_revoked_portal_link_stops_working(client, db_path):

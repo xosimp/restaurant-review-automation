@@ -162,6 +162,12 @@ struct StaffPortalView: View {
                         .font(.cavnarBody(CavnarType.body))
                         .foregroundStyle(Color.cavnarInk2)
                 }
+                if let station = shift.station, !station.isEmpty {
+                    // The kitchen station the schedule put them on (9/30/26).
+                    Text("On \(station)")
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                }
                 if shift.shiftStart != nil {
                     HStack(spacing: 18) {
                         Button("Swap with a colleague") { changing = ShiftChange(day: day, mode: .swap) }
@@ -193,7 +199,7 @@ struct StaffPortalView: View {
                     Text(day.weekday)
                         .font(.cavnarBody(15, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                    Text(day.isToday ? "today" : day.date)
+                    Text(day.isToday ? "today" : CavnarDate.mdy(day.date))
                         .font(.cavnarBody(12.5))
                         .foregroundStyle(Color.cavnarInk3)
                 }
@@ -202,7 +208,7 @@ struct StaffPortalView: View {
                         .font(.cavnarNumber(17, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     if let role = shift.role, !role.isEmpty {
-                        Text(role)
+                        Text([role, shift.station.map { "on \($0)" }].compactMap { $0 }.joined(separator: " · "))
                             .font(.cavnarBody(13))
                             .foregroundStyle(Color.cavnarInk2)
                     }

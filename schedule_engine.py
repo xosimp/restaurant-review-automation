@@ -2072,6 +2072,105 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     return preview_rows, rows_added, added_dates
 
 
+def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: list,
+                             close_times: dict, role_buffers: dict, constraints=None,
+                             scorer_for=None) -> tuple:
+    """Every kitchen station the owner requires on a daypart gets a cook
+    trained on it (kitchen_stations; owner, 9/30/26: "just because a sauté
+    cook works sauté doesn't mean the same cook can be on grill").
+
+    The draft's kitchen cooks on each date and daypart are matched to the
+    stations it needs (kitchen_stations.week). For a station none of them
+    can take, a shift is added for a cook trained on it who is free that
+    day, on the same legal checks the role floors use (availability, time
+    off, the daypart window, the hours ceiling, rest) — never an invented
+    person, never a cook who isn't trained. What can't be filled is left
+    for the review to name. Returns (preview_rows, rows_added, unfilled)."""
+    import kitchen_stations as _ks
+    cfg = getattr(constraints, "stations", None) or {}
+    if not cfg:
+        return preview_rows, 0, []
+    scorer = scorer_for(preview_rows) if scorer_for else None
+    working_on_date, hours_by_employee, rows_by_person, templates = {}, {}, {}, {}
+    for r in preview_rows:
+        emp, date = (r.get("employee") or "").strip(), r.get("date")
+        if not (emp and date):
+            continue
+        working_on_date.setdefault(date, set()).add(emp)
+        rows_by_person.setdefault(emp.lower(), []).append(r)
+        try:
+            hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + float(r.get("scheduled_hours") or 0)
+        except (ValueError, TypeError):
+            pass
+        if _ks.is_kitchen(cfg, r.get("role")) and r.get("shift_start") and r.get("shift_end"):
+            for part in _ks.parts_of(r):
+                templates.setdefault(part, (r["shift_start"], r["shift_end"], r.get("role")))
+    roster_roles = getattr(constraints, "roster_roles", None) or {}
+    closed = set(getattr(constraints, "closed_dates", None) or ())
+    added, unfilled = 0, []
+    for gap in _ks.week(preview_rows, cfg, week_dates)["gaps"]:
+        date, day, part, station = gap["date"], gap["day"], gap["daypart"], gap["station"]
+        if date in closed:
+            continue
+        # Still a gap? An earlier addition this pass may have covered it.
+        if not _ks.uncovered(preview_rows, cfg, date, part):
+            continue
+        pool = [name for name, have in (cfg.get("skills") or {}).items()
+                if station in have and name not in working_on_date.get(date, set())]
+        start, end, role = templates.get(part) or (_daypart_fallback(constraints, day, part) + (cfg["roles"][0],))
+        legal = []
+        for name in sorted(pool, key=lambda n: (hours_by_employee.get(n, 0.0), n)):
+            person_role = roster_roles.get(name) if _ks.is_kitchen(cfg, roster_roles.get(name)) else role
+            if not (constraints.can_work(name, date, part)[0] and constraints.cert_ok(name, person_role)[0]
+                    and constraints.window_ok(name, date, start, end)[0]):
+                continue
+            row = {"date": date, "day": day, "employee": name, "role": person_role,
+                   "shift_start": start, "shift_end": end, "scheduled_hours": "0",
+                   "notes": f"added — {station} station"}
+            _enforce_close_time(row, day, close_times, role_buffers)
+            s_min, e_min = _parse_time_to_minutes(row["shift_start"]), _parse_time_to_minutes(row["shift_end"])
+            if row.get("needs_review") or s_min is None or e_min is None or e_min <= s_min:
+                continue
+            hrs = round((e_min - s_min) / 60, 1)
+            base = sum((constraints.base_hours.get(name.lower()) or {}).values())
+            if hours_by_employee.get(name, 0.0) + base + hrs > constraints.max_hours(name):
+                continue
+            if not constraints.rest_ok(name, row, rows_by_person.get(name.lower(), []))[0]:
+                continue
+            row["scheduled_hours"] = str(hrs)
+            legal.append((name, row))
+            if len(legal) >= FILL_SCORE_CANDIDATES:
+                break
+        if not legal:
+            unfilled.append(gap)
+            continue
+        name, row = _fill_pick(scorer, preview_rows, legal)
+        preview_rows.append(row)
+        rows_by_person.setdefault(name.lower(), []).append(row)
+        working_on_date.setdefault(date, set()).add(name)
+        hours_by_employee[name] = hours_by_employee.get(name, 0.0) + float(row["scheduled_hours"])
+        added += 1
+    return preview_rows, added, unfilled
+
+
+def station_report(rows: list, constraints, week_dates: list) -> dict:
+    """The week's station assignment as the review and the screens read it:
+    {"stations": [...], "assigned": [{date, employee, shift_start, morning,
+    night}], "gaps": [{date, day, daypart, station}]}, or {} when the
+    restaurant has no stations set."""
+    import kitchen_stations as _ks
+    cfg = getattr(constraints, "stations", None) or {}
+    if not cfg:
+        return {}
+    w = _ks.week(rows, cfg, week_dates)
+    assigned = []
+    for i, parts in sorted(w["stations"].items()):
+        r = rows[i]
+        assigned.append({"date": r.get("date"), "employee": r.get("employee"), "shift_start": r.get("shift_start"),
+                         "role": r.get("role"), "morning": parts.get("morning"), "night": parts.get("night")})
+    return {"stations": cfg["stations"], "assigned": assigned, "gaps": w["gaps"]}
+
+
 def _daypart_fallback(constraints, day_name: str, part: str) -> tuple:
     """A daypart's slice of the opening hours, when no shift of that role
     exists this week to copy times from."""
@@ -3046,6 +3145,14 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if pizza_rows_added:
                 hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] role floors added {pizza_rows_added} row(s) across {pizza_added_dates}")
+            # Kitchen stations (kitchen_stations): each required station on
+            # each daypart gets a cook trained on it.
+            preview_rows, _st_added, _st_unfilled = _ensure_station_coverage(
+                preview_rows, result.get("week_dates", []), result.get("week_days", []),
+                _close_times, _role_close_buffers, constraints=_constraints, scorer_for=_scorer_for)
+            if _st_added:
+                hours_scheduled = _safe_hours_sum(preview_rows)
+                print(f"[schedule] station coverage added {_st_added} row(s); {len(_st_unfilled)} left open")
 
             _hourly_so_far = _hourly_hours_sum(preview_rows, _constraints)
             preview_rows, hours_added, added_dates = _top_up_hours_gap(
@@ -3558,6 +3665,22 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # marking it. It rides in the notes column now, which is the one
             # field a human actually reads on the printed schedule.
             if preview_rows:
+                # Stations last: the fix pass, the solver and the optimizer
+                # may have moved cooks since the first pass. Close what they
+                # opened, then name each cook's station for the screens.
+                try:
+                    if getattr(_constraints, "stations", None):
+                        preview_rows, _st2, _ = _ensure_station_coverage(
+                            preview_rows, result.get("week_dates", []), result.get("week_days", []),
+                            _close_times, _role_close_buffers, constraints=_constraints)
+                        if _st2:
+                            hours_scheduled = _safe_hours_sum(preview_rows)
+                        _stations = station_report(preview_rows, _constraints, result.get("week_dates", []))
+                        result["stations"] = _stations
+                        if isinstance(result.get("review"), dict):
+                            result["review"]["stations"] = _stations
+                except Exception as _stx:
+                    print(f"[schedule] station assignment skipped: {_stx}")
                 _price_week(preview_rows)
                 _lines_out = [",".join(_COLS)]
                 for _r in preview_rows:

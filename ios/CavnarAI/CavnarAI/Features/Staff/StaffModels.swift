@@ -61,12 +61,39 @@ struct StaffShift: Decodable, Hashable {
     let shiftEnd: String?
     let scheduledHours: String?
     let notes: String?
+    /// The kitchen station the draft put this cook on ("Grill", or "Prep then
+    /// Grill" across a double) — kitchen_stations, 9/30/26. Nil off the line.
+    let station: String?
 
     enum CodingKeys: String, CodingKey {
-        case date, day, role, notes
+        case date, day, role, notes, station, start, end, hours
         case shiftStart = "shift_start"
         case shiftEnd = "shift_end"
         case scheduledHours = "scheduled_hours"
+    }
+
+    /// /staff/api/shifts sends `start`, `end` and `hours`
+    /// (labor.employee_shifts_from_csv); older payloads and the schedule
+    /// views send `shift_start`, `shift_end`, `scheduled_hours`. Both decode —
+    /// reading only the second left every staff shift with no times (9/30/26).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        day = try c.decodeIfPresent(String.self, forKey: .day)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        station = try c.decodeIfPresent(String.self, forKey: .station)
+        shiftStart = try c.decodeIfPresent(String.self, forKey: .shiftStart)
+            ?? c.decodeIfPresent(String.self, forKey: .start)
+        shiftEnd = try c.decodeIfPresent(String.self, forKey: .shiftEnd)
+            ?? c.decodeIfPresent(String.self, forKey: .end)
+        if let h = try? c.decodeIfPresent(String.self, forKey: .scheduledHours) {
+            scheduledHours = h
+        } else if let h = try? c.decodeIfPresent(Double.self, forKey: .hours) {
+            scheduledHours = h == h.rounded() ? String(Int(h)) : String(h)
+        } else {
+            scheduledHours = try? c.decodeIfPresent(String.self, forKey: .hours)
+        }
     }
 
     var timeRange: String {

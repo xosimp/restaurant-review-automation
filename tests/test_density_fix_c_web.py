@@ -259,19 +259,6 @@ def test_billing_shows_the_measured_figure_only():
 
 # ── #13 staff portal ─────────────────────────────────────────────────────────
 
-def test_the_staff_portal_leads_with_the_next_shift_and_what_is_asked_of_you():
-    s = _read("staff_portal.html")
-    tab = s[s.index('<section id="tab-schedule"'):s.index("</section>", s.index('<section id="tab-schedule"'))]
-    assert tab.index('id="next-shift"') < tab.index('id="asks-body"') < tab.index('id="sched-body"')
-    disc = tab[tab.index('id="disc-body"'):]
-    for body in ('id="avail-body"', 'id="pref-body"', 'id="timeoff-body"'):
-        assert body in disc, body
-    assert 'class="card"' not in s and "today-line" not in s
-    assert "/static/fonts/cavnar-fonts.css" in s and "Space+Grotesk" in s and "'Apfel Grotezk'" in s
-    render = s[s.index("function renderShifts(d){"):s.index("fetch('/staff/api/shifts')")]
-    assert "offs.push(" in render and "'<div class=\"offline\">Off <b>'" in render
-    assert "more-btn" in render and 'class="shift-menu drop"' in render
-    assert "ahtml += '<h2>Asked of you</h2>';" in s and "hero.asks = asks.length" in s
 
 
 def test_the_schedule_link_prints_the_date_once():

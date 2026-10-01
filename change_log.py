@@ -89,7 +89,7 @@ _K = {
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "delivery_pct", "foh_roles_json",
               "patio_roles_json", "jurisdiction", "quality_weights_json", "role_arrival_json",
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
-              "role_minimums_json", "role_requirements_json", "role_strength_json", "shift_leader_rules_json",
+              "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
               "section_count", "sched_notes"),
     "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json", "person_rates_json"),
     "setting": ("name", "owner_email", "owner_name", "owner_phone", "mailing_address", "location_group",

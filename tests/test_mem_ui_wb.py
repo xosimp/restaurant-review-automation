@@ -32,7 +32,6 @@ from flask import Flask
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASH = os.path.join(ROOT, "templates", "dashboard.html")
 CARD = os.path.join(ROOT, "templates", "_review_card.html")
-PORTAL = os.path.join(ROOT, "templates", "staff_portal.html")
 
 
 @pytest.fixture(scope="module")
@@ -487,8 +486,6 @@ def test_intel_and_what_connects_read_their_history(page):
     assert "dsr:'Daily report'" in page and "food_cost:'Food Cost'" in page
 
 
-def test_the_staff_portal_tags_a_promotion(page):
-    assert "promotion: 'Promotion'" in _read(PORTAL)
 
 
 def test_new_markup_follows_the_house_rules(page):

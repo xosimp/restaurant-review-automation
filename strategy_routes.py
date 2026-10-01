@@ -1761,6 +1761,38 @@ def _cross_training_defaults(restaurant_id) -> dict:
     return {r: int(round(_sq.cross_training_target_for(r) * 100)) for r in sorted(roles)}
 
 
+import json as _j_ks
+
+
+def _kitchen_stations_payload(restaurant_id, r) -> dict:
+    """The stations as the rules screens edit them: the raw lists (so a
+    station with no rule yet still shows), the roster's roles to choose the
+    kitchen from, and the people under the chosen kitchen roles."""
+    import kitchen_stations as _ks
+    raw = getattr(r, "kitchen_stations_json", None)
+    try:
+        stored = _j_ks.loads(raw) if raw else {}
+    except ValueError:
+        stored = {}
+    cfg = _ks.normalise(stored)
+    roles, people = [], []
+    try:
+        import staff_settings as _ss
+        kitchen = {(x or "").strip().lower() for x in (stored.get("roles") or [])}
+        for e in _ss.roster(restaurant_id) or []:
+            role, name = (e.get("role") or "").strip(), (e.get("name") or "").strip()
+            if role and role.lower() not in {x.lower() for x in roles}:
+                roles.append(role)
+            if name and role.lower() in kitchen and name not in people:
+                people.append(name)
+    except Exception:
+        pass
+    return {"roles": stored.get("roles") or [], "stations": stored.get("stations") or [],
+            "needs": stored.get("needs") or [], "skills": stored.get("skills") or {},
+            "active": bool(cfg), "roster_roles": sorted(roles, key=str.lower),
+            "kitchen_people": sorted(people, key=str.lower)}
+
+
 def _do_compliance_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the rules.")
@@ -1798,6 +1830,10 @@ def _do_compliance_get(u):
             # "Never cut a role below N people": the cut floor for a role
             # with no floor of its own (schedule_rules.cut_floor), 1..10.
             "cut_floor_default": _sr.cut_floor_default(r), "cut_floor_max": _sr.CUT_FLOOR_MAX,
+            # Kitchen stations (kitchen_stations, 9/30/26): which stations a
+            # daypart needs and which cooks can work each. `kitchen_people`
+            # is the roster under the kitchen roles, for the skills grid.
+            "kitchen_stations": _kitchen_stations_payload(_rid(u), r),
             "closures": _sr.closures(r),
             "certifications": list(__import__("staff_settings").CERTIFICATIONS),
             "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available()}, 200
@@ -1822,6 +1858,18 @@ def _do_compliance_set(u):
         if not in_range:
             return {"ok": False, "error": f"Never cut below must be a whole number of people from 1 to "
                                           f"{_sr.CUT_FLOOR_MAX}."}, 400
+    if isinstance(b.get("station_edit"), dict):
+        # One station change per request (kitchen_stations.apply_edit), read
+        # and written against what is stored now - never a whole list sent
+        # back over someone else's change.
+        import kitchen_stations as _ks
+        from models import get_restaurant as _gr_ks, update_restaurant as _ur_ks
+        try:
+            cfg = _ks.apply_edit(getattr(_gr_ks(_rid(u)), "kitchen_stations_json", None), b["station_edit"])
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        _ur_ks(_rid(u), {"kitchen_stations_json": _j_ks.dumps(cfg)})
+        out["kitchen_stations"] = _kitchen_stations_payload(_rid(u), _gr_ks(_rid(u)))
     if isinstance(b.get("rules"), dict):
         out["rules"] = _sr.save_compliance(_rid(u), b["rules"])
     if "role_floors" in b:

@@ -650,6 +650,7 @@ class Constraints:
     daypart_avail: dict = field(default_factory=dict)      # {lower: {day: any|morning|night|off}}
     hours_limits: dict = field(default_factory=dict)       # {lower: (min, max)}
     salaried: set = field(default_factory=set)             # models.salaried_name_key of salaried people
+    stations: dict = field(default_factory=dict)           # kitchen_stations.normalise config, {} when none
     employment: dict = field(default_factory=dict)         # {lower: 'full'|'part'}
     minors: set = field(default_factory=set)
     minor_bands: dict = field(default_factory=dict)        # {lower: "14-15"|"16-17"} (MINOR_BANDS)
@@ -825,6 +826,11 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
+    try:
+        import kitchen_stations as _ks
+        c.stations = _ks.normalise(getattr(restaurant, "kitchen_stations_json", None))
+    except Exception:
+        c.stations = {}
     c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
     try:
         c.closed_dates = closed_in(restaurant, c.week_dates)
@@ -1595,6 +1601,9 @@ def prompt_block(c: Constraints) -> str:
         lines.append("- Salaried (the same pay whatever the hours): " + ", ".join(sorted(n.title() for n in c.salaried))
                      + " — no overtime and no weekly hours ceiling for them, and their hours are not spent from the "
                        "hourly hours budget. Never move an hourly person's shift onto them to save overtime.")
+    if c.stations:
+        import kitchen_stations as _ks
+        lines.extend(_ks.prompt_lines(c.stations))
     if c.close_mins and c.close_times:
         lines.append("- Stays after close: " + "; ".join(f"the last {role} until {m} min after close" for role, m in sorted(c.close_mins.items())) + ".")
     if c.minors:

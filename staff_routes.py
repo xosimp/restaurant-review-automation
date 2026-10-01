@@ -88,12 +88,29 @@ def _staff_context(current_user):
 
 # ── Sign in ────────────────────────────────────────────────────────────────
 
+def _app_url():
+    """Where an employee gets the app: the App Store link once it is listed
+    (IOS_APP_STORE_URL), else nothing and the page says to ask a manager."""
+    import os as _os_app
+    return (_os_app.getenv("IOS_APP_STORE_URL") or "").strip()
+
+
+def _app_page(restaurant=None, join_code="", error=None, status=200, **extra):
+    """The web side of the staff portal: one page saying the portal is in
+    the iPhone app (owner, 9/30/26: "no web version for employees"), with
+    the restaurant's join code when the link names one. It keeps the
+    create-your-account flow because it is the opt-in page registered for
+    the staff verification texts (A2P)."""
+    return render_template("staff_login.html", restaurant=restaurant, roster=[],
+                           portal_token="", login_nonce="", join_code=join_code or "",
+                           error=error, app_url=_app_url(),
+                           ready=request.args.get("ready") == "1", **extra), status
+
+
 @staff_bp.route("/")
 def portal_entry():
-    """Landing when we don't know which restaurant this is — the employee
-    needs their restaurant's link."""
-    return render_template("staff_login.html", restaurant=None, roster=[],
-                           portal_token="", login_nonce="", join_code="", error=None)
+    """Where an employee lands with no restaurant link: get the app."""
+    return _app_page()
 
 
 @staff_bp.route("/signup")
@@ -102,38 +119,26 @@ def portal_signup():
     page Twilio's A2P 10DLC reviewers are sent to for the staff verification
     program, so the number field, the unchecked consent box and the Terms /
     Privacy links are on screen without a click (9/28/26)."""
-    return render_template("staff_login.html", restaurant=None, roster=[],
-                           portal_token="", login_nonce="", join_code="", error=None,
-                           open_signup=True)
+    return _app_page(open_signup=True)
 
 
 @staff_bp.route("/r/<token>")
 def portal_login(token):
-    """The restaurant's staff link: pick your name, enter your PIN."""
+    """The restaurant's staff link or posted code: it no longer opens a PIN
+    pad in the browser. It names the restaurant and shows its join code for
+    the app's Create your account (the app's own PIN sign-in posts to
+    /staff/r/<token>/login, below)."""
     ip = _client_ip()
     throttled = _throttled(ip)
     if throttled:
-        return render_template("staff_login.html", restaurant=None, roster=[],
-                               portal_token="", login_nonce="", join_code="",
-                               error="Too many attempts from this device. Wait a few minutes."), 429
+        return _app_page(error="Too many attempts from this device. Wait a few minutes.", status=429)
     attempt = record_portal_attempt(ip)
     rid = restaurant_for_staff_code(token)
     if not rid:
-        return render_template("staff_login.html", restaurant=None, roster=[],
-                               portal_token="", login_nonce="", join_code="",
-                               error="That staff link isn't valid any more. Ask a manager for the current one."), 404
+        return _app_page(error="That staff link isn't valid any more. Ask a manager for the current code.",
+                         status=404)
     mark_portal_attempt_ok(attempt)      # a real code: not a guess (SEC-18)
-    restaurant = get_restaurant(rid)
-    roster = [
-        {"membership_id": m["id"],
-         "name": m.get("employee_name") or m["username"],
-         "role": m["role"]}
-        for m in get_memberships_for_restaurant(rid, role="employee")
-        if m.get("pin_hash")
-    ]
-    return render_template("staff_login.html", restaurant=restaurant, roster=roster,
-                           portal_token=token, login_nonce=issue_portal_nonce(rid),
-                           join_code=get_join_code(rid), error=None)
+    return _app_page(restaurant=get_restaurant(rid), join_code=get_join_code(rid))
 
 
 @staff_bp.route("/api/roster/<token>")
@@ -379,18 +384,13 @@ def portal_logout():
 @staff_bp.route("/home")
 @staff_login_required
 def portal_home(current_user):
-    rid, name = _staff_context(current_user)
-    restaurant = get_restaurant(rid)
-    # Where "Sign in again" goes when the shift session ends (CLIENT-47):
-    # this restaurant's own PIN pad, by its join code — the same short code
-    # posted in the back of house, which /staff/r/<code> resolves.
+    """A signed-in employee who opens the web: the portal is in the app."""
+    rid, _name = _staff_context(current_user)
     try:
         code = get_join_code(rid)
     except Exception:
         code = ""
-    signin_url = url_for("staff.portal_login", token=code) if code else url_for("staff.portal_entry")
-    return render_template("staff_portal.html", restaurant=restaurant,
-                           employee_name=name, signin_url=signin_url)
+    return _app_page(restaurant=get_restaurant(rid), join_code=code)
 
 
 @staff_bp.route("/api/me")

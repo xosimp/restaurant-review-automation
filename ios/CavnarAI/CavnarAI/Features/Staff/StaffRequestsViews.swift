@@ -69,7 +69,7 @@ struct StaffShiftChange: Decodable, Identifiable, Hashable {
         [CavnarDate.mdy(date), shiftStart ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    /// The web portal's wording for each state (staff_portal.html).
+    /// The wording for each state (the web portal's, before the portal became app-only 9/30/26).
     var statusLabel: String {
         switch status {
         case "pending": return isSwap && targetName != nil ? "Waiting on your manager and \(targetName!)" : "Waiting for an answer"

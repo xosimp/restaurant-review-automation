@@ -29,7 +29,7 @@ T = os.path.join(ROOT, "templates")
 # tests/test_edge_client_web_admin.py.
 NON_ADMIN_PAGES = [
     "dashboard.html", "_review_card.html", "_csrf_fetch.html",
-    "staff_login.html", "staff_portal.html", "staff_schedule.html",
+    "staff_login.html", "staff_schedule.html",
     "staff_schedule_expired.html", "staff_schedule_invalid.html",
     "login.html", "forgot_password.html", "reset_password.html", "two_fa.html",
     "admin_two_factor.html", "status.html", "guest_optin.html", "unsubscribed.html",

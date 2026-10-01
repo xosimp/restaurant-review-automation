@@ -329,6 +329,21 @@ class DimensionResult:
     blind_spots: list = field(default_factory=list)
 
 
+# The name each dimension carries on screen - the same words its result
+# uses (DimensionResult.label). The weighting list used to build them from
+# the key, so "splh" read "Splh" (owner, 9/30/26).
+DIMENSION_LABELS = {
+    "coverage": "Coverage", "coverage_curve": "Coverage by the hour",
+    "operational_strength": "Operational strength", "leadership": "Leadership",
+    "demand_match": "Demand match", "labor_efficiency": "Labor efficiency",
+    "splh": "Sales per labor hour", "experience_balance": "Experience",
+    "training_balance": "Training balance", "reliability": "Reliability",
+    "pairings": "Pairings", "fatigue": "Fatigue", "fairness": "Fairness",
+    "preferences": "Staff preferences", "stability": "Schedule stability",
+    "cross_training": "Cross-training",
+}
+
+
 DEFAULT_WEIGHTS = {
     "coverage": 20,
     "operational_strength": 18,

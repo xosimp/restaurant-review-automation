@@ -45,7 +45,7 @@ def test_the_activity_feed_formats_the_schedule_week_through_mdy():
 # The helpers are the rule: mdy() + cavClock() on web, CavnarDate on iOS.
 
 _OWNER_TEMPLATES = ["dashboard.html", "client_settings.html", "login.html",
-                    "staff_portal.html", "staff_schedule.html", "issue.html"]
+                    "staff_schedule.html", "issue.html"]
 
 
 def test_web_templates_never_format_a_date_through_the_locale():

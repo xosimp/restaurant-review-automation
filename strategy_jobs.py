@@ -2760,9 +2760,12 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
             token = get_or_create_staff_portal_token(r.id, db_path=db_path)
             base = config.base_url()
             lead = items[0]["text"]
+            # The team reads them in the staff app (the web portal is gone,
+            # 9/30/26); the link names the restaurant and its code for anyone
+            # who hasn't got the app yet.
             msg = (f"Cavnar AI · tonight's lineup notes are ready ({len(items)} point"
-                   f"{'' if len(items) == 1 else 's'}): {lead} Read them with the team: "
-                   f"{base}/staff/r/{token}")
+                   f"{'' if len(items) == 1 else 's'}): {lead} The team reads them in the "
+                   f"Cavnar AI app: {base}/staff/r/{token}")
             # The text is this restaurant's in sms_log (fix round E, #14).
             with sms_context(r.id):
                 texted = send_sms(manager["phone"], msg[:320], use_case="alert")

@@ -7685,7 +7685,7 @@ def mobile_shift_profiles(current_user):
             profiles=[_sq.profile_to_dict(p) for p in resolved],
             weights=get_quality_weights(rid) or _sq.DEFAULT_WEIGHTS,
             default_weights=_sq.DEFAULT_WEIGHTS,
-            dimensions=[{"key": k, "label": k.replace("_", " ").capitalize(),
+            dimensions=[{"key": k, "label": _sq.DIMENSION_LABELS.get(k) or k.replace("_", " ").capitalize(),
                          "customer_facing": k in _sq.CUSTOMER_DIMENSIONS}
                         for k in _sq.DIMENSIONS],
             demand_levels=list(_sq.DEMAND_LEVELS),

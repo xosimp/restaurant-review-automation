@@ -923,6 +923,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             return False
         if n - 1 < floor_for(floors, r.get("role"), day, part):
             return False
+        # Never the only trained cover for a kitchen station the owner
+        # requires on that daypart (kitchen_stations, 9/30/26).
+        _st = getattr(constraints, "stations", None) if constraints is not None else None
+        if _st:
+            import kitchen_stations as _ks
+            if _ks.protects([x for x in rows if id(x) not in no_show], r, _st):
+                return False
         return True
 
     def splh_for(r):

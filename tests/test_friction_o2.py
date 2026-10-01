@@ -397,10 +397,6 @@ def test_waste_can_be_logged_in_one_line_and_invoice_lines_become_ingredients():
     assert "'/api/food-cost/ingredients'" in s
 
 
-def test_the_staff_sign_in_list_can_be_searched():
-    s = _src("staff_login.html")
-    assert "{% if roster|length > 8 %}" in s and 'id="who-find"' in s
-    assert "localStorage.getItem(LAST_KEY)" in s and "catch (e) {}" in s
 
 
 # ── #30 "Do something about it" (U4-9) ───────────────────────────────────────

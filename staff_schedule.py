@@ -90,11 +90,23 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None) -> d
         detail = get_schedule_history_detail(w["id"], restaurant_id)
         if not detail:
             continue
+        # The cook's kitchen station on each shift, as the draft assigned
+        # it (schedule_engine.station_report, kept in the week's review):
+        # "Grill tonight" in the staff app (owner, 9/30/26).
+        stations = {}
+        for a in (((detail.get("review") or {}).get("stations") or {}).get("assigned") or []):
+            if " ".join(str(a.get("employee") or "").lower().split()) == " ".join(str(employee_name or "").lower().split()):
+                parts = [p for p in (a.get("morning"), a.get("night")) if p]
+                if parts:
+                    stations[(a.get("date"), a.get("shift_start"))] = " then ".join(dict.fromkeys(parts))
         for s in employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name,
                                           meal_break_after_hours=meal_after):
             d = _parse_day(s.get("date"))
             # Each day comes from the newest published week that covers it.
             if d and _owner_of(weeks, d) == w["id"]:
+                st = stations.get((d.isoformat(), s.get("start")))
+                if st:
+                    s["station"] = st
                 mine.append(s)
         if week_of is None and w["start"] and w["start"] <= today and (w["end"] is None or today <= w["end"]):
             week_of = detail.get("week_start")

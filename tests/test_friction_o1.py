@@ -446,8 +446,3 @@ def test_closeout_prefills_only_an_unfiled_night_and_says_so():
     body = _fn("renderCloseout")
     assert "(!e.created_at&&c.suggested)" in body and "Suggested" in body
 
-
-def test_the_staff_portal_texts_box_starts_unchecked():
-    s = _src("staff_portal.html")
-    assert "id=\"pref-texts\"' + (d.schedule_texts ? ' checked' : '')" in s
-    assert "reply STOP" in s

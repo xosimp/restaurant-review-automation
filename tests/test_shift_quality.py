@@ -9,6 +9,8 @@ These tests are written as scenarios an operator would recognise rather
 than as unit tests of each function, because the failure this engine exists
 to catch is emergent. No single dimension going wrong produces it.
 """
+import os
+
 import pytest
 
 import shift_quality as sq
@@ -1803,3 +1805,13 @@ def test_half_filling_a_short_role_never_scores_below_leaving_it_empty():
     assert h["score"] >= e["score"], (e["score"], h["score"])
     st = [d for d in h["dimensions"] if d["key"] == "operational_strength"][0]
     assert st["score"] == 75, "3 against the pro-rated 4 of 8 for 1 of the 2 cooks needed"
+
+
+def test_every_dimension_has_its_own_name_on_screen():
+    """The weighting list built names from the key: "splh" read "Splh"
+    (owner, 9/30/26). Each dimension's label is its result's own words."""
+    import shift_quality as sq
+    assert set(sq.DIMENSION_LABELS) == set(sq.DIMENSIONS)
+    assert sq.DIMENSION_LABELS["splh"] == "Sales per labor hour"
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mobile_api.py")).read()
+    assert '_sq.DIMENSION_LABELS.get(k)' in src

@@ -13091,6 +13091,18 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .tg-people .tg-person .l > span{font-size:14.5px;color:var(--ink2)}
 .tg-pos{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
 .tg-pos-l{font-size:12.5px;color:var(--ink3);margin-left:8px}
+.st-step{margin:4px 0 14px}
+.st-k{font-size:13px;font-weight:600;color:var(--ink2);margin:0 0 6px}
+.st-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.st-chip{display:inline-flex;align-items:center;gap:4px}
+.st-need .st-when{flex:1;font-size:13.5px;color:var(--ink3)}
+.st-grid-wrap{overflow-x:auto;border:1px solid var(--line,var(--paper3));border-radius:10px}
+.st-grid{border-collapse:collapse;width:100%;font-size:13.5px}
+.st-grid th,.st-grid td{padding:8px 10px;border-bottom:1px solid var(--line,var(--paper3));text-align:center;white-space:nowrap}
+.st-grid th:first-child,.st-grid td:first-child{text-align:left}
+.st-grid th{font-size:12px;font-weight:600;color:var(--ink3)}
+.st-grid tr:last-child td{border-bottom:none}
+.st-grid .st-skill{min-width:36px;justify-content:center}
 .tg-pay{margin-top:16px}
 .tg-pay summary{font-size:15px;color:var(--ink)}
 .tg-pay #as-tg-roles{margin-top:8px}
@@ -19597,6 +19609,7 @@ function _schedHandleResult(data) {
   // of a session rendered an empty table.
   _schedConstraints = data.staff_constraints || {};
   _schedRows = data.preview_rows || [];
+  _schedStations = data.stations || (data.review || {}).stations || null;
   _schedTargets = data.daily_target_hours || {};
   _schedOverrides = {};
   _schedHistoryId = data.history_id || null;
@@ -20007,6 +20020,19 @@ var _quality = null;
 var _whatIf = null;
 var _qualityOpenShift = null;
 var _schedRows = [];
+// The draft's kitchen station per cook (schedule_engine.station_report):
+// {stations, assigned:[{date, employee, shift_start, morning, night}], gaps}.
+var _schedStations = null;
+function _stationOf(r) {
+  var a = (_schedStations && _schedStations.assigned) || [], i;
+  for (i = 0; i < a.length; i++) {
+    if (a[i].date === r.date && a[i].employee === r.employee && a[i].shift_start === r.shift_start) {
+      if (a[i].morning && a[i].night && a[i].morning !== a[i].night) return a[i].morning + ' then ' + a[i].night;
+      return a[i].morning || a[i].night || '';
+    }
+  }
+  return '';
+}
 var _schedOverrides = {};
 var _schedTargets = {};
 
@@ -21402,6 +21428,7 @@ function reloadScheduleFromHistory(btn) {
     done();
     if (!d || !d.ok) { toast((d && d.error) || 'Could not reload', 'error'); return; }
     _schedRows = d.preview_rows || [];
+    _schedStations = d.stations || (d.review || {}).stations || null;
     _schedOverrides = {}; _schedWhyOpen = null; _schedEditIdx = null; _schedAddedIdx = null;
     _schedSnapshot();
     _schedSetDirty(false);
@@ -23565,7 +23592,7 @@ function ssRenderShift() {
   var i = _swSel, r = _schedRows[i], wk = _swWeekHours(r.employee), ceil = _swCeil(), why = _schedWhy(r), sc = _swScore(r.employee), dots = '', di;
   if (sc) { dots = ' <span class="swg-p"><span class="r">'; for (di = 1; di <= 5; di++) dots += '<i' + (di <= sc ? ' class="on"' : '') + '></i>'; dots += '</span></span>'; }
   var h = '<div class="ss-sd-h">' + _escHtml(r.employee || 'Open shift') + dots + '</div>'
-    + '<div class="ss-sd-m">' + _escHtml(_schedDayOf(r.date)) + ' <span class="hb-num">' + _escHtml(mdy(r.date)) + '</span> · <span class="hb-num">' + _escHtml(r.shift_start || '') + '–' + _escHtml(r.shift_end || '') + '</span> · ' + _escHtml(r.role || '') + '</div>'
+    + '<div class="ss-sd-m">' + _escHtml(_schedDayOf(r.date)) + ' <span class="hb-num">' + _escHtml(mdy(r.date)) + '</span> · <span class="hb-num">' + _escHtml(r.shift_start || '') + '–' + _escHtml(r.shift_end || '') + '</span> · ' + _escHtml(r.role || '') + (_stationOf(r) ? ' · <b>' + _escHtml(_stationOf(r)) + '</b>' : '') + '</div>'
     + '<div class="sw-kv"><span>This shift</span><b class="hb-num">' + _schedHrs(_swRowHrs(r)) + 'h</b></div>'
     + '<div class="sw-kv"><span>Their week</span><b class="hb-num' + (wk.hours > ceil ? ' bad' : '') + '">' + _schedHrs(wk.hours) + 'h of ' + ceil + 'h</b></div>'
     + '<div class="sw-kv"><span>Days on</span><b class="hb-num">' + wk.days + '</b></div>'
@@ -31973,6 +32000,80 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     t.disabled=true;
     cavClosedDateChange({remove:iso},chipEl.parentNode&&chipEl.parentNode.id==='as-closures'?'as-hours-status':null).then(function(){t.disabled=false;});
   });
+  // ── Kitchen stations ──
+  var ST_DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  var ST_PART={morning:'Mornings (before 3pm)',night:'Nights (after 3pm)',all:'All day'};
+  function stRender(k,ro){
+    var h='',i,j,roles=k.roster_roles||[],kr=k.roles||[],st=k.stations||[],needs=k.needs||[],people=k.kitchen_people||[],sk=k.skills||{};
+    h+='<div class="st-step"><div class="st-k">Which roles are the kitchen</div><div class="chip-tog">'+_chipTog(roles,kr,'data-st-role',ro)+'</div></div>';
+    if(!kr.length){return h+'<div class="hb-empty">Pick the role (or roles) your cooks are under on the schedule, then add the stations.</div>';}
+    h+='<div class="st-step"><div class="st-k">Stations</div><div class="st-list">';
+    for(i=0;i<st.length;i++)h+='<span class="ac-chip st-chip">'+esc(st[i])+(ro?'':'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-st-rm="'+esc(st[i])+'" aria-label="Remove '+esc(st[i])+'">&times;</button>')+'</span>';
+    if(!st.length)h+='<span class="ac-note" style="margin:0">None yet. Add each station a cook can be on: Saut&eacute;, Grill, Fry, Pantry, Prep&hellip;</span>';
+    h+='</div>';
+    if(!ro)h+='<div class="lb2-form"><div class="ac-field"><label for="st-new">Add a station</label><input class="ac-input" id="st-new" maxlength="40" placeholder="Grill"></div><div class="ac-field b"><button type="button" class="cbtn cbtn-secondary" data-st-add="1">Add</button></div></div>';
+    h+='</div>';
+    if(!st.length)return h;
+    h+='<div class="st-step"><div class="st-k">What each shift needs</div>';
+    if(!needs.length)h+='<div class="ac-note" style="margin:0 0 8px">Nothing required yet. Say which stations must be staffed, and when.</div>';
+    for(i=0;i<needs.length;i++){var n=needs[i],dys=(n.days&&n.days.length)?n.days.join(', '):'Every day';
+      h+='<div class="rul-row st-need"><span class="role">'+esc(n.station)+'</span><span class="st-when">'+esc(ST_PART[n.daypart]||n.daypart)+' &middot; '+esc(dys)+' &middot; <span class="hb-num">'+esc(n.count||1)+'</span> cook'+((n.count||1)>1?'s':'')+'</span>'
+        +(ro?'':'<button type="button" class="cbtn cbtn-text cbtn-sm" data-st-need-rm="'+i+'">Remove</button>')+'</div>';}
+    if(!ro){
+      h+='<div class="lb2-form"><div class="ac-field"><label for="st-need-st">Station</label><select class="ac-select" id="st-need-st">';
+      for(i=0;i<st.length;i++)h+='<option>'+esc(st[i])+'</option>';
+      h+='</select></div><div class="ac-field"><label for="st-need-part">When</label><select class="ac-select" id="st-need-part"><option value="night">Nights (after 3pm)</option><option value="morning">Mornings (before 3pm)</option><option value="all">All day</option></select></div>'
+        +'<div class="ac-field"><label for="st-need-n">Cooks</label><input type="number" class="ac-input ac-num" id="st-need-n" min="1" max="4" value="1"></div></div>'
+        +'<div class="st-k" style="margin-top:8px">On (none picked means every day)</div><div class="chip-tog" id="st-need-days">'+_chipTog(ST_DAYS,[],'data-st-day',false)+'</div>'
+        +'<div style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" data-st-need-add="1">Add requirement</button></div>';
+    }
+    h+='</div>';
+    h+='<div class="st-step"><div class="st-k">Who can work each station</div>';
+    if(!people.length)h+='<div class="hb-empty">Nobody on your roster is under '+esc(kr.join(' or '))+' yet.</div>';
+    else{
+      h+='<div class="st-grid-wrap"><table class="st-grid"><thead><tr><th>Cook</th>';
+      for(j=0;j<st.length;j++)h+='<th>'+esc(st[j])+'</th>';
+      h+='</tr></thead><tbody>';
+      for(i=0;i<people.length;i++){
+        var have={},mine=sk[people[i]]||[],key=people[i].toLowerCase(),q;
+        for(q in sk)if(sk.hasOwnProperty(q)&&q.toLowerCase()===key)mine=sk[q];
+        for(j=0;j<mine.length;j++)have[mine[j]]=1;
+        h+='<tr><td>'+esc(people[i])+'</td>';
+        for(j=0;j<st.length;j++){var on=!!have[st[j]];
+          h+='<td><button type="button" class="cbtn cbtn-secondary cbtn-sm ct st-skill'+(on?' on':'')+'" data-st-person="'+esc(people[i])+'" data-st-skill="'+esc(st[j])+'" aria-pressed="'+(on?'true':'false')+'" aria-label="'+esc(people[i])+' on '+esc(st[j])+'"'+(ro?' disabled':'')+'>'+(on?'&#10003;':'')+'</button></td>';}
+        h+='</tr>';
+      }
+      h+='</tbody></table></div>';
+    }
+    h+='<div class="ac-status" id="st-status"></div></div>';
+    return h;
+  }
+  function stSend(edit,btn){
+    var stEl=document.getElementById('st-status'),done=btn?busy(btn,'…'):null;
+    jsend('/api/labor/rules',{station_edit:edit},function(d){
+      if(done)done();
+      if(!d.ok){if(stEl){stEl.textContent=d.error||'Could not save.';stEl.style.color='var(--red)';}return;}
+      if(_rules)_rules.kitchen_stations=d.kitchen_stations;
+      var box=document.getElementById('rul-stations');if(box)box.innerHTML=stRender(d.kitchen_stations||{},!(_rules&&_rules.can_edit));
+      var s2=document.getElementById('st-status');if(s2){s2.textContent='Saved';s2.style.color='';}
+    });
+  }
+  document.addEventListener('click',function(ev){
+    var t=ev.target,box=document.getElementById('rul-stations');if(!box||!t||!t.closest||!box.contains(t))return;
+    var b;
+    if((b=t.closest('[data-st-role]'))){var cur=((_rules&&_rules.kitchen_stations)||{}).roles||[],r=b.getAttribute('data-st-role'),next=[],i,had=false;
+      for(i=0;i<cur.length;i++){if(cur[i].toLowerCase()===r.toLowerCase())had=true;else next.push(cur[i]);}
+      if(!had)next.push(r);
+      if(!next.length){var s=document.getElementById('st-status');if(s)s.textContent='Keep at least one kitchen role.';return;}
+      stSend({op:'roles',roles:next});return;}
+    if((b=t.closest('[data-st-rm]'))){if(!window.confirm('Remove the '+b.getAttribute('data-st-rm')+' station, its requirements and who is trained on it?'))return;stSend({op:'remove_station',name:b.getAttribute('data-st-rm')},b);return;}
+    if((b=t.closest('[data-st-add]'))){var nm=document.getElementById('st-new');if(nm&&nm.value.trim())stSend({op:'add_station',name:nm.value.trim()},b);return;}
+    if((b=t.closest('[data-st-day]'))){var on=b.className.indexOf(' on')<0;b.className=on?b.className+' on':b.className.replace(' on','');b.setAttribute('aria-pressed',on?'true':'false');return;}
+    if((b=t.closest('[data-st-need-add]'))){var days=_chipVals(document.getElementById('st-need-days'),'data-st-day');
+      stSend({op:'add_need',station:document.getElementById('st-need-st').value,daypart:document.getElementById('st-need-part').value,days:days,count:+(document.getElementById('st-need-n').value||1)},b);return;}
+    if((b=t.closest('[data-st-need-rm]'))){var n=(((_rules&&_rules.kitchen_stations)||{}).needs||[])[+b.getAttribute('data-st-need-rm')];if(n)stSend({op:'remove_need',station:n.station,daypart:n.daypart,days:n.days||[]},b);return;}
+    if((b=t.closest('[data-st-skill]'))){stSend({op:'skill',person:b.getAttribute('data-st-person'),station:b.getAttribute('data-st-skill'),on:b.className.indexOf(' on')<0},b);return;}
+  });
   window.renderRules=function(){
     var d=_rules,el=document.getElementById('rules-body');if(!d||!el)return;
     var ro=!d.can_edit,rules=d.rules||{},defs=d.defaults||{},floors=d.role_floors||{},roles=_rulRoles(),i,h='';
@@ -32040,6 +32141,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="rul-row" data-ct-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><input type="number" class="ac-input ac-num n" data-ct-n min="0" max="100" step="5" value="'+(hasCv?esc(cv):'')+'" placeholder="'+esc(cdf)+'" aria-label="'+esc(roles[i])+' cross-training target, percent"'+(ro?' disabled':'')+'><span class="lbl">% can cover another station</span></div>';
     }
     h+='</div>';
+    // Kitchen stations (kitchen_stations.py; owner, 9/30/26, from Jim at
+    // Simple EJ's: a saute cook is not a grill cook). Each change saves on
+    // its own, one change per request, and redraws only this block.
+    h+='<div class="lb2-sub">Kitchen stations<small>the stations inside your kitchen, who can work each, and which every morning or night needs</small></div><div id="rul-stations">'+stRender(d.kitchen_stations||{},ro)+'</div>';
     // Certifications a role needs, from the known list.
     h+='<div class="lb2-sub">Certifications<small>what a role must hold; a shift without it is named</small></div><div id="rul-certs">';
     if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
@@ -34706,6 +34811,9 @@ function memRetagBody(was, now) {
       h += '<div class="sr-line"><i class="' + (ok ? 'cv-ok' : 'cv-warn') + '" aria-hidden="true"></i><span class="tx">' + memNum(r.text || '') + ln(memNum(memSoftReqMeta(r))) + (r.confirm ? ln('To confirm: ' + memNum(r.confirm)) : '') + '</span></div>';
     }
     for (i = 0; i < cf.length; i++) h += '<div class="sr-line"><i class="cv-warn" aria-hidden="true"></i><span class="tx">' + memNum(cf[i].text || '') + ln('Left out of this draft until you settle it in Team & rules → What the draft has learned') + '</span></div>';
+    // A kitchen station nobody trained could cover (kitchen_stations).
+    var stg = ((data.stations || (data.review || {}).stations) || {}).gaps || [];
+    for (i = 0; i < stg.length; i++) h += '<div class="sr-line"><i class="cv-warn" aria-hidden="true"></i><span class="tx">' + memEsc(stg[i].station) + ' isn\u2019t covered ' + memEsc(stg[i].day) + ' ' + (stg[i].daypart === 'morning' ? 'morning' : 'night') + ln('Nobody trained on it was free. Train someone, or put a cook on it by hand.') + '</span></div>';
     var th = memThinnedNote(data);
     if (th) h += '<div class="sr-note" style="margin-top:6px">' + memEsc(th) + '</div>';
     el.innerHTML = h;

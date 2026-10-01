@@ -87,63 +87,28 @@
      9/28/26: "the opt-in link lacks a Terms & Conditions / Privacy Policy
      link"). */
   .legal{margin-top:34px;text-align:center;font-size:12.5px;line-height:1.7;color:var(--ink3)}
+.appcode{display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center}
+.appcode b{font-size:30px;letter-spacing:.18em;font-variant-numeric:tabular-nums;color:var(--ink)}
 </style>
 <script src="/static/cavnar-phone.js"></script>
 </head>
 <body>
 <div class="wrap">
  <div id="signin-root">
-  {% if not restaurant %}
+  {# The staff portal lives in the Cavnar AI iPhone app only (owner,
+     9/30/26: "no web version for employees"). This page stays because it
+     is the opt-in page registered for the staff verification texts (A2P,
+     tests/test_a2p_staff_verification_optin.py): it says where to go, shows
+     the restaurant's join code when the link names one, and still lets
+     someone create their account here. #}
     <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
-    <h1>Staff sign in</h1>
-    <p class="sub">{{ error or "Open the staff link your manager gave you to sign in." }}</p>
-    <div class="empty">Your restaurant has its own staff link. Ask a manager for it, or scan the code posted in the back of house.</div>
-  {% else %}
-    <div class="kicker">{{ restaurant.name }}</div>
-
-    <div id="pick">
-      <h1>Who's starting a shift?</h1>
-      <p class="sub">Tap your name, then enter your PIN.</p>
-      {% if roster %}
-        {# Type-to-filter for a long roster (friction audit U2-29): a flat
-           list of seventy names is a scroll per shift. #}
-        {% if roster|length > 8 %}<input type="search" id="who-find" class="who-find" placeholder="Type your name" aria-label="Find your name" autocomplete="off">{% endif %}
-        <div class="who">
-          {% for person in roster %}
-          <button type="button" data-id="{{ person.membership_id }}" data-name="{{ person.name }}">
-            {{ person.name }}
-          </button>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="empty">No staff PINs have been set up here yet. A manager can add them from the dashboard under Team.</div>
-      {% endif %}
-    </div>
-
-    <div id="pinstep" class="pinstep">
-      <div class="backrow">
-        <button type="button" onclick="back()">&larr;</button>
-        <span class="nm" id="who-name"></span>
-      </div>
-      <div class="dots" id="dots"><i></i><i></i><i></i><i></i></div>
-      <div class="pad">
-        <button type="button" data-d="1">1</button>
-        <button type="button" data-d="2">2</button>
-        <button type="button" data-d="3">3</button>
-        <button type="button" data-d="4">4</button>
-        <button type="button" data-d="5">5</button>
-        <button type="button" data-d="6">6</button>
-        <button type="button" data-d="7">7</button>
-        <button type="button" data-d="8">8</button>
-        <button type="button" data-d="9">9</button>
-        <button type="button" class="act" onclick="clearPin()">Clear</button>
-        <button type="button" data-d="0">0</button>
-        <button type="button" class="act" onclick="del()">&#9003;</button>
-      </div>
-      <button type="button" id="pin-go" class="cbtn cbtn-primary pin-go" onclick="submitPin()" disabled>Sign in</button>
-      <div class="err" id="err"></div>
-    </div>
-  {% endif %}
+    {% if restaurant %}<div class="kicker">{{ restaurant.name }}</div>{% endif %}
+    <h1>{% if ready %}You&rsquo;re all set{% else %}Your shifts are in the Cavnar AI app{% endif %}</h1>
+    <p class="sub">{% if error %}{{ error }}{% elif ready %}Open the Cavnar AI app on your iPhone, tap <b>I&rsquo;m staff</b>, and sign in with the PIN you just set.{% else %}Your schedule, swaps, time off and today&rsquo;s tasks are in the Cavnar AI iPhone app. Get the app, tap <b>I&rsquo;m staff</b>, then <b>Create your account</b>.{% endif %}</p>
+    {% if join_code %}
+    <div class="empty appcode"><span>Your restaurant&rsquo;s code</span><b>{{ join_code }}</b></div>
+    {% endif %}
+    {% if app_url %}<a class="cbtn cbtn-primary" style="width:100%;margin-top:14px" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty">Ask your manager for the invite to the Cavnar AI app.</div>{% endif %}
 
   <div class="newhere">
     <button type="button" class="linkish" onclick="startSignup()">First time here? Create your account</button>
@@ -226,10 +191,7 @@
 
 <script>
 (function(){
-  var PORTAL = "{{ portal_token }}";
-  var NONCE = "{{ login_nonce }}";
   var JOIN_CODE = "{{ join_code }}";
-  var pin = "", membershipId = null, busy = false;
 
   function $(id){ return document.getElementById(id); }
 
@@ -246,120 +208,6 @@
     }
   }
 
-  function paint(){
-    paintDots($('dots'), pin.length);
-    $('pin-go').disabled = busy || pin.length < PIN_MIN;
-  }
-
-  window.clearPin = function(){ pin = ""; paint(); $('err').textContent = ""; };
-  window.del = function(){ pin = pin.slice(0, -1); paint(); };
-  window.back = function(){
-    membershipId = null; clearPin();
-    $('pinstep').className = 'pinstep';
-    $('pick').style.display = '';
-  };
-
-  var picks = document.querySelectorAll('.who button');
-  /* Whoever signed in last on this device goes first (U2-29) - a
-     per-device convenience only, so storage failing changes nothing. */
-  var LAST_KEY = 'cav_staff_last_' + String(PORTAL).slice(0, 8);
-  try {
-    var last = window.localStorage ? localStorage.getItem(LAST_KEY) : null;
-    if (last) {
-      for (var li = 0; li < picks.length; li++) {
-        if (picks[li].getAttribute('data-id') === last) {
-          picks[li].className = 'last';
-          picks[li].parentNode.insertBefore(picks[li], picks[li].parentNode.firstChild);
-          break;
-        }
-      }
-    }
-  } catch (e) {}
-  var find = $('who-find');
-  if (find) {
-    find.addEventListener('input', function(){
-      var q = String(find.value || '').toLowerCase().replace(/^\s+|\s+$/g, '');
-      for (var fi = 0; fi < picks.length; fi++) {
-        var nm = String(picks[fi].getAttribute('data-name') || '').toLowerCase();
-        picks[fi].style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
-      }
-    });
-  }
-  for (var i = 0; i < picks.length; i++) {
-    picks[i].addEventListener('click', function(){
-      membershipId = parseInt(this.getAttribute('data-id'), 10);
-      try { if (window.localStorage) localStorage.setItem(LAST_KEY, String(membershipId)); } catch (e2) {}
-      $('who-name').textContent = this.getAttribute('data-name');
-      $('pick').style.display = 'none';
-      $('pinstep').className = 'pinstep on';
-      clearPin();
-    });
-  }
-
-  var keys = document.querySelectorAll('.pad button[data-d]');
-  for (var k = 0; k < keys.length; k++) {
-    keys[k].addEventListener('click', function(){
-      if (busy || pin.length >= PIN_MAX) return;
-      pin += this.getAttribute('data-d');
-      paint();
-      if (pin.length === 8) submit();
-    });
-  }
-
-  document.addEventListener('keydown', function(e){
-    if (membershipId === null) return;
-    if (busy) return;
-    if (e.key >= '0' && e.key <= '9' && pin.length < PIN_MAX) {
-      pin += e.key; paint();
-      if (pin.length === 8) submit();
-    } else if (e.key === 'Backspace') {
-      del();
-    } else if (e.key === 'Enter' && pin.length >= PIN_MIN) {
-      submit();
-    }
-  });
-
-  /* The sign-in body is one-shot: the server spends NONCE when it reads it,
-     so a captured request cannot be replayed. A stale one (page left open on
-     a host stand all afternoon) is recoverable rather than fatal — refetch
-     the roster for a fresh one and send the same PIN again, once. */
-  function post(attempt){
-    fetch('/staff/r/' + PORTAL + '/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({membership_id: membershipId, pin: pin, nonce: NONCE})
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if (d.ok) { window.location = d.redirect; return; }
-      if (d.login_nonce) { NONCE = d.login_nonce; }
-      if (d.nonce_expired && attempt === 0) { refreshNonce(post); return; }
-      busy = false;
-      clearPin();
-      $('err').textContent = d.error || 'That PIN didn’t match.';
-    }).catch(function(){
-      busy = false; clearPin();
-      $('err').textContent = 'Could not reach the server. Try again.';
-    });
-  }
-
-  function refreshNonce(next){
-    fetch('/staff/api/roster/' + PORTAL).then(function(r){ return r.json(); })
-      .then(function(d){
-        NONCE = (d && d.login_nonce) || "";
-        next(1);
-      }).catch(function(){
-        busy = false; clearPin();
-        $('err').textContent = 'Could not reach the server. Try again.';
-      });
-  }
-
-  function submit(){
-    if (busy || membershipId === null || pin.length < PIN_MIN) return;
-    busy = true;
-    paint();
-    $('err').textContent = "";
-    post(0);
-  }
-  window.submitPin = submit;
 
   /* ── Self-signup ──────────────────────────────────────────────────────
      phone -> texted code -> join code -> claim a name -> set a PIN.
@@ -561,7 +409,7 @@
       employee_name: suName, pin: suPin
     }, function(d){
       suBusy = false;
-      if (d.ok) { window.location = d.redirect; return; }
+      if (d.ok) { window.location = '/staff/?ready=1'; return; }
       suPin = ""; suPaintPin();
       suFail(d.error || 'Could not finish setting up your account.');
     });

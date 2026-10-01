@@ -3,7 +3,7 @@ import SwiftUI
 // The rest of the web staff portal on the phone (web-vs-iOS parity,
 // 9/25/26): Before service, My availability, What I'd like (with the
 // "text me when my schedule is posted" opt-in) and Change your PIN. Same
-// /staff/api/* routes as templates/staff_portal.html, one for one — there
+// /staff/api/* routes the retired web portal did, one for one — there
 // are no mobile twins for the staff tier.
 
 // MARK: - Payloads

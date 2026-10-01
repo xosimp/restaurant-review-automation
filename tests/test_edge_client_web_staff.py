@@ -1,7 +1,7 @@
 """The staff-facing web pages under the edge cases the CLIENT audit found.
 
 Staff reach Cavnar three ways on the web: the PIN pad (staff_login.html),
-the portal (staff_portal.html) and the per-person schedule link in their
+the portal (now the iPhone app only) and the per-person schedule link in their
 weekly email (`/s/<token>`, staff_schedule.html). What these protect:
 
 - CLIENT-3: the server accepts a 4–8 digit PIN, the portal lets you choose
@@ -145,15 +145,12 @@ def test_a_six_digit_pin_signs_in_when_all_six_digits_reach_the_server(client, d
     assert ok.status_code == 200 and ok.get_json()["ok"]
 
 
-def test_both_pin_pads_are_still_on_the_page():
+def test_the_web_keeps_only_the_sign_up_pad():
+    """The staff portal is in the iPhone app (owner, 9/30/26); the web page
+    keeps create-your-account (the A2P opt-in page), not a PIN sign-in."""
     page = _read("staff_login.html")
-    assert "'.pad button[data-d]'" in page and "'.pad button[data-sd]'" in page
-    assert "function submit()" in page or "submit()" in page
-
-
-def test_the_sign_in_pad_can_enter_every_pin_length_the_server_accepts():
-    for n in _auto_submit_lengths(_read("staff_login.html"), "pin"):
-        assert n >= auth.PIN_MAX_LENGTH, "auto-submits at %d digits" % n
+    assert "'.pad button[data-sd]'" in page
+    assert "'.pad button[data-d]'" not in page and "window.submitPin" not in page
 
 
 def test_the_self_signup_pad_can_enter_every_pin_length_the_server_accepts():
@@ -240,19 +237,10 @@ def test_the_link_page_dates_are_mdy(client, db_path):
         assert re.fullmatch(MDY, d.strip()), d
 
 
-def test_the_portal_has_an_mdy_formatter():
-    assert "function mdyShort(iso)" in _read("staff_portal.html")
 
 
-def test_the_portal_last_saved_line_is_mdy():
-    assert "'Last saved ' + esc(String(d.updated_at).slice(0, 10))" not in _read("staff_portal.html")
 
 
-def test_the_portal_time_off_rows_are_mdy():
-    page = _read("staff_portal.html")
-    render = page[page.index("function toRender(d)"):page.index("function loadTimeOff()")]
-    when = re.search(r"var when = ([^;]*);", render).group(1)
-    assert "mdyShort(" in when or "fmtShort(" in when, when
 
 
 # ── CLIENT-46: time-off double submit ───────────────────────────────────────
@@ -311,10 +299,6 @@ def test_two_overlapping_time_off_requests_store_one_row(db_path, _redirect, mon
     assert len(time_off.mine(rid, "Sofia R.", db_path=db_path)) == 1
 
 
-def test_the_time_off_button_is_disabled_while_sending():
-    page = _read("staff_portal.html")
-    handler = page[page.index("$('to-send').onclick"):page.index("function loadTimeOff()")]
-    assert ".disabled = true" in handler or ".disabled=true" in handler, handler
 
 
 # ── CLIENT-47: an expired shift session ─────────────────────────────────────
@@ -326,29 +310,12 @@ def test_an_expired_shift_session_is_told_so_in_json(client, db_path):
     assert r.get_json()["session_expired"] is True
 
 
-def test_the_portal_sends_an_expired_session_back_to_sign_in():
-    assert "session_expired" in _read("staff_portal.html")
 
 
 # ── the rest of the portal ──────────────────────────────────────────────────
 
-def test_the_task_checkbox_handler_still_posts():
-    page = _read("staff_portal.html")
-    assert "/staff/api/tasks/complete" in page
 
 
-def test_a_failed_task_toggle_is_shown_to_the_employee():
-    page = _read("staff_portal.html")
-    i = page.index("'/staff/api/tasks/complete'")
-    chain = page[i:page.index("});", page.index(".catch(", i)) + 3]
-    assert "d.ok" in chain or "!r.ok" in chain, chain
 
 
-def test_the_task_date_does_not_come_from_the_browser_clock():
-    page = _read("staff_portal.html")
-    today_fn = page[page.index("function today()"):page.index("}", page.index("function today()")) + 1]
-    assert "new Date()" not in today_fn, today_fn
 
-
-def test_the_portal_reports_errors_without_alert():
-    assert "window.alert(" not in _read("staff_portal.html")
