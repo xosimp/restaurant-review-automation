@@ -13002,6 +13002,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Every dropdown in Account settings is the size of the controls beside
    it — the bare selects rendered at the browser's default, far smaller. */
 #panel-account .ac-row .c .ac-select,#panel-account .ac-inline .ac-select{width:auto;min-width:200px}
+/* Pay by role: each role opens to its people (owner, 9/30/26). */
+.tg-role+.tg-role{border-top:1px solid var(--ac-line,var(--hb-line2))}
+.tg-role .tg-role-open{margin-left:10px;font-size:13px}
+.tg-people{margin:0 0 10px 14px;padding-left:12px;border-left:2px solid var(--ember)}
+.tg-people .tg-person .l span{font-size:14.5px;color:var(--ink2)}
+.tg-pos{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
+.tg-pos-l{font-size:12.5px;color:var(--ink3);margin-left:8px}
 #panel-account .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
 .ac-card-h p{margin:3px 0 0;font-size:13.5px;color:var(--ink3);line-height:1.5}
@@ -13466,7 +13473,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="ac-row"><div class="l"><b>Payroll week starts</b><span>Overtime is counted over this week.</span></div>
             <div class="c"><select class="ac-select" id="as-tg-week_start_day" aria-label="Payroll week starts" data-tg="week_start_day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
         </div>
-        <div class="lb2-sub" style="margin-top:14px">Pay by role<small>per hour · blank uses the blended rate</small></div>
+        <div class="lb2-sub" style="margin-top:14px">Pay by role<small>per hour · blank uses the blended rate · open a role to give one person their own rate</small></div>
         <div id="as-tg-roles" class="ac-rows"></div>
         <!-- Salaried staff (owner, 9/28/26): paid a salary, not by the hour.
              Their punches leave hourly labor; Labor and the daily report show
@@ -33442,7 +33449,27 @@ window.cavPalette = cavPalette;
     for (i = 0; i < roles.length; i++) {
       var cur = null, rk;
       for (rk in rates) if (rates.hasOwnProperty(rk) && rk.toLowerCase() === roles[i].toLowerCase()) cur = rates[rk];
-      h += '<div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b></div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
+      // Each role opens to its people (owner, 9/30/26: most hosts and cooks
+      // make the same, a few make more): what the POS pays someone shows as
+      // it is and wins; anyone else can have a rate of their own.
+      var ppl = (t.people_by_role || {})[roles[i]] || [], j, own = 0;
+      for (j = 0; j < ppl.length; j++) if (ppl[j].rate !== null && ppl[j].rate !== undefined) own++;
+      var roleRate = cur !== null ? cur : (t.hourly_rate || '');
+      h += '<div class="tg-role"><div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b>'
+        + (ppl.length ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm tg-role-open" data-tg-role-open aria-expanded="false">' + ppl.length + (ppl.length === 1 ? ' person' : ' people') + (own ? ' \u00b7 ' + own + ' with their own rate' : '') + ' \u2193</button>' : '')
+        + '</div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
+      if (ppl.length) {
+        h += '<div class="tg-people" hidden>';
+        for (j = 0; j < ppl.length; j++) {
+          var pp = ppl[j];
+          h += '<div class="ac-row tg-person"><div class="l"><span>' + e(pp.name) + '</span></div><div class="c">'
+            + (pp.pos_rate ? '<span class="tg-pos hb-num">$' + e(Number(pp.pos_rate).toFixed(2)) + '</span><span class="tg-pos-l">from your POS</span>'
+               : '<input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-person="' + e(pp.name) + '" value="' + (pp.rate === null || pp.rate === undefined ? '' : e(pp.rate)) + '" placeholder="' + e(roleRate) + '" aria-label="' + e(pp.name) + ' hourly rate"' + (ro ? ' disabled' : '') + '>')
+            + '</div></div>';
+        }
+        h += '</div>';
+      }
+      h += '</div>';
     }
     // Roles whose every person is salaried have no hourly rate (owner, 9/30/26).
     var salR = t.salaried_roles || [];
@@ -33517,8 +33544,26 @@ window.cavPalette = cavPalette;
     if (isNaN(v) || v <= 0) { other.value = ''; return; }
     other.value = tgRev(pair, pair === 'monthly_revenue_target' ? v * TG_WPM : v / TG_WPM);
   });
+  // A role's people open under it.
+  document.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('[data-tg-role-open]') : null; if (!b) return;
+    var wrap = b.closest('.tg-role'), list = wrap ? wrap.querySelector('.tg-people') : null; if (!list) return;
+    list.hidden = !list.hidden;
+    b.setAttribute('aria-expanded', list.hidden ? 'false' : 'true');
+    b.textContent = b.textContent.replace(/[\u2191\u2193]$/, list.hidden ? '\u2193' : '\u2191');
+  });
   document.addEventListener('change', function (ev) {
     var t = ev.target; if (!t || !t.getAttribute || !_tg) return;
+    var person = t.getAttribute('data-tg-person');
+    if (person !== null) {
+      // One person per save (never the whole list): blank goes back to the role's rate.
+      status('as-tg-status', 'Saving\u2026');
+      postJ('/api/account/targets', {person_rate: {name: person, rate: t.value === '' ? null : +t.value}}, function (d) {
+        if (d.ok) { _tg.targets = d.targets; status('as-tg-status', 'Saved'); }
+        else { status('as-tg-status', d.error || 'Could not save', true); tgRender(); }
+      });
+      return;
+    }
     var f = t.getAttribute('data-tg'), role = t.getAttribute('data-tg-role'), body = {};
     if (!f && role === null) return;
     var rev = f === 'monthly_revenue_target' || f === 'weekly_revenue_target';

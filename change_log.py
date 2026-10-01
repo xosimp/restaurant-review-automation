@@ -91,7 +91,7 @@ _K = {
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "role_strength_json", "shift_leader_rules_json",
               "section_count", "sched_notes"),
-    "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json"),
+    "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json", "person_rates_json"),
     "setting": ("name", "owner_email", "owner_name", "owner_phone", "mailing_address", "location_group",
                 "location_name", "timezone", "week_start_day", "fiscal_period_scheme", "fiscal_week_start_dow",
                 "fiscal_year_start", "fiscal_years_json", "dsr_gross_basis", "data_retention_months",

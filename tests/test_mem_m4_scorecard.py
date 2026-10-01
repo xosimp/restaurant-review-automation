@@ -142,3 +142,16 @@ def test_the_nightly_pass_writes_the_scorecard():
     out = learning_memory.nightly(rid)
     assert out["steps"]["scorecard"]["written"] >= 1
     assert lsc.scorecards(rid)[-1]["metrics"]["acceptance"]["n"] == 4
+
+
+def test_a_months_last_evening_counts_in_that_month():
+    """9/30/26: Ask feedback stamped 10/1 03:00 UTC is the evening of 9/30 in
+    Chicago - it belongs to September's scorecard, not October's. The month
+    was read against UTC stamps as if they were local dates."""
+    from datetime import date as _d
+    rid = _rid("Boundary Co")
+    _exec("UPDATE restaurants SET timezone='America/Chicago' WHERE id=?", (rid,))
+    _exec("INSERT INTO ask_feedback (restaurant_id, message_id, helpful, created_at) VALUES (?,?,?,?)",
+          (rid, 1, 1, "2026-10-01 03:00:00"))
+    assert lsc.compute_month(rid, _d(2026, 9, 1))["metrics"]["ask_helpful_rate"]["n"] == 1
+    assert lsc.compute_month(rid, _d(2026, 10, 1))["metrics"]["ask_helpful_rate"]["n"] == 0

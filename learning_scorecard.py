@@ -114,6 +114,23 @@ def _month_bounds(d):
     return first, nxt - timedelta(days=1)
 
 
+def _utc_stamps(restaurant_id, start, end, db_path=None):
+    """The local month [start, end] as UTC "YYYY-MM-DD HH:MM:SS" bounds for
+    the columns stamped datetime('now') (approved_at, created_at): read
+    against local dates, the last hours of a month west of UTC counted in
+    the next one (9/30/26). Falls back to the plain dates."""
+    try:
+        from datetime import datetime as _dt, time as _tm, timezone as _tz
+        from time_utils import restaurant_tz
+        import models as _m
+        tz = restaurant_tz(_m.get_restaurant(restaurant_id, db_path or _m.DB_PATH))
+        lo = _dt.combine(start, _tm.min).replace(tzinfo=tz).astimezone(_tz.utc)
+        hi = _dt.combine(end + timedelta(days=1), _tm.min).replace(tzinfo=tz).astimezone(_tz.utc) - timedelta(seconds=1)
+        return lo.strftime("%Y-%m-%d %H:%M:%S"), hi.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return f"{start.isoformat()} 00:00:00", f"{end.isoformat()} 23:59:59"
+
+
 def _rate(k, n):
     return {"value": round(k / n, 3) if n else None, "k": int(k), "n": int(n)}
 
@@ -132,7 +149,7 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
     fatigued}}. Never raises."""
     start, end = _month_bounds(month_start)
     s, e = start.isoformat(), end.isoformat()
-    e_stamp = f"{e} 23:59:59"
+    s_stamp, e_stamp = _utc_stamps(restaurant_id, start, end, db_path)
     out = {"metrics": {}, "forecast_error_by_kind": {}, "fatigue": None, "month": start.strftime("%Y-%m")}
     try:
         conn = get_conn(db_path)
@@ -142,14 +159,14 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
         r = _q(conn, "SELECT SUM(CASE WHEN edit_category IN ('light','heavy','rewrite') THEN 1 ELSE 0 END) AS edited, "
                      "COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                      "AND draft_response IS NOT NULL AND edit_category IS NOT NULL "
-                     "AND approved_at >= ? AND approved_at <= ?", (restaurant_id, s, e_stamp))
+                     "AND approved_at >= ? AND approved_at <= ?", (restaurant_id, s_stamp, e_stamp))
         if r:
             out["metrics"]["reply_edit_rate"] = _rate(r[0]["edited"] or 0, r[0]["n"] or 0)
         # Never an admin's rating (support, view-as) — excluded as every
         # other ask_feedback reader does (memory re-audit 9/29/26, QUALITY-19).
         r = _q(conn, "SELECT SUM(helpful) AS k, COUNT(*) AS n FROM ask_feedback WHERE restaurant_id=? "
                      "AND COALESCE(authority,'') != 'admin' "
-                     "AND created_at >= ? AND created_at <= ?", (restaurant_id, s, e_stamp))
+                     "AND created_at >= ? AND created_at <= ?", (restaurant_id, s_stamp, e_stamp))
         if r:
             out["metrics"]["ask_helpful_rate"] = _rate(r[0]["k"] or 0, r[0]["n"] or 0)
         rows = _q(conn, "SELECT kind, error_pct FROM forecast_log WHERE restaurant_id=? AND error_pct IS NOT NULL "
@@ -184,7 +201,7 @@ def compute_month(restaurant_id, month_start, db_path=None) -> dict:
         import rec_learning
         conn = get_conn(db_path)
         try:
-            eps = rec_learning._load(conn, restaurant_id, since=f"{s} 00:00:00", lean=True)
+            eps = rec_learning._load(conn, restaurant_id, since=s_stamp, lean=True)
         finally:
             conn.close()
         eps = [x for x in eps if x.get("shown") and str(x.get("created_at") or "") <= e_stamp

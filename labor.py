@@ -679,6 +679,11 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         _day_fit = _rthr.detail(restaurant_id, "labor_over_day") if is_live else None
     except Exception:
         _day_margin, _day_fit = None, None
+    try:
+        from models import get_restaurant as _gr_pr, person_rates as _prs
+        _person_rates = _prs(_gr_pr(restaurant_id))
+    except Exception:
+        _person_rates = {}
     _sal_day = 0.0
     if with_salaries and is_live:
         try:
@@ -692,7 +697,7 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
                             role_rates=role_rates,
                             week_start_day=get_week_start_day(restaurant_id),
                             covers_by_date=covers_by_date, over_margin=_day_margin,
-                            salaried_per_day=_sal_day)
+                            salaried_per_day=_sal_day, person_rates=_person_rates)
     result['over_margin'] = _day_margin
     result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
@@ -1003,7 +1008,7 @@ def _covers_for_shifts(restaurant_id, shifts):
     return _covers.by_date(restaurant_id, dates[0], dates[-1])
 
 
-def _shift_rate(shift: dict, role_rates: dict, fallback: float) -> float:
+def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None) -> float:
     """Return the hourly rate for a single shift based on role.
 
     Matched case- and whitespace-insensitively. The role names an owner
@@ -1022,6 +1027,12 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float) -> float:
         paid = 0.0
     if 0 < paid <= 500:
         return paid
+    # This person's own rate, where the owner set one (models.person_rates):
+    # the host or cook who makes more than the rest of their role.
+    if person_rates:
+        own = person_rates.get(" ".join(str(shift.get("employee") or "").lower().split()))
+        if own:
+            return own
     default = role_rates.get("_default", fallback)
     raw = shift.get("role", "") or ""
     if raw in role_rates:
@@ -1104,7 +1115,8 @@ def analyse_shifts(shifts: list[dict],
                    week_start_day: int = 0,
                    covers_by_date: dict = None,
                    over_margin: float = None,
-                   salaried_per_day: float = 0.0) -> dict:
+                   salaried_per_day: float = 0.0,
+                   person_rates: dict = None) -> dict:
     """Compute labor metrics from raw shift data.
 
     salaried_per_day: one trading day's share of the salaries
@@ -1211,7 +1223,7 @@ def analyse_shifts(shifts: list[dict],
         except (TypeError, ValueError):
             sched = 0.0
         actual = _shift_hours(s)
-        rate   = _shift_rate(s, role_rates, hourly_rate)
+        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates)
 
         by_day[day]["scheduled"] += sched
         by_day[day]["actual"]    += actual
@@ -1257,7 +1269,7 @@ def analyse_shifts(shifts: list[dict],
             continue
         ot_hours = wk_hours - OVERTIME_THRESHOLD_HOURS
         overtime_hours_total += ot_hours
-        blended = (sum(_shift_hours(r) * _shift_rate(r, role_rates, hourly_rate) for r in rows)
+        blended = (sum(_shift_hours(r) * _shift_rate(r, role_rates, hourly_rate, person_rates) for r in rows)
                    / wk_hours) if wk_hours else hourly_rate
         premium = ot_hours * blended * (OVERTIME_MULTIPLIER - 1.0)
         overtime_premium += premium
@@ -1502,7 +1514,7 @@ def analyse_shifts(shifts: list[dict],
     for s in shifts:
         role = s.get("role", "Unknown")
         actual = _shift_hours(s)
-        rate   = _shift_rate(s, role_rates, hourly_rate)
+        rate   = _shift_rate(s, role_rates, hourly_rate, person_rates)
         by_role[role]["hours"] += actual
         by_role[role]["labor_cost"] += actual * rate
         by_role[role]["headcount"].add(s.get("employee", "Unknown"))

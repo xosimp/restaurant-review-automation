@@ -5039,6 +5039,36 @@ def _targets_payload(rid):
         _nocl = []
     _nocl_low = {x.lower() for x in _nocl}
     roles = [x for x in roles if x.lower() not in _nocl_low]
+    # Each role's people, for the per-person rates (owner, 9/30/26): what
+    # the POS pays them (their latest punch's pay_rate - it beats any rate
+    # set here) and their own rate where one is set.
+    from models import person_rates as _prs, salaried_name_key as _snk
+    _own = _prs(r)
+    _pos_pay = {}
+    try:
+        import labor as _lab_pp
+        for sh in sorted(_lab_pp.load_shifts_for_restaurant(rid) or [], key=lambda x: str(x.get("date") or "")):
+            try:
+                pay = float(sh.get("pay_rate") or 0)
+            except (TypeError, ValueError):
+                pay = 0.0
+            if pay > 0:
+                _pos_pay[_snk(sh.get("employee"))] = round(pay, 2)
+    except Exception:
+        _pos_pay = {}
+    _sal_keys = {_snk(x["name"]) for x in _sal}
+    people_by_role = {}
+    try:
+        for e in _ss.roster(rid):
+            role, nm = (e.get("role") or "").strip(), (e.get("name") or "").strip()
+            if not role or not nm or role.lower() in _nocl_low or _snk(nm) in _sal_keys:
+                continue
+            people_by_role.setdefault(role, []).append(
+                {"name": nm, "pos_rate": _pos_pay.get(_snk(nm)), "rate": _own.get(_snk(nm))})
+    except Exception:
+        people_by_role = {}
+    for v in people_by_role.values():
+        v.sort(key=lambda x: x["name"].lower())
     return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
             # The same target by the week (models.weekly_revenue_target):
@@ -5047,6 +5077,7 @@ def _targets_payload(rid):
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
             "salaried_roles": sorted(_nocl, key=str.lower),
+            "people_by_role": people_by_role,
             # Salaried people (models.salaried_staff): costed by salary beside
             # hourly labor, never by the hour. The owner's alone (_do_targets_get);
             # `names` fills the add box so a name matches the punches exactly.
@@ -5118,7 +5149,7 @@ def _do_targets_get(u):
     t = _targets_payload(_rid(u))
     if not _sees_pay(u):
         # Wages are the owner's and the schedule sender's (F2-20).
-        t["role_rates"], t["hourly_rate"] = {}, None
+        t["role_rates"], t["hourly_rate"], t["people_by_role"] = {}, None, {}
         t["sources"].pop("hourly_rate", None)
     if not _principal(u):
         # Salaries are named people's pay: the owner's alone.
@@ -5175,6 +5206,31 @@ def _do_targets_set(u):
                 return {"ok": False, "error": f"The rate for {role} must be between $2 and $250 an hour."}, 400
             rates[role] = round(rate, 2)
         upd["role_rates_json"] = _json.dumps(rates) if rates else None
+    if "person_rate" in b:
+        # One person's own hourly rate (models.person_rates), one per save:
+        # {"name", "rate"} sets it, a blank rate clears it back to the role's.
+        pr = b.get("person_rate")
+        if not isinstance(pr, dict):
+            return {"ok": False, "error": "Give a name and an hourly rate."}, 400
+        from models import person_rates as _prs, salaried_name_key as _snk, PERSON_RATE_BOUNDS
+        name = " ".join(str(pr.get("name") or "").split())[:80]
+        if not name:
+            return {"ok": False, "error": "Pick the person."}, 400
+        try:
+            cur = _json.loads(get_restaurant(_rid(u)).person_rates_json or "{}") or {}
+        except (TypeError, ValueError):
+            cur = {}
+        cur = {k: v for k, v in cur.items() if _snk(k) != _snk(name)}
+        rate = pr.get("rate")
+        if rate not in (None, ""):
+            try:
+                rate = float(rate)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"The rate for {name} must be a number."}, 400
+            if not PERSON_RATE_BOUNDS[0] <= rate <= PERSON_RATE_BOUNDS[1]:
+                return {"ok": False, "error": f"The rate for {name} must be between $2 and $250 an hour."}, 400
+            cur[name] = round(rate, 2)
+        upd["person_rates_json"] = _json.dumps(cur) if cur else None
     if "salaried_add" in b or "salaried_remove" in b:
         # One person per save, read-modify-write here: an add or a remove
         # never sends the whole list, so nothing typed elsewhere is lost.

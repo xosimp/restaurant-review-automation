@@ -195,3 +195,38 @@ def test_a_role_whose_people_are_all_salaried_has_no_hourly_rate_to_set(db_path,
     if code == 200:
         assert got["targets"]["salaried_roles"] == []
     assert "t.salaried_roles" in SRC
+
+
+def test_one_person_can_have_their_own_rate_under_their_roles(db_path, monkeypatch):
+    """Owner, 9/30/26: most hosts and cooks make the same, a few make more.
+    A shift costs the POS's own pay first, then the person's own rate, then
+    the role's; the rate saves one person at a time and blank clears it."""
+    import labor
+    import staff_settings
+    import strategy_routes as sr
+    rates = {"Host AM": 15.0, "_default": 26.0}
+    own = {"kailey gordon": 17.5}
+    assert labor._shift_rate({"employee": "Kailey  Gordon", "role": "Host AM"}, rates, 26.0, own) == 17.5
+    assert labor._shift_rate({"employee": "Ana B.", "role": "Host AM"}, rates, 26.0, own) == 15.0
+    assert labor._shift_rate({"employee": "Kailey Gordon", "role": "Host AM", "pay_rate": "16"}, rates, 26.0, own) == 16.0
+
+    rid = models.create_restaurant(_r(), db_path=db_path)
+    monkeypatch.setattr(staff_settings, "roster", lambda *a, **k: [
+        {"name": "Kailey Gordon", "role": "Host AM"}, {"name": "Ana B.", "role": "Host AM"}])
+    owner = {"id": 1, "restaurant_id": rid, "role": "owner"}
+    orig = sr._body
+    try:
+        sr._body = lambda: {"person_rate": {"name": "Kailey Gordon", "rate": 17.5}}
+        out, code = sr._do_targets_set(owner)
+        assert code == 200 and models.person_rates(models.get_restaurant(rid)) == {"kailey gordon": 17.5}
+        ppl = out["targets"]["people_by_role"]["Host AM"]
+        assert [(p["name"], p["rate"]) for p in ppl] == [("Ana B.", None), ("Kailey Gordon", 17.5)]
+        sr._body = lambda: {"person_rate": {"name": "Kailey Gordon", "rate": 400}}
+        assert sr._do_targets_set(owner)[1] == 400
+        sr._body = lambda: {"person_rate": {"name": "kailey gordon", "rate": ""}}
+        sr._do_targets_set(owner)
+        assert models.person_rates(models.get_restaurant(rid)) == {}
+    finally:
+        sr._body = orig
+    assert "person_rates_json" in models.PAY_FIELDS
+    assert "data-tg-person" in SRC and "person_rate: {name: person" in SRC
