@@ -84,3 +84,14 @@ def test_the_phantom_people_and_their_questions_are_removed(db_path, rid):
     row = _rows(db_path, "SELECT subject, attribute, person_id FROM capability_changes WHERE restaurant_id=?", (rid,))[0]
     assert row == {"subject": "Antonio Corona Martinez", "attribute": "overall", "person_id": real}
     assert people.repair_labelled_people(db_path=db_path)["people"] == 0
+
+
+def test_an_issue_notification_says_where_it_came_from_never_its_text():
+    """Owner, 10/1/26: "An issue was opened" said nothing about where."""
+    import client_api
+    refs = {("issue", 3): {"kind": "no_show"}, ("issue", 4): {"kind": "loss"}, ("issue", 5): {"kind": "new_kind"}}
+    row = lambda i: {"ref_kind": "issue", "ref_id": i}
+    assert client_api._issue_where(row(3), refs) == "Labor · a no-show"
+    assert client_api._issue_where(row(4), refs) == "Operations · comps and voids"
+    assert client_api._issue_where(row(5), refs) == "Operations"
+    assert client_api._issue_where({"ref_kind": None, "ref_id": None}, refs) is None

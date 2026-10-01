@@ -2206,6 +2206,11 @@ function pastDueFix(btn) {
        where owners can easily view all reports instead of always going to
        the home page"): the daily report panel, opened on its list. #}
     {% if restaurant.dsr_enabled is none or restaurant.dsr_enabled %}<button class="tab" role="tab" id="tab-reports" onclick="if(window.dsrOpen)dsrOpen('list')">Reports</button>{% endif %}
+    {# The Schedule Studio as a tab of its own (owner, 10/1/26: "way too far
+       down on the labor page"): it opens docked under the header and these
+       tabs, with every stage (Setup, Build, Summary, Schedule, Publish,
+       History) inside it. Another tab closes it. #}
+    {% if mod_labor %}<button class="tab" role="tab" id="tab-schedule" onclick="if(window.studioOpen)studioOpen()">Schedule</button>{% endif %}
     {# Home and Reports read across the modules; a hairline sets them apart
        from the modules themselves (owner, 9/30/26). #}
     <span class="tab-sep" aria-hidden="true"></span>
@@ -6716,9 +6721,9 @@ svg:hover .hb-xh{opacity:1}
    round (::before, masked to the border) - the old hairline was a straight
    2px line across the top that faded out before the corners. */
 #panel-dsr .dr-score{border-color:transparent;isolation:isolate;
-  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 26.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 21.75%,transparent) 7.1%,color-mix(in srgb,var(--ember) 17.90%,transparent) 14.3%,color-mix(in srgb,var(--ember) 14.47%,transparent) 21.4%,color-mix(in srgb,var(--ember) 11.45%,transparent) 28.6%,color-mix(in srgb,var(--ember) 8.83%,transparent) 35.7%,color-mix(in srgb,var(--ember) 6.60%,transparent) 42.9%,color-mix(in srgb,var(--ember) 4.74%,transparent) 50.0%,color-mix(in srgb,var(--ember) 3.24%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.06%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.19%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.58%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.22%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.04%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 14.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 11.71%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 9.64%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 7.79%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 6.17%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 4.76%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 3.55%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 2.55%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.11%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 0.64%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.31%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.12%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.02%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.04%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.19%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.47%,transparent) 43.8%,color-mix(in srgb,var(--ember) 0.89%,transparent) 50.0%,color-mix(in srgb,var(--ember) 1.46%,transparent) 56.2%,color-mix(in srgb,var(--ember) 2.18%,transparent) 62.5%,color-mix(in srgb,var(--ember) 3.06%,transparent) 68.8%,color-mix(in srgb,var(--ember) 4.10%,transparent) 75.0%,color-mix(in srgb,var(--ember) 5.31%,transparent) 81.2%,color-mix(in srgb,var(--ember) 6.70%,transparent) 87.5%,color-mix(in srgb,var(--ember) 8.26%,transparent) 93.8%,color-mix(in srgb,var(--ember) 10.00%,transparent) 100.0%),var(--surface);
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 36.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 30.12%,transparent) 7.1%,color-mix(in srgb,var(--ember) 24.78%,transparent) 14.3%,color-mix(in srgb,var(--ember) 20.04%,transparent) 21.4%,color-mix(in srgb,var(--ember) 15.85%,transparent) 28.6%,color-mix(in srgb,var(--ember) 12.23%,transparent) 35.7%,color-mix(in srgb,var(--ember) 9.14%,transparent) 42.9%,color-mix(in srgb,var(--ember) 6.56%,transparent) 50.0%,color-mix(in srgb,var(--ember) 4.49%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.85%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.65%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.80%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.30%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.06%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 22.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 18.40%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 15.15%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 12.24%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 9.70%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 7.48%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 5.58%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 4.01%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 2.73%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 1.01%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.49%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.19%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.03%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.06%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.30%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.75%,transparent) 43.8%,color-mix(in srgb,var(--ember) 1.42%,transparent) 50.0%,color-mix(in srgb,var(--ember) 2.34%,transparent) 56.2%,color-mix(in srgb,var(--ember) 3.49%,transparent) 62.5%,color-mix(in srgb,var(--ember) 4.90%,transparent) 68.8%,color-mix(in srgb,var(--ember) 6.56%,transparent) 75.0%,color-mix(in srgb,var(--ember) 8.50%,transparent) 81.2%,color-mix(in srgb,var(--ember) 10.72%,transparent) 87.5%,color-mix(in srgb,var(--ember) 13.22%,transparent) 93.8%,color-mix(in srgb,var(--ember) 16.00%,transparent) 100.0%),var(--surface);
   box-shadow:inset 0 1px 0 var(--hb-sheen),0 2px 6px rgba(14,12,10,.06),0 34px 80px -36px var(--hb-glow)}
-[data-theme="dark"] #panel-dsr .dr-score{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 26.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 21.75%,transparent) 7.1%,color-mix(in srgb,var(--ember) 17.90%,transparent) 14.3%,color-mix(in srgb,var(--ember) 14.47%,transparent) 21.4%,color-mix(in srgb,var(--ember) 11.45%,transparent) 28.6%,color-mix(in srgb,var(--ember) 8.83%,transparent) 35.7%,color-mix(in srgb,var(--ember) 6.60%,transparent) 42.9%,color-mix(in srgb,var(--ember) 4.74%,transparent) 50.0%,color-mix(in srgb,var(--ember) 3.24%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.06%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.19%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.58%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.22%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.04%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 14.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 11.71%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 9.64%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 7.79%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 6.17%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 4.76%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 3.55%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 2.55%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.11%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 0.64%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.31%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.12%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.02%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.04%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.19%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.47%,transparent) 43.8%,color-mix(in srgb,var(--ember) 0.89%,transparent) 50.0%,color-mix(in srgb,var(--ember) 1.46%,transparent) 56.2%,color-mix(in srgb,var(--ember) 2.18%,transparent) 62.5%,color-mix(in srgb,var(--ember) 3.06%,transparent) 68.8%,color-mix(in srgb,var(--ember) 4.10%,transparent) 75.0%,color-mix(in srgb,var(--ember) 5.31%,transparent) 81.2%,color-mix(in srgb,var(--ember) 6.70%,transparent) 87.5%,color-mix(in srgb,var(--ember) 8.26%,transparent) 93.8%,color-mix(in srgb,var(--ember) 10.00%,transparent) 100.0%),var(--surface-glass),var(--surface);box-shadow:var(--elev-2),0 34px 80px -36px var(--hb-glow)}
+[data-theme="dark"] #panel-dsr .dr-score{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.09'/%3E%3C/svg%3E"),radial-gradient(75% 125% at 0% 0%,color-mix(in srgb,var(--ember) 36.00%,transparent) 0.0%,color-mix(in srgb,var(--ember) 30.12%,transparent) 7.1%,color-mix(in srgb,var(--ember) 24.78%,transparent) 14.3%,color-mix(in srgb,var(--ember) 20.04%,transparent) 21.4%,color-mix(in srgb,var(--ember) 15.85%,transparent) 28.6%,color-mix(in srgb,var(--ember) 12.23%,transparent) 35.7%,color-mix(in srgb,var(--ember) 9.14%,transparent) 42.9%,color-mix(in srgb,var(--ember) 6.56%,transparent) 50.0%,color-mix(in srgb,var(--ember) 4.49%,transparent) 57.1%,color-mix(in srgb,var(--ember) 2.85%,transparent) 64.3%,color-mix(in srgb,var(--ember) 1.65%,transparent) 71.4%,color-mix(in srgb,var(--ember) 0.80%,transparent) 78.6%,color-mix(in srgb,var(--ember) 0.30%,transparent) 85.7%,color-mix(in srgb,var(--ember) 0.06%,transparent) 92.9%,color-mix(in srgb,var(--ember) 0.00%,transparent) 100.0%),radial-gradient(60% 95% at 100% 100%,color-mix(in srgb,var(--ember2) 22.00%,transparent) 0.0%,color-mix(in srgb,var(--ember2) 18.40%,transparent) 7.1%,color-mix(in srgb,var(--ember2) 15.15%,transparent) 14.3%,color-mix(in srgb,var(--ember2) 12.24%,transparent) 21.4%,color-mix(in srgb,var(--ember2) 9.70%,transparent) 28.6%,color-mix(in srgb,var(--ember2) 7.48%,transparent) 35.7%,color-mix(in srgb,var(--ember2) 5.58%,transparent) 42.9%,color-mix(in srgb,var(--ember2) 4.01%,transparent) 50.0%,color-mix(in srgb,var(--ember2) 2.73%,transparent) 57.1%,color-mix(in srgb,var(--ember2) 1.74%,transparent) 64.3%,color-mix(in srgb,var(--ember2) 1.01%,transparent) 71.4%,color-mix(in srgb,var(--ember2) 0.49%,transparent) 78.6%,color-mix(in srgb,var(--ember2) 0.19%,transparent) 85.7%,color-mix(in srgb,var(--ember2) 0.03%,transparent) 92.9%,color-mix(in srgb,var(--ember2) 0.00%,transparent) 100.0%),linear-gradient(135deg,color-mix(in srgb,var(--ember) 0.00%,transparent) 25.0%,color-mix(in srgb,var(--ember) 0.06%,transparent) 31.2%,color-mix(in srgb,var(--ember) 0.30%,transparent) 37.5%,color-mix(in srgb,var(--ember) 0.75%,transparent) 43.8%,color-mix(in srgb,var(--ember) 1.42%,transparent) 50.0%,color-mix(in srgb,var(--ember) 2.34%,transparent) 56.2%,color-mix(in srgb,var(--ember) 3.49%,transparent) 62.5%,color-mix(in srgb,var(--ember) 4.90%,transparent) 68.8%,color-mix(in srgb,var(--ember) 6.56%,transparent) 75.0%,color-mix(in srgb,var(--ember) 8.50%,transparent) 81.2%,color-mix(in srgb,var(--ember) 10.72%,transparent) 87.5%,color-mix(in srgb,var(--ember) 13.22%,transparent) 93.8%,color-mix(in srgb,var(--ember) 16.00%,transparent) 100.0%),var(--surface-glass),var(--surface);box-shadow:var(--elev-2),0 34px 80px -36px var(--hb-glow)}
 #panel-dsr .dr-score::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.5px;pointer-events:none;z-index:1;
   background:conic-gradient(from 210deg at 30% 30%,var(--ember2),var(--ember) 25%,color-mix(in srgb,var(--ember) 45%,transparent) 50%,color-mix(in srgb,var(--ember) 30%,transparent) 62%,var(--ember) 85%,var(--ember2));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);opacity:.85}
@@ -9681,7 +9686,13 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    headline count in the number face, an ember mark, and its own action.
    Covers gets the ambient light because it is the one that is usually
    empty and matters most when it is. */
-.lb2-ops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:34px;padding-top:26px;border-top:1px solid var(--hb-line)}
+.lb2-ops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:40px}
+.lb2-cov-all{margin-top:12px}
+.lb2-cov-modal{position:fixed;inset:0;z-index:var(--z-modal);background:rgba(8,7,6,.72);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:16px}
+.lb2-cov-modal .box{position:relative;width:min(760px,100%);max-height:min(80vh,760px);overflow:auto;background:var(--surface);border:1px solid var(--hb-line,var(--paper3));border-radius:20px;padding:28px 28px 30px;box-shadow:0 30px 80px -20px rgba(0,0,0,.7)}
+.lb2-cov-modal h3{margin:4px 0 4px;font-size:22px;color:var(--ink)}
+.lb2-cov-modal .sub{font-size:14px;color:var(--ink3);margin-bottom:18px}
+.lb2-cov-modal .lb2-cov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .lb2-op{position:relative;padding:22px 24px 20px;border-radius:16px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
 [data-theme="dark"] .lb2-op{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
 .lb2-op:hover{transform:translateY(-1px)}
@@ -9735,7 +9746,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-bench .bar .tick.t{background:var(--hb-good)}.lb2-bench .bar .tick.h{background:var(--ink2)}
 /* The industry mark is a reference, not a verdict (Benchmarking #34): neutral ink, its source printed under the bar. */
 .lb2-bench .src{margin-top:8px;font-size:12.5px;color:var(--ink3);line-height:1.45}
-.lb2-money{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.lb2-money{display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:14px}
+/* One line: "Overtime premium · 28 days   $545" (owner, 10/1/26 - the label
+   wrapped in a third-width grid cell and pushed the dollars to a third line). */
+.lb2-money>div{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.lb2-money .l{white-space:nowrap}
+.lb2-money .x{margin-top:0!important}
+.lb2-sg .v .stat-n.lb2-over{color:var(--red)}
+.lb2-sg .v .stat-n.lb2-under{color:var(--green)}
 .lb2-money .l{font-size:12px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
 .lb2-money .x{font-family:'Space Grotesk',sans-serif;font-size:17.5px;font-weight:600;color:var(--ink);margin-top:2px}
 .lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}.lb2-money .x.warn{color:var(--hb-warn)}
@@ -10140,6 +10158,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-pill{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:3px 10px;background:var(--sf-recess);color:var(--ink3)}
 .ss-pill.sent{color:var(--hb-good)}.ss-pill.draft{color:var(--hb-warn)}
 /* Labor's launcher */
+.ss-launch[hidden]{display:none!important}
+/* Docked: the Studio sits under the dashboard header and tabs, so the
+   Schedule tab reads as the place it is (owner, 10/1/26). */
+body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .ss-launch{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-top:34px;background-image:var(--sf-ai);border-color:var(--sf-ai-line)}
 .ss-launch h2{font-family:'Clash Display',sans-serif;font-size:28px;font-weight:500;color:var(--ink);margin:6px 0 4px}
 .ss-launch-s{font-size:15px;color:var(--ink2);max-width:60ch}
@@ -10904,8 +10926,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="cap"><span>share of labor cost · hours · headcount</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Vs {{ _tl }}</span><i class="{% if not labor.is_live %}{% elif _lp > _lt + 3 %}{{ _tbad }}{% elif _lp > _lt %}warn{% elif _status_ok %}good{% endif %}">{% if not labor.is_live %}sample{% elif _lp > _lt + 8 %}needs attention{% elif _lp > _lt + 3 %}above target{% elif _lp > _lt %}slightly over{% elif not _status_ok %}— partial data{% elif _lp <= _lt - 3 %}well under target{% else %}on target{% endif %}</i></div>{# The industry benchmark for this restaurant's type only (benchmark_registry, NS4 H3): no entry, no industry mark. #}
       {% set _ind = savings_breakdown.labor_industry_pct %}
-      <div class="v"><span class="hb-num stat-n">{{ _lp }}</span><small>% vs <span class="hb-num">{{ _lt }}</span>% · {{ _tl }}{% if _ind %} · <span class="hb-num">{{ _ind }}</span>% industry benchmark{% endif %}</small></div>
-      <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span>{% if _ind %}<span style="left:{{ (_ind/50*100)|int }}%;color:var(--ink2)">{{ _ind }}% industry</span>{% endif %}<span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else ('bad' if _lp > _lt + 8 else '') }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div>{% if _ind %}<div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div>{% endif %}</div>{% if _ind and savings_breakdown.labor_industry_basis %}<div class="src">Industry mark <span class="hb-num">{{ _ind }}</span>%: {{ savings_breakdown.labor_industry_basis }}. It includes benefits; yours is wages from your shifts, so it is a reference, not a like-for-like target.</div>{% endif %}</div>
+      {# Over target reads red, at or under green - the figure and its bar
+         both (owner, 10/1/26); sample data stays neutral. #}
+      <div class="v"><span class="hb-num stat-n {% if labor.is_live %}{{ 'lb2-over' if _lp > _lt else 'lb2-under' }}{% endif %}">{{ _lp }}</span><small>% vs <span class="hb-num">{{ _lt }}</span>% · {{ _tl }}{% if _ind %} · <span class="hb-num">{{ _ind }}</span>% industry benchmark{% endif %}</small></div>
+      <div class="lb2-bench"><div class="scale"><span style="left:0;transform:none">0%</span><span style="left:{{ [(_lt/50*100), 96]|min|int }}%;color:var(--hb-good)">{{ _lt|int }}% target</span>{% if _ind %}<span style="left:{{ (_ind/50*100)|int }}%;color:var(--ink2)">{{ _ind }}% industry</span>{% endif %}<span style="right:0;left:auto;transform:none">50%</span></div><div class="bar"><div class="fill {{ 'good' if _lp <= _lt else 'bad' }}" style="width:{{ [(_lp/50*100), 100]|min|int }}%"></div><div class="tick t" style="left:{{ [(_lt/50*100), 100]|min|int }}%"></div>{% if _ind %}<div class="tick h" style="left:{{ (_ind/50*100)|int }}%"></div>{% endif %}</div>{% if _ind and savings_breakdown.labor_industry_basis %}<div class="src">Industry mark <span class="hb-num">{{ _ind }}</span>%: {{ savings_breakdown.labor_industry_basis }}. It includes benefits; yours is wages from your shifts, so it is a reference, not a like-for-like target.</div>{% endif %}</div>
       {# What counts as over target on one day (M4 thresholds): the larger
          of the stated 3 points and this restaurant's own daily swing, with
          the fit's basis behind the fold. #}
@@ -10937,6 +10961,15 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
       <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
     </section>
+  </div>
+  <div id="lb2-cov-modal" class="lb2-cov-modal" style="display:none" aria-labelledby="lb2-cov-modal-t">
+    <div class="box">
+      <button type="button" class="cbtn cbtn-close" aria-label="Close" onclick="cModal.close('lb2-cov-modal')">&#x2715;</button>
+      <div class="hb-kicker">Covers</div>
+      <h3 id="lb2-cov-modal-t">Every night on file</h3>
+      <div class="sub" id="lb2-cov-modal-sub"></div>
+      <div class="lb2-cov lb2-cov-grid" id="lb2-cov-modal-grid"></div>
+    </div>
   </div>
   <script>
   /* One hue per job family, the AM/PM halves of a family two shades of it
@@ -11035,7 +11068,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {# /schedule/studio serves this page and opens the Studio on load; the
      recent labor % is the measured one the summary's savings compare to. #}
   <script>window._SS_BOOT={{ 'true' if request.path == '/schedule/studio' else 'false' }};window._SS_TARGET={{ _lt|float }};window._SS_RECENT={{ ({'pct': (labor.overall_labor_pct|round(1)) if (labor.is_live and labor.overall_labor_pct and not labor.sales_data_missing) else None, 'days': labor.period_days or 14})|tojson }};</script>
-  <section class="hb-card ss-launch" id="ss-launch" data-nav="labor/schedule" aria-label="Schedule Studio">
+  {# The launcher moved to the Schedule tab (10/1/26); the card stays in
+     the page, hidden, for the scripts that read its status line. #}
+  <section class="hb-card ss-launch" id="ss-launch" data-nav="labor/schedule" aria-label="Schedule Studio" hidden>
     <div class="ss-launch-l">
       <div class="hb-kicker">Schedule</div>
       <h2>Schedule Studio</h2>
@@ -20147,6 +20182,17 @@ document.addEventListener('click',function(e){
     done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);
   }).catch(function(){done();});
 });
+var LB2_COV_SHOWN=16;
+function lb2CovChips(days,max){var h='',i;for(i=0;i<days.length&&i<max;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';return h;}
+function lb2CoversAll(){
+  var days=window._lb2CovDays||[],m=document.getElementById('lb2-cov-modal');if(!m||!days.length)return;
+  var tot=0,i;for(i=0;i<days.length;i++)tot+=(+days[i].covers||0);
+  var last=days[days.length-1],first=days[0];
+  document.getElementById('lb2-cov-modal-sub').innerHTML='<span class="hb-num">'+days.length+'</span> nights \u00b7 '+(window.num?window.num(mdy(last.date)+' \u2013 '+mdy(first.date)):esc(mdy(last.date)+' \u2013 '+mdy(first.date)))+' \u00b7 about <span class="hb-num">'+Math.round(tot/days.length)+'</span> a night';
+  document.getElementById('lb2-cov-modal-grid').innerHTML=lb2CovChips(days,days.length);
+  if(window.cModal)cModal.open('lb2-cov-modal');else m.style.display='flex';
+}
+function lb2CoversAllClose(){var m=document.getElementById('lb2-cov-modal');if(m)m.style.display='none';}
 function lb2LoadCovers(){
   var el=document.getElementById('lb2-covers-body');if(!el)return;
   var nEl=document.getElementById('lb2-covers-n'),vEl=document.getElementById('lb2-covers-v'),flag=document.getElementById('lb2-covers-flag');
@@ -20166,9 +20212,12 @@ function lb2LoadCovers(){
     // 9/30/26); a count typed here always wins over it.
     var fromPos=0;for(i=0;i<days.length;i++)if(days[i].source==='pos')fromPos++;
     var h=fromPos?'<div class="lb2-intro" style="margin-bottom:8px">Filled each night from your POS guest count. A number you enter below replaces that night\u2019s.</div>':'';
-    h+='<div class="lb2-cov">';
-    for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';
-    el.innerHTML=h+'</div>'+oh;
+    // Four full rows in the card (owner, 10/1/26); the rest in a modal, so
+    // the card stops growing with every night.
+    window._lb2CovDays=days;
+    h+='<div class="lb2-cov">'+lb2CovChips(days,LB2_COV_SHOWN)+'</div>';
+    if(days.length>LB2_COV_SHOWN)h+='<button type="button" class="cbtn cbtn-text cbtn-sm lb2-cov-all" onclick="lb2CoversAll()">Show all <span class="hb-num">'+days.length+'</span> nights</button>';
+    el.innerHTML=h+oh;
   }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});
 }
 document.addEventListener('click',function(e){
@@ -24135,6 +24184,7 @@ function studioOpen(opts) {
   if (!_ssOpen) {
     _ssOpen = true; st.hidden = false;
     document.body.classList.add('ss-open');
+    ssTabOn(true);
     if (!opts.fromBoot && !opts.fromPop && window.location.pathname !== '/schedule/studio' && window.history && history.pushState) {
       history.pushState({ss: 1}, '', '/schedule/studio'); _ssFromDash = true;
     }
@@ -24163,12 +24213,39 @@ function studioClose(opts) {
   swCloseEdit(true); ssTipHide();
   _ssOpen = false; st.hidden = true;
   document.body.classList.remove('ss-open');
+  if (!opts.toTab) ssTabOn(false);
   if (!opts.fromPop && window.location.pathname === '/schedule/studio') {
     if (_ssFromDash) { _ssFromDash = false; history.back(); }
     else { history.replaceState(null, '', '/#labor'); if (window.cavNav) cavNav('labor', {replace: true}); }
   }
   ssLaunchRefresh();
 }
+// The Schedule tab: active while the Studio is open; closing it gives the
+// tab bar back to the panel underneath. Any other tab closes the Studio
+// first (capture phase, before that tab's own click).
+var _ssPrevTab = null;
+function ssTabOn(on) {
+  var t = document.getElementById('tab-schedule'); if (!t) return;
+  var tabs = document.querySelectorAll('.tabs .tab'), i, act = null;
+  if (on) {
+    for (i = 0; i < tabs.length; i++) if (tabs[i] !== t && tabs[i].classList.contains('active')) act = tabs[i];
+    _ssPrevTab = act;
+    for (i = 0; i < tabs.length; i++) { tabs[i].classList.remove('active'); tabs[i].setAttribute('aria-selected', 'false'); }
+    t.classList.add('active'); t.setAttribute('aria-selected', 'true');
+    if (window._moveTabIndicator) _moveTabIndicator(t);
+  } else {
+    t.classList.remove('active'); t.setAttribute('aria-selected', 'false');
+    var back = _ssPrevTab || document.getElementById('tab-labor') || document.getElementById('tab-home');
+    if (back) { back.classList.add('active'); back.setAttribute('aria-selected', 'true'); if (window._moveTabIndicator) _moveTabIndicator(back); }
+    _ssPrevTab = null;
+  }
+}
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest ? e.target.closest('.tabs .tab') : null;
+  if (!t || t.id === 'tab-schedule' || !window._ssOpen) return;
+  studioClose({toTab: true});
+}, true);
+window.addEventListener('resize', function () { if (window._ssOpen) ssTabOn(true); });
 // Back and Forward cross the Studio's address; the dashboard's one router
 // (cavRoute) asks this first, so there is still one popstate owner.
 function studioOnRoute() {
@@ -34821,7 +34898,7 @@ window.cavPalette = cavPalette;
     cavNavRegister('schedule', function (p) {
       var id = parseInt(p.rest[0], 10);
       cavNavOpenModule('labor');
-      if (!id) { var s = document.querySelector('[data-nav="labor/schedule"]'); if (s) s.scrollIntoView({behavior: 'smooth', block: 'start'}); return true; }
+      if (!id) { if (window.studioOpen) studioOpen(); return true; }
       // A week opens in the Schedule Studio.
       if (window.studioOpen) studioOpen({stage: 'schedule'});
       openScheduleDraft(id);
@@ -35479,6 +35556,8 @@ function memRetagBody(was, now) {
      "Review them"); "labor/people" lands on Waiting on you. Anything else
      under labor is the router's. */
   if (window.cavNavRegister) cavNavRegister('labor', function (p) {
+    // The schedule is the Schedule tab now (10/1/26).
+    if (p.rest[0] === 'schedule') { if (window.studioOpen) { studioOpen(); return true; } }
     if (p.rest[0] === 'notes') { cavNavOpenModule('labor'); setTimeout(openNotes, 60); return true; }
     if (p.rest[0] === 'people') {
       cavNavOpenModule('labor');

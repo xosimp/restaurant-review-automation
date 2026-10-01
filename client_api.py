@@ -8622,6 +8622,8 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
             unread_after = after.get(r["restaurant_id"])
             text = " ".join(str(r["review_text"] or "").split())
             snippet = (text[:117] + "…") if len(text) > 120 else text
+            if not snippet and r["alert_type"] in ("issue", "issue_escalated"):
+                snippet = _issue_where(r, refs) or ""
             was_opened = int(r["id"]) in opened
             urgent = priority <= _push.P1_ACT_NOW
             settled = _notification_resolution(r, refs, superseded)
@@ -8664,6 +8666,27 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
     except Exception as e:
         print(f"[notifications] load failed for rid={restaurant_id}: {e}")
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
+
+
+# Where an issue came from, in a few words for the bell (owner, 10/1/26: "An
+# issue was opened" said nothing about where). The area and the kind only,
+# never the issue's own text — a loss issue's detail is the comps-and-voids
+# view's, and the row is opened for that.
+_ISSUE_WHERE = {"review": "Reviews · a guest review", "stock": "Food Cost · running low",
+                "labor": "Labor", "coverage": "Labor · a shift to cover", "no_show": "Labor · a no-show",
+                "checklist": "Operations · a checklist", "plan": "Operations · the weekly plan",
+                "loss": "Operations · comps and voids", "task_missed": "Labor · a missed task",
+                "task_sheet": "Labor · a task sheet", "task_pattern": "Labor · task sheets"}
+
+
+def _issue_where(r, refs):
+    try:
+        if r["ref_kind"] != "issue" or r["ref_id"] is None:
+            return None
+    except (IndexError, KeyError):
+        return None
+    ref = refs.get(("issue", int(r["ref_id"])))
+    return _ISSUE_WHERE.get((ref or {}).get("kind")) or ("Operations" if ref else None)
 
 
 def _notification_refs(conn, rows, restaurant_id):
