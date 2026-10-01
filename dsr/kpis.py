@@ -589,16 +589,23 @@ def _money(v):
     return f"${v:,.0f}"
 
 
+def _trend(delta, text, vs, tone):
+    """A tile's direction as a chip: {"dir": up|down|flat, "text", "vs", "tone"}."""
+    d = "up" if delta > 0 else "down" if delta < 0 else "flat"
+    return {"dir": d, "text": text, "vs": vs, "tone": tone}
+
+
 def _pace_tile(p, view):
     from dsr import access
     w = (p or {}).get("week")
     if not w:
         return None
-    sub, tone, bar = [], None, None
+    sub, tone, bar, trend = [], None, None, None
+    ly = w.get("last_year_pct")
     if view == access.OWNER and _num(w.get("budget_vs")):
         v = w["budget_vs"]
-        sub.append(f"{'+' if v >= 0 else '−'}{_money(abs(v))} vs {w.get('budget_label', 'budget').lower()}")
         tone = "good" if v >= 0 else "bad"
+        trend = _trend(v, _money(abs(v)), f"vs {w.get('budget_label', 'budget').lower()}", tone)
         if _num(w.get("budget_total")) and w["budget_total"] > 0:
             bar = {"value": w["net"], "max": w["budget_total"], "marker": w.get("budget_to_date"),
                    "label": f"{_money(w['net'])} of {_money(w['budget_total'])}"}
@@ -611,15 +618,13 @@ def _pace_tile(p, view):
             if _num(w.get("typical_per_night")):
                 need += f" · a typical one does {_money(w['typical_per_night'])}"
             sub.append(need)
-    elif _num(w.get("last_year_pct")):
-        v = w["last_year_pct"]
-        sub.append(f"{'↑' if v > 0 else '↓' if v < 0 else '→'} {abs(v):.1f}% vs last year")
-        tone = "good" if v >= 0 else "bad"
-    if _num(w.get("last_year_pct")) and view == access.OWNER:
-        v = w["last_year_pct"]
-        sub.append(f"{'↑' if v > 0 else '↓' if v < 0 else '→'} {abs(v):.1f}% vs last year")
+        if _num(ly):
+            sub.append(f"{'↑' if ly > 0 else '↓' if ly < 0 else '→'} {abs(ly):.1f}% vs last year")
+    elif _num(ly):
+        tone = "good" if ly >= 0 else "bad"
+        trend = _trend(ly, f"{abs(ly):.1f}%", "vs last year", tone)
     return {"key": "pace", "label": "Week to date", "value": w["net"], "value_text": _money(w["net"]),
-            "unit": "money", "sub": sub[:2], "tone": tone, "bar": bar,
+            "unit": "money", "sub": sub[:2], "tone": tone, "bar": bar, "trend": trend,
             "note": f"{w['nights_measured']} of {w['nights_total']} nights"}
 
 
@@ -633,35 +638,38 @@ def _tomorrow_tile(t, view):
     if not _num(pct):
         return None
     tgt = lab.get("target_pct")
-    tone = None
-    sub = []
+    tone, trend = None, None
     soft = lab.get("target_source") == "default"
     if _num(tgt):
         gap = round(pct - tgt, 1)
         # Over a target the owner never set is amber, never red (the
         # scorecard's rule, Benchmarking re-audit #10).
         tone = "good" if gap <= 0 else ("warn" if soft else "bad")
-        name = f"Cavnar AI's starting {tgt:g}%" if soft else f"the {tgt:g}% target"
-        sub.append(f"{abs(gap):.1f} pts {'over' if gap > 0 else 'under'} {name}" if gap else f"On {name}")
+        trend = _trend(gap, f"{abs(gap):.1f} pts", f"vs Cavnar AI's starting {tgt:g}%" if soft
+                       else f"vs the {tgt:g}% target", tone)
     cost = lab.get("salaried_total_cost") if view == access.OWNER and _num(lab.get("salaried_total_cost")) \
         else lab["hourly_cost"]
-    sub.append(f"{lab['hours']:g} hours · {_money(cost)} scheduled")
     return {"key": "tomorrow_labor", "label": f"{t.get('weekday') or 'Tomorrow'}'s labor", "value": pct,
-            "value_text": f"{pct:.1f}%", "unit": "pct", "sub": sub, "tone": tone,
+            "value_text": f"{pct:.1f}%", "unit": "pct", "sub": [f"{lab['hours']:g} hours · {_money(cost)} scheduled"],
+            "tone": tone, "trend": trend,
             "gauge": {"value": pct, "target": tgt, "soft": soft} if _num(tgt) else None,
             "note": "scheduled, against the forecast"}
 
 
 def _kpi_tile(k):
-    sub = []
-    if k.get("change"):
-        sub.append(k["change"]["text"])
+    sub, trend = [], None
+    ch = k.get("change") or {}
+    if _num(ch.get("delta")):
+        d = ch["delta"]
+        vs = ch.get("text", "").split(" vs ", 1)
+        trend = _trend(d, f"{abs(d):.1f}{' pts' if k.get('unit') == 'pct' else '★' if k.get('unit') == 'stars' else '%'}",
+                       ("vs " + vs[1]) if len(vs) == 2 else "", ch.get("tone"))
     if k.get("target"):
         sub.append(f"{k['target'].get('label', 'Target')} {k['target'].get('value_text')}")
     elif k.get("streak"):
         sub.append(k["streak"]["text"])
     out = {"key": k["key"], "label": k["label"], "value": k["value"], "value_text": k["value_text"],
-           "unit": k.get("unit"), "sub": sub[:2], "tone": (k.get("change") or {}).get("tone"),
+           "unit": k.get("unit"), "sub": sub[:1], "tone": ch.get("tone"), "trend": trend,
            "spark": k.get("spark") or [], "estimate": k.get("estimate")}
     t = k.get("target") or {}
     if k.get("unit") == "pct" and _num(t.get("value")):
@@ -669,10 +677,23 @@ def _kpi_tile(k):
     return out
 
 
+# The hero (owner, 10/1/26: "only one KPI card the visual hero"): the first
+# tile in the view's order that has a picture to carry it — the week's bar,
+# a gauge, a trend line or at least a direction. The next four are
+# secondary cards and the rest tertiary chips. Nothing is added: the same
+# six, ranked.
+SECONDARY_MAX = 4
+
+
+def _has_picture(t):
+    return bool(t.get("bar") or t.get("gauge") or len(t.get("spark") or []) >= 3 or t.get("trend"))
+
+
 def big(top, operations, pace_, tomorrow, view) -> list:
     """The six lead tiles for this view, in order, each
     {"key", "label", "value", "value_text", "unit", "sub": [≤2 lines],
-    "tone", "spark"?, "bar"?, "gauge"?, "note"?}."""
+    "tone", "trend": {dir, text, vs, tone}|None, "rank": hero|secondary|
+    tertiary, "spark"?, "bar"?, "gauge"?, "note"?}."""
     from dsr import access
     have = {k["key"]: k for k in list(top or []) + list(operations or []) if isinstance(k, dict) and k.get("key")}
     out = []
@@ -687,4 +708,10 @@ def big(top, operations, pace_, tomorrow, view) -> list:
             t = _kpi_tile(have[key]) if key in have else None
         if t:
             out.append(t)
+    hero = next((t for t in out if _has_picture(t)), out[0] if out else None)
+    if hero is not None:
+        out.remove(hero)
+        out.insert(0, hero)
+    for n, t in enumerate(out):
+        t["rank"] = "hero" if n == 0 else ("secondary" if n <= SECONDARY_MAX else "tertiary")
     return out

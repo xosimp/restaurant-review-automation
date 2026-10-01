@@ -311,14 +311,14 @@ def test_the_pace_tile_says_what_the_week_needs_and_never_a_negative():
                   "budget_total": 70000, "budget_left": 31580, "budget_to_date": 40000, "budget_label": "Budget",
                   "budget_per_night_needed": 31580, "typical_per_night": 9800, "last_year_pct": 4.2}}
     t = kpis._pace_tile(p, access.OWNER)
-    assert t["tone"] == "bad" and t["sub"][0].startswith("−$1,580")
-    assert "from the night left" in t["sub"][1] and t["bar"]["max"] == 70000
+    assert t["tone"] == "bad" and t["trend"] == {"dir": "down", "text": "$1,580", "vs": "vs budget", "tone": "bad"}
+    assert "from the night left" in t["sub"][0] and t["sub"][1] == "↑ 4.2% vs last year" and t["bar"]["max"] == 70000
     made = dict(p["week"], budget_left=-200, budget_vs=300)
     t2 = kpis._pace_tile({"week": made}, access.OWNER)
     assert any("already made" in s for s in t2["sub"]) and not any("Needs" in s for s in t2["sub"])
     mgr = kpis._pace_tile({"week": {"net": 38420, "nights_measured": 6, "nights_total": 7, "last_year_pct": 4.2}},
                           access.MANAGER)
-    assert mgr["sub"] == ["↑ 4.2% vs last year"] and mgr["bar"] is None
+    assert mgr["sub"] == [] and mgr["bar"] is None and mgr["trend"]["vs"] == "vs last year"
 
 
 def test_a_managers_pace_never_carries_the_budget(monkeypatch):
@@ -407,8 +407,14 @@ def test_tomorrows_labor_follows_the_labor_view_and_salaries_stay_the_owners():
 def test_the_report_leads_with_six_large_animated_tiles():
     assert "function bigHtml(list,p)" in SRC and "p.kpis_big" in SRC
     assert "cavCount(el,n," in SRC                     # the one count-up engine, never a private tween
-    assert ".dr-big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))" in SRC
-    assert "@media (prefers-reduced-motion:reduce){.dr-big:not(.on) .bt{opacity:1}" in SRC
+    # One hero at twice the width (owner, 10/1/26), the only card that keeps moving.
+    assert ".kx{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))" in SRC
+    assert ".kx-hero{grid-column:span 2;grid-row:span 2;" in SRC
+    for loop in (".kx.on .kx-hero .kx-glow{animation", ".kx.on .kx-hero .kx-spark .halo{animation",
+                 ".kx.on .kx-hero .kx-bar .tr i s{animation"):
+        assert loop in SRC
+    assert "@media (prefers-reduced-motion:reduce){.kx:not(.on)>.kx-hero" in SRC
+    assert "b.innerHTML=loading()+kxSkeleton();" in SRC
     for fn in ("hourHtml", "moneyHtml", "laborHtml", "serversHtml", "lossHtml", "tmrLaborHtml"):
         assert f"function {fn}(" in SRC
 
@@ -425,11 +431,11 @@ def test_over_a_starting_target_is_amber_never_red():
     t = {"weekday": "Wednesday", "labor": {"hours": 100, "hourly_cost": 2400, "hourly_pct": 32.0,
                                             "target_pct": 30.0, "target_source": "default"}}
     tile = kpis._tomorrow_tile(t, access.MANAGER)
-    assert tile["tone"] == "warn" and "Cavnar AI's starting 30%" in tile["sub"][0] and tile["gauge"]["soft"]
+    assert tile["tone"] == "warn" and tile["trend"]["vs"] == "vs Cavnar AI's starting 30%" and tile["gauge"]["soft"]
     owned = kpis._tomorrow_tile({"weekday": "Wednesday", "labor": dict(t["labor"], target_source="set")},
                                 access.MANAGER)
-    assert owned["tone"] == "bad" and "the 30% target" in owned["sub"][0]
-    assert ".bt-gauge.soft .gv{stroke:var(--hb-warn)}" in SRC
+    assert owned["tone"] == "bad" and owned["trend"]["vs"] == "vs the 30% target" and owned["trend"]["dir"] == "up"
+    assert ".kx-gauge.soft .gv{stroke:var(--hb-warn)}" in SRC
 
 
 def test_the_weeks_pace_reads_real_nights(db, monkeypatch):
@@ -448,3 +454,21 @@ def test_the_weeks_pace_reads_real_nights(db, monkeypatch):
     assert p["net"] == 3000.0 and p["nights_measured"] == 3 and p["budget_vs"] == -300.0
     assert p["budget_per_night_needed"] == round((7700 - 3000) / 4, 2) and p["typical_per_night"] == 1050.0
     assert p["last_year"] == 3000.0 and p["last_year_pct"] == 0.0
+
+
+def test_one_hero_four_secondary_and_the_rest_chips():
+    def k(key, spark=True):
+        return {"key": key, "label": key, "value": 1, "value_text": "1", "unit": "count",
+                "spark": [1, 2, 3] if spark else [], "change": None}
+    top = [k("prime_pct", spark=False), k("guests"), k("per_guest"), k("splh"), k("avg_ticket"), k("overtime")]
+    big = kpis.big(top, [], None, None, access.OWNER)
+    # prime cost has no picture tonight (no trend, no target), so the first
+    # tile that has one leads; the order is otherwise kept.
+    assert [t["rank"] for t in big] == ["hero", "secondary", "secondary", "secondary", "secondary", "tertiary"]
+    assert big[0]["key"] == "guests" and [t["key"] for t in big[1:]] == ["prime_pct", "per_guest", "splh",
+                                                                         "avg_ticket", "overtime"]
+
+
+def test_key_numbers_sit_above_the_day_after():
+    n = SRC[SRC.index("  function narrativeHtml(n,ck,p){"):SRC.index("  function drEffects(list){")]
+    assert n.index("h+=big?bigHtml(big,p):kpisHtml(p&&p.kpis,p);") < n.index("h+=tomorrowHtml(p&&p.tomorrow,n,p&&p.view);")
