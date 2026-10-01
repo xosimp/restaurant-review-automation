@@ -6376,10 +6376,25 @@ svg:hover .hb-xh{opacity:1}
 .dr-views{display:inline-flex;gap:6px;flex-wrap:wrap}
 .dr-views .cbtn[aria-pressed="true"]{border-color:var(--ember);color:var(--ember);background:var(--hb-tint)}
 /* The Reports tab's list: one row per night, the 3-second status of each. */
-.dr-list{padding:0!important;overflow:hidden}
+/* No overflow clip: a hovered row lifts and scales past the card's edge,
+   so the end rows carry the card's rounding themselves. */
+.dr-list{padding:0!important}
+#panel-dsr .dr-list:hover{transform:none}
 #panel-dsr .dr-list-row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:4px 18px;align-items:center;justify-content:stretch;width:100%;height:auto;min-height:0;text-align:left;white-space:normal;line-height:1.35;padding:14px 22px;background:none;border:0;border-radius:0;box-shadow:none;border-top:1px solid var(--hb-line2);color:var(--ink);font-weight:400;font-size:inherit}
 #panel-dsr .dr-list-row:first-child{border-top:none}
-#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{background:var(--hb-tint)}
+#panel-dsr .dr-list-row:first-child{border-radius:15px 15px 0 0}
+#panel-dsr .dr-list-row:last-child{border-radius:0 0 15px 15px}
+#panel-dsr .dr-list-row:only-child{border-radius:15px}
+/* Hover: the row becomes its own opaque tile - ember-tinted surface, its
+   own radius and shadow - lifted and scaled a touch, so the colour covers
+   the whole row edge to edge, past the card's 1px border (owner, 9/30/26). */
+#panel-dsr{--dr-lift:0 0 0 1px rgba(200,75,47,.20),0 2px 6px rgba(14,12,10,.08),0 22px 40px -18px rgba(14,12,10,.30)}
+[data-theme="dark"] #panel-dsr{--dr-lift:0 0 0 1px rgba(212,88,58,.30),0 2px 6px rgba(0,0,0,.32),0 24px 44px -18px rgba(0,0,0,.62)}
+#panel-dsr .dr-list-row{position:relative;z-index:1;transform-origin:50% 50%;transition:transform .26s cubic-bezier(.22,.61,.36,1),box-shadow .26s cubic-bezier(.22,.61,.36,1),background-color .18s ease,border-radius .26s ease,border-color .18s ease}
+#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{z-index:3;background-color:var(--surface);background-image:linear-gradient(var(--hb-tint2),var(--hb-tint2));border-radius:14px;border-top-color:transparent;box-shadow:var(--dr-lift);transform:translateY(-3px) scale(1.025)}
+#panel-dsr .dr-list-row:hover+.dr-list-row,#panel-dsr .dr-list-row:focus-visible+.dr-list-row{border-top-color:transparent}
+#panel-dsr .dr-list-row:active{transform:translateY(-1px) scale(1.01);transition-duration:.08s}
+@media (prefers-reduced-motion:reduce){ #panel-dsr .dr-list-row,#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible,#panel-dsr .dr-list-row:active{transform:none;transition:none}}
 .dr-list-d{display:flex;flex-direction:column;gap:2px}
 .dr-list-d b{font-size:15px}
 .dr-list-d span{font-size:13px;color:var(--ink3)}

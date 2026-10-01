@@ -34,7 +34,22 @@ def test_the_list_is_every_night_newest_first_with_older_on_request():
 def test_the_reports_page_has_no_home_link_and_its_hover_fills_the_row():
     nav = SRC[SRC.index('<div class="dr-nav">'):SRC.index('<div id="dr-body"')]
     assert 'data-dr="home"' not in nav and "&larr; Home" not in nav
-    assert ".dr-list{padding:0!important;overflow:hidden}" in SRC
+    assert ".dr-list{padding:0!important}" in SRC
+
+
+def test_a_hovered_row_is_an_opaque_lifted_tile_past_the_card_edge():
+    # Owner, 9/30/26: the translucent tint stopped at the card's 1px border.
+    # The hovered row is now its own surface, lifted and scaled, so the list
+    # card must not clip it and reduced motion keeps it still.
+    assert "overflow:hidden}" not in SRC[SRC.index(".dr-list{padding:0"):][:40]
+    hov = SRC[SRC.index("#panel-dsr .dr-list-row:hover,#panel-dsr .dr-list-row:focus-visible{"):]
+    hov = hov[:hov.index("}")]
+    for part in ("background-color:var(--surface)", "box-shadow:var(--dr-lift)",
+                 "scale(1.025)", "border-radius:14px"):
+        assert part in hov, part
+    assert "#panel-dsr .dr-list-row:hover+.dr-list-row" in SRC
+    assert ("@media (prefers-reduced-motion:reduce){ #panel-dsr .dr-list-row,"
+            "#panel-dsr .dr-list-row:hover") in SRC
 
 
 def test_each_row_shows_figures_not_the_paragraph():

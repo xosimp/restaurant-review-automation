@@ -966,7 +966,11 @@ status pill, then a row of `.dr-st` figure chips — vs last week, vs
 forecast, labor %, guests, average check, overtime, from
 `dsr.access.list_stats`, only what the night measured, never the summary
 paragraph), newest first, 30 at a time with "Load older reports". The list
-card has no inner padding so a row's hover fills it edge to edge. Night,
+card has no inner padding and does not clip: a hovered row becomes its own
+opaque tile (surface plus `--hb-tint2`, 14px radius, the `--dr-lift` ring and
+shadow) and lifts 3px at 1.025 scale over .26s, so the colour covers the
+whole row past the card's 1px border; reduced motion keeps the tile and drops
+the movement. The end rows carry the card's 15px inner rounding. Night,
 Week and Period sit beside "All reports" in the panel's `.dr-views`; there is
 no "Home" link (Home is the tab beside it). In the tab bar a 16px hairline
 (`.tab-sep`) sets Home and Reports apart from the modules.
