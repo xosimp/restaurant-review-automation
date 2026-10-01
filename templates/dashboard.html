@@ -2503,6 +2503,18 @@ cavNavRegister('marketing', function (p) {
       if (!inp && tries++ < 15) { setTimeout(fill, 200); return; }
       if (!inp) return;
       inp.value = goal;
+      /* When to send it (a starting rule from kickoff, said as one). */
+      var send = String((p.query || {}).send || '').slice(0, 120), hint = document.getElementById('cp-send-hint');
+      if (!hint && send) {
+        hint = document.createElement('div'); hint.id = 'cp-send-hint';
+        var box = inp.closest ? inp.closest('.cp-prompt') : null;
+        if (box && box.parentNode) box.parentNode.insertBefore(hint, box.nextSibling);
+      }
+      if (hint) {
+        hint.hidden = !send;
+        var safe = send.replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+        hint.innerHTML = send ? 'Best sent <b>' + safe + '</b> — a starting rule from kickoff, not yet measured here.' : '';
+      }
       if (inp.scrollIntoView) inp.scrollIntoView({behavior: 'smooth', block: 'center'});
       try { inp.focus({preventScroll: true}); } catch (e) { inp.focus(); }
     })();
@@ -6912,6 +6924,17 @@ svg:hover .hb-xh{opacity:1}
 .dr-eff span.pos{color:var(--hb-good)}
 .dr-eff span .hb-num{font-weight:600}
 /* Tonight's game against the last one of the same side (Event Intelligence phase 2). */
+.ev-week{margin:0 0 16px;padding:14px 16px;border-radius:14px;background:radial-gradient(90% 140% at 0% 0%,var(--hb-tint2) 0%,transparent 62%),var(--surface);border:1px solid var(--hb-line2)}
+.ev-week-k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.ev-week-t{margin:4px 0 2px;font-size:14px;color:var(--ink)}
+.ev-week-x{font-size:13.5px;line-height:1.5;color:var(--ink2)}
+.ev-week-l{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ev-week-l span{padding:5px 10px;border-radius:999px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
+.ev-week-l b{color:var(--ink)}
+.ev-week-b{margin-top:8px;font-size:12px;color:var(--ink3);line-height:1.45}
+.ev-follow-s{display:block;margin-top:2px;font-size:12.5px;color:var(--ink2)}
+#cp-send-hint{margin:10px 4px 0;font-size:13px;color:var(--ink3);line-height:1.45}
+#cp-send-hint b{color:var(--ink2);font-weight:600}
 .ev-follows{margin:0 0 18px;display:flex;flex-direction:column;gap:8px}
 .ev-follows-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
 .ev-follow{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--hb-line2,var(--paper3));background:var(--surface)}
@@ -12353,6 +12376,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
       <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
     <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
+      <div class="ev-week" id="so-game" hidden></div>
       <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
       <div id="po-history" class="fc2-po"></div>
     </div>
@@ -12624,8 +12648,23 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     if(btn&&!btn.disabled)btn.textContent='Send to '+(g.supplier_name||email)+' · '+_soMoney(tot);
     return {n:n,total:tot};
   }
+  // A followed game this week (Event Intelligence phase 3): the extra its
+  // kind used here through the recipes once two games are measured, else
+  // what the last one sold, said as one game. Nothing is added to the order.
+  function loadGameWeek(){
+    var box=document.getElementById('so-game');if(!box)return;
+    fetch('/api/food-cost/game-week').then(apiJson).then(function(d){
+      var g=d&&d.ok&&d.game;if(!g){box.hidden=true;box.innerHTML='';return;}
+      var h='<div class="ev-week-k">Game this week</div><div class="ev-week-t"><b>'+_mmEsc(g.describe||'')+'</b></div><div class="ev-week-x">'+_mmEsc(g.text||'')+'</div>';
+      var ls=(g.order&&g.order.lines)||[];
+      if(ls.length){h+='<div class="ev-week-l">';for(var i=0;i<ls.length&&i<6;i++)h+='<span><b class="hb-num">+'+_mmEsc(ls[i].extra)+'</b> '+_mmEsc(ls[i].unit||'')+' '+_mmEsc(ls[i].ingredient)+'</span>';h+='</div>';}
+      if(g.basis)h+='<div class="ev-week-b">'+_mmEsc(g.basis.charAt(0).toUpperCase()+g.basis.slice(1))+'.</div>';
+      box.innerHTML=h;box.hidden=false;
+    }).catch(function(){box.hidden=true;});
+  }
   function loadOrderDraft(){
     var el = document.getElementById('so-body');if(!el)return;
+    loadGameWeek();
     el.innerHTML = cavnarLoading('Building this week\'s order…',22,'working');
     fetch('/api/food-cost/order-draft').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
@@ -29657,6 +29696,7 @@ function cpResetDraft() {
   if (img) img.style.backgroundImage = ''; if (pl) pl.textContent = 'Add a photo';
   if (_cp.media) cpPaintThumbs();
   var tag = _cpEl('cp-aud-k'); if (tag) tag.textContent = '';
+  var sh = _cpEl('cp-send-hint'); if (sh) { sh.hidden = true; sh.innerHTML = ''; }
   cpCreateIdle();
 }
 window.cpCreate = function(rewrite) {
@@ -33106,7 +33146,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="ev-follow'+(f.following?'':' off')+'"><div class="ev-follow-t"><b>'+esc(f.name)+'</b>'
         +'<span>'+(isFinite(f.distance_km)&&f.distance_km!==null?'<span class="hb-num">'+esc(Math.round(f.distance_km*0.621371))+'</span> mi away':'')
         +(f.following&&f.next?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Next: '+esc(f.next):'')
-        +(!f.following?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Not followed — its games aren\u2019t planned for':'')+'</span></div>'
+        +(!f.following?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Not followed — its games aren\u2019t planned for':'')+'</span>'
+        +(f.season&&f.season.text?'<span class="ev-follow-s" title="'+esc(f.season.basis||'')+'">'+esc(f.season.text)+'</span>':'')+'</div>'
         +'<button type="button" class="cbtn '+(f.following?'cbtn-text':'cbtn-secondary')+' cbtn-sm" onclick="evFollowSet('+(+f.series_id)+','+(f.following?'false':'true')+',this)">'+(f.following?'Stop following':'Follow')+'</button></div>';}
     return h+'</div>';
   }

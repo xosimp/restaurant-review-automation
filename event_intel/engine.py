@@ -434,10 +434,18 @@ def follow_choices(restaurant, today=None, db_path=store.DB_PATH) -> list:
             continue
         nxt = [e for e in store.events_for([s["id"]], start, None, db_path=db_path)
                if e.get("status") not in ("cancelled", "postponed")][:1]
+        # What the season's games brought here, measured (phase 3) — beside
+        # the switch, so the choice is made knowing it.
+        season = None
+        if f and f["active"]:
+            from event_intel import gameday
+            sv = gameday.season_value(restaurant.id, s["id"], today=start, db_path=db_path)
+            season = {"text": sv["text"], "measured": sv["measured"], "played": sv["played"],
+                      "incremental": sv["incremental"], "basis": sv["basis"]} if sv else None
         out.append({"series_id": s["id"], "slug": s["slug"], "name": s["name"], "category": s["category"],
                     "following": bool(f and f["active"]), "source": f["source"] if f else None,
                     "distance_km": km if km is not None else (f or {}).get("distance_km"), "in_reach": reach,
-                    "next": describe(nxt[0]) if nxt else None})
+                    "next": describe(nxt[0]) if nxt else None, "season": season})
     return out
 
 

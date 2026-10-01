@@ -38,6 +38,7 @@ final class DeepLinkRoutingTests: XCTestCase {
         XCTAssertEqual(DeepLinkRouter.webModule(for: "shift_request"), "labor")
         XCTAssertEqual(DeepLinkRouter.webModule(for: "competitor_move"), "competitor")
         XCTAssertEqual(DeepLinkRouter.webModule(for: "demand_opportunity"), "marketing")
+        XCTAssertEqual(DeepLinkRouter.webModule(for: "event_ahead"), "ask")
         XCTAssertEqual(DeepLinkRouter.webModule(for: "daily_briefing"), "ask")
         XCTAssertEqual(DeepLinkRouter.webModule(for: "1star"), "reviews")
     }

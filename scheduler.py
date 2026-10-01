@@ -4872,6 +4872,10 @@ def scheduler_loop():
                 # the product that produced no notification at all.
                 from strategy_jobs import run_demand_opportunity
                 _ops.run_job("demand_opportunity", run_demand_opportunity, restaurants=_slot, claim="intraday")
+                # The afternoon before a game measured big here, one push per
+                # game (Event Intelligence phase 3).
+                from event_intel.gameday import run_event_push
+                _ops.run_job("event_push", run_event_push, restaurants=_slot, claim="intraday")
 
             # Every tick, claimed per 10-minute slot — the nightly DSR
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,

@@ -405,6 +405,11 @@ JOBS = {
         cadence="every 20 minutes (after close)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Closing summary", description="How tonight went, once the doors are shut",
         target=("strategy_jobs", "run_closing_summary"), claim="intraday", max_minutes=10),
+    "event_push": dict(
+        cadence="every 20 minutes (the afternoon before a big game)", sla_minutes=2 * 60, sends=True,
+        runnable=True, label="Big-game heads-up",
+        description="A push the afternoon before a followed game measured big here, once per game",
+        target=("event_intel.gameday", "run_event_push"), claim="intraday", max_minutes=10),
     "demand_opportunity": dict(
         cadence="every 20 minutes (weekly per restaurant)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Quiet-night heads-up", description="A quiet night two days out, once a week",

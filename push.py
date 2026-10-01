@@ -235,6 +235,9 @@ PRIORITY = {
     "dsr": P4_SUMMARY,
     "weekly_review": P4_SUMMARY, "monthly_review": P4_SUMMARY,
     "any_review": P5_LOW, "ai_visibility_drop": P5_LOW, "demand_opportunity": P5_LOW,
+    # The afternoon before a game measured big here (event_intel.gameday,
+    # Event Intelligence phase 3): worth knowing today, never a Focus break.
+    "event_ahead": P3_INFO,
     "competitor_move": P3_INFO, "review_request_nudge": P5_LOW,
     # A staff request waiting on a decision is worth today, not worth
     # breaking a Focus mode for; it used to ride "coverage" at P1 (A-6).
@@ -269,6 +272,8 @@ NOTIFICATION_MODULE = {
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
     "demand_opportunity": "marketing",
+    # A big game tomorrow opens Ask on getting ready for it (its payload's nav).
+    "event_ahead": "ask",
     # Cross-module reads that arrive with their own question, so they open
     # the assistant rather than guessing a module (iOS does the same).
     "morning_brief": "ask", "daily_briefing": "ask", "intraday_pulse": "ask",

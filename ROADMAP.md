@@ -72,6 +72,14 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 ## Recently shipped (newest first; trim entries older than ~2 months)
 
+- **10/1 — Event Intelligence phase 3.**
+  - What games like the next one sold, item by item; prep and a game-week
+    ordering bump (through the recipes) once two such games are measured.
+  - The guest text's send time from kickoff (a starting rule, said as one) on
+    the brief and in Campaign Studio; the Studio goal names what game nights
+    sell.
+  - The season's measured money on the follow card and in Ask, kept apart
+    from value delivered; one push the afternoon before a game measured big.
 - **10/1 — Event Intelligence phase 2.**
   - The morning brief names a followed game up to three days out: what games
     like it did here (or the last one, as one night), a staffing plan by role

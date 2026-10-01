@@ -33,6 +33,10 @@ def db(db_path, monkeypatch):
             monkeypatch.setattr(mod, "get_conn", conn)
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
+    # Nothing here reaches the National Weather Service.
+    import weather
+    monkeypatch.setattr(weather, "forecast_for_day", lambda *a, **k: None)
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
     return db_path
 
 

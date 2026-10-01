@@ -8478,6 +8478,7 @@ _NOTIFICATION_LABELS = {
     "issue_escalated":  "An issue was escalated",
     "outcome_achieved": "A measured result improved",   # never a claim of cause (re-audit A14)
     "demand_opportunity": "A quiet night worth filling",
+    "event_ahead":      "A big game tomorrow",
     "morning_brief":    "Morning brief",
     "daily_briefing":   "Your day, in one place",
     "intraday_pulse":   "Today vs a typical day",

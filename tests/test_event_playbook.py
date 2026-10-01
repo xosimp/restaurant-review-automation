@@ -35,6 +35,10 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    # Nothing here reaches the National Weather Service.
+    import weather
+    monkeypatch.setattr(weather, "forecast_for_day", lambda *a, **k: None)
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
     return db_path
 
 
@@ -117,8 +121,9 @@ def test_a_staffing_plan_needs_measured_games_that_all_ran_the_role_above_usual(
     assert st["n"] == 2 and st["usual"]["Bartender PM"] == 3
     plan = st["recommend"]
     assert [(p["role"], p["delta"], p["from"]) for p in plan] == [("Bartender PM", 1, "3:50pm")]
-    assert st["text"].startswith("Staff above a usual Sunday: 1 more Bartender PM from about 3:50pm. On your last "
-                                 "2 home games you ran 4 Bartender PM against a usual 3, and sales ran 25% above")
+    assert st["text"] == ("Staff above a usual Sunday: 1 more Bartender PM from about 3:50pm. On your last 2 home "
+                          "games you ran 4 Bartender PM against a usual Sunday's 3, and sales ran 25% above their "
+                          "usual weekday.")
     # roles that matched a usual Sunday are not said
     assert {d["role"] for d in st["deltas"]} == {"Bartender PM"}
 
@@ -201,7 +206,8 @@ def test_a_viewer_without_labor_hears_the_game_but_not_the_dollars_or_staffing(d
     r = _restaurant(db)
     _world(db, r.id)
     line = playbook.alert(r.id, date(2026, 11, 20), sees_sales=False, sees_labor=False, marketing=True, db_path=db)
-    assert line["text"] == "Sunday 11/22/26: Bears vs New Orleans Saints · 12pm · FOX."
+    assert line["text"] == ("Sunday 11/22/26: Bears vs New Orleans Saints · 12pm · FOX. Text your guests Sunday around "
+                            "9am, 3 hours before kickoff (a starting rule, not yet measured here).")
     assert "$" not in line["text"] and "%" not in line["text"] and "Staff" not in line["text"]
     assert line["action"]["label"] == "Draft a game-day campaign"
 

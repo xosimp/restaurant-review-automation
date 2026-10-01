@@ -182,9 +182,11 @@ def staffing(restaurant_id, e, db_path=store.DB_PATH):
         if recommend:
             plan = "; ".join(f"{int(round(d['delta']))} more {d['role']}" + (f" from about {d['from']}" if d["from"]
                                                                              else "") for d in recommend)
-            said = ", ".join(f"{d['game']:g} {d['role']} against a usual {d['usual']:g}" for d in recommend)
+            gdays = {_d(x["date"]).strftime("%A") for x in nights}
+            gword = f"a usual {gdays.pop()}'s" if len(gdays) == 1 else "a usual night's"
+            said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in recommend)
             text = (f"Staff above a usual {weekday}: {plan}. On your last {n} {kind} you ran {said}, and sales "
-                    f"ran {abs(float(eff['median_lift_pct'])):.0f}% above a usual {weekday}.")
+                    f"ran {abs(float(eff['median_lift_pct'])):.0f}% above their usual weekday.")
         else:
             ups = [d for d in deltas if d["delta"] > 0][:3]
             text = None
@@ -195,7 +197,9 @@ def staffing(restaurant_id, e, db_path=store.DB_PATH):
                                  f"{d['usual']:g}" for d in ups)
                 text = f"On {_mdy(last['date'])} you ran {said} — what was staffed, not yet a pattern to plan on."
             elif ups:
-                said = ", ".join(f"{d['game']:g} {d['role']} against a usual {d['usual']:g}" for d in ups)
+                gdays = {_d(x["date"]).strftime("%A") for x in nights}
+                gword = f"a usual {gdays.pop()}'s" if len(gdays) == 1 else "a usual night's"
+                said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in ups)
                 text = (f"On your last {n} {kind} you ran a median {said} — what was staffed, not yet a pattern "
                         f"to plan on.")
         return {"games": _games_out(nights), "usual": usual, "usual_n": len(usual_rows), "weekday": weekday,
@@ -379,11 +383,12 @@ def _when(day, today):
     return f"{day.strftime('%A')} {_mdy(day.isoformat())}"
 
 
-def campaign_goal(e) -> str:
-    """The Campaign Studio goal a game alert starts a draft from."""
-    who = engine.describe(e, with_date=False)
-    day = _d(e["event_date"]).strftime("%A") if e.get("event_date") else "game day"
-    return f"Bring guests in to watch {who} on {day}"
+def campaign_goal(e, restaurant_id=None, db_path=store.DB_PATH) -> str:
+    """The Campaign Studio goal a game alert starts a draft from
+    (event_intel.gameday.campaign_goal, phase 3)."""
+    from event_intel import gameday
+    return gameday.campaign_goal(restaurant_id, e, db_path=db_path) if restaurant_id else \
+        gameday.campaign_goal(None, e, mix={}, db_path=db_path)
 
 
 def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=False, db_path=store.DB_PATH):
@@ -430,6 +435,18 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 kick = int(str(e["kickoff_local"])[:2])
                 parts.append(f"Expect the jump around {_span((kick + rush_out['pattern_offset']) % 24)} "
                              f"({_offset_words(rush_out['pattern_offset'])}, as on your last {rush_out['n']}).")
+        # Phase 3: what games like it sold (a prep plan past the floor, the
+        # last one as a fact below it) and when to reach guests.
+        from event_intel import gameday
+        mix = gameday.item_mix(restaurant_id, e, db_path=db_path) if sees_sales else None
+        prep = gameday.prep_lines(restaurant_id, e, mix=mix, db_path=db_path) if mix else []
+        if prep:
+            parts.append("Prep for " + "; ".join(p["text"] for p in prep[:3]) + ".")
+        elif mix and mix.get("text") and mix["n"] == 1:
+            parts.append(mix["text"])
+        plan = gameday.send_plan(e) if marketing else None
+        if plan and day >= today:
+            parts.append(f"Text your guests {plan['text_words']} (a starting rule, not yet measured here).")
         line = {"key": f"event_ahead:{e['id']}", "event_id": e["id"], "source": "events",
                 "tone": "action" if (st and st.get("recommend")) else "neutral",
                 # A staffing plan is read from measured nights, not measured
@@ -442,7 +459,12 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
         if marketing:
             import nav
             line["action"] = {"label": "Draft a game-day campaign",
-                              "nav": nav.path("marketing", "campaigns", goal=campaign_goal(e))}
+                              "nav": nav.path("marketing", "campaigns",
+                                              goal=gameday.campaign_goal(restaurant_id, e, mix=mix if sees_sales
+                                                                         else {}, db_path=db_path),
+                                              send=(plan or {}).get("text_words"))}
+        if prep:
+            line["prep"] = prep
         return line
     except Exception as ex:
         log.warning("event_intel.playbook alert failed rid=%s: %s", restaurant_id, ex)

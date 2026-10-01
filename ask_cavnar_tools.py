@@ -2071,6 +2071,23 @@ def _read_events(restaurant_id, days=21, past=4):
             if ru and ru.get("text"):
                 item["rush"] = {"said": ru["text"], "pattern_hours_from_kickoff": ru["pattern_offset"],
                                 "games": ru["n"], "basis": ru["basis"]}
+            # Phase 3: what games like it sold, prep and the ordering bump past
+            # the floor, and when to reach guests (a starting rule, said so).
+            from event_intel import gameday
+            mix = gameday.item_mix(restaurant_id, e)
+            if mix and mix.get("items"):
+                item["items_sold"] = {"said": mix["text"], "games": mix["n"],
+                                      "items": [{k: x[k] for k in ("item", "game", "usual", "extra", "every_game")}
+                                                for x in mix["items"]],
+                                      "prep": gameday.prep_lines(restaurant_id, e, mix=mix),
+                                      "basis": mix["basis"]}
+                bump = gameday.order_bump(restaurant_id, e, mix=mix)
+                if bump:
+                    item["order_more"] = {"said": bump["text"], "lines": bump["lines"], "basis": bump["basis"]}
+            plan = gameday.send_plan(e)
+            if plan:
+                item["reach_guests"] = {"text": plan["text_words"], "email": plan["email_words"],
+                                        "basis": plan["basis"]}
         ahead.append(item)
     out["upcoming"] = ahead
     recent = []
@@ -2086,6 +2103,11 @@ def _read_events(restaurant_id, days=21, past=4):
                            "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
                            "measured": bool(o)})
     out["recent"] = recent
+    # What each followed season's games brought here, measured (phase 3):
+    # the games' own money, never Cavnar AI's value.
+    from event_intel import gameday
+    out["season_so_far"] = [sv for sv in (gameday.season_value(restaurant_id, f["series_id"], today=today)
+                                          for f in store.follows(restaurant_id)) if sv]
     out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
                     "weeks before (event_memory); a game night with no sales on file is not measured")
     return out

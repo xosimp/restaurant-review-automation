@@ -87,6 +87,26 @@ def _game_staffing(rid, event, db_path):
         return None
 
 
+def _game_prep(rid, event, db_path):
+    """{"text", "tone", "basis"} for the day after's prep line, or None."""
+    if not event or event.get("category") != "sports":
+        return None
+    try:
+        from event_intel import gameday
+        kw = {"db_path": db_path} if db_path else {}
+        mix = gameday.item_mix(rid, event, **kw)
+        prep = gameday.prep_lines(rid, event, mix=mix, **kw) if mix else []
+        if prep:
+            return {"text": "Prep for " + "; ".join(p["text"] for p in prep[:3]), "tone": "warn",
+                    "basis": mix["basis"]}
+        if mix and mix.get("text"):
+            return {"text": mix["text"] + " One game — not yet a pattern to prep on.", "tone": None,
+                    "basis": mix["basis"]}
+    except Exception:
+        return None
+    return None
+
+
 def _keeps_events(rid, db_path):
     """Whether this restaurant keeps its events/reservations in Cavnar at
     all — an empty day then means "nothing listed", not "unknown"."""
@@ -486,6 +506,11 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                 items.append({"kind": "game_staffing", "tone": "warn" if st.get("recommend") else None,
                               "text": st["text"], "basis": st.get("basis"),
                               "event_id": (ctx or {}).get("event", {}).get("id")})
+            # What games like it sold (event_intel.gameday, phase 3): a prep
+            # plan past the floor, the last one as a fact below it.
+            prep = _game_prep(rid, (ctx or {}).get("event"), db_path)
+            if prep:
+                items.append(dict(prep, kind="game_prep", event_id=(ctx or {}).get("event", {}).get("id")))
 
     food = blocks.get("food") or {}
     crit = (((food.get("detail") or {}).get("stock") or {}).get("critical") or []) \

@@ -83,6 +83,7 @@ _ALERT_ASK = {
     "monthly_review": "How did last month go?",
     "outcome_achieved": "Which of my tracked changes just came through?",
     "milestone": "What milestone did we just reach?",
+    "event_ahead": "How should we get ready for tomorrow's game?",
 }
 _URGENT_REVIEW_ALERTS = {"1star", "2star", "health", "neg_spike", "negative_trend", "rating_threshold"}
 

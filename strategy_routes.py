@@ -1757,6 +1757,16 @@ def _do_event_follow_set(u, series_id):
             "removed": got.get("removed", 0)}, 200
 
 
+def _do_game_week(u):
+    """The Food Cost order section's game-week line (event_intel.gameday,
+    phase 3): the next followed game within a week, the extra its kind used
+    here through the recipes once measured, else what the last one sold."""
+    if not _sees_food(u):
+        return _forbidden("Only someone who can see food cost can see this.")
+    from event_intel import gameday
+    return {"ok": True, "game": gameday.week_note(_rid(u))}, 200
+
+
 def _do_demand_signals_save(u):
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
@@ -5491,6 +5501,7 @@ _ROUTES = [
     ("/labor/demand-signals", ["POST"], _do_demand_signals_save, "demand_signals_save"),
     ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
     ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
+    ("/food-cost/game-week", ["GET"], _do_game_week, "game_week"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),

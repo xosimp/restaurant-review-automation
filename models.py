@@ -11957,7 +11957,7 @@ def is_in_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
 NON_ALERT_TYPES = (
     "morning_brief", "intraday_pulse", "closing_summary", "weekly_review",
     "monthly_review", "daily_briefing", "schedule_drafted", "outcome_achieved",
-    "issue", "issue_escalated", "coverage", "demand_opportunity",
+    "issue", "issue_escalated", "coverage", "demand_opportunity", "event_ahead",
     "while_away", "connection_lost", "schedule_publish_pending", "order_send_pending",
     "order_send_voided",
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
