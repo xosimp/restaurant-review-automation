@@ -143,6 +143,18 @@ def _q(conn, sql, args):
         return []
 
 
+def _local_today(restaurant_id, db_path=None):
+    """The restaurant's own date. The server runs on UTC: from 7pm Central
+    on the last day of a month, date.today() is the next month, and the
+    nightly scorecard scored a month with no data yet (CI on UTC, 9/30/26)."""
+    try:
+        from time_utils import restaurant_now
+        return restaurant_now(_models_mod.get_restaurant(restaurant_id, db_path or _models_mod.DB_PATH),
+                              naive=True).date()
+    except Exception:
+        return date.today()
+
+
 def compute_month(restaurant_id, month_start, db_path=None) -> dict:
     """The month's curves: {"metrics": {name: {value, n, ...}},
     "forecast_error_by_kind": {kind: {value, n}}, "fatigue": {share, n,
@@ -258,7 +270,7 @@ def rolling_fatigue(restaurant_id, today=None, db_path=None) -> dict:
     back and an unopened email are in no denominator). Never raises."""
     import rec_ledger
     import rec_learning
-    today = today or date.today()
+    today = today or _local_today(restaurant_id, db_path)
     # Stamps are UTC and `today` is a local day: a day's slack at the top
     # keeps an evening's answers (already tomorrow in UTC) in the reading.
     end = f"{(today + timedelta(days=1)).isoformat()} 23:59:59"
@@ -353,7 +365,7 @@ def snapshot(restaurant_id, today=None, db_path=None) -> dict:
     """Write this month's row, and last month's while it can still change
     (FROZEN_AFTER_DAYS), then the flags over the stored curve. Returns
     {"written", "flags"}. Never raises."""
-    today = today or date.today()
+    today = today or _local_today(restaurant_id, db_path)
     months = [today.replace(day=1)]
     prev = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
     if (today - today.replace(day=1)).days < FROZEN_AFTER_DAYS:
@@ -409,7 +421,8 @@ def fatigued(restaurant_id, db_path=None) -> bool:
         try:
             row = conn.execute("SELECT fatigued, fatigue_now FROM learning_scorecards WHERE restaurant_id=? "
                                "AND month >= ? ORDER BY month DESC LIMIT 1",
-                               (restaurant_id, (date.today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m"))
+                               (restaurant_id, (_local_today(restaurant_id, db_path).replace(day=1)
+                                                - timedelta(days=1)).strftime("%Y-%m"))
                                ).fetchone()
         finally:
             conn.close()

@@ -74,7 +74,14 @@ def notice_for(user, today=None, db_path=None):
         start = _updated_on()
         if start is None:
             return None
-        today = today or date.today()
+        if today is None:
+            # The owner's own date - the server's is tomorrow after 7pm
+            # Central (UTC host); Home passes its local date already.
+            try:
+                from time_utils import restaurant_now_by_id
+                today = restaurant_now_by_id(user.get("restaurant_id")).date()
+            except Exception:
+                today = date.today()
         if hasattr(today, "date") and callable(getattr(today, "date")):
             today = today.date()
         last = start + timedelta(days=NOTICE_DAYS - 1)

@@ -61,7 +61,15 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
     one bad week is not a bad quarter."""
     from models import get_restaurant, DB_PATH
     db_path = db_path or DB_PATH
-    today = today or date.today()
+    if today is None:
+        # The restaurant's own date: the server is UTC, a day ahead from
+        # 7pm Central, and the review's windows moved a day (or a month)
+        # early (CI on UTC, 9/30/26).
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            today = date.today()
     restaurant = restaurant or get_restaurant(restaurant_id)
     months = max(1, int(months or 1))
     last_end = today.replace(day=1) - timedelta(days=1)

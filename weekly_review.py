@@ -137,7 +137,15 @@ def build(restaurant_id, today=None, restaurant=None, db_path=None):
     reviewed — the digest goes out on the owner's chosen day."""
     from models import get_restaurant, DB_PATH
     db_path = db_path or DB_PATH
-    today = today or date.today()
+    if today is None:
+        # The restaurant's own date: the server is UTC, a day ahead from
+        # 7pm Central, and the review's windows moved a day (or a month)
+        # early (CI on UTC, 9/30/26).
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            today = date.today()
     restaurant = restaurant or get_restaurant(restaurant_id)
     last_start, last_end = week_bounds(today - timedelta(days=7))
     prev_start, prev_end = week_bounds(last_start - timedelta(days=7))

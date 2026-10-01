@@ -286,7 +286,10 @@ def _history(db_path, rid, weekday, values, before=None):
 def test_yesterday_is_compared_with_its_own_weekday_excluding_itself(db_path):
     import demand
     rid = _rid(db_path)
-    y = date.today() - timedelta(days=1)
+    # The restaurant's today, as the function reads it - not the machine's
+    # (a UTC host is a day ahead after 7pm Central; CI, 9/30/26).
+    today = demand.local_today(rid)
+    y = today - timedelta(days=1)
     _history(db_path, rid, y.strftime("%A"), [3000, 3100, 2900], before=y)
     _sales_day(db_path, rid, y.isoformat(), 2000)
     out = demand.yesterday_vs_typical(rid)

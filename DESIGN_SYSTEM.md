@@ -443,9 +443,19 @@ box only when nobody in it has a rate.
 control's own corners (never a fixed `border-radius` on `:focus-visible`).
 "Sign in with Google", "Sign in with Apple" (when set up) and "Sign in with a
 passkey" stack under "or continue with" as `.cbtn.cbtn-lg.sso` on the card's
-dark ground; small print is 12–14px, the legal links wrap rather than
-shrink. The living background paints with no banding: a smooth 21-stop
-falloff, full resolution, the vignette in the canvas, a 0–2 level dither.
+dark ground; small print is 12–14px. The card is 430px wide so the legal
+links sit on one line with a `·` between each (they wrap only on a phone
+too narrow for them). The living background has no banding: the ground —
+blooms, vignette and the card's own soft shadow — is a WebGL shader computed
+in float per device pixel and dithered ±1 level at the very last step
+(`cavnar-field.js` `GL_FS`); the card keeps only its 1px edge in CSS. Canvas
+2D (smooth 21-stop falloff, 0–2 level dither) is the fallback.
+
+**Passkey offer (9/30/26).** Right after a password sign-in, a login with no
+passkey is offered one: the browser's own quiet prompt where it supports
+conditional create, else one `so-modal` dialog — kicker "Faster sign-in",
+"Save a passkey for this device?", Not now / Save a passkey. "Not now" is
+remembered on that device; Account → Security can always add one.
 
 **An open section shows it is open.** A Team & rules row that is expanded
 becomes a card — `--sf-recess` fill, `--hb-line` outline, a 3px ember inner
@@ -1539,6 +1549,16 @@ Pick by what the email *is*, not by which is nearest:
    `report_lines` without a label — a list whose eyebrow already names it
    (the DSR's *Went well* on a `good` rule, *Needs attention* on `warn`,
    *Not in this report* on the quiet border).
+   `report_stats` (9/30/26): a figure never wraps (`nowrap`); a row whose
+   longest figure passes 6 characters steps 25px → 22px → 19px; each
+   column is its figure's or label's width plus an equal share of the rest
+   (balanced for a 330px phone column), so the gap after every figure
+   matches; columns line up across rows. A rating is toned by where it
+   stands (4.0+ `good`, 3.0+ `warn`, else `bad`), as everywhere.
+   `report_metric_lines(metric_parts(review, lines))` sets a review's
+   comparison as one block per metric: its name as a 15px `ember` heading,
+   the sentence under it in `body`, 18px between blocks — never one run-on
+   paragraph.
    `report_confidence(conf)` is the one line under a recommendation that
    carries a measured confidence — "72% confidence · data through 9/23/26"
    (`rec_trust.outbound_label`), 12px, `muted` — never a band word; "" for

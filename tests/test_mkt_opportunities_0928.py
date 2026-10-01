@@ -42,7 +42,10 @@ from models import Restaurant, create_restaurant, get_conn, get_restaurant, upda
 from time_utils import mdy
 
 SRC = open("templates/dashboard.html", encoding="utf-8").read()
-TODAY = date.today()
+# The restaurant's date (operator time when no zone is set), as the feed
+# reads it - not the machine's (CI is UTC: tomorrow after 7pm Central).
+from time_utils import restaurant_now as _rnow
+TODAY = _rnow(None, naive=True).date()
 # The slow night is always two days ahead of the day the suite runs. Pinned
 # to "Tuesday" it failed every Tuesday: the 56-day window then drops the
 # oldest Tuesday and "8 of the last 8" reads "7 of the last 7" (re-audit OPP-20).

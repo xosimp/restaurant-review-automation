@@ -152,18 +152,29 @@ def count_freshness(restaurant_id, ingredient_ids=None, db_path=DB_PATH, today=N
         conn.close()
     if not rows:
         return {"last_count_at": None, "age_days": None, "stale": True, "stalest_item": None}
-    worst, worst_age = None, -1
+    # A count's stamp is UTC; its DAY is the restaurant's (time_utils.
+    # local_iso). Read as UTC, a count made after 7pm in St. Louis was
+    # "tomorrow" - age -1, no stalest item, and the order check crashed
+    # every evening (CI on UTC, 9/30/26).
+    from time_utils import local_iso
+    try:
+        from models import get_restaurant as _gr_cf
+        _tz_cf = getattr(_gr_cf(restaurant_id, db_path), "timezone", None)
+    except Exception:
+        _tz_cf = None
+    worst, worst_age = None, None
     for r in rows:
         stamp = r["last_recount_at"]
         if not stamp:
             return {"last_count_at": None, "age_days": None, "stale": True, "stalest_item": r["name"]}
         try:
-            d = _date.fromisoformat(str(stamp)[:10])
+            day = local_iso(stamp, _tz_cf) or str(stamp)[:10]
+            d = _date.fromisoformat(day[:10])
         except ValueError:
             return {"last_count_at": stamp, "age_days": None, "stale": True, "stalest_item": r["name"]}
-        age = (today - d).days
-        if age > worst_age:
-            worst, worst_age = (r["name"], str(stamp)[:10]), age
+        age = max(0, (today - d).days)
+        if worst_age is None or age > worst_age:
+            worst, worst_age = (r["name"], d.isoformat()), age
     return {"last_count_at": worst[1], "age_days": worst_age, "stale": worst_age > COUNT_FRESH_DAYS,
             "stalest_item": worst[0]}
 

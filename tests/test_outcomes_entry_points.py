@@ -27,7 +27,11 @@ import strategy_routes
 from models import Restaurant, create_restaurant, get_conn
 from time_utils import mdy
 
-TODAY = date.today()
+# The restaurant's date as outcomes.local_today reads it (operator time for
+# a restaurant with no zone set) - never the machine's, which on a UTC host
+# is tomorrow after 7pm Central (CI, 9/30/26).
+from time_utils import restaurant_now as _rnow
+TODAY = _rnow(None, naive=True).date()
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

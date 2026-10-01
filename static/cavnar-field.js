@@ -109,31 +109,151 @@
     return out;
   }());
 
+  /* The aurora on the GPU (owner, 9/30/26, second report of banding).
+     Canvas 2D computes and stores a gradient in 8-bit colour, so on this
+     dark ground a bloom steps one level every few pixels; the dither added
+     after it lived at CSS resolution, was stretched 2x on a Retina screen
+     and could be re-quantised by the browser's colour conversion - and the
+     card's 100px CSS shadow was a second 8-bit gradient of rings. Here the
+     whole ground - blooms, vignette and the card's shadow - is computed in
+     float per DEVICE pixel and dithered at the very last step with
+     triangular noise of +-1 level, which is below what the eye can see and
+     exactly what turns a step into a smooth ramp. Canvas 2D is the fallback. */
+  var GL_VS = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}';
+  var GL_FS = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
+    'precision mediump float;',
+    '#endif',
+    'uniform vec2 uRes;uniform float uDpr;uniform vec3 uBase;',
+    'uniform vec4 uBloom[3];uniform vec3 uCol[3];',
+    'uniform vec4 uCard;uniform float uCardR;uniform float uShadow;uniform float uSeed;',
+    'float h(vec2 q){q=fract(q*vec2(0.1031,0.1030));q+=dot(q,q.yx+33.33);return fract((q.x+q.y)*q.x);}',
+    'float erfc2(float x){return 1.0/(1.0+exp(clamp(2.405*x,-60.0,60.0)));}',
+    'void main(){',
+    '  vec2 px=vec2(gl_FragCoord.x,uRes.y-gl_FragCoord.y);',
+    '  vec3 c=uBase;',
+    '  for(int i=0;i<3;i++){',
+    '    float d=length(px-uBloom[i].xy)/uBloom[i].z;',
+    '    float f=pow(clamp(1.0-d,0.0,1.0),2.43);',
+    '    c=mix(c,uCol[i],uBloom[i].w*f);',
+    '  }',
+    '  float y=clamp(px.y/uRes.y,0.0,1.0);',
+    '  c=mix(c,uBase,0.9*pow(y,1.6));',
+    '  if(uShadow>0.0){',
+    '    vec2 hc=uCard.xy+uCard.zw*0.5;',
+    '    vec2 q=abs(px-hc)-uCard.zw*0.5+vec2(uCardR);',
+    '    float sd=length(max(q,0.0))+min(max(q.x,q.y),0.0)-uCardR;',
+    '    float s1=0.55*erfc2(sd/(20.0*1.4142*uDpr));',
+    '    float s2=0.65*erfc2(sd/(50.0*1.4142*uDpr));',
+    '    float s=1.0-(1.0-s1)*(1.0-s2);',
+    '    c=mix(c,vec3(0.0),s*uShadow);',
+    '  }',
+    '  float n=h(gl_FragCoord.xy+uSeed)+h(gl_FragCoord.yx*1.37+uSeed+17.0)-1.0;',
+    '  gl_FragColor=vec4(c+n/255.0,1.0);',
+    '}'
+  ].join('\n');
+
+  function glAurora(canvas) {
+    var gl = null;
+    try {
+      gl = canvas.getContext('webgl', {alpha: false, antialias: false, depth: false, stencil: false,
+                                       premultipliedAlpha: false, preserveDrawingBuffer: false,
+                                       powerPreference: 'low-power'});
+    } catch (e) { gl = null; }
+    if (!gl) return null;
+    function sh(type, src) {
+      var o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o);
+      return gl.getShaderParameter(o, gl.COMPILE_STATUS) ? o : null;
+    }
+    var vs = sh(gl.VERTEX_SHADER, GL_VS), fs = sh(gl.FRAGMENT_SHADER, GL_FS);
+    if (!vs || !fs) return null;
+    var prog = gl.createProgram();
+    gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    gl.useProgram(prog);
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    var U = {}, names = ['uRes', 'uDpr', 'uBase', 'uBloom', 'uCol', 'uCard', 'uCardR', 'uShadow', 'uSeed'], i;
+    for (i = 0; i < names.length; i++) U[names[i]] = gl.getUniformLocation(prog, names[i]);
+    return {gl: gl, U: U};
+  }
+
   function mount(opts) {
     var aurora = opts.aurora, sky = opts.sky;
     if (!aurora || !sky || !aurora.getContext) return null;
-    var actx = aurora.getContext('2d'), sctx = sky.getContext('2d');
+    var GL = glAurora(aurora);
+    if (!GL && aurora.parentNode && aurora.cloneNode) {
+      // A canvas that once gave out a WebGL context never gives a 2D one:
+      // a shader that would not compile left the page black. Fall back on
+      // a fresh canvas in its place.
+      var fresh = aurora.cloneNode(false);
+      aurora.parentNode.replaceChild(fresh, aurora);
+      aurora = fresh;
+    }
+    var actx = GL ? null : aurora.getContext('2d'), sctx = sky.getContext('2d');
+    // The card's soft shadow is painted by the GL ground (dithered) instead
+    // of CSS, which banded; its 1px edge stays in CSS.
+    var card = GL ? document.querySelector('.card') : null, cardR = 14;
+    if (card) {
+      try { cardR = parseFloat(window.getComputedStyle(card).borderTopLeftRadius) || 14; } catch (e) {}
+      card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.35)';
+    }
     var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var W = 0, H = 0, dpr = 1, ascale = 1;
     var base = window.getComputedStyle ? window.getComputedStyle(document.body).backgroundColor : '';
     if (!base || base === 'transparent' || base === 'rgba(0, 0, 0, 0)') base = '#141110';
     var baseRGB = (base.match(/\d+/g) || [20, 17, 16]).slice(0, 3);
     var grain = null;
-    try { grain = actx.createPattern(ditherTile(), 'repeat'); } catch (e) { grain = null; }
+    try { grain = actx ? actx.createPattern(ditherTile(), 'repeat') : null; } catch (e) { grain = null; }
+    var seed = 0;
     var t0 = Date.now() / 1000, last = 0, raf = null, frames = 0, drawMs = 0;
 
     function size() {
       W = window.innerWidth; H = window.innerHeight;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
-      aurora.width = Math.max(1, Math.round(W * ascale)); aurora.height = Math.max(1, Math.round(H * ascale));
+      var as = GL ? dpr : ascale;
+      aurora.width = Math.max(1, Math.round(W * as)); aurora.height = Math.max(1, Math.round(H * as));
       sky.width = Math.round(W * dpr); sky.height = Math.round(H * dpr);
       aurora.style.width = sky.style.width = W + 'px';
       aurora.style.height = sky.style.height = H + 'px';
-      actx.setTransform(ascale, 0, 0, ascale, 0, 0);
+      if (actx) actx.setTransform(ascale, 0, 0, ascale, 0, 0);
+      if (GL) GL.gl.viewport(0, 0, aurora.width, aurora.height);
       sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
+    function drawGL(t, frozen) {
+      var gl = GL.gl, U = GL.U, i, bl = [], col = [];
+      for (i = 0; i < BLOOMS.length; i++) {
+        var b = BLOOMS[i], w = 2 * Math.PI / b.period;
+        var dx = frozen ? 0 : Math.sin(t * w + b.phase) * W * 0.16;
+        var dy = frozen ? 0 : Math.cos(t * w * 0.8 + b.phase) * H * 0.05;
+        var breathe = frozen ? 1 : 0.82 + 0.18 * Math.sin(t * w * 1.3 + b.phase);
+        bl.push((b.x * W + dx) * dpr, (b.y * H + dy) * dpr, b.r * W * dpr, b.a * breathe);
+        col.push(b.c[0] / 255, b.c[1] / 255, b.c[2] / 255);
+      }
+      gl.uniform2f(U.uRes, aurora.width, aurora.height);
+      gl.uniform1f(U.uDpr, dpr);
+      gl.uniform3f(U.uBase, baseRGB[0] / 255, baseRGB[1] / 255, baseRGB[2] / 255);
+      gl.uniform4fv(U.uBloom, new Float32Array(bl));
+      gl.uniform3fv(U.uCol, new Float32Array(col));
+      var r = card && card.getBoundingClientRect ? card.getBoundingClientRect() : null;
+      var op = 1;
+      if (r) { try { op = parseFloat(window.getComputedStyle(card).opacity); if (isNaN(op)) op = 1; } catch (e) { op = 1; } }
+      gl.uniform1f(U.uShadow, r ? op : 0);
+      if (r) { gl.uniform4f(U.uCard, r.left * dpr, r.top * dpr, r.width * dpr, r.height * dpr); gl.uniform1f(U.uCardR, cardR * dpr); }
+      seed = (seed + 1) % 997;
+      gl.uniform1f(U.uSeed, frozen ? 0 : seed * 3.1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
     function drawAurora(t, frozen) {
+      if (GL) { drawGL(t, frozen); return; }
       actx.globalCompositeOperation = 'source-over';
       actx.fillStyle = base;
       actx.fillRect(0, 0, W, H);
@@ -218,6 +338,9 @@
     size();
     if (reduced) { drawAurora(0, true); drawSky(0); }
     else { drawAurora(1000, false); drawSky(1000); start(); }
+    // The card fades in over ~half a second; a still frame (reduced motion,
+    // a hidden tab) is repainted once it has, so its shadow is drawn.
+    if (card) window.setTimeout(function () { drawAurora(reduced ? 0 : Date.now() / 1000 - t0 + 1000, reduced); }, 700);
     window.addEventListener('resize', function () { size(); if (reduced) { drawAurora(0, true); drawSky(0); } else { drawAurora(Date.now() / 1000 - t0 + 1000, false); drawSky(Date.now() / 1000 - t0 + 1000); } });
     document.addEventListener('visibilitychange', function () { if (document.hidden) stop(); else { last = 0; start(); } });
 
@@ -227,7 +350,7 @@
       drawAurora(t, false); drawSky(t);
       return performance.now() - s;
     }
-    return { stats: function () { return { frames: frames, lastDrawMs: drawMs, reduced: reduced, dpr: dpr, size: [W, H] }; }, stop: stop, start: start, tick: tick };
+    return { stats: function () { return { frames: frames, lastDrawMs: drawMs, reduced: reduced, dpr: dpr, size: [W, H], gl: !!GL }; }, stop: stop, start: start, tick: tick };
   }
 
   window.CavnarField = { mount: mount };

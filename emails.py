@@ -1165,9 +1165,29 @@ def report_eyebrow(label: str, color: str = None, tag: str = None,
             f'{label}</span></td>{right}</tr></table>')
 
 
+def _visible_len(html_text: str) -> int:
+    """Characters a figure shows: tags dropped, an entity one character."""
+    import re as _re_vl
+    t = _re_vl.sub(r"<[^>]+>", "", str(html_text or ""))
+    return len(_re_vl.sub(r"&#?\w+;", "x", t))
+
+
+# The phone's content width the row is balanced for (a 390pt screen less
+# the card's padding). Wider screens keep the same proportions.
+_STAT_ROW_PX = 330
+
+
 def report_stats(stats) -> str:
     """A stat row as real table cells — the thing `display:flex` was pretending
-    to be. Rows of up to four; every figure is set in Space Grotesk."""
+    to be. Rows of up to four; every figure is set in Space Grotesk.
+
+    Owner, 9/30/26: equal-width columns left "$10,060" filling its column
+    beside a short "44.6%", so the gaps either side of a figure differed, and
+    "$124,765" broke onto two lines with its last digit alone. Now a figure
+    never wraps (nowrap), the row's size steps down when its figures are long,
+    and each column is as wide as its figure or label plus an equal share of
+    what is left — the same gap after every figure. Columns line up across
+    rows (one table)."""
     stats = [s for s in stats if s]
     if not stats:
         return ""
@@ -1177,20 +1197,40 @@ def report_stats(stats) -> str:
     per = n if n <= 4 else -(-n // -(-n // 4))
     per = min(per, 4) or 1
     chunks = [stats[i:i + per] for i in range(0, n, per)]
+    longest = max(_visible_len(e[0]) for e in stats)
+    size = 25 if longest <= 6 else (22 if longest <= 8 else 19)
+    if per == 4 and longest > 6:
+        size = min(size, 20)
+    # Estimated width of each column: its widest figure or label.
+    est = [0.0] * per
+    for chunk in chunks:
+        for j, entry in enumerate(chunk):
+            fig = _visible_len(entry[0]) * size * 0.62
+            lab = len(str(entry[1] or "")) * 7.6
+            est[j] = max(est[j], fig, lab)
+    spare = _STAT_ROW_PX - sum(est)
+    if spare > 0:
+        gap = spare / per
+        widths = [(e + gap) for e in est]
+    else:
+        widths = [1.0] * per
+    tot = sum(widths)
+    pct = [max(10, round(w / tot * 100)) for w in widths]
+    pct[-1] = max(10, 100 - sum(pct[:-1]))
     rows = ""
     for ci, chunk in enumerate(chunks):
-        w = 100 // len(chunk)
         cells = ""
-        for entry in chunk:
+        for j, entry in enumerate(chunk):
             value, label = entry[0], entry[1]
             color = entry[2] if len(entry) > 2 and entry[2] else BRAND["strong"]
-            cells += (f'<td width="{w}%" align="left" valign="top" style="padding:0 12px 0 0">'
-                      f'<div style="font-family:{_NUM};font-size:25px;font-weight:700;line-height:1.1;'
-                      f'color:{color}">{value}</div>'
+            cells += (f'<td width="{pct[j]}%" align="left" valign="top" style="padding:0 10px 0 0">'
+                      f'<div style="font-family:{_NUM};font-size:{size}px;font-weight:700;line-height:1.1;'
+                      f'white-space:nowrap;color:{color}">{value}</div>'
                       f'<div style="font-family:{_SANS};font-size:10px;text-transform:uppercase;'
                       f'letter-spacing:.07em;color:{BRAND["muted"]};margin-top:5px">{label}</div></td>')
         # Pad the short row so its cells keep the same width as the row above.
-        cells += ('<td width="%d%%"></td>' % w) * (per - len(chunk))
+        for j in range(len(chunk), per):
+            cells += '<td width="%d%%"></td>' % pct[j]
         rows += f"<tr>{cells}</tr>"
         if ci + 1 < len(chunks):
             rows += f'<tr><td colspan="{per}" style="height:18px;font-size:0;line-height:0">&nbsp;</td></tr>'
@@ -1215,6 +1255,38 @@ def report_lines(lines) -> str:
                 f'<div style="font-family:{_SANS};font-size:13.5px;color:{BRAND["body"]};'
                 f'line-height:1.55;margin-top:4px">{text}</div></div>')
     return out.rstrip()
+
+
+def metric_parts(review, body) -> list:
+    """A review's sentences (weekly_review.lines / monthly_review.lines, one
+    per metric) as (metric name, the rest): the same words, split so the
+    name can be a heading."""
+    out = []
+    metrics = (review or {}).get("metrics") or []
+    for i, text in enumerate(body or ()):
+        label = str(metrics[i].get("label") or "") if i < len(metrics) else ""
+        head = label + ": "
+        if label and str(text).startswith(head):
+            out.append((label, str(text)[len(head):]))
+        else:
+            out.append(("", str(text)))
+    return out
+
+
+def report_metric_lines(parts) -> str:
+    """One measured figure per block: its name as a small orange heading,
+    then what it did, with room between blocks (owner, 9/30/26: "the week
+    against" was one run-on paragraph, every line the same weight)."""
+    out = ""
+    for heading, text in parts or ():
+        if not text:
+            continue
+        head = (f'<div style="font-family:{_SANS};font-size:15px;font-weight:700;color:{BRAND["ember"]};'
+                f'line-height:1.3;margin:0 0 4px">{esc(heading)}</div>') if heading else ""
+        out += (f'<div style="margin:0 0 18px">{head}'
+                f'<div style="font-family:{_SANS};font-size:14px;color:{BRAND["body"]};line-height:1.6">'
+                f'{esc(text)}</div></div>')
+    return out
 
 
 def report_quote(name: str, meta: str, text: str, accent: str) -> str:
@@ -1305,9 +1377,14 @@ def review_kpi_stats(review) -> str:
                 continue
             unit = m.get("unit")
             value = _rfmt(m["value"], unit)
+            color = tone.get(m.get("verdict"))
             if unit == "★":
                 value = f"{m['value']:.2f}&#9733;"
-            stats.append((value, esc(str(m.get("label") or "")).lower(), tone.get(m.get("verdict"))))
+                # A rating is coloured by where it stands, as every rating in
+                # the product is (owner, 9/30/26: "4.40 should be green").
+                v = float(m["value"])
+                color = BRAND["good"] if v >= 4.0 else (BRAND["warn"] if v >= 3.0 else BRAND["bad"])
+            stats.append((value, esc(str(m.get("label") or "")).lower(), color))
         return report_stats(stats[:4])
     except Exception as e:
         print(f"[review email] kpi row failed: {e}")
@@ -3045,7 +3122,7 @@ def _weekly_review_parts(restaurant_id, review=None, caveats=None, headline_in_t
             block = report_eyebrow("The week against " + review["compared_with"])
             if not headline_in_title:
                 block += report_paragraph(_html.escape(weekly_review.headline(review)))
-            block += report_paragraph(_list(body))
+            block += report_metric_lines(metric_parts(review, body))
             cost = weekly_review.cost_of_waiting(review)
             if cost:
                 block += report_paragraph(f'<strong>{_html.escape(cost)}</strong>')
@@ -3198,7 +3275,7 @@ def _monthly_review_parts(restaurant_id, months=1, review=None, caveats=None, he
                                    + " against " + review["compared_with"])
             if not headline_in_title:
                 block += report_paragraph(_html.escape(monthly_review.headline(review)))
-            block += report_paragraph(_list(body))
+            block += report_metric_lines(metric_parts(review, body))
             cost = monthly_review.cost_of_waiting(review)
             if cost:
                 block += report_paragraph(

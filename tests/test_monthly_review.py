@@ -92,6 +92,11 @@ def test_the_email_carries_the_review_and_survives_a_broken_block(db_path, monke
     _month(db_path, rid, 2026, 8, sales=4400, labor_cost=1200)
     import goals
     monkeypatch.setattr(goals, "progress", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    # The review of August, whatever today's date: the data is July and
+    # August (the test read the real clock and broke on 10/1).
+    real_build = monthly_review.build
+    monkeypatch.setattr(monthly_review, "build",
+                        lambda rid_, *a, **k: real_build(rid_, *a, **dict(k, today=k.get("today") or date(2026, 9, 1))))
     html = "".join(emails._monthly_review_sections(rid))
     assert "The month against July" in html and "Sales per day" in html
 

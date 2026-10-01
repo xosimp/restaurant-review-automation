@@ -485,6 +485,8 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 /* --scrim: the one backdrop behind a modal (the explain card's tone). */
 :root{--cav-chrome:93px;--z-modal:10000;--scrim:rgba(14,12,10,.6)}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:sticky;top:56px;z-index:99}
+.pk-offer-card{max-width:440px}
+.pk-offer-p{font-size:14.5px;line-height:1.55;color:var(--ink2);margin:8px 0 14px}
 .tabs .tab-sep{flex:none;align-self:center;width:1px;height:16px;margin:0 10px;background:rgba(240,235,224,.18)}
 [data-nav]{scroll-margin-top:calc(var(--cav-chrome) + 16px)}
 /* A focused item arriving from a link: one ember ring that fades. */
@@ -27809,26 +27811,78 @@ function pkLoad(){
   }).catch(function(){});
 }
 function pkAddOpen(){var a=document.getElementById('pk-add');a.hidden=!a.hidden;if(!a.hidden)document.getElementById('pk-pw').focus();pkStatus('');}
-function pkAdd(btn){
-  var pw=document.getElementById('pk-pw').value;
-  if(!pw){pkStatus('Enter your password first.',true);return;}
-  var done=cbtnBusy(btn,'Waiting\u2026');
-  fetch('/api/passkeys/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})}).then(apiJson).then(function(d){
-    if(!d.ok){done();pkStatus(d.error||'Could not start.',true);return;}
+// One ceremony for both ways in: Account -> Security (password typed) and
+// the offer right after signing in (no password - it was just typed).
+// opts.conditional: the browser's own quiet "save a passkey?" after a
+// password autofill (Safari 18 / Chrome 136+), never a dialog of ours.
+function pkCreate(pw,opts,done){
+  opts=opts||{};
+  fetch('/api/passkeys/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pw?{password:pw}:{})}).then(apiJson).then(function(d){
+    if(!d.ok){done({ok:false,error:d.error||'Could not start.'});return;}
     var o=d.options,i,pub={challenge:pkBuf(o.challenge),rp:o.rp,user:{id:pkBuf(o.user.id),name:o.user.name,displayName:o.user.displayName},
       pubKeyCredParams:o.pubKeyCredParams,timeout:o.timeout,attestation:o.attestation||'none',authenticatorSelection:o.authenticatorSelection,excludeCredentials:[]};
     for(i=0;i<(o.excludeCredentials||[]).length;i++)pub.excludeCredentials.push({type:'public-key',id:pkBuf(o.excludeCredentials[i].id)});
-    return navigator.credentials.create({publicKey:pub}).then(function(c){
+    var req={publicKey:pub};if(opts.conditional)req.mediation='conditional';
+    return navigator.credentials.create(req).then(function(c){
       var r=c.response,body={credential:{id:c.id,rawId:pkB64(c.rawId),type:c.type,clientExtensionResults:{},
         response:{clientDataJSON:pkB64(r.clientDataJSON),attestationObject:pkB64(r.attestationObject),transports:r.getTransports?r.getTransports():[]}}};
       return fetch('/api/passkeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(v){
-        done();
-        if(v.ok){document.getElementById('pk-pw').value='';document.getElementById('pk-add').hidden=true;pkStatus('');toast('Passkey added. Use it next time you sign in.','success');pkLoad();}
-        else pkStatus(v.error||'Could not save the passkey.',true);
+        done(v.ok?{ok:true}:{ok:false,error:v.error||'Could not save the passkey.'});
       });
-    },function(e){done();pkStatus(e&&e.name==='InvalidStateError'?'This device already has a passkey for your login.':(e&&e.name==='NotAllowedError'?'Cancelled.':'The passkey was not made. Try again.'),!(e&&e.name==='NotAllowedError'));});
-  }).catch(function(){done();pkStatus('Network error.',true);});
+    },function(e){done({ok:false,cancelled:!!(e&&e.name==='NotAllowedError'),error:e&&e.name==='InvalidStateError'?'This device already has a passkey for your login.':(e&&e.name==='NotAllowedError'?'Cancelled.':'The passkey was not made. Try again.')});});
+  }).catch(function(){done({ok:false,error:'Network error.'});});
 }
+function pkAdd(btn){
+  var pw=document.getElementById('pk-pw').value;
+  if(!pw){pkStatus('Enter your password first.',true);return;}
+  var fin=cbtnBusy(btn,'Waiting\u2026');
+  pkCreate(pw,{},function(r){
+    fin();
+    if(r.ok){document.getElementById('pk-pw').value='';document.getElementById('pk-add').hidden=true;pkStatus('');toast('Passkey added. Use it next time you sign in.','success');pkLoad();}
+    else pkStatus(r.error,!r.cancelled);
+  });
+}
+// Right after a password sign-in, a login with no passkey is offered one
+// (owner, 9/30/26): first the browser's own quiet prompt where it has one,
+// else one small dialog of ours - "Not now" is remembered on this device.
+var PK_SKIP='cav-pk-offer-skip';
+function pkOffer(){
+  if(!(window.PublicKeyCredential&&navigator.credentials&&navigator.credentials.create))return;
+  try{if(localStorage.getItem(PK_SKIP))return;}catch(e){}
+  fetch('/api/passkeys').then(apiJson).then(function(d){
+    if(!d||!d.ok||!d.offer)return;
+    var caps=PublicKeyCredential.getClientCapabilities?PublicKeyCredential.getClientCapabilities():null;
+    (caps&&caps.then?caps:{then:function(f){f({});}}).then(function(c){
+      if(c&&c.conditionalCreate){pkCreate(null,{conditional:true},function(r){if(r.ok)toast('Passkey saved. Next time, sign in with Face ID or Touch ID.','success');});return;}
+      pkOfferDialog();
+    },function(){pkOfferDialog();});
+  }).catch(function(){});
+}
+function pkOfferDialog(){
+  var m=document.getElementById('pk-offer-modal');
+  if(!m){m=document.createElement('div');m.id='pk-offer-modal';m.className='cmodal so-modal';m.style.display='none';
+    m.setAttribute('role','dialog');m.setAttribute('aria-modal','true');m.setAttribute('aria-labelledby','pk-offer-t');
+    m.innerHTML='<div class="so-card pk-offer-card"><div class="hb-kicker">Faster sign-in</div><h3 id="pk-offer-t">Save a passkey for this device?</h3>'
+      +'<p class="pk-offer-p">Next time, sign in with Face ID, Touch ID or this device\u2019s PIN \u2014 no password and no code. You can remove it any time in Account \u2192 Security.</p>'
+      +'<div class="ac-status" id="pk-offer-st" style="display:none"></div>'
+      +'<div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-pk-offer="later">Not now</button><button type="button" class="cbtn cbtn-primary" data-pk-offer="save">Save a passkey</button></div></div>';
+    m.addEventListener('click',function(e){
+      var t=e.target&&e.target.closest?e.target.closest('[data-pk-offer]'):null;
+      if(e.target===m||(t&&t.getAttribute('data-pk-offer')==='later')){try{localStorage.setItem(PK_SKIP,'1');}catch(x){}pkOfferDone();return;}
+      if(!t)return;
+      var fin=cbtnBusy(t,'Waiting\u2026');
+      pkCreate(null,{},function(r){
+        fin();
+        if(r.ok){pkOfferDone();toast('Passkey saved. Next time, sign in with Face ID or Touch ID.','success');pkLoad();}
+        else if(!r.cancelled){var st=document.getElementById('pk-offer-st');st.style.display='block';st.style.color='var(--red)';st.textContent=r.error;}
+      });
+    });
+    document.body.appendChild(m);}
+  if(window.cModal)cModal.open('pk-offer-modal',{close:'pkOfferClose'});else m.style.display='flex';
+}
+window.pkOfferClose=function(){var m=document.getElementById('pk-offer-modal');if(m)m.style.display='none';};
+function pkOfferDone(){if(window.cModal)cModal.close('pk-offer-modal');else pkOfferClose();}
+window.addEventListener('load',function(){window.setTimeout(pkOffer,1500);});
 document.addEventListener('click',function(ev){
   var b=ev.target&&ev.target.closest?ev.target.closest('[data-pk-rm]'):null;if(!b)return;
   if(!window.confirm('Remove this passkey? It won\u2019t sign you in any more.'))return;

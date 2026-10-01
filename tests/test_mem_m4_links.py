@@ -96,7 +96,11 @@ def test_an_answered_link_is_remembered_and_reopens_only_if_it_stays():
     link = _link()
     lm.observe(rid, [link], today=MON)
     rec_ledger.record(rid, bi.link_key(link), "completed", surface="home")
-    done_on = date.today()
+    # The day it was marked done on the restaurant's calendar - the label
+    # reads the UTC stamp as a local day (the machine's date is tomorrow
+    # after 7pm Central on a UTC host; CI, 9/30/26).
+    from time_utils import restaurant_now
+    done_on = restaurant_now(None, naive=True).date()
     assert lm.settle(rid, today=done_on)["answered"] == 1
     assert lm.active(rid, today=done_on) == [], "a resolved link is not acted on"
     soon = lm.observe(rid, [link], today=done_on + timedelta(days=3))[0]["memory"]

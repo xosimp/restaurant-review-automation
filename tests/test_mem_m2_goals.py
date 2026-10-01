@@ -84,8 +84,11 @@ def test_a_goal_whose_date_passed_stops_overriding_the_setting():
     rid = _rid(food=30.0)
     g = goals.set_goal(rid, "food_cost_pct", 28, deadline=_deadline(10), user_id=1, authority="principal")
     conn = models.get_conn()
-    conn.execute("UPDATE owner_goals SET deadline=? WHERE id=?", ((date.today() - timedelta(days=1)).isoformat(),
-                                                                  g["id"]))
+    # Yesterday on the restaurant's calendar (a goal runs through its
+    # deadline, read on the owner's date - not the machine's; CI on UTC).
+    from time_utils import restaurant_now_by_id
+    yday = restaurant_now_by_id(rid).date() - timedelta(days=1)
+    conn.execute("UPDATE owner_goals SET deadline=? WHERE id=?", (yday.isoformat(), g["id"]))
     conn.commit()
     conn.close()
     owner_memory.invalidate_targets(rid)

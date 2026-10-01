@@ -34,7 +34,11 @@ def _redirect_db(monkeypatch, db_path):
     monkeypatch.setattr(outcomes, "_holidays_between", lambda s, e: {})
 
 
-TODAY = date.today()
+# The restaurant's date as outcomes.local_today reads it (operator time for
+# a restaurant with no zone set) - never the machine's, which on a UTC host
+# is tomorrow after 7pm Central (CI, 9/30/26).
+from time_utils import restaurant_now as _rnow
+TODAY = _rnow(None, naive=True).date()
 
 
 def _rid(db_path, **kw):

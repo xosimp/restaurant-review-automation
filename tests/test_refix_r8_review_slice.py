@@ -29,7 +29,10 @@ def _db(db_path, monkeypatch):
     yield
 
 
-TODAY = date.today()
+# The restaurant's date (operator time when no zone is set), the edge of
+# every window read here - not the machine's (CI is UTC: tomorrow after 7pm).
+from time_utils import restaurant_now as _rnow
+TODAY = _rnow(None, naive=True).date()
 NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 

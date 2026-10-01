@@ -263,6 +263,41 @@ def test_apple_on_the_web_checks_the_services_id_and_the_nonce(app, db, monkeypa
 
 
 def test_the_site_lets_the_app_share_its_passkeys():
-    import hosted_dashboard
-    aasa = hosted_dashboard.apple_app_site_association()
-    assert aasa["webcredentials"]["apps"] == [hosted_dashboard.APPLE_APP_ID]
+    # Read from the source: importing hosted_dashboard registers every
+    # blueprint again, which Flask refuses once another test has done it.
+    import ast
+    src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
+    fn = next(n for n in ast.parse(src).body
+              if isinstance(n, ast.FunctionDef) and n.name == "apple_app_site_association")
+    body = ast.get_source_segment(src, fn)
+    assert '"webcredentials": {"apps": [APPLE_APP_ID]}' in body
+
+
+def test_a_fresh_password_sign_in_is_offered_a_passkey_without_a_second_password(app, db, monkeypatch):
+    from datetime import datetime
+    rid = _restaurant(db)
+    uid = _login(db, rid)
+    fresh = dict(auth.get_user_by_id(uid, db_path=db), reauth_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    monkeypatch.setattr(auth, "get_current_user", lambda: fresh)
+    c = app.test_client()
+    c.set_cookie("csrf_js", "tok")
+    h = {"X-CSRF": "tok", "Host": HOST}
+    assert c.get("/api/passkeys", headers=h).get_json()["offer"] is True
+    opts = c.post("/api/passkeys/options", json={}, headers=h)
+    assert opts.status_code == 200, opts.get_json()
+    assert c.post("/api/passkeys", json={"credential": Authenticator().create(opts.get_json()["options"])},
+                  headers=h).status_code == 200
+    # one saved: no more offers; a stale sign-in still needs the password
+    assert c.get("/api/passkeys", headers=h).get_json()["offer"] is False
+    stale = dict(fresh, reauth_at="2026-01-01 00:00:00")
+    monkeypatch.setattr(auth, "get_current_user", lambda: stale)
+    assert c.post("/api/passkeys/options", json={}, headers=h).status_code == 403
+    # never in view-as
+    monkeypatch.setattr(auth, "get_current_user", lambda: dict(fresh, acting_admin="will"))
+    conn = models.get_conn(db)
+    conn.execute("DELETE FROM user_passkeys")
+    conn.commit()
+    conn.close()
+    assert c.get("/api/passkeys", headers=h).get_json()["offer"] is False
+    src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    assert "function pkOffer()" in src and "conditionalCreate" in src and "cav-pk-offer-skip" in src

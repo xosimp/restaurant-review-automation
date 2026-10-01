@@ -19,7 +19,15 @@ so it 403'd for every account). The gate is therefore "not a member", never
 """
 import logging
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time - CLAUDE.md's bound-import
+    hazard: imported first while a test had models.get_conn patched, the
+    bound copy kept that test's database for the rest of the run."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 log = logging.getLogger(__name__)
 

@@ -94,7 +94,10 @@ def test_an_account_holder_sees_it_for_thirty_days_in_mdy_with_the_link(monkeypa
 
 def test_a_manager_and_an_admin_view_as_never_see_it_or_dismiss_it(monkeypatch):
     rid = _rid()
-    start = date.today()
+    # The restaurant's own date, which notice_for reads by default - the
+    # machine's is tomorrow after 7pm Central on a UTC host (CI, 9/30/26).
+    from time_utils import restaurant_now_by_id
+    start = restaurant_now_by_id(rid).date()
     monkeypatch.setattr(policy_notice, "POLICY_UPDATED_ON", start)
     manager = _login(rid, "dana", "manager")
     owner = _login(rid, "erik", "client")
@@ -109,7 +112,10 @@ def test_a_manager_and_an_admin_view_as_never_see_it_or_dismiss_it(monkeypatch):
 
 def test_a_dismissal_holds_per_login_and_a_later_change_shows_again(monkeypatch):
     rid = _rid()
-    start = date.today()
+    # The restaurant's own date, which notice_for reads by default - the
+    # machine's is tomorrow after 7pm Central on a UTC host (CI, 9/30/26).
+    from time_utils import restaurant_now_by_id
+    start = restaurant_now_by_id(rid).date()
     monkeypatch.setattr(policy_notice, "POLICY_UPDATED_ON", start)
     erik = _login(rid, "erik", "client")
     co = _login(rid, "maria", "client")
@@ -135,7 +141,9 @@ def test_the_dismiss_route_is_on_both_surfaces():
 def test_home_and_the_group_home_carry_it(monkeypatch):
     rid = _rid(module_reviews=1)
     owner = _login(rid, "erik", "client")
-    monkeypatch.setattr(policy_notice, "POLICY_UPDATED_ON", date.today())
+    # The restaurant's date, as Home passes it (not the machine's - CI).
+    from time_utils import restaurant_now_by_id
+    monkeypatch.setattr(policy_notice, "POLICY_UPDATED_ON", restaurant_now_by_id(rid).date())
     import anthropic
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AI on Home")))
     p, st = home_brief.build_home_brief(owner, fresh=True)

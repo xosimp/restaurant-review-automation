@@ -344,8 +344,11 @@ def test_no_pill_has_an_ember_glow_or_border_on_any_module():
         "no ember-colored glow on the pill itself"
     assert "rgba(232,149,106," not in rule, "no orange border ring"
     assert "border:1px solid var(--bg-base)" in rule
-    assert "box-shadow:0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35)" in rule
-    assert "box-shadow:0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)" in hover_rule
+    # The same colorless lift; since 9/30/26 an inset top highlight and
+    # bottom shade come first in the stack (the pills' "pop").
+    assert "0 10px 24px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.35)" in rule
+    assert "0 14px 32px rgba(0,0,0,.5),0 4px 10px rgba(0,0,0,.4)" in hover_rule
+    assert "box-shadow:inset 0 1px 0 rgba(255,255,255," in rule
     assert "#panel-reviews .hb-chip,#panel-reviews .hb-chip:hover{box-shadow:none}" not in s, \
         "page-scoped override should be gone now that the shared rule itself has no glow"
     # The .dot i/.dot b status-indicator glow is a different, small,

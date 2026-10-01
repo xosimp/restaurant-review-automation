@@ -315,11 +315,15 @@ def test_count_age_is_reported_separately_from_the_waste_window():
     items = [{"item": "X", "category": "pantry", "par_level": 1, "current_stock": 1,
               "unit_cost": 1, "avg_daily_usage": 1, "last_order_qty": 1,
               "waste_last_week": 0, "case_size": 1}]
-    old = (date.today() - timedelta(days=21)).isoformat()
-    a = inventory.analyse_inventory(items, counted_from=old, counted_to=old)
+    # One fixed "today" for the analysis and the test: the analysis's own
+    # default is the restaurant's date, which differs from the machine's
+    # from 7pm Central on a UTC host (CI, 9/30/26).
+    today = date(2026, 9, 30)
+    old = (today - timedelta(days=21)).isoformat()
+    a = inventory.analyse_inventory(items, counted_from=old, counted_to=old, today=today)
     # The waste window stays the trailing seven days...
-    assert a["week_end"] == date.today().strftime("%-m/%-d/%y")
-    assert a["week_start"] == (date.today() - timedelta(days=6)).strftime("%-m/%-d/%y")
+    assert a["week_end"] == today.strftime("%-m/%-d/%y")
+    assert a["week_start"] == (today - timedelta(days=6)).strftime("%-m/%-d/%y")
     # ...and the count age is its own, separate, reported fact.
     assert a["window_from_counts"] is True
     assert a["window_age_days"] == 21

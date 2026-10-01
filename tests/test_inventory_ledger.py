@@ -59,7 +59,11 @@ def _ingredient(db_path, restaurant_id, **overrides):
     conn.execute(
         "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, source) "
         "VALUES (?,?,?,?,?,?)",
-        (restaurant_id, ingredient_id, "recount", defaults["current_stock"], date.today().isoformat(), "migration")
+        # The restaurant's day, as the ledger stamps its own events - the
+        # machine's date is tomorrow after 7pm Central on a UTC host, which
+        # put this anchor after every count the test then records (CI).
+        (restaurant_id, ingredient_id, "recount", defaults["current_stock"],
+         ledger.local_today(restaurant_id).isoformat(), "migration")
     )
     conn.commit()
     conn.close()

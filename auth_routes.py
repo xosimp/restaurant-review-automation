@@ -1562,7 +1562,22 @@ def passkeys_list(current_user):
     for r in rows:
         r["created"] = mdy(r.get("created_at"))
         r["last_used"] = mdy(r.get("last_used_at")) if r.get("last_used_at") else None
-    return jsonify(ok=True, passkeys=rows)
+    return jsonify(ok=True, passkeys=rows, offer=_passkey_offer(current_user, rows))
+
+
+def _passkey_offer(current_user, rows):
+    """Whether to offer this login a passkey right after it signed in
+    (owner, 9/30/26: "do new users get the pop-up that asks if they want to
+    store a passkey?"): it has none, its password was typed moments ago
+    (so the offer needs no second password), and it is the account holder
+    themselves - not view-as, not a Cavnar AI staff login."""
+    from auth import is_internal_login, reauth_is_recent
+    if rows or current_user.get("acting_admin") or is_internal_login(current_user):
+        return False
+    try:
+        return bool(reauth_is_recent(current_user))
+    except Exception:
+        return False
 
 
 @auth_bp.route("/api/passkeys/options", methods=["POST"])
@@ -1578,7 +1593,12 @@ def passkeys_register_options(current_user):
     ip = _get_client_ip()
     if _is_rate_limited("passkey-add:" + ip):
         return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
-    if not _passkey_password_ok(current_user, (request.get_json(silent=True) or {}).get("password")):
+    # The password, unless it was typed moments ago (the offer right after
+    # signing in - _passkey_offer; auth.reauth_is_recent).
+    from auth import reauth_is_recent
+    pw = (request.get_json(silent=True) or {}).get("password")
+    just_signed_in = not pw and reauth_is_recent(current_user)
+    if not just_signed_in and not _passkey_password_ok(current_user, pw):
         _record_failed_attempt("passkey-add:" + ip)
         return jsonify(ok=False, error="That password isn't right."), 403
     try:

@@ -66,7 +66,7 @@ body{
   border-radius:14px;
   padding:40px 40px 36px;
   width:100%;
-  max-width:380px;
+  max-width:430px;
   box-shadow:0 0 0 1px rgba(0,0,0,.35), 0 0 40px rgba(0,0,0,.55), 0 0 100px rgba(0,0,0,.65);
   position:relative;
   overflow:hidden;
@@ -164,7 +164,11 @@ input::placeholder{font-family:'Apfel Grotezk',sans-serif;color:rgba(205,191,169
 .card .sso:hover{border-color:var(--ember);background:var(--paper2)}
 .card .sso svg{flex:none}
 .card .sso[disabled]{opacity:.6;cursor:default}
-.legal{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 18px;margin-top:20px;font-size:12px}
+/* The legal links on one line with a dot between each (owner, 9/30/26);
+   a phone too narrow for them lets them wrap rather than shrink. */
+.legal{display:flex;flex-wrap:nowrap;justify-content:center;align-items:center;gap:8px;margin-top:20px;font-size:12px;white-space:nowrap}
+.legal .dot{color:var(--ink3);opacity:.55}
+@media (max-width:440px){.legal{flex-wrap:wrap;gap:4px 8px}}
 .msg{border-radius:var(--ctl-r);padding:10px 14px;font-size:13.5px;margin-top:12px;text-align:center;line-height:1.45}
 .msg.bad{background:var(--red-bg);border:1px solid rgba(227,51,63,.35);color:var(--red)}
 .ftr-link{
@@ -237,9 +241,9 @@ input::placeholder{font-family:'Apfel Grotezk',sans-serif;color:rgba(205,191,169
     </div>
     <div class="footer-note" style="margin-top:12px">Need access? Contact <a href="mailto:will@cavnar.ai" style="color:#d4583a;text-decoration:none;font-weight:700">will@cavnar.ai</a></div>
     <div class="footer-note legal">
-      <a href="/privacy" class="ftr-link">Privacy Policy</a>
-      <a href="/terms" class="ftr-link">Terms of Service</a>
-      <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="ftr-link">System Status</a>
+      <a href="/privacy" class="ftr-link">Privacy Policy</a><span class="dot" aria-hidden="true">·</span>
+      <a href="/terms" class="ftr-link">Terms of Service</a><span class="dot" aria-hidden="true">·</span>
+      <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="ftr-link">System Status</a><span class="dot" aria-hidden="true">·</span>
       <a href="https://cavnar.ai/pricing" target="_blank" rel="noopener" class="ftr-link">Pricing</a>
     </div>
   </div>

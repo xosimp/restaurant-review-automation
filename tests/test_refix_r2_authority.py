@@ -309,7 +309,10 @@ def test_the_scorecards_ask_rate_leaves_admin_ratings_out(db_path):
                      "VALUES (?,?,?,?,?)", (rid, 11 + i, 100 + i, helpful, auth))
     conn.commit()
     conn.close()
-    out = learning_scorecard.compute_month(rid, date.today().replace(day=1), db_path=db_path)
+    # The restaurant's month (the rows are stamped now, in UTC).
+    from time_utils import restaurant_now
+    out = learning_scorecard.compute_month(rid, restaurant_now(None, naive=True).date().replace(day=1),
+                                           db_path=db_path)
     assert out["metrics"]["ask_helpful_rate"] == {"value": 1.0, "k": 1, "n": 1}
 
 

@@ -86,3 +86,19 @@ def test_the_aurora_is_smooth():
     assert "ascale = 1;" in js and "ascale = 0.25" not in js
     assert "globalCompositeOperation = 'lighter'" in js and "ditherTile()" in js
     assert "var VIGNETTE = " in js
+
+
+def test_the_ground_is_drawn_in_float_and_dithered_per_device_pixel():
+    """Owner, 9/30/26, second report: still banding. Canvas 2D gradients are
+    8-bit, the dither lived at CSS resolution and the card's 100px CSS
+    shadow banded too. WebGL computes blooms, vignette and the card's shadow
+    in float per device pixel, then dithers +-1 level; 2D stays a fallback."""
+    js = _src(JS)
+    assert "getContext('webgl'" in js and "var GL_FS = [" in js
+    fs = js[js.index("var GL_FS = ["):js.index("].join(")]
+    assert "gl_FragColor=vec4(c+n/255.0,1.0)" in fs, "dither at the very last step"
+    assert "uCard" in fs and "uShadow" in fs, "the card's shadow is in the shader, not CSS"
+    assert "tanh(" not in fs, "GLSL ES 1.0 has no tanh - the shader would not compile"
+    mount = js[js.index("function mount("):]
+    assert "aurora.cloneNode(false)" in mount, "a failed shader falls back on a fresh 2D canvas"
+    assert "card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.35)'" in mount

@@ -32,7 +32,10 @@ def _rid(db_path, **kw):
 
 
 def _sales_day(db_path, rid, days_ago, sales=4200.0, labor=1100.0):
-    d = (date.today() - timedelta(days=days_ago)).isoformat()
+    # Days ago on the restaurant's calendar, the one the age is read on -
+    # not the machine's (tomorrow after 7pm Central on a UTC host; CI).
+    from time_utils import restaurant_now_by_id
+    d = (restaurant_now_by_id(rid).date() - timedelta(days=days_ago)).isoformat()
     conn = get_conn(db_path)
     conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, labor_cost, sales, total_hours) "
                  "VALUES (?,?,?,?,?)", (rid, d, labor, sales, 80))

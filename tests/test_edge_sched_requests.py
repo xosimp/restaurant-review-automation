@@ -226,11 +226,13 @@ def test_a_person_on_approved_time_off_cannot_claim(db):
 # ── SCHED-34: past open shifts, and a same-day pickup ─────────────────────
 
 def test_an_open_shift_from_yesterday_is_neither_listed_nor_claimable(db):
-    # open_shifts and claim read the real clock, so the week is built around it.
-    today = dt.date.today()
+    # open_shifts and claim read the restaurant's clock (srq._today), so the
+    # week is built around it - not the machine's date, which is tomorrow
+    # after 7pm Central on a UTC host (CI, 9/30/26).
+    rid = _restaurant(db, SERVERS)
+    today = srq._today(rid)
     week = [(today - dt.timedelta(days=3 - i)).isoformat() for i in range(7)]
     yesterday = week[2]
-    rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(yesterday, "Ana", "Server", "11:00am", "3:00pm", 4)], dates=week)
     req = _open(rid, "Ana", yesterday, "11:00am", today=today - dt.timedelta(days=2))   # dropped before it happened
     assert req["id"] not in [r["id"] for r in srq.open_shifts(rid)]
