@@ -2055,6 +2055,22 @@ def _read_events(restaurant_id, days=21, past=4):
                                     "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
                                     "covers": last["covers"], "labor_pct": last["labor_pct"],
                                     "on_the_clock_by_role": last["headcount"]}
+        if len(ahead) < 3:
+            # Who worked games like it by role, and where the night moved
+            # around kickoff (event_intel.playbook, phase 2): a plan only
+            # where measured, else what was staffed and when it got busy.
+            from event_intel import playbook
+            st = playbook.staffing(restaurant_id, e)
+            if st and st.get("text"):
+                item["staffing"] = {"said": st["text"], "plan": [{k: d[k] for k in ("role", "delta", "game", "usual",
+                                                                                        "from")} for d in st["recommend"]],
+                                    "by_role_vs_usual": [{k: d[k] for k in ("role", "game", "usual", "delta")}
+                                                         for d in st["deltas"][:6]],
+                                    "games": st["n"], "basis": st["basis"]}
+            ru = playbook.rush(restaurant_id, e)
+            if ru and ru.get("text"):
+                item["rush"] = {"said": ru["text"], "pattern_hours_from_kickoff": ru["pattern_offset"],
+                                "games": ru["n"], "basis": ru["basis"]}
         ahead.append(item)
     out["upcoming"] = ahead
     recent = []

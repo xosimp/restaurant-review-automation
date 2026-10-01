@@ -4007,6 +4007,61 @@ def admin_api_events(current_user):
     return jsonify(ok=True, events=admin_events.recent(limit=min(request.args.get("limit", 100, type=int), 500), restaurant_id=rid))
 
 
+# ── the event catalog (Event Intelligence phase 2) ──────────────────────────
+# Every followed calendar's games, and an admin's correction to one: a
+# kickoff the league flexed, a TV change, Week 18's date once it is set.
+# A correction is kept apart from the season file and laid over it on every
+# load (event_intel.store.edit_event), and the restaurants that follow the
+# series are re-synced at once so their schedules and reports move with it.
+
+@admin_bp.route("/admin/api/event-catalog")
+@admin_required
+def admin_api_event_catalog(current_user):
+    from event_intel import store as _evs
+    return jsonify(ok=True, series=_evs.catalog(), editable=list(_evs.EDITABLE), statuses=list(_evs.STATUSES))
+
+
+@admin_bp.route("/admin/api/event-catalog/<int:event_id>", methods=["POST"])
+@admin_required
+def admin_api_event_catalog_edit(event_id, current_user):
+    import admin_events
+    from event_intel import engine as _eve, store as _evs
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Send the correction as a JSON object."), 400
+    changes = data.get("changes") if isinstance(data.get("changes"), dict) else {}
+    clear = data.get("clear") if isinstance(data.get("clear"), list) else []
+    if not changes and not clear:
+        return jsonify(ok=False, error="Nothing to change."), 400
+    try:
+        got = _evs.edit_event(event_id, changes, clear=clear)
+    except LookupError as e:
+        return jsonify(ok=False, error=str(e)), 404
+    except ValueError as e:
+        admin_events.record_admin_action(current_user, "event_catalog.edit", target=("catalog_event", event_id),
+                                         after={"changes": changes, "clear": clear}, result="refused",
+                                         summary=f"Event catalog edit refused: {e}")
+        return jsonify(ok=False, error=str(e)), 400
+    synced, failed = 0, 0
+    for rid in _evs.followers(got["series_id"]):
+        try:
+            r = get_restaurant(rid)
+            if r:
+                _eve.sync_restaurant(r)
+                synced += 1
+        except Exception as e:
+            failed += 1
+            _ops.capture(e, job="event_catalog_edit", context=f"restaurant_id={rid}")
+    admin_events.record_admin_action(current_user, "event_catalog.edit", target=("catalog_event", event_id),
+                                     before=got["before"], after=got["after"],
+                                     result="ok" if not failed else "partial",
+                                     summary=f"Event #{event_id} corrected; {synced} following restaurant"
+                                             f"{'s' if synced != 1 else ''} re-synced"
+                                             + (f", {failed} failed" if failed else ""))
+    return jsonify(ok=True, before=got["before"], after=got["after"], overrides=got["overrides"],
+                   synced=synced, failed=failed)
+
+
 @admin_bp.route("/admin/api/issues")
 @admin_required
 def admin_api_issues(current_user):

@@ -1718,7 +1718,43 @@ def _do_demand_signals_get(u):
             e = _ds._measured(rid, sg.get("label"))
             sg["measured"] = ({"median_lift_pct": e["median_lift_pct"], "n": e["n"], "applies": e["applies"],
                                "last": e["last"].isoformat(), "text": e["basis"]} if e else None)
-    return {"ok": True, "signals": signals, "what_nights_teach": _em.summaries(rid)}, 200
+    return {"ok": True, "signals": signals, "what_nights_teach": _em.summaries(rid),
+            "follows": _event_follows(rid)}, 200
+
+
+def _event_follows(rid):
+    """The calendars this restaurant follows or could (event_intel), for the
+    events card; [] when the catalog can't be read."""
+    try:
+        from event_intel import engine as _ev
+        from models import get_restaurant
+        r = get_restaurant(rid)
+        return _ev.follow_choices(r) if r else []
+    except Exception:
+        return []
+
+
+def _do_event_follow_set(u, series_id):
+    """Follow or stop following one calendar (event_intel, phase 2): the
+    owner's choice stands over auto-follow, and this restaurant's copy of
+    the games is re-synced at once."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's inputs.")
+    b = _body()
+    if not isinstance(b.get("active"), bool):
+        return {"ok": False, "error": "Send active: true or false."}, 400
+    from event_intel import engine as _ev
+    from models import get_restaurant
+    from client_api import log_account_event
+    r = get_restaurant(_rid(u))
+    try:
+        got = _ev.set_owner_follow(r, series_id, b["active"], source="owner")
+    except LookupError:
+        return {"ok": False, "error": "That calendar isn't in the catalog."}, 404
+    log_account_event(_rid(u), "event_follow_set", current_user=u,
+                      detail=f"series {series_id} {'followed' if b['active'] else 'unfollowed'}")
+    return {"ok": True, "follows": _ev.follow_choices(r), "added": got.get("added", 0),
+            "removed": got.get("removed", 0)}, 200
 
 
 def _do_demand_signals_save(u):
@@ -5454,6 +5490,7 @@ _ROUTES = [
     ("/labor/demand-signals", ["GET"], _do_demand_signals_get, "demand_signals_get"),
     ("/labor/demand-signals", ["POST"], _do_demand_signals_save, "demand_signals_save"),
     ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
+    ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),

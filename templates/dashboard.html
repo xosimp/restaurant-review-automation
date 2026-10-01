@@ -2486,6 +2486,29 @@ cavNavRegister('action', function (p) {
   }).catch(function () { toast('Couldn’t reach Cavnar AI — check your connection.', 'error'); });
   return true;
 });
+/* marketing/campaigns?goal=… opens Campaign Studio with that goal in the
+   prompt, ready for the owner to press Create — nothing is drafted or sent
+   on arrival (the morning brief's game alert, Event Intelligence phase 2).
+   Any other marketing address opens as before. */
+cavNavRegister('marketing', function (p) {
+  if (p.rest[0] !== 'campaigns') return false;
+  cavNavOpenModule('marketing');
+  if (window.switchMktTab) window.switchMktTab('campaigns');
+  var goal = String((p.query || {}).goal || '').slice(0, 200);
+  if (goal) {
+    if (typeof cpResetDraft === 'function') cpResetDraft();
+    var tries = 0;
+    (function fill() {
+      var inp = document.getElementById('cp-prompt');
+      if (!inp && tries++ < 15) { setTimeout(fill, 200); return; }
+      if (!inp) return;
+      inp.value = goal;
+      if (inp.scrollIntoView) inp.scrollIntoView({behavior: 'smooth', block: 'center'});
+      try { inp.focus({preventScroll: true}); } catch (e) { inp.focus(); }
+    })();
+  }
+  return true;
+});
 
 /* The sticky chrome's height (header + tabs), for everything that sticks
    or scrolls into view under it. */
@@ -6888,6 +6911,27 @@ svg:hover .hb-xh{opacity:1}
 .dr-chips span.neg{color:var(--hb-bad)}
 .dr-eff span.pos{color:var(--hb-good)}
 .dr-eff span .hb-num{font-weight:600}
+/* Tonight's game against the last one of the same side (Event Intelligence phase 2). */
+.ev-follows{margin:0 0 18px;display:flex;flex-direction:column;gap:8px}
+.ev-follows-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
+.ev-follow{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--hb-line2,var(--paper3));background:var(--surface)}
+.ev-follow.off{opacity:.7}
+.ev-follow-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ev-follow-t b{font-size:14px;color:var(--ink)}
+.ev-follow-t span{font-size:13px;color:var(--ink3);line-height:1.45}
+.dr-game{margin-top:22px}
+.dr-game-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin:0 0 12px}
+.dr-game-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.dr-game-c{padding:18px 20px;border-radius:16px;background:radial-gradient(90% 120% at 0% 0%,var(--hb-glow) 0%,transparent 60%),var(--surface);border:1px solid var(--hb-line2);min-width:0}
+.dr-game-c.dim{background:var(--surface);opacity:.75}
+.dr-game-c .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.dr-game-c .t{font-size:14px;line-height:1.45;color:var(--ink2);margin:4px 0 10px}
+.dr-game-c .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+.dr-game-l{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:600;color:var(--hb-good);margin-top:4px}
+.dr-game-l.neg{color:var(--red)}
+.dr-game-l .u{font-family:'Apfel Grotezk',sans-serif;font-weight:400;font-size:13px;color:var(--ink3)}
+.dr-game-l .u .hb-num{color:var(--ink2)}
+@media (max-width:860px){.dr-game-g{grid-template-columns:1fr}}
 .dr-co-r{display:grid;grid-template-columns:200px 1fr;gap:16px;padding:11px 0;border-top:1px solid var(--hb-line2)}
 .dr-co-r:first-of-type{border-top:none}
 .dr-co-r .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding-top:3px}
@@ -8182,6 +8226,9 @@ svg:hover .hb-xh{opacity:1}
       var l='',ev=(d.events||{}).items||[];
       for(var i=0;i<ev.length;i++)l+=row(esc(ev[i].label||''),'watch',ev[i].source==='manual'?'you entered it':'');
       if(l)h+='<div class="dr-list">'+l+'</div>';
+      // Tonight's game against the last one of the same side (Event
+      // Intelligence phase 2): both nights against their own usual weekday.
+      if(d.game)h+=drGameHtml(d.game);
       if(w.note&&!ob.summary)h+=note(esc(w.note));
       if((d.competitors||{}).note)h+=note(esc(d.competitors.note));
       return h;},
@@ -8195,6 +8242,28 @@ svg:hover .hb-xh{opacity:1}
       if(!any)h+='<div class="dr-why">The close-out was filed with every line blank.</div>';
       return h;}
   };
+  function drGameSide(k,title,x){
+    if(!x||!isNum(x.net))return '';
+    var lift=isNum(x.lift_pct)?x.lift_pct:null,h='<div class="dr-game-c"><div class="k">'+esc(k)+'</div><div class="t">'+esc(title)+'</div>'
+      +'<div class="v hb-num">'+esc(money(x.net))+'</div>'
+      +(lift!==null?'<div class="dr-game-l'+(lift<0?' neg':'')+'">'+hn((lift>0?'+':'')+Math.round(lift)+'%')+' <span class="u">vs a usual '+esc(x.weekday||'night')+(isNum(x.usual)?' · '+hn(money(x.usual)):'')+'</span></div>':'<div class="dr-game-l dim"><span class="u">No usual night to compare yet</span></div>');
+    var bits=[];
+    if(isNum(x.guests))bits.push(hn(cnt(x.guests))+' guests');
+    if(isNum(x.headcount))bits.push(hn(cnt(x.headcount))+' on the clock');
+    if(isNum(x.labor_pct))bits.push('labor '+hn(pct(x.labor_pct)));
+    if(bits.length)h+='<div class="dr-note">'+bits.join(' · ')+'</div>';
+    return h+'</div>';
+  }
+  function drGameHtml(g){
+    var t=g.tonight||{},l=g.last,side=g.side==='home'?'home':'road';
+    var h='<div class="dr-game"><div class="dr-game-h">Compared to your last '+esc(side)+' game</div><div class="dr-game-g">'
+      +drGameSide('Tonight',g.describe||'',t.net!=null?{net:t.net,lift_pct:t.lift_pct,usual:t.usual,weekday:g.weekday||null,guests:t.guests,headcount:t.headcount,labor_pct:t.labor_pct}:null);
+    if(l)h+=drGameSide('Last '+side+' game',l.describe||'',l);
+    else h+='<div class="dr-game-c dim"><div class="k">Last '+esc(side)+' game</div><div class="t">The first one measured here.</div></div>';
+    h+='</div>';
+    if(g.basis)h+=note(esc(cap(g.basis)));
+    return h+'</div>';
+  }
   function hours(list){
     if(!list||list.length<2)return '';
     var max=0,peak=-1,i;for(i=0;i<list.length;i++){if(isNum(list[i].net)&&list[i].net>max){max=list[i].net;peak=i;}}
@@ -32986,6 +33055,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var el=document.getElementById('signals-body');if(!el)return;
       if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load these dates.')+'</div>';return;}
       _signals=d.signals||[];
+      // The calendars followed for this location (Event Intelligence).
+      window._evFollows=d.follows||[];
       // What the nights here measured, per label (M5 event_memory).
       window._memTeach=d.what_nights_teach||[];
       renderSignals();
@@ -33000,12 +33071,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var rf=window._reservationFeed||(_rules&&_rules.reservation_feed)||null;
     if(rf&&rf.message)h+='<div class="ac-note" style="margin:0 0 10px">'+(rf.label?'<b>'+esc(rf.label)+'</b> · ':'')+esc(rf.message)+'</div>';
     if(window.memTeachHtml)h+=memTeachHtml(window._memTeach);
+    h+=evFollowsHtml(window._evFollows||[]);
     if(!list.length)h+='<div class="hb-empty">Nothing on the calendar for the next 60 days. A party, a block of reservations or a street fair goes here and the draft plans for it.</div>';
     else{
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
       for(i=0;i<list.length;i++){var sg=list[i];var lift=sg.lift_pct==null?null:+sg.lift_pct;
         h+='<tr style="cursor:default"><td><span class="hb-num">'+esc(mdy(sg.date))+'</span> <span style="color:var(--ink3)">'+esc(_dayShort(sg.date))+'</span></td>'
-          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">via '+esc(sg.source)+'</span>':'')
+          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">'+(sg.source==='events'?'from a calendar you follow':'via '+esc(sg.source))+'</span>':'')
             // Its label's own record here (M5 measured), before and after.
             +(sg.measured&&window.memMeasuredLine?'<span class="mem-ln">'+memNum(memMeasuredLine(sg.measured))+'</span>':'')+'</td>'
           +'<td class="r">'+(sg.covers==null?'<span class="dim">—</span>':'<span class="hb-num">'+esc(sg.covers)+'</span>')+'</td>'
@@ -33022,6 +33094,28 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<button type="button" class="cbtn cbtn-secondary" onclick="addSignal(this)">Add date</button></div>'
       +'<details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="sg-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px;margin-top:8px" placeholder="date,covers&#10;'+_isoPlus(7)+',180"></textarea><div class="fc2-count-ft"><span class="ac-status" id="sg-csv-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="importSignals(this)">Import</button></div></details>';
     el.innerHTML=h;
+  };
+  // Calendars Cavnar AI follows for this location (Event Intelligence
+  // phase 2): each with its distance and next game, and the owner's switch.
+  // Turning one off removes its games from this list and the schedule's
+  // inputs at once; turning it back on brings them back.
+  function evFollowsHtml(list){
+    if(!list||!list.length)return '';
+    var h='<div class="ev-follows"><div class="ev-follows-h">Calendars followed for you</div>';
+    for(var i=0;i<list.length;i++){var f=list[i];
+      h+='<div class="ev-follow'+(f.following?'':' off')+'"><div class="ev-follow-t"><b>'+esc(f.name)+'</b>'
+        +'<span>'+(isFinite(f.distance_km)&&f.distance_km!==null?'<span class="hb-num">'+esc(Math.round(f.distance_km*0.621371))+'</span> mi away':'')
+        +(f.following&&f.next?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Next: '+esc(f.next):'')
+        +(!f.following?(isFinite(f.distance_km)&&f.distance_km!==null?' \u00b7 ':'')+'Not followed — its games aren\u2019t planned for':'')+'</span></div>'
+        +'<button type="button" class="cbtn '+(f.following?'cbtn-text':'cbtn-secondary')+' cbtn-sm" onclick="evFollowSet('+(+f.series_id)+','+(f.following?'false':'true')+',this)">'+(f.following?'Stop following':'Follow')+'</button></div>';}
+    return h+'</div>';
+  }
+  window.evFollowSet=function(id,on,btn){
+    var done=busy(btn,on?'Following\u2026':'Stopping\u2026');
+    jsend('/api/labor/event-follows/'+id,{active:on},function(d){
+      done();if(!d.ok){toast(d.error||'Could not change that calendar','error');return;}
+      window._evFollows=d.follows||[];toast(on?'Following \u2014 its games are on your calendar':'Stopped following \u2014 its games are off your calendar','success');loadSignals();
+    });
   };
   function _dayShort(iso){if(!iso||!/^\d{4}-\d{2}-\d{2}/.test(iso))return '';var d=new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10));return isNaN(d)?'':['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];}
   function _sgResult(d){return (d.written||0)+' written'+(d.skipped?' · '+d.skipped+' skipped':'')+((d.errors||[]).length?' · '+esc(d.errors[0]):'');}

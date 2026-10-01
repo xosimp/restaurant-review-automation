@@ -98,7 +98,11 @@ MEASURED_BLOCKS = tuple(b for b in _dsr.BLOCKS if b != "closeout")
 # punch was edited (dsr.block_service). One narrative serves the owner AND
 # the manager view, so these never reach the model: it reads the night's
 # figures, the report shows the lists to the views allowed them.
-PRIVATE_DETAIL = {"service": ("servers", "loss", "timeclock_edits", "timeclock_basis")}
+PRIVATE_DETAIL = {"service": ("servers", "loss", "timeclock_edits", "timeclock_basis"),
+                  # Tonight's game against the last one (event_intel.playbook):
+                  # its labor half is the Labor view's, and one narrative serves
+                  # both views — the report shows it, the model does not read it.
+                  "intel": ("game",)}
 
 
 def _private(block, key):

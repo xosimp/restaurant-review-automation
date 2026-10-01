@@ -76,6 +76,17 @@ def _catalog_context(rid, signal, db_path):
         return None
 
 
+def _game_staffing(rid, event, db_path):
+    """event_intel.playbook.staffing for a catalog game, else None."""
+    if not event or event.get("category") != "sports":
+        return None
+    try:
+        from event_intel import playbook
+        return playbook.staffing(rid, event, db_path=db_path) if db_path else playbook.staffing(rid, event)
+    except Exception:
+        return None
+
+
 def _keeps_events(rid, db_path):
     """Whether this restaurant keeps its events/reservations in Cavnar at
     all — an empty day then means "nothing listed", not "unknown"."""
@@ -467,6 +478,14 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                 text += f". {ctx['effect']['basis']}"
             items.append({"kind": "event", "tone": "warn", "text": text,
                           "event_id": (ctx or {}).get("event", {}).get("id")})
+            # Who worked games like it, by role (event_intel.playbook,
+            # phase 2): a plan where measured, else what the last one
+            # staffed. The Labor view's (access.tomorrow_for).
+            st = _game_staffing(rid, (ctx or {}).get("event"), db_path)
+            if st and st.get("text"):
+                items.append({"kind": "game_staffing", "tone": "warn" if st.get("recommend") else None,
+                              "text": st["text"], "basis": st.get("basis"),
+                              "event_id": (ctx or {}).get("event", {}).get("id")})
 
     food = blocks.get("food") or {}
     crit = (((food.get("detail") or {}).get("stock") or {}).get("critical") or []) \

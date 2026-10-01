@@ -72,6 +72,17 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 ## Recently shipped (newest first; trim entries older than ~2 months)
 
+- **10/1 — Event Intelligence phase 2.**
+  - The morning brief names a followed game up to three days out: what games
+    like it did here (or the last one, as one night), a staffing plan by role
+    and the rush around kickoff once two games are measured, and a game-day
+    campaign to start.
+  - The nightly report sets tonight's game against the last one of the same
+    side, and the day after says who worked games like tomorrow's.
+  - Owners follow or stop following a calendar from the Labor events card; the
+    admin console's Event calendar corrects a game (Week 18's date when the
+    league sets it) and re-syncs every follower.
+
 - **9/30.**
   - The Reports tab and a figure strip per night.
   - Hourly pay per person: a $0 POS punch is costed at that person's own

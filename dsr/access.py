@@ -71,6 +71,9 @@ BLOCK_LABELS = {"sales": "Sales", "labor": "Labor", "service": "Service", "food"
                 "marketing": "Marketing", "intel": "Intel", "closeout": "Manager closeout"}
 
 
+GAME_LABOR_KEYS = ("labor_pct", "headcount")
+
+
 def _block_permissions():
     from permissions import (LABOR_VIEW, FOOD_COST_VIEW, REVIEWS_VIEW, MARKETING_VIEW, INTEL_VIEW)
     return {"labor": LABOR_VIEW, "food": FOOD_COST_VIEW, "reviews": REVIEWS_VIEW,
@@ -129,6 +132,14 @@ def redact(facts, user):
                 if not line_allowed(user, view, key):
                     section.pop(key)
                     hidden.add(f"{name}.{key}")
+    # Tonight's game against the last one (intel detail.game): its labor %
+    # and headcount are the Labor view's.
+    game = ((blocks.get("intel") or {}).get("detail") or {}).get("game")
+    if isinstance(game, dict) and (view is None or not _sees(user, perms["labor"])):
+        for side in ("tonight", "last"):
+            if isinstance(game.get(side), dict):
+                for k in GAME_LABOR_KEYS:
+                    game[side].pop(k, None)
     for name, need in perms.items():
         # A block this login may not read is hidden whether or not tonight
         # collected it — a line naming its subject is still not theirs.
@@ -442,7 +453,7 @@ def tomorrow_for(facts, user, view, withheld=None):
     if "labor" in (withheld or []):
         t.pop("labor", None)
         t.pop("overtime", None)
-        t["items"] = [i for i in t.get("items") or [] if i.get("kind") != "rest_day"]
+        t["items"] = [i for i in t.get("items") or [] if i.get("kind") not in ("rest_day", "game_staffing")]
     elif isinstance(t.get("labor"), dict) and view != OWNER:
         t["labor"] = {k: v for k, v in t["labor"].items() if not str(k).lower().startswith(OWNER_ONLY_PREFIXES)}
     ok = _cite_rule(user, view)

@@ -104,6 +104,12 @@ def init_event_intel(db_path=DB_PATH):
             created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, event_id)
         )""")
+        # An admin's correction to a game (a kickoff flexed, Week 18's date
+        # set) is kept apart from the season file and laid over it on every
+        # load, so the daily reload never undoes it (phase 2, 10/1/26).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(catalog_events)").fetchall()}
+        if "overrides_json" not in cols:
+            conn.execute("ALTER TABLE catalog_events ADD COLUMN overrides_json TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -167,6 +173,7 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
                 "THEN catalog_events.status ELSE excluded.status END, "
                 "result=COALESCE(excluded.result, catalog_events.result), attributes_json=excluded.attributes_json, "
                 "source_url=excluded.source_url, updated_at=datetime('now')", vals)
+            _apply_overrides(conn, series_id, e["external_id"])
             written += 1
             if row and (row["event_date"], row["kickoff_local"]) != (e.get("date"), e.get("kickoff")):
                 changed += 1
@@ -174,6 +181,123 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
     finally:
         conn.close()
     return {"written": written, "moved": changed}
+
+
+# What an admin may correct on a game, and how each value is checked.
+EDITABLE = ("event_date", "kickoff_local", "broadcast", "status", "result")
+
+
+def _clean_edit(field, value):
+    """A corrected value as stored, or raises ValueError naming the field."""
+    import re
+    if value in (None, ""):
+        if field in ("status",):
+            raise ValueError("A game always has a status.")
+        return None
+    v = str(value).strip()
+    if field == "event_date":
+        from datetime import date as _date
+        try:
+            return _date.fromisoformat(v[:10]).isoformat()
+        except ValueError:
+            raise ValueError("The date must be YYYY-MM-DD.")
+    if field == "kickoff_local":
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("The kickoff must be a 24-hour local time, like 19:15.")
+        return v
+    if field == "status":
+        if v not in STATUSES:
+            raise ValueError(f"The status must be one of {', '.join(STATUSES)}.")
+        return v
+    return v[:80]
+
+
+def _apply_overrides(conn, series_id, external_id):
+    """Lay an admin's corrections over the season file's row."""
+    row = conn.execute("SELECT id, overrides_json FROM catalog_events WHERE series_id=? AND external_id=?",
+                       (series_id, external_id)).fetchone()
+    if not row or not row["overrides_json"]:
+        return
+    try:
+        over = {k: v for k, v in json.loads(row["overrides_json"]).items() if k in EDITABLE}
+    except (TypeError, ValueError):
+        return
+    if not over:
+        return
+    sets = ", ".join(f"{k}=?" for k in over)
+    args = list(over.values())
+    if "kickoff_local" in over:
+        sets += ", is_primetime=?"
+        args.append(1 if is_primetime(over["kickoff_local"]) else 0)
+    conn.execute(f"UPDATE catalog_events SET {sets} WHERE id=?", args + [row["id"]])
+
+
+def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
+    """An admin's correction to one game: `changes` {field: value} over
+    EDITABLE, `clear` the fields to hand back to the season file (they
+    take its value on the next load). Returns {"before", "after"}; raises
+    ValueError on a bad value or LookupError when there is no such game."""
+    bad = [k for k in list(changes or {}) + list(clear or ()) if k not in EDITABLE]
+    if bad:
+        raise ValueError(f"Only {', '.join(EDITABLE)} can be corrected.")
+    clean = {k: _clean_edit(k, v) for k, v in (changes or {}).items()}
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM catalog_events WHERE id=?", (int(event_id),)).fetchone()
+        if not row:
+            raise LookupError("No such game in the catalog.")
+        before = {k: row[k] for k in EDITABLE}
+        try:
+            over = json.loads(row["overrides_json"] or "{}")
+        except (TypeError, ValueError):
+            over = {}
+        over.update(clean)
+        for k in clear or ():
+            over.pop(k, None)
+        conn.execute("UPDATE catalog_events SET overrides_json=?, updated_at=datetime('now') WHERE id=?",
+                     (json.dumps(over) if over else None, row["id"]))
+        _apply_overrides(conn, row["series_id"], row["external_id"])
+        conn.commit()
+        after_row = conn.execute("SELECT * FROM catalog_events WHERE id=?", (row["id"],)).fetchone()
+        return {"before": before, "after": {k: after_row[k] for k in EDITABLE}, "overrides": over,
+                "series_id": row["series_id"]}
+    finally:
+        conn.close()
+
+
+def catalog(db_path=DB_PATH) -> list:
+    """Every series with its games (dated or not) and how many restaurants
+    follow it — the admin catalog editor's read."""
+    conn = get_conn(db_path)
+    try:
+        series = [dict(r) for r in conn.execute("SELECT * FROM event_series ORDER BY name").fetchall()]
+        for s in series:
+            s["followers"] = conn.execute("SELECT COUNT(*) AS n FROM event_follows WHERE series_id=? AND active=1",
+                                          (s["id"],)).fetchone()["n"]
+            s["events"] = []
+            for r in conn.execute("SELECT * FROM catalog_events WHERE series_id=? ORDER BY event_date IS NULL, "
+                                  "event_date, kickoff_local, external_id", (s["id"],)).fetchall():
+                ev = dict(r)
+                try:
+                    ev["overrides"] = json.loads(ev.pop("overrides_json") or "{}")
+                except (TypeError, ValueError):
+                    ev["overrides"] = {}
+                ev.pop("attributes_json", None)
+                s["events"].append(ev)
+            s.pop("meta_json", None)
+        return series
+    finally:
+        conn.close()
+
+
+def followers(series_id, db_path=DB_PATH) -> list:
+    """Restaurant ids that follow a series."""
+    conn = get_conn(db_path)
+    try:
+        return [r["restaurant_id"] for r in conn.execute(
+            "SELECT restaurant_id FROM event_follows WHERE series_id=? AND active=1", (int(series_id),)).fetchall()]
+    finally:
+        conn.close()
 
 
 def load_season(path, db_path=DB_PATH) -> dict:

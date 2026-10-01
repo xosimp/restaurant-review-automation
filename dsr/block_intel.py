@@ -166,6 +166,21 @@ def _traffic(ctx):
                       "a comparison, not a cause")}
 
 
+def _game(ctx):
+    """Tonight's followed game against the last one of the same side
+    (event_intel.playbook.game_night): tonight's net, guests and labor % from
+    this report's own blocks, the usual weekday and the last game as event
+    memory measured them. None on a night with no game."""
+    from event_intel import playbook
+    blocks = ctx.blocks or {}
+    sales = blocks.get("sales") or {}
+    sm = (sales.get("metrics") or {}) if sales.get("status") == dsr.READY else {}
+    labor = blocks.get("labor") or {}
+    lm = (labor.get("metrics") or {}) if labor.get("status") == dsr.READY else {}
+    return playbook.game_night(ctx.restaurant_id, ctx.business_date, net=sm.get("net"), guests=sm.get("guests"),
+                               labor_pct=lm.get("pct"), db_path=ctx.db_path)
+
+
 def collect(ctx):
     gaps = []
     wx = common.guard(ctx, "intel", "weather", lambda: _weather(ctx), gaps)
@@ -192,6 +207,13 @@ def collect(ctx):
         "competitors": comp[1] if comp else {"note": "Competitor data couldn't be read."},
         "unavailable_parts": gaps,
     }
+    game = common.guard(ctx, "intel", "game", lambda: _game(ctx), gaps)
+    if game:
+        # "Compared to your last home game" (Event Intelligence phase 2):
+        # detail only — the figures are the sales block's and event
+        # memory's, never new metrics, and the narrative does not read it
+        # (narrative.PRIVATE_DETAIL; its labor half is the Labor view's).
+        detail["game"] = game
     if traffic:
         # Only where measured; otherwise the section is omitted, not zeroed.
         metrics["covers"] = traffic["covers"]

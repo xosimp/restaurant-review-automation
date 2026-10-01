@@ -793,7 +793,7 @@ function applyBadges(d){
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
 const PAGES = [
   ['Overview','#overview','Page'], ['Needs you','#overview','Page'],
-  ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'],
+  ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · Event calendar','#operations/events','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
   ['Engineering','#engineering','Page'], ['Engineering · Status page','#engineering/status','Page'], ['Engineering · Audit trail','#engineering/audit','Page'], ['Engineering · Team & access','#engineering/access','Page'], ['Engineering · Experiments','#engineering/experiments','Page'],
@@ -2300,7 +2300,7 @@ async function auditLink(aid, rid, auditName, name, pageId){
 // green (#128, #158). Then six subsystems as cards (state, figure, trend);
 // each opens its tab. The reads are shared across the tabs for a minute.
 let _ops = null, _opsAt = 0, _opsFresh = false, _opsTab = 'jobs', _aid = 30, _ef = 'all', _nf = 'all', _if = 'all', _jobsAll = false;
-const OPS_TABS = {jobs:'jobs', email:'email', messages:'email', emails:'email', sms:'email', push:'push', alerts:'push', ai:'ai', integrations:'integrations'};
+const OPS_TABS = {jobs:'jobs', email:'email', messages:'email', emails:'email', sms:'email', push:'push', alerts:'push', ai:'ai', integrations:'integrations', events:'events', calendar:'events'};
 function dayKeys(n){ const out = []; const d = new Date(); d.setHours(0,0,0,0); for(let i=n-1;i>=0;i--){ const x = new Date(d); x.setDate(d.getDate()-i); out.push(x); } return out; }
 function perDay(rows, key, n, pred){ const days = dayKeys(n); return days.map(ds => { const de = new Date(ds); de.setDate(ds.getDate()+1); return rows.filter(r => { const t = parseTs(r[key]); return t && t >= ds && t < de && (!pred || pred(r)); }).length; }); }
 
@@ -2475,7 +2475,7 @@ async function operations(tab){
       ${subCard('integrations', 'plug', 'Integrations', st.integrations.tone, ovE ? unknownV(ovE) : fmtN(k.integrations_active), 'live', st.integrations.sub, null)}
       ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95', st.api.sub, null, null, '#engineering')}
     </section>`
-    + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad']], _opsTab)
+    + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad'], ['events', 'Event calendar', '', 'warn']], _opsTab)
     + '<div class="area-body" id="area-body"></div>';
   _tgt = $('area-body');
   await opsRender();
@@ -2484,9 +2484,61 @@ function opsRender(){
   const t = _opsTab, d = _ops;
   if(t === 'email') opsEmail(d.em, d.mh); else if(t === 'push') opsPush(d.nt, d.mh); else if(t === 'ai') opsAI(d.ai);
   else if(t === 'integrations') return opsIntegrations().catch(e => { if(!(e && e.message === STALE)) V().innerHTML = `<div class="err">Couldn't load this tab — ${esc(e.message || e)}. Refresh to try again.</div>`; });
+  else if(t === 'events') return opsEvents().catch(e => { if(!(e && e.message === STALE)) V().innerHTML = `<div class="err">Couldn't load the event calendar — ${esc(e.message || e)}. Refresh to try again.</div>`; });
   else opsJobs(d.jb);
   return Promise.resolve();
 }
+// Event calendar (Event Intelligence phase 2): every followed series and its
+// games. A correction (a flexed kickoff, a TV change, Week 18's date) is
+// kept apart from the season file and laid over it on every load; the
+// restaurants that follow the series re-sync at once. Each save is audited.
+function isoMdy(s){ if(!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return '—'; return (+s.slice(5,7)) + '/' + (+s.slice(8,10)) + '/' + s.slice(2,4); }
+async function opsEvents(){
+  V().innerHTML = '<div class="sk blk"></div>';
+  const d = await need('/admin/api/event-catalog');
+  const ss = d.series || [];
+  if(!ss.length){ V().innerHTML = '<div class="card" style="padding:18px">No calendars in the catalog yet. A season file in event_intel/seasons adds one.</div>'; return; }
+  V().innerHTML = ss.map(s => {
+    const undated = s.events.filter(e => !e.event_date).length;
+    return `<section class="card" style="overflow:hidden">
+      <div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>${esc(s.name)}</h2>
+        <span class="muted" style="font-size:12.5px">${esc(s.league || s.category)} · ${fmtN(s.events.length)} games · ${fmtN(s.followers)} following${undated ? ` · <span style="color:var(--amber)">${fmtN(undated)} without a date</span>` : ''}</span></div></div>
+      <div class="tw" style="border:0;border-radius:0;box-shadow:none"><table style="width:100%"><thead><tr><th>Week</th><th>Game</th><th>Date</th><th>Kickoff</th><th>TV</th><th>Status</th><th>Result</th><th></th></tr></thead><tbody>
+      ${s.events.map(e => {
+        const over = Object.keys(e.overrides || {});
+        const st = (d.statuses || []).map(x => `<option value="${esc(x)}"${x === e.status ? ' selected' : ''}>${esc(x)}</option>`).join('');
+        return `<tr data-ev="${e.id}" data-over="${esc(JSON.stringify(e.overrides || {}))}">
+          <td class="muted">${esc(e.week || '')}</td>
+          <td><b>${e.home_away === 'home' ? 'vs' : 'at'} ${esc(e.opponent || '')}</b>${e.is_primetime ? ' <span class="chip">prime time</span>' : ''}${over.length ? ` <span class="chip warn" title="Corrected here: ${esc(over.join(', '))}">corrected</span>` : ''}</td>
+          <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:11px;display:block">${esc(isoMdy(e.event_date))}</span></td>
+          <td><input data-f="kickoff_local" data-o="${esc(e.kickoff_local || '')}" value="${esc(e.kickoff_local || '')}" placeholder="19:15" size="5" aria-label="Kickoff, 24-hour local"></td>
+          <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
+          <td><select data-f="status" data-o="${esc(e.status || '')}" aria-label="Status">${st}</select></td>
+          <td><input data-f="result" data-o="${esc(e.result || '')}" value="${esc(e.result || '')}" size="8" placeholder="W 24-20" aria-label="Result"></td>
+          <td style="white-space:nowrap"><button class="btn p s" onclick="evSave(${e.id},this)">Save</button>${over.length ? ` <button class="btn g s" title="Hand ${esc(over.join(', '))} back to the season file" onclick="evRevert(${e.id},this)">Revert</button>` : ''}</td>
+        </tr>`; }).join('')}
+      </tbody></table></div></section>`; }).join('');
+}
+async function evSave(id, btn){
+  const tr = btn.closest('tr'), changes = {};
+  // Only what was changed: an untouched field keeps following the season file.
+  tr.querySelectorAll('[data-f]').forEach(el => { const v = el.value.trim(); if(v !== (el.getAttribute('data-o') || '')) changes[el.getAttribute('data-f')] = v || null; });
+  if(!Object.keys(changes).length){ toast('Nothing changed', 'neu'); return; }
+  btn.disabled = true;
+  const d = await post('/admin/api/event-catalog/' + id, {changes});
+  btn.disabled = false;
+  if(say(d, 'Game corrected · ' + ((d && d.synced) || 0) + ' restaurant' + ((d && d.synced) === 1 ? '' : 's') + ' re-synced')) opsEvents();
+}
+async function evRevert(id, btn){
+  const tr = btn.closest('tr'), fields = [];
+  Object.keys(JSON.parse(tr.getAttribute('data-over') || '{}')).forEach(k => fields.push(k));
+  if(!confirm('Hand this game back to the season file? Its corrections stay until the next daily load replaces them.')) return;
+  btn.disabled = true;
+  const d = await post('/admin/api/event-catalog/' + id, {clear: fields});
+  btn.disabled = false;
+  if(say(d, 'Handed back to the season file')) opsEvents();
+}
+
 // A panel that fills from its own read after the tab is drawn (UI-1's
 // lazy + need): skeleton lines until it lands, its own amber line if it
 // fails — one slow panel never blanks the tab.

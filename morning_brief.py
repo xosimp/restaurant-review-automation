@@ -310,6 +310,28 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
     return out[:BRIEF_MEMORY_LINES]
 
 
+def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH):
+    """event_intel.playbook.alert for this viewer. On game day a measured
+    effect the today line already applied is not said twice."""
+    from event_intel import playbook
+    sees = "labor" not in denied
+    marketing = bool(getattr(restaurant, "module_marketing", 0)) and "marketing" not in denied
+    line = playbook.alert(restaurant_id, today, sees_sales=sees, sees_labor=sees, marketing=marketing,
+                          db_path=db_path)
+    if not line:
+        return None
+    applied = any(l.get("key") == "today" and "measured" in str(l.get("text") or "") for l in lines)
+    if applied and str(line["text"]).startswith("Today:"):
+        # The forecast line already carries the effect: keep the game's
+        # name, staffing and rush, drop the repeated measurement.
+        from event_intel import engine, store
+        e = store.event_by_id(line["event_id"], db_path=db_path)
+        eff = engine.effect_for(restaurant_id, e, db_path=db_path) if e else None
+        if eff:
+            line["text"] = line["text"].replace(eff["basis"][0].upper() + eff["basis"][1:] + ". ", "")
+    return line
+
+
 def _record_read(restaurant_id, brief, view=None, db_path=DB_PATH):
     """Keep the brief a person was sent as history (ai_reads.record_read,
     surface "brief", memory audit 9/29/26) — once per view per day. Never
@@ -757,6 +779,16 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # model.
     for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path) or []):
         lines.append(ml)
+
+    # ── the next game ── (Event Intelligence phase 2, 10/1/26) a followed
+    # game within three days: the game, what games like it did here
+    # (measured, else the last one as a fact), staffing by role and the rush
+    # around kickoff where measured, and a game-day campaign to start. The
+    # dollars and the staffing follow the forecast's own gate (the Labor
+    # view); the game itself and the campaign do not.
+    game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path)
+    if game:
+        lines.append(game)
 
     # ── one thing the reviews alone can say ──
     # A reviews-only brief had three possible lines and the retention audit
@@ -1270,7 +1302,7 @@ _NOT_MEASURED = {"forecast": "a projection", "opportunity": "an estimate", "comp
                  "estimate": "an estimate", "inferred": "an inference"}
 _FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost projection",
                  "money": "the dollar opportunity", "fix_first": "the one thing",
-                 "dsr_action": "last night's report's priority"}
+                 "dsr_action": "last night's report's priority", "event_ahead": "the game's staffing plan"}
 
 
 def footer_source(lines, data_as_of=None, stale=None) -> str:
@@ -1286,7 +1318,7 @@ def footer_source(lines, data_as_of=None, stale=None) -> str:
     for l in lines:
         kind = l.get("claim_kind") or ("forecast" if l.get("forecast") else "measured")
         if kind in _NOT_MEASURED:
-            name = _FOOTER_NAMES.get(l.get("key"), "one line")
+            name = _FOOTER_NAMES.get(str(l.get("key") or "").split(":", 1)[0], "one line")
             bit = f"{name} ({_NOT_MEASURED[kind]})"
             if bit not in exceptions:
                 exceptions.append(bit)

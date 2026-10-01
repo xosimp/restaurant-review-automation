@@ -411,3 +411,42 @@ def context_by_ref(restaurant_id, ref, db_path=store.DB_PATH):
         return None
     return {"event": e, "describe": describe(e), "describe_short": describe(e, with_date=False),
             "label": label_for(e), "effect": effect_for(restaurant_id, e, db_path=db_path)}
+
+
+# ── owner follow settings (phase 2) ────────────────────────────────────────
+
+def follow_choices(restaurant, today=None, db_path=store.DB_PATH) -> list:
+    """The calendars an owner can follow or stop following here: every
+    series this restaurant has a follow row for (on or off) and every one
+    whose radius reaches it. Each {"series_id", "slug", "name", "category",
+    "following", "source", "distance_km", "in_reach", "next"}."""
+    rows = {f["series_id"]: f for f in store.follows(restaurant.id, active_only=False, db_path=db_path)}
+    lat, lng = getattr(restaurant, "latitude", None), getattr(restaurant, "longitude", None)
+    start = _d(today) if today else _today(restaurant)
+    out = []
+    for s in store.all_series(db_path=db_path):
+        km = None
+        if lat is not None and lng is not None and s.get("lat") is not None and s.get("lng") is not None:
+            km = round(haversine_km(float(lat), float(lng), float(s["lat"]), float(s["lng"])), 1)
+        reach = km is not None and bool(s.get("radius_km")) and km <= float(s["radius_km"])
+        f = rows.get(s["id"])
+        if not f and not reach:
+            continue
+        nxt = [e for e in store.events_for([s["id"]], start, None, db_path=db_path)
+               if e.get("status") not in ("cancelled", "postponed")][:1]
+        out.append({"series_id": s["id"], "slug": s["slug"], "name": s["name"], "category": s["category"],
+                    "following": bool(f and f["active"]), "source": f["source"] if f else None,
+                    "distance_km": km if km is not None else (f or {}).get("distance_km"), "in_reach": reach,
+                    "next": describe(nxt[0]) if nxt else None})
+    return out
+
+
+def set_owner_follow(restaurant, series_id, active, source="owner", db_path=store.DB_PATH) -> dict:
+    """An owner's (or admin's) follow choice, then this restaurant's copy of
+    the games re-synced at once — the games appear, or leave the schedule's
+    inputs, without waiting for the 5am job. Raises LookupError for a
+    series that isn't in the catalog."""
+    if not any(s["id"] == int(series_id) for s in store.all_series(db_path=db_path)):
+        raise LookupError("No such calendar.")
+    store.set_follow(restaurant.id, int(series_id), bool(active), source=source, db_path=db_path)
+    return sync_restaurant(restaurant, db_path=db_path)
