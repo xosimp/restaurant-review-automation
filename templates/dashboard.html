@@ -6580,24 +6580,96 @@ svg:hover .hb-xh{opacity:1}
 .dr-dep{container-type:inline-size}
 .dr-ch{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
 .dr-ch h3,.dr-detail h3.t3{margin:6px 0 0;font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
-.dr-leg{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--ink2)}
-.dr-leg span{display:inline-flex;align-items:center;gap:7px}
-.dr-leg small{color:var(--ink3);font-size:12px}
-.dr-leg .dr-sw{display:inline-block;width:12px;height:12px;border-radius:4px}
-.dr-leg .dr-sw.ember{background:var(--ember)}.dr-leg .dr-sw.green{background:var(--hb-good);height:3px;border-radius:2px;width:16px}
-.dr-leg .dr-sw.dash{width:18px;height:0;border-radius:0;border-top:2px dashed var(--ink2)}
-.dr-hourly-plot{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.dr-hourly-svg{display:block;width:100%;height:auto;overflow:visible}
-.dr-hourly-svg .ax text{font-family:'Space Grotesk',sans-serif;font-size:12px;fill:var(--ink3)}
-.dr-hourly-svg .hb{transform-box:fill-box;transform-origin:bottom;animation:drBarUp .6s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 35ms)}
-.dr-hourly-svg .ll{stroke-dasharray:1;animation:drDraw 1.4s cubic-bezier(.2,.9,.3,1) .35s backwards}
-.dr-hourly-svg .ul{animation:drFade .8s ease .5s backwards}
-.dr-hourly-f{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:22px}
-.dr-hourly-f .f{padding:16px 18px;border-radius:14px;background:var(--hb-inner);min-width:0}
-.dr-hourly-f .k{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
-.dr-hourly-f .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;margin-top:8px;color:var(--ink)}
-.dr-hourly-f .f.good .v{color:var(--hb-good)}.dr-hourly-f .f.bad .v{color:var(--hb-bad)}
-.dr-hourly-f .s{font-size:13px;color:var(--ink2);margin-top:4px}
+/* The night, hour by hour (.hx, owner 10/1/26): the story line on top, the
+   chart (ember bars on a warming background, the people-on-the-clock line
+   with its glow, the usual night dashed, a floating peak card), a tooltip
+   per hour, then what stood out as numbered callouts. */
+.hx{padding:28px 30px 26px}
+.hx-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px 28px;flex-wrap:wrap}
+.hx-head>div:first-child{flex:1 1 380px;min-width:0}
+.hx-head h3{margin:6px 0 0;font-size:22px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
+.hx-story{margin:10px 0 0;font-size:16.5px;line-height:1.55;color:var(--ink2);max-width:64ch}
+.hx-story b{color:var(--ink);font-weight:600}
+.hx-leg{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px 16px;max-width:380px;font-size:12.5px;color:var(--ink3)}
+.hx-leg span{display:inline-flex;align-items:center;gap:7px}
+.hx-leg small{font-size:11.5px}
+.hx-leg .hx-sw{display:inline-block;flex:none}
+.hx-leg .hx-sw.bar{width:10px;height:13px;border-radius:3px 3px 1px 1px;background:linear-gradient(180deg,var(--ember),var(--ember2))}
+.hx-leg .hx-sw.line{width:18px;height:3px;border-radius:2px;background:var(--ink);box-shadow:0 0 8px var(--ink3)}
+.hx-leg .hx-sw.dash{width:18px;height:0;border-top:2px dashed var(--ink3)}
+.hx-leg .hx-sw.heat{width:18px;height:9px;border-radius:3px;background:linear-gradient(90deg,var(--hb-line2),var(--ember))}
+/* The scroll area clips what overflows it; its top padding is the room the
+   peak card floats in above a tall bar. */
+.hx-plot{margin-top:2px;padding-top:30px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.hx-in{position:relative}
+.hx-svg{display:block;width:100%;height:auto;overflow:visible}
+.hx-svg .hm{fill:var(--ember);animation:drFade .9s ease backwards;animation-delay:calc(var(--i) * 30ms)}
+.hx-svg .gl{stroke:var(--hb-line);stroke-width:1;stroke-dasharray:2 5}
+.hx-svg .yt{font-family:'Space Grotesk',sans-serif;font-size:11.5px;fill:var(--ink3)}
+.hx-svg .xt{font-family:'Space Grotesk',sans-serif;font-size:12px;fill:var(--ink3)}
+.hx-svg .xt.pk{fill:var(--ember);font-weight:700}
+.hx-svg .hb{opacity:.88;transform-box:fill-box;transform-origin:bottom;animation:drBarUp .75s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 40ms + .1s)}
+.hx-svg .hb.pk{opacity:1;filter:drop-shadow(0 0 12px var(--hb-glow)) drop-shadow(0 10px 20px var(--hb-glow));animation:drBarUp .75s cubic-bezier(.2,.9,.3,1) backwards,hxPk 3.4s ease-in-out 1.6s infinite;animation-delay:calc(var(--i) * 40ms + .1s),1.6s}
+.hx-svg .ul{fill:none;stroke:var(--ink3);stroke-width:1.6;stroke-dasharray:5 5;animation:drFade .8s ease .6s backwards}
+.hx-svg .lg{fill:none;stroke:var(--ink);stroke-width:10;stroke-opacity:.09;stroke-linecap:round;stroke-linejoin:round;animation:drFade 1s ease .9s backwards}
+.hx-svg .ll{fill:none;stroke:var(--ink);stroke-width:2.3;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;animation:drDraw 1.7s cubic-bezier(.2,.9,.3,1) .5s backwards}
+.hx-svg .ld{fill:var(--surface);stroke:var(--ink);stroke-width:1.6;animation:drFade .5s ease backwards;animation-delay:calc(var(--i) * 40ms + 1.2s)}
+.hx-svg .mk{animation:hxMk .5s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 40ms + 1.3s)}
+.hx-svg .mk circle{fill:var(--ember);stroke:var(--surface);stroke-width:2.5}
+.hx-svg .mk.good circle{fill:var(--hb-good)}.hx-svg .mk.bad circle{fill:var(--hb-bad)}.hx-svg .mk.warn circle{fill:var(--hb-warn)}
+.hx-svg .mk text{font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;fill:var(--surface)}
+.hx-svg .hs{fill:var(--ember)}
+.hx-svg .hx-col{fill:transparent;cursor:crosshair;outline:none;transition:fill .15s ease}
+.hx-svg .hx-col.on,.hx-svg .hx-col:focus-visible{fill:var(--hb-tint)}
+.hx-peak{position:absolute;z-index:2;transform:translate(-50%,calc(-100% - 16px));padding:10px 16px 11px;border-radius:14px;text-align:center;white-space:nowrap;pointer-events:none;
+  background:linear-gradient(160deg,var(--surface) 40%,var(--hb-tint) 100%),var(--surface);border:1px solid var(--hb-tint2);
+  box-shadow:0 2px 6px rgba(14,12,10,.08),0 14px 34px -14px var(--hb-glow);animation:hxCard .6s cubic-bezier(.2,.9,.3,1) 1s backwards}
+[data-theme="dark"] .hx-peak{background:linear-gradient(160deg,transparent 40%,var(--hb-tint) 100%),var(--surface-glass),var(--surface)}
+.hx-peak::after{content:'';position:absolute;left:50%;bottom:-6px;width:10px;height:10px;margin-left:-5px;transform:rotate(45deg);background:var(--surface);border-right:1px solid var(--hb-tint2);border-bottom:1px solid var(--hb-tint2)}
+.hx-peak .k{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.hx-peak .v{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:600;color:var(--ink);margin-top:3px}
+.hx-peak .v span{margin-left:8px;color:var(--ink2);font-weight:500}
+.hx-peak .d{font-size:12px;font-weight:700;margin-top:3px}
+.hx-peak .d.good{color:var(--hb-good)}.hx-peak .d.bad{color:var(--hb-bad)}
+.hx-tip{position:absolute;z-index:3;transform:translate(-50%,calc(-100% - 14px));min-width:180px;padding:12px 14px;border-radius:14px;pointer-events:none;
+  background:var(--ink);color:var(--paper);box-shadow:0 18px 40px -16px rgba(14,12,10,.5)}
+.hx-tip[hidden]{display:none}
+.hx-tip.left{transform:translate(-100%,calc(-100% - 14px))}.hx-tip.right{transform:translate(0,calc(-100% - 14px))}
+.hx-tip .h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;opacity:.7}
+.hx-tip .v{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;margin-top:2px}
+.hx-tip .r{display:flex;align-items:baseline;gap:10px;font-size:12.5px;margin-top:6px}
+.hx-tip .r span{flex:1;opacity:.7}.hx-tip .r b{font-weight:600}.hx-tip .r em{font-style:normal;font-weight:700;opacity:.85}
+.hx-call{margin-top:26px}
+.hx-call-k{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.hx-call-k .spark{width:9px;height:9px;transform:rotate(45deg);border-radius:2px;background:var(--ember);box-shadow:0 0 10px var(--hb-glow)}
+.hx-call-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.hx-c{display:flex;gap:14px;align-items:flex-start;padding:15px 16px;border-radius:14px;background:var(--hb-inner);animation:drBtIn .5s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms + 1.4s)}
+.hx-c .no{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;color:var(--surface);background:var(--ember)}
+.hx-c.good .no{background:var(--hb-good)}.hx-c.bad .no{background:var(--hb-bad)}.hx-c.warn .no{background:var(--hb-warn)}
+.hx-c .t{font-size:14.5px;font-weight:600;color:var(--ink)}
+.hx-c .s{font-size:13.5px;color:var(--ink2);margin-top:3px;line-height:1.45}
+.hx-ghost{display:flex;align-items:flex-end;gap:10px;height:130px;margin-top:22px}
+.hx-ghost i{flex:1;border-radius:7px 7px 2px 2px;background:var(--hb-line2)}
+.hx-ghost i:nth-child(1){height:22%}.hx-ghost i:nth-child(2){height:40%}.hx-ghost i:nth-child(3){height:34%}.hx-ghost i:nth-child(4){height:26%}.hx-ghost i:nth-child(5){height:48%}
+.hx-ghost i:nth-child(6){height:86%}.hx-ghost i:nth-child(7){height:100%}.hx-ghost i:nth-child(8){height:70%}.hx-ghost i:nth-child(9){height:38%}
+.hx-emsg{margin-top:16px;font-size:14px;color:var(--ink3)}
+.hx-skel .sk{display:block;height:12px;margin-bottom:10px;border-radius:8px;background:linear-gradient(90deg,var(--hb-line2) 20%,var(--hb-tint) 50%,var(--hb-line2) 80%);background-size:250% 100%;animation:kxSkel 1.6s ease-in-out infinite}
+.hx-skel .w30{width:30%}.hx-skel .w50{width:50%}
+.hx-skel .hx-ghost i{background:linear-gradient(180deg,var(--hb-tint),var(--hb-line2));background-size:100% 250%;animation:kxSkel 1.6s ease-in-out infinite}
+@keyframes hxPk{0%,100%{filter:drop-shadow(0 0 10px var(--hb-glow)) drop-shadow(0 8px 16px var(--hb-glow))}50%{filter:drop-shadow(0 0 22px var(--hb-glow)) drop-shadow(0 12px 26px var(--hb-glow))}}
+@keyframes hxMk{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes hxCard{from{opacity:0;transform:translate(-50%,calc(-100% - 4px))}to{opacity:1;transform:translate(-50%,calc(-100% - 16px))}}
+@media (max-width:760px){.hx{padding:22px 18px 20px}.hx-in{min-width:560px}.hx-plot{padding-top:44px}.hx-peak{padding:8px 12px 9px}.hx-peak .v{font-size:16px}.hx-call-g{grid-template-columns:1fr}.hx-leg{justify-content:flex-start;max-width:none}.hx-story{font-size:15px}}
+@media (prefers-reduced-motion:reduce){.hx *,.hx-svg .hb.pk{animation:none!important}.hx-svg .hx-col{transition:none}}
+/* Today's score: the report's hero card carries the brand (owner, 10/1/26
+   "less flat") - an ember wash from the top corner, a warm glow at the
+   far corner, a hairline of ember along the top. */
+#panel-dsr .dr-score{border-color:var(--hb-tint2);
+  background:radial-gradient(70% 120% at 0% 0%,var(--hb-glow) 0%,transparent 58%),radial-gradient(55% 90% at 100% 100%,var(--hb-halo) 0%,transparent 62%),linear-gradient(135deg,var(--surface) 25%,var(--hb-tint) 100%),var(--surface);
+  box-shadow:inset 0 1px 0 var(--hb-sheen),0 2px 6px rgba(14,12,10,.06),0 34px 80px -36px var(--hb-glow)}
+[data-theme="dark"] #panel-dsr .dr-score{background:radial-gradient(70% 120% at 0% 0%,var(--hb-glow) 0%,transparent 58%),radial-gradient(55% 90% at 100% 100%,var(--hb-halo) 0%,transparent 62%),linear-gradient(135deg,transparent 25%,var(--hb-tint2) 100%),var(--surface-glass),var(--surface);box-shadow:var(--elev-2),0 34px 80px -36px var(--hb-glow)}
+#panel-dsr .dr-score::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--ember) 30%,var(--ember2) 70%,transparent);opacity:.8;z-index:1}
+#panel-dsr .dr-score .hb-stat{background:var(--hb-field);border:1px solid var(--hb-line2);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .dr-split-g h3,.dr-loss-g h3{margin:22px 0 12px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .dr-split-g h3 small,.dr-loss-g h3 small{font-weight:500;letter-spacing:0;text-transform:none}
 .dr-split-r{margin-bottom:16px}
@@ -6665,13 +6737,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-ot-r .m{font-size:13.5px;color:var(--ink2);margin-top:3px}
 .dr-ot-r .ok{font-size:13px;font-weight:600;margin-top:3px}
 .dr-note.dim{color:var(--ink3)}
-@media (max-width:760px){.dr-tlab-g{grid-template-columns:1fr;gap:24px}.dr-hourly-f{grid-template-columns:1fr;gap:10px}
-  .dr-hourly-svg{min-width:560px}.dr-hourly-f .f{padding:12px 14px;display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px}
-  .dr-hourly-f .v{margin-top:0;font-size:20px;grid-row:1/3;grid-column:2;align-self:center}.dr-detail .hb-card,.dr-tlab{padding:22px 20px}
+@media (max-width:760px){.dr-tlab-g{grid-template-columns:1fr;gap:24px}.dr-detail .hb-card,.dr-tlab{padding:22px 20px}
 }
 @media (prefers-reduced-motion:reduce){.kx:not(.on)>.kx-hero,.kx:not(.on)>.kx-card,.kx:not(.on) .kx-chip{opacity:1}
   .kx *,.kx.on>.kx-hero,.kx.on>.kx-card,.kx.on .kx-chip,
-  .dr-hourly-svg .hb,.dr-hourly-svg .ll,.dr-hourly-svg .ul,.dr-split-r .tr i,.dr-dep-bar i{animation:none!important}
+  .dr-split-r .tr i,.dr-dep-bar i{animation:none!important}
   .kx-hero,.kx-card,.kx-chip,.kx-ic,.dr-stbl tbody tr{transition:none}.kx-hero:hover,.kx-card:hover,.kx-chip:hover{transform:none}}
 .dr-shift{margin-top:18px}.dr-shift-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}
 .dr-shift-rows .c{padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -7086,7 +7156,7 @@ svg:hover .hb-xh{opacity:1}
 
   // ── one night ────────────────────────────────────────────────────────────
   function loadNight(date,version){
-    var tk=st.token,b=body();if(!b)return;b.innerHTML=loading()+kxSkeleton();
+    var tk=st.token,b=body();if(!b)return;b.innerHTML=loading()+kxSkeleton()+hxSkeleton();
     if(!date){
       return get('/api/dsr?limit=1').then(function(d){
         if(tk!==st.token)return;
@@ -7619,38 +7689,125 @@ svg:hover .hb-xh{opacity:1}
       rows.push({hour:hh,net:+hr[i].net||0,usual:typ&&isNum(typ[String(hh)])?typ[String(hh)]:null,hours:lab,splh:lab&&lab>=1?(+hr[i].net||0)/lab:null});}
     return {rows:rows,typical:typ?d.hourly_typical:null,labor:!!lh};
   }
-  function hourHtml(p){
-    var D=hourData(p);if(!D)return '';
-    var rows=D.rows,n=rows.length,w=720,hh=230,pl=8,pr=8,pt=18,pb=30,cw=(w-pl-pr)/n,i;
-    var mx=0,lmx=0;for(i=0;i<n;i++){mx=Math.max(mx,rows[i].net,rows[i].usual||0);lmx=Math.max(lmx,rows[i].hours||0);}
-    mx=mx||1;lmx=lmx||1;var ih=hh-pt-pb,s='',ax='',ul='',ll='';
-    for(i=0;i<n;i++){var r=rows[i],x=pl+i*cw,bw=Math.max(4,cw*0.62),bx=x+(cw-bw)/2,bh=r.net/mx*ih;
-      s+='<rect class="hb" style="--i:'+i+'" x="'+bx.toFixed(1)+'" y="'+(pt+ih-bh).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="url(#drhg)"><title>'+esc(hourLabel(r.hour,true))+': '+esc(money(r.net))+(isNum(r.usual)?' (usual '+esc(money(r.usual))+')':'')+(isNum(r.hours)?', '+r.hours.toFixed(1)+' labor hours':'')+'</title></rect>';
-      if(isNum(r.usual))ul+=(ul?' L':'M')+(x+cw/2).toFixed(1)+','+(pt+ih-r.usual/mx*ih).toFixed(1);
-      if(isNum(r.hours))ll+=(ll?' L':'M')+(x+cw/2).toFixed(1)+','+(pt+ih-r.hours/lmx*ih*0.92).toFixed(1);
-      if(n<=14||i%2===0)ax+='<text x="'+(x+cw/2).toFixed(1)+'" y="'+(hh-9)+'" text-anchor="middle">'+esc(hourLabel(r.hour))+'</text>';}
-    var svg='<svg class="dr-hourly-svg" viewBox="0 0 '+w+' '+hh+'" role="img" aria-label="Net sales by hour'+(D.typical?' against a usual night':'')+(D.labor?', with labor hours':'')+'">'
-      +'<defs><linearGradient id="drhg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".45"/></linearGradient></defs>'
-      +'<line x1="'+pl+'" x2="'+(w-pr)+'" y1="'+(pt+ih)+'" y2="'+(pt+ih)+'" stroke="var(--hb-line)"/>'+s
-      +(ul?'<path class="ul" d="'+ul+'" fill="none" stroke="var(--ink2)" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"/>':'')
-      +(ll?'<path class="ll" d="'+ll+'" fill="none" stroke="var(--hb-good)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" pathLength="1"/>':'')
-      +'<g class="ax">'+ax+'</g></svg>';
-    var leg='<div class="dr-leg"><span><i class="dr-sw ember"></i>Net sales</span>'+(D.typical?'<span><i class="dr-sw dash"></i>A usual '+esc((drDayNames(p)||{}).day||'night')+' <small>median of '+hn(D.typical.nights)+'</small></span>':'')
-      +(D.labor?'<span><i class="dr-sw green"></i>Labor hours</span>':'')+'</div>';
-    // The hours that stand out, measured: the most and the least sales per
-    // labor hour among hours with at least two people's worth of hours on.
-    var best=null,worst=null,top=null;
-    for(i=0;i<n;i++){var q=rows[i];if(!top||q.net>top.net)top=q;
-      if(isNum(q.splh)&&q.hours>=2){if(!best||q.splh>best.splh)best=q;if(!worst||q.splh<worst.splh)worst=q;}}
-    var facts='';
-    if(top)facts+='<div class="f"><div class="k">Busiest hour</div><div class="v">'+hn(esc(hourLabel(top.hour,true)))+'</div><div class="s">'+hn(money(top.net))+(isNum(top.usual)?' · usual '+hn(money(top.usual)):'')+'</div></div>';
-    if(best&&worst&&best!==worst){
-      facts+='<div class="f good"><div class="k">Most sales per labor hour</div><div class="v">'+hn(esc(hourLabel(best.hour,true)))+'</div><div class="s">'+hn(money(best.splh))+' an hour · '+hn(best.hours.toFixed(1))+' hours on</div></div>';
-      facts+='<div class="f bad"><div class="k">Fewest sales per labor hour</div><div class="v">'+hn(esc(hourLabel(worst.hour,true)))+'</div><div class="s">'+hn(money(worst.splh))+' an hour · '+hn(worst.hours.toFixed(1))+' hours on</div></div>';}
-    return '<section class="hb-card dr-hourly" aria-label="The night, hour by hour"><div class="dr-ch"><div><div class="hb-kicker">Hour by hour</div><h3>Sales and staffing through the night</h3></div>'+leg+'</div>'
-      +'<div class="dr-hourly-plot">'+svg+'</div>'+(facts?'<div class="dr-hourly-f">'+facts+'</div>':'')
-      +(!D.typical?'<div class="dr-note">A usual night shows here once two finished reports exist for this weekday.</div>':'')+'</section>';
+  // ── The night, hour by hour (owner, 10/1/26: "what happened tonight?"):
+  // net sales as ember bars, people on the clock as one glowing line, a
+  // usual same weekday as a dashed line, the busy hours warming the
+  // background, the peak hour as a floating card, and up to four numbered
+  // callouts the figures themselves prove. Nothing here is new data: every
+  // callout is arithmetic over the hourly net, the usual night and the
+  // labor hours the report already holds.
+  function hxK(v){if(!isNum(v))return '';var a=Math.abs(v);return a>=1000?'$'+(Math.round(a/100)/10).toString().replace(/\.0$/,'')+'k':'$'+Math.round(a);}
+  function hxNice(mx){var steps=[50,100,200,250,500,1000,1500,2000,2500,5000,10000],i;for(i=0;i<steps.length;i++)if(steps[i]*4>=mx)return steps[i];return Math.ceil(mx/4/1000)*1000;}
+  function hxSmooth(pts){
+    if(pts.length<2)return '';var d='M'+pts[0][0].toFixed(1)+','+pts[0][1].toFixed(1),i;
+    for(i=0;i<pts.length-1;i++){var p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
+      d+=' C'+(p1[0]+(p2[0]-p0[0])/6).toFixed(1)+','+(p1[1]+(p2[1]-p0[1])/6).toFixed(1)+' '+(p2[0]-(p3[0]-p1[0])/6).toFixed(1)+','+(p2[1]-(p3[1]-p1[1])/6).toFixed(1)+' '+p2[0].toFixed(1)+','+p2[1].toFixed(1);}
+    return d;
   }
+  // What stood out, from the figures alone (at most four, left to right).
+  function hxCallouts(rows,peak,wd){
+    var out=[],i,r,n=rows.length,tot=0,hrs=0,withH=[];
+    for(i=0;i<n;i++){if(isNum(rows[i].hours)&&rows[i].hours>0){tot+=rows[i].net;hrs+=rows[i].hours;withH.push(rows[i].hours);}}
+    var night=hrs>0?tot/hrs:null;withH.sort(function(a,b){return a-b;});var medH=withH.length?withH[Math.floor(withH.length/2)]:null;
+    // The rush is the climb that leads INTO the peak: walk back from the
+    // peak while sales were rising, then take that climb's biggest jump
+    // (a lunch bump earlier in the day is not the night's rush).
+    var pk=rows.indexOf(peak),st=pk;while(st>0&&rows[st-1].net<rows[st].net)st--;
+    var ru=null;for(i=st+1;i<pk;i++){r=rows[i];var pv=rows[i-1];
+      if(pv.net>0&&r.net>=1.5*pv.net&&r.net>=0.45*peak.net&&(!ru||r.net/pv.net>ru.net/rows[ru.k-1].net))ru={k:i,net:r.net};}
+    if(ru){r=rows[ru.k];out.push({i:ru.k,kind:'rush',tone:'info',title:(r.hour>=15?'Dinner rush begins':'The rush begins'),
+        text:hn(money(r.net))+' at '+esc(hourLabel(r.hour,true))+', up from '+hn(money(rows[ru.k-1].net))+' the hour before.'});}
+    var sp=null;for(i=0;i<n;i++){r=rows[i];if(r!==peak&&isNum(r.usual)&&r.usual>=0.1*peak.net&&r.net>=1.25*r.usual&&(!sp||r.net/r.usual>sp.net/sp.usual))sp=r;}
+    if(sp)out.push({i:rows.indexOf(sp),kind:'spike',tone:'good',title:esc(hourLabel(sp.hour,true))+' ran '+hn(Math.round((sp.net/sp.usual-1)*100)+'%')+' above usual',
+      text:hn(money(sp.net))+' against a usual '+esc(wd)+'’s '+hn(money(sp.usual))+'.'});
+    var dp=null;for(i=0;i<n;i++){r=rows[i];if(isNum(r.usual)&&r.usual>=0.15*peak.net&&r.net<=0.8*r.usual&&(!dp||r.usual-r.net>dp.usual-dp.net))dp=r;}
+    if(dp){var staffed=isNum(dp.hours)&&isNum(medH)&&dp.hours>=medH;
+      out.push({i:rows.indexOf(dp),kind:staffed?'dip':'missed',tone:'bad',title:staffed?'Sales dipped despite full staffing':'Missed revenue at '+esc(hourLabel(dp.hour,true)),
+        text:esc(hourLabel(dp.hour,true))+' came in '+hn(money(dp.usual-dp.net))+' below a usual '+esc(wd)+(staffed?', with '+hn(dp.hours.toFixed(1))+' hours on the clock.':'.')});}
+    if(isNum(night)){var lo=null,ok=null;
+      for(i=0;i<n;i++){r=rows[i];if(!isNum(r.splh)||r.hours<2)continue;if(r.splh<0.6*night&&(!lo||r.splh<lo.splh))lo=r;}
+      var top=rows.slice().sort(function(a,b){return b.net-a.net;}).slice(0,3);
+      for(i=0;i<top.length;i++){r=top[i];if(isNum(r.splh)&&r.hours>=2&&Math.abs(r.splh/night-1)<=0.15){ok=r;break;}}
+      if(lo&&(!dp||lo!==dp))out.push({i:rows.indexOf(lo),kind:'labor',tone:'warn',title:'Labor ran ahead of demand',
+        text:esc(hourLabel(lo.hour,true))+': '+hn(money(lo.splh))+' per labor hour against '+hn(money(night))+' for the night.'});
+      if(ok)out.push({i:rows.indexOf(ok),kind:'matched',tone:'good',title:'Staffing matched demand',
+        text:esc(hourLabel(ok.hour,true))+': '+hn(money(ok.splh))+' per labor hour, right on the night’s '+hn(money(night))+'.'});}
+    out.sort(function(a,b){return a.i-b.i;});
+    return {list:out.slice(0,4),night:night};
+  }
+  function hxStory(rows,peak,cs,wd){
+    var rush=null,i;for(i=0;i<cs.list.length;i++)if(cs.list[i].kind==='rush')rush=rows[cs.list[i].i];
+    var s=(rush?'The rush began at <b>'+esc(hourLabel(rush.hour,true))+'</b> and peaked':'Sales peaked')+' at <b>'+esc(hourLabel(peak.hour,true))+'</b> with '+hn(money(peak.net));
+    if(isNum(peak.usual)&&peak.usual>0){var d=Math.round((peak.net/peak.usual-1)*100);s+=d===0?', right on a usual '+esc(wd)+'.':', '+hn(Math.abs(d)+'%')+' '+(d>0?'above':'below')+' a usual '+esc(wd)+'.';}
+    else s+='.';
+    for(i=0;i<cs.list.length;i++){var c=cs.list[i];if(c.kind==='labor'){s+=' Staffing ran ahead of demand at <b>'+esc(hourLabel(rows[c.i].hour,true))+'</b>.';break;}
+      if(c.kind==='dip'||c.kind==='missed'){s+=' <b>'+esc(hourLabel(rows[c.i].hour,true))+'</b> came in below a usual '+esc(wd)+'.';break;}}
+    return s;
+  }
+  function hourHtml(p){
+    var B=(p.facts&&p.facts.blocks)||{},s=B.sales;
+    if(!s||s.status!=='ready')return '';
+    var D=hourData(p),wd=(drDayNames(p)||{}).day||'night';
+    var head='<div class="hx-head"><div><div class="hb-kicker">Hour by hour</div><h3>What happened that night</h3>';
+    if(!D)return '<section class="hb-card dr-hourly hx hx-empty" aria-label="The night, hour by hour">'+head+'</div></div><div class="hx-ghost" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="hx-emsg">The hour-by-hour story appears once the POS sends this night’s sales by the hour.</div></section>';
+    var rows=D.rows,n=rows.length,W=760,H=300,pl=48,pr=44,pt=74,pb=52,pw=W-pl-pr,ph=H-pt-pb,cw=pw/n,i;
+    var peak=rows[0];for(i=1;i<n;i++)if(rows[i].net>peak.net)peak=rows[i];
+    var mx=0,lmx=0;for(i=0;i<n;i++){mx=Math.max(mx,rows[i].net,rows[i].usual||0);lmx=Math.max(lmx,rows[i].hours||0);}
+    var step=hxNice(mx*1.05),top=step*4;lmx=Math.max(1,Math.ceil(lmx*1.15));
+    var y=function(v){return pt+ph-(v/top)*ph;},yl=function(v){return pt+ph-(v/lmx)*ph*0.9;},cx=function(k){return pl+k*cw+cw/2;};
+    var cs=hxCallouts(rows,peak,wd),mark={};for(i=0;i<cs.list.length;i++)mark[cs.list[i].i]={no:i+1,tone:cs.list[i].tone};
+    var g='',hm='',bars='',ax='',strip='',cols='',up=[],lp=[],mk='';
+    for(i=0;i<=4;i++){var gy=y(step*i);g+='<line class="gl" x1="'+pl+'" x2="'+(W-pr)+'" y1="'+gy.toFixed(1)+'" y2="'+gy.toFixed(1)+'"/><text class="yt" x="'+(pl-10)+'" y="'+(gy+4).toFixed(1)+'" text-anchor="end">'+(i?hxK(step*i):'$0')+'</text>';}
+    if(D.labor)g+='<text class="yt r" x="'+(W-pr+10)+'" y="'+(yl(lmx)+4).toFixed(1)+'">'+lmx+'</text><text class="yt r" x="'+(W-pr+10)+'" y="'+(yl(0)+4).toFixed(1)+'">0</text>';
+    for(i=0;i<n;i++){var r=rows[i],x=pl+i*cw,bw=Math.min(cw*0.6,34),bx=x+(cw-bw)/2,yt=y(r.net),yb=pt+ph,rr=Math.min(7,bw/2),hgt=Math.max(0,yb-yt),isPk=r===peak,heat=peak.net>0?r.net/peak.net:0;
+      hm+='<rect class="hm" x="'+x.toFixed(1)+'" y="'+pt+'" width="'+cw.toFixed(1)+'" height="'+ph+'" style="fill-opacity:'+(0.015+0.11*heat*heat).toFixed(3)+';--i:'+i+'"/>';
+      if(hgt>0.5){var d=hgt>rr?'M'+bx.toFixed(1)+','+yb+' L'+bx.toFixed(1)+','+(yt+rr).toFixed(1)+' Q'+bx.toFixed(1)+','+yt.toFixed(1)+' '+(bx+rr).toFixed(1)+','+yt.toFixed(1)+' L'+(bx+bw-rr).toFixed(1)+','+yt.toFixed(1)+' Q'+(bx+bw).toFixed(1)+','+yt.toFixed(1)+' '+(bx+bw).toFixed(1)+','+(yt+rr).toFixed(1)+' L'+(bx+bw).toFixed(1)+','+yb+' Z'
+        :'M'+bx.toFixed(1)+','+yb+' h'+bw.toFixed(1)+' v-'+hgt.toFixed(1)+' h-'+bw.toFixed(1)+' Z';
+        bars+='<path class="hb'+(isPk?' pk':'')+'" d="'+d+'" fill="url(#'+(isPk?'hxp':'hxb')+')" style="--i:'+i+'"/>';}
+      if(isNum(r.usual))up.push([cx(i),y(r.usual)]);
+      if(isNum(r.hours))lp.push([cx(i),yl(r.hours)]);
+      if(n<=14||i%2===0)ax+='<text class="xt'+(isPk?' pk':'')+'" x="'+cx(i).toFixed(1)+'" y="'+(pt+ph+22)+'" text-anchor="middle">'+esc(hourLabel(r.hour))+'</text>';
+      strip+='<rect class="hs" x="'+(x+2).toFixed(1)+'" y="'+(H-14)+'" width="'+Math.max(1,cw-4).toFixed(1)+'" height="6" rx="3" style="fill-opacity:'+(0.12+0.88*heat).toFixed(2)+'"/>';
+      if(mark[i]&&!isPk)mk+='<g class="mk '+mark[i].tone+'" style="--i:'+i+'"><circle cx="'+cx(i).toFixed(1)+'" cy="'+(yt-18).toFixed(1)+'" r="10"/><text x="'+cx(i).toFixed(1)+'" y="'+(yt-14).toFixed(1)+'" text-anchor="middle">'+mark[i].no+'</text></g>';
+      cols+='<rect class="hx-col" x="'+x.toFixed(1)+'" y="'+pt+'" width="'+cw.toFixed(1)+'" height="'+(ph+30)+'" tabindex="0" role="img" aria-label="'+esc(hourLabel(r.hour,true))+': '+esc(money(r.net))+(isNum(r.usual)?', usual '+esc(money(r.usual)):'')+(isNum(r.hours)?', '+r.hours.toFixed(1)+' labor hours':'')+'"'
+        +' data-h="'+esc(hourLabel(r.hour,true))+'" data-net="'+esc(money(r.net))+'" data-usual="'+(isNum(r.usual)?esc(money(r.usual)):'')+'" data-d="'+(isNum(r.usual)&&r.usual>0?Math.round((r.net/r.usual-1)*100):'')+'" data-hrs="'+(isNum(r.hours)?r.hours.toFixed(1):'')+'" data-splh="'+(isNum(r.splh)?esc(money(r.splh)):'')+'" data-x="'+(cx(i)/W*100).toFixed(2)+'" data-y="'+(yt/H*100).toFixed(2)+'"/>';}
+    var ul=up.length>1?'<path class="ul" d="'+hxSmooth(up)+'"/>':'';
+    var ll=lp.length>1?'<path class="lg" d="'+hxSmooth(lp)+'"/><path class="ll" d="'+hxSmooth(lp)+'" pathLength="1"/>':'';
+    var dots='';for(i=0;i<lp.length;i++)dots+='<circle class="ld" cx="'+lp[i][0].toFixed(1)+'" cy="'+lp[i][1].toFixed(1)+'" r="2.8" style="--i:'+i+'"/>';
+    var svg='<svg class="hx-svg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Net sales by hour'+(D.typical?' against a usual night':'')+(D.labor?', with people on the clock':'')+'">'
+      +'<defs><linearGradient id="hxb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".28"/></linearGradient>'
+      +'<linearGradient id="hxp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember2)"/><stop offset=".45" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".5"/></linearGradient></defs>'
+      +'<g class="hms">'+hm+'</g>'+g+'<g class="bars">'+bars+'</g>'+ul+ll+dots+mk+'<g class="ax">'+ax+'</g><g class="strip">'+strip+'</g>'+cols+'</svg>';
+    var pd=isNum(peak.usual)&&peak.usual>0?Math.round((peak.net/peak.usual-1)*100):null;
+    var card='<div class="hx-peak" style="left:'+Math.max(14,Math.min(86,cx(rows.indexOf(peak))/W*100)).toFixed(2)+'%;top:'+(y(peak.net)/H*100).toFixed(2)+'%"><div class="k">Peak hour</div><div class="v">'+hn(esc(hourLabel(peak.hour,true)))+'<span>'+hn(money(peak.net))+'</span></div>'
+      +(pd!==null?'<div class="d '+(pd>=0?'good':'bad')+'">'+(pd>=0?'↑ ':'↓ ')+hn(Math.abs(pd)+'%')+' vs usual</div>':'')+'</div>';
+    var leg='<div class="hx-leg"><span><i class="hx-sw bar"></i>Net sales</span>'+(D.labor?'<span><i class="hx-sw line"></i>People on the clock</span>':'')+(D.typical?'<span><i class="hx-sw dash"></i>A usual '+esc(wd)+' <small>median of '+hn(D.typical.nights)+'</small></span>':'')+'<span><i class="hx-sw heat"></i>Busier hours, warmer</span></div>';
+    var h='<section class="hb-card dr-hourly hx" aria-label="The night, hour by hour">'+head+'<p class="hx-story">'+hxStory(rows,peak,cs,wd)+'</p></div>'+leg+'</div>'
+      +'<div class="hx-plot"><div class="hx-in">'+svg+card+'<div class="hx-tip" hidden></div></div></div>';
+    if(cs.list.length){h+='<div class="hx-call"><div class="hx-call-k"><span class="spark" aria-hidden="true"></span>What stood out</div><div class="hx-call-g">';
+      for(i=0;i<cs.list.length;i++){var c=cs.list[i];h+='<div class="hx-c '+c.tone+'" style="--i:'+i+'"><span class="no">'+(rows[c.i]===peak?'★':(i+1))+'</span><div><div class="t">'+c.title+'</div><div class="s">'+c.text+'</div></div></div>';}
+      h+='</div></div>';}
+    if(!D.typical)h+='<div class="dr-note">A usual night shows here once two finished reports exist for this weekday.</div>';
+    return h+'</section>';
+  }
+  // The hover card: one hour's figures over the column under the pointer
+  // (a tap on a phone, focus from the keyboard).
+  function hxShow(col){
+    var box=col.closest?col.closest('.hx-in'):null;if(!box)return;var tip=box.querySelector('.hx-tip');if(!tip)return;
+    var d=col.getAttribute('data-d'),prev=box.querySelector('.hx-col.on');if(prev&&prev!==col)prev.classList.remove('on');col.classList.add('on');
+    tip.innerHTML='<div class="h">'+esc(col.getAttribute('data-h'))+'</div><div class="v">'+hn(esc(col.getAttribute('data-net')))+'</div>'
+      +(col.getAttribute('data-usual')?'<div class="r"><span>Usual</span><b>'+hn(esc(col.getAttribute('data-usual')))+'</b>'+(d!==''?'<em class="'+(+d>=0?'good':'bad')+'">'+(+d>=0?'+':'−')+hn(Math.abs(+d)+'%')+'</em>':'')+'</div>':'')
+      +(col.getAttribute('data-hrs')?'<div class="r"><span>Labor hours</span><b>'+hn(esc(col.getAttribute('data-hrs')))+'</b></div>':'')
+      +(col.getAttribute('data-splh')?'<div class="r"><span>Per labor hour</span><b>'+hn(esc(col.getAttribute('data-splh')))+'</b></div>':'');
+    var x=+col.getAttribute('data-x');tip.style.left=Math.max(10,Math.min(90,x))+'%';tip.style.top=col.getAttribute('data-y')+'%';
+    tip.className='hx-tip'+(x>70?' left':(x<30?' right':''));tip.hidden=false;
+  }
+  function hxHide(box){if(!box)return;var t=box.querySelector('.hx-tip');if(t)t.hidden=true;var o=box.querySelector('.hx-col.on');if(o)o.classList.remove('on');}
+  document.addEventListener('mouseover',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
+  document.addEventListener('focusin',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
+  document.addEventListener('click',function(e){var c=e.target&&e.target.closest?e.target.closest('.hx-col'):null;if(c)hxShow(c);});
+  document.addEventListener('mouseout',function(e){var b=e.target&&e.target.closest?e.target.closest('.hx-in'):null;if(!b)return;var to=e.relatedTarget;if(to&&b.contains(to))return;hxHide(b);});
+  function hxSkeleton(){return '<section class="hb-card dr-hourly hx hx-skel" aria-hidden="true"><i class="sk w30"></i><i class="sk w50"></i><div class="hx-ghost"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></section>';}
   function splitRows(list,keyLabel){
     var h='',mx=0,i;for(i=0;i<list.length;i++)mx=Math.max(mx,list[i].net||0);mx=mx||1;
     for(i=0;i<list.length;i++){var x=list[i];

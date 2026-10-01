@@ -414,7 +414,7 @@ def test_the_report_leads_with_six_large_animated_tiles():
                  ".kx.on .kx-hero .kx-bar .tr i s{animation"):
         assert loop in SRC
     assert "@media (prefers-reduced-motion:reduce){.kx:not(.on)>.kx-hero" in SRC
-    assert "b.innerHTML=loading()+kxSkeleton();" in SRC
+    assert "b.innerHTML=loading()+kxSkeleton()+hxSkeleton();" in SRC
     for fn in ("hourHtml", "moneyHtml", "laborHtml", "serversHtml", "lossHtml", "tmrLaborHtml"):
         assert f"function {fn}(" in SRC
 
@@ -472,3 +472,58 @@ def test_one_hero_four_secondary_and_the_rest_chips():
 def test_key_numbers_sit_above_the_day_after():
     n = SRC[SRC.index("  function narrativeHtml(n,ck,p){"):SRC.index("  function drEffects(list){")]
     assert n.index("h+=big?bigHtml(big,p):kpisHtml(p&&p.kpis,p);") < n.index("h+=tomorrowHtml(p&&p.tomorrow,n,p&&p.view);")
+
+
+# ── the hour-by-hour story (owner, 10/1/26) ────────────────────────────────
+
+def _hx_node(rows_js):
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    a, b = SRC.index("  function hxK(v){"), SRC.index("  function hourHtml(p){")
+    helpers = ("function isNum(v){return typeof v==='number'&&isFinite(v);}function esc(v){return String(v);}"
+               "function hn(s){return s;}function money(v){return '$'+Math.round(v);}"
+               "function hourLabel(h,f){h=(+h)%24;return ((h%12)||12)+(f?(h<12?'am':'pm'):(h<12?'a':'p'));}")
+    js = helpers + SRC[a:b] + ("var rows=" + rows_js + ";var peak=rows[0];rows.forEach(function(r){if(r.net>peak.net)peak=r;});"
+                               "var cs=hxCallouts(rows,peak,'Tuesday');"
+                               "console.log(JSON.stringify({c:cs.list.map(function(x){return [x.kind,rows[x.i].hour];}),"
+                               "s:hxStory(rows,peak,cs,'Tuesday')}));")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_the_rush_is_the_climb_into_the_peak_not_a_lunch_bump():
+    hours = [(11, 310, 290, 6), (12, 820, 760, 9), (13, 690, 720, 9), (14, 380, 400, 8), (15, 260, 300, 8),
+             (16, 420, 450, 9), (17, 980, 900, 12), (18, 1420, 1280, 14), (19, 1350, 1290, 14), (20, 1010, 1080, 13),
+             (21, 640, 700, 10), (22, 280, 330, 6), (23, 120, 160, 3)]
+    rows = "[" + ",".join(f"{{hour:{h},net:{n},usual:{u},hours:{l},splh:{n}/{l}}}" for h, n, u, l in hours) + "]"
+    out = _hx_node(rows)
+    kinds = dict((k, h) for k, h in out["c"])
+    assert kinds.get("rush") == 17                     # 5pm, never the noon bump
+    assert kinds.get("labor") == 15                    # 3pm: $33 a labor hour against $72
+    assert out["s"].startswith("The rush began at <b>5pm</b> and peaked at <b>6pm</b> with $1420, 11% above a usual Tuesday.")
+    assert len(out["c"]) <= 4
+
+
+def test_a_quiet_flat_night_says_nothing_it_cannot_prove():
+    rows = "[" + ",".join(f"{{hour:{h},net:500,usual:null,hours:null,splh:null}}" for h in range(11, 22)) + "]"
+    out = _hx_node(rows)
+    assert out["c"] == [] and out["s"].startswith("Sales peaked at")
+
+
+def test_the_hour_chart_is_one_hybrid_story():
+    js = SRC[SRC.index("  function hourHtml(p){"):SRC.index("  function hxSkeleton(){")]
+    for part in ('class="hm"', "'hxp':'hxb'", 'class="ll"', 'class="lg"', 'class="ul"', "hx-peak", "hx-tip",
+                 "What stood out", "hx-story", 'class="hs"'):
+        assert part in js, part
+    assert "The hour-by-hour story appears once the POS sends" in js      # the empty state
+    assert "b.innerHTML=loading()+kxSkeleton()+hxSkeleton();" in SRC      # the loading state
+    assert "@media (prefers-reduced-motion:reduce){.hx *,.hx-svg .hb.pk{animation:none!important}" in SRC
+    assert 'class="sw ' not in js
+
+
+def test_todays_score_carries_the_brand_gradient():
+    assert "#panel-dsr .dr-score{border-color:var(--hb-tint2);" in SRC
+    assert "#panel-dsr .dr-score::before{" in SRC
