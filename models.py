@@ -3905,6 +3905,10 @@ def init_db(db_path: str = DB_PATH):
     # and the bundled seasons (the 2026 Chicago Bears first).
     from event_intel import init_event_intel
     init_event_intel(db_path)
+    # The Studio notes an owner confirmed as staffing rules (every week or
+    # one week) — schedule_note_rules, 10/1/26.
+    from schedule_note_rules import init_note_rules
+    init_note_rules(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -12437,6 +12441,7 @@ ACCOUNT_EVENT_TYPES = (
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "auto_draft_changed", "auto_draft_day_changed", "auto_order_day_changed",
+    "schedule_note_rule_added", "schedule_note_rule_removed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
     "team_member_invited", "team_member_revoked",
@@ -12491,6 +12496,9 @@ ACCOUNT_EVENT_LABELS = {
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",
+    # `detail` carries the rule in words ("at least 2 Cook at lunch, Fri · every week").
+    "schedule_note_rule_added": "A schedule note made a rule",
+    "schedule_note_rule_removed": "A schedule note's rule removed",
     # `detail` carries the new day ("Tuesday").
     "auto_draft_day_changed": "Schedule draft day changed",
     "auto_order_day_changed": "Supplier order day changed",

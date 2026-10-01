@@ -940,6 +940,13 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         apply_owner_rules(c, restaurant_id, db_path=db_path)
     except Exception:
         pass
+    # The Studio notes the owner confirmed as rules, every week or this
+    # week only (schedule_note_rules, 10/1/26): floors like the ones above.
+    try:
+        import schedule_note_rules
+        schedule_note_rules.apply_note_rules(c, restaurant_id, db_path=db_path)
+    except Exception:
+        pass
     return c
 
 

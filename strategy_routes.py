@@ -1785,6 +1785,70 @@ def _do_schedule_forecast(u):
     return dict(out, available=True), 200
 
 
+def _do_note_rules_get(u):
+    """The Studio AI tab: each sentence of the saved notes as Cavnar AI reads
+    it (a rule it can hold, one it can't, about one person, guidance), the
+    rules in force for the picked week, and the roles a rule can name
+    (schedule_note_rules). `week_start`: any date in the week; none is the
+    rules in force from this week on."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the scheduling notes.")
+    from flask import request
+    from models import get_restaurant
+    import schedule_note_rules as snr
+    week = (request.args.get("week_start") or "").strip()[:10] or None
+    if week:
+        import schedule_engine
+        week, err = schedule_engine.check_week_start(_rid(u), week)
+        if err:
+            return {"ok": False, "error": err}, 400
+    notes = getattr(get_restaurant(_rid(u)), "sched_notes", None) or ""
+    # The week a "this week only" rule would hold for: the picked week's
+    # Monday, else next week's (the one Generate drafts by default).
+    from datetime import date as _date, timedelta as _td
+    if week:
+        d = _date.fromisoformat(week)
+        week_of = d - _td(days=d.weekday())
+    else:
+        t = _local_today(u)
+        week_of = t + _td(days=(7 - t.weekday()) % 7 or 7)
+    return {"ok": True, "week_of": week_of.isoformat(),
+            "sentences": snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat()),
+            "rules": snr.note_rules(_rid(u), week_start=week or week_of.isoformat()),
+            "roles": snr.restaurant_roles(_rid(u)),
+            "can_edit": _may_draft(u)}, 200
+
+
+def _do_note_rule_add(u):
+    """{role, min, dayparts: ["morning"|"night"], days?: [weekday], scope:
+    "every"|"week", week_start?, source_text?} — a note the owner confirmed
+    as a rule the draft is built to and checked against."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's rules.")
+    from client_api import log_account_event
+    import schedule_note_rules as snr
+    b = _body()
+    try:
+        rule = snr.add_rule(_rid(u), b.get("role"), b.get("min"), b.get("dayparts") or [],
+                            days=b.get("days") or None, scope=b.get("scope") or "every",
+                            week_start=b.get("week_start"), source_text=b.get("source_text"), user=u)
+    except ValueError as e:
+        return {"ok": False, "error": e.args[0]}, 400
+    log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=rule["words"][:200])
+    return {"ok": True, "rule": rule}, 200
+
+
+def _do_note_rule_remove(u, rule_id):
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's rules.")
+    from client_api import log_account_event
+    import schedule_note_rules as snr
+    if not snr.remove_rule(_rid(u), rule_id, user=u):
+        return {"ok": False, "error": "That rule is already gone."}, 404
+    log_account_event(_rid(u), "schedule_note_rule_removed", current_user=u, detail=f"rule {int(rule_id)}")
+    return {"ok": True}, 200
+
+
 def _do_demand_signals_save(u):
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
@@ -5521,6 +5585,9 @@ _ROUTES = [
     ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
     ("/food-cost/game-week", ["GET"], _do_game_week, "game_week"),
     ("/labor/schedule-forecast", ["GET"], _do_schedule_forecast, "schedule_forecast"),
+    ("/labor/note-rules", ["GET"], _do_note_rules_get, "note_rules_get"),
+    ("/labor/note-rules", ["POST"], _do_note_rule_add, "note_rule_add"),
+    ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),

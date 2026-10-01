@@ -3950,7 +3950,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Extra scheduling notes from admin
     _sched_notes_block = ""
     if sched_notes:
-        _sched_notes_block = f"\n\nADDITIONAL SCHEDULING NOTES (from management):\n{sched_notes}"
+        # The owner's own words for every draft, ranked (owner, 10/1/26:
+        # "are the AI tab notes a high priority?"): they lead the quality
+        # preferences (priority 5) and give way only to 1-4. A note the owner
+        # confirmed as a rule is already a floor in SHIFT REQUIREMENTS
+        # (schedule_note_rules), checked by code like any floor.
+        _sched_notes_block = ("\n\nADDITIONAL SCHEDULING NOTES (from management) — the owner's instructions for "
+                              "every draft. Follow each one; the only thing that may stop you is priorities 1-4 "
+                              "in the PRIORITIES list, and then say which note and why in the summary:\n"
+                              f"{sched_notes}")
 
     # A labor target is a CEILING, not a quota. This block used to tell the
     # model that landing under budget meant "the historical staffing data
@@ -4074,7 +4082,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         "  3. Leadership — every shift that needs somebody to run it has one, busiest shifts first, and every "
         "SHIFT LEADER REQUIREMENT is met.\n"
         "  4. The weekly hours ceiling — trim toward it only in ways that keep 1-3 intact; it never adds hours.\n"
-        "  5. Quality preferences — operational strength and pairing, experience mix, a fair share of closes, "
+        "  5. Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES first, then operational strength "
+        "and pairing, experience mix, a fair share of closes, "
         "weekends and busy shifts, and keeping people on their usual days and dayparts."
     )
     _dates_block = "Next week dates:\n" + "\n".join(f"- {d}: {n}" for d, n in zip(_gen_dates, _gen_days))
