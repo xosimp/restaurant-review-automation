@@ -39,12 +39,13 @@ STAGES = ("scheduled", "awaiting_close", "collecting", "writing", "final", "prov
 TERMINAL_STAGES = ("final", "provisional", "failed")
 
 # The blocks, in the order a report shows them.
-BLOCKS = ("sales", "labor", "food", "reviews", "marketing", "intel", "closeout")
+BLOCKS = ("sales", "labor", "service", "food", "reviews", "marketing", "intel", "closeout")
 
 # Owner-facing sentences for a block that isn't ready, by block.
 MISSING_TEXT = {
     "sales": "Awaiting POS synchronization",
     "labor": "Labor data unavailable",
+    "service": "Check-level detail unavailable",
     "food": "Inventory data unavailable",
     "reviews": "Review sync delayed",
     "marketing": "Marketing data unavailable",
@@ -120,12 +121,20 @@ def block(status, source=None, reason=None, metrics=None, detail=None, block_nam
             "metrics": clean, "detail": detail or {}}
 
 
+# Blocks a POS may simply not support (check-level detail): not connected
+# is what that POS can do, not something missing tonight, so it is never
+# listed as missing.
+QUIET_WHEN_NOT_CONNECTED = ("service",)
+
+
 def missing_reasons(blocks: dict) -> list:
     """The owner-facing sentences for every block that isn't ready, in
     report order."""
     out = []
     for name in BLOCKS:
         b = (blocks or {}).get(name)
+        if b and name in QUIET_WHEN_NOT_CONNECTED and b.get("status") == NOT_CONNECTED:
+            continue
         if b and b.get("status") != READY and b.get("reason"):
             out.append(b["reason"])
     return out

@@ -166,6 +166,33 @@ def live_categories(detail, restaurant_id, net, db_path=None):
     return _arrange(cats, net), unmapped
 
 
+TYPICAL_WEEKS = 4         # the usual night, hour by hour: the same weekday, the last 4 weeks
+TYPICAL_MIN = 2           # …from at least 2 of them that have an hourly curve
+
+
+def hourly_typical(ctx):
+    """{"hours": {hour: median net}, "nights": n} — the same weekday's
+    hourly net over the last TYPICAL_WEEKS finished reports (their own
+    hourly curve, so the basis is tonight's), or None below TYPICAL_MIN."""
+    import statistics
+    curves = []
+    for w in range(1, TYPICAL_WEEKS + 1):
+        day = ctx.business_date - timedelta(days=7 * w)
+        try:
+            rep = store.get_finished_report(ctx.restaurant_id, day.isoformat(), db_path=ctx.db_path)
+        except Exception:
+            rep = None
+        blk = (((rep or {}).get("facts") or {}).get("blocks") or {}).get("sales") or {}
+        hourly = (blk.get("detail") or {}).get("hourly") if blk.get("status") == dsr.READY else None
+        if hourly:
+            curves.append({int(h["hour"]): float(h.get("net") or 0) for h in hourly})
+    if len(curves) < TYPICAL_MIN:
+        return None
+    hours = sorted({h for c in curves for h in c}, key=_service_order)
+    return {"hours": {str(h): round(statistics.median(c.get(h, 0.0) for c in curves), 2) for h in hours},
+            "nights": len(curves), "basis": f"the median of the last {len(curves)} same weekdays, hour by hour"}
+
+
 def _items(items):
     sold = [it for it in items if (it.get("qty") or 0) > 0]
     top = sorted(sold, key=lambda it: (-it["net"], it["name"] or ""))[:TOP_N]
@@ -345,6 +372,7 @@ def _ready(ctx, data, provider, closed_by):
         "budget": ({"gross": b_gross, "net": b_net, "source": budget.get("source"), "label": budget.get("label"),
                     "goal_id": budget.get("goal_id")} if budget else None),
         "hourly": hourly,
+        "hourly_typical": hourly_typical(ctx),
         "categories": cats,
         "unmapped": unmapped,
         "by_department": {dep: round(float(v or 0), 2) for dep, v in data["by_department"].items()},

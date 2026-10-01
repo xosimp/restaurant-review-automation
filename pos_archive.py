@@ -28,7 +28,17 @@ the POS has since removed.
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. A bound `from models import get_conn` kept whichever function
+    was there when this module was first imported, so the nightly report's
+    at-report-time read (dsr.common.night_archive) wrote a test's checks to
+    another test's database."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 log = logging.getLogger("pos_archive")
 

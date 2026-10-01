@@ -224,7 +224,8 @@ reports a status instead of a zero:
 | Block | What it reads |
 |---|---|
 | `block_sales.py` | The POS night (`pos.fetch_day_sales`) against yesterday, last week, last year, the forecast and the budget |
-| `block_labor.py` | `labor_daily_history`, overtime, the evening split, attendance; salaried pay for the owner (`access._live_salaries`) |
+| `block_labor.py` | `labor_daily_history`, overtime, the evening split, attendance; salaried pay for the owner (`access._live_salaries`); labor by department (`department_of`: the POS's payroll category, the bar and management named apart) scaled to the night's labor, and labor hours in every clock hour |
+| `block_service.py` | The night's checks, read from the POS when the report runs (`common.night_archive` archives the night once per pass after Sales is in, so the figures are in version 1, not the 4am archive): meal periods, rooms, drinks per guest, servers, the loss ledger by reason and approver, punch edits. Never holds the night (`pipeline.NEVER_HOLDS`); a POS without check detail is quiet, not missing |
 | `block_food.py` | Theoretical food cost from recipes × dishes sold, plus waste |
 | `block_reviews.py` | The night's reviews and what's owed; the guest score over the trailing 7 days |
 | `block_marketing.py` | What went out that night and what it did, where measured |
@@ -240,7 +241,14 @@ reports a status instead of a zero:
 - `kpis.py` sets each figure beside its direction, its best or worst in
   weeks, its target and fair peers.
 - `predictions.py` and `tomorrow.py` are the next night's forecast and the
-  claims tomorrow's report will grade.
+  claims tomorrow's report will grade. `tomorrow.py` also prices the next
+  day's published schedule against the forecast (`labor_plan`), names who
+  goes past 40 hours this payroll week (`overtime_outlook`) and anyone who
+  would work a 7th day in a row (`rest_day_items`).
+- `kpis.pace` is the week and the period to date against the budget and last
+  year, with what each night left needs (arithmetic, never a run rate);
+  `kpis.big` picks the six KPIs the report leads with. The owner's labor and
+  prime history add the salaried share, so all-in is compared with all-in.
 - `access.py` is who sees what: one snapshot, an owner view and a manager
   view (owner-only keys such as `salaried*` and the budget).
   `access.summary` builds a list row's verdict, net and `list_stats` (the

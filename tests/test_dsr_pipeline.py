@@ -152,7 +152,9 @@ def test_stages_run_in_order_and_each_block_is_saved_as_it_finishes(db, world, m
     assert rep["status"] == "final" and not rep["provisional"] and rep["finalized_at"]
     order = _stages_in_order(rep)
     assert order == sorted(order) and len(set(order)) == len(order)
-    assert seen == {"status": "collecting", "saved": ["labor", "sales"], "writing": False, "ctx": ["labor", "sales"]}
+    # Service (the night's checks, read at report time) comes after Labor.
+    assert seen == {"status": "collecting", "saved": ["labor", "sales", "service"], "writing": False,
+                    "ctx": ["labor", "sales", "service"]}
     assert rep["stages"]["closed_by"] == "pos"
     assert rep["stages"]["narrative"] == {"status": "written", "reason": None}
     assert rep["narrative"]["executive_summary"]["text"] == "A good night."

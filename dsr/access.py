@@ -47,7 +47,9 @@ import dsr
 OWNER = "owner"
 MANAGER = "manager"
 
-OWNER_ONLY_PREFIXES = ("budget", "vs_budget", "prime_cost", "source_checks", "salaried")
+# "timeclock": punches a manager edited (dsr.block_service) — the owner's
+# check on the people who edit them (9/30/26).
+OWNER_ONLY_PREFIXES = ("budget", "vs_budget", "prime_cost", "source_checks", "salaried", "timeclock")
 LOSS_KEYS = ("comps", "voids", "refunds")
 # Figures that close the net equation (D2-2): net = gross − discounts −
 # comps, and on the "everything rung" basis gross = items + tax + voids — so
@@ -65,7 +67,7 @@ STAGE_LABELS = {
     "provisional": "Provisional — some data is still syncing",
     "failed": "Couldn't finish tonight",
 }
-BLOCK_LABELS = {"sales": "Sales", "labor": "Labor", "food": "Food", "reviews": "Reviews",
+BLOCK_LABELS = {"sales": "Sales", "labor": "Labor", "service": "Service", "food": "Food", "reviews": "Reviews",
                 "marketing": "Marketing", "intel": "Intel", "closeout": "Manager closeout"}
 
 
@@ -377,6 +379,19 @@ def render(report, user, restaurant=None, versions=None):
         headline = _kpis.headline(kp.get("top") or [], card) if _kpis else []
     except Exception:
         headline = []
+    tmr = tomorrow_for(stored, user, view, withheld=facts.get("withheld"))
+    # The week to date and the six KPIs the report leads with (owner,
+    # 9/30/26: large, animated, scannable). Read at render so a budget
+    # entered tomorrow morning moves this week's pace.
+    try:
+        pace = _kpis.pace(facts, restaurant, view) if _kpis else None
+    except Exception:
+        pace = None
+    try:
+        big = _kpis.big(kp.get("top") or [], kp.get("operations_all") or kp.get("operations") or [], pace, tmr,
+                       view) if _kpis else []
+    except Exception:
+        big = []
     return {
         "view": view,
         "business_date": report.get("business_date"),
@@ -394,7 +409,9 @@ def render(report, user, restaurant=None, versions=None):
         "kpis_headline": headline,
         "operations": kp.get("operations") or [],
         "shift": kp.get("shift"),
-        "tomorrow": tomorrow_for(stored, user, view, withheld=facts.get("withheld")),
+        "tomorrow": tmr,
+        "pace": pace,
+        "kpis_big": big,
         "insights": insights(facts, shown, view, said=_said(card, shown)),
         "yesterday": _yesterday(report, restaurant, user, view),
         "checklist": checklist(report, user, restaurant),
@@ -420,6 +437,14 @@ def tomorrow_for(facts, user, view, withheld=None):
         withheld = [n for n, need in _block_permissions().items() if view is None or not _sees(user, need)]
     if "food" in (withheld or []):
         t["items"] = [i for i in t.get("items") or [] if i.get("kind") != "stock"]
+    # Tomorrow's labor, the week's overtime and a 7th day in a row are the
+    # Labor view's; the salaried share is the owner's (OWNER_ONLY_PREFIXES).
+    if "labor" in (withheld or []):
+        t.pop("labor", None)
+        t.pop("overtime", None)
+        t["items"] = [i for i in t.get("items") or [] if i.get("kind") != "rest_day"]
+    elif isinstance(t.get("labor"), dict) and view != OWNER:
+        t["labor"] = {k: v for k, v in t["labor"].items() if not str(k).lower().startswith(OWNER_ONLY_PREFIXES)}
     ok = _cite_rule(user, view)
     t["predictions"] = [p for p in t.get("predictions") or []
                         if isinstance(p, dict) and all(ok(c) for c in predictions.cites_for(p.get("key")))]

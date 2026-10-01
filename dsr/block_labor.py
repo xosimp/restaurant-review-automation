@@ -305,6 +305,116 @@ def _quality(ctx):
                         "meets_profile": s.get("meets_profile"), "headline": s.get("headline")} for s in shifts]}
 
 
+def hourly_hours(rows):
+    """{clock hour: labor hours worked in it} — each shift's recorded hours
+    shared over its clock span (as _hours_after does), so a break is not
+    counted twice. Hours are 0-23; past midnight is 0, 1, …"""
+    from labor import _shift_hours
+    out = {}
+    for row in rows or []:
+        span = _span(row)
+        hours = _shift_hours(row)
+        if not span or hours <= 0:
+            continue
+        start, end = span
+        per_min = hours / (end - start)
+        m = start
+        while m < end:
+            nxt = min(end, (m // 60 + 1) * 60)
+            h = (m // 60) % 24
+            out[h] = out.get(h, 0.0) + (nxt - m) * per_min
+            m = nxt
+    return {h: round(v, 2) for h, v in sorted(out.items())}
+
+
+# Departments (owner, 9/30/26): the POS's own payroll category where it has
+# one (RPOWER: Front of House / Back of House on each job), with the bar and
+# management named apart because owners run them apart; a job with no
+# category falls to its name. Nothing is guessed past that: "Other".
+DEPARTMENTS = ("Front of house", "Bar", "Kitchen", "Management", "Other")
+_MANAGER_RE = re.compile(r"\b(manager|gm|general\s+manager|supervisor)\b", re.I)
+_BAR_RE = re.compile(r"\b(bartender|barback|bar\s*back|bar)\b", re.I)
+_KITCHEN_RE = re.compile(r"\b(kitchen|cook|chef|line|prep|dish\w*|utility|grill|saut[eé]|fry|pizza|pastry|boh)\b", re.I)
+_FOH_RE = re.compile(r"\b(server|host\w*|busser|bus|runner|cashier|expo|mascot|to\s*-?\s*go|barista|foh)\b", re.I)
+
+
+def department_of(role, category=None):
+    """One of DEPARTMENTS for a job name and its POS payroll category."""
+    r = str(role or "")
+    if _MANAGER_RE.search(r):
+        return "Management"
+    if _BAR_RE.search(r):
+        return "Bar"
+    c = str(category or "").lower()
+    if "back" in c or "kitchen" in c or "boh" in c:
+        return "Kitchen"
+    if "front" in c or "foh" in c:
+        return "Front of house"
+    if _KITCHEN_RE.search(r):
+        return "Kitchen"
+    if _FOH_RE.search(r):
+        return "Front of house"
+    return "Other"
+
+
+def _job_categories(ctx, provider):
+    """{job lower: payroll category} from the POS, else {} (names decide)."""
+    import pos
+    try:
+        _p, mod = pos.connected_provider(ctx.restaurant_id)
+        fn = getattr(mod, "job_categories", None) if mod else None
+        return dict(fn(ctx.restaurant_id) or {}) if fn else {}
+    except Exception as e:
+        log.warning("dsr labor: job categories unreadable rid=%s: %s", ctx.restaurant_id, e)
+        return {}
+
+
+def departments(ctx, provider, day_rows, all_rows, cost, net):
+    """[{department, hours, cost, pct_of_sales, roles}] for the night's
+    hourly staff (salaried pay is the owner's own line). Each shift is priced
+    on Labor's own rate chain (the POS's pay, the person's, the role's, the
+    blended) and the department dollars are then scaled to the night's
+    labor cost, so the rows add up to the figure above them."""
+    from labor import _shift_hours, _shift_rate, rate_book
+    sal = _salaried_keys(ctx)
+    from models import salaried_name_key
+    rows = [r for r in day_rows or [] if salaried_name_key(r.get("employee")) not in sal]
+    if not rows:
+        return []
+    cats = _job_categories(ctx, provider)
+    try:
+        from models import get_role_rates, person_rates
+        role_rates = get_role_rates(ctx.restaurant_id, db_path=ctx.db_path) or {}
+        people, typical = rate_book(all_rows, person_rates(ctx.restaurant))
+    except Exception:
+        role_rates, people, typical = {}, {}, {}
+    fallback = float(role_rates.get("_default") or getattr(ctx.restaurant, "hourly_rate", None) or 0) or 0.0
+    out = {}
+    for r in rows:
+        role = (r.get("role") or "").strip()
+        dept = department_of(role, cats.get(role.lower()))
+        h = _shift_hours(r)
+        d = out.setdefault(dept, {"department": dept, "hours": 0.0, "raw": 0.0, "roles": set()})
+        d["hours"] += h
+        try:
+            d["raw"] += h * float(_shift_rate(r, role_rates, fallback, people, typical) or 0)
+        except Exception:
+            pass
+        if role:
+            d["roles"].add(role)
+    raw_total = sum(d["raw"] for d in out.values())
+    res = []
+    for name in DEPARTMENTS:
+        d = out.get(name)
+        if not d or d["hours"] <= 0:
+            continue
+        c = (round(cost * d["raw"] / raw_total, 2) if isinstance(cost, (int, float)) and raw_total > 0 else None)
+        res.append({"department": name, "hours": round(d["hours"], 2), "cost": c,
+                    "pct_of_sales": round(c / net * 100.0, 1) if c is not None and net else None,
+                    "roles": sorted(d["roles"])})
+    return res
+
+
 # The share of a night's hours the POS must price before its wages are the
 # night's labor cost (the rest at the owner's role or blended rate).
 POS_PAY_MIN_SHARE = 0.5
@@ -431,6 +541,12 @@ def collect(ctx):
                             "salaried_total_pct": all_in,
                             "salaried_vs_target_pts": round(all_in - target, 1)})
 
+    try:
+        depts = departments(ctx, provider, day_rows, all_rows, cost, net)
+    except Exception as e:
+        log.warning("dsr labor: departments failed rid=%s: %s", ctx.restaurant_id, e)
+        depts = []
+
     observations = []
     if pct is not None:
         side = "over" if pct > target else "at or under"
@@ -476,6 +592,15 @@ def collect(ctx):
         "target_source": target_source,
         "target_label": target_label,
         "overtime_source": ot_source,
+        # Labor by department (Front of house, Bar, Kitchen, Management,
+        # Other) and labor hours in every clock hour of service — the
+        # report's staffing-to-demand chart sets them against the Sales
+        # block's hourly net (owner, 9/30/26).
+        "departments": depts,
+        "departments_basis": ("each shift priced at its own pay, scaled to the night's labor dollars; salaried "
+                              "pay is its own line; departments from the POS's payroll category, else the job "
+                              "name"),
+        "hourly_hours": {str(h): v for h, v in hourly_hours(day_rows).items()},
         "coverage": cov,
         "shift_quality": quality,
         "observations": observations,

@@ -167,7 +167,8 @@ def test_one_night_from_close_to_the_owner_and_manager_views(db, fake_pos, monke
     blocks = rep["facts"]["blocks"]
     assert list(blocks) == list(dsr.BLOCKS)
     assert {n: b["status"] for n, b in blocks.items()} == {
-        "sales": dsr.READY, "labor": dsr.READY, "food": dsr.NOT_CONNECTED, "reviews": dsr.NOT_CONNECTED,
+        "sales": dsr.READY, "labor": dsr.READY, "service": dsr.NOT_CONNECTED, "food": dsr.NOT_CONNECTED,
+        "reviews": dsr.NOT_CONNECTED,
         "marketing": dsr.READY, "intel": dsr.READY, "closeout": dsr.READY}
     # What isn't connected says why, once, on the report.
     assert rep["facts"]["missing"] == [blocks["food"]["reason"], blocks["reviews"]["reason"]]

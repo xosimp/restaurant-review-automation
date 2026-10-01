@@ -119,3 +119,44 @@ def guard(ctx, block_name, part, fn, gaps, default=None):
                     f"date={ctx.day} part={part}")
         gaps.append(part)
         return default
+
+
+# ── the night's checks, read when the report runs ──────────────────────────
+#
+# The ticket-level archive (pos_archive) is written by the 4am job, after a
+# night's report has already gone out at the POS close. The blocks that read
+# checks, lines and punches (dsr.block_service) therefore archive the night
+# themselves, once per pass and only once the Sales block shows the POS day
+# is closed: the figures are in the first version the owner reads, not a 4am
+# update. The 4am job archives the same day again; a day is replaced whole,
+# so the two never disagree for long.
+
+def night_archive(ctx):
+    """{"ok", "provider", "reason", "counts"} for tonight's check-level
+    archive, read from the POS at most once per Context (memoised on it).
+
+    ok False with a reason when: no POS can archive (provider None), the
+    Sales block isn't ready (the day isn't closed, or its tickets haven't
+    arrived — nothing to read yet), or the read itself failed. Never raises."""
+    cached = getattr(ctx, "_night_archive", None)
+    if cached is not None:
+        return cached
+    import pos_archive
+    out = {"ok": False, "provider": None, "reason": None, "counts": None}
+    name, mod = pos_archive.provider_for(ctx.restaurant_id)
+    if mod is None:
+        out["reason"] = "no_provider"
+    elif ((ctx.blocks or {}).get("sales") or {}).get("status") != "ready":
+        out.update(provider=name, reason="sales_pending")
+    else:
+        out["provider"] = name
+        try:
+            counts = pos_archive.archive_day(ctx.restaurant_id, ctx.business_date,
+                                             db_path=ctx.db_path, provider=(name, mod))
+            out.update(ok=True, counts=counts)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="dsr_service", context=f"restaurant_id={ctx.restaurant_id} business_date={ctx.day}")
+            out["reason"] = "read_failed"
+    ctx._night_archive = out
+    return out

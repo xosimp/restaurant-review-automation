@@ -446,7 +446,8 @@ _sales_type_cache = {}
 
 def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
-    for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache):
+    for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
+              _job_cat_cache):
         c.clear()
 
 
@@ -1155,6 +1156,36 @@ def fetch_people(restaurant_id: int) -> dict:
 
 PEOPLE_CACHE_SECONDS = 600
 _people_cache = {}
+
+
+def employee_names(restaurant_id: int) -> dict:
+    """{employee mid: "First Last"} — who approved a comp or edited a punch,
+    for the nightly report (dsr.block_service). Cached with the people list."""
+    return dict((_people_cached(restaurant_id) or {}).get("employees") or {})
+
+
+_job_cat_cache = {}
+
+
+def job_categories(restaurant_id: int) -> dict:
+    """{job name lower-cased: payroll category name} — RPOWER's own Front of
+    House / Back of House on each job (job.pyrlcat_mid → payrollcategory),
+    for labor by department. A job with no category is left out. Cached for
+    PEOPLE_CACHE_SECONDS like the people list."""
+    hit = _job_cat_cache.get(restaurant_id)
+    if hit and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
+        return hit[1]
+    token, base = _ctx(restaurant_id)
+    cats = {str(c.get("mid")): _tidy_name(c.get("name"))
+            for c in _paged(token, "payrollcategory/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            if c.get("mid")}
+    out = {}
+    for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+        name, cat = _tidy_name(j.get("name")), cats.get(str(j.get("pyrlcat_mid") or ""))
+        if name and cat:
+            out[name.lower()] = cat
+    _job_cat_cache[restaurant_id] = (time.monotonic(), out)
+    return out
 
 
 def _people_cached(restaurant_id: int) -> dict:

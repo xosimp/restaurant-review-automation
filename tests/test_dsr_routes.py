@@ -152,8 +152,8 @@ def test_an_owner_reads_the_owner_dsr_and_a_manager_the_manager_dsr(client, db, 
     body = client.get("/api/dsr/2026-09-22").get_json()
     assert body["view"] == "manager" and "budget_net" not in body["facts"]["blocks"]["sales"]["metrics"]
     assert body["facts"]["withheld"] == ["food"] and "executive_summary" not in body["narrative"]
-    assert [b["name"] for b in body["checklist"]["blocks"]] == ["sales", "labor", "reviews", "marketing",
-                                                                "intel", "closeout"]
+    assert [b["name"] for b in body["checklist"]["blocks"]] == ["sales", "labor", "service", "reviews",
+                                                                "marketing", "intel", "closeout"]
 
 
 @pytest.mark.parametrize("role", ["employee", "support"])

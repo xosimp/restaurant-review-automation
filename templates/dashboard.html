@@ -6452,6 +6452,163 @@ svg:hover .hb-xh{opacity:1}
    shape) rather than running into the next card. */
 .dr-spark{color:var(--ink3);flex:0 1 84px;min-width:36px;height:auto}.dr-spark .dot{fill:var(--ember)}
 .dr-kpi .row>.v{flex:none}
+/* The six KPIs the report leads with (.dr-big, owner 9/30/26): large,
+   animated, scannable - about a seventh of the report. Three across, two on
+   a tablet or phone, one below 400px. Kickers ember; the figure in the
+   number face; one picture per tile; at most two toned lines. Entrance: a
+   staggered rise (no overshoot), the count-up, a line that draws, a bar
+   that fills, a gauge that sweeps. Reduced motion: all of it at rest. */
+.dr-big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:20px}
+.dr-big .bt{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;min-height:208px;padding:24px 26px 22px;border-radius:20px;overflow:hidden;
+  background:linear-gradient(155deg,var(--hb-tint) 0%,transparent 46%),var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card);
+  transition:transform .22s cubic-bezier(.2,.9,.3,1),box-shadow .22s cubic-bezier(.2,.9,.3,1),border-color .22s ease}
+[data-theme="dark"] .dr-big .bt{background:linear-gradient(155deg,var(--hb-tint) 0%,transparent 46%),var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
+.dr-big .bt::after{content:'';position:absolute;right:-60px;top:-70px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,var(--hb-glow) 0%,transparent 68%);opacity:.55;pointer-events:none}
+.dr-big .bt.bad::after{opacity:.25}
+.dr-big .bt>*{position:relative;z-index:1}
+.dr-big .bt:hover{transform:translateY(-3px);box-shadow:0 2px 6px rgba(14,12,10,.07),0 26px 48px -24px rgba(14,12,10,.30);border-color:var(--hb-tint2)}
+[data-theme="dark"] .dr-big .bt:hover{box-shadow:var(--elev-2)}
+.dr-big .bt-k{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.dr-big .bt-k small{font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink3)}
+.dr-big .bt-v{font-family:'Space Grotesk',sans-serif;font-size:clamp(34px,3.6vw,48px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dr-big .bt-pic{margin-top:2px;min-height:30px;display:flex;align-items:flex-end}
+.dr-big .bt-s{font-size:14px;font-weight:600;color:var(--ink2);line-height:1.35}
+.dr-big .bt-s.good{color:var(--hb-good)}.dr-big .bt-s.bad{color:var(--hb-bad)}
+.dr-big .bt-n{font-size:12.5px;color:var(--ink3);margin-top:auto}
+.bt-spark{display:block;width:100%;height:54px;overflow:visible}
+.bt-spark .ln{stroke-dasharray:1;stroke-dashoffset:0}
+.bt-bar{width:100%}
+.bt-bar .tr{position:relative;height:12px;border-radius:999px;background:var(--hb-line2)}
+.bt-bar .tr i{position:absolute;left:0;top:0;bottom:0;width:var(--f);border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2))}
+.bt-bar .tr b{position:absolute;top:-5px;width:2px;height:22px;margin-left:-1px;border-radius:2px;background:var(--ink2)}
+.bt-bar .cap{margin-top:8px;font-size:12.5px;color:var(--ink3)}
+.bt-gauge{display:block;width:132px;height:74px}
+.bt-gauge .gv{stroke:var(--hb-good);stroke-dasharray:var(--len);stroke-dashoffset:var(--to)}
+.bt-gauge.over .gv{stroke:var(--hb-bad)}.bt-gauge.soft .gv{stroke:var(--hb-warn)}
+.dr-big .bt-s.warn{color:var(--hb-warn)}
+@keyframes drBtIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes drDraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes drFade{from{opacity:0}to{opacity:1}}
+@keyframes drFill{from{width:0}}
+@keyframes drSweep{from{stroke-dashoffset:var(--len)}}
+@keyframes drBarUp{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.dr-big:not(.on) .bt{opacity:0}
+.dr-big.on .bt{animation:drBtIn .5s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms)}
+.dr-big.on .bt-spark .ln{animation:drDraw 1.4s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms + .25s)}
+.dr-big.on .bt-spark .ar,.dr-big.on .bt-spark .dot{animation:drFade .8s ease backwards;animation-delay:calc(var(--i) * 90ms + .9s)}
+.dr-big.on .bt-bar .tr i{animation:drFill 1.3s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms + .2s)}
+.dr-big.on .bt-gauge .gv{animation:drSweep 1.4s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms + .2s)}
+@media (max-width:1100px){.dr-big{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* A phone keeps two across, compact, so the six stay one glance tall. */
+@media (max-width:640px){.dr-big{gap:12px}.dr-big .bt{min-height:0;padding:16px 16px 14px;border-radius:16px;gap:8px}
+  .dr-big .bt-k{font-size:10.5px;letter-spacing:.1em}.dr-big .bt-v{font-size:clamp(22px,7vw,30px)}
+  .dr-big .bt-s{font-size:12.5px}.dr-big .bt-n{font-size:11.5px}
+  .bt-spark{height:38px}.bt-gauge{width:96px;height:54px}.bt-bar .tr{height:9px}.bt-bar .cap{font-size:11.5px}}
+@media (max-width:330px){.dr-big{grid-template-columns:1fr}}
+
+/* The night in detail (owner, 9/30/26): one roomy column of cards -
+   the hour-by-hour chart, the money and the labor side by side, the
+   servers, then given away and punch edits. */
+.dr-detail{display:flex;flex-direction:column;gap:22px;margin-top:20px}
+.dr-detail .hb-card{padding:26px 28px}
+.dr-two-lg{gap:22px;margin-top:0}
+@media (max-width:1020px){.dr-two-lg{grid-template-columns:1fr}}
+.dr-dep{container-type:inline-size}
+.dr-ch{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.dr-ch h3,.dr-detail h3.t3{margin:6px 0 0;font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
+.dr-leg{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--ink2)}
+.dr-leg span{display:inline-flex;align-items:center;gap:7px}
+.dr-leg small{color:var(--ink3);font-size:12px}
+.dr-leg .dr-sw{display:inline-block;width:12px;height:12px;border-radius:4px}
+.dr-leg .dr-sw.ember{background:var(--ember)}.dr-leg .dr-sw.green{background:var(--hb-good);height:3px;border-radius:2px;width:16px}
+.dr-leg .dr-sw.dash{width:18px;height:0;border-radius:0;border-top:2px dashed var(--ink2)}
+.dr-hourly-plot{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.dr-hourly-svg{display:block;width:100%;height:auto;overflow:visible}
+.dr-hourly-svg .ax text{font-family:'Space Grotesk',sans-serif;font-size:12px;fill:var(--ink3)}
+.dr-hourly-svg .hb{transform-box:fill-box;transform-origin:bottom;animation:drBarUp .6s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 35ms)}
+.dr-hourly-svg .ll{stroke-dasharray:1;animation:drDraw 1.4s cubic-bezier(.2,.9,.3,1) .35s backwards}
+.dr-hourly-svg .ul{animation:drFade .8s ease .5s backwards}
+.dr-hourly-f{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:22px}
+.dr-hourly-f .f{padding:16px 18px;border-radius:14px;background:var(--hb-inner);min-width:0}
+.dr-hourly-f .k{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.dr-hourly-f .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;margin-top:8px;color:var(--ink)}
+.dr-hourly-f .f.good .v{color:var(--hb-good)}.dr-hourly-f .f.bad .v{color:var(--hb-bad)}
+.dr-hourly-f .s{font-size:13px;color:var(--ink2);margin-top:4px}
+.dr-split-g h3,.dr-loss-g h3{margin:22px 0 12px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.dr-split-g h3 small,.dr-loss-g h3 small{font-weight:500;letter-spacing:0;text-transform:none}
+.dr-split-r{margin-bottom:16px}
+.dr-split-r .t{display:flex;align-items:baseline;gap:10px}
+.dr-split-r .n{font-size:15px;font-weight:600;color:var(--ink)}
+.dr-split-r .v{font-size:15.5px;font-weight:600;color:var(--ink)}
+.dr-split-r .sh{min-width:44px;text-align:right;font-size:13px;color:var(--ink3)}
+.dr-split-r .tr{position:relative;height:9px;border-radius:999px;background:var(--hb-line2);margin:8px 0 7px;overflow:hidden}
+.dr-split-r .tr i{position:absolute;left:0;top:0;bottom:0;width:var(--f);border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));animation:drFill 1.1s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 80ms + .15s)}
+.dr-split-r .m{font-size:12.5px;color:var(--ink3)}
+.dr-dep-bar{display:flex;gap:3px;height:16px;border-radius:999px;overflow:hidden;margin:18px 0 20px}
+.dr-dep-bar i{display:block;width:var(--f);min-width:3px;animation:drFill 1.2s cubic-bezier(.2,.9,.3,1) backwards;animation-delay:calc(var(--i) * 90ms + .15s)}
+.dr-dep-bar .c0,.dr-dep-r .dr-sw.c0{background:var(--ember)}.dr-dep-bar .c1,.dr-dep-r .dr-sw.c1{background:var(--ember2)}
+.dr-dep-bar .c2,.dr-dep-r .dr-sw.c2{background:var(--hb-good)}.dr-dep-bar .c3,.dr-dep-r .dr-sw.c3{background:var(--ink3)}
+.dr-dep-bar .dim,.dr-dep-r .dr-sw.dim{background:var(--hb-line)}
+.dr-dep-r{display:grid;grid-template-columns:12px minmax(0,1fr) 64px 84px 118px;align-items:baseline;gap:12px;padding:12px 0;border-top:1px solid var(--hb-line2)}
+.dr-dep-r:first-child{border-top:0}
+.dr-dep-r .dr-sw{width:12px;height:12px;border-radius:4px;align-self:center}
+.dr-dep-r .n{font-size:15px;font-weight:600;color:var(--ink);min-width:0}
+.dr-dep-r .n small{display:block;font-size:12px;font-weight:400;color:var(--ink3);margin-top:2px}
+.dr-dep-r .h,.dr-dep-r .c,.dr-dep-r .p{text-align:right;font-size:14.5px;color:var(--ink2)}
+.dr-dep-r .c{font-weight:600;color:var(--ink)}
+.dr-dep-r .p small{font-size:11.5px;color:var(--ink3)}
+/* A narrow card (two up on a laptop, or a phone): name and dollars on the
+   first line, hours and the share of sales under them. */
+@container (max-width:520px){.dr-dep-r{grid-template-columns:12px minmax(0,1fr) auto;row-gap:4px}
+  .dr-dep-r .n{grid-column:2;grid-row:1}.dr-dep-r .c{grid-column:3;grid-row:1}
+  .dr-dep-r .h{display:block;grid-column:2;grid-row:2;text-align:left;font-size:13px;color:var(--ink3)}
+  .dr-dep-r .p{grid-column:3;grid-row:2;font-size:13px}
+  .dr-dep-r .n small{display:block}}
+.dr-stbl-w{overflow-x:auto;margin:0 -4px}
+.dr-stbl{width:100%;border-collapse:collapse;font-size:14.5px}
+.dr-stbl th{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);text-align:right;padding:0 12px 12px;white-space:nowrap}
+.dr-stbl th:first-child,.dr-stbl td.nm{text-align:left}
+.dr-stbl td{padding:13px 12px;border-top:1px solid var(--hb-line2);text-align:right;color:var(--ink2);white-space:nowrap}
+.dr-stbl td.nm{font-weight:600;color:var(--ink)}
+.dr-stbl td.good{color:var(--hb-good);font-weight:600}.dr-stbl td.bad{color:var(--hb-bad);font-weight:600}
+.dr-stbl td small{font-size:12px;font-weight:500}
+.dr-stbl tbody tr{transition:background-color .15s ease}.dr-stbl tbody tr:hover{background:var(--hb-tint)}
+.dr-loss-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:12px}
+.dr-loss-top .v{font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:600;letter-spacing:-.02em;color:var(--ink);line-height:1}
+.dr-loss-top .s{font-size:14px;color:var(--ink2)}
+.dr-loss-r{display:flex;align-items:baseline;gap:12px;padding:10px 0;border-top:1px solid var(--hb-line2);font-size:14.5px}
+.dr-loss-r:first-of-type{border-top:0}
+.dr-loss-r .n{color:var(--ink);min-width:0}
+.dr-loss-r .sp{flex:1}
+.dr-loss-r .c{color:var(--ink3);min-width:28px;text-align:right}
+.dr-loss-r .a{font-weight:600;color:var(--ink);min-width:72px;text-align:right}
+.dr-edit-r{padding:12px 0;border-top:1px solid var(--hb-line2)}
+.dr-edit-r:first-of-type{margin-top:14px}
+.dr-edit-r .n{font-size:15px;font-weight:600;color:var(--ink)}
+.dr-edit-r .n small{font-weight:400;color:var(--ink3);font-size:12.5px}
+.dr-edit-r .m{font-size:13.5px;color:var(--ink2);margin-top:3px}
+.dr-tlab{margin-top:22px;padding:26px 28px}
+.dr-tlab-g{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:32px}
+.dr-tlab .v{font-family:'Space Grotesk',sans-serif;font-size:42px;font-weight:600;letter-spacing:-.03em;line-height:1;margin-top:12px;color:var(--ink)}
+.dr-tlab .v.good,.dr-tlab .s.good,.dr-tlab .dr-ok,.dr-ot-r .ok{color:var(--hb-good)}
+.dr-tlab .v.bad,.dr-tlab .s.bad{color:var(--hb-bad)}.dr-tlab .v.warn,.dr-tlab .s.warn{color:var(--hb-warn)}
+.dr-tlab .s{font-size:14px;color:var(--ink2);margin-top:8px}
+.dr-tlab .dr-ok{font-size:15px;font-weight:600;margin-top:12px}
+.dr-ot-r{padding:12px 0;border-top:1px solid var(--hb-line2)}
+.dr-ot-r:first-of-type{margin-top:10px}
+.dr-ot-r .n{font-size:15px;font-weight:600;color:var(--ink)}
+.dr-ot-r .n small{font-weight:400;font-size:12.5px;color:var(--ink3)}
+.dr-ot-r .m{font-size:13.5px;color:var(--ink2);margin-top:3px}
+.dr-ot-r .ok{font-size:13px;font-weight:600;margin-top:3px}
+.dr-note.dim{color:var(--ink3)}
+@media (max-width:760px){.dr-tlab-g{grid-template-columns:1fr;gap:24px}.dr-hourly-f{grid-template-columns:1fr;gap:10px}
+  .dr-hourly-svg{min-width:560px}.dr-hourly-f .f{padding:12px 14px;display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:12px}
+  .dr-hourly-f .v{margin-top:0;font-size:20px;grid-row:1/3;grid-column:2;align-self:center}.dr-detail .hb-card,.dr-tlab{padding:22px 20px}
+}
+@media (prefers-reduced-motion:reduce){.dr-big:not(.on) .bt{opacity:1}
+  .dr-big.on .bt,.dr-big.on .bt-spark .ln,.dr-big.on .bt-spark .ar,.dr-big.on .bt-spark .dot,.dr-big.on .bt-bar .tr i,.dr-big.on .bt-gauge .gv,
+  .dr-hourly-svg .hb,.dr-hourly-svg .ll,.dr-hourly-svg .ul,.dr-split-r .tr i,.dr-dep-bar i{animation:none!important}
+  .dr-big .bt,.dr-stbl tbody tr{transition:none}.dr-big .bt:hover{transform:none}}
 .dr-shift{margin-top:18px}.dr-shift-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}
 .dr-shift-rows .c{padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 .dr-shift-rows .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--ink);line-height:1}
@@ -6693,7 +6850,7 @@ svg:hover .hb-xh{opacity:1}
   var STATUS={final:'Final',provisional:'Provisional',failed:'Couldn’t finish'};
   // Reading order (9/25/26): sales, labor, food cost, reviews, weather — then the rest.
   var BLOCKS=['sales','labor','food','reviews','intel','marketing','closeout'];
-  var BLOCK={sales:'Sales',labor:'Labor',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
+  var BLOCK={sales:'Sales',labor:'Labor',service:'Service',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
   var BSTATUS={awaiting:'Awaiting',unavailable:'Unavailable',not_connected:'Not connected'};
   var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar AI',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
   var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
@@ -6992,6 +7149,7 @@ svg:hover .hb-xh{opacity:1}
     if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
     b.innerHTML=h;
+    bigMount(b);
   }
 
   // How the night was built: the stage and block times kept as provenance,
@@ -7126,7 +7284,11 @@ svg:hover .hb-xh{opacity:1}
     var h='',mgr=p&&p.view==='manager',sc=p&&p.scorecard;
     if(sc)h+=scoreHtml(sc,p)+leadHtml(n,ck,mgr,false)+winsRisksHtml(sc);
     else h+=leadHtml(n,ck,mgr,true);
-    if(mgr){h+=shiftHtml(p.shift,drDayNames(p));h+=kpisHtml(notIn(p.kpis,p.operations),p);h+=opsHtml(p.operations);}
+    // The six KPIs lead the manager's figures, under Today's shift; the
+    // owner's sit after Tomorrow, where the 9/25/26 order put the KPIs.
+    var big=p&&p.kpis_big instanceof Array&&p.kpis_big.length?p.kpis_big:null;
+    if(mgr){h+=shiftHtml(p.shift,drDayNames(p));
+      if(big)h+=bigHtml(big,p);else{h+=kpisHtml(notIn(p.kpis,p.operations),p);h+=opsHtml(p.operations);}}
     n=n||{};
     if(!sc){var ww=n.went_well||[],na=n.needs_attention||[];
       if(ww.length||na.length){h+='<div class="dr-two">';
@@ -7166,8 +7328,10 @@ svg:hover .hb-xh{opacity:1}
           +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
           +acf+ans+'</div>';}
       h+='</div>'+(acts.length>SHOWN?'<div class="dr-more-recs">'+drMoreBtn(acts.length-SHOWN,acts.length-SHOWN===1?'priority':'priorities')+'</div>':'');}
-    h+=tomorrowHtml(p&&p.tomorrow,n);
-    if(!mgr)h+=kpisHtml(p&&p.kpis,p);
+    h+=tomorrowHtml(p&&p.tomorrow,n,p&&p.view);
+    if(!mgr)h+=big?bigHtml(big,p):kpisHtml(p&&p.kpis,p);
+    h+=detailHtml(p||{});
+    if(big)h+=allKpisHtml((p.kpis||[]).concat(mgr?(p.operations||[]):[]),big);
     h+=insightsHtml(p&&p.insights);
     return h;
   }
@@ -7238,6 +7402,252 @@ svg:hover .hb-xh{opacity:1}
       h+='</div></div></details>';}
     return h;
   }
+  // ── The six KPIs the report leads with (dsr.kpis.big, the payload's
+  // kpis_big; owner, 9/30/26): large, animated, scannable - about a seventh
+  // of the report. Each tile: its kicker, one figure that counts up
+  // (cavCount), one picture of it (a trend line that draws in, a bar that
+  // fills toward the budget, or a gauge against the target), then at most
+  // two lines toned good or bad. Nothing moves under reduced motion.
+  function bigNum(t){
+    var s=String(t||''),m=/^([^0-9\-]*)(-?[0-9][0-9,]*\.?[0-9]*)(.*)$/.exec(s);
+    if(!m)return null;
+    var n=parseFloat(m[2].replace(/,/g,''));if(!isFinite(n))return null;
+    var dot=m[2].indexOf('.');
+    return {prefix:m[1],n:n,suffix:m[3],decimals:dot<0?0:m[2].length-dot-1};
+  }
+  function bigSpark(vals,id){
+    if(!vals||vals.length<3)return '';
+    var w=220,hh=54,mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),rg=(mx-mn)||1,pts=[],i;
+    for(i=0;i<vals.length;i++)pts.push([(i*(w-8)/(vals.length-1)+4),(hh-6-(vals[i]-mn)/rg*(hh-14))]);
+    var line='',area='M'+pts[0][0].toFixed(1)+','+hh;
+    for(i=0;i<pts.length;i++){line+=(i?' L':'M')+pts[i][0].toFixed(1)+','+pts[i][1].toFixed(1);area+=' L'+pts[i][0].toFixed(1)+','+pts[i][1].toFixed(1);}
+    area+=' L'+pts[pts.length-1][0].toFixed(1)+','+hh+' Z';
+    var last=pts[pts.length-1];
+    return '<svg class="bt-spark" viewBox="0 0 '+w+' '+hh+'" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="'+id+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember)" stop-opacity=".26"/><stop offset="1" stop-color="var(--ember)" stop-opacity="0"/></linearGradient></defs>'
+      +'<path class="ar" d="'+area+'" fill="url(#'+id+')"/><path class="ln" d="'+line+'" fill="none" stroke="var(--ember)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" pathLength="1"/>'
+      +'<path class="dot" d="M'+last[0].toFixed(1)+','+last[1].toFixed(1)+' h0" stroke="var(--ember)" stroke-width="9" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
+  }
+  function bigBar(b){
+    if(!b||!isNum(b.value)||!isNum(b.max)||b.max<=0)return '';
+    var f=Math.max(0,Math.min(1,b.value/b.max)),mk=isNum(b.marker)?Math.max(0,Math.min(1,b.marker/b.max)):null;
+    return '<div class="bt-bar" role="img" aria-label="'+esc(b.label||'')+'"><div class="tr"><i style="--f:'+(f*100).toFixed(1)+'%"></i>'
+      +(mk!==null?'<b style="left:'+(mk*100).toFixed(1)+'%" title="Budget to date"></b>':'')+'</div><div class="cap">'+hn(esc(b.label||''))+'</div></div>';
+  }
+  function bigGauge(g){
+    if(!g||!isNum(g.value)||!isNum(g.target)||g.target<=0)return '';
+    // A half ring from 0 to twice the target: the target sits at the top.
+    var mx=g.target*2,f=Math.max(0,Math.min(1,g.value/mx)),over=g.value>g.target;
+    var r=40,c=Math.PI*r;
+    // Over a target the owner never set is amber, never red (g.soft).
+    return '<svg class="bt-gauge'+(over?(g.soft?' soft':' over'):'')+'" viewBox="0 0 100 56" aria-hidden="true">'
+      +'<path d="M10,50 A40,40 0 0 1 90,50" fill="none" stroke="var(--hb-line)" stroke-width="8" stroke-linecap="round"/>'
+      +'<path class="gv" d="M10,50 A40,40 0 0 1 90,50" fill="none" stroke-width="8" stroke-linecap="round" style="--len:'+c.toFixed(1)+';--to:'+(c*(1-f)).toFixed(1)+'"/>'
+      +'<line x1="50" y1="4" x2="50" y2="16" stroke="var(--ink2)" stroke-width="2" stroke-linecap="round"/></svg>';
+  }
+  function bigTile(t,i){
+    var nm=bigNum(t.value_text),pic='';
+    if(t.bar)pic=bigBar(t.bar);else if(t.gauge)pic=bigGauge(t.gauge);else pic=bigSpark(t.spark,'drbg'+i);
+    var h='<div class="bt'+(t.tone?' '+esc(t.tone):'')+'" style="--i:'+i+'"><div class="bt-k">'+esc(t.label)+(t.estimate?' <small>est.</small>':'')+'</div>'
+      +'<div class="bt-v"><span class="hb-num"'+(nm?' data-big-n="'+nm.n+'" data-big-p="'+esc(nm.prefix)+'" data-big-s="'+esc(nm.suffix)+'" data-big-d="'+nm.decimals+'"':'')+'>'+esc(t.value_text)+'</span></div>'
+      +(pic?'<div class="bt-pic">'+pic+'</div>':'');
+    var sub=t.sub||[];
+    for(var j=0;j<sub.length;j++)h+='<div class="bt-s'+(j===0&&t.tone?' '+esc(t.tone):'')+'">'+prose(sub[j])+'</div>';
+    if(t.note)h+='<div class="bt-n">'+prose(t.note)+'</div>';
+    return h+'</div>';
+  }
+  function bigHtml(list,p){
+    if(!list||!list.length)return '';
+    var dn=drDayNames(p),h='<div class="hb-sh"><div><div class="k">Key numbers</div><h2>'+esc(dn?dn.day+' at a glance':'The night at a glance')+'</h2></div></div><div class="dr-big">';
+    for(var i=0;i<list.length;i++)h+=bigTile(list[i],i);
+    return h+'</div>';
+  }
+  // Start the band's motion once it is in the page: the figures count up,
+  // the lines draw, the bars fill, the gauges sweep - each tile a beat
+  // after the one before it (the CSS --i delay).
+  function bigMount(root){
+    var box=root&&root.querySelector?root.querySelector('.dr-big'):null;if(!box)return;
+    var ns=box.querySelectorAll('[data-big-n]');
+    for(var i=0;i<ns.length;i++){(function(el,k){
+      var n=+el.getAttribute('data-big-n');
+      setTimeout(function(){if(window.cavCount)cavCount(el,n,{prefix:el.getAttribute('data-big-p')||'',suffix:el.getAttribute('data-big-s')||'',decimals:+el.getAttribute('data-big-d')||0});},k*90);
+    })(ns[i],i);}
+    requestAnimationFrame(function(){requestAnimationFrame(function(){box.classList.add('on');});});
+  }
+
+  // ── The night in detail (owner, 9/30/26): the hour-by-hour chart, where
+  // the money came from, where the labor went, the servers, and the loss
+  // ledger with punch edits. Each reads one block's figures as stored; a
+  // card with nothing measured is not drawn.
+  function hourData(p){
+    var B=(p.facts&&p.facts.blocks)||{},s=B.sales,l=B.labor;
+    if(!s||s.status!=='ready')return null;
+    var d=s.detail||{},hr=d.hourly||[],typ=(d.hourly_typical&&d.hourly_typical.hours)||null;
+    var lh=(l&&l.status==='ready'&&l.detail&&l.detail.hourly_hours)||null;
+    if(hr.length<3)return null;
+    var rows=[],i;
+    for(i=0;i<hr.length;i++){var hh=+hr[i].hour,lab=lh&&isNum(lh[String(hh)])?lh[String(hh)]:null;
+      rows.push({hour:hh,net:+hr[i].net||0,usual:typ&&isNum(typ[String(hh)])?typ[String(hh)]:null,hours:lab,splh:lab&&lab>=1?(+hr[i].net||0)/lab:null});}
+    return {rows:rows,typical:typ?d.hourly_typical:null,labor:!!lh};
+  }
+  function hourHtml(p){
+    var D=hourData(p);if(!D)return '';
+    var rows=D.rows,n=rows.length,w=720,hh=230,pl=8,pr=8,pt=18,pb=30,cw=(w-pl-pr)/n,i;
+    var mx=0,lmx=0;for(i=0;i<n;i++){mx=Math.max(mx,rows[i].net,rows[i].usual||0);lmx=Math.max(lmx,rows[i].hours||0);}
+    mx=mx||1;lmx=lmx||1;var ih=hh-pt-pb,s='',ax='',ul='',ll='';
+    for(i=0;i<n;i++){var r=rows[i],x=pl+i*cw,bw=Math.max(4,cw*0.62),bx=x+(cw-bw)/2,bh=r.net/mx*ih;
+      s+='<rect class="hb" style="--i:'+i+'" x="'+bx.toFixed(1)+'" y="'+(pt+ih-bh).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="url(#drhg)"><title>'+esc(hourLabel(r.hour,true))+': '+esc(money(r.net))+(isNum(r.usual)?' (usual '+esc(money(r.usual))+')':'')+(isNum(r.hours)?', '+r.hours.toFixed(1)+' labor hours':'')+'</title></rect>';
+      if(isNum(r.usual))ul+=(ul?' L':'M')+(x+cw/2).toFixed(1)+','+(pt+ih-r.usual/mx*ih).toFixed(1);
+      if(isNum(r.hours))ll+=(ll?' L':'M')+(x+cw/2).toFixed(1)+','+(pt+ih-r.hours/lmx*ih*0.92).toFixed(1);
+      if(n<=14||i%2===0)ax+='<text x="'+(x+cw/2).toFixed(1)+'" y="'+(hh-9)+'" text-anchor="middle">'+esc(hourLabel(r.hour))+'</text>';}
+    var svg='<svg class="dr-hourly-svg" viewBox="0 0 '+w+' '+hh+'" role="img" aria-label="Net sales by hour'+(D.typical?' against a usual night':'')+(D.labor?', with labor hours':'')+'">'
+      +'<defs><linearGradient id="drhg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--ember)"/><stop offset="1" stop-color="var(--ember)" stop-opacity=".45"/></linearGradient></defs>'
+      +'<line x1="'+pl+'" x2="'+(w-pr)+'" y1="'+(pt+ih)+'" y2="'+(pt+ih)+'" stroke="var(--hb-line)"/>'+s
+      +(ul?'<path class="ul" d="'+ul+'" fill="none" stroke="var(--ink2)" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"/>':'')
+      +(ll?'<path class="ll" d="'+ll+'" fill="none" stroke="var(--hb-good)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" pathLength="1"/>':'')
+      +'<g class="ax">'+ax+'</g></svg>';
+    var leg='<div class="dr-leg"><span><i class="dr-sw ember"></i>Net sales</span>'+(D.typical?'<span><i class="dr-sw dash"></i>A usual '+esc((drDayNames(p)||{}).day||'night')+' <small>median of '+hn(D.typical.nights)+'</small></span>':'')
+      +(D.labor?'<span><i class="dr-sw green"></i>Labor hours</span>':'')+'</div>';
+    // The hours that stand out, measured: the most and the least sales per
+    // labor hour among hours with at least two people's worth of hours on.
+    var best=null,worst=null,top=null;
+    for(i=0;i<n;i++){var q=rows[i];if(!top||q.net>top.net)top=q;
+      if(isNum(q.splh)&&q.hours>=2){if(!best||q.splh>best.splh)best=q;if(!worst||q.splh<worst.splh)worst=q;}}
+    var facts='';
+    if(top)facts+='<div class="f"><div class="k">Busiest hour</div><div class="v">'+hn(esc(hourLabel(top.hour,true)))+'</div><div class="s">'+hn(money(top.net))+(isNum(top.usual)?' · usual '+hn(money(top.usual)):'')+'</div></div>';
+    if(best&&worst&&best!==worst){
+      facts+='<div class="f good"><div class="k">Most sales per labor hour</div><div class="v">'+hn(esc(hourLabel(best.hour,true)))+'</div><div class="s">'+hn(money(best.splh))+' an hour · '+hn(best.hours.toFixed(1))+' hours on</div></div>';
+      facts+='<div class="f bad"><div class="k">Fewest sales per labor hour</div><div class="v">'+hn(esc(hourLabel(worst.hour,true)))+'</div><div class="s">'+hn(money(worst.splh))+' an hour · '+hn(worst.hours.toFixed(1))+' hours on</div></div>';}
+    return '<section class="hb-card dr-hourly" aria-label="The night, hour by hour"><div class="dr-ch"><div><div class="hb-kicker">Hour by hour</div><h3>Sales and staffing through the night</h3></div>'+leg+'</div>'
+      +'<div class="dr-hourly-plot">'+svg+'</div>'+(facts?'<div class="dr-hourly-f">'+facts+'</div>':'')
+      +(!D.typical?'<div class="dr-note">A usual night shows here once two finished reports exist for this weekday.</div>':'')+'</section>';
+  }
+  function splitRows(list,keyLabel){
+    var h='',mx=0,i;for(i=0;i<list.length;i++)mx=Math.max(mx,list[i].net||0);mx=mx||1;
+    for(i=0;i<list.length;i++){var x=list[i];
+      h+='<div class="dr-split-r"><div class="t"><span class="n">'+esc(x.name)+'</span><span class="sp"></span><span class="v hb-num">'+esc(money(x.net))+'</span><span class="sh hb-num">'+(isNum(x.share_pct)?esc(pct(x.share_pct,0)):'')+'</span></div>'
+        +'<div class="tr"><i style="--f:'+((x.net||0)/mx*100).toFixed(1)+'%;--i:'+i+'"></i></div>'
+        +'<div class="m">'+hn(cnt(x.guests))+' guest'+(x.guests===1?'':'s')+' · '+hn(cnt(x.checks))+' checks'+(isNum(x.per_guest)?' · '+hn(money(x.per_guest,true))+' a guest':'')+'</div></div>';}
+    return h;
+  }
+  function moneyHtml(svc){
+    if(!svc||svc.status!=='ready')return '';
+    var d=svc.detail||{},dp=d.dayparts||[],rm=d.rooms||[];
+    if(!dp.length&&!rm.length)return '';
+    var h='<section class="hb-card dr-split" aria-label="Where the money came from"><div class="hb-kicker">Where the money came from</div>';
+    if(dp.length>1||(dp.length===1&&dp[0].name!=='Other'))h+='<div class="dr-split-g"><h3>By meal period</h3>'+splitRows(dp)+'</div>';
+    if(rm.length)h+='<div class="dr-split-g"><h3>By room</h3>'+splitRows(rm)+'</div>';
+    var dg=(svc.metrics||{}).drinks_per_guest;
+    if(isNum(dg))h+='<div class="dr-note">'+hn(dg.toFixed(2))+' drinks a guest across the night.</div>';
+    return h+'</section>';
+  }
+  function laborHtml(lab,p){
+    if(!lab||lab.status!=='ready')return '';
+    var ds=(lab.detail&&lab.detail.departments)||[],m=lab.metrics||{};
+    if(!ds.length)return '';
+    var withCost=false,i,tot=0;for(i=0;i<ds.length;i++)if(isNum(ds[i].cost)){withCost=true;tot+=ds[i].cost;}
+    var sal=isNum(m.salaried_cost)?m.salaried_cost:null,all=tot+(sal||0),bar='',rows='';
+    var tones=['c0','c1','c2','c3'];
+    var parts=ds.slice();if(sal!==null&&withCost)parts.push({department:'Salaried',cost:sal,hours:null,pct_of_sales:null,roles:[],salaried:true});
+    var mx=0;for(i=0;i<parts.length;i++)mx+=withCost?(parts[i].cost||0):(parts[i].hours||0);mx=mx||1;
+    for(i=0;i<parts.length;i++){var x=parts[i],share=(withCost?(x.cost||0):(x.hours||0))/mx,tn=x.salaried?'dim':tones[i%4];
+      bar+='<i class="'+tn+'" style="--f:'+(share*100).toFixed(1)+'%;--i:'+i+'" title="'+esc(x.department)+'"></i>';
+      var net=(p.facts&&p.facts.blocks&&p.facts.blocks.sales&&p.facts.blocks.sales.metrics)?p.facts.blocks.sales.metrics.net:null;
+      var ps=isNum(x.pct_of_sales)?x.pct_of_sales:(x.salaried&&isNum(net)&&net>0?x.cost/net*100:null);
+      rows+='<div class="dr-dep-r"><span class="dr-sw '+tn+'"></span><span class="n">'+esc(x.department)+(x.roles&&x.roles.length?'<small>'+esc(x.roles.join(', '))+'</small>':'')+'</span>'
+        +'<span class="h hb-num">'+(isNum(x.hours)?esc(x.hours.toFixed(1))+'h':'')+'</span>'
+        +'<span class="c hb-num">'+(isNum(x.cost)?esc(money(x.cost)):'—')+'</span>'
+        +'<span class="p hb-num">'+(isNum(ps)?esc(pct(ps))+' <small>of sales</small>':'')+'</span></div>';}
+    return '<section class="hb-card dr-dep" aria-label="Where the labor went"><div class="hb-kicker">Where the labor went</div>'
+      +'<div class="dr-dep-bar" role="img" aria-label="Labor by department">'+bar+'</div><div class="dr-dep-rows">'+rows+'</div>'
+      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, salaries included.</div>':'')
+      +'<div class="dr-note dim">'+esc(cap((lab.detail||{}).departments_basis||''))+'</div></section>';
+  }
+  function serversHtml(svc){
+    if(!svc||svc.status!=='ready')return '';
+    var d=svc.detail||{},ss=d.servers||[];
+    if(!ss.length)return '';
+    var h='<section class="hb-card dr-srv" aria-label="Servers and bartenders"><div class="dr-ch"><div><div class="hb-kicker">On the floor</div><h3>Servers and bartenders</h3></div>'
+      +(isNum(d.servers_below_floor)&&d.servers_below_floor?'<div class="dr-note">'+hn(d.servers_below_floor)+' with fewer than '+hn(d.servers_min_checks)+' checks not shown</div>':'')+'</div>'
+      +'<div class="dr-stbl-w"><table class="dr-stbl"><thead><tr><th>Name</th><th>Checks</th><th>Guests</th><th>Net</th><th>Per guest</th><th>Drinks a guest</th><th>Card tip</th><th>Net an hour</th></tr></thead><tbody>';
+    for(var i=0;i<ss.length;i++){var x=ss[i],vf=x.vs_floor,tn=isNum(vf)?(vf>=1?'good':(vf<=-1?'bad':'')):'';
+      h+='<tr><td class="nm">'+esc(x.name)+'</td><td class="hb-num">'+esc(cnt(x.checks))+'</td><td class="hb-num">'+esc(cnt(x.guests))+'</td><td class="hb-num">'+esc(money(x.net))+'</td>'
+        +'<td class="hb-num '+tn+'">'+esc(money(x.per_guest,true))+(isNum(vf)&&Math.abs(vf)>=1?' <small>'+(vf>0?'+':'−')+esc(money(Math.abs(vf),true))+'</small>':'')+'</td>'
+        +'<td class="hb-num">'+(isNum(x.drinks_per_guest)?esc(x.drinks_per_guest.toFixed(2)):'—')+'</td>'
+        +'<td class="hb-num">'+(isNum(x.tip_pct)?esc(pct(x.tip_pct)):'—')+'</td>'
+        +'<td class="hb-num">'+(isNum(x.net_per_hour)?esc(money(x.net_per_hour)):'—')+'</td></tr>';}
+    h+='</tbody></table></div>';
+    var fl=(svc.metrics||{}).server_floor_per_guest;
+    if(isNum(fl))h+='<div class="dr-note">Per guest is set against the floor’s '+hn(money(fl,true))+'.</div>';
+    return h+'<div class="dr-note dim">'+esc(cap(d.servers_basis||''))+'</div></section>';
+  }
+  function lossHtml(svc){
+    if(!svc||svc.status!=='ready')return '';
+    var d=svc.detail||{},L=d.loss,E=d.timeclock_edits,h='',i;
+    if(L&&L.given){var g=L.given,v=L.voids||{};
+      h+='<section class="hb-card dr-loss" aria-label="Comps, discounts and voids"><div class="hb-kicker">Given away</div>'
+        +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(g.total))+'</div><div class="s">in comps, discounts and refunds'+(isNum(g.pct_of_gross)?' · '+hn(pct(g.pct_of_gross))+' of gross':'')+'</div></div>';
+      var rs=g.by_reason||[];
+      if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
+      var ap=g.by_approver||[];
+      if(ap.length){h+='<div class="dr-loss-g"><h3>Approved by</h3>';for(i=0;i<ap.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(ap[i].approver)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(ap[i].lines))+'</span><span class="a hb-num">'+esc(money(ap[i].amount))+'</span></div>';h+='</div>';}
+      if(v.lines){h+='<div class="dr-loss-g"><h3>Voided lines <small>never reached the bill</small></h3>';var vr=v.by_reason||[];
+        for(i=0;i<vr.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(vr[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(vr[i].lines))+'</span><span class="a hb-num">'+esc(money(vr[i].amount))+'</span></div>';
+        h+='</div>';}
+      h+='</section>';}
+    if(E instanceof Array){
+      h+='<section class="hb-card dr-edits" aria-label="Punch edits"><div class="hb-kicker">Punch edits</div>';
+      if(!E.length)h+='<div class="dr-loss-top"><div class="v hb-num">0</div><div class="s">No punch was edited for this night.</div></div>';
+      else{h+='<div class="dr-loss-top"><div class="v hb-num">'+esc(cnt(E.length))+'</div><div class="s">punch'+(E.length===1?'':'es')+' a manager edited</div></div>';
+        for(i=0;i<E.length&&i<8;i++){var x=E[i];
+          h+='<div class="dr-edit-r"><div class="n">'+esc(x.employee)+(x.role?' <small>'+esc(x.role)+'</small>':'')+'</div><div class="m">'+(x.clock_in?hn(esc(clock(x.clock_in)))+'–'+hn(esc(x.clock_out?clock(x.clock_out):'open')):'')+(isNum(x.hours)?' · '+hn(x.hours.toFixed(2))+'h':'')
+            +' · edited by '+esc(x.edited_by)+(x.edited_at?' at '+hn(esc(clock(x.edited_at))):'')+(x.code?' · RPOWER code '+esc(x.code):'')+'</div></div>';}
+        if(E.length>8)h+='<div class="dr-note">'+hn(E.length-8)+' more in the POS.</div>';}
+      h+='</section>';}
+    return h;
+  }
+  function detailHtml(p){
+    var B=(p.facts&&p.facts.blocks)||{},svc=B.service,h='';
+    var hr=hourHtml(p),mo=moneyHtml(svc),lb=laborHtml(B.labor,p),sv=serversHtml(svc),ls=lossHtml(svc);
+    if(!(hr||mo||lb||sv||ls))return '';
+    h+='<div class="hb-sh"><div><div class="k">The night in detail</div><h2>Where it came from, and where it went</h2></div></div><div class="dr-detail">';
+    h+=hr;
+    if(mo&&lb)h+='<div class="dr-two dr-two-lg">'+mo+lb+'</div>';else h+=mo+lb;
+    h+=sv;
+    if(ls)h+='<div class="dr-two dr-two-lg">'+ls+'</div>';
+    return h+'</div>';
+  }
+  // "All KPIs": every KPI with direction that isn't one of the six above.
+  function allKpisHtml(list,big){
+    var used={},rest=[],i;for(i=0;i<(big||[]).length;i++)used[big[i].key]=1;
+    for(i=0;i<(list||[]).length;i++)if(list[i]&&!used[list[i].key])rest.push(list[i]);
+    if(!rest.length)return '';
+    var h='<details class="dr-sec dr-allk" id="dr-allk"><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more, with direction and trend</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
+    for(i=0;i<rest.length;i++)h+=kpiTile(rest[i]);
+    return h+'</div></div></details>';
+  }
+  // Tomorrow's labor and the week's overtime (dsr.tomorrow labor_plan and
+  // overtime_outlook): the schedule priced against the forecast, while it
+  // can still change.
+  function tmrLaborHtml(t,view){
+    if(!t||(!t.labor&&!t.overtime))return '';
+    var L=t.labor,O=t.overtime,h='<section class="hb-card dr-tlab" aria-label="Labor for the day after"><div class="dr-tlab-g">';
+    if(L){var own=view==='owner'&&isNum(L.salaried_total_pct),pc=own?L.salaried_total_pct:L.hourly_pct,tg=L.target_pct;
+      var gap=isNum(pc)&&isNum(tg)?Math.round((pc-tg)*10)/10:null,soft=L.target_source==='default',gt=isNum(gap)?(gap>0?(soft?'warn':'bad'):'good'):'';
+      h+='<div class="dr-tlab-a"><div class="hb-kicker">'+esc((t.weekday||'The day after')+'’s labor')+'</div>'
+        +'<div class="v hb-num '+gt+'">'+(isNum(pc)?esc(pct(pc)):'—')+'</div>'
+        +'<div class="s">'+hn(esc(String(L.hours)))+' hours · '+hn(money(own?L.salaried_total_cost:L.hourly_cost))+(own?' with salaries':'')+(isNum(L.forecast_net)?' over a '+hn(money(L.forecast_net))+' forecast':'')+'</div>'
+        +(isNum(gap)?'<div class="s '+gt+'">'+(gap===0?'On '+(soft?'Cavnar AI\u2019s starting ':'the ')+hn(tg+'%')+(soft?'':' target'):hn(Math.abs(gap).toFixed(1))+' pts '+(gap>0?'over':'under')+' '+(soft?'Cavnar AI\u2019s starting '+hn(tg+'%'):'the '+hn(tg+'%')+' target'))+'</div>':'')
+        +(isNum(L.overtime_hours)&&L.overtime_hours>0?'<div class="s bad">'+hn(L.overtime_hours)+' overtime hours on it</div>':'')+'</div>';}
+    if(O){h+='<div class="dr-tlab-b"><div class="hb-kicker">Overtime this week</div>';
+      var ps=O.people||[];
+      if(!ps.length)h+='<div class="dr-ok">No one goes past 40 hours this week if the schedule holds.</div>';
+      else{h+='<div class="s">'+hn(O.over_count)+' '+(O.over_count===1?'person goes':'people go')+' past 40 hours'+(isNum(O.extra_cost)&&O.extra_cost>0?' · about '+hn(money(O.extra_cost))+' extra':'')+'</div>';
+        for(var i=0;i<ps.length;i++){var x=ps[i];
+          h+='<div class="dr-ot-r"><div class="n">'+esc(x.employee)+(x.role?' <small>'+esc(x.role)+'</small>':'')+'</div><div class="m">'+hn(x.projected_hours)+'h scheduled · '+hn(x.overtime_hours)+'h over'+(isNum(x.extra_cost)?' · '+hn(money(x.extra_cost))+' extra':'')+'</div>'
+            +((x.room||[]).length?'<div class="ok">Room: '+esc(x.room.join(', '))+'</div>':'')+'</div>';}}
+      h+='</div>';}
+    return h+'</div><div class="dr-note dim">'+esc(cap((L&&L.basis)||(O&&O.basis)||''))+'</div></section>';
+  }
   // Manager: Today's shift and Operations.
   // The night's weekday and the next one, from the report's own business
   // date: labels for views without the owner's scorecard (the manager's).
@@ -7266,7 +7676,7 @@ svg:hover .hb-xh{opacity:1}
     return h+'</div>';
   }
   // Tomorrow: the prep list, Cavnar's forecast and the confidence it rests on.
-  function tomorrowHtml(t,n){
+  function tomorrowHtml(t,n,view){
     if(!t)return '';
     var it=t.items||[],fc=t.forecast,cf=t.confidence;
     var h='<div class="hb-sh"><div><div class="k">The day after</div><h2>'+esc(t.weekday||'The day after')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
@@ -7288,7 +7698,7 @@ svg:hover .hb-xh{opacity:1}
     if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+(isNum(cf.pct)?hn(cf.pct)+'<small>%</small>':'\u2014')+'</div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
       +((cf.watch||[]).length?'<div class="sub dim">Worth watching: '+esc(cf.watch.join(' \u00b7 '))+'</div>':'')
       +((cf.missing||[]).length?'<div class="sub dim">Missing: '+esc(cf.missing.join(' \u00b7 '))+'</div>':'')+'<div class="sub dim">'+esc(cf.track||'')+'</div></div>';}
-    return h+'</div></div>';
+    return h+'</div></div>'+tmrLaborHtml(t,view);
   }
   // How did yesterday turn out? Cavnar's predictions about this night, graded.
   function yesterdayHtml(y){

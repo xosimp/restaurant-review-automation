@@ -107,8 +107,11 @@ REQUIRED_BLOCKS = ("sales",)
 
 # Blocks that never hold a night open (their absence is "unavailable", not
 # "coming") but are read again on every pass while the night is still open,
-# so a closeout filed at 11:45 still makes the report.
-NEVER_HOLDS = ("closeout",)
+# so a closeout filed at 11:45 still makes the report. Service reads the
+# night's checks straight from the POS when the report runs (dsr.common
+# .night_archive): a failed read goes out labelled rather than holding the
+# report until the deadline, and the next pass reads it again.
+NEVER_HOLDS = ("closeout", "service")
 
 # Owner-facing words for the narrative's outcome.
 NO_SUMMARY_SALES_PENDING = "Not enough data yet for a summary — sales are still syncing"

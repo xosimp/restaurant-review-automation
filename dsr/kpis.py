@@ -58,15 +58,17 @@ KPIS = {
     "comps": ("Comps", "sales.comps", "money", "lower"),
     "refunds": ("Refunds", "sales.refunds", "money", "lower"),
     "rating": ("Guest rating", "reviews.avg_rating", "stars", "higher"),
+    "per_guest": ("Spend per guest", "sales.per_guest", "money", "higher"),
+    "drinks_per_guest": ("Drinks per guest", "service.drinks_per_guest", "ratio", "higher"),
 }
-OWNER_SET = ("net", "labor_pct", "food_pct", "prime_pct", "avg_ticket", "guests", "splh", "labor_cost",
-             "overtime", "bev_mix", "rating")
+OWNER_SET = ("net", "labor_pct", "food_pct", "prime_pct", "avg_ticket", "guests", "per_guest", "splh",
+             "labor_cost", "overtime", "drinks_per_guest", "bev_mix", "rating")
 # The Manager DSR's Top KPIs and its Operations are two sets that never share
 # a key (D3-5): guests, average ticket and sales per labor hour are
 # Operations; overtime is a row of Today's shift. build() also skips any key
 # Operations already placed, so the same tile is never drawn twice.
 MANAGER_SET = ("labor_pct", "rating")
-OPERATIONS_SET = ("avg_ticket", "guests", "splh", "voids", "discounts", "comps")
+OPERATIONS_SET = ("avg_ticket", "guests", "per_guest", "splh", "drinks_per_guest", "voids", "discounts", "comps")
 # Operations shows at most this many tiles (ID1-21, 9/25/26): the first four
 # in OPERATIONS_SET order (guest complaints third). Discounts, voids and
 # comps stay in the Sales block, where the view allows them.
@@ -152,12 +154,32 @@ def _value(key, blocks):
     return float(v) if _num(v) else None
 
 
-def _history(key, rid, day, db_path):
+# The owner's labor is all-in (dsr.access._live_salaries swaps cost and pct
+# for the salaries-in figures at render); the nights it is compared with are
+# stored hourly. Those nights get the same salaried day share added, so
+# "vs last Saturday", the streak and the sparkline compare like with like.
+ALL_IN_KEYS = ("labor_pct", "labor_cost", "prime_pct")
+
+
+def _history(key, rid, day, db_path, salaried_share=None):
     """{date: value} for the KPI over the streak window (same-weekday reads
-    pick from it) — derived KPIs rebuilt night by night."""
+    pick from it) — derived KPIs rebuilt night by night. With a
+    salaried_share (the owner's all-in labor), labor %, labor dollars and
+    prime cost add it to every past night's hourly labor."""
     start = day - timedelta(days=7 * STREAK_WEEKS)
     end = day - timedelta(days=1)
     fact = KPIS[key][1]
+    if salaried_share and key in ALL_IN_KEYS:
+        lab = {d: v + salaried_share for d, v in _series(rid, "labor.cost", start, end, db_path).items()}
+        net = _series(rid, "sales.net", start, end, db_path)
+        if key == "labor_cost":
+            return lab
+        if key == "labor_pct":
+            return {d: round(lab[d] / net[d] * 100, 1) for d in lab if net.get(d, 0) > 0}
+        food, cov = (_series(rid, "food.est_food_cost", start, end, db_path),
+                     _series(rid, "food.recipe_coverage_pct", start, end, db_path))
+        out = {d: _prime(lab.get(d), food.get(d), net.get(d), cov.get(d)) for d in lab}
+        return {d: v for d, v in out.items() if v is not None}
     if fact == "derived:splh":
         net, hrs = _series(rid, "sales.net", start, end, db_path), _series(rid, "labor.hours", start, end, db_path)
         return {d: round(net[d] / hrs[d], 2) for d in net if d in hrs and hrs[d] > 0}
@@ -289,7 +311,9 @@ def kpi(key, blocks, restaurant, day, db_path=None, with_peers=True) -> dict | N
         return None
     wd = day.strftime("%A")
     rid = getattr(restaurant, "id", None)
-    hist = _history(key, rid, day, db_path) if rid else {}
+    lab = ((blocks.get("labor") or {}).get("metrics") or {})
+    share = lab.get("salaried_cost") if lab.get("includes_salaries") else None
+    hist = _history(key, rid, day, db_path, salaried_share=share if _num(share) else None) if rid else {}
     last_week = hist.get((day - timedelta(days=7)).isoformat())
     nights = sorted(d for d in hist if d >= (day - timedelta(days=SPARK_NIGHTS - 1)).isoformat())
     spark = [hist[d] for d in nights] + [value]
@@ -345,8 +369,10 @@ def build(facts, restaurant, user, view, db_path=None) -> dict:
         comp = _complaints(blocks)
         if comp is not None:
             ops.insert(2, comp)
+        ops_all = list(ops)
         ops = ops[:OPERATIONS_MAX]
         shift = shift_recap(blocks, user)
+        return {"top": top, "operations": ops, "operations_all": ops_all, "shift": shift}
     return {"top": top, "operations": ops, "shift": shift}
 
 
@@ -447,3 +473,218 @@ def shift_verdict(m, detail) -> dict | None:
     if len(bits) > 1 and tone in (None, "good"):
         tone = "warn"
     return {"text": " · ".join(bits), "tone": tone}
+
+
+# ── the week and the period, to date ───────────────────────────────────────
+#
+# "Are we going to make the week?" (owner, 9/30/26). Arithmetic only — the
+# nights measured so far against the budget and last year for the same
+# nights, and what the budget still needs from each night left, set beside a
+# typical night for each of them (the demand forecast). Never a run rate:
+# the narrative's pace-word rule (dsr.narrative _PACE_RE) holds here too.
+# budget* keys are the owner's (dsr.access OWNER_ONLY_PREFIXES); the
+# manager's view keeps last year.
+
+def _span_pace(restaurant, first, last, through, db_path=None, ahead=True):
+    from dsr import store
+    rid = restaurant.id
+    days, d = [], first
+    while d <= last:
+        days.append(d)
+        d += timedelta(days=1)
+    done = [x for x in days if x <= through]
+    got = store.baselines_net(rid, done, db_path=db_path) if db_path else store.baselines_net(rid, done)
+    measured = {x.isoformat(): v[0] for x in done for v in [got.get(x.isoformat()) or (None, None)] if _num(v[0])}
+    if not measured:
+        return None
+    wtd = round(sum(measured.values()), 2)
+    out = {"start": first.isoformat(), "end": last.isoformat(), "net": wtd,
+           "nights_measured": len(measured), "nights_total": len(days),
+           "nights_left": len([x for x in days if x > through])}
+    budgets, label = {}, None
+    for x in days:
+        b = store.night_budget(rid, x, db_path=db_path) if db_path else store.night_budget(rid, x)
+        if _num(b.get("net")):
+            budgets[x.isoformat()] = float(b["net"])
+            label = label or ("Goal" if b.get("source") == "goal" else "Budget")
+    if budgets and all(k in budgets for k in measured):
+        to_date = round(sum(budgets[k] for k in measured), 2)
+        out.update(budget_to_date=to_date, budget_vs=round(wtd - to_date, 2),
+                   budget_vs_pct=round((wtd - to_date) / to_date * 100, 1) if to_date else None,
+                   budget_label=label)
+        if len(budgets) == len(days):
+            total = round(sum(budgets.values()), 2)
+            out.update(budget_total=total, budget_left=round(total - wtd, 2))
+            if ahead and out["nights_left"]:
+                out["budget_per_night_needed"] = round((total - wtd) / out["nights_left"], 2)
+    ly_days = {x.isoformat(): store.last_year_day(restaurant, x) for x in measured}
+    ly = store.baselines_net(rid, [v for v in ly_days.values() if v], db_path=db_path) if db_path \
+        else store.baselines_net(rid, [v for v in ly_days.values() if v])
+    ly_vals = [(ly.get(v.isoformat()) or (None, None))[0] for v in ly_days.values() if v]
+    if ly_vals and len(ly_vals) == len(measured) and all(_num(v) for v in ly_vals):
+        ly_total = round(sum(ly_vals), 2)
+        out.update(last_year=ly_total,
+                   last_year_pct=round((wtd - ly_total) / ly_total * 100, 1) if ly_total else None)
+    if ahead and out["nights_left"]:
+        import demand
+        typical = []
+        for x in days:
+            if x <= through:
+                continue
+            try:
+                fc = demand.forecast_net(rid, x, db_path=db_path) if db_path else demand.forecast_net(rid, x)
+            except Exception:
+                fc = None
+            if fc and fc.get("available") and _num(fc.get("typical_sales")):
+                typical.append(float(fc["typical_sales"]))
+        if len(typical) == out["nights_left"]:
+            out["typical_left"] = round(sum(typical), 2)
+            out["typical_per_night"] = round(sum(typical) / len(typical), 2)
+    return out
+
+
+def pace(facts, restaurant, view, db_path=None) -> dict | None:
+    """{"week": {...}, "period": {...}|None} to the report's night, as this
+    view may read it (budget* keys are the owner's)."""
+    from dsr import access, fiscal
+    if restaurant is None:
+        return None
+    try:
+        day = date.fromisoformat(str((facts or {}).get("business_date"))[:10])
+    except Exception:
+        return None
+    try:
+        ws, we = fiscal.week_bounds(restaurant, day)
+        week = _span_pace(restaurant, ws, we, day, db_path)
+        span = fiscal.period_span(restaurant, day)
+        period = _span_pace(restaurant, span[0], span[1], day, db_path, ahead=False) if span else None
+        if period:
+            pos = fiscal.position(restaurant, day)
+            period["label"] = f"Period {pos['period']}" if pos.get("period") else "Period"
+    except Exception:
+        return None
+    if not week:
+        return None
+    if view != access.OWNER:
+        strip = lambda d: {k: v for k, v in d.items() if not k.startswith(access.OWNER_ONLY_PREFIXES)} if d else d
+        week, period = strip(week), strip(period)
+    return {"week": week, "period": period}
+
+
+# ── the six KPIs a report leads with ───────────────────────────────────────
+#
+# Large, animated, scannable (owner, 9/30/26: "the top 6 total KPIs"). The
+# owner's six never repeat what Today's score states (sales against budget,
+# labor, food, the rating); the manager's lead with labor. A tile with no
+# measurement is skipped and the next candidate takes its place, so six are
+# shown whenever six exist.
+BIG_MAX = 6
+BIG_OWNER = ("pace", "prime_pct", "guests", "per_guest", "splh", "tomorrow_labor", "drinks_per_guest",
+             "avg_ticket", "overtime")
+BIG_MANAGER = ("labor_pct", "pace", "guests", "per_guest", "splh", "tomorrow_labor", "drinks_per_guest",
+               "avg_ticket")
+
+
+def _money(v):
+    return f"${v:,.0f}"
+
+
+def _pace_tile(p, view):
+    from dsr import access
+    w = (p or {}).get("week")
+    if not w:
+        return None
+    sub, tone, bar = [], None, None
+    if view == access.OWNER and _num(w.get("budget_vs")):
+        v = w["budget_vs"]
+        sub.append(f"{'+' if v >= 0 else '−'}{_money(abs(v))} vs {w.get('budget_label', 'budget').lower()}")
+        tone = "good" if v >= 0 else "bad"
+        if _num(w.get("budget_total")) and w["budget_total"] > 0:
+            bar = {"value": w["net"], "max": w["budget_total"], "marker": w.get("budget_to_date"),
+                   "label": f"{_money(w['net'])} of {_money(w['budget_total'])}"}
+        if _num(w.get("budget_left")) and w["budget_left"] <= 0:
+            sub.append(f"The week's {w.get('budget_label', 'budget').lower()} is already made")
+        elif _num(w.get("budget_per_night_needed")):
+            n = w["nights_left"]
+            need = (f"Needs {_money(w['budget_per_night_needed'])} "
+                    + ("from the night left" if n == 1 else f"a night from the {n} left"))
+            if _num(w.get("typical_per_night")):
+                need += f" · a typical one does {_money(w['typical_per_night'])}"
+            sub.append(need)
+    elif _num(w.get("last_year_pct")):
+        v = w["last_year_pct"]
+        sub.append(f"{'↑' if v > 0 else '↓' if v < 0 else '→'} {abs(v):.1f}% vs last year")
+        tone = "good" if v >= 0 else "bad"
+    if _num(w.get("last_year_pct")) and view == access.OWNER:
+        v = w["last_year_pct"]
+        sub.append(f"{'↑' if v > 0 else '↓' if v < 0 else '→'} {abs(v):.1f}% vs last year")
+    return {"key": "pace", "label": "Week to date", "value": w["net"], "value_text": _money(w["net"]),
+            "unit": "money", "sub": sub[:2], "tone": tone, "bar": bar,
+            "note": f"{w['nights_measured']} of {w['nights_total']} nights"}
+
+
+def _tomorrow_tile(t, view):
+    from dsr import access
+    lab = (t or {}).get("labor")
+    if not isinstance(lab, dict):
+        return None
+    pct = lab.get("salaried_total_pct") if view == access.OWNER and _num(lab.get("salaried_total_pct")) \
+        else lab.get("hourly_pct")
+    if not _num(pct):
+        return None
+    tgt = lab.get("target_pct")
+    tone = None
+    sub = []
+    soft = lab.get("target_source") == "default"
+    if _num(tgt):
+        gap = round(pct - tgt, 1)
+        # Over a target the owner never set is amber, never red (the
+        # scorecard's rule, Benchmarking re-audit #10).
+        tone = "good" if gap <= 0 else ("warn" if soft else "bad")
+        name = f"Cavnar AI's starting {tgt:g}%" if soft else f"the {tgt:g}% target"
+        sub.append(f"{abs(gap):.1f} pts {'over' if gap > 0 else 'under'} {name}" if gap else f"On {name}")
+    cost = lab.get("salaried_total_cost") if view == access.OWNER and _num(lab.get("salaried_total_cost")) \
+        else lab["hourly_cost"]
+    sub.append(f"{lab['hours']:g} hours · {_money(cost)} scheduled")
+    return {"key": "tomorrow_labor", "label": f"{t.get('weekday') or 'Tomorrow'}'s labor", "value": pct,
+            "value_text": f"{pct:.1f}%", "unit": "pct", "sub": sub, "tone": tone,
+            "gauge": {"value": pct, "target": tgt, "soft": soft} if _num(tgt) else None,
+            "note": "scheduled, against the forecast"}
+
+
+def _kpi_tile(k):
+    sub = []
+    if k.get("change"):
+        sub.append(k["change"]["text"])
+    if k.get("target"):
+        sub.append(f"{k['target'].get('label', 'Target')} {k['target'].get('value_text')}")
+    elif k.get("streak"):
+        sub.append(k["streak"]["text"])
+    out = {"key": k["key"], "label": k["label"], "value": k["value"], "value_text": k["value_text"],
+           "unit": k.get("unit"), "sub": sub[:2], "tone": (k.get("change") or {}).get("tone"),
+           "spark": k.get("spark") or [], "estimate": k.get("estimate")}
+    t = k.get("target") or {}
+    if k.get("unit") == "pct" and _num(t.get("value")):
+        out["gauge"] = {"value": k["value"], "target": t["value"], "soft": t.get("source") == "default"}
+    return out
+
+
+def big(top, operations, pace_, tomorrow, view) -> list:
+    """The six lead tiles for this view, in order, each
+    {"key", "label", "value", "value_text", "unit", "sub": [≤2 lines],
+    "tone", "spark"?, "bar"?, "gauge"?, "note"?}."""
+    from dsr import access
+    have = {k["key"]: k for k in list(top or []) + list(operations or []) if isinstance(k, dict) and k.get("key")}
+    out = []
+    for key in (BIG_OWNER if view == access.OWNER else BIG_MANAGER):
+        if len(out) >= BIG_MAX:
+            break
+        if key == "pace":
+            t = _pace_tile(pace_, view)
+        elif key == "tomorrow_labor":
+            t = _tomorrow_tile(tomorrow, view)
+        else:
+            t = _kpi_tile(have[key]) if key in have else None
+        if t:
+            out.append(t)
+    return out
