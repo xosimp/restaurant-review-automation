@@ -295,6 +295,19 @@ def module_of(alert_type) -> str:
     return NOTIFICATION_MODULE.get(alert_type or "", "reviews")
 
 
+# The module whose readers a notification is FOR, where that is not the one
+# it opens (re-audit 2 R3-07): the big-game heads-up opens Ask on the game,
+# but it is pushed only to the logins who read Labor (event_intel.gameday) —
+# so the bell, its badge and Ask's alerts show it to those logins only.
+NOTIFICATION_AUDIENCE = {"event_ahead": "labor"}
+
+
+def audience_of(alert_type) -> str:
+    """The module a login must be able to view to see this notification —
+    one rule for who is pushed it and whose bell lists it."""
+    return NOTIFICATION_AUDIENCE.get(alert_type or "") or module_of(alert_type)
+
+
 # Notifications that ask someone to DO something. Everything else — the
 # briefs, summaries, wins, milestones, sign-ins, a reply that went out — is
 # news. Ask counted every non-review row as "still needing action", so an

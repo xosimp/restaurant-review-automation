@@ -310,9 +310,12 @@ def _days(value, default=7, ceiling=90):
 def alert_visible(viewer, alert_type) -> bool:
     """Whether a viewer_restaurant may see a notification of this type: the
     bell's rule (client_api._sees) against Ask's denied modules. None, or a
-    plain restaurant, is an unrestricted caller."""
-    from client_api import _NOTIFICATION_MODULE, _NOTIFICATION_MODULE_KEY
-    module = _NOTIFICATION_MODULE_KEY.get(_NOTIFICATION_MODULE.get(alert_type, "reviews"))
+    plain restaurant, is an unrestricted caller. The module is the one the
+    row is FOR (push.audience_of: the big-game heads-up is Labor's, re-audit
+    2 R3-07), as the bell reads it."""
+    import push as _push
+    from client_api import _NOTIFICATION_MODULE_KEY
+    module = _NOTIFICATION_MODULE_KEY.get(_push.audience_of(alert_type))
     return module is None or module not in _denied(viewer)
 
 
@@ -2054,6 +2057,15 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
         out["note"] = "This restaurant follows no team or event yet."
         return out
     ahead, _planned = [], [0]
+    from event_intel import gameday as _gd
+    # The viewer_restaurant's module flags already follow the login; a bare
+    # internal caller (no viewer) reads the restaurant's own.
+    if hasattr(_viewer, "module_marketing"):
+        _place = _viewer
+    else:
+        from models import get_restaurant as _get_restaurant
+        _place = _get_restaurant(restaurant_id)
+    guest_ok = _gd.guest_text_visible(_place, denied=_denied(_viewer))
     # engine.upcoming never lists a cancelled, postponed or removed game
     # (re-audit P1-04 / P2-05); what it lists says its status.
     for u in engine.upcoming(restaurant_id, days=_days(days, 21, 120), today=today):
@@ -2117,10 +2129,15 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
                 bump = gameday.order_bump(restaurant_id, e, mix=mix)
                 if bump:
                     item["order_more"] = {"said": bump["text"], "lines": bump["lines"], "basis": bump["basis"]}
-            plan = gameday.send_plan(e, tz=tz)
+            # Only to a reader the one rule lets see it (the Marketing module
+            # and the login's Marketing view, re-audit 2 R3-03 / RX-04), and
+            # never a text time or an email day already gone (plan_ahead —
+            # the brief's and the push's test, re-audit 2 R3-02 / R2-06).
+            plan = gameday.plan_ahead(restaurant_id, e, tz=tz) if guest_ok else None
             if plan:
-                item["reach_guests"] = {"text": plan["text_words"], "email": plan["email_words"],
-                                        "basis": plan["basis"]}
+                item["reach_guests"] = {"text": plan["text_words"], "basis": plan["basis"]}
+                if plan.get("email_words"):
+                    item["reach_guests"]["email"] = plan["email_words"]
         ahead.append(item)
     out["upcoming"] = ahead
     recent = []
@@ -2155,8 +2172,8 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
     # What this login may read (audit 10/1/26): the dollars and staffing
     # follow the Labor view as the brief's do, the item mix the one rule
     # every surface uses (gameday.item_mix_visible: Labor or Food Cost,
-    # re-audit X-8), the ordering bump the Food Cost view, the guest-text
-    # timing Marketing.
+    # re-audit X-8), the ordering bump the Food Cost view; the guest-text
+    # timing is decided above (gameday.guest_text_visible).
     denied = _denied(_viewer)
     if not gameday.item_mix_visible(denied=denied):
         for item in ahead:
@@ -2172,9 +2189,6 @@ def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
     if "inventory" in denied:
         for item in ahead:
             item.pop("order_more", None)
-    if "marketing" in denied:
-        for item in ahead:
-            item.pop("reach_guests", None)
     if "reviews" in denied or not getattr(_viewer, "module_reviews", 1):
         out.pop("reviews_on_game_nights", None)
     out["basis"] = ("lifts are this restaurant's own nights against the median of the same weekday over the 8 "
