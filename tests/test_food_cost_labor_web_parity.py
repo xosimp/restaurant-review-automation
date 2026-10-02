@@ -345,12 +345,12 @@ def test_web_publish_schedule_share_status_reflects_a_real_open(client, db_path,
     _login_as(monkeypatch, rid)
     client.post("/api/labor/staff-contacts", json={"employee_name": "Sofia R.", "email": "sofia@x.test"})
     import emails as _em
-    monkeypatch.setattr("emails.send_staff_schedule_email", lambda **kw: _em.SendResult(True))
+    links = []
+    # The link as Sofia receives it: only its hash is stored (SEC-09).
+    monkeypatch.setattr("emails.send_staff_schedule_email",
+                        lambda **kw: links.append(kw["link"]) or _em.SendResult(True))
     d = client.post("/api/labor/publish-schedule", json={"schedule_id": sid}).get_json()
-    token = get_conn(db_path).execute(
-        "SELECT token FROM schedule_shares WHERE restaurant_id=? AND employee_name='Sofia R.'", (rid,)
-    ).fetchone()["token"]
-    mark_schedule_share_viewed(token, db_path=db_path)
+    mark_schedule_share_viewed(links[0].rsplit("/s/", 1)[1], db_path=db_path)
     status = client.get(f"/api/labor/schedule-share-status?schedule_id={d['schedule_id']}").get_json()["status"]
     sofia = next(s for s in status if s["employee_name"] == "Sofia R.")
     assert sofia["viewed_at"] is not None

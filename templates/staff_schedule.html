@@ -5,22 +5,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>{{ employee_name }} — schedule</title>
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
+  /* DESIGN_SYSTEM.md §1 dark tokens (the staff pages are dark, like the
+     app's own chrome: paper is the iOS #0c0c0c). Nothing below names a hex. */
   :root{
-    --paper:#0c0c0c; --card:#151515; --line:#262626;
-    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
-    --ember:#d4583a; --ember2:#e8956a; --red:#e3333f;
+    --paper:#0c0c0c; --paper2:#121212; --paper3:#262626;
+    --ink:#f0ebe0; --ink2:#c4bdb4; --ink3:#cdbfa9;
+    --ember:#d4583a; --ember2:#e8956a; --red:#e3333f; --green:#4ead7a;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);
-       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
-       -webkit-font-smoothing:antialiased;padding:28px 18px 56px}
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 16px 56px}
   .wrap{max-width:520px;margin:0 auto}
+  /* Every number in Space Grotesk (DESIGN_SYSTEM.md §2): the dates line,
+     each shift's date and times, the total, and .hb-num inside text. */
+  .hb-num,.sub,.shift .date,.shift .time,.total b{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
   .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
-  h1{font-size:26px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
-  .sub{color:var(--ink3);font-size:14px;margin:0 0 24px}
-  .shift{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember);
+  h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:26px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--ink3);font-size:14px;margin:0 0 14px}
+  .app-line{color:var(--ink2);font-size:14px;line-height:1.5;margin:0 0 22px}
+  .app-line a{color:var(--ember2);font-weight:700;text-decoration:underline;text-underline-offset:3px}
+  .changed{background:var(--paper2);border:1px solid var(--ember2);border-radius:12px;padding:12px 14px;
+           color:var(--ink);font-size:14px;line-height:1.5;margin:0 0 18px}
+  .shift{background:var(--paper2);border:1px solid var(--paper3);border-left:3px solid var(--ember);
          border-radius:12px;padding:14px 16px;margin-bottom:10px}
   .shift .day{font-size:15px;font-weight:700}
   .shift .date{font-size:12.5px;color:var(--ink3);margin-left:6px;font-weight:400}
@@ -28,26 +39,27 @@
   .shift .time{font-size:17px;font-weight:700;margin-top:6px;letter-spacing:.01em}
   .shift .meta{font-size:13px;color:var(--ink2);margin-top:4px}
   .shift .note{font-size:13px;color:var(--ember2);margin-top:6px}
-  .total{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;
+  .total{border-top:1px solid var(--paper3);margin-top:18px;padding-top:14px;
          display:flex;justify-content:space-between;align-items:baseline;font-size:14px;color:var(--ink2)}
   .total b{font-size:20px;color:var(--ink)}
-  .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  .empty{background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;
          padding:22px 18px;color:var(--ink2);font-size:15px;line-height:1.55}
-  .avail{margin-top:30px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 16px}
+  .avail{margin-top:30px;background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;padding:18px 16px}
   .avail-title{font-size:15px;font-weight:700;margin-bottom:4px}
   .avail-note{font-size:13px;color:var(--ink3);line-height:1.5;margin:0 0 14px}
   .days{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
   .day{position:relative}
   .day input{position:absolute;opacity:0;width:0;height:0}
-  .day span{display:block;min-width:46px;text-align:center;padding:9px 6px;border-radius:9px;
-            border:1px solid var(--line);background:#101010;color:var(--ink2);
-            font-size:13px;font-weight:600;cursor:pointer;user-select:none}
-  .day input:checked + span{background:var(--ember);border-color:var(--ember);color:#fff}
+  /* 44px tall: a thumb's target on a phone (UX-25). */
+  .day span{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:44px;
+            padding:0 8px;border-radius:9px;border:1px solid var(--paper3);background:var(--paper);color:var(--ink2);
+            font-size:14px;font-weight:700;cursor:pointer;user-select:none}
+  .day input:checked + span{background:var(--ember);border-color:var(--ember);color:var(--ink)}
   .day input:focus-visible + span{outline:2px solid var(--ember2);outline-offset:2px}
-  .avail-input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:9px;border:1px solid var(--line);
-        background:#101010;color:var(--ink);font-size:14px;font-family:inherit;margin-bottom:12px}
-  .refused{margin:0 0 12px;font-size:13.5px;color:var(--red);font-weight:600}
-  .saved{margin-top:10px;font-size:13.5px;color:#4ead7a;font-weight:600;text-align:center}
+  .avail-input{width:100%;box-sizing:border-box;min-height:44px;padding:10px 12px;border-radius:9px;border:1px solid var(--paper3);
+        background:var(--paper);color:var(--ink);font-size:16px;font-family:inherit;margin-bottom:12px}
+  .refused{margin:0 0 12px;font-size:13.5px;color:var(--red);font-weight:700}
+  .saved{margin-top:10px;font-size:13.5px;color:var(--green);font-weight:700;text-align:center}
   footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
 </style>
 </head>
@@ -56,6 +68,15 @@
   <div class="kicker">{{ restaurant_name }}</div>
   <h1>{{ employee_name }}</h1>
   <p class="sub">Week of {{ week_start }}{% if week_end %} – {{ week_end }}{% endif %}</p>
+  {# The app is where the rest of the job lives (UX-25, C1). #}
+  <p class="app-line">Swaps, time off and today&rsquo;s tasks are in the Cavnar AI app.
+    {% if app_url %}<a href="{{ app_url }}">Get the app</a>{% else %}It&rsquo;s on iPhone, in testing &mdash; ask your manager for the invite.{% endif %}</p>
+
+  {% if updated %}
+    {# The link was sent for an earlier copy of this week; this is the one
+       staff are on now (SEC-09 / LG-18). #}
+    <div class="changed" role="status">This week&rsquo;s schedule changed{% if updated_on %} on <span class="hb-num">{{ updated_on }}</span>{% endif %}. You&rsquo;re seeing the latest version.</div>
+  {% endif %}
 
   {% if shifts %}
     {% for s in shifts %}
@@ -64,7 +85,7 @@
            date twice when the CSV row had no day (density audit #13). #}
         <div>{% if s.day %}<span class="day">{{ s.day }}</span>{% endif %}<span class="date">{{ s.date_label }}</span></div>
         <div class="time">{{ s.start }} – {{ s.end }}</div>
-        <div class="meta">{{ s.role }}{% if s.hours %} · {{ s.hours }} hrs{% endif %}</div>
+        <div class="meta">{{ s.role }}{% if s.hours %} · <span class="hb-num">{{ s.hours }}</span> hrs{% endif %}</div>
         {% if s.notes %}<div class="note">{{ s.notes }}</div>{% endif %}
       </div>
     {% endfor %}
@@ -75,21 +96,26 @@
 
   <form class="avail" method="post" action="/s/{{ token }}/availability">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="avail-title">Days you can't work</div>
+    <div class="avail-title" id="avail-title">Days you can't work</div>
     <p class="avail-note">Tick anything you're not available for. Your manager sees this straight away, and next week's schedule is built around it.</p>
-    <div class="days">
+    <div class="days" role="group" aria-labelledby="avail-title">
       {% for d in days %}
         <label class="day{% if d in unavailable_days %} on{% endif %}">
-          <input type="checkbox" name="unavailable" value="{{ d }}"{% if d in unavailable_days %} checked{% endif %}>
-          <span>{{ d[:3] }}</span>
+          <input type="checkbox" name="unavailable" aria-label="{{ d }}" value="{{ d }}"{% if d in unavailable_days %} checked{% endif %}>
+          <span aria-hidden="true">{{ d[:3] }}</span>
         </label>
       {% endfor %}
     </div>
-    <input class="avail-input" type="text" name="note" maxlength="300" value="{{ note }}" placeholder="Anything else? (optional)">
+    <input class="avail-input" type="text" name="note" maxlength="300" value="{{ note }}" placeholder="Anything else? (optional)" aria-label="Anything else about your availability (optional)">
     <input type="hidden" name="note_prefilled" value="1">
+    {# The version of the record this form shows: a save over a newer change
+       (from the app) is refused and the page reloads the latest. #}
+    {% if version %}<input type="hidden" name="updated_at" value="{{ version.value }}">{% endif %}
+    {% if stale %}<div class="refused" role="alert">Someone changed this since you opened it — here&rsquo;s the latest. Make your change again.</div>{% endif %}
     {% if all_days_blocked %}<div class="refused" role="alert">Every day blocked — leave at least one you can work.</div>{% endif %}
+    {% if throttled %}<div class="refused" role="alert">Too many updates from this device just now — try again in a few minutes.</div>{% endif %}
     <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block">Save my availability</button>
-    {% if saved %}<div class="saved">Saved — thanks, your manager has it.</div>{% endif %}
+    {% if saved %}<div class="saved" role="status">Saved — thanks, your manager has it.</div>{% endif %}
   </form>
 
   <footer>

@@ -3791,7 +3791,10 @@ def test_share_status_reports_who_has_opened_the_schedule(client, db_path, monke
                 json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
                 headers=_auth_headers(token))
     import emails as _emails
-    monkeypatch.setattr(_emails, "send_staff_schedule_email", lambda **kw: _emails.SendResult(True))
+    links = []
+    # The link as Sofia receives it: only its hash is stored (SEC-09).
+    monkeypatch.setattr(_emails, "send_staff_schedule_email",
+                        lambda **kw: links.append(kw["link"]) or _emails.SendResult(True))
     client.post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid}, headers=_auth_headers(token))
 
     d = client.get("/mobile/api/labor/schedule-share-status", headers=_auth_headers(token)).get_json()
@@ -3800,10 +3803,7 @@ def test_share_status_reports_who_has_opened_the_schedule(client, db_path, monke
     assert row["viewed_at"] is None        # sent, not yet opened
 
     from models import mark_schedule_share_viewed, get_schedule_share_status
-    conn = get_conn(db_path)
-    share_token = conn.execute("SELECT token FROM schedule_shares WHERE schedule_id=?", (sid,)).fetchone()["token"]
-    conn.close()
-    mark_schedule_share_viewed(share_token, db_path=db_path)
+    mark_schedule_share_viewed(links[0].rsplit("/s/", 1)[1], db_path=db_path)
     after = client.get("/mobile/api/labor/schedule-share-status", headers=_auth_headers(token)).get_json()
     assert next(r for r in after["status"] if r["employee_name"] == "Sofia R.")["viewed_at"] is not None
 

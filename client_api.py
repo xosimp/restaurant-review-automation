@@ -8192,7 +8192,9 @@ def marketing_link_redirect(token):
     target = resolve(token, count=counts,
                      visitor=visitor_key(request.remote_addr, ua) if counts else None)
     if not target:
-        return render_template("staff_schedule_invalid.html"), 404
+        # The guest's own page — this used to be the staff schedule-link
+        # error, which told a diner to "ask your manager" (UX-39).
+        return render_template("guest_link_expired.html"), 404
     return redirect(target, code=302)
 
 
@@ -8987,6 +8989,39 @@ def get_notifications_unread_count(current_user):
 
 # ── Staff-facing schedule page ─────────────────────────────────────────────────
 
+def _share_page_extras():
+    """What every /s/ page shows about the app (UX-25, C1): the App Store
+    link once it is listed (IOS_APP_STORE_URL), else none and the page says
+    how to get the invite."""
+    try:
+        from staff_routes import _app_url
+        return {"app_url": _app_url()}
+    except Exception:
+        return {"app_url": ""}
+
+
+def _share_lookup(token):
+    """(share, None) for a token this address may look up, else (None,
+    (page, status)): the branded invalid page — throttled when this address
+    has been guessing (UX-40). The same per-address budget as the staff
+    portal's other public codes (auth.portal_attempts), counted before the
+    lookup so concurrent guesses all count; a real token is not a guess."""
+    from models import get_schedule_share
+    from auth import portal_attempts_exceeded, record_portal_attempt, mark_portal_attempt_ok
+    ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
+    if portal_attempts_exceeded(ip):
+        return None, (render_template("staff_schedule_invalid.html", throttled=True, **_share_page_extras()), 429)
+    attempt = record_portal_attempt(ip)
+    share = get_schedule_share(token)
+    if not share:
+        # A branded page, not a bare string. Its OWN template, not the
+        # expired one: saying "expired" would confirm the token had once been
+        # real, which is precisely what this branch is careful not to reveal.
+        return None, (render_template("staff_schedule_invalid.html", throttled=False, **_share_page_extras()), 404)
+    mark_portal_attempt_ok(attempt)
+    return share, None
+
+
 @client_bp.route("/s/<token>")
 def staff_schedule_page(token):
     """One employee's own shifts, no login. Deliberately public: kitchen and
@@ -8994,29 +9029,25 @@ def staff_schedule_page(token):
     why schedules end up as a photo of a printout in a group chat.
 
     The token is the whole authorisation — long, random, per employee per
-    schedule (models.create_schedule_share) — and it only ever exposes that
-    one person's shifts, never the full roster, wages, or anything else.
-    An unknown token 404s rather than saying whether it ever existed.
-    """
-    from models import get_schedule_share, mark_schedule_share_viewed
+    send (models.create_schedule_share, stored only as its hash) — and it
+    only ever exposes that one person's shifts, never the full roster, wages,
+    or anything else. An unknown token 404s rather than saying whether it
+    ever existed. A link to a week that was re-published shows the copy staff
+    are on now, with a line saying it changed (SEC-09 / LG-18); a link whose
+    holder was deactivated reads as expired."""
     from labor import employee_shifts_from_csv
 
-    share = get_schedule_share(token)
-    if not share:
-        # A branded page, not the bare string this used to return — the one
-        # link in any Cavnar AI email that could land a member of staff on
-        # something that looked broken. Its OWN template, not the expired
-        # one: saying "expired" would confirm the token had once been real,
-        # which is precisely what this branch is careful not to reveal.
-        return render_template("staff_schedule_invalid.html"), 404
+    share, refused = _share_lookup(token)
+    if refused:
+        return refused
     if share.get("expired"):
-        # 410 Gone, not 404: the link was real, it has simply aged out. Says
-        # so plainly so someone who no longer works here isn't left guessing,
-        # and doesn't leak any shift data.
+        # 410 Gone, not 404: the link was real, it has simply aged out (or
+        # its holder no longer works here). Says so plainly and leaks no
+        # shift data.
         return render_template("staff_schedule_expired.html",
-                               restaurant_name=share.get("restaurant_name") or ""), 410
+                               restaurant_name=share.get("restaurant_name") or "", **_share_page_extras()), 410
 
-    from models import get_staff_availability
+    from models import get_staff_availability, mark_schedule_share_viewed
     import json as _json_av
 
     shifts = employee_shifts_from_csv(share.get("schedule_csv") or "", share["employee_name"])
@@ -9025,15 +9056,24 @@ def staff_schedule_page(token):
     # Whatever they last told us — days and note — so the form comes back
     # pre-filled rather than making them re-enter it every week, and a
     # re-save cannot silently blank the note (CLIENT-11).
-    unavailable, saved_note = [], ""
-    for row in get_staff_availability(share["restaurant_id"]):
-        if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
-            try:
-                unavailable = _json_av.loads(row.get("unavailable_days") or "[]")
-            except Exception:
-                unavailable = []
-            saved_note = row.get("notes") or ""
-            break
+    unavailable, saved_note, version = [], "", None
+    import staff_settings as _ss_av
+    own = getattr(_ss_av, "own_availability", None)
+    if own is not None:
+        # The record the app reads too, and its version, which the form
+        # sends back so a save over a newer change is refused (B8).
+        mine = own(share["restaurant_id"], share["employee_name"])
+        unavailable, saved_note = mine.get("unavailable_days") or [], mine.get("notes") or ""
+        version = {"value": mine.get("updated_at") or ""}
+    else:
+        for row in get_staff_availability(share["restaurant_id"]):
+            if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
+                try:
+                    unavailable = _json_av.loads(row.get("unavailable_days") or "[]")
+                except Exception:
+                    unavailable = []
+                saved_note = row.get("notes") or ""
+                break
     from time_utils import mdy as _mdy
 
     # The availability form below is a plain HTML POST, not a fetch, so it
@@ -9064,7 +9104,13 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         all_days_blocked=request.args.get("error") == "all_days",
+        throttled=request.args.get("error") == "throttled",
+        stale=request.args.get("error") == "stale",
+        version=version,
+        updated=bool(share.get("updated")),
+        updated_on=_mdy(share.get("live_at")) if share.get("live_at") else "",
         csrf_token=csrf_token,
+        **_share_page_extras(),
     ))
     if not request.cookies.get(_CSRF_COOKIE):
         response.set_cookie(_CSRF_COOKIE, csrf_token, max_age=30 * 24 * 3600,
@@ -9087,23 +9133,51 @@ def staff_availability_submit(token):
 
     Authorised by the same per-person token as the page itself, and it can
     only ever write that one person's row — the employee name comes from
-    the token, never from the form, so a submitted name can't be forged.
+    the token, never from the form, so a submitted name can't be forged. A
+    refusal is a page, never a bare string: the branded invalid page, or
+    back to the form with the reason shown inline (UX-40).
     """
-    from models import get_schedule_share, save_staff_availability, get_staff_availability
+    from models import save_staff_availability, get_staff_availability
     from ai_utils import ai_rate_limited
 
-    share = get_schedule_share(token)
-    if not share:
-        return "This link isn't valid. Ask your manager for a new one.", 404
+    share, refused = _share_lookup(token)
+    if refused:
+        return refused
     if share.get("expired"):
         # An expired link is read-only-gone in both directions — it must not
         # keep writing availability that would shape next week's schedule.
         return render_template("staff_schedule_expired.html",
-                               restaurant_name=share.get("restaurant_name") or ""), 410
+                               restaurant_name=share.get("restaurant_name") or "", **_share_page_extras()), 410
 
     ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
     if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
-        return "Too many updates just now — try again in a few minutes.", 429
+        return redirect(f"/s/{token}?error=throttled")
+
+    # The one save the app uses too, when this build has it (employee audit
+    # B8: staff_settings.save_own_availability) — it carries the version the
+    # page loaded, so the link and the app never overwrite each other.
+    import staff_settings as _ss_av
+    save_own = getattr(_ss_av, "save_own_availability", None)
+    if save_own is not None:
+        note_in = request.form.get("note")
+        # The page pre-fills the note and says so with note_prefilled, so
+        # there a blank means "clear it"; a form without it never showed the
+        # note, so a blank keeps it.
+        if request.form.get("note_prefilled") or (note_in or "").strip():
+            notes = note_in
+        else:
+            notes = _ss_av.KEEP
+        if "updated_at" in request.form:
+            expected = request.form.get("updated_at") or None
+        else:
+            expected = getattr(_ss_av, "MISSING", None)
+        res = save_own(share["restaurant_id"], share["employee_name"], expected_updated_at=expected,
+                       unavailable_days=request.form.getlist("unavailable"), notes=notes, source="link")
+        if res.get("status") == 409:
+            return redirect(f"/s/{token}?error=stale")
+        if not res.get("ok"):
+            return redirect(f"/s/{token}?error=all_days")
+        return redirect(f"/s/{token}?saved=1")
 
     # The same rule the portal applies (CLIENT-11): 7 of 7 blocked is
     # refused, and available_days is the complement, never a stale list.
@@ -10472,13 +10546,10 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
 
 def _drop_share(token, schedule_id):
     """Remove a share link made for a send that did not go out, so the
-    status list never shows someone as sent who was not."""
-    conn = get_conn()
-    try:
-        conn.execute("DELETE FROM schedule_shares WHERE token=? AND schedule_id=?", (token, schedule_id))
-        conn.commit()
-    finally:
-        conn.close()
+    status list never shows someone as sent who was not. By the token's
+    hash — the only form the row keeps (SEC-09)."""
+    import models as _models_share
+    _models_share.drop_schedule_share(token, schedule_id)
 
 
 def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_label, contacts=None,
