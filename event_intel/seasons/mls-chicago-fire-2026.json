@@ -1,8 +1,11 @@
 {
- "_about": "The 2026 Chicago Fire FC MLS regular season, from ESPN's published team schedule (fetched 10/1/26): results for games played, the rest as scheduled. Kickoff times converted to Chicago time. Playoff games are added when they are set.",
+ "_about": "The 2026 Chicago Fire FC season, from ESPN's published team schedule (fetched 10/1/26): the MLS regular season, results for games played and the rest as scheduled, plus the cup matches already played (the U.S. Open Cup, out in the Round of 16 on 4/29, and the Leagues Cup, out in the quarterfinal on 8/25), each with season_type \"special\" and attributes.competition. Cup matches were checked against Wikipedia's 2026 Chicago Fire FC season page. A home match at SeatGeek Stadium (Bridgeview) carries alt_venue; two Leagues Cup matches there the competition lists with the Mexican club as home (listed_as \"away\") are stored as Fire home nights, since the crowd is the Fire's in Bridgeview. Kickoff times converted to Chicago time. Playoff games are added when they are set.",
  "sources": [
   "https://www.espn.com/soccer/team/fixtures/_/id/182/chicago-fire-fc",
-  "https://www.chicagofirefc.com/schedule/"
+  "https://www.chicagofirefc.com/schedule/",
+  "https://site.api.espn.com/apis/site/v2/sports/soccer/concacaf.leagues.cup/teams/182/schedule?season=2026",
+  "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.open/teams/182/schedule?season=2026",
+  "https://en.wikipedia.org/wiki/2026_Chicago_Fire_FC_season"
  ],
  "fetched": "2026-10-01",
  "series": {
@@ -116,6 +119,22 @@
    "result": "W 1-0"
   },
   {
+   "external_id": "401867355",
+   "season_type": "special",
+   "week": "U.S. Open Cup Round of 32",
+   "date": "2026-04-14",
+   "kickoff": "18:30",
+   "home_away": "away",
+   "opponent": "Detroit City FC",
+   "venue": "Keyworth Stadium",
+   "broadcast": "Paramount+",
+   "status": "completed",
+   "result": "W 2-1",
+   "attributes": {
+    "competition": "U.S. Open Cup"
+   }
+  },
+  {
    "external_id": "761550",
    "season_type": "regular",
    "week": null,
@@ -140,6 +159,23 @@
    "broadcast": "Apple TV",
    "status": "completed",
    "result": "W 5-0"
+  },
+  {
+   "external_id": "401869708",
+   "season_type": "special",
+   "week": "U.S. Open Cup Round of 16",
+   "date": "2026-04-29",
+   "kickoff": "19:00",
+   "home_away": "home",
+   "opponent": "St. Louis CITY SC",
+   "venue": "SeatGeek Stadium",
+   "broadcast": "Paramount+",
+   "status": "completed",
+   "result": "L 1-2",
+   "attributes": {
+    "competition": "U.S. Open Cup",
+    "alt_venue": true
+   }
   },
   {
    "external_id": "761593",
@@ -246,6 +282,58 @@
    "result": "W 2-1"
   },
   {
+   "external_id": "401863566",
+   "season_type": "special",
+   "week": "Leagues Cup League Phase",
+   "date": "2026-08-06",
+   "kickoff": "19:30",
+   "home_away": "home",
+   "opponent": "Necaxa",
+   "venue": "SeatGeek Stadium",
+   "broadcast": "Apple TV",
+   "status": "completed",
+   "result": "W 2-0",
+   "attributes": {
+    "competition": "Leagues Cup",
+    "alt_venue": true
+   }
+  },
+  {
+   "external_id": "401863605",
+   "season_type": "special",
+   "week": "Leagues Cup League Phase",
+   "date": "2026-08-09",
+   "kickoff": "19:00",
+   "home_away": "home",
+   "opponent": "Santos Laguna",
+   "venue": "SeatGeek Stadium",
+   "broadcast": "Apple TV",
+   "status": "completed",
+   "result": "W 3-1",
+   "attributes": {
+    "competition": "Leagues Cup",
+    "alt_venue": true
+   }
+  },
+  {
+   "external_id": "401863624",
+   "season_type": "special",
+   "week": "Leagues Cup League Phase",
+   "date": "2026-08-13",
+   "kickoff": "20:00",
+   "home_away": "home",
+   "opponent": "Cruz Azul",
+   "venue": "SeatGeek Stadium",
+   "broadcast": "Apple TV",
+   "status": "completed",
+   "result": "W 2-1",
+   "attributes": {
+    "competition": "Leagues Cup",
+    "alt_venue": true,
+    "listed_as": "away"
+   }
+  },
+  {
    "external_id": "761723",
    "season_type": "regular",
    "week": null,
@@ -283,6 +371,24 @@
    "broadcast": "Apple TV",
    "status": "completed",
    "result": "D 1-1"
+  },
+  {
+   "external_id": "401909652",
+   "season_type": "special",
+   "week": "Leagues Cup Quarterfinal",
+   "date": "2026-08-25",
+   "kickoff": "19:30",
+   "home_away": "home",
+   "opponent": "Monterrey",
+   "venue": "SeatGeek Stadium",
+   "broadcast": "Apple TV",
+   "status": "completed",
+   "result": "L 1-2",
+   "attributes": {
+    "competition": "Leagues Cup",
+    "alt_venue": true,
+    "listed_as": "away"
+   }
   },
   {
    "external_id": "761755",
