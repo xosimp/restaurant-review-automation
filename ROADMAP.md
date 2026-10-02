@@ -4,7 +4,7 @@ What's open, what's next and what's deliberately on hold. Update it when an
 item ships or a new one is committed to. Keep it short enough to read in one
 pass: it is not a changelog (git is).
 
-Last refreshed 9/30/26.
+Last refreshed 10/2/26.
 
 ## Active client
 
@@ -32,15 +32,24 @@ restaurant 5; restaurant 4 is Will's demo copy.
 - **RPOWER schedule push.** The preview builds and checks the exact body
   without sending. A live push needs Will's go-ahead and RPOWER's answers on
   the open questions.
-- **App Store.** Privacy manifest and in-app account-deletion request done.
-  Still open: the App Store Connect listing copy, the reviewer demo login
-  and a TestFlight upload (`docs/app-store-submission.md`).
+- **App Store.** Privacy manifest and in-app account-deletion request done
+  (the staff app's own Delete my account too, 10/2/26). Still open (Will):
+  the App Store Connect listing copy, the reviewer demo login and a
+  TestFlight upload (`docs/app-store-submission.md`); once the app is
+  listed, set `IOS_APP_STORE_URL` — until then the staff web page and the
+  `/s/` schedule pages name the TestFlight invite instead of a store button.
 - **Google OAuth verification.** A Cloudflare bot challenge in front of
   `cavnar.ai` blocked Google's crawler. It needs a Cloudflare rule change,
   not code (last checked 9/25/26).
 - **Messaging setup.**
-  - The staff-schedule Twilio A2P campaign is not registered yet; owner
-    alerts and sign-in codes are approved.
+  - The staff Twilio A2P campaign is not registered yet; owner alerts and
+    sign-in codes are approved. Will: register it with the consent wording
+    in `people.STAFF_SMS_CONSENT_TEXT` ("Text me about my schedule and my
+    requests: a posted or changed week, swaps, open shifts and time off…" —
+    schedule and request notices), then set
+    `TWILIO_STAFF_MESSAGING_SERVICE_SID`. Until then `sms_available` is
+    false, the staff app hides its texts switch and staff are reached by the
+    app and email only.
   - `CAVNAR_POSTAL_ADDRESS` (a PO box for email footers) is unset.
 - **iPhone parity** for the web work of 9/28–9/30/26:
   - the Reports tab;
@@ -67,10 +76,67 @@ restaurant 5; restaurant 4 is Will's demo copy.
   - the remaining module-level `from models import ... get_conn` imports
     (34 modules; move each to a call-time `get_conn` as it is touched);
   - the hand-duplicated web/mobile route pairs.
+- **Staff app, left open after the 10/2/26 fix round** (each with its reason
+  in the round's reports):
+  - a separate `staff_account` push type, so owners can mute sign-ins
+    without muting PIN locks, sprays and claims (today all ride
+    `staff_signin`) — needs a product call;
+  - a manager's "took it" on Home does not close that person's live offer
+    (it expires when the shift passes) — accepting there would run the cover;
+  - no retention entry for `shift_change_requests` (it predates the round;
+    the learners read it);
+  - B3's minimal change to `schedule_engine.replacement_is_legal` (a gap the
+    shift already had is not charged to the cover) awaits the schedule
+    owner's review;
+  - `shifts_for_employee` and `/staff/api/colleagues` could read the narrow
+    `models.get_published_week_csv(with_stations=True)` (PERF-12);
+  - not built: ranking cover candidates by a running-late ETA (AI-09);
+  - known limits: the staff brief's figure check binds numbers as a set, not
+    item by item; spelled-out numbers ("nine reviews") are not caught; a
+    house rule that names a rostered teammate makes any answer citing it say
+    "Ask your manager"; a Studio edit that changes two people in one slot
+    leaves its floor section alone;
+  - `task_sheets.store_photo` has no route callers (candidate for future
+    cleanup after additional verification);
+  - if production already holds two active staff logins under one name, the
+    `uq_memberships_active_employee_name` index is not created until an
+    owner resolves them (`ops.capture` names them, job
+    `memberships_name_index`).
 - **Apollo.io upgrade.** No longer held for Gia Mia, who is not becoming a
   client. Decide on its own merits.
 
 ## Recently shipped (newest first; trim entries older than ~2 months)
+
+- **10/2 — The employee app, fix round** (from the staff app audit; server
+  B1–B8 and S9, iOS I1–I4).
+  - Sign-in and identity: one active login per name, a common-PIN denylist,
+    attempts counted before the PIN check, owner notices on locks, sprays
+    and claims, Change PIN on its own counter, server sign-out, forgot PIN by
+    text, delete my account, US-only verification texts with an hourly
+    ceiling, a location switch that asks that location's PIN.
+  - Notifications: staff phones on their own push tier (an owner alert can
+    never reach one), one delivered-only rule (app, consented text, email),
+    quiet hours with texts held to 8am, shift and critical-task reminders
+    (`staff_reminders`), consent that covers schedule and request notices.
+  - Shifts: the restaurant's own date, every leg of a double, manager-posted
+    open shifts and one-person offers answered in the app (the coverage ask
+    is one), start-time gates, expiry and escalation (`open_shift_watch`),
+    voiding, the role checked both ways, who's on with me, approved time off
+    called off, reasons and notes both ways; availability by hours and dates
+    with one versioned save; floor sections per shift.
+  - Tasks: a same-day cover takes the sheet, one round trip per tick,
+    photos authorised before they are stored and capped, the critical
+    out-of-range alert, last night's note.
+  - Running late, announcements with Got it, a thread with the manager on
+    duty and the Team inbox under Labor.
+  - The employee's own hours and tips, week stats, guest mentions, the
+    post-shift pulse, a calendar feed; hashed schedule links that follow the
+    live week and die on deactivation.
+  - A personal pre-shift brief, a manager-approved rewrite and focus item,
+    translation, house rules and docs with cited answers, certifications
+    with reminders (`cert_reminders`).
+  - The iPhone app: Today, Tasks, Requests and Me tabs, the inbox, offline
+    ticks, a Next shift widget.
 
 - **10/1 — Event Intelligence phase 4 (no new APIs).**
   - The Blackhawks, Bulls and Fire seasons and the White Sox postseason, from
@@ -166,8 +232,9 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 ## Deliberately not doing (yet)
 
-- **Self-serve account deletion.** Service is contract-based (DocuSign), so
-  cancelling goes through Will, not a button.
+- **Self-serve account deletion** for an owner. Service is contract-based
+  (DocuSign), so cancelling goes through Will, not a button. (An employee's
+  staff login can be deleted in the staff app since 10/2/26.)
 - **A second LLM provider** for anything but the AI-visibility checks
   (Perplexity stays scoped to that one job).
 - **A schema migration or version-table system.** Additive `ALTER TABLE`

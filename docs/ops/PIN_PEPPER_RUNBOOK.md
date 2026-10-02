@@ -39,6 +39,16 @@ those hashes were written under version `v0` (no pepper) and still verify,
 then get rewritten under the current version on the owner's next successful
 sign-in. `unpeppered` counts down as staff sign in, and reaches 0 on its own.
 
+That is true again since the employee-app fix round (10/2/26, SEC-10): the
+upgrade on sign-in now runs only when a pepper is configured, a new PIN is
+refused without one (`set_membership_pin` raises), and a staff sign-up claim
+refuses before writing anything. Before that fix, a sign-in on a server with
+no pepper rewrote the hash as `pepv1$` over `"::<pin>"` — marked current, so
+`pin_pepper_health()` counted it as protected — and those hashes stop
+verifying the day the pepper is set. **If production ever ran without
+`CAVNAR_PIN_PEPPER` while staff signed in, re-issue those PINs** (the owner's
+New PIN, or the employee's Forgot PIN by text) once the pepper is set.
+
 ## How rotation works
 
 Hashes are stored version-tagged: `pepv1$<scrypt hash>`. An unversioned value

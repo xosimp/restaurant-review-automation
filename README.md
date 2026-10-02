@@ -164,7 +164,7 @@ Full detail in `MODULE_OVERVIEW.md`.
 | **Intel** | Competitor snapshots and AI-visibility checks | `competitor.py`, AI-visibility routes |
 | **Ask Cavnar** | The tool-calling assistant with live access to every module | `ask_cavnar.py`, `ask_cavnar_tools.py` |
 | **POS integrations** | Toast, Square, Clover and RPOWER behind one contract; the ticket archive | `pos.py`, `rpower.py`, `toast.py`, `pos_archive.py` |
-| **Staff portal and task sheets** | PIN sign-in for employees; opening and closing sheets by job code | `staff_routes.py`, `task_sheets.py` |
+| **Staff app and task sheets** | The employees' iPhone app: PIN sign-in, their shifts, requests, swaps and offers, availability, task sheets by job code, the personal pre-shift brief, announcements and a thread with the manager, their own hours, tips and calendar, house rules | `staff_routes.py` and the `staff_*` modules, `shift_requests.py`, `task_sheets.py` (MODULE_OVERVIEW.md → Staff app) |
 | **Admin** | Will's console: clients, jobs and the backup, billing and contracts, AI operations, messaging, the audit trail, support tools, the sales-audit tool | `admin_routes.py`, `admin_ops.py`, `admin_events.py` |
 | **Platform** | The job loop and its registry, the backup, paging, `/health`, telemetry, the supervisor thread | `scheduler.py`, `jobs_registry.py`, `ops.py`, `status_manager.py`, `platform_monitor.py` |
 | **Billing** | The Stripe and DocuSign lifecycle, the billing outbox, reconcile | `webhook_routes.py`, `billing_jobs.py`, `pricing.py` |

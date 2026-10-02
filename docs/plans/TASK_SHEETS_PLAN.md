@@ -155,7 +155,10 @@ and `labor.employee_shifts_from_csv` already reads it per person. Opening
 = the earliest shift on that job code that day; closing = the latest.
 A shift that spans both (a 10-hour manager day) gets both sheets. When
 Erik edits the schedule after publishing, assignments re-resolve for
-future days only.
+future days only. *(Superseded 10/2/26, employee audit H12: today's open
+sheets follow the live published week too — a same-day cover or swap hands
+the sheet, and its due times, to whoever took the shift, while the lines
+stay as issued. MODULE_OVERVIEW.md → Task sheets.)*
 
 ## Phases
 

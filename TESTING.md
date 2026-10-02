@@ -115,6 +115,26 @@ iOS: `ios/CavnarAI/CavnarAITests/MemoryRoundIATests.swift` and `MemoryRoundIBTes
 
 Known order-dependent failures seen during the round (each passes alone; the cause is a module that binds `get_conn` or `DB_PATH` at import): `test_rec_trust_modules.py::test_an_expired_quiet_night_draft_is_neither_approved_nor_revived` after `test_automation.py` (`delayed`), `test_security_parity_audit.py::test_7_a_manager_cannot_end_a_food_cost_goal` (`goals`), `test_reaudit_m.py::test_m21`. Timing-sensitive under load: `test_mkt_fix_a_consent.py::test_cs19`, `test_automation_days.py::test_reservations_sync`.
 
+## Employee-app fix round (`tests/test_empfix_*`, 10/2/26)
+
+From the staff app audit. One file per server workstream; each test is named for the behaviour it holds and was revert-checked when written. Run the file for the code you touch:
+
+| File | Covers |
+|---|---|
+| `test_empfix_b1.py` | auth and identity: one active login per name (code and index), the claim transaction, delete my account, the OTP gate (US only, the hourly ceiling, the dev-code flag), the PIN denylist, attempts counted before the KDF, owner notices on lock / spray / claim, Change PIN's own counter, server sign-out, forgot PIN by text, per-restaurant revoke, the Me fields and the switch |
+| `test_empfix_b2.py` | staff notifications: the device tier filter, staff registration and the reminders switch, `people.deliver` (delivered-only, the fallback chain, quiet hours and held texts), staff alert types and payloads, the `staff_reminders` job, consent scope and `sms_available` |
+| `test_empfix_b3.py` | shifts and requests: the restaurant's date, every leg's state and actions, offers and posted shifts, start-time gates, expiry and escalation, voiding, the role check, the swap picker, time-off cancel, notes and reasons, who's on with me, a standing staffing gap not charged to a cover |
+| `test_empfix_b4.py` | task sheets: a same-day cover takes the sheet, settled days, one round trip per tick, photo authorisation and cap, the tick window and sweep, the critical out-of-range alert, last night's note, no-store |
+| `test_empfix_b5.py` | running late (attendance strength, the coverage hold), announcements with acknowledgement, the staff ↔ manager thread, the owner's Team inbox twins |
+| `test_empfix_b6.py` | the employee's own earnings, stats, recognition and pulse, the calendar feed, hashed and live-week schedule links, the staff web pages |
+| `test_empfix_b7.py` | the personal brief, the rush and 86'd lines, the approved rewrite and the S1 staff rule, the focus item, translation and figure parity, docs and certifications, house-rules answers; every model call mocked |
+| `test_empfix_b8.py` | availability by hours and dates (one versioned save, conflicts, the time-off hint) and floor sections |
+| `test_empfix_s9.py` | the integration: retention for the staff ledgers, rename and erase across the staff stores, announcements translated per recipient, the brief line on the reminder, expired certificates in the rules, the live week by one rule, sections carried on any rewrite, running late on an open issue |
+
+**No live model calls.** `tests/conftest.py`'s autouse `_no_live_anthropic_calls` patches `httpx.Client.send` / `AsyncClient.send`: a request to `*.anthropic.com` raises `LiveAnthropicCall` (a `BaseException`, so neither the SDK nor `ai_utils` can turn it into a quiet fallback), and any attempt also fails the test at teardown. A test that stubs `ai_utils.get_client`, `create_with_retry` or `messages.create` never reaches it; with no key the SDK refuses before sending, so CI cannot trip it.
+
+iOS: `ios/CavnarAI/CavnarAITests/StaffSignInTests.swift`, `StaffTodayTests.swift`, `StaffRequestsMeInboxTests.swift` and `StaffTasksTests.swift` — the staff app's decoding (lenient: an odd or missing field never fails a screen), its sign-in and session rules, and the pure logic of each tab.
+
 ## Test file naming
 
 Files read as sentences, not identifiers — `test_a_new_share_gets_an_expiry_about_sixty_days_out`, not `test_share_expiry`. This is deliberate: a failing test's name should tell you what broke without opening the file.

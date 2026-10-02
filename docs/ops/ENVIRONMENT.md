@@ -75,11 +75,11 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TWILIO_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for owner alerts. | notify.py |
 | `TWILIO_OTP_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for sign-in codes. | notify.py |
 | `TWILIO_GUEST_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for guest marketing texts. | notify.py |
-| `TWILIO_STAFF_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for staff schedule texts (unset until that campaign is approved). | notify.py |
+| `TWILIO_STAFF_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for every staff text: a posted or changed week, and request notices (swaps, open shifts, time off), each only for an employee whose own consent covers that purpose (`preferences.staff_sms_scope`). Unset until the staff campaign is registered with the wording in `people.STAFF_SMS_CONSENT_TEXT`; while it is unset `people.staff_sms_ready()` is false, the staff app hides its "text me" switch (`sms_available`) and no staff text goes. | notify.py, people.py |
 | `SMS_TRACKED_LINKS` | `""` | 1 keys the link in alert texts for open tracking (off: the longer link can add a billed segment). | notify.py |
 | `PUBLIC_BASE_URL` | — | Origin for guest join links (`/g/<token>`); default `https://dashboard.cavnar.ai`. | guest_marketing.py |
 | `ALLOW_LEGACY_JOIN_LINKS` | `"0"` | Accept old unsigned guest join links (default 0). | guest_links.py |
-| `IOS_APP_STORE_URL` | — | The App Store link for the onboarding emails' "get the app" step, offered when no owner device is registered; empty leaves the step out. | scheduler.py |
+| `IOS_APP_STORE_URL` | — | The App Store link: the onboarding emails' "get the app" step (offered when no owner device is registered; empty leaves the step out), and the App Store button on the staff web page and the `/s/` schedule pages (empty: they name the TestFlight invite instead). | scheduler.py, staff_routes.py (client_api reads it through `staff_routes._app_url`) |
 
 ## Push
 
