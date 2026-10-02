@@ -56,7 +56,45 @@ _JWT_REMINT_REASONS = {"ExpiredProviderToken", "InvalidProviderToken", "TooManyP
 # the date-keyed collapse id would silently overwrite all but the last.
 _UNCOLLAPSIBLE_TYPES = {"login", "staff_signin", "issue", "issue_escalated", "coverage",
                         # each is its own staff request or held order (A-6, A-22)
-                        "shift_request", "order_send_held"}
+                        "shift_request", "order_send_held",
+                        # Every notice to an employee is its own event: "Drop
+                        # approved" and "You picked up a shift" on one day used
+                        # to share a date-keyed collapse id, so the second
+                        # replaced the first on the lock screen (COM-13).
+                        "staff_schedule", "staff_request", "staff_notice", "staff_reminder",
+                        "staff_announcement", "staff_urgent", "staff_message",
+                        # each message an employee sends the managers
+                        "employee_message"}
+
+# ── The staff tier (employee audit C4, 10/1/26) ─────────────────────────────
+#
+# A device registered from the staff app (POST /staff/api/device-tokens) is
+# filed with tier='staff'. The fan-out was owner-first: a restaurant-wide
+# push (user_ids=None) — the "New sign-in" alert with its IP, "Dana opened
+# the staff portal", every brief and alert — selected every active login's
+# phone at the restaurant, so the day staff phones registered, owner alerts
+# would have reached employees' lock screens (COM-03). Now a staff device is
+# reached only when the caller NAMES its login (user_ids), and only by one of
+# these types, whatever user_ids says.
+TIER_OWNER, TIER_STAFF = "owner", "staff"
+STAFF_ALERT_TYPES = frozenset({
+    "staff_schedule",      # a week posted or changed
+    "staff_request",       # a request decided, a swap asked of them, an open shift offered
+    "staff_notice",        # anything else addressed to one employee
+    "staff_reminder",      # their shift starts soon, a critical task is due (staff_reminders)
+    "staff_announcement",  # a manager's note to the team
+    "staff_urgent",        # an urgent announcement: breaks Focus (P1)
+    "staff_message",       # a reply in their thread with the manager on duty
+})
+# The staff app's tabs a notice may open (`tab` in the payload).
+STAFF_TABS = ("today", "tasks", "requests", "me", "inbox")
+STAFF_DEFAULT_TAB = {
+    "staff_schedule": "today", "staff_request": "requests", "staff_notice": "inbox",
+    "staff_reminder": "today", "staff_announcement": "inbox", "staff_urgent": "inbox",
+    "staff_message": "inbox",
+}
+# The id a staff nav path names after its tab ("staff/requests/12").
+_STAFF_NAV_IDS = ("request_id", "announcement_id", "thread_id", "assignment_id")
 
 
 class PushNotConfigured(RuntimeError):
@@ -74,7 +112,9 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     last_success_at      TEXT,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
-    disabled_reason      TEXT
+    disabled_reason      TEXT,
+    -- 'owner' (the console app) or 'staff' (the staff app, a PIN session).
+    tier                 TEXT NOT NULL DEFAULT 'owner'
 );
 CREATE TABLE IF NOT EXISTS push_deliveries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,31 +163,131 @@ CREATE INDEX IF NOT EXISTS idx_push_outbox_created ON push_outbox(created_at);
 
 
 def init_push(db_path=DB_PATH):
+    """Boot DDL (hosted_dashboard) — never on a request path."""
     conn = get_conn(db_path)
     conn.executescript(_SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(device_tokens)").fetchall()}
+    if "tier" not in cols:
+        conn.execute("ALTER TABLE device_tokens ADD COLUMN tier TEXT NOT NULL DEFAULT 'owner'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id, tier)")
     conn.commit()
     conn.close()
+    # The staff side of push — the reminder claims and the texts held through
+    # the night (staff_reminders) — made with push's own tables, at boot.
+    import staff_reminders
+    staff_reminders.init_staff_reminders(db_path)
 
 
-def register_device_token(user_id, restaurant_id, apns_token, environment="production", db_path=DB_PATH):
+def register_device_token(user_id, restaurant_id, apns_token, environment="production", db_path=DB_PATH,
+                          tier=TIER_OWNER):
     """Upsert by apns_token — a reinstall or token rotation just re-points the
     existing row (and clears any prior failure count), same idea as
-    webhooks.save_webhook()'s upsert-by-restaurant."""
+    webhooks.save_webhook()'s upsert-by-restaurant.
+
+    `tier` is the app that registered it: the console (TIER_OWNER, the
+    mobile route) or the staff app (TIER_STAFF, staff_device_routes). One
+    phone is one app in one mode, so a phone signed into the staff portal
+    moves its row to the staff tier, and back when the owner signs in."""
+    tier = TIER_STAFF if tier == TIER_STAFF else TIER_OWNER
     conn = get_conn(db_path)
     existing = conn.execute("SELECT id FROM device_tokens WHERE apns_token=?", (apns_token,)).fetchone()
     if existing:
         conn.execute(
-            """UPDATE device_tokens SET user_id=?, restaurant_id=?, environment=?,
+            """UPDATE device_tokens SET user_id=?, restaurant_id=?, environment=?, tier=?,
                consecutive_failures=0, disabled_reason=NULL WHERE apns_token=?""",
-            (user_id, restaurant_id, environment, apns_token)
+            (user_id, restaurant_id, environment, tier, apns_token)
         )
     else:
         conn.execute(
-            "INSERT INTO device_tokens (user_id, restaurant_id, apns_token, environment) VALUES (?,?,?,?)",
-            (user_id, restaurant_id, apns_token, environment)
+            "INSERT INTO device_tokens (user_id, restaurant_id, apns_token, environment, tier) VALUES (?,?,?,?,?)",
+            (user_id, restaurant_id, apns_token, environment, tier)
         )
     conn.commit()
     conn.close()
+
+
+def unregister_staff_devices(user_id, restaurant_id=None, apns_token=None, db_path=DB_PATH) -> int:
+    """Remove a staff login's staff-app devices — the one call for staff
+    sign-out, a PIN change or reset, and a deactivation or unlink (employee
+    audit C4). Narrowed to one location with `restaurant_id` and to one
+    phone with `apns_token`. Never touches an owner-tier row. Returns how
+    many rows went. Never raises."""
+    try:
+        sql = "DELETE FROM device_tokens WHERE user_id=? AND tier=?"
+        args = [int(user_id), TIER_STAFF]
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args.append(int(restaurant_id))
+        if apns_token:
+            sql += " AND apns_token=?"
+            args.append(str(apns_token))
+        conn = get_conn(db_path)
+        try:
+            n = conn.execute(sql, args).rowcount or 0
+            conn.commit()
+        finally:
+            conn.close()
+        return n
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="staff_device_unregister", context=f"user_id={user_id}", db_path=db_path)
+        except Exception:
+            pass
+        return 0
+
+
+def staff_device_users(restaurant_id, user_ids=None, db_path=DB_PATH) -> set:
+    """The logins with a live device here that a staff notice can reach:
+    the staff app's (an active membership here), or the console app's for a
+    manager who is also on the schedule. people.reach reads this, so "has
+    the app" means what fire_push will actually deliver to."""
+    try:
+        rows = get_device_tokens(restaurant_id, db_path, for_delivery=True, include_staff=True)
+    except Exception:
+        return set()
+    out = {int(r.get("user_id") or 0) for r in rows if int(r.get("restaurant_id") or 0) == int(restaurant_id)}
+    if user_ids is not None:
+        out &= {int(u) for u in user_ids if u is not None}
+    return out
+
+
+def console_user_ids(restaurant_id, db_path=DB_PATH) -> list:
+    """The logins a restaurant-wide CONSOLE alert is for — a sign-in with
+    its IP address, "Dana opened the staff portal": every console login
+    with a phone that hears about this restaurant, never an employee's,
+    whatever tier its phone registered under (COM-03). Pass it as
+    fire_push(user_ids=…)."""
+    try:
+        ids = {int(t.get("user_id") or 0) for t in get_device_tokens(restaurant_id, db_path, for_delivery=True)}
+        if not ids:
+            return []
+        conn = get_conn(db_path)
+        try:
+            marks = ",".join("?" * len(ids))
+            employees = {r[0] for r in conn.execute(
+                f"SELECT u.id FROM users u LEFT JOIN memberships m ON m.user_id=u.id AND m.restaurant_id=? "
+                f"WHERE u.id IN ({marks}) AND LOWER(COALESCE(m.role, u.role, '')) = 'employee'",
+                (int(restaurant_id), *sorted(ids))).fetchall()}
+        finally:
+            conn.close()
+        return sorted(ids - employees)
+    except Exception as e:
+        print(f"[push] console audience unreadable rid={restaurant_id}: {e}")
+        return []
+
+
+def token_may_receive(token_row, alert_type) -> bool:
+    """A staff-app device receives staff notices only (and a test push) —
+    the last gate before delivery, whoever asked: a caller that names an
+    employee's login for an owner type still never reaches their phone."""
+    try:
+        tier = token_row.get("tier")
+    except AttributeError:
+        tier = None
+    if tier == TIER_STAFF:
+        return alert_type in STAFF_ALERT_TYPES or alert_type == "test_push"
+    return True
 
 
 def remove_device_token(apns_token, db_path=DB_PATH):
@@ -157,18 +297,28 @@ def remove_device_token(apns_token, db_path=DB_PATH):
     conn.close()
 
 
-def get_device_tokens(restaurant_id, db_path=DB_PATH, for_delivery=False):
+def get_device_tokens(restaurant_id, db_path=DB_PATH, for_delivery=False, include_staff=False):
     """Every registered device for this restaurant.
 
     `for_delivery=True` drops the ones parked by repeated failures — sending
     to them is what filled push_deliveries with noise and, before the fix
     above, is what eventually deleted them. A parked token comes back on its
     own the next time the app launches and re-registers (register_device_token
-    clears both the counter and the reason)."""
+    clears both the counter and the reason).
+
+    Staff-app devices (tier 'staff') are left out unless `include_staff` —
+    fire_push passes it only when its caller named the logins (user_ids).
+    So every "who has a phone here" reader (the brief's audience, _reach,
+    the DSR, the alert channels) means the console's phones, and a
+    restaurant-wide alert can never reach an employee (COM-03). A staff
+    device is delivered to only while its membership here is active."""
     conn = get_conn(db_path)
     try:
         if not for_delivery:
-            rows = conn.execute("SELECT * FROM device_tokens WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+            sql = "SELECT * FROM device_tokens WHERE restaurant_id=?"
+            if not include_staff:
+                sql += " AND COALESCE(tier, 'owner') <> 'staff'"
+            rows = conn.execute(sql, (restaurant_id,)).fetchall()
             return [dict(r) for r in rows]
         # Delivery is narrower and wider than "registered here":
         # - only a login that is still active. A removed teammate's or a
@@ -179,17 +329,27 @@ def get_device_tokens(restaurant_id, db_path=DB_PATH, for_delivery=False):
         #   A device belonged to whichever location was open when it
         #   registered, so a multi-location owner heard about one (MOD-NOT-7).
         # One row per phone, even when it registered at several locations.
+        who = ("(COALESCE(d.tier, 'owner') <> 'staff' AND ("
+               "  d.restaurant_id = ? OR ("
+               "    COALESCE(u.role, 'client') IN ('client', 'owner') AND d.restaurant_id IN ("
+               "      SELECT o.id FROM restaurants o JOIN restaurants me ON me.id = ? "
+               "      WHERE TRIM(COALESCE(me.location_group, '')) <> '' "
+               "        AND TRIM(o.location_group) = TRIM(me.location_group) "
+               "        AND LOWER(TRIM(o.owner_email)) = LOWER(TRIM(me.owner_email))))))")
+        args = [restaurant_id, restaurant_id]
+        if include_staff:
+            # Only this location's staff devices, and only while the
+            # membership they signed in under is active: a deactivated or
+            # unlinked employee's phone stops hearing about the restaurant.
+            who = (f"({who} OR (d.tier = 'staff' AND d.restaurant_id = ? AND EXISTS ("
+                   "SELECT 1 FROM memberships m WHERE m.user_id = d.user_id "
+                   "AND m.restaurant_id = d.restaurant_id AND m.is_active = 1)))")
+            args.append(restaurant_id)
         rows = conn.execute(
             "SELECT d.* FROM device_tokens d JOIN users u ON u.id = d.user_id "
-            "WHERE d.disabled_reason IS NULL AND u.is_active = 1 AND ("
-            "  d.restaurant_id = ? OR ("
-            "    COALESCE(u.role, 'client') IN ('client', 'owner') AND d.restaurant_id IN ("
-            "      SELECT o.id FROM restaurants o JOIN restaurants me ON me.id = ? "
-            "      WHERE TRIM(COALESCE(me.location_group, '')) <> '' "
-            "        AND TRIM(o.location_group) = TRIM(me.location_group) "
-            "        AND LOWER(TRIM(o.owner_email)) = LOWER(TRIM(me.owner_email)))))"
+            f"WHERE d.disabled_reason IS NULL AND u.is_active = 1 AND {who} "
             "ORDER BY (d.restaurant_id = ?) DESC, d.id",
-            (restaurant_id, restaurant_id, restaurant_id)).fetchall()
+            (*args, restaurant_id)).fetchall()
     finally:
         conn.close()
     out, seen = [], set()
@@ -252,6 +412,15 @@ PRIORITY = {
     # To Will only (ops.alert_will): the scheduler stopped or a job is
     # overdue — every restaurant's data is going stale (DH2-2).
     "platform_alert": P1_ACT_NOW,
+    # Notices to one employee (the staff app). Worth today, never a Focus
+    # break — except an announcement the manager marked urgent ("storm:
+    # don't come in"). They had no entry, so P3, and opened Reviews (COM-13).
+    "staff_schedule": P2_OPPORTUNITY, "staff_request": P2_OPPORTUNITY, "staff_notice": P2_OPPORTUNITY,
+    "staff_reminder": P2_OPPORTUNITY, "staff_announcement": P2_OPPORTUNITY, "staff_message": P2_OPPORTUNITY,
+    "staff_urgent": P1_ACT_NOW,
+    # The other direction, to the console: an employee wrote to the manager
+    # on duty (staff_comms). A task like a staff request, never a Focus break.
+    "employee_message": P2_OPPORTUNITY,
 }
 # Which module a notification opens — the web tab ids (?tab=). The ONE map:
 # client_api._NOTIFICATION_MODULE is this dict (the bell's rows carry it),
@@ -266,7 +435,7 @@ NOTIFICATION_MODULE = {
     "unresponded": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
     "schedule_publish_pending": "labor", "schedule_publish_held": "labor",
-    "shift_request": "labor", "labor_reminder": "labor",
+    "shift_request": "labor", "labor_reminder": "labor", "employee_message": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "order_send_pending": "inventory", "order_send_held": "inventory", "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
@@ -288,6 +457,10 @@ NOTIFICATION_MODULE = {
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "data_source_down": "account", "data_source_restored": "account",
     "platform_alert": "home",
+    # The staff app, not a console module: the payload's `tab` and `nav`
+    # ("staff/requests/12") say where in it. A console phone that gets one
+    # (a manager on the schedule) degrades an unknown module to Home.
+    **{t: "staff" for t in STAFF_ALERT_TYPES},
 }
 
 
@@ -316,7 +489,7 @@ def audience_of(alert_type) -> str:
 ACTIONABLE_TYPES = frozenset({
     "health", "1star", "2star", "3star", "neg_spike", "edit_downgrade", "no_response",
     "unresponded", "negative_trend", "rating_threshold",
-    "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held",
+    "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held", "employee_message",
     "schedule_drafted",
     "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided",
     "ai_visibility_drop", "issue", "issue_escalated", "connection_lost", "data_source_down",
@@ -405,6 +578,25 @@ def _review_draft_ready(restaurant_id, review_id, db_path=DB_PATH) -> bool:
         return False
 
 
+def staff_tab(alert_type, data=None) -> str:
+    """The staff app tab a staff notice opens: the payload's own `tab` when
+    it names one of STAFF_TABS, else the type's default."""
+    tab = str((data or {}).get("tab") or "").strip().lower()
+    return tab if tab in STAFF_TABS else STAFF_DEFAULT_TAB.get(alert_type, "today")
+
+
+def staff_nav(alert_type, data=None) -> str:
+    """"staff/<tab>[/<id>]" — the staff app's address for a notice: the tab,
+    then the request, announcement, thread or task sheet it is about."""
+    data = data or {}
+    parts = ["staff", staff_tab(alert_type, data)]
+    for k in _STAFF_NAV_IDS:
+        if data.get(k) not in (None, ""):
+            parts.append(str(data[k]))
+            break
+    return "/".join(parts)
+
+
 def nav_for(alert_type, data=None) -> str:
     """The nav path (nav.py) a notification opens: the item when the payload
     names one, else the section, else the module. The same string rides the
@@ -414,6 +606,11 @@ def nav_for(alert_type, data=None) -> str:
     data = data or {}
     if data.get("nav"):
         return str(data["nav"])
+    if alert_type in STAFF_ALERT_TYPES:
+        return staff_nav(alert_type, data)
+    if alert_type == "employee_message":
+        # The console's Team inbox, on the thread when the payload names it.
+        return nav.path("labor", "inbox", data.get("thread_id"))
     if alert_type in _UNDOABLE_TYPES and data.get("delayed_action_id"):
         return nav.path("action", data["delayed_action_id"])
     if data.get("review_id"):
@@ -620,7 +817,16 @@ def _client():
 
 def _badge_for(device_token_row, db_path):
     """This login's unread count, for the app icon. The app asked for badge
-    authorization from the first launch and nothing ever set one."""
+    authorization from the first launch and nothing ever set one.
+
+    None (no badge key at all) for a staff-app device: the count is the
+    console's unread notifications — owner alerts — and must never land on
+    an employee's icon (COM-03)."""
+    try:
+        if device_token_row.get("tier") == TIER_STAFF:
+            return None
+    except AttributeError:
+        pass
     try:
         from models import unread_notification_count
         uid = int(device_token_row.get("user_id") or 0)
@@ -1131,6 +1337,9 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     data = dict(data or {})
     data.setdefault("restaurant_id", restaurant_id)
     data.setdefault("module", module_of(alert_type))
+    if alert_type in STAFF_ALERT_TYPES:
+        # The staff app routes on `tab` (+ the id) — every staff push says it.
+        data["tab"] = staff_tab(alert_type, data)
     # A review push carries whether its reply may be published from the
     # lock screen (read once here, not per device), and every push carries
     # where it opens (nav.py) — friction audit #3/#22.
@@ -1141,10 +1350,14 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     except Exception as e:
         print(f"[push] nav for {alert_type} failed: {e}")
     try:
-        tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
+        # A staff-app device only when the caller named its login, and only
+        # for a staff type (COM-03): a restaurant-wide push never reaches one.
+        tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True,
+                                   include_staff=user_ids is not None)
         if user_ids is not None:
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
+        tokens = [t for t in tokens if token_may_receive(t, alert_type)]
         # Each login's OWN choices at this location (preferences, memory
         # audit 9/29/26 owner_layers): push off, a type they muted, their own
         # quiet hours. They only ever take a push away from that login's own
@@ -1240,7 +1453,7 @@ def reap_push_outbox(db_path=DB_PATH, limit=200) -> dict:
             (f"-{PUSH_OUTBOX_STALE_MINUTES} minutes",)).rowcount
         conn.commit()
         rows = conn.execute(
-            "SELECT o.*, d.user_id, d.apns_token, d.environment, d.disabled_reason FROM push_outbox o "
+            "SELECT o.*, d.user_id, d.apns_token, d.environment, d.disabled_reason, d.tier FROM push_outbox o "
             "LEFT JOIN device_tokens d ON d.id=o.device_token_id WHERE o.state='queued' "
             "AND COALESCE(o.updated_at, o.created_at) < datetime('now', ?) ORDER BY o.id LIMIT ?",
             (f"-{PUSH_OUTBOX_STALE_MINUTES} minutes", int(limit))).fetchall()
@@ -1255,7 +1468,12 @@ def reap_push_outbox(db_path=DB_PATH, limit=200) -> dict:
         except (TypeError, ValueError):
             data = {}
         token_row = {"id": r["device_token_id"], "user_id": r["user_id"], "restaurant_id": r["restaurant_id"],
-                     "apns_token": r["apns_token"], "environment": r["environment"] or "production"}
+                     "apns_token": r["apns_token"], "environment": r["environment"] or "production",
+                     "tier": r["tier"] or TIER_OWNER}
+        if not token_may_receive(token_row, r["alert_type"]):
+            # The row moved to the staff app since this was queued.
+            _outbox_finish(r["id"], "failed", "the device is now a staff-app device", db_path)
+            continue
         with _executor_lock:
             if _queued >= _MAX_PUSH_QUEUED:
                 break

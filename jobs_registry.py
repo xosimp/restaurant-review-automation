@@ -426,6 +426,15 @@ JOBS = {
         label="DSR delivery", description="Send the DSR pushes held through each restaurant's quiet hours, once they end",
         target=("dsr.deliver", "release_held"), max_minutes=10),
 
+    # ── staff reminders, every 10 minutes (employee audit H3/M8) ─────────
+    "staff_reminders": dict(
+        # Sends: gated inside on scheduling_allowed (staff_reminders._allowed).
+        cadence="every 10 minutes", sla_minutes=60, sends=True, runnable=True,
+        label="Staff reminders",
+        description="Push each employee ~1 hour before a published shift and ~15 minutes before a critical "
+                    "task line is due (claimed once per person), and send the staff texts held overnight",
+        target=("staff_reminders", "run_job"), max_minutes=10),
+
     # ── every tick ──────────────────────────────────────────────────────
     "morning_brief": dict(
         cadence="every tick (each restaurant's own brief hour)", sla_minutes=60, sends=True, runnable=True,

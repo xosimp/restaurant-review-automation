@@ -4894,6 +4894,15 @@ def scheduler_loop():
                 from dsr.deliver import release_held
                 _ops.run_job("dsr_delivery", release_held)
 
+            # Every tick, claimed per 10-minute slot — staff reminders: a push
+            # about an hour before each published shift and ~15 minutes before
+            # a critical task line is due, each claimed once per person; then
+            # the staff texts held through the night (staff_reminders).
+            # Bounded and resumable inside.
+            if _ops.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
+                from staff_reminders import run_job as _run_staff_reminders
+                _ops.run_job("staff_reminders", _run_staff_reminders)
+
             # Every tick — scheduled posts, delayed actions whose undo window
             # closed, issue escalations, alerts held through a rush. Skipped
             # when a job's pulse ran them within the last interval.

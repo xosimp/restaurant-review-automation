@@ -362,6 +362,9 @@ def staff_out(monkeypatch):
     monkeypatch.setattr(notify, "send_sms", lambda to, msg, use_case="alert": out["sms"].append((to, msg)) or True)
     monkeypatch.setattr(emails, "deliver", lambda payload=None, restaurant_id=None, email_type=None, **k:
                         out["email"].append((payload["to"][0], payload["subject"], email_type)) or emails.SendResult(True))
+    # Midday at the restaurant: between 10pm and 8am a staff text is held
+    # until morning (people.deliver, employee audit M8), whenever the suite runs.
+    monkeypatch.setattr(people, "staff_local_now", lambda rid: dt.datetime(2026, 10, 1, 12, 0))
     return out
 
 
@@ -437,8 +440,11 @@ def test_the_drafted_push_goes_to_nobody_when_no_publisher_gets_the_brief(db, mo
 
 def test_a_shift_request_outcome_reaches_someone_with_no_email_by_text(db, staff_out, monkeypatch):
     rid = _restaurant(db)
-    monkeypatch.setattr(people, "reach", lambda r, names, db_path=None: {
-        n: {"push_user_id": None, "sms": "+15550001111", "email": None} for n in names})
+    # A consent on the current wording, which covers request notices
+    # (employee audit H14; one on the old wording covers the schedule only).
+    monkeypatch.setattr(people, "reach", lambda r, names, db_path=None, purpose=None: {
+        n: {"push_user_id": None, "sms": "+15550001111", "sms_scope": ["schedule", "request"], "email": None}
+        for n in names})
     n = shift_requests._email_staff(rid, ["Ana"], "Your shift is off your schedule", ["Approved."], db)
     assert n == 1 and staff_out["sms"] and not staff_out["email"]
 
