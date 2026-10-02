@@ -300,6 +300,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `square` / `square_routes` | 2 / 3 | Square provider / routes |
 | `staff_roster` | 2 | names and job roles |
 | `staff_routes` | 3 | the staff portal `/staff/*` |
+| `staff_account_routes` | 3 | an employee's own account on `staff_bp` (imported at the bottom of `staff_routes`): server sign-out, forgot PIN by text, delete my account, my email, switch location (answers the other location's PIN pad, never a PIN-less session); the Me tab's extra `/staff/api/me` fields; the owner notice on every self-signup claim |
 | `staff_schedule` | 2 | the published week as an employee sees it |
 | `status_manager` / `status_routes` | 2 / 3 | the public status page and incidents; `/health`'s body (`health_snapshot`: read-only, a write probe, disk state, the schema check against the reference built at boot, the volume marker); the scheduler heartbeat reads (`scheduler_heartbeat_age_minutes`, `scheduler_state(db_path)` — the one reading, with its `state` word, from the `scheduler_heartbeat` table, which only the loop writes) and `check_scheduler_liveness` (run by the supervisor; writes only `service_status`, and only when the row is not already saying so); the incident routes and `GET /admin/api/ops/state`, behind `auth.admin_required` |
 | `strategy_jobs` | 4 | the scheduled half of the strategic features |

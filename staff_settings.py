@@ -308,27 +308,53 @@ def _sync_portal_access(restaurant_id, name, active, db_path=DB_PATH):
     person's staff-portal membership (ending their sessions and PIN sign-in)
     and expires their schedule share links; reactivating restores the
     membership. The two were unrelated switches, so someone taken off the
-    roster kept reading the schedule (MOD-EMP-3 / DATA-59)."""
+    roster kept reading the schedule (MOD-EMP-3 / DATA-59).
+
+    Reactivating restores what the roster switch took away, and nothing
+    else (employee audit C9 / LG-05): never a login an owner unlinked as
+    claimed by the wrong person, nor one its holder deleted (unlinked_at /
+    deleted_at), and at most one employee login for the name — the most
+    recently claimed — and none if the name already has an active one. It
+    used to reactivate every row carrying the name, an impostor's included,
+    with its old PIN.
+
+    A failure here leaves a person off the roster still signed in, so it is
+    reported through ops.capture like the session revoke it calls (SEC-15)."""
     key = name_key(name)
     try:
+        import auth
+        if not active:
+            auth.expire_share_links(restaurant_id, name, db_path=db_path)
         conn = get_conn(db_path)
         try:
-            members = [r["id"] for r in conn.execute(
-                "SELECT id, employee_name FROM memberships WHERE restaurant_id=? AND employee_name IS NOT NULL",
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, employee_name, role, is_active, unlinked_at, deleted_at, claimed_at, updated_at "
+                "FROM memberships WHERE restaurant_id=? AND employee_name IS NOT NULL",
                 (restaurant_id,)).fetchall() if name_key(r["employee_name"]) == key]
-            if not active:
-                for r in conn.execute("SELECT id, employee_name FROM schedule_shares WHERE restaurant_id=?",
-                                      (restaurant_id,)).fetchall():
-                    if name_key(r["employee_name"]) == key:
-                        conn.execute("UPDATE schedule_shares SET expires_at=datetime('now') WHERE id=?", (r["id"],))
-                conn.commit()
         finally:
             conn.close()
-        import auth
-        for mid in members:
-            auth.set_membership_active(mid, restaurant_id, active, db_path=db_path)
+        if not active:
+            targets = [r["id"] for r in rows if r["is_active"]]
+        else:
+            ended = lambda r: r["unlinked_at"] or r["deleted_at"]
+            targets = [r["id"] for r in rows if not r["is_active"] and not ended(r) and r["role"] != "employee"]
+            if not any(r["is_active"] and r["role"] == "employee" for r in rows):
+                back = sorted((r for r in rows if not r["is_active"] and not ended(r) and r["role"] == "employee"),
+                              key=lambda r: (r["claimed_at"] or "", r["updated_at"] or "", r["id"]), reverse=True)
+                targets += [r["id"] for r in back[:1]]
+        for mid in targets:
+            try:
+                auth.set_membership_active(mid, restaurant_id, active, db_path=db_path)
+            except auth.NameTakenError as e:
+                print(f"[staff_settings] membership {mid} left inactive rid={restaurant_id}: {e}")
     except Exception as e:
-        print(f"[staff_settings] portal access sync failed rid={restaurant_id}: {e!r}")
+        try:
+            import ops
+            ops.capture(e, job="staff_portal_access_sync",
+                        context=f"rid={restaurant_id} active={active}",
+                        db_path=None if db_path == DB_PATH else db_path, restaurant_id=restaurant_id)
+        except Exception:
+            print(f"[staff_settings] portal access sync failed rid={restaurant_id}: {e!r}")
 
 
 # ── the roster ─────────────────────────────────────────────────────────────

@@ -346,21 +346,25 @@ def test_a_claim_that_fails_half_way_can_be_retried(db_path, monkeypatch):
     models.init_manual_team_members(db_path)
     models.add_manual_team_member(rid, "Jordan P.", "Bartender", db_path=db_path)
     monkeypatch.setattr(notify, "send_sms", lambda *a, **k: True)
+    monkeypatch.setenv("STAFF_SIGNUP_DEV_CODE", "1")     # the code back without a phone (C11)
     started = auth.start_staff_signup("5550142233", optin=True, db_path=db_path)
     token = auth.verify_staff_signup("5550142233", started["dev_code"], db_path=db_path)
 
-    real_set_pin = auth.set_membership_pin
+    # The claim is one transaction now (employee audit C9): a failure inside
+    # it writes nothing, so the name is still free and the token unspent.
+    real_write = auth._write_claim
     calls = {"n": 0}
 
-    def set_pin_locked_once(*a, **k):
+    def write_locked_once(*a, **k):
         calls["n"] += 1
         if calls["n"] == 1:
             raise sqlite3.OperationalError("database is locked")
-        return real_set_pin(*a, **k)
+        return real_write(*a, **k)
 
-    monkeypatch.setattr(auth, "set_membership_pin", set_pin_locked_once)
+    monkeypatch.setattr(auth, "_write_claim", write_locked_once)
     with pytest.raises(sqlite3.OperationalError):
         auth.claim_staff_name(token, rid, "Jordan P.", "5063", db_path=db_path)
+    assert "Jordan P." in [c["name"] for c in auth.claimable_names(rid, db_path=db_path)]
 
     done = auth.claim_staff_name(token, rid, "Jordan P.", "5063", db_path=db_path)   # the employee taps again
     assert done["employee_name"] == "Jordan P."
