@@ -293,7 +293,7 @@ def _season_values(slug, external_id) -> dict | None:
 def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
     """An admin's correction to one game: `changes` {field: value} over
     EDITABLE, `clear` the fields to hand back to the season file (they
-    take its value on the next load). Returns {"before", "after"}; raises
+    take its value now; the caller re-syncs the followers). Returns {"before", "after"}; raises
     ValueError on a bad value or LookupError when there is no such game."""
     bad = [k for k in list(changes or {}) + list(clear or ()) if k not in EDITABLE]
     if bad:

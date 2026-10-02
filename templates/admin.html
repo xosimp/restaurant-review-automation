@@ -2503,14 +2503,14 @@ async function opsEvents(){
     const undated = s.events.filter(e => !e.event_date).length;
     return `<section class="card" style="overflow:hidden">
       <div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>${esc(s.name)}</h2>
-        <span class="muted" style="font-size:12.5px">${esc(s.league || s.category)} · ${fmtN(s.events.length)} games · ${fmtN(s.followers)} following${undated ? ` · <span style="color:var(--amber)">${fmtN(undated)} without a date</span>` : ''}</span></div></div>
+        <span class="muted" style="font-size:12.5px">${esc(s.league || s.category)} · ${fmtN(s.events.length)} games · ${fmtN(s.followers)} following${undated ? ` · <span style="color:var(--amber)">${fmtN(undated)} without a date</span>` : ''}${s.needs_result ? ` · <span style="color:var(--amber)">${fmtN(s.needs_result)} if-necessary ${s.needs_result === 1 ? 'game needs' : 'games need'} a result or a cancellation</span>` : ''}</span></div></div>
       <div class="tw" style="border:0;border-radius:0;box-shadow:none"><table style="width:100%"><thead><tr><th>Week</th><th>Game</th><th>Date</th><th>Kickoff</th><th>TV</th><th>Status</th><th>Result</th><th></th></tr></thead><tbody>
       ${s.events.map(e => {
         const over = Object.keys(e.overrides || {});
         const st = (d.statuses || []).map(x => `<option value="${esc(x)}"${x === e.status ? ' selected' : ''}>${esc(x)}</option>`).join('');
         return `<tr data-ev="${e.id}" data-over="${esc(JSON.stringify(e.overrides || {}))}">
           <td class="muted">${esc(e.week || '')}</td>
-          <td><b>${e.home_away === 'home' ? 'vs' : 'at'} ${esc(e.opponent || '')}</b>${e.is_primetime ? ' <span class="chip">prime time</span>' : ''}${over.length ? ` <span class="chip warn" title="Corrected here: ${esc(over.join(', '))}">corrected</span>` : ''}</td>
+          <td><b>${e.home_away === 'home' ? 'vs' : 'at'} ${esc(e.opponent || '')}</b>${e.is_primetime ? ' <span class="chip">prime time</span>' : ''}${over.length ? ` <span class="chip warn" title="Corrected here: ${esc(over.join(', '))}">corrected</span>` : ''}${e.needs_result ? ` <span class="chip warn" title="An if-necessary game whose date has passed: enter its result, or set it cancelled if it was not played. Until then its night stays out of every baseline and is not measured.">needs a result</span>` : ''}</td>
           <td><input type="date" data-f="event_date" data-o="${esc(e.event_date || '')}" value="${esc(e.event_date || '')}" aria-label="Date"><span class="muted" style="font-size:11px;display:block">${esc(isoMdy(e.event_date))}</span></td>
           <td><input data-f="kickoff_local" data-o="${esc(e.kickoff_local || '')}" value="${esc(e.kickoff_local || '')}" placeholder="19:15" size="5" aria-label="Kickoff, 24-hour local"></td>
           <td><input data-f="broadcast" data-o="${esc(e.broadcast || '')}" value="${esc(e.broadcast || '')}" size="7" aria-label="Broadcast"></td>
