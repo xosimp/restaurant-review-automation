@@ -372,13 +372,23 @@ def _consented_phone(restaurant_id, phone, db_path=DB_PATH):
     return phone if notify.textable(phone, restaurant_id, "alert", db_path) else None
 
 
-def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", db_path=DB_PATH):
-    """One tap on "Ask Ana to cover": text Ana the cover request — or email
-    her when her number carries no SMS consent — and record that the
-    suggestion was taken. Only a person the coverage issue itself suggested
-    can be asked, and only while the issue is open.
+def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", db_path=DB_PATH, actor=None):
+    """One tap on "Ask Ana to cover": offer Ana the shift in the Cavnar AI
+    app (shift_requests.post_open_shift with offer_to — checked by the
+    claim's own rules first), told on her own channel (people.tell). Her
+    Accept is the claim: the week is written, and her answer lands on this
+    issue (mark_cover_answer), a yes resolving it. The ask used to be a text
+    saying "Reply to your manager to confirm", on the owner-alert campaign,
+    whose replies nobody read (employee audit H2 / COM-06).
 
-    Returns {"ok", "via", "name"} or {"ok": False, "error"}."""
+    Someone with no app login is still asked the old way — a text to a
+    consented number, or email — told to CALL their manager, since a reply
+    goes nowhere. Only a person the coverage issue itself suggested can be
+    asked, and only while the issue is open.
+
+    Returns {"ok", "via", "name", "offer_id"} or {"ok": False, "error"}.
+    `via` is "push" | "sms" | "email" | "app" (waiting in their app, no
+    notice delivered) for an offer; "sms" | "email" for the fallback."""
     import json as _json
     import issues
     import staff_settings as _ss
@@ -401,10 +411,25 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     r = get_restaurant(restaurant_id, db_path)
     place = (getattr(r, "location_name", None) or getattr(r, "name", None) or "the restaurant") if r else "the restaurant"
     missing, role, start = meta.get("missing") or "A teammate", meta.get("role") or "", meta.get("shift_start") or ""
-    text = (f"Cavnar AI · {place}: {missing} can't make today's {role + ' ' if role else ''}shift"
-            f"{' (' + start + ')' if start else ''}. Can you cover? Reply to your manager to confirm.")
-    contact = _staff_contact(restaurant_id, who, db_path)
+    tail = str(issue.get("source_key") or "").split(":")
+    day = tail[1] if len(tail) >= 3 else None
+    offer_id = None
     via = None
+    if day and meta.get("missing") and start:
+        import shift_requests as _sreq
+        try:
+            out = _sreq.post_open_shift(restaurant_id, day, start, employee=meta["missing"],
+                                        actor=actor or "coverage issue", offer_to=who, issue_id=issue_id,
+                                        db_path=db_path)
+            offer_id, via = out["offer"]["id"], out["offer"].get("via") or "app"
+        except _sreq.NotOnApp:
+            via = None                    # asked the old way below
+        except _sreq.ShiftRequestError as e:
+            return {"ok": False, "error": f"Couldn't offer {who} the shift: {e}."}
+    text = (f"Cavnar AI · {place}: {missing} can't make today's {role + ' ' if role else ''}shift"
+            f"{' (' + start + ')' if start else ''}. Can you cover? Call your manager to say yes or no — "
+            "a reply to this message isn't read.")
+    contact = {} if via else _staff_contact(restaurant_id, who, db_path)
     phone = _consented_phone(restaurant_id, contact.get("phone"), db_path)
     if phone:
         import notify
@@ -425,9 +450,12 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
         except Exception as e:
             log.warning("cover email failed rid=%s: %s", restaurant_id, e)
     if via is None:
-        return {"ok": False, "error": f"{who} has no consented phone or email on file — call them directly."}
-    meta.setdefault("asked", []).append({"name": who, "via": via,
-                                         "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})
+        return {"ok": False, "error": f"{who} isn't on the Cavnar AI app and has no consented phone or email on file "
+                                      "— call them directly."}
+    ask = {"name": who, "via": via, "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}
+    if offer_id:
+        ask["offer_id"] = offer_id        # answered in the app (shift_requests.respond_offer)
+    meta.setdefault("asked", []).append(ask)
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
@@ -442,7 +470,7 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
                           db_path=db_path)
     except Exception as e:
         log.warning("cover rec_ledger failed rid=%s: %s", restaurant_id, e)
-    return {"ok": True, "via": via, "name": who}
+    return {"ok": True, "via": via, "name": who, "offer_id": offer_id}
 
 
 def mark_cover_answer(restaurant_id, issue_id, name, accepted, db_path=None) -> bool:

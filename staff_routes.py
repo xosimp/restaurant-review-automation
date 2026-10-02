@@ -432,7 +432,19 @@ def api_shifts(current_user):
     if not name:
         return jsonify(ok=True, today=None, upcoming=[], week=[])
     from staff_schedule import shifts_for_employee
-    return jsonify(ok=True, **shifts_for_employee(rid, name))
+    # "Today" is the restaurant's service date, not the server's UTC one
+    # (employee audit C5): shifts_for_employee resolves it from the
+    # restaurant's clock.
+    out = shifts_for_employee(rid, name)
+    week_ids = out.pop("_week_ids", [])
+    # The app showed them the week: it counts as seen, as opening the
+    # emailed link does (COM-07). Never fails the read.
+    try:
+        from models import mark_schedule_shares_seen_in_app
+        mark_schedule_shares_seen_in_app(rid, week_ids, name)
+    except Exception as e:
+        print(f"[staff] schedule seen not recorded rid={rid}: {e!r}")
+    return jsonify(ok=True, **out)
 
 
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -552,17 +564,35 @@ def api_time_off_withdraw(request_id, current_user):
     return jsonify(ok=True)
 
 
+@staff_bp.route("/api/time-off/<int:request_id>/cancel", methods=["POST"])
+@staff_login_required
+def api_time_off_cancel(request_id, current_user):
+    """Call off approved time off before it starts. Direct, and the deciders
+    are told (time_off.cancel_approved, WF-21)."""
+    rid, name = _staff_context(current_user)
+    import time_off
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    row, err = time_off.cancel_approved(rid, request_id, name)
+    if err:
+        return jsonify(ok=False, error=err), 400
+    row.pop("decided_by", None)
+    return jsonify(ok=True, request=row)
+
+
 @staff_bp.route("/api/shift-requests")
 @staff_login_required
 def api_shift_requests(current_user):
-    """This employee's own requests to drop a published shift, and the
-    open shifts anybody on the roster can pick up."""
+    """This employee's own requests, the swaps asked of them, the shifts
+    offered to them by name, and the open shifts they could pick up — each
+    projected to what this reader may see: never another person's reason or
+    a manager's login (SEC-04). `open` leaves out their own shift and other
+    roles' shifts and says whether the claim would pass (WF-11)."""
     rid, name = _staff_context(current_user)
     import shift_requests
     if not name:
-        return jsonify(ok=True, requests=[], open=[], asks=[])
-    return jsonify(ok=True, requests=shift_requests.mine(rid, name), open=shift_requests.open_shifts(rid),
-                   asks=shift_requests.asked_of_me(rid, name))
+        return jsonify(ok=True, requests=[], open=[], asks=[], offers=[])
+    return jsonify(ok=True, **shift_requests.for_staff(rid, name))
 
 
 @staff_bp.route("/api/shift-requests", methods=["POST"])
@@ -574,56 +604,156 @@ def api_shift_request_drop(current_user):
     body = request.get_json(silent=True) or {}
     import shift_requests
     from time_utils import restaurant_now_by_id
+    swap = (body.get("kind") or "drop") == "swap"
     try:
-        today = restaurant_now_by_id(rid, naive=True).date()
-        if (body.get("kind") or "drop") == "swap":
+        # The restaurant's wall clock: a shift already started can't be
+        # dropped or swapped (LG-08), judged by its start, not its date.
+        now = restaurant_now_by_id(rid, naive=True)
+        if swap:
             row = shift_requests.request_swap(rid, name, body.get("date"), body.get("shift_start"),
                                               body.get("target_name"), body.get("target_date"), body.get("target_start"),
-                                              reason=body.get("reason"), today=today)
+                                              reason=body.get("reason"), now=now)
         else:
             row = shift_requests.request_drop(rid, name, body.get("date"), body.get("shift_start"),
-                                              reason=body.get("reason"), today=today)
+                                              reason=body.get("reason"), now=now)
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
     from models import log_event
     try:
-        log_event(rid, "shift_drop_requested", {"employee": name, "date": row["date"], "start": row["shift_start"]})
+        log_event(rid, "shift_swap_requested" if swap else "shift_drop_requested",
+                  {"employee": name, "date": row["date"], "start": row["shift_start"]})
     except Exception:
         pass
-    return jsonify(ok=True, request=row)
+    return jsonify(ok=True, request=shift_requests._for_requester(row))
+
+
+COLLEAGUE_JUDGE_SECONDS = 2.5
+
+
+def _coworkers_on(weeks, details, rows_by_week, on, me):
+    """Everyone else on the published week's `on` date: name, role, kitchen
+    station and times — what "who's on with me" shows (H7)."""
+    import staff_schedule
+    from schedule_rules import parse_minutes
+    owner = staff_schedule._owner_of(weeks, on)
+    if owner is None:
+        return [], False
+    stations = {}
+    for a in (((details[owner].get("review") or {}).get("stations") or {}).get("assigned") or []):
+        parts = [p for p in (a.get("morning"), a.get("night")) if p]
+        if parts:
+            stations[(" ".join(str(a.get("employee") or "").lower().split()), a.get("date"), a.get("shift_start"))] = \
+                " then ".join(dict.fromkeys(parts))
+    out = []
+    for r in rows_by_week[owner]:
+        if r["date"] != on.isoformat() or r["employee"].strip().lower() == me:
+            continue
+        out.append({"name": r["employee"], "role": r["role"] or None,
+                    "station": stations.get((" ".join(r["employee"].lower().split()), r["date"], r["shift_start"])),
+                    "shift_start": r["shift_start"], "shift_end": r["shift_end"]})
+    out.sort(key=lambda c: (9999 if parse_minutes(c["shift_start"]) is None else parse_minutes(c["shift_start"]),
+                            c["name"].lower()))
+    return out, True
 
 
 @staff_bp.route("/api/colleagues")
 @staff_login_required
 def api_colleagues(current_user):
-    """Who else is on the published week, with their shifts — what a swap
-    request needs to name. Names and shifts only; nothing else about them."""
+    """Two answers from the published weeks — names and shifts only,
+    nothing else about anybody.
+
+    `coworkers` — who's on with me (H7): everyone else working `date`
+    (YYYY-MM-DD, default the restaurant's service date) with role, kitchen
+    station and times; `posted` says whether a published week covers it.
+
+    `colleagues` — whom a swap can name: only people with an active
+    employee login (somebody who can answer, LG-12), only shifts not yet
+    started. With `shift_date` + `shift_start` (the shift being swapped),
+    only shifts in that shift's published week whose trade passes the role
+    and legality check both ways — what the server would accept (WF-08)."""
+    import time as _time
+    from datetime import date as _date
     rid, name = _staff_context(current_user)
     import staff_schedule
+    import shift_requests as _sr
     from schedule_versions import rows_from_csv
     from models import get_schedule_history_detail
     from time_utils import restaurant_now_by_id
     if not name:
-        return jsonify(ok=True, colleagues=[])
+        return jsonify(ok=True, colleagues=[], coworkers=[], date=None, posted=False)
+    now = restaurant_now_by_id(rid, naive=True)
+    today = staff_schedule.restaurant_today(rid, now)
+    try:
+        on = _date.fromisoformat(request.args["date"].strip()[:10]) if request.args.get("date") else today
+        sd = (request.args.get("shift_date") or "").strip()[:10]
+        if sd:
+            _date.fromisoformat(sd)
+    except ValueError:
+        return jsonify(ok=False, error="Dates are YYYY-MM-DD."), 400
+    ss_ = (request.args.get("shift_start") or "").strip()
     # Every published week still ahead, each date read from the week that
-    # owns it — the same reading the portal's own shifts use. This called a
-    # helper that no longer exists (_newest_published), so the swap picker
-    # was a 500.
-    today = restaurant_now_by_id(rid, naive=True).date()
-    weeks = staff_schedule._published_weeks(rid, today)
+    # owns it — the same reading the portal's own shifts use.
+    weeks = staff_schedule._published_weeks(rid, min(today, on))
+    me = name.strip().lower()
+    details = {w["id"]: (get_schedule_history_detail(w["id"], rid) or {}) for w in weeks}
+    rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
+    coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)
+
+    try:
+        from auth import get_memberships_for_restaurant
+        with_login = {_sr._key(m.get("employee_name")) for m in get_memberships_for_restaurant(rid, role="employee")}
+    except Exception:
+        with_login = set()
+    mine_week = mine_idx = mine_rows = constraints = None
+    if sd and ss_:
+        mine_week = staff_schedule._owner_of(weeks, _date.fromisoformat(sd))
+        if mine_week is not None:
+            mine_rows = rows_by_week[mine_week]
+            mine_idx = _sr._find(mine_rows, name, sd, ss_)
+        if mine_idx is None:
+            return jsonify(ok=True, colleagues=[], coworkers=coworkers, date=on.isoformat(), posted=posted,
+                           note="That shift isn't on your published schedule.")
+        import schedule_rules as _rules
+        dates = sorted({r["date"] for r in mine_rows if r.get("date")})
+        try:
+            constraints = _rules.build_constraints(rid, dates, [_date.fromisoformat(d).strftime("%A") for d in dates])
+        except Exception:
+            constraints = None
+    judge_until = _time.monotonic() + COLLEAGUE_JUDGE_SECONDS
     out = {}
     for w in weeks:
-        detail = get_schedule_history_detail(w["id"], rid) or {}
-        for r in rows_from_csv(detail.get("schedule_csv") or ""):
+        if mine_week is not None and w["id"] != mine_week:
+            continue
+        for r in rows_by_week[w["id"]]:
             d = staff_schedule._parse_day(r["date"])
             if not d or d < today or staff_schedule._owner_of(weeks, d) != w["id"]:
                 continue
-            if r["employee"].strip().lower() == name.strip().lower():
+            if r["employee"].strip().lower() == me or _sr._key(r["employee"]) not in with_login:
                 continue
-            out.setdefault(r["employee"], []).append({"date": r["date"], "day": r["day"], "role": r["role"],
-                                                      "shift_start": r["shift_start"], "shift_end": r["shift_end"]})
+            try:
+                _sr._gate(r["date"], r["shift_start"], r["shift_end"], now)
+            except _sr.ShiftRequestError:
+                continue
+            item = {"date": r["date"], "day": r["day"], "role": r["role"],
+                    "shift_start": r["shift_start"], "shift_end": r["shift_end"],
+                    "week_start": w["start"].isoformat() if w["start"] else None}
+            if mine_idx is not None:
+                if _time.monotonic() < judge_until:
+                    req = {"employee_name": name, "date": sd, "shift_start": mine_rows[mine_idx]["shift_start"],
+                           "target_name": r["employee"], "target_date": r["date"], "target_start": r["shift_start"]}
+                    try:
+                        _sr._swap_legal(rid, req, None, rows=mine_rows, constraints=constraints)
+                    except _sr.ShiftRequestError:
+                        continue
+                    item["checked"] = True
+                else:
+                    # Past the time budget: listed unjudged — the request
+                    # is still checked before anyone is asked.
+                    item["checked"] = False
+            out.setdefault(r["employee"], []).append(item)
     return jsonify(ok=True, colleagues=[{"name": n, "shifts": sorted(v, key=lambda x: (x["date"], x["shift_start"]))}
-                                        for n, v in sorted(out.items())])
+                                        for n, v in sorted(out.items())],
+                   coworkers=coworkers, date=on.isoformat(), posted=posted)
 
 
 @staff_bp.route("/api/preferences")
@@ -701,7 +831,35 @@ def api_shift_request_respond(request_id, current_user):
         row = shift_requests.respond_swap(rid, request_id, name, bool(body.get("accept")))
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True, request=row)
+    return jsonify(ok=True, request=shift_requests._for_colleague(row))
+
+
+@staff_bp.route("/api/offers/<int:offer_id>/respond", methods=["POST"])
+@staff_login_required
+def api_offer_respond(offer_id, current_user):
+    """{accept: bool} — this person's answer to a shift a manager offered
+    them by name (H2). Yes is the open-shift claim itself: the same
+    legality check, written into the published week; no tells the manager.
+    An offer made from a coverage issue answers that issue too."""
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("accept"), bool):
+        return jsonify(ok=False, error="accept must be true or false."), 400
+    import shift_requests
+    try:
+        out = shift_requests.respond_offer(rid, offer_id, name, body["accept"])
+    except shift_requests.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    from models import log_event
+    try:
+        log_event(rid, "shift_offer_answered", {"employee": name, "offer_id": offer_id, "accepted": body["accept"]})
+    except Exception:
+        pass
+    o = out["offer"]
+    return jsonify(ok=True, offer={"id": o["id"], "status": o["status"]},
+                   request=shift_requests._for_teammate(out["request"]) if out.get("request") else None)
 
 
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])
@@ -723,7 +881,7 @@ def api_open_shift_claim(request_id, current_user):
         log_event(rid, "open_shift_claimed", {"employee": name, "date": row["date"], "start": row["shift_start"]})
     except Exception:
         pass
-    return jsonify(ok=True, request=row)
+    return jsonify(ok=True, request=shift_requests._for_teammate(row))
 
 
 TASK_DATE_WINDOW_DAYS = 1

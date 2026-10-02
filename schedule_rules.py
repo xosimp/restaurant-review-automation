@@ -1160,11 +1160,17 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
         sibs = []
         group = ((me["location_group"] if me else "") or "").strip()
         if group:
+            # Every live published sibling week that overlaps the window,
+            # not just the sibling's newest: once a sibling published next
+            # week, this week's shifts there dropped out and a claim or swap
+            # here could double-book someone across sites (employee audit
+            # LG-20).
+            week_end = max(c.week_dates)
             for s in conn.execute("SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
                                   "WHERE location_group=? AND owner_email=? AND id<>?", (group, me["owner_email"], restaurant_id)).fetchall():
-                row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                                   "ORDER BY id DESC LIMIT 1", (s["id"],)).fetchone()
-                if row:
+                for row in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+                                        "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
+                                        (s["id"], window_start, week_end)).fetchall():
                     sibs.append((s["label"], row["schedule_csv"]))
     finally:
         conn.close()
@@ -1181,9 +1187,14 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             b = c.bucket(r["date"])
             if b in buckets:
                 c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
+    sib_seen = set()
     for label, csv_text in sibs:
         for r in rows_from_csv(csv_text):
             key = r["employee"].strip().lower()
+            sig = (label, key, r["date"], r["shift_start"])
+            if sig in sib_seen:
+                continue
+            sib_seen.add(sig)
             if r["date"] in c.week_dates:
                 c.blocked_dates.setdefault(key, {}).setdefault(r["date"], f"already scheduled at {label}")
             elif r["date"] >= window_start:

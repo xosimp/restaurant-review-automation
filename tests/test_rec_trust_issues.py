@@ -258,7 +258,9 @@ def test_ask_ana_to_cover_texts_her_consented_number_and_records_the_yes(db_path
     _contact(db_path, rid, name="Ana", phone="+15555550142")
     texts.clear()
     out = intraday.ask_to_cover(rid, cov["id"], "ana", user_id=9, db_path=db_path)
-    assert out == {"ok": True, "via": "sms", "name": "Ana"}
+    # Ana has no app login, so no in-app offer (offer_id None): she is asked
+    # the old way, told to call (employee audit H2).
+    assert out == {"ok": True, "via": "sms", "name": "Ana", "offer_id": None}
     assert len(texts) == 1 and "Dana K" in texts[0][1] and "cover" in texts[0][1]
     conn = get_conn(db_path)
     ev = conn.execute("SELECT event FROM rec_events WHERE restaurant_id=? AND key=?",

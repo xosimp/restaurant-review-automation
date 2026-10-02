@@ -4056,6 +4056,11 @@ def _rows_to_csv_text(rows: list) -> str:
     return "\n".join(lines)
 
 
+# Hard flags about the shift's staffing rather than the person on it: one the
+# week already had on a shift is not a newcomer's to answer for.
+_STAFFING_GAPS = frozenset({"no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
+
+
 def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, constraints=None):
     """(ok, reason): could `name` take rows[index] outright, by every rule
     the generation itself is checked against? One answer for the web and
@@ -4090,10 +4095,17 @@ def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, const
         trial = [dict(r) for r in rows]
         trial[index]["employee"] = name
 
-        def _hard_for_name(rs):
+        def _hard_for_name(rs, inherit=False):
+            # `inherit`: a staffing gap the week already had ON this shift
+            # (nobody until close, a floor short) is the week's, not the
+            # newcomer's — it was charged to whoever held the shift, so it
+            # read as new for anyone taking it, and a restaurant with any
+            # standing gap could never have a cover claimed or offered
+            # (employee audit B3, H2).
             return {(v["kind"], v["index"]): v for v in _rules.violations(rs, c)
-                    if v["hard"] and (v.get("employee") or "").strip().lower() == low}
-        before, after = _hard_for_name(rows), _hard_for_name(trial)
+                    if v["hard"] and ((v.get("employee") or "").strip().lower() == low
+                                      or (inherit and v.get("index") == index and v["kind"] in _STAFFING_GAPS))}
+        before, after = _hard_for_name(rows, inherit=True), _hard_for_name(trial)
         new = sorted((k for k in after if k not in before), key=lambda k: (k[1] != index, k[1]))
         if new:
             v = after[new[0]]

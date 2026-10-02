@@ -4617,6 +4617,14 @@ def scheduler_loop():
                 from strategy_jobs import run_labor_reminders
                 _ops.run_job("labor_reminders", run_labor_reminders)
 
+            # Hourly — shift requests whose shift has passed expire (a swap
+            # for last Tuesday no longer executes), and an open shift still
+            # unclaimed 12 hours before it starts goes back to the deciders
+            # once (shift_requests.run_open_shift_watch, employee audit C8/H9).
+            if _ops.claim_period("open_shift_watch", f"{today}-{now.hour}"):
+                from shift_requests import run_open_shift_watch
+                _ops.run_job("open_shift_watch", run_open_shift_watch)
+
             # Sunday 5am — let each restaurant's own clean and troubled weeks
             # nudge its quality weights (strategy_jobs.run_quality_calibration).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):

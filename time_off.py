@@ -25,6 +25,15 @@ def _as_date(s):
     return date.fromisoformat(str(s)[:10])
 
 
+def _today(restaurant_id, today=None):
+    """The restaurant's own date, never the server's: date.today() is UTC on
+    Railway, so after 7pm Central "today" was already tomorrow (C5)."""
+    if today:
+        return today
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True).date()
+
+
 def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_path=DB_PATH, today=None):
     """The employee's own request. Returns (row, error)."""
     name = (employee_name or "").strip()
@@ -34,7 +43,7 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
         s, e = _as_date(start), _as_date(end or start)
     except (TypeError, ValueError):
         return None, "Pick a start and end date."
-    today = today or date.today()
+    today = _today(restaurant_id, today)
     if e < s:
         return None, "The end date is before the start."
     if s < today:
@@ -71,10 +80,13 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
         import shift_requests as _sr
         from time_utils import mdy
         span = mdy(s.isoformat()) + ("" if e == s else f"–{mdy(e.isoformat())}")
+        why = _sr._clean(reason, 120)
         # The id rides along so the push offers Approve / Deny and opens
-        # this request, and it reaches whoever can decide it (F2-6).
+        # this request, and it reaches whoever can decide it (F2-6). The
+        # reason rides too: it was stored and left out (COM-14).
         _sr._tell_managers(restaurant_id, "Time off request",
-                           f"{name} asked for {span} off. Approve or decline it in Labor.", db_path,
+                           f"{name} asked for {span} off" + (f" — “{why}”" if why else "")
+                           + ". Approve or decline it in Labor.", db_path,
                            req={"id": row["id"], "request_kind": "time_off"})
     except Exception as ex:
         print(f"[time_off] manager notice failed rid={restaurant_id}: {ex!r}")
@@ -94,6 +106,41 @@ def withdraw(restaurant_id, request_id, employee_name, db_path=DB_PATH) -> bool:
         return cur.rowcount == 1
     finally:
         conn.close()
+
+
+def cancel_approved(restaurant_id, request_id, employee_name, db_path=DB_PATH, today=None):
+    """The employee calls off approved time off they no longer need — before
+    it starts. Direct, with a notice to the deciders rather than a second
+    approval: giving days back only makes the person available again, it
+    can't leave a shift uncovered, and "a changed mind is a new request" was
+    refused by the overlap rule (WF-21). The row reads 'withdrawn' with a
+    note, so the manager's list says what happened. Returns (row, error)."""
+    today = _today(restaurant_id, today)
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM staff_time_off WHERE id=? AND restaurant_id=? AND LOWER(employee_name)=LOWER(?) "
+                           "AND status='approved'", (int(request_id), restaurant_id, (employee_name or "").strip())).fetchone()
+        if not row:
+            return None, "That time off isn't yours, or isn't approved."
+        if _as_date(row["start_date"]) <= today:
+            return None, "That time off has already started — ask your manager to change it."
+        cur = conn.execute("UPDATE staff_time_off SET status='withdrawn', decision_note=? WHERE id=? AND status='approved'",
+                           ("Cancelled by the employee after approval.", row["id"]))
+        conn.commit()
+        if cur.rowcount != 1:
+            return None, "That time off was already changed."
+        row = dict(conn.execute("SELECT * FROM staff_time_off WHERE id=?", (row["id"],)).fetchone())
+    finally:
+        conn.close()
+    try:
+        import shift_requests as _sr
+        from time_utils import mdy_range
+        _sr._tell_managers(restaurant_id, "Time off cancelled",
+                           f"{row['employee_name']} no longer needs {mdy_range(row['start_date'], row['end_date'])} off — "
+                           "they're available again for the next draft.", db_path)
+    except Exception as ex:
+        print(f"[time_off] cancel notice failed rid={restaurant_id}: {ex!r}")
+    return row, None
 
 
 def published_conflicts(restaurant_id, employee_name, start, end, db_path=DB_PATH) -> list:
@@ -125,8 +172,10 @@ def published_conflicts(restaurant_id, employee_name, start, end, db_path=DB_PAT
 
 def mine(restaurant_id, employee_name, db_path=DB_PATH, today=None):
     """This employee's requests, upcoming first; decided ones from the last
-    60 days stay visible so the answer is not lost."""
-    today = today or date.today()
+    60 days stay visible so the answer is not lost. An approved one still
+    ahead carries `still_scheduled` — the published shifts inside it that
+    nobody has moved yet — and `can_cancel` (WF-21)."""
+    today = _today(restaurant_id, today)
     floor = (today - timedelta(days=60)).isoformat()
     conn = get_conn(db_path)
     try:
@@ -135,7 +184,22 @@ def mine(restaurant_id, employee_name, db_path=DB_PATH, today=None):
             "AND end_date >= ? ORDER BY start_date", (restaurant_id, (employee_name or "").strip(), floor)).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        r = dict(r)
+        r.pop("decided_by", None)       # a login id: nothing an employee needs (SEC-04)
+        ahead = _as_date(r["end_date"]) >= today
+        r["can_cancel"] = r["status"] == "approved" and _as_date(r["start_date"]) > today
+        r["still_scheduled"] = []
+        if r["status"] == "approved" and ahead:
+            try:
+                r["still_scheduled"] = published_conflicts(restaurant_id, r["employee_name"],
+                                                           max(_as_date(r["start_date"]), today).isoformat(),
+                                                           r["end_date"], db_path=db_path)
+            except Exception:
+                r["still_scheduled"] = []
+        out.append(r)
+    return out
 
 
 def pending(restaurant_id, db_path=DB_PATH):
@@ -151,7 +215,7 @@ def pending(restaurant_id, db_path=DB_PATH):
 def recent(restaurant_id, limit=30, db_path=DB_PATH, today=None):
     """Pending first, then everything decided that is still ahead or ended
     in the last 30 days — the manager's whole picture on one screen."""
-    today = today or date.today()
+    today = _today(restaurant_id, today)
     floor = (today - timedelta(days=30)).isoformat()
     conn = get_conn(db_path)
     try:
@@ -195,6 +259,19 @@ def _tell_requester(restaurant_id, row, db_path=DB_PATH):
         span = mdy_range(row["start_date"], row["end_date"])
         if row["status"] == "approved":
             title, lines = "Your time off is approved", [f"Your manager approved your time off {span}."]
+            # Approval doesn't move shifts already published: name them, so
+            # nobody assumes they're off a shift they're still on (WF-21).
+            try:
+                still = published_conflicts(restaurant_id, row["employee_name"], row["start_date"], row["end_date"],
+                                            db_path=db_path)
+            except Exception:
+                still = []
+            if still:
+                from time_utils import mdy
+                listed = ", ".join(f"{(c.get('day') or '')[:3]} {mdy(c['date'])} {c['shift_start']}".strip()
+                                   for c in still[:4]) + (f" and {len(still) - 4} more" if len(still) > 4 else "")
+                lines.append(f"You're still on the published schedule for {listed} — you're on it until your "
+                             "manager moves it, so check with them.")
         else:
             title, lines = "Your time off request was declined", [
                 f"Your manager declined your time off request for {span}. Talk to them if that is a problem."]
