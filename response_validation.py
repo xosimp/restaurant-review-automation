@@ -316,6 +316,15 @@ def _norm_direction(d):
     return None
 
 
+_DATE_ENTITY_RE = re.compile(r"^(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?|(?:mon|tues|wednes|thurs|fri|satur|sun)day|"
+                             r"(?:mon|tue|wed|thu|fri|sat|sun))$", re.I)
+
+
+def _entity_kind(e) -> str:
+    """"date" for a day or a weekday, "name" for a person, item or role."""
+    return "date" if _DATE_ENTITY_RE.match(str(e or "").strip()) else "name"
+
+
 def _paired_entity(t, c, claims, mentions):
     """The name a figure binds to in a paired list, or None. Within one
     sentence, N names mentioned together, then N figures with no name among
@@ -2754,6 +2763,20 @@ class _Run:
                 # on a live labor read (9/29/26).
                 here = _paired_entity(t, c, [cc for _k, cc in claims], mentions) or here
                 allowed = [f for f in facts if f.entity is None or f.entity.lower() == here]
+                if not allowed:
+                    # A date beside a person's or an item's figure qualifies
+                    # it, never takes it ("Slaone Arado's 47.8hr week (9/23)
+                    # ... $65.88" is Slaone's — 10/2/26, a live labor read):
+                    # each kind binds to the nearest mention of its OWN kind
+                    # in the sentence. A swap within one kind is still caught.
+                    lo = max(t.rfind(". ", 0, c["start"]), t.rfind("\n", 0, c["start"]))
+                    for f in facts:
+                        if not f.entity or _entity_kind(f.entity) == _entity_kind(here):
+                            continue
+                        same = [n for p, n in mentions if lo < p < c["start"]
+                                and _entity_kind(n) == _entity_kind(f.entity)]
+                        if same and same[-1] == f.entity.lower():
+                            allowed.append(f)
                 if not allowed:
                     self.emit("F2", "withhold", "drop", c["raw"], f"attached to {here}",
                               f"A figure here is attached to the wrong day or item: {c['raw']}.")

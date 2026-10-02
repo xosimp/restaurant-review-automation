@@ -10004,6 +10004,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ssf-day.closed{color:var(--ink3)}.ssf-day.closed .s,.ssf-day.closed .h{color:var(--ink3)}
 .ssf-ev{grid-column:2/-1;font-size:13px;line-height:1.4;color:var(--ember);margin-top:-4px}
 @media(max-width:640px){.ssf-head{grid-template-columns:minmax(0,1fr)}.ssf-cols,.ssf-day{grid-template-columns:72px 88px minmax(0,1fr) 48px;gap:10px}.ssf-day{font-size:14px}}
+/* Advanced: the switch and number rows read at the setup card's size
+   (owner, 10/2/26: "the small subtext is so tiny"). */
+#ss-settings .rul-sw .t{font-size:16px;line-height:1.45}
+#ss-settings .rul-sw .t small{font-size:14.5px;line-height:1.5;margin-top:4px}
+#ss-settings .rul-sw .t .ac-input.n{font-size:15.5px;width:70px}
 #ss-settings .sched-redo{display:grid!important;grid-template-columns:repeat(4,minmax(0,176px));gap:10px;align-items:center;padding:0;border:0;margin-top:4px}
 #ss-settings .sched-redo .sr-k{grid-column:1/-1;margin:0 0 2px}
 #ss-settings .sched-redo .sp{display:none}
@@ -10788,6 +10793,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .lrn-row .n{flex:none;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .lrn-row .n.on{color:var(--hb-good)}
 /* What the record says */
+/* Each block's heading in the brand ember, its note quieter beneath, so the
+   eye finds the headings first (owner, 10/2/26: "needs better distinction"). */
+#intel-body .lb2-sub{color:var(--ember);font-size:17px}
+#intel-body .lb2-sub small{display:block;margin:4px 0 0;font-size:14px;line-height:1.45;color:var(--ink3)}
 .int-rev{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:14.5px;color:var(--ink2);margin-bottom:6px}
 .int-rev .hb-num{font-size:26px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
 .int-rev .src{font-size:13px;color:var(--ink3)}
