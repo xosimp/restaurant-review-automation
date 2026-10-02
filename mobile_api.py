@@ -8059,3 +8059,34 @@ def _opening_headline(payload, briefing):
     if (payload.get("empty_state") or {}).get("active"):
         return "Not much to go on yet — connect your data and I can be useful."
     return "All clear. Ask me anything."
+
+
+# ── Website analytics (web_analytics, 10/2/26) — twins of client_api's ──────
+
+@mobile_bp.route("/web-analytics", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_web_analytics(current_user):
+    fn = _capi._do_web_analytics_get if request.method == "GET" else _capi._do_web_analytics_set
+    payload, status = fn(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/web-analytics/disconnect", methods=["POST"])
+@mobile_login_required
+def mobile_web_analytics_disconnect(current_user):
+    payload, status = _capi._do_web_analytics_disconnect(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/web-analytics/sync", methods=["POST"])
+@mobile_login_required
+def mobile_web_analytics_sync(current_user):
+    payload, status = _capi._do_web_analytics_sync(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/marketing/website")
+@mobile_login_required
+def mobile_marketing_website(current_user):
+    payload, status = _capi._do_marketing_website(current_user)
+    return jsonify(**payload), status

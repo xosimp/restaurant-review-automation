@@ -43,6 +43,8 @@ _UNTRUSTED_CONTENT_TOOLS = {
     "read_past_conversations", "read_recent_reads", "read_closeouts",
     # Competitor names are Google's listing text (re-audit 9/29/26, INVENTORY-6).
     "read_market_history",
+    # The top Google searches are what the public typed (web_analytics, 10/2/26).
+    "read_website_analytics",
 }
 
 _UNTRUSTED_NOTE = (
@@ -604,6 +606,28 @@ def _read_competitors(restaurant_id, limit=5):
         "competitors": out,
         "recommendations": recs,
     }
+
+
+def _read_website_analytics(restaurant_id, days=28):
+    """The restaurant's own website and Google search (web_analytics):
+    the last `days` against the `days` before, visits by channel, clicks out
+    to booking / ordering / checkout sites, the top searches, and each
+    spike, dip or 3-week run with what else happened that day. Moved
+    together is not caused — the basis says so."""
+    import web_analytics
+    try:
+        days = max(7, min(90, int(days or 28)))
+    except (TypeError, ValueError):
+        days = 28
+    s = web_analytics.summary(restaurant_id, days=days)
+    if not s.get("available"):
+        return {"has_data": False, "connected": s.get("connected"),
+                "why": ("website analytics are connected but not read yet" if s.get("connected")
+                        else "no website analytics connected (Account → Connections)")}
+    return {"has_data": True, "window_days": days, "totals": s.get("totals"), "channels": s.get("channels"),
+            "clicks_out": s.get("clicks"), "top_searches": (s.get("queries") or [])[:15],
+            "searches_through": s.get("queries_through"), "signals": (s.get("signals") or [])[:12],
+            "signals_basis": s.get("signals_basis")}
 
 
 def _read_marketing_posts(restaurant_id, limit=10):
@@ -2822,6 +2846,22 @@ TOOLS = [
             "description": "Marketing content history — what was generated, what was actually published, and its reach/engagement.",
             "input_schema": {"type": "object", "properties": {
                 "limit": {"type": "integer", "description": "Max posts (default 10, max 20)."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_website_analytics,
+        "module": "module_marketing",
+        "spec": {
+            "name": "read_website_analytics",
+            "description": ("The restaurant's own website (Google Analytics) and Google search (Search Console): "
+                            "visits, where they came from, clicks out to book a table / order / checkout, menu "
+                            "page views, Google search clicks and appearances, the top searches, and each spike, "
+                            "dip or 3-week run with what else happened that day (sales, games, posts, reviews). "
+                            "Use it for questions about the website, online traffic, search, or why bookings "
+                            "moved. What moved together is not proof of cause."),
+            "input_schema": {"type": "object", "properties": {
+                "days": {"type": "integer", "description": "Window in days (7-90, default 28)."}}},
         },
     },
     {

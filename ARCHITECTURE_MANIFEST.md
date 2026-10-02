@@ -322,6 +322,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `value_delivered` | 2 | the four value figures, never summed |
 | `waste_trend` | 2 | the waste trend engine and forecasts |
 | `weather` | 2 | NWS forecast, cached on the restaurant row; observed weather (`observation_station`, `fetch_observations`, `summarise_day` → `event_memory`'s `weather_daily`) |
+| `web_analytics` | 2 | the restaurant's website (GA4) and Google search (Search Console), read daily through a read-only service account (`GA_SERVICE_ACCOUNT_JSON`) into `web_analytics_daily`; `signals` — spikes, dips and 3-week runs against the same weekday, each with what else happened that day; `summary` for Marketing → Analytics and Ask (10/2/26) |
 | `webhook_routes` | 3 | inbound Stripe / DocuSign / Resend / Twilio (inbound SMS and the `/webhooks/twilio/status` delivery callbacks), the `/pay/<token>` links; billing state written through `_apply_state` (a failed write raises so the provider redelivers), holds only an admin lifts, one subscription per group, signature failures counted per provider (`_webhook_seen` → `webhook_verifications` and, like Resend and Twilio, `inbound_webhook_health`) |
 | `webhooks` | 2 | outbound webhook config and delivery: a `webhook_outbox` row before anything is queued, a bounded pool (`WEBHOOK_MAX_QUEUED`), an event id per delivery (`X-Cavnar-Event-Id`), delivery through `net_safety`, `reap_webhook_outbox`, `outbox_counts` |
 | `weekly_review` | 2 | the week in review |

@@ -77,6 +77,10 @@ SOURCES = {
     # benchmarks.MAX_BAND_AGE_WEEKS (8) × 7 = 56 days, past which the band
     # is withheld (re-audit #24: 49 here while the engine served to 56).
     "cohort":     {"label": "Peer benchmarks", "expected_lag": 7.0, "grace": 7.0, "horizon": 56},
+    # The website (web_analytics, 10/2/26): GA4 through yesterday when the
+    # 7am read works; Search Console runs 2-3 days behind on Google's side,
+    # so the newest day of either is what is dated.
+    "website":    {"label": "Website",        "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
 }
 # How often each source is refreshed when everything works, in hours, and
 # the owner's word for it. "Live" is said only of a source refreshed more
@@ -92,6 +96,7 @@ CADENCE = {
     "visibility": (168, "weekly"), "competitor": (168, "weekly"), "weather": (6, "every 6 hours"),
     "dsr": (24, "nightly, after close"), "depletion": (24, "nightly"),
     "cohort": (24, "nightly"),
+    "website": (24, "every morning"),
 }
 LIVE_WITHIN_HOURS = 1
 
@@ -979,6 +984,26 @@ def _competitor(r, conn, today, now, ctx, db_path=None):
     return _data_date_state("competitor", d, today, "Competitors read")
 
 
+def _website(r, conn, today, now, ctx, db_path=None):
+    """Dated by the newest day stored from GA4 or Search Console
+    (web_analytics_daily); not_connected with neither property set. A read
+    that failed carries its own sentence (web_analytics_error)."""
+    if not (_get(r, "ga4_property_id") or _get(r, "gsc_site_url")):
+        return _result("website", None, None, "No website analytics connected", state="not_connected")
+    try:
+        row = conn.execute("SELECT MAX(day) FROM web_analytics_daily WHERE restaurant_id=?", (_rid(r),)).fetchone()
+    except Exception:
+        row = None
+    d = _as_date(row[0] if row else None)
+    if d is None:
+        return _result("website", 0, None, "Not read yet", state="unknown",
+                       error=_get(r, "web_analytics_error") or None)
+    res = _data_date_state("website", d, today, "Website read")
+    if _get(r, "web_analytics_error"):
+        res["error"] = _get(r, "web_analytics_error")
+    return res
+
+
 def _cohort(r, conn, today, now, ctx, db_path=None):
     """Dated by the bands the restaurant is ACTUALLY compared with
     (Benchmarking re-audit #24, R2-8, R3-18): its owner-confirmed peer
@@ -1204,7 +1229,7 @@ _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, 
             "purchases": _purchases, "waste": _waste, "prices": _prices,
             "marketing": _marketing, "visibility": _visibility,
             "competitor": _competitor, "weather": _weather, "dsr": _dsr, "depletion": _depletion,
-            "cohort": _cohort}
+            "cohort": _cohort, "website": _website}
 
 
 def source_state(restaurant, key, db_path=None, now=None, context=None) -> dict:

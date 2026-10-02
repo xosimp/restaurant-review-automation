@@ -95,6 +95,7 @@ INTEGRATION_FIELDS = {
                "rpower_sync_error", "rpower_last_synced"),
     "backoffice": ("backoffice_api_key",),
     "reservations": ("reservation_api_key",),
+    "website": ("ga4_property_id", "gsc_site_url", "web_analytics_synced_at", "web_analytics_error"),
 }
 # The field(s) whose presence means "connected" — never their values.
 _CREDENTIAL_OF = {
@@ -106,6 +107,7 @@ _CREDENTIAL_OF = {
     "rpower": ("rpower_token",),
     "backoffice": ("backoffice_api_key",),
     "reservations": ("reservation_api_key",),
+    "website": ("ga4_property_id", "gsc_site_url"),
 }
 
 

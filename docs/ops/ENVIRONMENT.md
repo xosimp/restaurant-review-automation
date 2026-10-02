@@ -104,6 +104,9 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `META_APP_ID` | `""` | Meta app (Instagram/Facebook connect). | mobile_api.py, scheduler.py, social_routes.py |
 | `META_APP_SECRET` | `""` | Its secret. | scheduler.py, social_routes.py |
 | `META_REDIRECT_URI` | `"https://dashboard.cavnar.ai/instagram/callback"` | Meta OAuth callback. | mobile_api.py, social_routes.py |
+| `GA_SERVICE_ACCOUNT_JSON` | `""` | The Google service account (JSON key, or base64 of it) website analytics reads GA4 and Search Console with — read-only (`analytics.readonly`, `webmasters.readonly`). Unset: website analytics is dormant and the Connections card says so. Railway only, never the repo. | web_analytics.py |
+| `WEB_ANALYTICS_MAX_SECONDS` | `900` | The daily website-analytics read's wall-clock bound (resumable). | scheduler.py |
+| `RETAIN_WEB_ANALYTICS_DAYS` | `800` | How long the website's daily figures are kept (floor 400). | ops.py |
 | `META_LOGIN_CONFIG_ID` | `""` | The Facebook Login for Business configuration the Instagram & Facebook connect dialog names (`config_id`); unset sends the scope list instead (`meta_api.login_params`). | meta_api.py |
 | `META_GRAPH_VERSION` | `"v21.0"` | Graph API version (default v21.0). | meta_api.py |
 | `TOAST_API_BASE` | `"https://ws-api.toasttab.com"` | Toast API host. | toast.py |

@@ -2260,6 +2260,9 @@ _RETENTION_DAYS = {
     "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "shift_sections":        int(os.getenv("RETAIN_SHIFT_SECTIONS_DAYS", "730")),
     "staff_translations":    int(os.getenv("RETAIN_STAFF_TRANSLATIONS_DAYS", "90")),
+    # The website's daily figures (web_analytics): two years, so a year-on-year
+    # comparison stays possible.
+    "web_analytics_daily": int(os.getenv("RETAIN_WEB_ANALYTICS_DAYS", "800")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2293,6 +2296,7 @@ _RETENTION_COLUMN = {
     "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
+    "web_analytics_daily": "day",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2349,6 +2353,8 @@ RETENTION_FLOOR_DEFAULT_DAYS = 30
 # (_RETENTION_READERS, checked by the test); where the default IS the
 # floor, the window may be raised, never lowered.
 _RETENTION_FLOOR_DAYS = {
+    # The website (web_analytics): a year and a bit, so a year-on-year read stays possible.
+    "web_analytics_daily": 400,
     "ai_usage": 90, "ai_validation_log": 90, "activity_log": 90, "job_runs": 45, "job_failures": 30,
     "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
     "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
@@ -2418,6 +2424,8 @@ _RETENTION_ROLLUP = {
 # the raw rows no longer hold (the name is checked in its source). The binding readers only — the
 # longest windows and every lifetime reader (a mapped sweep, 9/29/26).
 _RETENTION_READERS = {
+    # Marketing's website card: a window and the one before it (Ask asks for up to 90 days).
+    "web_analytics_daily": (("web_analytics.summary", 180, None),),
     "pos_tickets": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
     "pos_ticket_lines": (("service_performance.summary", "service_performance.MAX_DAYS", None),),
     "pos_punches": (("service_performance.pay_and_tips", "service_performance.MAX_DAYS", None),),

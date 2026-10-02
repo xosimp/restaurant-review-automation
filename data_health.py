@@ -68,6 +68,7 @@ OWNER_LABEL = {
     "dsr": "Daily report", "depletion": "Depletion",
     # Benchmarking audit BM3-9 (Top-50 #22): the peer bands comparisons rest on.
     "cohort": "Peer comparison",
+    "website": "Website analytics",
 }
 
 # The module flags an owner sees, and the modules each one turns on. Intel
@@ -349,10 +350,11 @@ SCHED_TZ = "America/Chicago"
 SLOTS = {
     "pos": ((3,), None), "labor": ((3,), None), "sales": ((3,), None),
     "reviews": ((8, 12, 16, 20), None), "marketing": ((4,), None),
-    "competitor": ((6,), 0), "visibility": ((7,), 0),
+    "competitor": ((6,), 0), "visibility": ((7,), 0), "website": ((7,), None),
 }
 SLOT_WORD = {"pos": "POS sync", "labor": "Shift sync", "sales": "Sales sync", "reviews": "Review check",
-             "marketing": "Metrics sync", "competitor": "Competitor read", "visibility": "AI visibility check"}
+             "marketing": "Metrics sync", "competitor": "Competitor read", "visibility": "AI visibility check",
+             "website": "Website read"}
 # A nightly sync that ran at 3:02am still counts as current until the next
 # slot has had this long to finish (job jitter, a slow provider).
 CADENCE_SLACK_HOURS = 2
@@ -854,7 +856,8 @@ def _connect_hint(key) -> str:
             "competitor": "Refresh competitors on Intel",
             "visibility": "Run an AI visibility check on Intel",
             "weather": "Weather starts once your address is set",
-            "dsr": "Turn on the daily report in Account"}.get(key, "Connect it in Account")
+            "dsr": "Turn on the daily report in Account",
+            "website": "Connect Google Analytics in Account → Connections"}.get(key, "Connect it in Account")
 
 
 # ── before a model call ────────────────────────────────────────────────────

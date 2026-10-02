@@ -5286,6 +5286,10 @@ _UNGATED_PREFIXES = (
     # Integrations. Credential writes are principal_only in the handler.
     "/api/webhook", "/api/toast/", "/api/square/", "/api/clover/", "/api/rpower/",
     "/mobile/api/connections/", "/api/instagram-",
+    # Website analytics' connection (web_analytics, 10/2/26): the property ID
+    # and site URL, principal_only to change; its figures are under
+    # /api/marketing/website, gated by Marketing.
+    "/api/web-analytics", "/mobile/api/web-analytics",
     # Cross-module surfaces: they read several modules and belong to none
     # (Home, Ask Cavnar, the action/issue/goal/outcome loop, notifications,
     # the morning brief), so a single module gate would be wrong for them.

@@ -240,6 +240,11 @@ JOBS = {
         label="Competitor ratings", description="Daily re-read of the tracked competitors' ratings and review counts "
                     "and the restaurant's own (Places details only); the full analysis again when one moved",
         target=("scheduler", "run_daily_competitor_ratings"), max_minutes=25, lane="intel"),
+    "web_analytics": dict(
+        cadence="daily 7am CT", sla_minutes=26 * 60, sends=False, runnable=True,
+        label="Website analytics", description="Each connected website's Google Analytics and Search Console "
+                    "figures into web_analytics_daily (read-only; the first read backfills a year)",
+        target=("scheduler", "run_daily_web_analytics"), max_minutes=20, lane="intel"),
     "ai_visibility": dict(
         cadence="Mon 7am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="AI visibility", description="Weekly AI visibility checks for full-tier clients (Perplexity), on the Intel lane",
