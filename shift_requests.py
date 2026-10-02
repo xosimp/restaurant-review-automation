@@ -462,8 +462,11 @@ def for_staff(restaurant_id, employee_name, db_path=DB_PATH, now=None) -> dict:
     name = (employee_name or "").strip()
     out = {"requests": [_for_requester(r) for r in mine(restaurant_id, name, db_path=db_path)],
            "asks": [_for_colleague(r) for r in asked_of_me(restaurant_id, name, db_path=db_path, today=now.date())],
-           "offers": [_for_offer(o) for o in live_offers(restaurant_id, db_path=db_path, name=name, today=now.date())],
-           "open": []}
+           "offers": [], "open": []}
+    for o in live_offers(restaurant_id, db_path=db_path, name=name, today=now.date()):
+        item = _for_offer(o)
+        item["pickup_overtime_note"] = _overtime_note(restaurant_id, name, o, now.date(), db_path)
+        out["offers"].append(item)
     judged = 0
     for r in open_shifts(restaurant_id, db_path=db_path, today=now.date()):
         if r.get("offer_only"):
@@ -487,8 +490,28 @@ def for_staff(restaurant_id, employee_name, db_path=DB_PATH, now=None) -> dict:
                 if why.startswith("that's a "):
                     continue            # another role's shift: not theirs to see
                 item["can_take"], item["why_not"] = False, why
+        item["pickup_overtime_note"] = (_overtime_note(restaurant_id, name, r, now.date(), db_path)
+                                        if item["can_take"] else None)
         out["open"].append(item)
     return out
+
+
+def _overtime_note(restaurant_id, name, row, today, db_path=None):
+    """The viewer's own heads-up before taking this shift — "This 6h pickup
+    takes you past 40 hours that week (to 43h)." — or None
+    (staff_insights.pickup_overtime_note: hours only, never pay; nothing for
+    a salaried person or a shift whose times can't be read). Never raises."""
+    try:
+        s, e = shift_span(row.get("date"), row.get("shift_start"), row.get("shift_end"))
+        if s is None or e is None:
+            return None
+        import staff_insights
+        return staff_insights.pickup_overtime_note(restaurant_id, name, row.get("date"),
+                                                   round((e - s).total_seconds() / 3600.0, 2), today=today,
+                                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception as ex:
+        print(f"[shift_requests] overtime note skipped rid={restaurant_id}: {ex!r}")
+        return None
 
 
 def live_request_by_shift(restaurant_id, employee_name, db_path=DB_PATH) -> dict:
@@ -1462,23 +1485,25 @@ def _tell_staff(restaurant_id, people, subject, lines, db_path, channels=None) -
 
 
 def _tell_managers(restaurant_id, title, body, db_path, req=None):
+    # Its own type (re-audit A-6). As "coverage" it was P1 (broke Focus
+    # mode), labelled "Someone hasn't clocked in", opened Reviews on iOS
+    # and was dropped by the "calm" level and the briefing budget.
+    if req and req.get("id"):
+        # A request waiting on an answer goes through THE deciders helper
+        # (people.tell_deciders): it carries its id, so the push can offer
+        # Approve / Deny and open that request (push.CATEGORY_REQUEST,
+        # friction audit #22) — a time-off request as "time_off" — and it
+        # reaches the people who can decide it, whether or not their morning
+        # brief is on (F2-6). Never raises.
+        import people
+        people.tell_deciders(restaurant_id, title, body, request_id=req["id"],
+                             request_kind=req.get("request_kind") or "shift", db_path=db_path)
+        return
     try:
+        # A notice with nothing to decide (a swap done, a shift covered)
+        # goes to the brief's audience, as every other heads-up does.
         import strategy_jobs
-        # Its own type (re-audit A-6). As "coverage" it was P1 (broke Focus
-        # mode), labelled "Someone hasn't clocked in", opened Reviews on iOS
-        # and was dropped by the "calm" level and the briefing budget.
-        data = {"tab": "labor"}
-        kw = {}
-        if req and req.get("id"):
-            # A request waiting on an answer carries its id, so the push can
-            # offer Approve / Deny and open that request (push.CATEGORY_REQUEST,
-            # friction audit #22) — a time-off request as "time_off".
-            data.update(request_id=req["id"], request_kind=req.get("request_kind") or "shift")
-            # ...and it reaches the people who can decide it, whether or
-            # not their morning brief is on (F2-6).
-            from permissions import SCHEDULE_DRAFT
-            kw = {"deciders": True, "permissions": [SCHEDULE_DRAFT]}
-        strategy_jobs._reach(restaurant_id, "shift_request", title, body, data, db_path, lines=[body], **kw)
+        strategy_jobs._reach(restaurant_id, "shift_request", title, body, {"tab": "labor"}, db_path, lines=[body])
     except Exception as e:
         print(f"[shift_requests] manager notice failed rid={restaurant_id}: {e!r}")
 

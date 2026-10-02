@@ -257,6 +257,51 @@ def _no_real_email_or_sms(monkeypatch):
     yield
 
 
+class LiveAnthropicCall(BaseException):
+    """A test reached the real Anthropic API. A BaseException on purpose:
+    the SDK turns any Exception from its transport into APIConnectionError
+    and ai_utils turns that into a quiet fallback, so a live call (with the
+    checkout's real key, which scheduler.py loads from .env) would pass
+    unseen, and spend."""
+
+
+@pytest.fixture(autouse=True)
+def _no_live_anthropic_calls(monkeypatch):
+    """Any request the Anthropic SDK sends fails the test (employee audit B7
+    handoff). The guard sits on httpx's transport — what the SDK sends
+    through — so a test that stubs ai_utils.get_client, create_with_retry or
+    the client's messages.create never reaches it and is unaffected. With no
+    key the SDK refuses before sending, so CI never trips it; a checkout with
+    a real key does, which is the point. The attempt is also recorded and
+    failed at teardown, in case a caller swallowed even this."""
+    import httpx
+    hits = []
+
+    def _blocked(url):
+        host = str(getattr(url, "host", "") or "")
+        return host == "anthropic.com" or host.endswith(".anthropic.com")
+
+    real_send, real_async_send = httpx.Client.send, httpx.AsyncClient.send
+
+    def send(self, request, *a, **k):
+        if _blocked(request.url):
+            hits.append(str(request.url))
+            raise LiveAnthropicCall(f"test tried to call the Anthropic API ({request.url}) — stub the model call")
+        return real_send(self, request, *a, **k)
+
+    async def async_send(self, request, *a, **k):
+        if _blocked(request.url):
+            hits.append(str(request.url))
+            raise LiveAnthropicCall(f"test tried to call the Anthropic API ({request.url}) — stub the model call")
+        return await real_async_send(self, request, *a, **k)
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", async_send)
+    yield hits                     # the guard's own test clears what it tripped on purpose
+    if hits:
+        pytest.fail(f"a live Anthropic call was attempted: {hits[:3]}", pytrace=False)
+
+
 _DB_TEMPLATE = None
 
 

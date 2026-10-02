@@ -309,8 +309,15 @@ def update_person(restaurant_id, key, fields, updated_by=None, may_manage_logins
     if "pin" in f or "job_title" in f:
         if not may_manage_logins:
             raise PersonError("Only the account owner can change a staff login.")
-        member = next((m for m in _memberships(restaurant_id, db)
-                       if staff_settings.name_key(m.get("employee_name")) == staff_settings.name_key(name)), None)
+        # The person's live login: the active one (one per name, B1's rule),
+        # else the newest that was neither unlinked nor deleted. The first
+        # row under the name — an old, switched-off login — used to win and
+        # take the PIN (LG-13).
+        mine = [m for m in _memberships(restaurant_id, db)
+                if staff_settings.name_key(m.get("employee_name")) == staff_settings.name_key(name)
+                and not m.get("unlinked_at") and not m.get("deleted_at")]
+        mine.sort(key=lambda m: (bool(m.get("is_active")), m.get("id") or 0), reverse=True)
+        member = mine[0] if mine else None
         if not member:
             raise PersonError(f"{name} has no staff login yet — add one in Account → People.")
         if "pin" in f:
@@ -909,7 +916,9 @@ NAME_STORES = (
     {"table": "staff_first_seen", "cols": ("employee_name",), "unique": ("employee_name",), "fold": "tenure"},
     {"table": "manual_team_members", "cols": ("employee_name",), "unique": ("employee_name",), "fold": "fill"},
     {"table": "staff_time_off", "cols": ("employee_name",)},
-    {"table": "shift_change_requests", "cols": ("employee_name", "replacement_name")},
+    # The person asked to swap (target_name) is another person's mention:
+    # renamed with them, cleared — not deleted — when they are erased.
+    {"table": "shift_change_requests", "cols": ("employee_name", "replacement_name", "target_name")},
     {"table": "schedule_shares", "cols": ("employee_name",)},
     {"table": "memberships", "cols": ("employee_name",)},
     {"table": "staff_pairs", "cols": ("employee_a", "employee_b"), "fold": "pairs", "no_person_id": True},
@@ -932,6 +941,34 @@ NAME_STORES = (
     # name, so these are re-keyed, not just re-pointed (_repoint_patterns).
     {"table": "schedule_standing_patterns", "cols": ("employee",), "fold": "patterns", "no_create": True},
     {"table": "schedule_pattern_dismissals", "cols": ("employee",), "fold": "patterns", "no_create": True},
+    # The staff app (employee audit fix round, 10/2/26). Each is keyed by the
+    # name (or by the login, which a rename leaves alone) and carries no
+    # person_id; a rename re-points the name, an erase deletes the rows. An
+    # open shift offered to them; their running-late reports; the
+    # announcements they were sent; their thread with the managers (its
+    # messages go with it — `children`); held texts and reminder claims
+    # (a held text is delivered to its employee_name); their certificates.
+    {"table": "shift_offers", "cols": ("name",), "key": "name_key", "no_person_id": True},
+    {"table": "staff_running_late", "cols": ("employee_name",), "key": "employee_key", "no_person_id": True},
+    {"table": "staff_announcement_recipients", "cols": ("employee_name",), "no_person_id": True},
+    {"table": "staff_threads", "cols": ("employee_name",), "no_person_id": True,
+     "children": (("staff_thread_messages", "thread_id"),)},
+    {"table": "staff_notices", "cols": ("employee_name",), "no_person_id": True},
+    {"table": "staff_certs", "cols": ("employee_name",), "key": "employee_key", "unique": ("employee_key", "cert"),
+     "fold": "newest", "no_person_id": True},
+)
+
+# Stores keyed only by a staff login (memberships.id), with no name to
+# match: erase_person deletes the rows of every login the person held here
+# (after the NAME_STORES pass; a rename needs nothing — the login keeps its
+# id). (table, membership column, child tables deleted first as (table, fk)).
+MEMBERSHIP_STORES = (
+    ("staff_shift_pulse", "membership_id", ()),
+    ("staff_calendar_links", "membership_id", ()),
+    ("staff_language", "membership_id", ()),
+    ("staff_running_late", "membership_id", ()),
+    ("staff_announcement_recipients", "membership_id", ()),
+    ("staff_threads", "membership_id", (("staff_thread_messages", "thread_id"),)),
 )
 
 # A source name as aliases store it.
@@ -2223,8 +2260,12 @@ def erase_person(restaurant_id, person_id, user=None, db_path=None) -> dict:
     file, a salaried entry removed, their aliases, questions and merge
     records gone, and their people row left as an anonymous tombstone
     ("Erased #id", so ids elsewhere still resolve to nobody). Where another
-    person's row only mentions them (a shift request's replacement) the
-    mention is cleared, not the row.
+    person's row only mentions them (a shift request's replacement or swap
+    target) the mention is cleared, not the row. The staff app's records go
+    too: offers, running-late reports, announcement receipts, their message
+    thread, held texts, certificates (NAME_STORES), and what their staff
+    logins here hold by login alone — the after-shift pulse and its notes,
+    calendar feeds, their language (MEMBERSHIP_STORES).
 
     Refused while they are on the active roster or hold a staff login —
     take them off the roster and remove the login first. Not touched: the
@@ -2286,12 +2327,39 @@ def erase_person(restaurant_id, person_id, user=None, db_path=None) -> dict:
                     if store.get("where"):
                         where += f" AND {store['where']}"
                     if i == 0 or store.get("fold") == "pairs":
+                        for child, fk in store.get("children") or ():
+                            if child in have:
+                                n += conn.execute(f"DELETE FROM {child} WHERE {fk} IN (SELECT id FROM {table} "
+                                                  f"WHERE {where})", args).rowcount or 0
                         cur = conn.execute(f"DELETE FROM {table} WHERE {where}", args)
                     else:
                         cur = conn.execute(f"UPDATE {table} SET {col}=NULL WHERE {where}", args)
                     n += cur.rowcount or 0
             if n:
                 erased[table] = n
+        # What their staff logins here hold under the login alone — the
+        # after-shift pulse and its notes, calendar feeds, their language,
+        # and anything above a rename left under another spelling.
+        if "memberships" in have:
+            mids = [r[0] for r in conn.execute(
+                f"SELECT id FROM memberships WHERE restaurant_id=? AND ({m_pid}"
+                f"cav_name_key(employee_name) IN ({marks}))",
+                (restaurant_id, *([pid] if m_pid else []), *keys)).fetchall()]
+            if mids:
+                mm = ",".join("?" * len(mids))
+                for table, col, children in MEMBERSHIP_STORES:
+                    if table not in have:
+                        continue
+                    n = 0
+                    for child, fk in children:
+                        if child in have:
+                            n += conn.execute(f"DELETE FROM {child} WHERE {fk} IN (SELECT id FROM {table} WHERE "
+                                              f"restaurant_id=? AND {col} IN ({mm}))",
+                                              (restaurant_id, *mids)).rowcount or 0
+                    n += conn.execute(f"DELETE FROM {table} WHERE restaurant_id=? AND {col} IN ({mm})",
+                                      (restaurant_id, *mids)).rowcount or 0
+                    if n:
+                        erased[table] = erased.get(table, 0) + n
         # The shift file.
         import csv as _csv
         import io as _io

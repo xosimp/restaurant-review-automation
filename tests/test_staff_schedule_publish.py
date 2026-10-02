@@ -44,9 +44,17 @@ def _submit_availability(client, token, days, note="", extra=None):
     CSRF pair (cookie + hidden field) — see staff_schedule_page's comment
     on why the route isn't exempted from CSRF. A MultiDict, because
     `unavailable` is a repeated field."""
+    import html
+    import re
     from werkzeug.datastructures import MultiDict
     client.set_cookie("csrf_js", "tok-for-test", domain="localhost")
     items = [("unavailable", d) for d in days]
+    # The version of the record the page showed (B8): a save without it is
+    # refused as stale, as a tab opened before the field existed would be.
+    page = client.get(f"/s/{token}").get_data(as_text=True)
+    seen = re.search(r'name="updated_at" value="([^"]*)"', page)
+    if seen:
+        items.append(("updated_at", html.unescape(seen.group(1))))
     items.append(("note", note))
     items.append(("csrf_token", "tok-for-test"))
     items.extend(extra or [])

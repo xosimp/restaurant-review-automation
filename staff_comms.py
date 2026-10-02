@@ -148,10 +148,21 @@ def init_staff_comms(db_path=None):
             delivered_via    TEXT,
             delivered_at     TEXT,
             acked_at         TEXT,
+            created_at       TEXT    DEFAULT (datetime('now')),
             UNIQUE(announcement_id, membership_id)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_ann_rcpt_member ON staff_announcement_recipients"
                      "(restaurant_id, membership_id, acked_at)")
+        # Its retention stamp (ops._RETENTION_DAYS): a database made before
+        # it had the column gets it here, filled from the announcement.
+        if "created_at" not in {r[1] for r in conn.execute("PRAGMA table_info(staff_announcement_recipients)")}:
+            conn.execute("ALTER TABLE staff_announcement_recipients ADD COLUMN created_at TEXT")
+            conn.execute("UPDATE staff_announcement_recipients SET created_at=(SELECT a.created_at FROM "
+                         "staff_announcements a WHERE a.id=announcement_id) WHERE created_at IS NULL")
+        # The retention deletes' indexes (ops._RETENTION_COLUMN).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_ann_rcpt_created ON staff_announcement_recipients(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_ann_created ON staff_announcements(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_running_late_date ON staff_running_late(business_date)")
         conn.execute("""CREATE TABLE IF NOT EXISTS staff_threads (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
@@ -180,6 +191,7 @@ def init_staff_comms(db_path=None):
                      "(thread_id, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_msg_unread ON staff_thread_messages"
                      "(restaurant_id, sender_kind, read_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_msg_created ON staff_thread_messages(created_at)")
         conn.commit()
     finally:
         conn.close()
@@ -463,6 +475,17 @@ def report_late(restaurant_id, membership, shift_date, shift_start, eta_minutes,
                           db_path=db_path)
     except Exception as e:
         log.warning("staff_comms: attendance self-report failed rid=%s: %r", restaurant_id, e)
+    # A "hasn't clocked in" issue already open for this shift says what they
+    # told us now (the coverage check names a report only when it opens one).
+    try:
+        import issues
+        hold = late_hold(restaurant_id, name, row["shift_start"], local, restaurant=restaurant, db_path=db_path)
+        if hold:
+            kw = {"db_path": db_path} if db_path else {}
+            issues.note_running_late(restaurant_id, {day.isoformat(), local.date().isoformat()},
+                                     {key, _nk(name)}, hold_sentence(hold), **kw)
+    except Exception as e:
+        log.warning("staff_comms: coverage issue note failed rid=%s: %r", restaurant_id, e)
     told = bool(rec["told_at"])
     if not told:
         arrive = (due + timedelta(minutes=eta)) if due else None
@@ -705,8 +728,8 @@ def create_announcement(restaurant_id, user, title, body="", priority="normal", 
                             exp.isoformat() if exp else None, (user or {}).get("id"), who, now)).lastrowid
         for m in members:
             conn.execute("INSERT OR IGNORE INTO staff_announcement_recipients (restaurant_id, announcement_id, "
-                         "membership_id, employee_name) VALUES (?,?,?,?)",
-                         (restaurant_id, aid, m["id"], " ".join(m["employee_name"].split())))
+                         "membership_id, employee_name, created_at) VALUES (?,?,?,?,?)",
+                         (restaurant_id, aid, m["id"], " ".join(m["employee_name"].split()), now))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -742,11 +765,18 @@ def _deliver_announcement(restaurant_id, aid, title, body, priority, members, db
     except Exception as e:
         log.warning("staff_comms: reach failed rid=%s: %r", restaurant_id, e)
         channels = {}
-    head = ("Urgent: " if priority == "urgent" else "") + title
-    first = body.split("\n", 1)[0] if body else title
-    lines = [first] + ([body] if body and body != first else [])
     counts = {"push": 0, "sms": 0, "email": 0, "none": 0}
     for m, name in zip(members, names):
+        # In the recipient's language when they set one (staff_knowledge,
+        # V11): the manager wrote it, so it is approved text; the
+        # translation is cached per language, so a crew of ten Spanish
+        # readers costs one model call per text, and the inbox reads the
+        # same cache. Untranslated (a failure, a refusal) it goes as written.
+        t_title, t_body = _translated(m["id"], title, restaurant_id, db_path), \
+            (_translated(m["id"], body, restaurant_id, db_path) if body else body)
+        head = ("Urgent: " if priority == "urgent" else "") + t_title
+        first = t_body.split("\n", 1)[0] if t_body else t_title
+        lines = [first] + ([t_body] if t_body and t_body != first else [])
         via = _tell_staff(restaurant_id, name, head, lines, email_type="staff_announcement",
                           data={"kind": "announcement", "announcement_id": aid, "nav": "inbox"},
                           priority="urgent" if priority == "urgent" else None,
@@ -762,6 +792,20 @@ def _deliver_announcement(restaurant_id, aid, title, body, priority, members, db
         finally:
             conn.close()
     return counts
+
+
+def _translated(membership_id, text, restaurant_id, db_path=None, cache_only=False) -> str:
+    """staff_knowledge.translate_for — `text` in this login's language, or
+    as written. Never raises."""
+    try:
+        import staff_knowledge
+        kw = {"restaurant_id": restaurant_id, "cache_only": cache_only}
+        if db_path:
+            kw["db_path"] = db_path
+        return staff_knowledge.translate_for(membership_id, text, **kw)
+    except Exception as e:
+        log.warning("staff_comms: translation skipped rid=%s: %r", restaurant_id, e)
+        return text
 
 
 def _announcement_out(a, rcpts, local_day=None) -> dict:
@@ -865,9 +909,27 @@ def staff_announcements(restaurant_id, membership_id, now_local=None, db_path=No
             (restaurant_id, membership_id, local.date().isoformat())).fetchall()
     finally:
         conn.close()
-    out = [{"id": r["id"], "title": r["title"], "body": r["body"], "priority": r["priority"],
-            "created_at": iso(r["created_at"]), "created_by_name": r["created_by_name"] or "",
-            "expires_on": r["expires_on"], "acked_at": iso(r["acked_at"])} for r in rows]
+    # In the reader's language when one is set and delivery translated it
+    # (the cache only — a list read never calls the model), with what the
+    # manager wrote beside it: `original_title` / `original_body`.
+    lang = "en"
+    try:
+        import staff_knowledge
+        lang = staff_knowledge.language_for(membership_id, **({"db_path": db_path} if db_path else {}))
+    except Exception:
+        lang = "en"
+    out = []
+    for r in rows:
+        item = {"id": r["id"], "title": r["title"], "body": r["body"], "priority": r["priority"],
+                "created_at": iso(r["created_at"]), "created_by_name": r["created_by_name"] or "",
+                "expires_on": r["expires_on"], "acked_at": iso(r["acked_at"]), "language": lang,
+                "translated": False, "original_title": None, "original_body": None}
+        if lang != "en":
+            t = _translated(membership_id, r["title"], restaurant_id, db_path, cache_only=True)
+            b = _translated(membership_id, r["body"], restaurant_id, db_path, cache_only=True) if r["body"] else r["body"]
+            if t != r["title"] or b != r["body"]:
+                item.update(title=t, body=b, translated=True, original_title=r["title"], original_body=r["body"])
+        out.append(item)
     out.sort(key=lambda x: x["acked_at"] is not None)          # stable: unread first, newest within
     return out
 

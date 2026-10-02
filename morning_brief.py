@@ -24,9 +24,22 @@ import logging
 import config
 from datetime import date, datetime, timedelta
 
-from models import get_conn, DB_PATH
+from models import DB_PATH
 
 log = logging.getLogger(__name__)
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports). The
+    bound copy kept whatever models.get_conn was when this module was first
+    imported — mid-test, a redirect into that test's database — so a later
+    caller passing no path (staff_knowledge's certificate notice reads
+    recipients() that way) read another test's logins (S9). The module's own
+    DB_PATH default means "whatever models uses now"."""
+    import models as _m
+    if db_path is None or db_path == DB_PATH:
+        return _m.get_conn()
+    return _m.get_conn(db_path)
 
 # A "morning" brief is not sent after this local hour. A deploy or an outage
 # that delays the scheduler to 9pm should skip the day, not text the owner a

@@ -362,8 +362,10 @@
 
   function suLoadNames(){
     suBusy = true;
-    fetch('/staff/api/signup/claimable/' + encodeURIComponent(suJoin)
-          + '?signup_token=' + encodeURIComponent(suToken))
+    // The token rides a header, never the query string: a URL reaches
+    // proxy and edge logs (SEC-14).
+    fetch('/staff/api/signup/claimable/' + encodeURIComponent(suJoin),
+          {headers: {'X-Signup-Token': suToken}})
       .then(function(r){ return r.json(); })
       .then(function(d){
         suBusy = false;

@@ -8,7 +8,9 @@ resumable over restaurants (strategy_jobs._BoundedWalk) — pushes:
 
   * "Your shift starts at 4pm" about an hour before each PUBLISHED shift
     (task_sheets.published_day_shifts: a draft never reminds anyone), on the
-    first pass with the start 15–65 minutes away;
+    first pass with the start 15–65 minutes away, with the day's brief line
+    (the manager-approved brief's first sentence, in the person's language,
+    else the first deterministic pre-shift line — brief_line, AI-07);
   * "Due in 15 min: <line>" for each CRITICAL line on that person's open
     task sheet, on the first pass with it due within 20 minutes, unless it
     is already ticked.
@@ -317,10 +319,81 @@ def _due_reminders(restaurant_id, now_local, db_path):
     return out
 
 
+BRIEF_LINE_MAX = 160
+
+
+def _first_sentence(text) -> str:
+    import re
+    t = " ".join(str(text or "").split())
+    first = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)[0] if t else ""
+    return first if len(first) <= BRIEF_LINE_MAX else first[:BRIEF_LINE_MAX - 1].rstrip() + "…"
+
+
+def brief_line(restaurant_id, day_iso, db_path=None, memo=None):
+    """(line, approved) the shift reminder carries for `day_iso` (AI-07): the
+    first sentence of the brief a manager approved for that day, else the
+    first line of the deterministic pre-shift items — both staff-safe by
+    construction (staff_brief: approval runs the staff-safety check;
+    preshift.build: relative figures only, never money). (None, False) when
+    there is neither. `memo` keeps one read per restaurant and day."""
+    if memo is not None and day_iso in memo:
+        return memo[day_iso]
+    out = (None, False)
+    try:
+        from datetime import date as _date
+        import preshift
+        import staff_brief
+        d = _date.fromisoformat(str(day_iso)[:10])
+        kw = {"db_path": db_path} if db_path else {}
+        text = (staff_brief.approved(restaurant_id, d, **kw).get("brief_text") or "").strip()
+        if text:
+            out = (_first_sentence(text), True)
+        else:
+            built = preshift.build_cached(restaurant_id, day=d, **kw) or {}
+            items = [i for i in (built.get("items") or []) if str(i.get("text") or "").strip()]
+            if items:
+                out = (_first_sentence(items[0]["text"]), False)
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="staff_reminders", context=f"restaurant_id={restaurant_id} brief line")
+        except Exception:
+            pass
+        out = (None, False)
+    if memo is not None:
+        memo[day_iso] = out
+    return out
+
+
+def _with_brief(restaurant_id, body, shift_date, uid, db_path, memo) -> str:
+    """The shift reminder's body with the day's brief line — the approved one
+    in the person's language when they set one (staff_knowledge.translate_for
+    on the login holding the device; deterministic lines stay as built)."""
+    line, approved = brief_line(restaurant_id, shift_date, db_path=db_path, memo=memo)
+    if not line:
+        return body
+    if approved and uid:
+        try:
+            import staff_knowledge
+            conn = get_conn(db_path)
+            try:
+                m = conn.execute("SELECT id FROM memberships WHERE user_id=? AND restaurant_id=? AND is_active=1 "
+                                 "ORDER BY id DESC LIMIT 1", (uid, restaurant_id)).fetchone()
+            finally:
+                conn.close()
+            if m:
+                line = staff_knowledge.translate_for(m["id"], line, restaurant_id=restaurant_id,
+                                                     **({"db_path": db_path} if db_path else {}))
+        except Exception:
+            pass
+    return f"{body} {line}"
+
+
 def remind_restaurant(restaurant_id, now_local, db_path=None) -> dict:
     """Send this restaurant's due reminders. Returns the standard counts:
     attempted = claimed now, ok = pushed, failed = no device took it,
-    skipped = no staff device, or the person muted reminders."""
+    skipped = no staff device, or the person muted reminders. A shift
+    reminder carries the day's brief line (brief_line, AI-07)."""
     import people
     import preferences
     db = db_path or DB_PATH
@@ -329,6 +402,7 @@ def remind_restaurant(restaurant_id, now_local, db_path=None) -> dict:
     if not due:
         return c
     channels = people.reach(restaurant_id, sorted({d[1] for d in due}), db_path=db)
+    briefs = {}
     for kind, name, key, title, body, nav, shift_date in due:
         uid = (channels.get(name) or {}).get("push_user_id")
         if not uid or not preferences.push_allowed(uid, restaurant_id, "staff_reminder", now_local=now_local,
@@ -340,6 +414,8 @@ def remind_restaurant(restaurant_id, now_local, db_path=None) -> dict:
         notice_id = _claim(restaurant_id, kind, key, name, title, db_path)
         if not notice_id:
             continue
+        if kind == "shift_reminder":
+            body = _with_brief(restaurant_id, body, shift_date, uid, db_path, briefs)
         c["attempted"] += 1
         outcome = people.tell_staff(restaurant_id, name, "reminder", title, body, nav=nav, purpose="reminder",
                                     shift_date=shift_date, channel={"push_user_id": uid},

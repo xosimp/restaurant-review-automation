@@ -289,8 +289,9 @@ def _share(db_path, rid, name):
 def _share_live(db_path, token):
     conn = models.get_conn(db_path)
     try:
+        # Only the link's hash is stored (B6, SEC-09).
         row = conn.execute("SELECT expires_at > datetime('now') AS live FROM schedule_shares WHERE token=?",
-                           (token,)).fetchone()
+                           (models._share_hash(token),)).fetchone()
         return bool(row["live"])
     finally:
         conn.close()

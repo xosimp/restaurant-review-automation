@@ -67,6 +67,8 @@ _DDL = [
         updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, business_date)
     )""",
+    # The retention delete's index (ops._RETENTION_COLUMN).
+    "CREATE INDEX IF NOT EXISTS idx_staff_briefs_date ON staff_briefs(business_date)",
 ]
 
 

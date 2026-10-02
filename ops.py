@@ -2235,6 +2235,31 @@ _RETENTION_DAYS = {
     # forever, frozen a week after each month closes).
     "ask_topics":         int(os.getenv("RETAIN_ASK_TOPICS_DAYS", "400")),
     "ask_feedback":       int(os.getenv("RETAIN_ASK_FEEDBACK_DAYS", "400")),
+    # The staff app's ledgers (employee audit fix round, 10/2/26). What staff
+    # and managers said to each other — announcements, who got and read each,
+    # the message threads' messages, running-late reports (they mirror
+    # attendance_events), offers of an open shift — two years. A recipient
+    # row goes before its announcement, and an announcement only once no
+    # recipient row is left (_RETENTION_ONLY), so the FK never refuses a
+    # prune. The threads themselves (one per login) are bounded, not pruned.
+    # Operational records a year: the after-shift pulse (its notes are the
+    # person's own words; the owner's summary reads 90 days at most), each
+    # day's staff brief, revoked calendar-feed links (a live one has no
+    # revoked_at, so it never matches). Floor sections per shift two years
+    # (the shift history they sit beside is kept longer). The translation
+    # cache 90 days: a miss only costs one model call. staff_notices,
+    # staff_otp_sends and staff_pin_resets prune themselves
+    # (staff_reminders._prune, auth) — one pruner per table.
+    "staff_announcement_recipients": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    "staff_announcements":   int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    "staff_thread_messages": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    "staff_running_late":    int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    "shift_offers":          int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    "staff_shift_pulse":     int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
+    "staff_briefs":          int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
+    "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
+    "shift_sections":        int(os.getenv("RETAIN_SHIFT_SECTIONS_DAYS", "730")),
+    "staff_translations":    int(os.getenv("RETAIN_STAFF_TRANSLATIONS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2264,6 +2289,10 @@ _RETENTION_COLUMN = {
     "rec_rank_builds": "built_at", "rec_silences": "until",
     "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
     "ask_topics": "created_at", "ask_feedback": "created_at",
+    "staff_announcement_recipients": "created_at", "staff_announcements": "created_at",
+    "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
+    "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
+    "shift_sections": "date", "staff_translations": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2277,6 +2306,10 @@ _RETENTION_ONLY = {
     "ask_memory_archive": "NOT (reason='evicted' AND kind='constraint' "
                           "AND COALESCE(authority, '') NOT IN ('delegate', 'admin') "
                           "AND COALESCE(audience, 'team')!='author')",
+    # An announcement goes once its recipient rows have (they are pruned on
+    # the same window, first): the recipients' FK would refuse it otherwise.
+    "staff_announcements": "NOT EXISTS (SELECT 1 FROM staff_announcement_recipients r "
+                           "WHERE r.announcement_id = staff_announcements.id)",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
@@ -2347,6 +2380,13 @@ _RETENTION_FLOOR_DAYS = {
     # Ask's past chats read up to 400 days (read_past_conversations); the
     # console's AI quality reads up to a year of ratings.
     "ask_topics": 400, "ask_feedback": 365,
+    # The staff app (10/2/26): the inbox and threads read the newest 50/200
+    # rows, running late and offers today's and the live ones, the pulse
+    # summary 90 days at most, the brief one day, the translation cache a
+    # lookup (a miss re-translates).
+    "staff_announcement_recipients": 90, "staff_announcements": 90, "staff_thread_messages": 90,
+    "staff_running_late": 30, "shift_offers": 30, "staff_shift_pulse": 90, "staff_briefs": 30,
+    "staff_calendar_links": 30, "shift_sections": 30, "staff_translations": 7,
 
 
     # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
@@ -2451,6 +2491,8 @@ _RETENTION_READERS = {
                  ("ai_reads.recent_reads", 30, None)),
     "ai_claims": (("ai_reads.claims_record", 365, None), ("ai_reads.confidence_calibration", 365, None),
                   ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
+    # The after-shift pulse: the owner's summary reads 90 days at most.
+    "staff_shift_pulse": (("staff_insights.pulse_summary", 90, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so

@@ -509,10 +509,15 @@ def test_a_link_dies_on_any_deactivation_path(db_path):
     auth.set_membership_active(mid, rid, False, db_path=db_path)      # Account → Staff, not the roster
     r = c.get(f"/s/{token}")
     assert r.status_code == 410 and "16:00" not in r.get_data(as_text=True)
+    # The end is durable (auth calls staff_insights.expire_links_for on the
+    # deactivation — this file's handoff to B1): reactivating does not revive
+    # the old link; the next send mints a new one.
     auth.set_membership_active(mid, rid, True, db_path=db_path)
-    assert c.get(f"/s/{token}").status_code == 200
-    staff_settings.upsert(rid, "Sofia R.", active=False, db_path=db_path)  # the roster switch
     assert c.get(f"/s/{token}").status_code == 410
+    fresh = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    assert c.get(f"/s/{fresh}").status_code == 200
+    staff_settings.upsert(rid, "Sofia R.", active=False, db_path=db_path)  # the roster switch
+    assert c.get(f"/s/{fresh}").status_code == 410
 
 
 def test_expire_links_for_ends_schedule_and_calendar_links(db_path):

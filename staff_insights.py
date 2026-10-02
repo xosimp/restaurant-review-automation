@@ -129,6 +129,9 @@ def init_staff_insights(db_path=None):
             fetch_count     INTEGER NOT NULL DEFAULT 0
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_cal_member ON staff_calendar_links(restaurant_id, membership_id)")
+        # The retention deletes' indexes (ops._RETENTION_COLUMN).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_pulse_date ON staff_shift_pulse(business_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_cal_revoked ON staff_calendar_links(revoked_at)")
         conn.commit()
     finally:
         conn.close()
