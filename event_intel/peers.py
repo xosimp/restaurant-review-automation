@@ -196,6 +196,13 @@ def peer_effect(restaurant_id, e, db_path=store.DB_PATH):
         side = e.get("home_away")
         if side not in SIDES or e.get("series_id") is None:
             return None
+        # A home game at another ground (store.alt_venue: the Fire at
+        # SeatGeek Stadium) is its own segment (re-audit SD-02), and no
+        # member's figure for it is materialised — the home rows are the
+        # home ground's crowd, never to be said as "home games at SeatGeek
+        # Stadium" (re-audit 2 R4-02). No peer figure for it.
+        if store.alt_venue(e):
+            return None
         pre = e.get("season_type") == "preseason"
         orgs, real, since = _memoised(("ctx", dbp), lambda: (privacy.org_map(db_path=dbp),
                                                              real_restaurant_ids(db_path=db_path),

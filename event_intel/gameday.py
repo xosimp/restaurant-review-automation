@@ -23,6 +23,10 @@ heads-up before a big game (Event Intelligence phase 3, 10/1/26).
                         inside the legal 8am–9pm texting window, the email
                         the day before. A starting rule, said as one —
                         nothing here has measured send times
+  plan_ahead(rid, e)    send_plan with nothing already gone at the
+                        restaurant — what the brief, the push and Ask say
+  guest_text_visible(…) who may read the send times — one rule for every
+                        surface: the Marketing module and the login's view
   campaign_goal(rid, e) the Campaign Studio goal a game starts from, naming
                         the items game nights sell here past the plan floor
                         (never a price or an offer the owner didn't make)
@@ -354,6 +358,40 @@ def send_plan(e, tz=None):
         return None
 
 
+def guest_text_visible(restaurant, denied=None, user=None) -> bool:
+    """Who may read WHEN to text and email guests about a game — the ONE
+    rule for the brief's game alert, the big-game push and Ask's read_events
+    (re-audit 2 R3-03, R3-04, RX-04): the restaurant has the Marketing
+    module on AND the reader may view Marketing. `restaurant` is the
+    location (or Ask's viewer_restaurant, whose module flags already follow
+    the login); `denied` a viewer's denied module keys (the brief's and
+    Ask's: "marketing"); `user` a login dict (the push's recipient). With
+    neither, the module flag alone (an internal caller)."""
+    if restaurant is None or not getattr(restaurant, "module_marketing", 0):
+        return False
+    if denied is not None and "marketing" in set(denied):
+        return False
+    if user is not None and not user.get("is_admin"):
+        from permissions import MARKETING_VIEW, has_permission
+        return bool(has_permission(user, MARKETING_VIEW))
+    return True
+
+
+def plan_ahead(restaurant_id, e, tz=None):
+    """send_plan with nothing already gone at the restaurant (re-audit 2
+    R3-02, R2-06): None once the text time has passed there (an early
+    kickoff's "the evening before" is gone on game day — playbook._past, the
+    test the brief and the push used on their own), and the email half
+    (`email_by`, `email_words` None) once its day is over. The one reader of
+    a send time for every surface."""
+    plan = send_plan(e, tz=tz)
+    if not plan or playbook._past(restaurant_id, plan["text_at"]):
+        return None
+    if playbook._past(restaurant_id, f"{plan['email_by']}T23:59"):
+        plan = dict(plan, email_by=None, email_words=None)
+    return plan
+
+
 def campaign_goal(restaurant_id, e, mix=None, db_path=store.DB_PATH) -> str:
     """"Bring guests in to watch Bears vs New York Jets on Sunday 10/4/26
     (12pm, FOX) — feature Wings and Salt Caramel Tini, what game nights sell
@@ -396,7 +434,11 @@ def season_value(restaurant_id, series_id, today=None, season=None, db_path=stor
     if-necessary game with no result yet (re-audit P3-05, P4-04): those are
     counted apart as `waiting`, neither played nor unmeasured."""
     try:
-        rows = store.events_for([series_id], None, None, db_path=db_path)
+        # Never a game this restaurant removed from its list (store.dismissed,
+        # re-audit 2 R3-05): the rule every other reader of games applies —
+        # Ask's `recent` beside it in the same answer left it out.
+        skip = store.dismissed(restaurant_id, db_path=db_path)
+        rows = [x for x in store.events_for([series_id], None, None, db_path=db_path) if x["id"] not in skip]
         tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
         today = _d(today) if today else store.local_today(tz)
         played = [x for x in rows if store.played(x, today=today)]
@@ -507,9 +549,15 @@ def big_game(restaurant_id, e, db_path=store.DB_PATH, tz=None):
     SEGMENT_MIN_N measured, the last game of the same kind (_same_kind:
     game_class and prime time) decides alone — and never a night that had
     something else on too (store.confounded, re-audit P3-06): one holiday
-    night is not a reason to push."""
+    night is not a reason to push.
+
+    A measured figure that had to count such a night (`confounded`: too few
+    clean nights, so a Christmas Eve sits in the median) is not big either
+    (re-audit 2 R3-01, item_mix's own rule of planning nothing on a mixed
+    set): it falls to the clean-last-game rule above, as if the mixed nights
+    were not there."""
     eff = engine.effect_for(restaurant_id, e, db_path=db_path)
-    if eff and eff.get("median_lift_pct") is not None:
+    if eff and eff.get("median_lift_pct") is not None and not eff.get("confounded"):
         if float(eff["median_lift_pct"]) >= BIG_LIFT:
             return True, eff["basis"][0].upper() + eff["basis"][1:] + "."
         return False, None
@@ -525,13 +573,21 @@ def big_game(restaurant_id, e, db_path=store.DB_PATH, tz=None):
     return False, None
 
 
-def _labor_logins(restaurant_id, db_path):
-    """Every console login here who reads labor — brief preference or not:
-    the push has its own per-type mute (preferences.push_allowed)."""
+def _labor_readers(restaurant_id, db_path) -> dict:
+    """{login id: login} — every console login here who reads the module the
+    push is FOR (push.audience_of: Labor, the bell's rule for its row too,
+    re-audit 2 R3-07), brief preference or not: the push has its own
+    per-type mute (preferences.push_allowed)."""
     import morning_brief
-    from permissions import LABOR_VIEW, has_permission
-    return {u["id"] for u in morning_brief.recipients(restaurant_id, db_path, include_opted_out=True)
-            if has_permission(u, LABOR_VIEW)}
+    import push
+    from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+    need = MODULE_VIEW_PERMISSIONS[push.audience_of(PUSH_TYPE)]
+    return {u["id"]: u for u in morning_brief.recipients(restaurant_id, db_path, include_opted_out=True)
+            if has_permission(u, need)}
+
+
+def _labor_logins(restaurant_id, db_path):
+    return set(_labor_readers(restaurant_id, db_path))
 
 
 def _claim_key(restaurant_id):
@@ -560,12 +616,16 @@ def ask_for(e, tz=None) -> str:
     return f"How should we get ready for {engine.describe(e, tz=tz)}?"
 
 
-def push_for(restaurant, today, db_path=store.DB_PATH, events=None):
-    """[(event, title, body)] for tomorrow's big games at this restaurant
-    (every one, not just the first). Pure read. Dates and times are the
-    restaurant's clock (engine.local_kickoff, re-audit P2-04)."""
+def _push_parts(restaurant, events, db_path=store.DB_PATH):
+    """[(event, title, body without the guest text, the guest-text sentence
+    or None)] for tomorrow's big games — the guest text apart, because who
+    may read it is decided per recipient (guest_text_visible, re-audit 2
+    R3-04). The sentence is there only where the restaurant has Marketing
+    on, said as the starting rule it is, and never a time already gone
+    (plan_ahead: an early kickoff's "the evening before" is often before the
+    push, re-audit P3-07)."""
     out = []
-    for e in (events if events is not None else tomorrows_games(restaurant, today, db_path=db_path)):
+    for e in events:
         big, words = big_game(restaurant.id, e, db_path=db_path, tz=restaurant)
         if not big:
             continue
@@ -573,18 +633,25 @@ def push_for(restaurant, today, db_path=store.DB_PATH, events=None):
         st = playbook.staffing(restaurant.id, e, db_path=db_path)
         if st and st.get("recommend"):
             body.append(st["text"].split(". On your last")[0] + ".")
-        # When to text guests only where Marketing is on (the brief's rule),
-        # said as the starting rule it is, and never a time already gone —
-        # an early kickoff's "the evening before" is often before the push
-        # (re-audit P3-07; the brief's own playbook._past test).
-        plan = send_plan(e, tz=restaurant) if getattr(restaurant, "module_marketing", 0) else None
-        if plan and playbook._past(restaurant.id, plan["text_at"]):
-            plan = None
-        if plan:
-            body.append(f"Guest text, as a starting rule: {plan['text_words']}.")
+        plan = plan_ahead(restaurant.id, e, tz=restaurant) if guest_text_visible(restaurant) else None
+        guest = f"Guest text, as a starting rule: {plan['text_words']}." if plan else None
         title = f"Tomorrow: {engine.describe(e, with_date=False, tz=restaurant)}"
-        out.append((e, title[:120], " ".join(body)[:400]))
+        out.append((e, title[:120], " ".join(body), guest))
     return out
+
+
+def _body(base, guest=None) -> str:
+    return (base + (" " + guest if guest else ""))[:400]
+
+
+def push_for(restaurant, today, db_path=store.DB_PATH, events=None):
+    """[(event, title, body)] for tomorrow's big games at this restaurant
+    (every one, not just the first), the body as a login who may read the
+    guest text reads it. Pure read. Dates and times are the restaurant's
+    clock (engine.local_kickoff, re-audit P2-04)."""
+    events = events if events is not None else tomorrows_games(restaurant, today, db_path=db_path)
+    return [(e, title, _body(base, guest))
+            for e, title, base, guest in _push_parts(restaurant, events, db_path=db_path)]
 
 
 def run_event_push(db_path=None, restaurants=None) -> dict:
@@ -623,16 +690,29 @@ def run_event_push(db_path=None, restaurants=None) -> dict:
             continue
         st["attempted"] += 1
         try:
-            got = push_for(r, local.date(), db_path=db, events=todo)
+            got = _push_parts(r, todo, db_path=db)
             if not got:
                 continue
-            audience = sj.deliverable_audience(r.id, _labor_logins(r.id, db), db)
+            readers = _labor_readers(r.id, db)
+            # A phone that takes it AND a login whose own choices let it
+            # through (push off, this type muted, their own quiet hours — the
+            # test fire_push applies per device): a push nobody would get
+            # writes no budgeted briefing row and is not "sent" (re-audit 2
+            # R3-06).
+            import preferences
+            _pc = {}
+            audience = {u for u in sj.deliverable_audience(r.id, set(readers), db)
+                        if preferences.push_allowed(u, r.id, PUSH_TYPE, db_path=db, _cache=_pc)}
             import notify
             if not audience:
                 skipped += 1
                 continue
+            # Who may read the guest text: the one rule (guest_text_visible —
+            # the restaurant's Marketing module and the login's Marketing
+            # view, re-audit 2 R3-04), per recipient.
+            with_text = {u for u in audience if guest_text_visible(r, user=readers.get(u))}
             import nav
-            for e, title, body in got:
+            for e, title, base, guest in got:
                 # Before EACH push: the one before it counted (an event_ahead
                 # row is a budgeted briefing). Held, it stays unclaimed.
                 if not notify.briefing_allowed(r.id, PUSH_TYPE, db):
@@ -649,7 +729,16 @@ def run_event_push(db_path=None, restaurants=None) -> dict:
                         data["quiet"] = True
                 except Exception as qe:
                     log.warning("event_intel.gameday quiet-hours check failed rid=%s: %s", r.id, qe)
-                push.fire_push(r.id, PUSH_TYPE, title, body, data=data, db_path=db, user_ids=audience)
+                groups = [(with_text, _body(base, guest)), (audience - with_text, _body(base))] if guest \
+                    else [(audience, _body(base))]
+                queued = [push.fire_push(r.id, PUSH_TYPE, title, body, data=dict(data), db_path=db, user_ids=ids)
+                          for ids, body in groups if ids]
+                # fire_push returns how many devices it was queued for; 0 on
+                # every call is nobody: the row comes back out of the budget.
+                if queued and all(q == 0 for q in queued):
+                    notify.withdraw_notification(r.id, alert_id, db_path=db)
+                    skipped += 1
+                    continue
                 sent += 1
         except Exception as ex:
             st["failed"] += 1

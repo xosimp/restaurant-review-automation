@@ -8613,7 +8613,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
         items = []
         for r in rows:
             module = _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")
-            if not _sees(viewer, module):
+            if not sees_alert(viewer, r["alert_type"]):
                 continue
             priority = r["priority"]
             if priority is None:
@@ -8827,7 +8827,17 @@ def _notification_ref_fields(r, refs, viewer, restaurant_id):
 def notification_visibility(viewer):
     """alert_type -> whether this login's notification list shows it; the
     same rule _do_get_notifications applies, for the unread badge."""
-    return lambda alert_type: _sees(viewer, _NOTIFICATION_MODULE.get(alert_type, "reviews"))
+    return lambda alert_type: sees_alert(viewer, alert_type)
+
+
+def sees_alert(viewer, alert_type):
+    """Whether this login's bell (list and badge) shows a row of this
+    type: the view of the module the row is FOR (push.audience_of) — its
+    routing module, except where the push went to another module's readers
+    (the big-game heads-up opens Ask but goes to Labor readers only,
+    re-audit 2 R3-07)."""
+    import push as _push
+    return _sees(viewer, _push.audience_of(alert_type))
 
 
 def _sees(viewer, module):

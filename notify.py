@@ -2041,6 +2041,30 @@ def record_notification(restaurant_id: int, alert_type: str, review_id: int = No
         return None
 
 
+def withdraw_notification(restaurant_id: int, alert_id, db_path: str = DB_PATH) -> bool:
+    """Take back a record_notification row whose push reached nobody
+    (push.fire_push queued it for no device): the row's id had to ride the
+    payload, so it was written first, and left in place it lists a push no
+    phone showed and spends a briefing slot (re-audit 2 R3-06). Only a row
+    nobody has opened, at this restaurant."""
+    if not alert_id:
+        return False
+    try:
+        conn = models.get_conn(db_path)
+        try:
+            n = conn.execute(
+                "DELETE FROM alert_log WHERE id=? AND restaurant_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM notification_opens o WHERE o.alert_log_id=alert_log.id)",
+                (int(alert_id), int(restaurant_id))).rowcount
+            conn.commit()
+            return bool(n)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[notify] could not withdraw alert {alert_id} for rid={restaurant_id}: {e}")
+        return False
+
+
 def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PATH,
                           min_increase_pct: float = 10.0) -> bool:
     """True when this week's flagged waste is meaningfully worse than the

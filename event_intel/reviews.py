@@ -50,12 +50,15 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
         today = today if isinstance(today, date) else date.fromisoformat(str(today)[:10])
         start = today - timedelta(days=int(days))
         followed = store.follows(restaurant_id, db_path=db_path)
+        skip = store.dismissed(restaurant_id, db_path=db_path)
         games = [e for e in store.events_for([f["series_id"] for f in followed], start, today - timedelta(days=1),
                                              db_path=db_path)
                  # Played games only (store.played: never cancelled or
                  # postponed, nor an if-necessary game with no result —
-                 # re-audit P4-04), so no phantom game widens the window.
-                 if e.get("category") == "sports" and store.played(e, today=today)
+                 # re-audit P4-04), so no phantom game widens the window;
+                 # never one this restaurant removed from its list
+                 # (store.dismissed, every game reader's rule — re-audit 2 R4-04).
+                 if e.get("category") == "sports" and store.played(e, today=today) and e["id"] not in skip
                  and engine.headline(restaurant_id, e, db_path=db_path)]
         if not games:
             return None
