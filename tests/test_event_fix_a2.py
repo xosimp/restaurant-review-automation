@@ -40,6 +40,11 @@ def db(db_path, monkeypatch, tmp_path):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
     monkeypatch.setattr(engine, "_today", lambda r=None: TODAY)
+    # The owner routes hand their re-sync to ops' admin pool (re-audit 2
+    # RX-03); here it runs inline, so no pool thread outlives the test.
+    import ops
+    monkeypatch.setattr(ops, "run_admin_task",
+                        lambda kind, rid, name, fn, *a, context="", **k: (fn(*a, **k), ("inline", False))[1])
     import weather
     monkeypatch.setattr(weather, "forecast_for_day", lambda *a, **k: None)
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
@@ -206,9 +211,14 @@ def _ctx(app, path, method="GET", body=None, view_as=None):
 
 
 def _activity(db, rid, event_type):
-    return [json.loads(r["event_data"]) for r in _rows(
+    rows = [json.loads(r["event_data"]) for r in _rows(
         db, "SELECT event_data FROM activity_log WHERE restaurant_id=? AND event_type=? ORDER BY id",
         (rid, event_type))]
+    # Logged is not enough: the owner's own reader must show it (re-audit 2
+    # RX-01/RX-09 — these rows were written and filtered out).
+    shown = [e for e in models.get_account_activity(rid) if e["type"] == event_type]
+    assert len(shown) == len(rows), f"{event_type} is logged but not in Account activity"
+    return rows
 
 
 def test_a_view_as_follow_change_is_stored_as_the_admins(db):

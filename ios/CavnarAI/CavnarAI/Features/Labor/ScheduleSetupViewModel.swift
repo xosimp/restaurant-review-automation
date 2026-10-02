@@ -300,6 +300,59 @@ struct RemovedGame: Decodable, Identifiable, Equatable {
     }
 }
 
+/// A game calendar this location follows or could (GET
+/// /labor/demand-signals `follows`, event_intel follow_choices): its name,
+/// distance, next game (worded on the restaurant's clock, M/D/YY) and, when
+/// followed, the season so far. The owner's switch is POST
+/// /labor/event-follows/<series_id> {active} (re-audit 2 RX-10: the web
+/// had the switch, iOS had none). Lenient: an odd field is nil, never a
+/// failed list.
+struct EventFollow: Decodable, Identifiable, Equatable {
+    let seriesId: Int
+    let name: String
+    let following: Bool
+    let distanceKm: Double?
+    let next: String?
+    let seasonText: String?
+    var id: Int { seriesId }
+
+    enum CodingKeys: String, CodingKey {
+        case name, following, next, season
+        case seriesId = "series_id"
+        case distanceKm = "distance_km"
+    }
+
+    private enum SeasonKeys: String, CodingKey { case text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        seriesId = try c.decode(Int.self, forKey: .seriesId)
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "A calendar"
+        following = (try? c.decodeIfPresent(Bool.self, forKey: .following)) ?? false
+        distanceKm = (try? c.decodeIfPresent(Double.self, forKey: .distanceKm)) ?? nil
+        next = (try? c.decodeIfPresent(String.self, forKey: .next)) ?? nil
+        if let season = try? c.nestedContainer(keyedBy: SeasonKeys.self, forKey: .season) {
+            seasonText = (try? season.decodeIfPresent(String.self, forKey: .text)) ?? nil
+        } else {
+            seasonText = nil
+        }
+    }
+
+    /// "12 mi away · Next: Bears vs Jets · Sun 10/4/26 · 12pm" — or, not
+    /// followed, "Not followed — its games aren't planned for" (the web's
+    /// `.ev-follow` line).
+    var line: String {
+        var parts: [String] = []
+        if let km = distanceKm { parts.append("\(Int((km * 0.621371).rounded())) mi away") }
+        if following {
+            if let game = next, !game.isEmpty { parts.append("Next: \(game)") }
+        } else {
+            parts.append("Not followed — its games aren't planned for")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Shift requests
 
 /// A shift somebody has asked to give up (`pending`) or that nobody has
@@ -1403,8 +1456,11 @@ final class ScheduleSetupViewModel {
         /// What the nights taught here — recurring effects, measured, before
         /// and after (memory round, 9/29/26). Absent on an older server.
         let whatNightsTeach: HomeLenientList<NightLesson>?
+        /// The game calendars followed here or in reach, each with the
+        /// owner's switch. Absent on an older server.
+        let follows: HomeLenientListDecodable<EventFollow>?
         enum CodingKeys: String, CodingKey {
-            case ok, signals, error
+            case ok, signals, error, follows
             case whatNightsTeach = "what_nights_teach"
         }
         init(from decoder: Decoder) throws {
@@ -1413,6 +1469,7 @@ final class ScheduleSetupViewModel {
             signals = try? c.decodeIfPresent([DemandSignal].self, forKey: .signals)
             error = try? c.decodeIfPresent(String.self, forKey: .error)
             whatNightsTeach = try? c.decodeIfPresent(HomeLenientList<NightLesson>.self, forKey: .whatNightsTeach)
+            follows = try? c.decodeIfPresent(HomeLenientListDecodable<EventFollow>.self, forKey: .follows)
         }
     }
 
@@ -1464,6 +1521,7 @@ final class ScheduleSetupViewModel {
             guard r.ok else { signalError = r.error; return }
             signals = (r.signals ?? []).sorted { $0.date < $1.date }
             nightLessons = r.whatNightsTeach?.items ?? []
+            eventFollows = r.follows?.items ?? []
             signalError = nil
         } catch is CancellationError {
         } catch let error as APIClient.APIError {
@@ -1539,6 +1597,10 @@ final class ScheduleSetupViewModel {
         let ok: Bool
         let error: String?
         let removed: [RemovedGame]?
+        /// Put back's own sentence, and whether the calendar is still
+        /// catching up (the re-sync runs after the answer — RX-03).
+        let message: String?
+        let refreshing: Bool?
     }
 
     func loadRemovedGames() async {
@@ -1561,13 +1623,63 @@ final class ScheduleSetupViewModel {
                 "/mobile/api/labor/event-dismissals/\(eventId)/restore", method: .post)
             guard r.ok else { signalError = r.error ?? "Couldn't put that back."; return }
             removedGames = r.removed ?? removedGames.filter { $0.eventId != eventId }
+            signalOutcome = r.message ?? "Put back — the game is on your calendar again"
             Haptic.success()
-            await loadSignals()
+            await reloadAfterResync(r.refreshing == true)
         } catch let error as APIClient.APIError {
             signalError = error.message
         } catch {
             signalError = "Couldn't put that back."
         }
+    }
+
+    // MARK: Followed calendars
+
+    /// The game calendars followed here or in reach (with the dates list).
+    var eventFollows: [EventFollow] = []
+    var followBusyId: Int?
+
+    private struct FollowBody: Encodable { let active: Bool }
+
+    private struct FollowResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let message: String?
+        let refreshing: Bool?
+        let follows: HomeLenientListDecodable<EventFollow>?
+    }
+
+    /// Follow or stop following one calendar. The choice is saved at once;
+    /// the server re-syncs the games just after it answers, so the dates
+    /// list is read again a moment later.
+    func setFollow(seriesId: Int, active: Bool) async {
+        followBusyId = seriesId
+        defer { followBusyId = nil }
+        signalError = nil
+        signalOutcome = nil
+        do {
+            let r: FollowResponse = try await client.send(
+                "/mobile/api/labor/event-follows/\(seriesId)", method: .post, body: FollowBody(active: active))
+            guard r.ok else { signalError = r.error ?? "Couldn't change that calendar."; return }
+            if let list = r.follows?.items, !list.isEmpty { eventFollows = list }
+            signalOutcome = r.message ?? (active ? "Following — its games are on your calendar"
+                                                 : "Stopped following — its games are off your calendar")
+            Haptic.success()
+            await reloadAfterResync(r.refreshing == true)
+        } catch let error as APIClient.APIError {
+            signalError = error.message
+        } catch {
+            signalError = "Couldn't change that calendar."
+        }
+    }
+
+    /// The dates list now, and once more after a beat while the server's
+    /// re-sync is still writing the games.
+    private func reloadAfterResync(_ refreshing: Bool) async {
+        await loadSignals()
+        guard refreshing else { return }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        await loadSignals()
     }
 
     // MARK: Shift requests

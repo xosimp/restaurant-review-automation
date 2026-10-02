@@ -223,7 +223,15 @@ def test_an_unmeasured_game_is_said_as_the_last_one_never_as_a_lift(db):
     assert "Staff above" not in line["text"] and "action" not in line
 
 
-def test_a_viewer_without_labor_hears_the_game_but_not_the_dollars_or_staffing(db):
+def test_a_viewer_without_labor_hears_the_game_but_not_the_dollars_or_staffing(db, monkeypatch):
+    # The texting time is dropped once it has passed there: the clock is
+    # pinned to 11/20/26, never the real one (re-audit 2 RX-08).
+    import time_utils
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    noon = datetime(2026, 11, 20, 12, 0, tzinfo=ZoneInfo("America/Chicago"))
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id",
+                        lambda rid, naive=False: noon.replace(tzinfo=None) if naive else noon)
     r = _restaurant(db)
     _world(db, r.id)
     line = playbook.alert(r.id, date(2026, 11, 20), sees_sales=False, sees_labor=False, marketing=True, db_path=db)
@@ -336,8 +344,12 @@ def test_a_bad_correction_is_refused_by_name(db):
         store.edit_event(999999, {"broadcast": "CBS"}, db_path=db)
 
 
-def test_an_owner_can_stop_following_and_the_games_leave_at_once(db):
+def test_an_owner_can_stop_following_and_the_games_leave_at_once(db, monkeypatch):
     import demand_signals
+    # set_owner_follow syncs on the restaurant's today: pinned, so the
+    # 10/1-12/31 copies stay inside the window whatever the real date
+    # (re-audit 2 RX-08: this failed from Feb 2028).
+    monkeypatch.setattr(engine, "_today", lambda r=None: date(2026, 10, 1))
     r = _restaurant(db)
     choices = engine.follow_choices(r, today=date(2026, 10, 1), db_path=db)
     assert len(choices) == 1 and choices[0]["following"] and choices[0]["in_reach"]
@@ -357,9 +369,16 @@ def test_an_owner_can_stop_following_and_the_games_leave_at_once(db):
         engine.set_owner_follow(r, 999999, True, db_path=db)
 
 
-def test_the_follow_route_is_the_schedule_editors_and_the_list_rides_the_events_card(db):
+def test_the_follow_route_is_the_schedule_editors_and_the_list_rides_the_events_card(db, monkeypatch):
     from flask import Flask
+    import demand_signals
+    import ops
     import strategy_routes
+    # The route hands its re-sync to ops' admin pool (re-audit 2 RX-03):
+    # inline here, on a pinned today.
+    monkeypatch.setattr(ops, "run_admin_task",
+                        lambda kind, rid, name, fn, *a, context="", **k: (fn(*a, **k), ("inline", False))[1])
+    monkeypatch.setattr(engine, "_today", lambda r=None: date(2026, 10, 1))
     r = _restaurant(db)
     sid = store.series_by_slug("nfl-chicago-bears", db_path=db)["id"]
     app = Flask(__name__)
@@ -372,7 +391,9 @@ def test_the_follow_route_is_the_schedule_editors_and_the_list_rides_the_events_
     assert status == 400
     with app.test_request_context(f"/labor/event-follows/{sid}", method="POST", json={"active": False}):
         body, status = strategy_routes._do_event_follow_set(owner, sid)
-    assert status == 200 and body["follows"][0]["following"] is False and body["removed"] > 0
+    assert status == 200 and body["follows"][0]["following"] is False and body["refreshing"] is True
+    assert not [s for s in demand_signals.upcoming(r.id, "2026-10-01", "2026-12-31", db_path=db)
+                if s.get("source") == "events"]
     with app.test_request_context(f"/labor/event-follows/{sid}", method="POST", json={"active": True}):
         body, status = strategy_routes._do_event_follow_set({"restaurant_id": r.id, "role": "employee"}, sid)
     assert status == 403
@@ -387,6 +408,9 @@ def test_the_catalog_editor_is_admin_only_audited_and_moves_every_follower(db, m
     from auth import create_session, create_user, init_auth
     from flask import Flask
     import demand_signals
+    # The re-sync runs on the restaurant's today: pinned, so Week 18 stays
+    # inside the window whatever the real date (re-audit 2 RX-08).
+    monkeypatch.setattr(engine, "_today", lambda r=None: date(2026, 10, 1))
     for mod in (auth, admin_routes):
         monkeypatch.setattr(mod, "get_conn", models.get_conn, raising=False)
         monkeypatch.setattr(mod, "DB_PATH", db, raising=False)
