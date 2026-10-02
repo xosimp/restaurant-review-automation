@@ -14665,6 +14665,28 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div id="staff-pin-events" style="margin-top:10px"></div>
       </div>
       {% endif %}
+
+      {# What staff can look up in the app (employee audit V9/V10, 10/1/26):
+         the house rules their questions are answered from, read-only docs
+         by job, and certifications with the expiry reminder. Written by
+         people; no model writes a how-to. staff_knowledge_routes. #}
+      <div class="ac-grid" style="margin-top:14px">
+        <div class="ac-card span" id="sk-rules-card" hidden>
+          <div class="ac-card-h"><div><h3>House rules</h3><p>Your rules in your words. Staff read them in the app, and its answers to their questions come only from these lines, your docs and their task sheets &mdash; never about pay, other people or discipline.</p></div>
+            <div class="r"><span class="ac-status" id="sk-rules-status" role="status"></span></div></div>
+          <div id="sk-rules-body"></div>
+        </div>
+        <div class="ac-card span" id="sk-docs-card" hidden>
+          <div class="ac-card-h"><div><h3>Staff docs</h3><p>Menu specs, allergens and how you do things, read-only in the app. Pick the jobs a doc is for, or leave it for everyone.</p></div>
+            <div class="r"><span class="ac-status" id="sk-docs-status" role="status"></span></div></div>
+          <div id="sk-docs-body"></div>
+        </div>
+        <div class="ac-card span" id="sk-certs-card" hidden>
+          <div class="ac-card-h"><div><h3>Certifications</h3><p id="sk-certs-sub">Who holds which certificate until when. The holder and you are told before one expires.</p></div>
+            <div class="r"><span class="ac-status" id="sk-certs-status" role="status"></span></div></div>
+          <div id="sk-certs-body"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ══════════════ BILLING ══════════════ -->
@@ -14834,6 +14856,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
           </div>
+        </div>
+        {# Tonight's lineup brief (employee audit V3/V4, 10/1/26): the day's
+           lines staff read, the one AI rewrite a day waiting for approval,
+           and the focus item. Nothing the AI wrote reaches staff until
+           someone who publishes the schedule approves it; staff see the
+           focus item and this line, never why it was suggested.
+           /api/staff-brief (staff_knowledge_routes). #}
+        <div class="ac-card span" id="sb-card" hidden>
+          <div class="ac-card-h"><div><h3>Tonight&rsquo;s lineup brief</h3><p>What your team reads in the app before service. Nothing the AI writes reaches them until you approve it.</p></div>
+            <div class="r"><span class="ac-status" id="sb-status" role="status"></span></div></div>
+          <div id="sb-body"></div>
         </div>
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
@@ -37046,6 +37079,289 @@ document.addEventListener('click', function (e) {
     if (typeof cavnarWhenVisible === 'function') cavnarWhenVisible(box, lb2InboxLoad); else lb2InboxLoad();
     box.addEventListener('toggle', function () { if (box.open) lb2InboxLoad(); });
   });
+})();
+</script>
+<script>
+/* ── Staff brief, house rules, docs and certifications (employee audit B7,
+   10/1/26). Loaded when Account opens; every write answers with the saved
+   state, so each card repaints from the server. ES5 only. */
+(function () {
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function mdy(x) {
+    if (!x || !/^\d{4}-\d{2}-\d{2}/.test(String(x))) return esc(x || '');
+    var s = String(x);
+    return (+s.slice(5, 7)) + '/' + (+s.slice(8, 10)) + '/' + s.slice(2, 4);
+  }
+  function post(url, body) {
+    return fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                       body: JSON.stringify(body || {})}).then(apiJson);
+  }
+  function say(id, msg, bad) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = bad ? 'var(--red)' : '';
+  }
+  function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+
+  // ── the brief ───────────────────────────────────────────────────────────
+  var SB = null;
+  var DRAFT_SAID = {
+    none: 'No AI draft today. Approve the lines as a brief, or write your own.',
+    drafted: 'The AI drafted this from the lines above. Edit it if you like, then approve it.',
+    refused: 'The AI draft didn’t pass the staff check, so it isn’t offered. The lines above stand.',
+    held: 'No AI draft today: the data it rests on isn’t current. The lines above stand.',
+    failed: 'The AI draft didn’t come back today. The lines above stand.',
+    no_items: 'Nothing for the AI to draft from today.'
+  };
+  function sbLoad() {
+    fetch('/api/staff-brief', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (!d || !d.ok) return;
+      SB = d;
+      sbPaint();
+    }).catch(function () {});
+  }
+  function sbPaint() {
+    var card = document.getElementById('sb-card'), body = document.getElementById('sb-body');
+    if (!card || !body || !SB) return;
+    card.hidden = false;
+    var b = SB.brief, edit = SB.can_edit, h = '', i;
+    h += '<div class="ac-row"><div class="l"><b>' + esc(b.weekday) + ' ' + mdy(b.day) + '</b><span>The lines every working teammate sees, with their own role and station first.</span></div>'
+       + '<div class="c">' + (b.approved_text ? '<span class="ac-chip good"><i></i>Brief approved</span>' : '<span class="ac-chip"><i></i>Lines only</span>') + '</div></div>';
+    if (!b.items.length) {
+      h += '<div class="ac-note">Nothing to tell the team yet today.</div>';
+    } else {
+      h += '<div class="ac-list">';
+      for (i = 0; i < b.items.length; i++) h += '<div style="padding:7px 0;color:var(--ink2)">' + esc(b.items[i].text) + '</div>';
+      h += '</div>';
+    }
+    var text = b.approved_text || b.draft_text || '';
+    if (edit) {
+      h += '<div class="ac-field" style="margin-top:12px"><label for="sb-text">Brief for the team</label>'
+         + '<textarea class="ac-textarea" id="sb-text" maxlength="600" rows="3" placeholder="Write a short brief, or leave it and the team reads the lines above.">' + esc(text) + '</textarea></div>';
+      h += '<div class="ac-note">' + esc(b.approved_text ? (b.edited ? 'Your words are what the team sees.' : 'The team sees this brief.') : (DRAFT_SAID[b.draft_status] || '')) + (b.draft_items_changed ? ' The lines changed since it was drafted.' : '') + '</div>';
+      h += '<div class="ac-inline" style="margin-top:10px">'
+         + '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="sbApprove(this)">' + (b.approved_text ? 'Save the brief' : 'Approve for the team') + '</button>'
+         + (b.approved_text ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="sbWithdraw(this)">Show the lines instead</button>' : '')
+         + (!b.model_used_today && !b.draft_text && b.items.length > 1 ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="sbDraft(this)">Draft it for me</button>' : '')
+         + '</div>';
+    } else if (b.approved_text) {
+      h += '<div class="ac-note">' + esc(b.approved_text) + '</div>';
+    }
+    // tonight's focus
+    var f = b.focus || {};
+    h += '<div class="ac-row" style="margin-top:10px"><div class="l"><b>Tonight&rsquo;s focus</b><span>The team sees the item and your line, never why it was suggested.</span></div></div>';
+    if (edit) {
+      h += '<div class="ac-inline">'
+         + '<input class="ac-input" id="sb-focus-item" maxlength="80" placeholder="Item (Fall old fashioned)" aria-label="Focus item" value="' + esc(f.item || '') + '">'
+         + '<input class="ac-input" id="sb-focus-line" maxlength="160" placeholder="Your line for the team" aria-label="Your line about it" value="' + esc(f.line || '') + '" style="flex:2">'
+         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="sbFocus(this)">Save focus</button>'
+         + (f.item ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="sbFocusClear(this)">Clear</button>' : '')
+         + '</div>';
+      var sg = b.suggestions || [];
+      if (sg.length) {
+        h += '<div class="ac-note">Ideas: ';
+        for (i = 0; i < sg.length; i++) {
+          h += '<button type="button" class="cbtn cbtn-soft cbtn-sm" style="margin:4px 6px 0 0" title="' + esc(sg[i].why) + '" data-sb-item="' + esc(sg[i].item) + '" onclick="sbPick(this)">' + esc(sg[i].item) + '</button>';
+        }
+        h += '</div>';
+      }
+    } else {
+      h += '<div class="ac-note">' + (f.item ? esc(f.item) + (f.line ? ' — ' + esc(f.line) : '') : 'No focus item tonight.') + '</div>';
+    }
+    body.innerHTML = h;
+  }
+  function sbAfter(d, ok) {
+    if (!d || !d.ok) { say('sb-status', (d && d.error) || 'Couldn’t save that.', true); return; }
+    SB.brief = d.brief;
+    sbPaint();
+    say('sb-status', ok);
+  }
+  window.sbApprove = function () {
+    var t = val('sb-text').replace(/^\s+|\s+$/g, '');
+    if (!t) { say('sb-status', 'Write the brief first, or leave it and the team reads the lines.', true); return; }
+    post('/api/staff-brief/approve', {day: SB.brief.day, text: t}).then(function (d) { sbAfter(d, 'Approved — the team sees it now.'); })
+      .catch(function () { say('sb-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.sbWithdraw = function () {
+    post('/api/staff-brief/withdraw', {day: SB.brief.day}).then(function (d) { sbAfter(d, 'The team sees the lines again.'); })
+      .catch(function () { say('sb-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.sbDraft = function (btn) {
+    if (btn) btn.disabled = true;
+    say('sb-status', 'Drafting…');
+    post('/api/staff-brief/draft', {day: SB.brief.day}).then(function (d) { sbAfter(d, d && d.ok && d.brief.draft_text ? 'Drafted — read it before you approve it.' : ''); })
+      .catch(function () { say('sb-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.sbFocus = function () {
+    post('/api/staff-brief/focus', {day: SB.brief.day, item: val('sb-focus-item'), line: val('sb-focus-line')})
+      .then(function (d) { sbAfter(d, 'Focus saved.'); })
+      .catch(function () { say('sb-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.sbFocusClear = function () {
+    post('/api/staff-brief/focus', {day: SB.brief.day, item: '', line: ''}).then(function (d) { sbAfter(d, 'Focus cleared.'); })
+      .catch(function () { say('sb-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.sbPick = function (btn) {
+    var el = document.getElementById('sb-focus-item');
+    if (el && btn) { el.value = btn.getAttribute('data-sb-item') || ''; el.focus(); }
+  };
+
+  // ── house rules ─────────────────────────────────────────────────────────
+  function skRulesLoad() {
+    fetch('/api/house-rules', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (!d || !d.ok) return;
+      var card = document.getElementById('sk-rules-card'), body = document.getElementById('sk-rules-body');
+      if (!card || !body) return;
+      card.hidden = false;
+      var hr = d.house_rules, h = '';
+      if (d.can_edit) {
+        h += '<div class="ac-field"><label for="sk-rules-text">One rule a line</label>'
+           + '<textarea class="ac-textarea" id="sk-rules-text" rows="8" maxlength="20000" placeholder="Phones stay in the locker during service.&#10;Shift meal is after close, from the staff menu.">' + esc(hr ? hr.body : '') + '</textarea></div>'
+           + '<div class="ac-inline" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="skRulesSave(this)">Save house rules</button>'
+           + (hr ? '<span class="ac-note" style="margin:0">Saved ' + mdy(hr.updated_at) + '</span>' : '') + '</div>';
+      } else {
+        h += hr ? '<div class="ac-note" style="white-space:pre-line">' + esc(hr.body) + '</div>' : '<div class="ac-note">No house rules yet.</div>';
+      }
+      body.innerHTML = h;
+    }).catch(function () {});
+  }
+  window.skRulesSave = function () {
+    post('/api/house-rules', {body: val('sk-rules-text')}).then(function (d) {
+      if (!d || !d.ok) { say('sk-rules-status', (d && d.error) || 'Couldn’t save.', true); return; }
+      say('sk-rules-status', 'Saved — staff see it now.');
+      skRulesLoad();
+    }).catch(function () { say('sk-rules-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+
+  // ── docs ────────────────────────────────────────────────────────────────
+  var DOCS = null;
+  function skDocsLoad() {
+    fetch('/api/staff-docs', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (!d || !d.ok) return;
+      DOCS = d;
+      skDocsPaint(null);
+    }).catch(function () {});
+  }
+  function skDocsPaint(editing) {
+    var card = document.getElementById('sk-docs-card'), body = document.getElementById('sk-docs-body');
+    if (!card || !body || !DOCS) return;
+    card.hidden = false;
+    var h = '<div class="ac-list">', i, d;
+    if (!DOCS.docs.length) h += '<div class="ac-note" style="margin:0">No docs yet.</div>';
+    for (i = 0; i < DOCS.docs.length; i++) {
+      d = DOCS.docs[i];
+      h += '<div class="ac-row"><div class="l"><b>' + esc(d.title) + '</b><span>' + esc(d.kind_label) + ' · ' + (d.roles.length ? esc(d.roles.join(', ')) : 'Everyone') + ' · updated ' + mdy(d.updated_at) + '</span></div>'
+         + (DOCS.can_edit ? '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-doc="' + d.id + '" onclick="skDocEdit(this)">Edit</button>'
+         + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-doc="' + d.id + '" onclick="skDocRemove(this)">Remove</button></div>' : '') + '</div>';
+    }
+    h += '</div>';
+    if (DOCS.can_edit) {
+      var e = editing || {kind: 'menu_spec', title: '', body: '', roles: []}, opts = '';
+      for (i = 0; i < DOCS.kinds.length; i++) opts += '<option value="' + DOCS.kinds[i].kind + '"' + (DOCS.kinds[i].kind === e.kind ? ' selected' : '') + '>' + esc(DOCS.kinds[i].label) + '</option>';
+      h += '<div class="ac-form" style="margin-top:12px">'
+         + '<div class="ac-field"><label for="sk-doc-kind">Kind</label><select class="ac-select" id="sk-doc-kind">' + opts + '</select></div>'
+         + '<div class="ac-field"><label for="sk-doc-title">Title</label><input class="ac-input" id="sk-doc-title" maxlength="120" value="' + esc(e.title) + '"></div>'
+         + '<div class="ac-field"><label for="sk-doc-roles">For jobs (blank = everyone)</label><input class="ac-input" id="sk-doc-roles" placeholder="Server, Bartender" value="' + esc((e.roles || []).join(', ')) + '"></div>'
+         + '<div class="ac-field wide"><label for="sk-doc-body">Text</label><textarea class="ac-textarea" id="sk-doc-body" rows="6" maxlength="20000">' + esc(e.body) + '</textarea></div>'
+         + '</div><div class="ac-inline" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-doc="' + (e.id || '') + '" onclick="skDocSave(this)">' + (e.id ? 'Save changes' : 'Add doc') + '</button>'
+         + (e.id ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="skDocCancel(this)">Cancel</button>' : '') + '</div>';
+    }
+    body.innerHTML = h;
+  }
+  function docById(id) {
+    for (var i = 0; i < DOCS.docs.length; i++) if (String(DOCS.docs[i].id) === String(id)) return DOCS.docs[i];
+    return null;
+  }
+  window.skDocEdit = function (btn) { skDocsPaint(docById(btn.getAttribute('data-doc'))); };
+  window.skDocCancel = function () { skDocsPaint(null); };
+  window.skDocSave = function (btn) {
+    var id = btn.getAttribute('data-doc');
+    post('/api/staff-docs', {id: id || null, kind: val('sk-doc-kind'), title: val('sk-doc-title'), body: val('sk-doc-body'),
+                             roles: val('sk-doc-roles').split(',')}).then(function (d) {
+      if (!d || !d.ok) { say('sk-docs-status', (d && d.error) || 'Couldn’t save.', true); return; }
+      say('sk-docs-status', 'Saved.');
+      skDocsLoad();
+    }).catch(function () { say('sk-docs-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.skDocRemove = function (btn) {
+    var d0 = docById(btn.getAttribute('data-doc'));
+    if (!d0 || !window.confirm('Remove “' + d0.title + '”? Staff stop seeing it.')) return;
+    post('/api/staff-docs/' + d0.id + '/remove', {}).then(function (d) {
+      if (!d || !d.ok) { say('sk-docs-status', (d && d.error) || 'Couldn’t remove it.', true); return; }
+      say('sk-docs-status', 'Removed.');
+      skDocsLoad();
+    }).catch(function () { say('sk-docs-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+
+  // ── certifications ──────────────────────────────────────────────────────
+  var CERT_CHIP = {expired: 'bad', expiring: 'warn', current: '', no_expiry: ''};
+  function certSaid(c) {
+    if (c.status === 'no_expiry') return 'No expiry date';
+    if (c.status === 'expired') return 'Expired ' + mdy(c.expires_on);
+    return 'Expires ' + mdy(c.expires_on);
+  }
+  function skCertsLoad() {
+    fetch('/api/staff-certs', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (!d || !d.ok) return;
+      var card = document.getElementById('sk-certs-card'), body = document.getElementById('sk-certs-body');
+      if (!card || !body) return;
+      card.hidden = false;
+      var sub = document.getElementById('sk-certs-sub');
+      if (sub) sub.textContent = 'Who holds which certificate until when. The holder and you are told ' + d.remind_days + ' days before one expires.';
+      var h = '<div class="ac-list">', i, c;
+      if (!d.certs.length) h += '<div class="ac-note" style="margin:0">No certificates on file yet.</div>';
+      for (i = 0; i < d.certs.length; i++) {
+        c = d.certs[i];
+        h += '<div class="ac-row"><div class="l"><b>' + esc(c.employee_name) + '</b><span>' + esc(String(c.cert).replace(/_/g, ' ')) + (c.note ? ' · ' + esc(c.note) : '') + '</span></div>'
+           + '<div class="c"><span class="ac-chip ' + (CERT_CHIP[c.status] || '') + '"><i></i>' + certSaid(c) + '</span>'
+           + (d.can_edit ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cert="' + c.id + '" onclick="skCertRemove(this)">Remove</button>' : '') + '</div></div>';
+      }
+      h += '</div>';
+      if (d.can_edit) {
+        var names = '';
+        for (i = 0; i < d.roster.length; i++) names += '<option value="' + esc(d.roster[i]) + '">';
+        h += '<datalist id="sk-cert-names">' + names + '</datalist>'
+           + '<datalist id="sk-cert-kinds"><option value="food handler"><option value="alcohol"><option value="allergen"><option value="manager"><option value="first aid"></datalist>'
+           + '<div class="ac-inline" style="margin-top:12px">'
+           + '<input class="ac-input" id="sk-cert-name" list="sk-cert-names" placeholder="Name, as on the schedule" aria-label="Employee name">'
+           + '<input class="ac-input" id="sk-cert-kind" list="sk-cert-kinds" placeholder="Certificate (food handler)" aria-label="Certificate">'
+           + '<input class="ac-input ac-num" id="sk-cert-exp" type="date" aria-label="Expires on" style="flex:0 0 170px">'
+           + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="skCertSave(this)">Save</button></div>';
+      }
+      body.innerHTML = h;
+    }).catch(function () {});
+  }
+  window.skCertSave = function () {
+    post('/api/staff-certs', {employee_name: val('sk-cert-name'), cert: val('sk-cert-kind'), expires_on: val('sk-cert-exp')}).then(function (d) {
+      if (!d || !d.ok) { say('sk-certs-status', (d && d.error) || 'Couldn’t save.', true); return; }
+      say('sk-certs-status', 'Saved.');
+      skCertsLoad();
+    }).catch(function () { say('sk-certs-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+  window.skCertRemove = function (btn) {
+    if (!window.confirm('Remove this certificate?')) return;
+    post('/api/staff-certs/' + btn.getAttribute('data-cert') + '/remove', {}).then(function (d) {
+      if (!d || !d.ok) { say('sk-certs-status', (d && d.error) || 'Couldn’t remove it.', true); return; }
+      say('sk-certs-status', 'Removed.');
+      skCertsLoad();
+    }).catch(function () { say('sk-certs-status', 'Couldn’t reach Cavnar AI.', true); });
+  };
+
+  // Load once, the first time Account opens (the same hook loadOpsSettings uses).
+  var loaded = false, prev = window.switchTab;
+  if (typeof prev === 'function') {
+    window.switchTab = function (n, btn) {
+      prev(n, btn);
+      if (n === 'account' && !loaded) {
+        loaded = true;
+        sbLoad();
+        skRulesLoad();
+        skDocsLoad();
+        skCertsLoad();
+      }
+    };
+  }
 })();
 </script>
 </body>

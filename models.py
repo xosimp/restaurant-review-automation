@@ -4017,6 +4017,11 @@ def init_db(db_path: str = DB_PATH):
     init_staff_comms(db_path)
     import people as _people_boot
     _people_boot.init_people(db_path)
+    # What staff can look up and the day's brief a manager approves: the
+    # language preferences, translations, docs and house rules,
+    # certifications and the staff_briefs rows (employee audit B7).
+    from staff_knowledge import init_staff_knowledge
+    init_staff_knowledge(db_path)
     # The phantom people a "Name · attribute" rating subject made (10/1/26).
     try:
         _people_boot.repair_labelled_people(db_path=db_path)

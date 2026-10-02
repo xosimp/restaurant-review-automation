@@ -2776,6 +2776,12 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
     staff portal, and staff phone numbers carry no SMS consent — the one
     consented, routed number is the manager's. Nothing is sent when the
     briefing has nothing to say.
+
+    This is also when the day's one model rewrite of the lineup notes is
+    written (staff_brief.draft — at most one per restaurant per day, a
+    DRAFT nobody on staff sees until a manager approves it), and the text
+    asks the manager to approve the brief and pick tonight's focus item.
+    A failed draft never stops the text.
     """
     import issues, ops, preshift
     from time_utils import restaurant_now
@@ -2792,10 +2798,17 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
             continue
         st["attempted"] += 1
         try:
-            brief = preshift.build(r.id, day=local.date(), db_path=db_path)
+            brief = preshift.build_cached(r.id, day=local.date(), db_path=db_path)
             items = brief.get("items") or []
             if not items:
                 continue
+            drafted = False
+            try:
+                import staff_brief
+                row = staff_brief.draft(r.id, day=local.date(), db_path=db_path, items=items)
+                drafted = (row or {}).get("draft_status") == "drafted"
+            except Exception as de:
+                ops.capture(de, job="preshift_nudge", context=f"restaurant_id={r.id} staff brief draft")
             routing = issues.get_routing(r.id, db_path)
             manager = routing.get("manager")
             if not manager or not manager.get("phone"):
@@ -2811,9 +2824,20 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
             # The team reads them in the staff app (the web portal is gone,
             # 9/30/26); the link names the restaurant and its code for anyone
             # who hasn't got the app yet.
-            msg = (f"Cavnar AI · tonight's lineup notes are ready ({len(items)} point"
-                   f"{'' if len(items) == 1 else 's'}): {lead} The team reads them in the "
-                   f"Cavnar AI app: {base}/staff/r/{token}")
+            # The manager's say: approve the rewrite (or write their own) and
+            # pick tonight's focus item, before the team reads it.
+            # The links are never the part cut to fit one 320-character text:
+            # the lead line is.
+            ask = ("Approve the drafted brief, or pick a focus item: " if drafted
+                   else "Add a brief or a focus item: ")
+            head = (f"Cavnar AI · tonight's lineup notes ({len(items)} point"
+                    f"{'' if len(items) == 1 else 's'}): ")
+            tail = (f" {ask}{base}/?nav=account%2Fnotifications The team reads them in the Cavnar AI app: "
+                    f"{base}/staff/r/{token}")
+            room = max(0, 320 - len(head) - len(tail))
+            if len(lead) > room:
+                lead = lead[:max(0, room - 1)].rstrip() + "…"
+            msg = head + lead + tail
             # The text is this restaurant's in sms_log (fix round E, #14).
             with sms_context(r.id):
                 texted = send_sms(manager["phone"], msg[:320], use_case="alert")

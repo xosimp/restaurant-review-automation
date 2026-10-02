@@ -166,6 +166,13 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
   I1 injection residue, a model-written "UNVERIFIED:" marker, and (on
      unattended owner surfaces) a six-word echo of untrusted text
                                                  drop (public: refuse)
+  S1 staff text (audience "staff": the shift brief, a house-rules answer,
+     a translation): money ($, dollars), pay (rates, wages, payroll, tip
+     pool), the owner's numbers (sales, revenue, labor %, SPLH, prime /
+     food / plate cost, margins, comps and voids), anyone's reliability
+     or rating, discipline, sign-in detail, or the name of anyone on the
+     roster other than the reader (policy people_denied / people_allowed)
+                                                                refuse
 
 SEVERITY → ACTION: info (log) · rewrite (deterministic phrase swap) ·
 caveat (a structured actions.caveats entry — never only the "UNVERIFIED:"
@@ -173,7 +180,9 @@ string) · withhold (actions.controls = False, plus its caveat) · drop (the
 sentence, or the line under validate_lines) · refuse (the caller's
 fallback: fixed copy or the previous stored read; Verdict.text is "").
 Unattended delivery turns anything above caveat into drop/refuse; public
-text (audience guest_public) turns anything above rewrite into refuse.
+text (audience guest_public) and staff text (audience staff — there is no
+caveat a member of staff could read, and the fallback is the deterministic
+copy) turn anything above rewrite into refuse.
 
 PROPERTIES (tests/test_response_validation.py): validate never adds a
 figure, never raises confidence (it only ever lowers a modal, a band or a
@@ -204,8 +213,13 @@ SURFACES = (
     "reply_public", "guest_sms", "social_post", "calendar_idea",
     # A starter task-sheet line the owner accepts one by one (task_sheets.starter_lines).
     "task_draft",
+    # Read by staff (audience "staff", employee audit B7, 10/1/26): the
+    # day's lineup brief a manager approves (staff_brief), an answer from
+    # the house rules (staff_knowledge.answer), and a translation of
+    # manager-approved text (staff_knowledge.translate_for).
+    "staff_brief", "staff_answer", "staff_translation",
 )
-AUDIENCES = ("owner", "manager", "guest_public", "internal")
+AUDIENCES = ("owner", "manager", "guest_public", "internal", "staff")
 DELIVERIES = ("interactive", "unattended")
 FACT_KINDS = ("measured", "computed", "estimate", "opportunity", "projection", "plan", "forecast",
               "benchmark", "price", "prediction")
@@ -216,9 +230,12 @@ _ACTION_OF = {"info": "log", "rewrite": "rewrite", "caveat": "caveat", "withhold
               "drop": "drop", "refuse": "refuse"}
 
 # Surfaces nobody reads before the recipient does, and surfaces a guest reads.
-UNATTENDED_SURFACES = frozenset({"digest", "dsr", "weekly_plan", "email_personalise"})
+UNATTENDED_SURFACES = frozenset({"digest", "dsr", "weekly_plan", "email_personalise", "staff_brief",
+                                 "staff_translation"})
 PUBLIC_SURFACES = frozenset({"reply_public", "guest_sms", "social_post", "calendar_idea"})
 DIAGNOSIS_SURFACES = frozenset({"review_diagnosis", "food_diagnosis"})
+# Surfaces an employee reads: always audience "staff" (S1), and only they.
+STAFF_SURFACES = frozenset({"staff_brief", "staff_answer", "staff_translation"})
 
 RULES = {
     "F1": "figure not in the facts",
@@ -243,6 +260,7 @@ RULES = {
     "A2": "unsafe action or flat legal statement",
     "P1": "public text claim the restaurant never made",
     "I1": "injection residue or echo of untrusted text",
+    "S1": "staff text carries money, pay, the owner's numbers, a rating, discipline or another person",
 }
 
 # The disclosure codes M1 knows: the words that show a disclosure is
@@ -426,8 +444,13 @@ class ValidationContext:
             raise ValueError(f"unknown surface {self.surface!r}; one of {', '.join(SURFACES)}")
         if not self.audience:
             self.audience = "guest_public" if self.surface in PUBLIC_SURFACES else "owner"
+        if self.surface in STAFF_SURFACES:
+            # Whoever built the context, a staff surface is read by staff.
+            self.audience = "staff"
         if self.audience not in AUDIENCES:
             raise ValueError(f"unknown audience {self.audience!r}")
+        if self.audience == "staff" and self.surface not in STAFF_SURFACES:
+            raise ValueError(f"audience 'staff' is only for {', '.join(sorted(STAFF_SURFACES))}")
         if not self.delivery:
             self.delivery = "unattended" if self.surface in UNATTENDED_SURFACES else "interactive"
         if self.delivery not in DELIVERIES:
@@ -1963,6 +1986,7 @@ class _Run:
         self.controls = True
         self.unattended = ctx.delivery == "unattended"
         self.public = ctx.audience == "guest_public"
+        self.staff = ctx.audience == "staff"
         self.pct = _pct(ctx.confidence)
         self.level = target_level(self.pct)
         self.facts = _Facts(ctx.facts)
@@ -2015,7 +2039,7 @@ class _Run:
     # ── findings ──
     def emit(self, rule, sev_i, sev_u=None, span="", detail="", caveat=None):
         sev = (sev_u or sev_i) if self.unattended else sev_i
-        if self.public and _SEV_RANK[sev] >= _SEV_RANK["caveat"]:
+        if (self.public or self.staff) and _SEV_RANK[sev] >= _SEV_RANK["caveat"]:
             sev = "refuse"
         finding = {"rule": rule, "severity": sev, "span": str(span or "")[:60],
                    "detail": str(detail or "")[:200], "action": _ACTION_OF[sev]}
@@ -2083,6 +2107,9 @@ class _Run:
         # Public text is checked whole by the existing public checks.
         if self.public:
             self.public_checks(body)
+        # Staff text: nothing from the "must never reach staff" list (S1).
+        if self.staff:
+            self.staff_checks(body)
         # A model-written forecast ("What should change") stands only as a
         # conditional (NS1 H10 / V8): "If the cause is right, …".
         if ctx.policy.get("must_start_with_if") and not re.match(r"\s*if\b", body, re.I):
@@ -2278,6 +2305,24 @@ class _Run:
                 names.append(m.group(1))
             if names:
                 self.emit("P1", "refuse", span=names[0], detail="names a person in public")
+
+    # ── S1 (whole staff text) ──
+    def staff_checks(self, body):
+        why = staff_unsafe(body, people_denied=self.ctx.policy.get("people_denied") or (),
+                           people_allowed=self.ctx.policy.get("people_allowed") or ())
+        if why:
+            label, span = why
+            self.emit("S1", "refuse", span=span, detail=label)
+            return
+        # Staff text carries only the source's numbers, every one of them —
+        # not only the figures F1 types: "in 9 reviews" or "at 5:30" is a
+        # number a lineup would repeat as fact (F1, refuse).
+        if self.ctx.context_text:
+            have = set(re.findall(r"\d+", _g.normalise_numbers(self.ctx.context_text)))
+            for d in re.findall(r"\d+", _g.normalise_numbers(body)):
+                if d not in have:
+                    self.emit("F1", "refuse", span=d, detail="a number the source doesn't hold")
+                    return
 
     # ── A1 ──
     def action_claims(self, s):
@@ -3417,6 +3462,84 @@ class _Run:
                           (f"This reads data that is {int(age)} days old, not this week."
                            if isinstance(age, (int, float)) else
                            f"This reads data that isn't current ({', '.join(not_current[:3])}), not this week."))
+
+
+# ── S1: what never reaches staff ────────────────────────────────────────────
+#
+# The employee audit's list (4_communication_ai.md §6.0, 10/1/26): sales and
+# per-hour dollars, labor % and SPLH, prime cost, anyone's pay, owner
+# ratings and reliability, other people's attendance and notes, loss / comp
+# / void by approver, person mentions, sign-in detail, costs and margins.
+# A pure text check, so the same rule holds a model's rewrite, a manager's
+# edit and a translation (staff_brief / staff_knowledge call staff_unsafe
+# directly on text no model wrote).
+
+_STAFF_MONEY_RE = re.compile(
+    r"\$|\b\d[\d,.]*\s?(?:dollars?|bucks|usd)\b|\bUSD\b|\b(?:dollars?|bucks)\b", re.I)
+_STAFF_UNSAFE = [
+    ("pay", re.compile(
+        r"\b(?:pay\s*rates?|hourly\s+rates?|rate\s+of\s+pay|wages?|salar(?:y|ies)|payroll|pay\s*checks?|"
+        r"paycheques?|tip[\s-]?outs?|tip\s+pool(?:ing)?|overtime\s+pay|bonus(?:es)?|pay\s+(?:raise|cut)s?|"
+        r"(?:his|her|their|your|my)\s+pay)\b", re.I)),
+    ("the owner's numbers", re.compile(
+        r"\b(?:net\s+sales|gross\s+sales|sales\s+(?:per|by|were|was|figures?|numbers?|totals?)|revenue|"
+        r"labor\s*(?:cost|%|percent(?:age)?|ratio)|labou?r\s+costs?|SPLH|sales\s+per\s+labou?r|"
+        r"prime\s+cost|food\s+cost|plate\s+costs?|cost\s+of\s+goods|COGS|margins?|profit(?:s|ability|able)?|"
+        r"comps?\b|comped|voids?\b|voided|shrink(?:age)?|loss\s+signals?)", re.I)),
+    ("a rating of a person", re.compile(
+        r"\b(?:reliability(?:\s+scores?)?|strength\s+ratings?|performance\s+(?:scores?|ratings?|reviews?)|"
+        r"(?:attendance|lateness)\s+(?:record|history)|no[\s-]?call[\s-]?no[\s-]?shows?|"
+        r"(?:his|her|their)\s+(?:attendance|record|rating))\b", re.I)),
+    ("discipline", re.compile(
+        r"\b(?:disciplin\w*|write[\s-]?ups?|written\s+up|reprimand\w*|terminat\w*|"
+        r"suspend(?:ed|sion)?|final\s+warning|let\s+go)\b", re.I)),
+    ("sign-in detail", re.compile(r"\b(?:IP\s+address(?:es)?|signed\s+in\s+from|sign-?in\s+alerts?)\b", re.I)),
+]
+
+
+def _person_patterns(names):
+    """(name, pattern) for each roster name: the full name, and a first
+    name of three letters or more, as a capitalised word."""
+    out = []
+    for n in names or ():
+        full = " ".join(str(n or "").split())
+        if not full:
+            continue
+        parts = [full]
+        first = full.split()[0].strip(".,")
+        if len(first) >= 3 and first[0].isalpha():
+            parts.append(first)
+        for part in dict.fromkeys(parts):
+            out.append((full, re.compile(r"(?<![\w])" + re.escape(part[0].upper() + part[1:]) + r"(?:['’]s)?(?![\w])")))
+    return out
+
+
+def staff_unsafe(text, people_denied=(), people_allowed=()):
+    """(label, span) for the first thing in `text` that must never reach
+    staff (S1), or None. `people_denied`: the roster's names (anyone other
+    than the reader); `people_allowed`: the reader's own name, never
+    refused. Pure."""
+    t = str(text or "")
+    if not t.strip():
+        return None
+    m = _STAFF_MONEY_RE.search(t)
+    if m:
+        return ("money", m.group(0))
+    for c in _g.figure_claims(_g.normalise_numbers(t)):
+        if c.get("kind") == "money":
+            return ("money", str(c.get("raw") or ""))
+    for label, pat in _STAFF_UNSAFE:
+        m = pat.search(t)
+        if m:
+            return (label, m.group(0))
+    allowed = {_norm_name(a) for a in people_allowed or () if a}
+    allowed |= {_norm_name(str(a).split()[0]) for a in people_allowed or () if str(a or "").split()}
+    for full, pat in _person_patterns(people_denied):
+        m = pat.search(t)
+        if m and _norm_name(m.group(0).replace("’s", "").replace("'s", "")) not in allowed \
+                and _norm_name(full) not in allowed:
+            return ("another person's name", m.group(0))
+    return None
 
 
 # ── entry points ────────────────────────────────────────────────────────────

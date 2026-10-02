@@ -4866,6 +4866,10 @@ def scheduler_loop():
                 _ops.run_job("coverage_check", run_coverage_check, restaurants=_slot, claim="intraday")
                 from strategy_jobs import run_preshift_nudge
                 _ops.run_job("preshift_nudge", run_preshift_nudge, restaurants=_slot, claim="intraday")
+                # A certificate about to expire, told to its holder and the
+                # owner once (10am local; staff_knowledge, employee audit V9).
+                from staff_knowledge import run_cert_reminders
+                _ops.run_job("cert_reminders", run_cert_reminders, restaurants=_slot, claim="intraday")
                 # How tonight went, once the doors are shut — the one part
                 # of the day nothing reported on while the owner could
                 # still picture the room.

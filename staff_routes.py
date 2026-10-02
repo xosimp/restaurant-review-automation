@@ -442,16 +442,20 @@ def api_me(current_user):
 @staff_bp.route("/api/preshift")
 @staff_login_required
 def api_preshift(current_user):
-    """Today's lineup briefing — see preshift.py. Staff-safe by construction:
-    no money and no individuals, so it is the same for every employee."""
-    rid, _name = _staff_context(current_user)
-    import preshift
+    """Today's lineup briefing, made personal (staff_brief.personal, employee
+    audit H16/V3): the reader's own role, hours and station first, then the
+    day's items — built once per restaurant and day (preshift.build_cached),
+    no money and no individuals — and the manager-approved brief and focus
+    item when there is one, in the reader's language. A day off is a short
+    payload ({working: false}) with nothing to read."""
+    rid, name = _staff_context(current_user)
+    import staff_brief
     try:
-        return jsonify(ok=True, **preshift.build(rid))
+        return jsonify(ok=True, **staff_brief.personal(rid, current_user, name))
     except Exception as e:
         import ops
         ops.capture(e, job="preshift", context=f"restaurant_id={rid}")
-        return jsonify(ok=True, items=[])
+        return jsonify(ok=True, items=[], you=[], working=None, brief_text=None, focus=None)
 
 
 @staff_bp.route("/api/shifts")
