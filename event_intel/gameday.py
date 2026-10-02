@@ -699,10 +699,7 @@ def run_event_push(db_path=None, restaurants=None) -> dict:
             # test fire_push applies per device): a push nobody would get
             # writes no budgeted briefing row and is not "sent" (re-audit 2
             # R3-06).
-            import preferences
-            _pc = {}
-            audience = {u for u in sj.deliverable_audience(r.id, set(readers), db)
-                        if preferences.push_allowed(u, r.id, PUSH_TYPE, db_path=db, _cache=_pc)}
+            audience = sj.deliverable_audience(r.id, set(readers), db, alert_type=PUSH_TYPE)
             import notify
             if not audience:
                 skipped += 1

@@ -1726,7 +1726,7 @@ def run_pre_dinner_pulse(db_path=DB_PATH, restaurants=None):
             # "sent" to an audience with no deliverable device reached
             # nobody, and was recorded as shown all the same (re-audit C2).
             audience = deliverable_audience(r.id, {u["id"] for u in morning_brief.recipients(r.id, db_path)},
-                                            db_path)
+                                            db_path, alert_type="intraday_pulse")
             if not audience:
                 continue
             word = "behind" if p["direction"] == "behind" else "ahead of"
@@ -1762,11 +1762,16 @@ def run_pre_dinner_pulse(db_path=DB_PATH, restaurants=None):
                 if ans:
                     data["rec_key"] = move["key"]
                 data["answerable"] = ans
-            push.fire_push(
+            queued = push.fire_push(
                 r.id, "intraday_pulse",
                 f"{abs(p['pct']):.0f}% {word} a typical {p['weekday']}", body,
                 data=data, db_path=db_path, user_ids=audience,
                 on_delivered=rec_delivery.when_pushed(r.id, "alert_push", recs, db_path=db_path))
+            if queued == 0:
+                # No device took it: the row comes back out of the history
+                # and the briefing budget (notify.withdraw_notification).
+                notify.withdraw_notification(r.id, alert_id, db_path=db_path)
+                continue
             sent += 1
         except Exception as e:
             st["failed"] += 1
@@ -2140,9 +2145,19 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
                   if rec["key"] not in rec_ledger.own_silences(restaurant_id, u, db_path=db_path)]
         if not people:
             return 0
+    # Who it can actually reach, decided BEFORE the row is written (the row is
+    # a budgeted briefing): a phone whose login lets this type through
+    # (deliverable_audience with the type — a login who muted it is not
+    # reached, and not emailed instead: they have the app and said no), and
+    # by email the people with no phone. Nobody: no row, no slot spent.
+    pushed = deliverable_audience(restaurant_id, {u["id"] for u in people if devices.get(u["id"])},
+                                  db_path, alert_type=alert_type)
+    emailable = [u for u in people if not devices.get(u["id"]) and u.get("email")]
+    if not pushed and not emailable:
+        return 0
     alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path,
                                           **_notification_ref(data))
-    pushed = {u["id"] for u in people if devices.get(u["id"])}
+    queued = 0
     if pushed:
         # The history row's id rides the payload so the open can name it
         # (#39); the recommendation key too, when this is one, with the
@@ -2161,13 +2176,15 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
             print(f"[strategy_jobs] quiet-hours check failed rid={restaurant_id}: {qe}")
         # Presented on alert_push once a phone took it, never on the
         # queueing (re-audit C2/C4).
-        push.fire_push(restaurant_id, alert_type, title, body, data=data,
-                       db_path=db_path, user_ids=pushed,
-                       on_delivered=(rec_delivery.when_pushed(restaurant_id, "alert_push", [rec], db_path=db_path)
-                                     if rec else None))
-    reached = len(pushed)
+        queued = push.fire_push(restaurant_id, alert_type, title, body, data=data,
+                                db_path=db_path, user_ids=pushed,
+                                on_delivered=(rec_delivery.when_pushed(restaurant_id, "alert_push", [rec],
+                                                                       db_path=db_path)
+                                              if rec else None))
+    # fire_push returns how many devices it queued for: 0 is nobody.
+    reached = 0 if pushed and queued == 0 else len(pushed)
 
-    emailed = [u for u in people if u["id"] not in pushed and u.get("email")]
+    emailed = emailable
     if emailed:
         import html as _h
         import emails as _emails
@@ -2199,25 +2216,38 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
                 })
             if getattr(result, "ok", False):
                 reached += 1
-    if rec and reached > len(pushed):
+    if rec and reached > (0 if queued == 0 else len(pushed)):
         rec_delivery.present_now(restaurant_id, "alert_email", [rec], db_path=db_path)
+    if not reached:
+        # Written for a push no device took and no email that went: it comes
+        # back out of the history and the budget (notify.withdraw_notification).
+        notify.withdraw_notification(restaurant_id, alert_id, db_path=db_path)
     return reached
 
 
-def deliverable_audience(restaurant_id, user_ids, db_path=DB_PATH) -> set:
+def deliverable_audience(restaurant_id, user_ids, db_path=DB_PATH, alert_type=None) -> set:
     """The logins in `user_ids` with a phone a push can reach right now
-    (push.get_device_tokens for delivery: active logins, unparked tokens).
-    A push-only job sends to this set, and to nobody when it is empty."""
+    (push.get_device_tokens for delivery: active logins, unparked tokens) —
+    and, given `alert_type`, whose own choices let it through
+    (preferences.push_allowed: push off, this type muted, their own quiet
+    hours — the test fire_push applies per device). A push-only job sends to
+    this set, and writes no budgeted briefing row when it is empty: a push
+    every recipient muted reached nobody and must not spend a slot."""
     import push
     ids = {int(u) for u in (user_ids or ()) if u}
     if not ids:
         return set()
     try:
-        return {int(t.get("user_id") or 0) for t in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True)
-                                                    or [])} & ids
+        out = {int(t.get("user_id") or 0) for t in (push.get_device_tokens(restaurant_id, db_path, for_delivery=True)
+                                                   or [])} & ids
     except Exception as e:
         print(f"[strategy_jobs] device lookup failed rid={restaurant_id}: {e}")
         return set()
+    if alert_type and out:
+        import preferences
+        cache = {}
+        out = {u for u in out if preferences.push_allowed(u, restaurant_id, alert_type, db_path=db_path, _cache=cache)}
+    return out
 
 
 def _close_hour(r, local):
@@ -2439,7 +2469,7 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             # before the week is claimed — a week "sent" to nobody's phone
             # was spent and recorded as shown (re-audit C2).
             audience = deliverable_audience(r.id, {u["id"] for u in morning_brief.recipients(r.id, db_path)},
-                                            db_path)
+                                            db_path, alert_type="demand_opportunity")
             if not audience:
                 continue
             # Claimed on the ISO WEEK, not the date — once a week at most.
@@ -2482,7 +2512,7 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             # presents it on delivery should a client ever answer it.
             import rec_delivery
             ans = rec_delivery.answerable(rec["key"])
-            push.fire_push(
+            queued = push.fire_push(
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
                 # It opens Marketing, where the post and the night's card are
@@ -2492,6 +2522,9 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
                       **({"rec_key": rec["key"]} if ans else {})},
                 db_path=db_path, user_ids=audience,
                 on_delivered=rec_delivery.when_pushed(r.id, "alert_push", [rec], db_path=db_path))
+            if queued == 0:
+                notify.withdraw_notification(r.id, alert_id, db_path=db_path)
+                continue
             sent += 1
         except Exception as e:
             st["failed"] += 1

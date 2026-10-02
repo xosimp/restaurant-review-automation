@@ -279,7 +279,13 @@ def _push_world(db, monkeypatch, marketing=1):
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: sent.append((a, k)))
     monkeypatch.setattr(morning_brief, "recipients", lambda rid, db_path=None, include_opted_out=False: [
         {"id": 1, "role": "owner"}])
-    monkeypatch.setattr(strategy_jobs, "deliverable_audience", lambda rid, ids, db_path=None: set(ids))
+    # Every login has a phone here; the login's own choices still apply
+    # (deliverable_audience's per-type mute test, preferences.push_allowed).
+    import preferences
+    monkeypatch.setattr(strategy_jobs, "deliverable_audience",
+                        lambda rid, ids, db_path=None, alert_type=None: {
+                            u for u in ids if not alert_type
+                            or preferences.push_allowed(u, rid, alert_type, db_path=db_path)})
     claims = set()
     monkeypatch.setattr(ops, "period_claimed", lambda k, p: (k, p) in claims)
     monkeypatch.setattr(ops, "claim_period", lambda k, p: not ((k, p) in claims or claims.add((k, p))))

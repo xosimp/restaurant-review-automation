@@ -216,7 +216,7 @@ def test_the_push_goes_once_the_afternoon_before_to_the_labor_view_only(db, monk
     monkeypatch.setattr(notify, "briefing_allowed", lambda *a, **k: True)
     monkeypatch.setattr(morning_brief, "recipients", lambda rid, db_path=None, include_opted_out=False: [
         {"id": 1, "role": "owner"}, {"id": 2, "role": "employee"}])
-    monkeypatch.setattr(strategy_jobs, "deliverable_audience", lambda rid, ids, db_path=None: set(ids))
+    monkeypatch.setattr(strategy_jobs, "deliverable_audience", lambda rid, ids, db_path=None, alert_type=None: set(ids))
     claims = set()
     monkeypatch.setattr(ops, "period_claimed", lambda k, p: (k, p) in claims)
     monkeypatch.setattr(ops, "claim_period", lambda k, p: not ((k, p) in claims or claims.add((k, p))))

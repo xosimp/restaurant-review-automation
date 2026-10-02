@@ -96,7 +96,7 @@ def test_reach_keeps_what_the_notification_is_about(db_path):
     assert strategy_jobs._notification_ref(None) == {}
     # _reach passes it to the history row.
     src = open("strategy_jobs.py", encoding="utf-8").read()
-    body = src[src.index("def _reach("):src.index("pushed = {u[\"id\"]", src.index("def _reach("))]
+    body = src[src.index("def _reach("):src.index("queued = 0", src.index("def _reach("))]
     assert "**_notification_ref(data)" in body
 
 
