@@ -23,7 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOT_APPLICABLE_SITES = {
     ("task_sheets.py", "starter_lines"): "a starter task sheet from general restaurant practice and the owner's profile, accepted line by line",
     ("drafter.py", "draft_response"): "a reply to one review, written from that review",
-    ("marketing.py", "generate_content"): "a social post drafted from the owner's topic",
+    ("marketing.py", "_draft_social_post"): "a social post drafted from the owner's topic",
     ("marketing.py", "get_content_calendar_ideas"): "calendar ideas from the profile and holidays",
     ("marketing.py", "_fill_missing_days"): "the same calendar prompt, for the days a week came back without",
     ("emails.py", "generate_email_personalization"): "onboarding email copy from typed counts",

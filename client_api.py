@@ -4482,7 +4482,7 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
     with a raw 500. Now: `{ok, content, tags, validation}` or `{ok: false,
     content: "", error}` with a real status (429 rate limit or budget stop,
     502/503/422 from ai_utils.user_facing_error)."""
-    from marketing import generate_content, mark_calendar_idea_used
+    from marketing import generate_content, mark_calendar_idea_used, MarketingCopyRejected
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
         return {"ok": False, "content": "",
@@ -4494,6 +4494,12 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
         # from it, but it is never the owner's word for an offer (AI-2).
         result = generate_content(content_type, topic, restaurant_id=restaurant_id,
                                   topic_is_owner=not from_calendar, user_id=user_id)
+    except MarketingCopyRejected:
+        # Two drafts failed the public-copy check (already counted as a
+        # quality event). Nothing broke: say so, never "server error".
+        return {"ok": False, "content": "", "code": "copy_rejected",
+                "error": "Cavnar AI's drafts didn't pass its checks for public posts. "
+                         "Click Generate to write another, or change the topic a little."}, 422
     except Exception as e:
         # A budget stop says the account is paused, never "try again" (AI-11).
         from ai_utils import AIBudgetExceeded, user_facing_error

@@ -252,6 +252,41 @@ def test_a_post_offering_a_discount_nobody_set_is_refused(db, monkeypatch):
         _post(db, monkeypatch, rid, "20% off every pizza this Friday! #GiaMia")
 
 
+def test_a_refused_first_draft_is_written_again_told_why(db, monkeypatch):
+    """One slip by the model is not an error the owner sees (10/2/26: 'your
+    usual' in a brunch post came back as an HTTP 502)."""
+    import marketing
+    import response_validation as rv
+    rid = _restaurant(db)
+    drafts = ["Our famous meatballs, all week long! #GiaMia", "Meatballs, all week long! #GiaMia"]
+    prompts = []
+    monkeypatch.setattr(marketing, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(marketing, "create_with_retry",
+                        lambda *a, **k: prompts.append(k["messages"][0]["content"]) or _msg(drafts[len(prompts) - 1]))
+    monkeypatch.setattr(marketing, "extract_text", lambda m: m.content[0].text)
+    out = marketing.generate_content("instagram_post", "fall menu", restaurant_id=rid)
+    assert out.startswith("Meatballs, all week") and rv.validation_of(out)["verdict"] == "pass"
+    assert len(prompts) == 2 and "rejected before anyone saw it" in prompts[1] and "famous" in prompts[1]
+
+
+def test_two_refused_drafts_answer_in_words_not_a_server_error(db, monkeypatch):
+    import marketing
+    from flask import Flask
+    rid = _restaurant(db)
+    calls = []
+    monkeypatch.setattr(marketing, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(marketing, "create_with_retry",
+                        lambda *a, **k: calls.append(1) or _msg("Our famous meatballs! #GiaMia"))
+    monkeypatch.setattr(marketing, "extract_text", lambda m: m.content[0].text)
+    with pytest.raises(marketing.MarketingCopyRejected):
+        marketing.generate_content("instagram_post", "fall menu", restaurant_id=rid)
+    assert len(calls) == 2, "one retry, never a loop"
+    import client_api
+    with Flask(__name__).test_request_context("/x"):
+        body, status = client_api._do_generate_content(rid, "instagram_post", "fall menu")
+    assert status == 422 and body["code"] == "copy_rejected" and "Generate" in body["error"]
+
+
 def test_a_post_repeating_what_the_owner_is_known_for_passes(db, monkeypatch):
     import response_validation as rv
     rid = _restaurant(db, known_for="famous meatballs and Sunday gravy")

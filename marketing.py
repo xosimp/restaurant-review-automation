@@ -595,6 +595,56 @@ def refusal_detail(verdict) -> str:
     return detail
 
 
+class MarketingCopyRejected(ValueError):
+    """The public-copy check refused the draft twice. Not a server fault: the
+    route says so in words, as a 422."""
+
+
+def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, given, data_health):
+    """One model draft of a social post, cleaned and run through the
+    Response Validation Layer. The caller reads result.verdict."""
+    msg = create_with_retry(
+        get_client(),
+        model=model_for("marketing"),
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="marketing_content",
+        # Rests on no data source: a social post drafted from the owner's topic.
+        readiness=data_health.NOT_APPLICABLE,
+    )
+    result = extract_text(msg).strip()
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("marketing copy was truncated")
+
+    # Strip markdown formatting Claude sometimes adds
+    import re as _re
+    result = _re.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
+    result = _re.sub('[*](.+?)[*]', lambda m: m.group(1), result)
+    # A markdown heading is "# Heading" — the space is required. Without it
+    # this ate the "#" off the first hashtag of every caption whose tags
+    # started a new line ("#GiaMia #TruffleSeason" came out "GiaMia
+    # #TruffleSeason"), quietly breaking one tag on every Instagram post.
+    result = _re.sub(r'^#{1,3}[ \t]+', '', result, flags=_re.MULTILINE)
+
+    # This copy is published to Instagram, Facebook and Google Business
+    # Profile. Hashtags and links are fine here — a claim the restaurant
+    # cannot make about itself is not. The Response Validation Layer on
+    # social_post (workstream A) replaces the bare check_marketing_copy: the
+    # same closure / health-department / never-say check, plus an offer, an
+    # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
+    # never wrote, fault and inspection claims, another tenant's name.
+    # What the owner wrote is the offer source: the profile the prompt was
+    # built from (known for, vibe, voice, menu notes, their website) and the
+    # topic they typed — not a calendar angle or a job's topic (AI-2). What
+    # guests said (the signal block) is never a source. Today's date and the
+    # holiday dates the prompt carried may back a date, never an offer.
+    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=owner_topic,
+                                     untrusted=[signal_context] if signal_context else (),
+                                     action="marketing_content", given=given)
+    return result
+
+
 def generate_content(content_type: str, topic: str,
                      restaurant_id: int = None, topic_is_owner: bool = True, user_id: int = None) -> str:
     """Generate marketing content for a given type and topic.
@@ -714,48 +764,28 @@ def generate_content(content_type: str, topic: str,
     prompt += PUBLIC_COPY_RULES + ("" if topic_is_owner else SUGGESTED_TOPIC_RULE)
 
     import data_health
-    msg = create_with_retry(
-        get_client(),
-        model=model_for("marketing"),
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
-        restaurant_id=restaurant_id,
-        action="marketing_content",
-        # Rests on no data source: a social post drafted from the owner's topic.
-        readiness=data_health.NOT_APPLICABLE,
-    )
-    result = extract_text(msg).strip()
-    if getattr(msg, "stop_reason", None) == "max_tokens":
-        raise ValueError("marketing copy was truncated")
-
-    # Strip markdown formatting Claude sometimes adds
-    import re as _re
-    result = _re.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
-    result = _re.sub('[*](.+?)[*]', lambda m: m.group(1), result)
-    # A markdown heading is "# Heading" — the space is required. Without it
-    # this ate the "#" off the first hashtag of every caption whose tags
-    # started a new line ("#GiaMia #TruffleSeason" came out "GiaMia
-    # #TruffleSeason"), quietly breaking one tag on every Instagram post.
-    result = _re.sub(r'^#{1,3}[ \t]+', '', result, flags=_re.MULTILINE)
-
-    # This copy is published to Instagram, Facebook and Google Business
-    # Profile. Hashtags and links are fine here — a claim the restaurant
-    # cannot make about itself is not. The Response Validation Layer on
-    # social_post (workstream A) replaces the bare check_marketing_copy: the
-    # same closure / health-department / never-say check, plus an offer, an
-    # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
-    # never wrote, fault and inspection claims, another tenant's name.
-    # What the owner wrote is the offer source: the profile the prompt was
-    # built from (known for, vibe, voice, menu notes, their website) and the
-    # topic they typed — not a calendar angle or a job's topic (AI-2). What
-    # guests said (the signal block) is never a source. Today's date and the
-    # holiday dates the prompt carried may back a date, never an offer.
     given = f"Today's date: {today_date}. Upcoming holidays: {upcoming or 'none'}."
-    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=owner_topic,
-                                     untrusted=[signal_context] if signal_context else (),
-                                     action="marketing_content", given=given)
-    if result.verdict is not None and result.verdict.verdict == "refuse":
-        raise ValueError(f"marketing copy rejected: {refusal_detail(result.verdict)}")
+    # A draft the public-copy check refuses is written once more, told why:
+    # one slip by the model ("your usual" in a brunch post) is not an error
+    # the owner should see. A second refusal is MarketingCopyRejected.
+    retry_note = ""
+    for attempt in range(2):
+        result = _draft_social_post(prompt + retry_note, restaurant_id, p, owner_topic, signal_context,
+                                    given, data_health)
+        refused = result.verdict is not None and result.verdict.verdict == "refuse"
+        if not refused:
+            break
+        why = refusal_detail(result.verdict)
+        try:
+            from ai_utils import record_quality_event
+            record_quality_event("marketing_content", "public_copy_refused", restaurant_id=restaurant_id,
+                                 detail=why, action="marketing_content")
+        except Exception:
+            pass
+        if attempt == 1:
+            raise MarketingCopyRejected(f"marketing copy rejected: {why}")
+        retry_note = (f"\n\nA draft you wrote for this was rejected before anyone saw it: {why}. "
+                      "Write a new one that avoids that entirely.")
 
     # Log this content for future memory — the owner's own topic, not the
     # public one (AUX-15). Its row id travels with the text, so a publish
