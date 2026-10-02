@@ -25,6 +25,11 @@ overwrites a stronger one's outcome):
   schedule_vs_punch_join  the published week against the POS punches, the
                        night after, for a night whose POS day is final — the
                        only source an RPOWER restaurant can have
+  self_report          the employee's own "running late" in the staff app
+                       (staff_comms.report_late, COM-05): late, minutes =
+                       their ETA. The weakest: every clock-in reading above
+                       overwrites it, and it never overwrites one — nor
+                       fills in a measured row's minutes (an ETA is a guess)
 
 Readers — reliability (staff_settings.reliability), attendance by weekday
 and standby days (schedule_learning), the schedule prompt's no-show block
@@ -48,7 +53,9 @@ log = logging.getLogger(__name__)
 OUTCOMES = ("on_time", "late", "no_show", "called_out", "left_early", "covered")
 MISSES = ("no_show", "called_out")
 # Who may overwrite whom: a stronger source's outcome stands.
-SOURCE_RANK = {"manual": 4, "closeout_confirmed": 3, "coverage_check": 2, "schedule_vs_punch_join": 1}
+SOURCE_RANK = {"manual": 4, "closeout_confirmed": 3, "coverage_check": 2, "schedule_vs_punch_join": 1,
+               # The person's own word before anyone saw them arrive.
+               "self_report": 0}
 # Past this many minutes after the expected clock-in a clock-in is late.
 # The expected clock-in is the scheduled start less the role's lead
 # (clock_in_leads — "servers clock in 5 minutes before their shift").
@@ -135,7 +142,8 @@ def record(restaurant_id, name, business_date, outcome, source, shift_start="", 
         if cur is not None:
             mine, theirs = SOURCE_RANK[source], SOURCE_RANK.get(cur["source"], 0)
             if mine < theirs:
-                if cur["outcome"] == outcome and cur["minutes_late"] is None and minutes_late is not None:
+                if (cur["outcome"] == outcome and cur["minutes_late"] is None and minutes_late is not None
+                        and source != "self_report"):
                     conn.execute("UPDATE attendance_events SET minutes_late=?, updated_at=datetime('now') WHERE id=?",
                                  (int(minutes_late), cur["id"]))
                     conn.commit()

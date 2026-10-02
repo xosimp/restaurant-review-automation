@@ -1009,3 +1009,10 @@ def _resolve_job_role_from_data(restaurant_id, name):
     except Exception:
         pass
     return None
+
+
+# Running late, the inbox (announcements) and the thread with the managers
+# live in staff_comms_routes and attach to staff_bp when it is imported —
+# here, so staff_bp never reaches an app without them (a blueprint takes
+# no new routes once registered).
+import staff_comms_routes  # noqa: E402,F401

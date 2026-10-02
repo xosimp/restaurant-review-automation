@@ -287,6 +287,16 @@ app.register_blueprint(issue_link_bp)
 # fetch carrying its own httponly session cookie with SameSite=Lax, which is
 # the same posture mobile_bp already takes.
 from staff_routes import staff_bp
+# Running late, announcements and the staff ↔ manager thread (staff_comms):
+# its staff routes are on staff_bp (staff_routes imports them). Its owner
+# half is the Team inbox under Labor — web CSRF-protected like strategy_bp,
+# mobile bearer-token like mobile_bp.
+from staff_comms_routes import staff_comms_bp, staff_comms_mobile_bp
+if not getattr(staff_comms_bp, "_csrf_wired", False):
+    csrf_protect(staff_comms_bp)
+    staff_comms_bp._csrf_wired = True
+app.register_blueprint(staff_comms_bp)
+app.register_blueprint(staff_comms_mobile_bp)
 app.register_blueprint(staff_bp)
 _check_duplicate_routes()
 

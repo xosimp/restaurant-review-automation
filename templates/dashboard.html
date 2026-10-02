@@ -10940,6 +10940,31 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div id="lb2-wait-people" class="ac-rows" data-nav="labor/people"></div>
   </section>
 
+  {# Team inbox (employee audit fix B5, staff_comms): what staff say from
+     the app - running late, a message to the manager on duty - and the
+     announcements you send them, each with who has tapped Got it. One
+     quiet disclosure like Team & rules; its summary carries the unread
+     count. Loads when Labor shows it (lb2InboxLoad). #}
+  <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
+    <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
+    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
+    <div id="lb2-inbox-late" class="ac-rows" hidden></div>
+    <div class="hb-kicker" style="margin-top:18px">Messages</div>
+    <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
+    <div class="hb-kicker" style="margin-top:26px">Announcements</div>
+    <div class="lb2-form" id="lb2-ann-form">
+      <div class="ac-field w"><label for="lb2-ann-title">Title</label><input class="ac-input" id="lb2-ann-title" type="text" maxlength="120" placeholder="Closing at 9 tonight"></div>
+      <div class="ac-field"><label for="lb2-ann-aud">To</label><select class="ac-select" id="lb2-ann-aud" onchange="lb2AnnAudience()"><option value="all">Everyone</option><option value="role">One role</option><option value="shift_date">One day's schedule</option></select></div>
+      <div class="ac-field" id="lb2-ann-role-f" hidden><label for="lb2-ann-role">Role</label><select class="ac-select" id="lb2-ann-role"></select></div>
+      <div class="ac-field" id="lb2-ann-date-f" hidden><label for="lb2-ann-date">Day</label><input class="ac-input is-empty" id="lb2-ann-date" type="date" oninput="cavDateEmpty(this)"></div>
+      <div class="ac-field"><label for="lb2-ann-pri">Priority</label><select class="ac-select" id="lb2-ann-pri"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></div>
+      <div class="ac-field"><label for="lb2-ann-exp">Last day <small>optional</small></label><input class="ac-input is-empty" id="lb2-ann-exp" type="date" oninput="cavDateEmpty(this)"></div>
+    </div>
+    <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
+    <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
+    <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
+  </details>
+
   {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
      below in Every day and person (#lb2-money-all), and the Staffing board
      carries the same days. #}
@@ -36672,6 +36697,187 @@ document.addEventListener('click', function (e) {
   });
 })();
 /* ── end print a section */
+</script>
+<script id="cav-b5-inbox">
+/* Team inbox (employee audit fix B5, staff_comms; ES5 only). Staff threads
+   with the managers, today's running-late reports, and announcements with
+   "N of M read". /api/labor/inbox/... - the mobile twin is
+   /mobile/api/labor/inbox/... */
+(function () {
+  function $id(id) { return document.getElementById(id); }
+  function e(s) { return (typeof _escHtml === 'function') ? _escHtml(s) : String(s == null ? '' : s); }
+  function when(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    return (window.mdy ? window.mdy(d) : '') + ' · ' + (typeof cavClock === 'function' ? cavClock(d) : '');
+  }
+  function day(iso) { return iso && window.mdy ? window.mdy(iso) : (iso || ''); }
+  function getJ(url, fn) {
+    fetch(url, {credentials: 'same-origin'}).then(apiJson).then(function (d) { fn(d || {}); }).catch(function () { fn({ok: false}); });
+  }
+  function postJ(url, body, fn) {
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(apiJson).then(function (d) { fn(d || {}); }).catch(function () { fn({ok: false, error: 'Network error'}); });
+  }
+  function say(id, text, bad) {
+    var el = $id(id); if (!el) return;
+    el.textContent = text || ''; el.style.color = bad ? 'var(--hb-bad)' : '';
+    if (text && !bad) setTimeout(function () { if (el.textContent === text) el.textContent = ''; }, 3000);
+  }
+  var _open = null, _roles = [];
+
+  function summary(unread, late) {
+    var s = $id('lb2-inbox-sum'); if (!s) return;
+    var parts = [];
+    if (unread) parts.push('<span class="hb-num">' + unread + '</span> unread message' + (unread === 1 ? '' : 's'));
+    if (late) parts.push('<span class="hb-num">' + late + '</span> running late today');
+    s.innerHTML = parts.length ? parts.join(' · ') : 'Messages from staff, who’s running late, announcements';
+  }
+  function renderLate(rows) {
+    var el = $id('lb2-inbox-late'); if (!el) return;
+    var h = '', i;
+    for (i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      h += '<div class="ac-row"><div class="l"><b>' + e(r.employee_name) + ' is running about <span class="hb-num">' + (+r.eta_minutes) + '</span> minutes late</b><span>'
+        + e(r.shift_start) + (r.role ? ' ' + e(r.role) : '') + (r.expected_at ? ' · expect them around ' + e(r.expected_at) : '')
+        + (r.note ? ' · “' + e(r.note) + '”' : '') + '</span></div></div>';
+    }
+    el.innerHTML = h; el.hidden = !h;
+  }
+  function renderThreads(threads) {
+    var el = $id('lb2-inbox-threads'); if (!el) return;
+    if (!threads.length) { el.innerHTML = '<div class="hb-empty">No messages yet. Staff write to the manager on duty from the app.</div>'; return; }
+    var h = '', i;
+    for (i = 0; i < threads.length; i++) {
+      var t = threads[i];
+      h += '<div class="ac-row" data-thread="' + (+t.thread_id) + '"><div class="l"><b>' + e(t.employee_name)
+        + (t.unread ? ' · <span class="hb-num">' + t.unread + '</span> unread' : '') + '</b><span>'
+        + (t.last_from === 'manager' ? 'You: ' : '') + e((t.last_body || '').slice(0, 140)) + (t.last_at ? ' · ' + e(when(t.last_at)) : '') + '</span></div>'
+        + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2ThreadOpen(' + (+t.thread_id) + ')">' + (_open === t.thread_id ? 'Close' : 'Open') + '</button></div></div>'
+        + '<div id="lb2-thread-' + (+t.thread_id) + '"' + (_open === t.thread_id ? '' : ' hidden') + '></div>';
+    }
+    el.innerHTML = h;
+    if (_open) lb2ThreadLoad(_open);
+  }
+  function audienceLine(a) {
+    var bits = [e(a.audience_label || 'Everyone'), day(a.created_at ? new Date(a.created_at) : '')];
+    if (a.created_by_name) bits.push('by ' + e(a.created_by_name));
+    bits.push('<span class="hb-num">' + (+a.read) + '</span> of <span class="hb-num">' + (+a.recipients) + '</span> read');
+    if (a.unread_names && a.unread_names.length && !a.withdrawn) bits.push('not yet: ' + e(a.unread_names.slice(0, 8).join(', ')) + (a.unread_names.length > 8 ? ' and ' + (a.unread_names.length - 8) + ' more' : ''));
+    if (a.expires_on) bits.push((a.expired ? 'ended ' : 'until ') + e(day(a.expires_on)));
+    if (a.withdrawn) bits.push('withdrawn');
+    return bits.join(' · ');
+  }
+  function renderAnns(list) {
+    var el = $id('lb2-ann-list'); if (!el) return;
+    if (!list.length) { el.innerHTML = '<div class="hb-empty">Nothing sent yet. An announcement reaches each person’s phone, and you see who has read it.</div>'; return; }
+    var h = '', i;
+    for (i = 0; i < list.length; i++) {
+      var a = list[i];
+      h += '<div class="ac-row"><div class="l"><b>' + (a.priority === 'urgent' ? '<span style="color:var(--red)">Urgent</span> · ' : '') + e(a.title) + '</b>'
+        + (a.body ? '<span>' + e(a.body.slice(0, 220)) + '</span>' : '') + '<span>' + audienceLine(a) + '</span></div>'
+        + '<div class="c">' + (!a.withdrawn && !a.expired ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2AnnWithdraw(' + (+a.id) + ',this)">Withdraw</button>' : '') + '</div></div>';
+    }
+    el.innerHTML = h;
+  }
+  function renderRoles() {
+    var sel = $id('lb2-ann-role'); if (!sel) return;
+    var h = '', i;
+    for (i = 0; i < _roles.length; i++) h += '<option value="' + e(_roles[i]) + '">' + e(_roles[i]) + '</option>';
+    sel.innerHTML = h || '<option value="">No roles yet</option>';
+  }
+  window.lb2InboxLoad = function () {
+    getJ('/api/labor/inbox', function (d) {
+      if (!d.ok) { var el = $id('lb2-inbox-threads'); if (el && typeof loadFailed === 'function') loadFailed(el, d); return; }
+      renderLate(d.late_today || []);
+      renderThreads(d.threads || []);
+      summary(d.unread || 0, (d.late_today || []).length);
+    });
+    getJ('/api/labor/inbox/announcements', function (d) {
+      if (!d.ok) return;
+      _roles = d.roles || []; renderRoles();
+      renderAnns(d.announcements || []);
+    });
+  };
+  window.lb2ThreadOpen = function (id) {
+    _open = (_open === id) ? null : id;
+    var rows = document.querySelectorAll('#lb2-inbox-threads [data-thread]'), i;
+    for (i = 0; i < rows.length; i++) {
+      var tid = +rows[i].getAttribute('data-thread'), box = $id('lb2-thread-' + tid), b = rows[i].querySelector('button');
+      if (box) box.hidden = (tid !== _open);
+      if (b) b.textContent = (tid === _open) ? 'Close' : 'Open';
+    }
+    if (_open) lb2ThreadLoad(_open);
+  };
+  window.lb2ThreadLoad = function (id) {
+    var box = $id('lb2-thread-' + id); if (!box) return;
+    getJ('/api/labor/inbox/threads/' + id, function (d) {
+      if (!d.ok) { box.innerHTML = '<div class="ac-status" style="color:var(--hb-bad)">' + e(d.error || 'Could not open it') + '</div>'; return; }
+      var h = '', i, ms = d.messages || [];
+      for (i = 0; i < ms.length; i++) {
+        var m = ms[i];
+        h += '<div class="ac-row"><div class="l"><b>' + e(m.from === 'manager' ? (m.sender_name || 'A manager') : (m.sender_name || d.thread.employee_name))
+          + ' <span class="hb-num" style="color:var(--ink3);font-weight:400">' + e(when(m.created_at)) + '</span></b><span>' + e(m.body).replace(/\n/g, '<br>')
+          + (m.shift_date ? ' · about ' + e(day(m.shift_date)) : '') + (m.from === 'manager' && m.read_at ? ' · read' : '') + '</span></div></div>';
+      }
+      h += '<div class="ac-field" style="margin-top:10px"><label for="lb2-reply-' + id + '">Reply to ' + e(d.thread.employee_name) + '</label><textarea class="ac-textarea" id="lb2-reply-' + id + '" rows="2" maxlength="1000"></textarea></div>'
+        + '<div class="cbtn-row" style="margin:8px 0 14px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ThreadReply(' + (+id) + ',this)">Send reply</button><span class="ac-status" id="lb2-reply-st-' + id + '"></span></div>';
+      box.innerHTML = h;
+      var row = document.querySelector('#lb2-inbox-threads [data-thread="' + id + '"] .l b');
+      if (row) row.innerHTML = e(d.thread.employee_name);
+    });
+  };
+  window.lb2ThreadReply = function (id, btn) {
+    var ta = $id('lb2-reply-' + id), text = ta ? ta.value.replace(/^\s+|\s+$/g, '') : '';
+    if (!text) { say('lb2-reply-st-' + id, 'Write a reply first.', true); return; }
+    var done = cbtnBusy(btn, 'Sending…');
+    postJ('/api/labor/inbox/threads/' + id + '/reply', {body: text}, function (d) {
+      done();
+      if (!d.ok) { say('lb2-reply-st-' + id, d.error || 'Could not send it', true); return; }
+      lb2ThreadLoad(id);
+      if (!d.delivered_via) say('lb2-reply-st-' + id, 'Saved — they see it next time they open the app.', false);
+    });
+  };
+  window.lb2AnnAudience = function () {
+    var v = ($id('lb2-ann-aud') || {}).value;
+    var rf = $id('lb2-ann-role-f'), df = $id('lb2-ann-date-f');
+    if (rf) rf.hidden = v !== 'role';
+    if (df) df.hidden = v !== 'shift_date';
+  };
+  window.lb2AnnSend = function (btn) {
+    var aud = $id('lb2-ann-aud').value, body = {
+      title: $id('lb2-ann-title').value, body: $id('lb2-ann-body').value, audience: aud,
+      priority: $id('lb2-ann-pri').value, expires_on: $id('lb2-ann-exp').value || null
+    };
+    if (aud === 'role') body.audience_value = $id('lb2-ann-role').value;
+    if (aud === 'shift_date') body.audience_value = $id('lb2-ann-date').value;
+    if (!String(body.title || '').replace(/\s/g, '')) { say('lb2-ann-status', 'Give it a title.', true); return; }
+    var done = cbtnBusy(btn, 'Sending…');
+    postJ('/api/labor/inbox/announcements', body, function (d) {
+      done();
+      if (!d.ok) { say('lb2-ann-status', d.error || 'Could not send it', true); return; }
+      var a = d.announcement || {}, dv = d.delivery || {}, reached = (dv.push || 0) + (dv.sms || 0) + (dv.email || 0);
+      say('lb2-ann-status', 'Sent to ' + a.recipients + (a.recipients === 1 ? ' person' : ' people') + (reached < a.recipients ? ' · ' + (a.recipients - reached) + ' see it next time they open the app' : ''), false);
+      $id('lb2-ann-title').value = ''; $id('lb2-ann-body').value = '';
+      var x = $id('lb2-ann-exp'); x.value = ''; if (typeof cavDateEmpty === 'function') cavDateEmpty(x);
+      lb2InboxLoad();
+    });
+  };
+  window.lb2AnnWithdraw = function (id, btn) {
+    var done = cbtnBusy(btn, 'Withdrawing…');
+    postJ('/api/labor/inbox/announcements/' + id + '/withdraw', {}, function (d) {
+      done();
+      if (!d.ok) { say('lb2-ann-status', d.error || 'Could not withdraw it', true); return; }
+      lb2InboxLoad();
+    });
+  };
+  document.addEventListener('DOMContentLoaded', function () {
+    var box = $id('lb2-inbox'); if (!box) return;
+    if (typeof cavnarWhenVisible === 'function') cavnarWhenVisible(box, lb2InboxLoad); else lb2InboxLoad();
+    box.addEventListener('toggle', function () { if (box.open) lb2InboxLoad(); });
+  });
+})();
 </script>
 </body>
 </html>
