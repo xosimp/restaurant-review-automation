@@ -3909,6 +3909,9 @@ def init_db(db_path: str = DB_PATH):
     # one week) — schedule_note_rules, 10/1/26.
     from schedule_note_rules import init_note_rules
     init_note_rules(db_path)
+    # A person's scheduling notes confirmed as holds (person_note_holds).
+    from person_note_holds import init_holds
+    init_holds(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -12441,7 +12444,7 @@ ACCOUNT_EVENT_TYPES = (
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "auto_draft_changed", "auto_draft_day_changed", "auto_order_day_changed",
-    "schedule_note_rule_added", "schedule_note_rule_removed",
+    "schedule_note_rule_added", "schedule_note_rule_removed", "staff_note_held", "staff_note_hold_removed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
     "team_member_invited", "team_member_revoked",
@@ -12505,6 +12508,9 @@ ACCOUNT_EVENT_LABELS = {
     # `detail` carries the rule in words ("at least 2 Cook at lunch, Fri · every week").
     "schedule_note_rule_added": "A schedule note made a rule",
     "schedule_note_rule_removed": "A schedule note's rule removed",
+    # `detail`: the person and the hold in words ("Marcus — off Tue, until 10/31/26").
+    "staff_note_held": "A scheduling note held as unavailability",
+    "staff_note_hold_removed": "A scheduling note no longer held",
     # `detail` carries the new day ("Tuesday").
     "auto_draft_day_changed": "Schedule draft day changed",
     "auto_order_day_changed": "Supplier order day changed",

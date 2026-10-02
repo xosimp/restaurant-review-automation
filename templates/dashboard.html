@@ -35312,6 +35312,13 @@ window.cavPalette = cavPalette;
 .mem-part.stale .tx{box-shadow:inset 3px 0 0 var(--amber);padding-left:10px}
 .mem-part .acts{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .mem-part .ask{font-size:13.5px;font-weight:600;color:var(--amber)}
+/* How Cavnar AI reads one note (person_note_holds): held (green), can be
+   held (ember, with Hold it), not checked (amber, with why). */
+.mem-hold{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px;padding:8px 12px;border-radius:10px;background:var(--sf-recess);font-size:14px;line-height:1.45;color:var(--ink2);box-shadow:inset 3px 0 0 var(--hb-line)}
+.mem-hold.ok{box-shadow:inset 3px 0 0 var(--hb-good)}.mem-hold.ok b{color:var(--hb-good)}
+.mem-hold.offer{box-shadow:inset 3px 0 0 var(--ember)}.mem-hold.offer b{color:var(--ember)}
+.mem-hold.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}.mem-hold.warn b{color:var(--hb-warn)}
+.mem-hold .w{flex:1 1 220px;min-width:0}
 .mem-add{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:18px}
 .mem-add .ac-field{margin:0}
 /* Standing patterns and the two-editor conflicts */
@@ -35777,8 +35784,10 @@ function memRetagBody(was, now) {
       paintNotes();
     });
   };
+  var _noteHolds = {};
   function paintNotes() {
     var el = $id('notes-body'), chip = $id('notes-chip'); if (!el || !_notes) return;
+    _noteHolds = {};
     var ns = _notes.notes || [], ro = !_notes.can_edit, h = '', i, j, live = 0;
     for (i = 0; i < ns.length; i++) for (j = 0; j < (ns[i].parts || []).length; j++) if (!ns[i].parts[j].ended) live++;
     if (chip) chip.innerHTML = live ? (memNum(memPlural(live, 'note')) + (_notes.stale ? ' · ' + memNum(_notes.stale + ' to check') : '')) : '';
@@ -35793,6 +35802,21 @@ function memRetagBody(was, now) {
           var p = n.parts[j];
           h += '<div class="mem-part' + (p.ended ? ' ended' : '') + (p.stale && !p.ended ? ' stale' : '') + '" data-part="' + (+p.index) + '">'
             + '<div class="tx">' + memEsc(p.text) + ln(memNotePartMeta(p)) + '</div>';
+          // How Cavnar AI reads it (person_note_holds, 10/2/26): a held note
+          // keeps the person off then, the way availability does.
+          var rd = p.reading || {}, hk = i + ':' + j;
+          if (p.held) {
+            h += '<div class="mem-hold ok"><span class="w"><b>Held</b> \u2014 ' + memNum(p.held.words) + '. The draft can\u2019t schedule them then.</span>'
+              + (ro ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-hold-off="' + (+p.held.id) + '">Stop holding</button>') + '</div>';
+          } else if (!p.ended && rd.kind === 'hold' && rd.hold) {
+            _noteHolds[hk] = {employee_name: n.employee_name, part_text: p.text, days: rd.hold.days, dayparts: rd.hold.dayparts,
+                              start: rd.hold.start, end: rd.hold.end};
+            h += '<div class="mem-hold offer"><span class="w"><b>Cavnar AI can hold this</b> \u2014 ' + memNum(rd.hold.words)
+              + '. Until you do, the draft only aims for it.</span>'
+              + (ro ? '' : '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-hold-on="' + hk + '">Hold it</button>') + '</div>';
+          } else if (!p.ended && rd.kind === 'unchecked') {
+            h += '<div class="mem-hold warn"><span class="w"><b>Not held.</b> ' + memEsc(rd.why || '') + '</span></div>';
+          }
           if (!ro) {
             h += '<div class="acts">';
             if (p.stale && !p.ended) h += '<span class="ask">Still true?</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-note-act="confirm">Yes, still true</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-note-act="expire-today">It ended</button>';
@@ -35842,6 +35866,24 @@ function memRetagBody(was, now) {
     });
   }
   document.addEventListener('click', function (ev) {
+    var hb = ev.target && ev.target.closest ? ev.target.closest('[data-hold-on],[data-hold-off]') : null;
+    if (hb) {
+      var done = busy(hb, 'Saving\u2026');
+      if (hb.hasAttribute('data-hold-on')) {
+        postJ('/api/labor/staff-note-holds', _noteHolds[hb.getAttribute('data-hold-on')] || {}, function (d) {
+          done();
+          if (!d.ok) { say(d.error || 'Couldn\u2019t hold that note', 'error'); return; }
+          say('Held \u2014 the draft can\u2019t schedule them then'); window.memLoadNotes();
+        });
+      } else {
+        postJ('/api/labor/staff-note-holds/' + encodeURIComponent(hb.getAttribute('data-hold-off')) + '/remove', {}, function (d) {
+          done();
+          if (!d.ok) { say(d.error || 'Couldn\u2019t stop holding it', 'error'); return; }
+          say('No longer held \u2014 the draft only aims for it'); window.memLoadNotes();
+        });
+      }
+      return;
+    }
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-note-act],[data-note-add],[data-note-end-save],[data-note-end-cancel]') : null;
     if (!t || t.disabled) return;
     if (t.hasAttribute('data-note-add')) {
