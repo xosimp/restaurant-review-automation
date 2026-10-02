@@ -55,7 +55,8 @@ def test_the_studio_is_a_full_page_application_at_its_own_address():
     assert "history.pushState({ss: 1}, '', '/schedule/studio')" in s
     assert "if (st.parentNode !== document.body) document.body.appendChild(st);" in s
     stages = re.findall(r'<section class="ss-stage" data-stage="(\w+)"', s)
-    assert stages == ["setup", "build", "summary", "schedule", "publish", "history"]
+    # Team & rules and the Staffing review joined as stages (owner, 10/2/26).
+    assert stages == ["setup", "build", "summary", "schedule", "publish", "history", "team", "staffing"]
     # Read, not imported: importing hosted_dashboard installs its CSRF hooks
     # on the shared blueprints for every later test in the process.
     hd = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()

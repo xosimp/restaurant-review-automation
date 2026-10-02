@@ -247,7 +247,7 @@ def test_the_labor_tab_has_the_task_sheets_section_in_place_of_daily_tasks():
     html = _dashboard_html()
     assert 'id="tasks-panel"' not in html and "toggleTasksPanel" not in html
     # A Team & rules row like the others (owner, 9/30/26), opened on demand.
-    team = html[html.index('<details class="hb-results lb2-team" id="lb2-team">'):]
+    team = html[html.index('<details class="hb-results lb2-team" id="lb2-team" open>'):]
     team = team[:team.index("</details>")]
     row = team[team.index('<div class="lb2-srow s3" data-nav="labor/tasks">'):]
     assert 'onclick="lb2RowClick(event,toggleTsPanel)"' in row and 'id="ts-panel" style="display:none"' in row

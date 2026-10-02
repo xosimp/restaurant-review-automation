@@ -3134,6 +3134,14 @@ def _do_staff_notes_get(u):
         return _forbidden("Only someone who can see labor can see scheduling notes.")
     from models import get_staff_notes, STAFF_NOTE_STALE_DAYS
     notes = [_staff_note_out(n) for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))]
+    # Each note as Cavnar AI reads it, and the hold made from it
+    # (person_note_holds, 10/2/26): a confirmed hold is unavailability.
+    try:
+        import person_note_holds
+        person_note_holds.readings(_rid(u), notes, today=_local_today(u))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="staff_note_readings", context=f"restaurant_id={_rid(u)}")
     return {"ok": True, "notes": notes, "stale_after_days": STAFF_NOTE_STALE_DAYS,
             "stale": sum(1 for n in notes for p in n["parts"] if p["stale"]), "can_edit": _may_rate(u)}, 200
 
@@ -3148,6 +3156,40 @@ def _note_change(u, name, before, after):
     except Exception as e:
         import ops
         ops.capture(e, job="staff_note_change_log", context=f"restaurant_id={_rid(u)}")
+
+
+def _do_staff_note_hold(u):
+    """{employee_name, part_text, days?, dayparts?, start?, end?} — one
+    scheduling note the owner confirmed as a hold: the person can't be
+    scheduled then, like availability (person_note_holds)."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from client_api import log_account_event
+    import person_note_holds
+    b = _body()
+    try:
+        h = person_note_holds.add_hold(_rid(u), b.get("employee_name"), b.get("part_text"), days=b.get("days") or None,
+                                       dayparts=b.get("dayparts") or None, start=b.get("start") or None,
+                                       end=b.get("end") or None, user=u)
+    except ValueError as e:
+        return {"ok": False, "error": e.args[0]}, 400
+    if not h.get("existing"):
+        log_account_event(_rid(u), "staff_note_held", current_user=u,
+                          detail=f"{h['employee_name']} — {h['words']}"[:200])
+    return {"ok": True, "hold": h}, 200
+
+
+def _do_staff_note_unhold(u, hold_id):
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from client_api import log_account_event
+    import person_note_holds
+    gone = person_note_holds.remove_hold(_rid(u), hold_id, user=u)
+    if not gone:
+        return {"ok": False, "error": "That hold is already gone."}, 404
+    log_account_event(_rid(u), "staff_note_hold_removed", current_user=u,
+                      detail=f"{gone['employee_name']} — {gone['words']}"[:200])
+    return {"ok": True}, 200
 
 
 def _do_staff_note_add(u):
@@ -5864,6 +5906,8 @@ _ROUTES = [
     ("/food-cost/game-week", ["GET"], _do_game_week, "game_week"),
     ("/labor/schedule-forecast", ["GET"], _do_schedule_forecast, "schedule_forecast"),
     ("/labor/note-rules", ["GET"], _do_note_rules_get, "note_rules_get"),
+    ("/labor/staff-note-holds", ["POST"], _do_staff_note_hold, "staff_note_hold"),
+    ("/labor/staff-note-holds/<int:hold_id>/remove", ["POST"], _do_staff_note_unhold, "staff_note_unhold"),
     ("/labor/note-rules", ["POST"], _do_note_rule_add, "note_rule_add"),
     ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),

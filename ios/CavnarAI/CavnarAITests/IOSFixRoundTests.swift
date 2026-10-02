@@ -489,6 +489,8 @@ final class IOSFixRoundTests: XCTestCase {
         let t = try JSONDecoder().decode(DSRTomorrow.self, from: Data("""
             {"date": "2026-09-26", "weekday": "Saturday"}
             """.utf8))
-        XCTAssertEqual(t.heading, "Tomorrow \u{00B7} Saturday \u{00B7} 9/26/26")
+        // "The day after" since 9/29/26: the report covers a night, and its
+        // next day is the day after that night (DSRTomorrow.heading).
+        XCTAssertEqual(t.heading, "The day after \u{00B7} Saturday \u{00B7} 9/26/26")
     }
 }

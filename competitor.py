@@ -1790,3 +1790,95 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         print(f"[Competitor] run_competitor_analysis error: {e}")
         from ai_guard import safe_error
         return {"ok": False, "error": safe_error(e, "Competitor analysis could not be completed.")}
+
+
+# ── the daily ratings check (owner, 10/2/26) ─────────────────────────────────
+#
+# The full analysis (nearby search, details, reviews and a Claude read) runs
+# weekly — a week-old rating comparison read as current until Monday. Every
+# morning this re-reads ONLY the tracked competitors' ratings, review counts
+# and open/closed status, and the restaurant's own rating: one Places
+# details call each (~13), never a search, never a model call. The stored
+# comparison is updated in place; when something moved enough to change
+# what the read says, the full analysis runs again the same morning.
+RATING_MOVE = 0.1             # stars, either way
+REVIEW_BURST = 15             # new reviews since the last check
+DAILY_CHECK_MAX = 15          # competitors re-read per restaurant per day
+
+
+def check_ratings(restaurant_id: int) -> dict:
+    """{"ok", "checked", "moved": [why...], "reanalyse": bool} — re-read the
+    stored competitors' ratings and the restaurant's own. Never raises."""
+    try:
+        from models import get_restaurant, get_conn
+        import models as _m
+        r = get_restaurant(restaurant_id)
+        raw = getattr(r, "competitor_intel", None) if r else None
+        blob = json.loads(raw) if raw else None
+        if not blob or not blob.get("competitors"):
+            return {"ok": False, "reason": "no competitor read to refresh yet"}
+        moved, checked = [], 0
+        for c in blob["competitors"][:DAILY_CHECK_MAX]:
+            pid = c.get("place_id")
+            if not pid:
+                continue
+            try:
+                resp = _places_request("details", {"place_id": pid, "fields": "rating,user_ratings_total,business_status",
+                                                   "key": PLACES_API_KEY},
+                                       restaurant_id=restaurant_id, action="competitor_daily", timeout=8)
+                data = resp.json()
+            except PlacesUnavailable:
+                break
+            except Exception:
+                continue
+            if data.get("status") != "OK":
+                continue
+            checked += 1
+            res = data.get("result") or {}
+            new_r, new_n = res.get("rating"), int(res.get("user_ratings_total") or 0)
+            old_r, old_n = c.get("rating"), int(c.get("review_count") or 0)
+            if new_r is not None and old_r is not None and abs(float(new_r) - float(old_r)) >= RATING_MOVE - 1e-9:
+                moved.append(f"{c.get('name')}: {old_r}★ → {new_r}★")
+            if new_n - old_n >= REVIEW_BURST:
+                moved.append(f"{c.get('name')}: {new_n - old_n} new reviews")
+            status = res.get("business_status")
+            if status and status != "OPERATIONAL" and not c.get("closed"):
+                moved.append(f"{c.get('name')}: {status.replace('_', ' ').lower()}")
+                c["business_status"] = status
+            if new_r is not None:
+                c["rating"] = new_r
+            c["review_count"] = new_n
+            c["rating_is_provisional"] = new_n < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING
+        # The restaurant's own rating, from the same morning.
+        pid = getattr(r, "google_place_id", None)
+        if pid:
+            try:
+                resp = _places_request("details", {"place_id": pid, "fields": "rating,user_ratings_total,types,price_level",
+                                                   "key": PLACES_API_KEY},
+                                       restaurant_id=restaurant_id, action="own_rating", timeout=8)
+                data = resp.json()
+                if data.get("status") == "OK":
+                    res = data.get("result") or {}
+                    _remember_own_listing(pid, res.get("types"), res.get("price_level"), res.get("rating"),
+                                          res.get("user_ratings_total"))
+            except Exception:
+                pass
+        from time_utils import restaurant_now
+        blob["ratings_checked_at"] = restaurant_now(r, naive=True).strftime("%Y-%m-%d")
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE restaurants SET competitor_intel=? WHERE id=?", (json.dumps(blob), restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+        _m._invalidate_request_cache(restaurant_id)
+        try:
+            import event_memory
+            event_memory.record_market_snapshot(restaurant_id, blob["competitors"],
+                                                at=restaurant_now(r, naive=True))
+        except Exception as e:
+            print(f"[competitor] market history not kept on the daily check: {e}")
+        return {"ok": True, "checked": checked, "moved": moved, "reanalyse": bool(moved)}
+    except Exception as e:
+        print(f"[competitor] daily ratings check failed for {restaurant_id}: {e}")
+        return {"ok": False, "reason": "the ratings check failed"}

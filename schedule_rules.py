@@ -48,7 +48,7 @@ _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "daily_ot_hour
 # with a real person still on the floor.
 NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                      "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere"})
-NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert"})
+NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailable"})
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
@@ -65,7 +65,8 @@ LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
     "outside_week": "date is outside next week", "double_booked": "double-booked at the same start time",
     "overlap": "two shifts overlap", "approved_time_off": "on approved time off",
-    "unavailable_day": "marked unavailable that day", "unavailable_daypart": "not available for that daypart",
+    "unavailable_day": "marked unavailable that day",
+    "note_unavailable": "off by a scheduling note", "unavailable_daypart": "not available for that daypart",
     "elsewhere": "already scheduled at another location", "over_max_hours": "over their hours ceiling for the payroll week",
     "shift_too_long": "shift longer than the maximum", "rest_gap": "not enough rest since their previous shift",
     "minor_late": "a minor working past the latest allowed end", "minor_hours": "a minor over the daily hours limit",
@@ -543,6 +544,35 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
         return base
 
 
+def effective_floors_ahead(restaurant, day=None, db_path=DB_PATH) -> dict:
+    """effective_role_floors for this week and next, the higher of the two
+    per role, day and daypart — a cut or a plan item may be about either
+    week, and a one-week note rule for the week being planned must hold."""
+    from datetime import date as _date, timedelta as _td
+    if not hasattr(restaurant, "role_floors_json"):
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant)
+    try:
+        if day is None:
+            from time_utils import restaurant_now
+            day = restaurant_now(restaurant, naive=True).date()
+        day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
+    except Exception:
+        day = _date.today()
+    a = effective_role_floors(restaurant, day, db_path=db_path)
+    b = effective_role_floors(restaurant, day + _td(days=7), db_path=db_path)
+    out = {}
+    for role in set(a) | set(b):
+        spec = {"morning": 0, "night": 0, "days": {}}
+        for d in DAYS:
+            for part in ("morning", "night"):
+                v = max(floor_for(a, role, d, part), floor_for(b, role, d, part))
+                if v:
+                    spec["days"].setdefault(d, {})[part] = v
+        out[role] = spec
+    return out
+
+
 def cut_policy(restaurant, text: str = "") -> dict:
     """The Response Validation Layer's A2 inputs for one restaurant, as
     ValidationContext.policy keys: {"role_floors": {role: floor},
@@ -559,7 +589,14 @@ def cut_policy(restaurant, text: str = "") -> dict:
         if restaurant is None:
             return {}
         from labor import note_floors
-        return {"role_floors": note_floors(text, effective_role_floors(restaurant), role_minimums(restaurant)),
+        spec = effective_floors_ahead(restaurant)
+        mins = role_minimums(restaurant)
+        # role_floors: for a caller's own text (the smallest a vague one
+        # could mean); role_floor_spec + role_minimums: the A2 check reads
+        # each sentence's own day and daypart off them, so "cut Friday lunch
+        # to 1 line cook" meets Friday lunch's floor, note rules included
+        # (blind re-audit, 10/2/26).
+        return {"role_floors": note_floors(text, spec, mins), "role_floor_spec": spec, "role_minimums": mins,
                 "cut_floor_default": cut_floor_default(restaurant)}
     except Exception:
         return {}
@@ -1055,6 +1092,14 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         schedule_note_rules.apply_note_rules(c, restaurant_id, db_path=db_path)
     except Exception:
         pass
+    # A person's scheduling notes the owner confirmed as holds ("no Tuesdays
+    # until 10/31", "out 12/20-12/28") are unavailability like any other
+    # (person_note_holds, 10/2/26).
+    try:
+        import person_note_holds
+        person_note_holds.apply_holds(c, restaurant_id, db_path=db_path)
+    except Exception:
+        pass
     return c
 
 
@@ -1301,7 +1346,10 @@ def violations(rows: list, c: Constraints) -> list:
         if not ok:
             kind = next((k for k, lab in LABELS.items() if lab == why), None)
             if kind is None:
-                kind = "elsewhere" if "another location" in why or "scheduled at" in why else "approved_time_off"
+                # A held scheduling note names itself ("your note: no
+                # Tuesdays", person_note_holds) — never "approved time off".
+                kind = ("note_unavailable" if str(why).startswith("your note:") else
+                        "elsewhere" if "another location" in why or "scheduled at" in why else "approved_time_off")
             out.append(_v(kind, i, r, why))
         slot = (key, r.get("date"), r.get("shift_start"))
         if slot in seen_slots:

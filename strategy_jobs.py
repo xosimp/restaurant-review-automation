@@ -1654,7 +1654,7 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
     `pos_intraday` in the Data Health ledger."""
     import intraday, ops
     from time_utils import restaurant_now
-    c = {"captured": 0, "closed": 0, "attempted": 0, "failed": 0}
+    c = {"captured": 0, "closed": 0, "attempted": 0, "failed": 0, "not_yet": 0}
     lock = threading.Lock()
 
     def _one(r):
@@ -1670,26 +1670,55 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
         except Exception as e:
             ops.capture(e, job="intraday_capture", context=f"restaurant_id={r.id}")
             out = {"ok": False, "reason": "the POS didn't answer"}
-        answered = out.get("ok") or out.get("reason") == "the POS didn't answer"
+        if out.get("not_yet"):
+            # Nothing posted yet is the normal state at opening, and the
+            # admin card read red every morning at 11 (10/1/26). It is a
+            # failure only past NOT_YET_GRACE_HOURS after today's opening.
+            if not _not_yet_overdue(r, local):
+                with lock:
+                    c["not_yet"] += 1
+                return
+            out = dict(out, reason=f"no sales posted {NOT_YET_GRACE_HOURS} hours after opening")
+        answered = out.get("ok") or out.get("reason") == "the POS didn't answer" or out.get("not_yet")
         with lock:
             c["captured"] += 1 if out.get("ok") else 0
             if answered:
                 c["attempted"] += 1
                 c["failed"] += 0 if out.get("ok") else 1
         if answered:
-            _record_intraday(r.id, bool(out.get("ok")), out.get("provider"), db_path)
+            _record_intraday(r.id, bool(out.get("ok")), out.get("provider"), db_path,
+                             error=None if out.get("ok") else out.get("reason"))
 
     hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=INTRADAY_WORKERS,
                       max_seconds=INTRADAY_CAPTURE_MAX_SECONDS)
-    return _counts(c["attempted"], c["attempted"] - c["failed"], c["failed"], c["closed"], hit,
-                   captured=c["captured"], closed=c["closed"])
+    return _counts(c["attempted"], c["attempted"] - c["failed"], c["failed"], c["closed"] + c["not_yet"], hit,
+                   captured=c["captured"], closed=c["closed"], not_yet=c["not_yet"])
 
 
-def _record_intraday(restaurant_id, ok, provider, db_path):
+# How long after today's opening "nothing posted yet" is still normal:
+# the first checks close, and the POS's cloud copy catches up.
+NOT_YET_GRACE_HOURS = 2
+
+
+def _not_yet_overdue(r, local) -> bool:
+    """True once it is NOT_YET_GRACE_HOURS past today's opening (the
+    restaurant's own open_times; 11am when unset)."""
+    try:
+        import json as _j
+        from schedule_rules import parse_minutes
+        opens = (_j.loads(getattr(r, "open_times_json", None) or "{}") or {}).get(local.strftime("%A"))
+        m = parse_minutes(opens or "") if opens else None
+    except Exception:
+        m = None
+    open_m = m if m is not None else 11 * 60
+    return local.hour * 60 + local.minute >= open_m + NOT_YET_GRACE_HOURS * 60
+
+
+def _record_intraday(restaurant_id, ok, provider, db_path, error=None):
     try:
         import data_health
         data_health.record_attempt(restaurant_id, "pos_intraday", ok, provider=provider,
-                                   error=None if ok else "the POS didn't answer",
+                                   error=None if ok else (error or "the POS didn't answer"),
                                    db_path=None if db_path == DB_PATH else db_path)
     except Exception:
         pass

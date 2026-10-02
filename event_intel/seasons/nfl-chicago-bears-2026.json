@@ -1,46 +1,282 @@
 {
-  "_about": "The 2026 Chicago Bears schedule. Dates, opponents, sites, TV and the results of games played are from the team's own schedule page (fetched 10/1/26). Kickoff times for games already played are from NBC Chicago's schedule article; the team page lists them without a time. Where the two disagreed (10/11 at Green Bay: 3:25pm vs 12:00pm) the team page wins. Week 10 is the bye. Week 18 at Minnesota has no date yet: it is stored date_tbd and placed when the league sets it.",
-  "sources": [
-    "https://www.chicagobears.com/schedule/",
-    "https://www.nbcchicago.com/chicago-sports-bears-sox-cubs-bulls-blackhawks/heres-the-bears-preseason-schedule-and-when-they-open-the-2026-season/3970992/"
-  ],
-  "fetched": "2026-10-01",
-  "series": {
-    "slug": "nfl-chicago-bears",
-    "name": "Chicago Bears",
-    "short_name": "Bears",
-    "category": "sports",
-    "league": "NFL",
-    "metro": "Chicago",
-    "home_venue": "Soldier Field",
-    "timezone": "America/Chicago",
-    "lat": 41.8623,
-    "lng": -87.6167,
-    "radius_km": 120,
-    "source_url": "https://www.chicagobears.com/schedule/",
-    "meta": {"bye_weeks": {"2026": "Week 10"}}
+ "_about": "The 2026 Chicago Bears schedule. Dates, opponents, sites, TV and the results of games played are from the team's own schedule page (fetched 10/1/26). Kickoff times for games already played are from NBC Chicago's schedule article; the team page lists them without a time. Where the two disagreed (10/11 at Green Bay: 3:25pm vs 12:00pm) the team page wins. Week 10 is the bye. Week 18 at Minnesota has no date yet: it is stored date_tbd and placed when the league sets it.",
+ "sources": [
+  "https://www.chicagobears.com/schedule/",
+  "https://www.nbcchicago.com/chicago-sports-bears-sox-cubs-bulls-blackhawks/heres-the-bears-preseason-schedule-and-when-they-open-the-2026-season/3970992/"
+ ],
+ "fetched": "2026-10-02",
+ "series": {
+  "slug": "nfl-chicago-bears",
+  "name": "Chicago Bears",
+  "short_name": "Bears",
+  "category": "sports",
+  "league": "NFL",
+  "metro": "Chicago",
+  "home_venue": "Soldier Field",
+  "timezone": "America/Chicago",
+  "lat": 41.8623,
+  "lng": -87.6167,
+  "radius_km": 120,
+  "source_url": "https://www.chicagobears.com/schedule/",
+  "meta": {
+   "bye_weeks": {
+    "2026": "Week 10"
+   }
+  }
+ },
+ "season": 2026,
+ "events": [
+  {
+   "external_id": "2026-pre-1",
+   "season_type": "preseason",
+   "week": "Preseason 1",
+   "date": "2026-08-15",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "Cleveland Browns",
+   "venue": "Soldier Field",
+   "broadcast": "NFL Net, FOX32",
+   "status": "completed",
+   "result": "W 34-10"
   },
-  "season": 2026,
-  "events": [
-    {"external_id": "2026-pre-1", "season_type": "preseason", "week": "Preseason 1", "date": "2026-08-15", "kickoff": "12:00", "home_away": "home", "opponent": "Cleveland Browns", "venue": "Soldier Field", "broadcast": null, "status": "completed", "result": "W 34-10"},
-    {"external_id": "2026-pre-2", "season_type": "preseason", "week": "Preseason 2", "date": "2026-08-22", "kickoff": "18:00", "home_away": "away", "opponent": "Cincinnati Bengals", "venue": "Paycor Stadium", "broadcast": null, "status": "completed", "result": "L 9-27"},
-    {"external_id": "2026-pre-3", "season_type": "preseason", "week": "Preseason 3", "date": "2026-08-29", "kickoff": "17:00", "home_away": "away", "opponent": "Tennessee Titans", "venue": "Nissan Stadium", "broadcast": null, "status": "completed", "result": "W 24-15"},
-    {"external_id": "2026-reg-01", "season_type": "regular", "week": "Week 1", "date": "2026-09-13", "kickoff": "12:00", "home_away": "away", "opponent": "Carolina Panthers", "venue": "Bank of America Stadium", "broadcast": "FOX", "status": "completed", "result": "W 59-37"},
-    {"external_id": "2026-reg-02", "season_type": "regular", "week": "Week 2", "date": "2026-09-20", "kickoff": "12:00", "home_away": "home", "opponent": "Minnesota Vikings", "venue": "Soldier Field", "broadcast": "FOX", "status": "completed", "result": "L 3-9"},
-    {"external_id": "2026-reg-03", "season_type": "regular", "week": "Week 3", "date": "2026-09-28", "kickoff": "19:15", "home_away": "home", "opponent": "Philadelphia Eagles", "venue": "Soldier Field", "broadcast": "ESPN/ABC", "status": "completed", "result": "W 27-7"},
-    {"external_id": "2026-reg-04", "season_type": "regular", "week": "Week 4", "date": "2026-10-04", "kickoff": "12:00", "home_away": "home", "opponent": "New York Jets", "venue": "Soldier Field", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-05", "season_type": "regular", "week": "Week 5", "date": "2026-10-11", "kickoff": "12:00", "home_away": "away", "opponent": "Green Bay Packers", "venue": "Lambeau Field", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-06", "season_type": "regular", "week": "Week 6", "date": "2026-10-18", "kickoff": "12:00", "home_away": "away", "opponent": "Atlanta Falcons", "venue": "Mercedes-Benz Stadium", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-07", "season_type": "regular", "week": "Week 7", "date": "2026-10-22", "kickoff": "19:15", "home_away": "home", "opponent": "New England Patriots", "venue": "Soldier Field", "broadcast": "Prime Video", "status": "scheduled"},
-    {"external_id": "2026-reg-08", "season_type": "regular", "week": "Week 8", "date": "2026-11-02", "kickoff": "19:15", "home_away": "away", "opponent": "Seattle Seahawks", "venue": "Lumen Field", "broadcast": "ESPN/ABC", "status": "scheduled"},
-    {"external_id": "2026-reg-09", "season_type": "regular", "week": "Week 9", "date": "2026-11-08", "kickoff": "19:20", "home_away": "home", "opponent": "Tampa Bay Buccaneers", "venue": "Soldier Field", "broadcast": "NBC", "status": "scheduled"},
-    {"external_id": "2026-reg-11", "season_type": "regular", "week": "Week 11", "date": "2026-11-22", "kickoff": "12:00", "home_away": "home", "opponent": "New Orleans Saints", "venue": "Soldier Field", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-12", "season_type": "regular", "week": "Week 12", "date": "2026-11-26", "kickoff": "12:00", "home_away": "away", "opponent": "Detroit Lions", "venue": "Ford Field", "broadcast": "CBS", "status": "scheduled", "attributes": {"holiday": "Thanksgiving"}},
-    {"external_id": "2026-reg-13", "season_type": "regular", "week": "Week 13", "date": "2026-12-06", "kickoff": "12:00", "home_away": "home", "opponent": "Jacksonville Jaguars", "venue": "Soldier Field", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-14", "season_type": "regular", "week": "Week 14", "date": "2026-12-13", "kickoff": "12:00", "home_away": "away", "opponent": "Miami Dolphins", "venue": "Hard Rock Stadium", "broadcast": "CBS", "status": "scheduled"},
-    {"external_id": "2026-reg-15", "season_type": "regular", "week": "Week 15", "date": "2026-12-19", "kickoff": "19:20", "home_away": "away", "opponent": "Buffalo Bills", "venue": "Highmark Stadium", "broadcast": "CBS", "status": "scheduled"},
-    {"external_id": "2026-reg-16", "season_type": "regular", "week": "Week 16", "date": "2026-12-25", "kickoff": "12:00", "home_away": "home", "opponent": "Green Bay Packers", "venue": "Soldier Field", "broadcast": "Netflix", "status": "scheduled", "attributes": {"holiday": "Christmas Day"}},
-    {"external_id": "2026-reg-17", "season_type": "regular", "week": "Week 17", "date": "2027-01-03", "kickoff": "15:25", "home_away": "home", "opponent": "Detroit Lions", "venue": "Soldier Field", "broadcast": "FOX", "status": "scheduled"},
-    {"external_id": "2026-reg-18", "season_type": "regular", "week": "Week 18", "date": null, "kickoff": null, "home_away": "away", "opponent": "Minnesota Vikings", "venue": "U.S. Bank Stadium", "broadcast": null, "status": "scheduled"}
-  ]
+  {
+   "external_id": "2026-pre-2",
+   "season_type": "preseason",
+   "week": "Preseason 2",
+   "date": "2026-08-22",
+   "kickoff": "18:00",
+   "home_away": "away",
+   "opponent": "Cincinnati Bengals",
+   "venue": "Paycor Stadium",
+   "broadcast": "Bengals Preseason TV Network, FOX32",
+   "status": "completed",
+   "result": "L 9-27"
+  },
+  {
+   "external_id": "2026-pre-3",
+   "season_type": "preseason",
+   "week": "Preseason 3",
+   "date": "2026-08-29",
+   "kickoff": "17:00",
+   "home_away": "away",
+   "opponent": "Tennessee Titans",
+   "venue": "Nissan Stadium",
+   "broadcast": "NFL Net, FOX32",
+   "status": "completed",
+   "result": "W 24-15"
+  },
+  {
+   "external_id": "2026-reg-01",
+   "season_type": "regular",
+   "week": "Week 1",
+   "date": "2026-09-13",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Carolina Panthers",
+   "venue": "Bank of America Stadium",
+   "broadcast": "FOX",
+   "status": "completed",
+   "result": "W 59-37"
+  },
+  {
+   "external_id": "2026-reg-02",
+   "season_type": "regular",
+   "week": "Week 2",
+   "date": "2026-09-20",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "Minnesota Vikings",
+   "venue": "Soldier Field",
+   "broadcast": "FOX",
+   "status": "completed",
+   "result": "L 3-9"
+  },
+  {
+   "external_id": "2026-reg-03",
+   "season_type": "regular",
+   "week": "Week 3",
+   "date": "2026-09-28",
+   "kickoff": "19:15",
+   "home_away": "home",
+   "opponent": "Philadelphia Eagles",
+   "venue": "Soldier Field",
+   "broadcast": "ESPN/ABC",
+   "status": "completed",
+   "result": "W 27-7"
+  },
+  {
+   "external_id": "2026-reg-04",
+   "season_type": "regular",
+   "week": "Week 4",
+   "date": "2026-10-04",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "New York Jets",
+   "venue": "Soldier Field",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-05",
+   "season_type": "regular",
+   "week": "Week 5",
+   "date": "2026-10-11",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Green Bay Packers",
+   "venue": "Lambeau Field",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-06",
+   "season_type": "regular",
+   "week": "Week 6",
+   "date": "2026-10-18",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Atlanta Falcons",
+   "venue": "Mercedes-Benz Stadium",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-07",
+   "season_type": "regular",
+   "week": "Week 7",
+   "date": "2026-10-22",
+   "kickoff": "19:15",
+   "home_away": "home",
+   "opponent": "New England Patriots",
+   "venue": "Soldier Field",
+   "broadcast": "Prime Video",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-08",
+   "season_type": "regular",
+   "week": "Week 8",
+   "date": "2026-11-02",
+   "kickoff": "19:15",
+   "home_away": "away",
+   "opponent": "Seattle Seahawks",
+   "venue": "Lumen Field",
+   "broadcast": "ESPN/ABC",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-09",
+   "season_type": "regular",
+   "week": "Week 9",
+   "date": "2026-11-08",
+   "kickoff": "19:20",
+   "home_away": "home",
+   "opponent": "Tampa Bay Buccaneers",
+   "venue": "Soldier Field",
+   "broadcast": "NBC",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-11",
+   "season_type": "regular",
+   "week": "Week 11",
+   "date": "2026-11-22",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "New Orleans Saints",
+   "venue": "Soldier Field",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-12",
+   "season_type": "regular",
+   "week": "Week 12",
+   "date": "2026-11-26",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Detroit Lions",
+   "venue": "Ford Field",
+   "broadcast": "CBS",
+   "status": "scheduled",
+   "attributes": {
+    "holiday": "Thanksgiving"
+   }
+  },
+  {
+   "external_id": "2026-reg-13",
+   "season_type": "regular",
+   "week": "Week 13",
+   "date": "2026-12-06",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "Jacksonville Jaguars",
+   "venue": "Soldier Field",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-14",
+   "season_type": "regular",
+   "week": "Week 14",
+   "date": "2026-12-13",
+   "kickoff": "12:00",
+   "home_away": "away",
+   "opponent": "Miami Dolphins",
+   "venue": "Hard Rock Stadium",
+   "broadcast": "CBS",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-15",
+   "season_type": "regular",
+   "week": "Week 15",
+   "date": "2026-12-19",
+   "kickoff": "19:20",
+   "home_away": "away",
+   "opponent": "Buffalo Bills",
+   "venue": "Highmark Stadium",
+   "broadcast": "CBS",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-16",
+   "season_type": "regular",
+   "week": "Week 16",
+   "date": "2026-12-25",
+   "kickoff": "12:00",
+   "home_away": "home",
+   "opponent": "Green Bay Packers",
+   "venue": "Soldier Field",
+   "broadcast": "Netflix",
+   "status": "scheduled",
+   "attributes": {
+    "holiday": "Christmas Day"
+   }
+  },
+  {
+   "external_id": "2026-reg-17",
+   "season_type": "regular",
+   "week": "Week 17",
+   "date": "2027-01-03",
+   "kickoff": "15:25",
+   "home_away": "home",
+   "opponent": "Detroit Lions",
+   "venue": "Soldier Field",
+   "broadcast": "FOX",
+   "status": "scheduled"
+  },
+  {
+   "external_id": "2026-reg-18",
+   "season_type": "regular",
+   "week": "Week 18",
+   "date": "2027-01-09",
+   "kickoff": null,
+   "home_away": "away",
+   "opponent": "Minnesota Vikings",
+   "venue": "U.S. Bank Stadium",
+   "broadcast": null,
+   "status": "scheduled"
+  }
+ ]
 }

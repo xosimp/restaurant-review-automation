@@ -115,7 +115,7 @@ def test_the_labor_tile_says_what_its_delta_is_against():
 def test_the_reports_own_priority_is_left_to_the_report():
     follow = _fn("renderFollow")
     assert "return !(l.key==='dsr_action'&&l.source==='dsr');" in follow
-    assert "+num(l.text)+hbBriefExtra(l)+acts+" in follow
+    assert "+num(l.text)+hbBriefExtra(l)+lineActs+" in follow   # never "acts": the queue's name (10/2/26)
 
 
 def test_the_reports_today_line_lists_its_calls_and_a_line_can_carry_a_conflict():

@@ -198,3 +198,29 @@ def test_coverage_reads_the_schedule_that_covers_today_not_the_newest(db_path, m
     monkeypatch.setattr(pos, "fetch_clock_ins_today", lambda rid_, d: ([], "toast"))
     out = intraday.coverage_gaps(rid, now_local=datetime(2026, 9, 21, 11, 30), db_path=db_path)
     assert [m["employee"] for m in out["missing"]] == ["Dana K"]
+
+
+def test_nothing_posted_yet_at_opening_is_not_a_failure(monkeypatch):
+    """Simple EJ's, 10/1/26: the 11am reading failed every day (no check had
+    closed yet) and RPOWER's cloud copy trailed the store until 3pm. "Not
+    yet" is skipped inside NOT_YET_GRACE_HOURS of opening; past it, it is a
+    failure that says so — never "the POS didn't answer"."""
+    from datetime import datetime
+    import intraday
+    import pos
+    import rpower
+    import strategy_jobs as sj
+
+    def _none(rid, day):
+        raise rpower.RPowerNoSalesYet("RPOWER has no sales posted for 2026-10-01 yet")
+    monkeypatch.setattr(pos, "fetch_sales_today", _none)
+    out = intraday.capture(5, now_local=datetime(2026, 10, 1, 11, 5), restaurant=type("R", (), {"id": 5})(),
+                           business_day=datetime(2026, 10, 1).date())
+    assert out["not_yet"] and out["ok"] is False and "didn't answer" not in out["reason"]
+
+    class R:
+        open_times_json = '{"Thursday": "11:00"}'
+    assert not sj._not_yet_overdue(R(), datetime(2026, 10, 1, 12, 59))
+    assert sj._not_yet_overdue(R(), datetime(2026, 10, 1, 13, 0))
+    R.open_times_json = None
+    assert not sj._not_yet_overdue(R(), datetime(2026, 10, 1, 12, 0))

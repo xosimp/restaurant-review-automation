@@ -138,7 +138,7 @@ struct LaborView: View {
                                 if !stats.roleSummary.isEmpty {
                                     roleSection(stats.roleSummary, dateRange: stats.dateRange)
                                 }
-                                // Every day and person: the staffing board
+                                // Staffing review: the staffing board
                                 // (labor.staffing_board) — the web's
                                 // executive strip and decision cards,
                                 // replacing the phone's own overstaffed /

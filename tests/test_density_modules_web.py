@@ -239,7 +239,7 @@ def test_labor_says_its_percent_once_and_the_money_sits_under_waiting_on_you():
     assert wait < panel.index('aria-label="Labor % by day"')
     assert 'id="gap-current-pct"' not in panel and 'id="lb2-hero-n"' not in panel
     # Where the money went and Labor's own schedule history are gone (owner,
-    # 9/26/26): the full lists stay in Every day and person; history lives
+    # 9/26/26): the full lists stay in the Staffing review (the Studio, 10/2/26); history lives
     # in the Studio.
     assert 'id="lb2-went"' not in panel and 'id="sched-history-list"' not in panel
     assert 'id="lb2-money-all"' in panel

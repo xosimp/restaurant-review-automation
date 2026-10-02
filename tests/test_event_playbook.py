@@ -324,7 +324,7 @@ def test_an_admins_correction_survives_the_daily_season_reload(db):
     wk18 = _event(db, "2026-reg-18")
     got = store.edit_event(wk18["id"], {"event_date": "2027-01-10", "kickoff_local": "19:20", "broadcast": "NBC"},
                            db_path=db)
-    assert got["before"]["event_date"] is None and got["after"]["event_date"] == "2027-01-10"
+    assert got["before"]["event_date"] == "2027-01-09" and got["after"]["event_date"] == "2027-01-10"
     store.load_bundled(db_path=db)
     again = _event(db, "2026-reg-18")
     assert (again["event_date"], again["kickoff_local"], again["broadcast"], again["is_primetime"]) == \
@@ -332,7 +332,7 @@ def test_an_admins_correction_survives_the_daily_season_reload(db):
     # handed back, the season file's values return on the next load
     store.edit_event(wk18["id"], {}, clear=["event_date", "kickoff_local", "broadcast"], db_path=db)
     store.load_bundled(db_path=db)
-    assert _event(db, "2026-reg-18")["event_date"] is None
+    assert _event(db, "2026-reg-18")["event_date"] == "2027-01-09"
 
 
 def test_a_bad_correction_is_refused_by_name(db):

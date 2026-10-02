@@ -81,6 +81,12 @@ def capture(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None, bus
     except pos.POSCapabilityError as e:
         return {"ok": False, "reason": str(e)}
     except Exception as e:
+        if getattr(e, "not_yet", False):
+            # The POS answered with nothing posted yet for the day — not a
+            # POS that didn't answer (strategy_jobs.run_intraday_capture
+            # decides when "not yet" has gone on too long).
+            return {"ok": False, "not_yet": True, "reason": "no sales posted for today yet",
+                    "provider": getattr(e, "provider", None)}
         log.warning("intraday capture failed rid=%s: %s", restaurant_id, e)
         return {"ok": False, "reason": "the POS didn't answer"}
     conn = get_conn(db_path)

@@ -179,7 +179,7 @@ html{background:var(--bg-base);min-height:100%}
 
 
 
-[data-theme="dark"] #panel-labor [style*="color:#7a4f00"]{color:var(--amber)!important}
+[data-theme="dark"] :is(#panel-labor,#studio) [style*="color:#7a4f00"]{color:var(--amber)!important}
 /* Number input spinners — color-scheme makes browser render arrows light-on-dark */
 [data-theme="dark"] input[type="number"]{color-scheme:dark}
 /* Reduce order pill — light green bg unreadable in dark mode */
@@ -2324,6 +2324,10 @@ function cavNavSection(p) {
   /* A section on one of Marketing's own tabs (Campaigns) opens that tab. */
   var mt = sec.closest ? sec.closest('[id^="mkt-tab-"]') : null;
   if (mt && window.switchMktTab) window.switchMktTab(mt.id.replace('mkt-tab-', ''));
+  /* A section in one of the Studio's stages (Team & rules, 10/2/26) opens
+     the Studio there; the address stays the one cavNav writes. */
+  var ss = sec.closest ? sec.closest('#studio .ss-stage') : null;
+  if (ss && window.studioOpen) studioOpen({stage: ss.getAttribute('data-stage'), fromPop: true});
   if (sec.tagName === 'DETAILS') sec.open = true;
   var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
   while (d) { d.open = true; d = d.parentNode && d.parentNode.closest ? d.parentNode.closest('details') : null; }
@@ -5904,8 +5908,10 @@ svg:hover .hb-xh{opacity:1}
       var act=(l.action&&l.action.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(l.action.nav)+'">'+esc(l.action.label)+'</button>':'';
       // The action sits in the answers' row, after Done | Not for us behind
       // a thin rule (9/25/26), not at the far right of the line.
-      var acts=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
-      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+hbBriefExtra(l)+acts+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+      // lineActs, never acts: a var is the whole function's, and this loop's
+      // last string replaced the Still open list (304 blank rows, 10/2/26).
+      var lineActs=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+hbBriefExtra(l)+lineActs+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
@@ -5971,7 +5977,9 @@ svg:hover .hb-xh{opacity:1}
   // Everything still open, as a checklist - the answer to "what's left?",
   // which used to mean opening six screens (workflow audit #8).
   function renderOpen(acts){
-    if(!acts||!acts.length)return '';
+    // Only ever a list of items: a string here drew one blank row per
+    // character (10/2/26).
+    if(!acts||Object.prototype.toString.call(acts)!=='[object Array]'||!acts.length)return '';
     var h='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
     for(var a=0;a<acts.length;a++){var y=acts[a];
       h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
@@ -6955,16 +6963,18 @@ svg:hover .hb-xh{opacity:1}
 .ev-week-l span{padding:5px 10px;border-radius:999px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
 .ev-week-l b{color:var(--ink)}
 .ev-week-b{margin-top:8px;font-size:12px;color:var(--ink3);line-height:1.45}
-.ev-follow-s{display:block;margin-top:2px;font-size:12.5px;color:var(--ink2)}
+/* Events & reservations read at body size (owner, 10/2/26: "ALL of this
+   subtext needs to be bigger"): the follow rows and the dates table. */
+.ev-follow-t .ev-follow-s{display:block;margin-top:2px;font-size:14.5px;color:var(--ink2)}
 #cp-send-hint{margin:10px 4px 0;font-size:13px;color:var(--ink3);line-height:1.45}
 #cp-send-hint b{color:var(--ink2);font-weight:600}
 .ev-follows{margin:0 0 18px;display:flex;flex-direction:column;gap:8px}
-.ev-follows-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
+.ev-follows-h{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
 .ev-follow{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--hb-line2,var(--paper3));background:var(--surface)}
 .ev-follow.off{opacity:.7}
 .ev-follow-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.ev-follow-t b{font-size:14px;color:var(--ink)}
-.ev-follow-t span{font-size:13px;color:var(--ink3);line-height:1.45}
+.ev-follow-t b{font-size:16px;color:var(--ink)}
+.ev-follow-t span{font-size:15px;color:var(--ink3);line-height:1.5}
 .dr-game{margin-top:22px}
 .dr-game-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin:0 0 12px}
 .dr-game-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
@@ -9696,7 +9706,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    Covers gets the ambient light because it is the one that is usually
    empty and matters most when it is. */
 .lb2-ops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:40px}
-.lb2-cov-all{margin-top:12px}
+.lb2-cov-all{margin-top:12px;margin-left:-7px}
 .lb2-cov-modal{position:fixed;inset:0;z-index:var(--z-modal);background:rgba(8,7,6,.72);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:16px}
 .lb2-cov-modal .box{position:relative;width:min(760px,100%);max-height:min(80vh,760px);overflow:auto;background:var(--surface);border:1px solid var(--hb-line,var(--paper3));border-radius:20px;padding:28px 28px 30px;box-shadow:0 30px 80px -20px rgba(0,0,0,.7)}
 .lb2-cov-modal h3{margin:4px 0 4px;font-size:22px;color:var(--ink)}
@@ -9724,8 +9734,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-op-form>.ac-input{padding-top:0;padding-bottom:0;font-size:14px}
 .lb2-op .fc2-import{margin-top:10px}
 .lb2-op .cap{font-size:13.5px;color:var(--ink3);margin-top:16px;padding-top:12px;border-top:1px solid var(--hb-line2);display:flex;justify-content:space-between;gap:10px}
-.lb2-cov{display:flex;flex-wrap:wrap;gap:8px}
-.lb2-cov-offer{margin-top:8px;font-size:13.5px;color:var(--ink3)}
+/* Each pill's number lines up with the text above and below it: the
+   pill's border and inner padding sit outside the text edge (owner, 10/2/26). */
+.lb2-cov{display:flex;flex-wrap:wrap;gap:8px;margin-left:-4px}
 .lb2-cov span{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink2);background:var(--sf-recess);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 12px 3px 3px}
 @media(max-width:820px){.lb2-ops{grid-template-columns:1fr}}
 /* The weekday radar fills its card (owner, 9/26/26): one fixed, centred
@@ -10000,6 +10011,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ssf-day.closed{color:var(--ink3)}.ssf-day.closed .s,.ssf-day.closed .h{color:var(--ink3)}
 .ssf-ev{grid-column:2/-1;font-size:13px;line-height:1.4;color:var(--ember);margin-top:-4px}
 @media(max-width:640px){.ssf-head{grid-template-columns:minmax(0,1fr)}.ssf-cols,.ssf-day{grid-template-columns:72px 88px minmax(0,1fr) 48px;gap:10px}.ssf-day{font-size:14px}}
+/* Advanced: the switch and number rows read at the setup card's size
+   (owner, 10/2/26: "the small subtext is so tiny"). */
+#ss-settings .rul-sw .t{font-size:16px;line-height:1.45}
+#ss-settings .rul-sw .t small{font-size:14.5px;line-height:1.5;margin-top:4px}
+#ss-settings .rul-sw .t .ac-input.n{font-size:15.5px;width:70px}
 #ss-settings .sched-redo{display:grid!important;grid-template-columns:repeat(4,minmax(0,176px));gap:10px;align-items:center;padding:0;border:0;margin-top:4px}
 #ss-settings .sched-redo .sr-k{grid-column:1/-1;margin:0 0 2px}
 #ss-settings .sched-redo .sp{display:none}
@@ -10167,7 +10183,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-sd-alt{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .ss-sd-alt .cbtn{justify-content:space-between}
 /* Publish */
-.ss-pub,.ss-hist{max-width:980px;margin:0 auto;padding:56px 24px 90px}
+.ss-pub,.ss-hist,.ss-side{max-width:980px;margin:0 auto;padding:56px 24px 90px}
+/* Team & rules and the Staffing review in the Studio (10/2/26): the stage
+   heading names them, so their disclosure line is hidden and they stay open. */
+.ss-side>details>summary{display:none}
+.ss-side>details{margin-top:22px;border-top:none}
 .ss-pub-sub{font-size:16px;color:var(--ink3);margin:0 0 26px;max-width:62ch}
 .ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 .ss-pub-card{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:20px 22px;box-shadow:var(--elev-card);min-width:0}
@@ -10569,12 +10589,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    branded"): every form control here is one height, one radius, one type
    size, and a select is the branded one (chevron, no native chrome), so
    labels and boxes line up across a row. */
-#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select,#panel-labor .lb2-form .cbtn,
-#panel-labor .ts-form .ac-input,#panel-labor .ts-form .ac-select,
-#panel-labor .rul-grid .ac-input,#panel-labor .rul-grid .ac-select{height:44px;min-height:44px;box-sizing:border-box;padding-top:0;padding-bottom:0;font-size:15px;border-radius:10px;margin:0}
-#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select{padding-left:13px}
-#panel-labor .lb2-form .ac-field>label,#panel-labor .ts-form .ac-field>label{font-size:13.5px;font-weight:600;color:var(--ink2);line-height:1.2}
-#panel-labor .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
+:is(#panel-labor,#ss-team) .lb2-form .ac-input,:is(#panel-labor,#ss-team) .lb2-form .ac-select,:is(#panel-labor,#ss-team) .lb2-form .cbtn,
+:is(#panel-labor,#ss-team) .ts-form .ac-input,:is(#panel-labor,#ss-team) .ts-form .ac-select,
+:is(#panel-labor,#ss-team) .rul-grid .ac-input,:is(#panel-labor,#ss-team) .rul-grid .ac-select{height:44px;min-height:44px;box-sizing:border-box;padding-top:0;padding-bottom:0;font-size:15px;border-radius:10px;margin:0}
+:is(#panel-labor,#ss-team) .lb2-form .ac-input,:is(#panel-labor,#ss-team) .lb2-form .ac-select{padding-left:13px}
+:is(#panel-labor,#ss-team) .lb2-form .ac-field>label,:is(#panel-labor,#ss-team) .ts-form .ac-field>label{font-size:13.5px;font-weight:600;color:var(--ink2);line-height:1.2}
+:is(#panel-labor,#ss-team) .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 /* The availability days: a row of toggles at the field height. */
 .lb2-days{display:flex;gap:6px;flex-wrap:wrap}
 .lb2-days label{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:44px;box-sizing:border-box;padding:0 12px;border:1px solid var(--ac-line,var(--hb-line));border-radius:10px;font-size:14.5px;font-weight:600;color:var(--ink2);cursor:pointer;user-select:none;-webkit-user-select:none;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
@@ -10600,7 +10620,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .rul-add[hidden]{display:none}
 .rul-add .ac-select{width:auto;padding:5px 8px;font-size:13px}
 /* Events & reservations */
-.dsg-tbl .kd{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.dsg-tbl{font-size:15px}
+.dsg-tbl th{font-size:11.5px}
+.dsg-tbl .dsg-src{font-size:13.5px;color:var(--ink3)}
+.dsg-tbl .kd{font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .dsg-tbl .kd.event{color:var(--ember)}
 .dsg-tbl .lift{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--hb-good)}
 .dsg-tbl .lift.neg{color:var(--hb-bad)}
@@ -10784,6 +10807,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .lrn-row .n{flex:none;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .lrn-row .n.on{color:var(--hb-good)}
 /* What the record says */
+/* Each block's heading in the brand ember, its note quieter beneath, so the
+   eye finds the headings first (owner, 10/2/26: "needs better distinction"). */
+#intel-body .lb2-sub{color:var(--ember);font-size:17px}
+#intel-body .lb2-sub small{display:block;margin:4px 0 0;font-size:14px;line-height:1.45;color:var(--ink3)}
 .int-rev{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:14.5px;color:var(--ink2);margin-bottom:6px}
 .int-rev .hb-num{font-size:26px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
 .int-rev .src{font-size:13px;color:var(--ink3)}
@@ -10837,11 +10864,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Salaries beside hourly labor: a second-tier figure, never the headline. */
 .lb2-bn.lb2-sal .hb-num{font-size:24px;color:var(--ink2)}.lb2-bn.lb2-sal .pct{font-size:16px;color:var(--ink2)}.lb2-bn.lb2-sal .lb2-vs .hb-num{font-size:15px}
 #panel-labor .two-col{margin-top:30px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
-/* No rule above the Every day and person disclosure (owner, 9/26/26). */
+/* No rule above the Staffing review disclosure (owner, 9/26/26). */
 #lb2-money-all{border-top:none}
-/* Details and Every day and person sit closer to the card above (9/26/26). */
+/* Details and the Staffing review sit closer to the card above (9/26/26). */
 #lb2-details,#lb2-money-all{margin-top:14px}
-/* Inside the Every day and person disclosure the summary's own rule is the
+/* Inside the Staffing review disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
 @media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
@@ -10966,7 +10993,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   </details>
 
   {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
-     below in Every day and person (#lb2-money-all), and the Staffing board
+     in the Studio's Staffing review (#lb2-money-all), and the Staffing board
      carries the same days. #}
 
   <div id="lb-panel-schedule">
@@ -11029,7 +11056,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
       <div id="lb2-covers-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
-      <details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
       <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
     </section>
   </div>
@@ -11165,6 +11191,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-go="schedule"><i>3</i>Schedule</button>
         <button type="button" role="tab" data-ss-go="publish"><i>4</i>Publish</button>
         <button type="button" role="tab" data-ss-go="history" class="ss-steps-h">History</button>
+        <button type="button" role="tab" data-ss-go="team">Team</button>
+        <button type="button" role="tab" data-ss-go="staffing">Staffing</button>
       </nav>
       <div class="ss-top-r">
         <span class="ss-week" id="ss-week"></span>
@@ -11543,17 +11571,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
-    </div>
-  </div>
-  {# Team & rules and History sat inside the old schedule card; they keep a
-     wrapper of their own at the column width, closed where that card was. #}
-  <div class="lb2-sched-rest">
+    {# Team & rules and the Staffing review left Labor for the Studio (owner,
+       10/2/26: "they dont belong on labor anymore"). Same markup and ids, so
+       every opener, deep link and loader still finds them; each is its own
+       stage, open, its disclosure line hidden under the stage's heading. #}
+    <section class="ss-stage" data-stage="team" aria-label="Team and rules">
+      <div class="ss-side" id="ss-team">
+        <div class="ss-kick">Team &amp; rules</div>
+        <h1>Your team, and the rules every draft keeps</h1>
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
-  <details class="hb-results lb2-team" id="lb2-team">
+  <details class="hb-results lb2-team" id="lb2-team" open>
     <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says, task sheets</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
@@ -11831,14 +11862,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
 
   </details>
+      </div>
+    </section>
 
-    {# Schedules you've built moved into the Studio's History (owner, 9/26/26):
-       one list, with Open, the CSV and Delete. loadScheduleHistory and its
-       row helpers find no list here and do nothing. #}
-  </div>
-
-  <!-- Two col: overstaffed table + overtime alerts -->
-  {# Every day and person behind "Where the money went", in the standard
+    <section class="ss-stage" data-stage="staffing" aria-label="Staffing review">
+      <div class="ss-side" id="ss-staffing">
+        <div class="ss-kick">Staffing review</div>
+        <h1>Overstaffed days, strong days run lean, and overtime</h1>
+  {# Staffing review (was "Every day and person", renamed and moved into
+     the Studio, owner 10/2/26) behind "Where the money went", in the standard
      list shape - an hb-card of hb-rows with a status dot - instead of the
      dark slabs (density round #9, #44). Collapsed: the top of it already
      sits under Waiting on you. Dollars above target and overtime premiums
@@ -11855,8 +11887,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {%- if c and c.pct is not none -%}<span class="sb-ring" style="--p:{{ c.pct }}" title="The same pattern on {{ c.hits }} of {{ c.of }} of these weekdays in the window" aria-label="Consistency {{ c.pct }}%"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/><circle class="fg" cx="18" cy="18" r="15.5" pathLength="100"/></svg><b class="hb-num">{{ c.pct }}%</b><small>consistent</small></span>
   {%- else -%}<span class="sb-ring none" title="First time in this window - not enough of these weekdays to call it a pattern"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/></svg><b>—</b><small>first seen</small></span>{%- endif -%}
   {%- endmacro %}
-  <details class="hb-results lb2-money-all" id="lb2-money-all">
-    <summary><span class="hb-kicker">Every day and person</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
+  <details class="hb-results lb2-money-all" id="lb2-money-all" open>
+    <summary><span class="hb-kicker">Staffing review</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
   {% if _sb %}
   <div class="sb">
     <div class="sb-sum">
@@ -11910,6 +11942,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
   {% endif %}
   </details>
+      </div>
+    </section>
+
+    </div>
+  </div>
+
   <script>
   /* Today (#48): the waiting count joins the server's sentence once
      Waiting on you has loaded (waitRender calls this with its count). */
@@ -20324,10 +20362,10 @@ function lb2LoadCovers(){
     if(nEl)nEl.textContent=String(days.length);
     if(flag)flag.textContent=days.length?('day'+(days.length===1?'':'s')+' on file \u00b7 about '+Math.round(tot/days.length)+' a day'):'no counts yet';
     if(vEl)vEl.className='v'+(days.length?' ember':'');
-    // What the POS counted on nights nobody entered (U2-18): offered for one
-    // tap, never written on its own - a guest count is not always a cover.
-    var off=d.pos_offers||[],oh='';
-    for(i=0;i<off.length&&i<3;i++)oh+='<div class="lb2-cov-offer">POS counted <b class="hb-num">'+esc(off[i].guests)+'</b> guests on '+esc(mdy(off[i].date))+' — <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cov-pos="'+esc(off[i].date)+'" data-cov-n="'+esc(off[i].guests)+'">save as covers</button></div>';
+    // Covers fill themselves each night from the POS guest count
+    // (covers.sync_from_pos), so the card no longer offers a night's POS count
+    // for a tap (owner, 10/2/26).
+    var oh='';
     if(!days.length){el.innerHTML=esc('No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.')+oh;return;}
     // Filled nightly from the POS guest count (covers.sync_from_pos, owner
     // 9/30/26); a count typed here always wins over it.
@@ -20341,13 +20379,6 @@ function lb2LoadCovers(){
     el.innerHTML=h+oh;
   }).catch(function(){loadFailed(el,null);if(flag)flag.textContent='';});
 }
-document.addEventListener('click',function(e){
-  var t=e.target&&e.target.closest?e.target.closest('[data-cov-pos]'):null;if(!t||t.disabled)return;
-  var done=cbtnBusy(t,'Saving…');
-  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({from_pos:true,rows:[{date:t.getAttribute('data-cov-pos'),covers:+t.getAttribute('data-cov-n')}]})}).then(apiJson).then(function(d){
-    done();if(typeof toast==='function')toast(d&&d.ok&&d.written?'Saved':((d&&(d.error||(d.errors||[])[0]))||'Could not save'),d&&d.ok&&d.written?'success':'error');lb2LoadCovers();
-  }).catch(function(){done();});
-});
 function lb2SaveCover(btn){
   var dt=(document.getElementById('lb2-cov-date')||{}).value,n=(document.getElementById('lb2-cov-n')||{}).value;
   if(!dt||n===''){if(typeof toast==='function')toast('Pick a date and a count','error');return;}
@@ -20355,15 +20386,6 @@ function lb2SaveCover(btn){
   fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:[{date:dt,covers:n}]})}).then(apiJson).then(function(d){
     done();if(typeof toast==='function')toast(d&&d.ok&&d.written?'Saved':((d&&(d.error||(d.errors||[])[0]))||'Could not save'),d&&d.ok&&d.written?'success':'error');lb2LoadCovers();
   }).catch(function(){done();});
-}
-function lb2ImportCovers(btn){
-  var csv=(document.getElementById('lb2-cov-csv')||{}).value||'',st=document.getElementById('lb2-cov-status');
-  if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
-  var done=cbtnBusy(btn,'Importing\u2026');
-  fetch('/api/labor/covers',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(apiJson).then(function(d){
-    done();if(st)st.textContent=d&&d.ok?('Saved '+d.written+' day'+(d.written===1?'':'s')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+'.'):((d&&d.error)||'Could not import.');
-    if(d&&d.ok)lb2LoadCovers();
-  }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
 }
 // labor.py appends "UNVERIFIED: 12%, $400" to a read whose figures didn't
 // trace (CA1 L6); the web printed it raw. It becomes the same caveat every
@@ -21449,6 +21471,7 @@ function _sqRecAnswer(el, action, text, code, note, picker) {
     }).catch(function () { done(); if (picker) picker.unlock(); toast('Could not record that', 'error'); });
 }
 function openIntelPanel() {
+  ssOpenTeam();
   var tm = document.getElementById('lb2-team'); if (tm) tm.open = true;
   var p = document.getElementById('intel-panel');
   if (p && p.style.display === 'none' && window.toggleIntelPanel) toggleIntelPanel();
@@ -24234,9 +24257,11 @@ document.addEventListener('change', function (ev) {
   if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it', function () { _ssFcKey = null; }); }
   else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these', function () { ssLoadNoteRules(true); });
 });
+// Team & rules lives in the Studio's Team stage (10/2/26): every opener
+// goes there - from Labor, a brief or a deep link - instead of Labor.
+function ssOpenTeam() { return !!(window.studioOpen && studioOpen({stage: 'team'})); }
 function swOpenTeam(which) {
-  // The roster and rules editors live in Labor: leave the Studio for them.
-  if (window.studioClose && window._ssOpen) studioClose();
+  ssOpenTeam();
   var det = document.getElementById('lb2-team'); if (det && !det.open) det.open = true;
   var p = document.getElementById(which + '-panel');
   if (p && p.style.display === 'none') { if (which === 'roster' && window.toggleRosterPanel) toggleRosterPanel(); else if (which === 'rules' && window.toggleRulesPanel) toggleRulesPanel(); else if (which === 'notes' && window.toggleNotesPanel) toggleNotesPanel(); }
@@ -24273,7 +24298,7 @@ function swOpenTeam(which) {
 // DESIGN_SYSTEM.md -> Schedule Studio.
 var _ssOpen = false, _ssStage = 'setup', _ssFromDash = false, _ssGenerating = false, _ssReview = null;
 var _swSel = null, _swSelRow = null, _swDrag = null, _swLeftLoaded = false;
-var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history'];
+var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team', 'staffing'];
 function _ssHost() { var st = document.getElementById('studio'); return st && !st.hidden ? st : null; }
 function _ssHasDraft() {
   var p = document.getElementById('schedule-preview-panel');
@@ -24429,6 +24454,7 @@ function studioGo(stage) {
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
+  else if (stage === 'team' || stage === 'staffing') { var dt = document.getElementById(stage === 'team' ? 'lb2-team' : 'lb2-money-all'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
 }
 function ssTopbar() {
@@ -24500,7 +24526,7 @@ function snrHtml(d) {
     var q = '<div class="snr-q">“' + _escHtml(x.text) + '”</div>';
     if (x.rule_id) {
       used[x.rule_id] = 1;
-      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(x.enforced) + '</div>'
+      h += '<div class="snr-row ' + (x.stale ? 'warn' : 'ok') + '">' + q + '<div class="snr-s">' + (x.stale ? '<b>' + _escHtml(x.stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(x.enforced) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Remove the rule</button></div>') + '</div>';
     } else if (x.kind === 'rule') {
       h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
@@ -24520,8 +24546,8 @@ function snrHtml(d) {
   if (rest.length) {
     h += '<div class="snr-h" style="margin-top:6px">Rules from earlier notes</div>';
     for (i = 0; i < rest.length; i++) {
-      h += '<div class="snr-row ok">' + (rest[i].source_text ? '<div class="snr-q">“' + _escHtml(rest[i].source_text) + '”</div>' : '')
-        + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(rest[i].words) + '</div>'
+      h += '<div class="snr-row ' + (rest[i].stale ? 'warn' : 'ok') + '">' + (rest[i].source_text ? '<div class="snr-q">“' + _escHtml(rest[i].source_text) + '”</div>' : '')
+        + '<div class="snr-s">' + (rest[i].stale ? '<b>' + _escHtml(rest[i].stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(rest[i].words) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + rest[i].id + '">Remove the rule</button></div>') + '</div>';
     }
   }
@@ -24690,7 +24716,7 @@ function studioOnResult(data, fromGeneration) {
     return;
   }
   ssTopbar();
-  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build')) studioGo('schedule');
+  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team' || _ssStage === 'staffing')) studioGo('schedule');
   ssRescoreOnOpen();
 }
 // A stored week's score was measured against the staffing history and
@@ -33692,7 +33718,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
       for(i=0;i<list.length;i++){var sg=list[i];var lift=sg.lift_pct==null?null:+sg.lift_pct;
         h+='<tr style="cursor:default"><td><span class="hb-num">'+esc(mdy(sg.date))+'</span> <span style="color:var(--ink3)">'+esc(_dayShort(sg.date))+'</span></td>'
-          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">'+(sg.source==='events'?'from a calendar you follow':'via '+esc(sg.source))+'</span>':'')
+          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span class="dsg-src">'+(sg.source==='events'?'from a calendar you follow':'via '+esc(sg.source))+'</span>':'')
             // Its label's own record here (M5 measured), before and after.
             +(sg.measured&&window.memMeasuredLine?'<span class="mem-ln">'+memNum(memMeasuredLine(sg.measured))+'</span>':'')+'</td>'
           +'<td class="r">'+(sg.covers==null?'<span class="dim">—</span>':'<span class="hb-num">'+esc(sg.covers)+'</span>')+'</td>'
@@ -35006,7 +35032,7 @@ window.cavPalette = cavPalette;
   }
   function waitFocus(key) {
     var box = $id('lb2-wait'), row = box ? box.querySelector('[data-wait-key="' + key + '"]') : null;
-    if (!box || box.hidden) { if (window.toggleRequestsPanel) { var tm = $id('lb2-team'); if (tm) tm.open = true; var rp = $id('requests-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
+    if (!box || box.hidden) { if (window.toggleRequestsPanel) { ssOpenTeam(); var tm = $id('lb2-team'); if (tm) tm.open = true; var rp = $id('requests-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
     (row || box).scrollIntoView({behavior: 'smooth', block: 'center'});
     if (row) { row.style.background = 'var(--hb-tint2)'; setTimeout(function () { row.style.background = ''; }, 2200); }
   }
@@ -35481,8 +35507,6 @@ window.cavPalette = cavPalette;
     cavNavRegister('person', function (p) {
       if (!p.rest[0]) return false;
       cavNavOpenModule('labor');
-      var tm = $id('lb2-team'); if (tm) tm.open = true;
-      var s = document.querySelector('[data-nav="labor/team"]'); if (s) s.scrollIntoView({behavior: 'smooth', block: 'start'});
       openPersonSheet(p.rest[0]);
       return true;
     });
@@ -35542,6 +35566,13 @@ window.cavPalette = cavPalette;
 .mem-part.stale .tx{box-shadow:inset 3px 0 0 var(--amber);padding-left:10px}
 .mem-part .acts{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .mem-part .ask{font-size:13.5px;font-weight:600;color:var(--amber)}
+/* How Cavnar AI reads one note (person_note_holds): held (green), can be
+   held (ember, with Hold it), not checked (amber, with why). */
+.mem-hold{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px;padding:8px 12px;border-radius:10px;background:var(--sf-recess);font-size:14px;line-height:1.45;color:var(--ink2);box-shadow:inset 3px 0 0 var(--hb-line)}
+.mem-hold.ok{box-shadow:inset 3px 0 0 var(--hb-good)}.mem-hold.ok b{color:var(--hb-good)}
+.mem-hold.offer{box-shadow:inset 3px 0 0 var(--ember)}.mem-hold.offer b{color:var(--ember)}
+.mem-hold.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}.mem-hold.warn b{color:var(--hb-warn)}
+.mem-hold .w{flex:1 1 220px;min-width:0}
 .mem-add{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:18px}
 .mem-add .ac-field{margin:0}
 /* Standing patterns and the two-editor conflicts */
@@ -35563,7 +35594,7 @@ window.cavPalette = cavPalette;
 .mem-teach .ln:before{content:'';flex:none;width:7px;height:7px;margin-top:8px;border-radius:50%;background:var(--ember2);box-shadow:0 0 8px var(--ember2)}
 .mem-teach .ln.dim{color:var(--ink3)}
 .mem-teach .ln.dim:before{background:var(--ink3);box-shadow:none}
-.dsg-tbl .mem-ln{max-width:420px}
+.dsg-tbl .mem-ln{max-width:460px;font-size:14.5px}
 /* Intel: your rating over time and the market's history */
 .mem-rating{margin-top:22px;padding:18px 20px 12px;border-radius:14px;background:var(--surface);box-shadow:var(--elev-card);border:1px solid var(--hb-line)}
 .mem-rating .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -35997,6 +36028,7 @@ function memRetagBody(was, now) {
     if (open) window.memLoadNotes();
   };
   function openNotes() {
+    ssOpenTeam();
     var tm = $id('lb2-team'); if (tm) tm.open = true;
     var p = $id('notes-panel'); if (p && p.style.display === 'none') window.toggleNotesPanel();
     var row = document.querySelector('[data-nav="labor/notes"]'); if (row) row.scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -36007,8 +36039,10 @@ function memRetagBody(was, now) {
       paintNotes();
     });
   };
+  var _noteHolds = {};
   function paintNotes() {
     var el = $id('notes-body'), chip = $id('notes-chip'); if (!el || !_notes) return;
+    _noteHolds = {};
     var ns = _notes.notes || [], ro = !_notes.can_edit, h = '', i, j, live = 0;
     for (i = 0; i < ns.length; i++) for (j = 0; j < (ns[i].parts || []).length; j++) if (!ns[i].parts[j].ended) live++;
     if (chip) chip.innerHTML = live ? (memNum(memPlural(live, 'note')) + (_notes.stale ? ' · ' + memNum(_notes.stale + ' to check') : '')) : '';
@@ -36023,6 +36057,21 @@ function memRetagBody(was, now) {
           var p = n.parts[j];
           h += '<div class="mem-part' + (p.ended ? ' ended' : '') + (p.stale && !p.ended ? ' stale' : '') + '" data-part="' + (+p.index) + '">'
             + '<div class="tx">' + memEsc(p.text) + ln(memNotePartMeta(p)) + '</div>';
+          // How Cavnar AI reads it (person_note_holds, 10/2/26): a held note
+          // keeps the person off then, the way availability does.
+          var rd = p.reading || {}, hk = i + ':' + j;
+          if (p.held) {
+            h += '<div class="mem-hold ok"><span class="w"><b>Held</b> \u2014 ' + memNum(p.held.words) + '. The draft can\u2019t schedule them then.</span>'
+              + (ro ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-hold-off="' + (+p.held.id) + '">Stop holding</button>') + '</div>';
+          } else if (!p.ended && rd.kind === 'hold' && rd.hold) {
+            _noteHolds[hk] = {employee_name: n.employee_name, part_text: p.text, days: rd.hold.days, dayparts: rd.hold.dayparts,
+                              start: rd.hold.start, end: rd.hold.end};
+            h += '<div class="mem-hold offer"><span class="w"><b>Cavnar AI can hold this</b> \u2014 ' + memNum(rd.hold.words)
+              + '. Until you do, the draft only aims for it.</span>'
+              + (ro ? '' : '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-hold-on="' + hk + '">Hold it</button>') + '</div>';
+          } else if (!p.ended && rd.kind === 'unchecked') {
+            h += '<div class="mem-hold warn"><span class="w"><b>Not held.</b> ' + memEsc(rd.why || '') + '</span></div>';
+          }
           if (!ro) {
             h += '<div class="acts">';
             if (p.stale && !p.ended) h += '<span class="ask">Still true?</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-note-act="confirm">Yes, still true</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-note-act="expire-today">It ended</button>';
@@ -36072,6 +36121,24 @@ function memRetagBody(was, now) {
     });
   }
   document.addEventListener('click', function (ev) {
+    var hb = ev.target && ev.target.closest ? ev.target.closest('[data-hold-on],[data-hold-off]') : null;
+    if (hb) {
+      var done = busy(hb, 'Saving\u2026');
+      if (hb.hasAttribute('data-hold-on')) {
+        postJ('/api/labor/staff-note-holds', _noteHolds[hb.getAttribute('data-hold-on')] || {}, function (d) {
+          done();
+          if (!d.ok) { say(d.error || 'Couldn\u2019t hold that note', 'error'); return; }
+          say('Held \u2014 the draft can\u2019t schedule them then'); window.memLoadNotes();
+        });
+      } else {
+        postJ('/api/labor/staff-note-holds/' + encodeURIComponent(hb.getAttribute('data-hold-off')) + '/remove', {}, function (d) {
+          done();
+          if (!d.ok) { say(d.error || 'Couldn\u2019t stop holding it', 'error'); return; }
+          say('No longer held \u2014 the draft only aims for it'); window.memLoadNotes();
+        });
+      }
+      return;
+    }
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-note-act],[data-note-add],[data-note-end-save],[data-note-end-cancel]') : null;
     if (!t || t.disabled) return;
     if (t.hasAttribute('data-note-add')) {

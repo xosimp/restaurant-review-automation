@@ -200,7 +200,11 @@ def test_the_ask_and_unattended_contexts_carry_the_restaurants_cut_policy(db):
     rid = _rest(db, "Ask", cut_floor_default=3, role_floors_json=json.dumps({"Server": {"night": 2}}))
     pol = ask_cavnar._validation_context(["corpus"], rid).policy
     assert pol["cut_floor_default"] == 3 and pol["role_floors"] == {"Server": 2}
-    assert sr.cut_policy(rid) == {"role_floors": {"Server": 2}, "cut_floor_default": 3}
+    got = sr.cut_policy(rid)
+    assert {k: got[k] for k in ("role_floors", "cut_floor_default")} == {"role_floors": {"Server": 2}, "cut_floor_default": 3}
+    # The day-by-day floors travel too, so the A2 check reads each sentence's
+    # own day and daypart (blind re-audit, 10/2/26).
+    assert sr.floor_for(got["role_floor_spec"], "Server", "Friday", "night") == 2
     assert sr.cut_policy(None) == {}
 
 
