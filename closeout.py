@@ -285,9 +285,11 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
                 coverage check (intraday.coverage_gaps) opened one per person
                 on the published schedule who never arrived. A late arrival
                 closes theirs, so it is not suggested.
-    influence — tonight's dated events and reservations (demand_signals) and
-                the holiday, if tonight is one — never a followed game from
-                the catalog, which the night already carries.
+    influence — tonight's dated events (demand_signals) and the holiday, if
+                tonight is one — never a followed game from the catalog,
+                covers booked or a scheduled post. A kept suggestion is read
+                back as the thing the night already carries, never a second
+                one (event_memory.flags_for / _tie_notes).
 
     A suggestion is never saved on its own: the closer sees it in the box and
     keeps, edits or clears it."""
@@ -330,6 +332,13 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
             # P1-02). The influence box is for what only the closer knows.
             if str(s.get("source") or "") == "events":
                 continue
+            # Nor what is no "what was going on" at all: covers booked (a
+            # forecast input) and a scheduled post. Kept, either came back
+            # as a never-quiet note that knocked the night out of every
+            # baseline (event re-audit 2, R1-04; event_memory._tie_notes
+            # reads an old one as nothing new).
+            if str(s.get("kind") or "") != "event":
+                continue
             if label:
                 bits.append(label + (f" ({s['covers']} covers booked)" if s.get("covers") else ""))
     except Exception:
@@ -345,5 +354,5 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
         pass
     if bits:
         out["influence"] = "; ".join(bits)
-        out["sources"]["influence"] = "From tonight's events, reservations and holidays on file"
+        out["sources"]["influence"] = "From tonight's events and holidays on file"
     return out

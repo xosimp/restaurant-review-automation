@@ -326,9 +326,18 @@ def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
             # admin clearing tonight's postponed status after 7pm Central
             # got "completed" for a game still being played (re-audit X-6).
             today = local_today(row["timezone"] or (s["timezone"] if s else None)).isoformat()
-            if "status" in sets and sets["status"] == "scheduled" and row["event_date"] and \
-                    (file_vals.get("event_date") or row["event_date"]) < today:
-                sets["status"] = "completed"       # a past game the file still calls scheduled was played
+            # A past game the file still calls scheduled was played — `played`
+            # on the game as it will stand after this edit, so an if-necessary
+            # game with no result stays scheduled and `unresolved` (the
+            # catalog's needs_result), never "completed" for good (event
+            # re-audit 2, R1-03; mark_past_completed's own rule).
+            if sets.get("status") == "scheduled":
+                will = dict(row)
+                will.update(sets)
+                will.update({k: v for k, v in over.items() if k in EDITABLE})
+                will["status"] = "scheduled"
+                if played(will, today=today):
+                    sets["status"] = "completed"
             if sets:
                 cols = ", ".join(f"{k}=?" for k in sets)
                 args = list(sets.values())
@@ -648,16 +657,22 @@ def confounded(outcome) -> bool:
         return False
 
 
-def clean_first(rows, floor, outcome=lambda r: r["outcome"]):
+def clean_first(rows, floor, outcome=lambda r: r["outcome"], enough=None):
     """(rows to use, mixed?) — the clean-nights rule (engine.effect_for's,
+    event_memory's label summaries, playbook's staffing and rush,
     gameday.item_mix's, re-audit P3-01): a confounded night is left out
     while the clean ones reach `floor`; when they can't, every row is used
     and `mixed` says some of them had something else on, so the caller says
-    so (and plans nothing on them). `outcome(row)` is the row's measured
-    night."""
+    so (and plans nothing on them). `floor` is the floor the caller DECIDES
+    on (effect_for's `applies`: event_memory.EFFECT_MIN_N; a plan's
+    SEGMENT_MIN_N games), never a lower one, so one more clean night can
+    never turn a pattern into "not enough" (event re-audit 2, R4-03).
+    `enough(clean)`, when given, is that floor as a test (a holiday's
+    record: two nights, or one past HOLIDAY_ONE_NIGHT_PCT). `outcome(row)`
+    is the row's measured night."""
     rows = list(rows or [])
     clean = [r for r in rows if not confounded(outcome(r))]
-    if len(clean) >= floor:
+    if clean and (enough(clean) if enough is not None else len(clean) >= floor):
         return clean, False
     return rows, len(clean) < len(rows)
 
