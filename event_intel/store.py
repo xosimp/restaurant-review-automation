@@ -113,6 +113,13 @@ def init_event_intel(db_path=DB_PATH):
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(catalog_events)").fetchall()}
         if "overrides_json" not in cols:
             conn.execute("ALTER TABLE catalog_events ADD COLUMN overrides_json TEXT")
+        # Who removed a game, and whether it was the owner or an admin in
+        # view-as (event re-audit X-4): the events card says it beside Put back.
+        dcols = {r["name"] for r in conn.execute("PRAGMA table_info(event_dismissals)").fetchall()}
+        if "dismissed_by" not in dcols:
+            conn.execute("ALTER TABLE event_dismissals ADD COLUMN dismissed_by TEXT")
+        if "source" not in dcols:
+            conn.execute("ALTER TABLE event_dismissals ADD COLUMN source TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -529,11 +536,14 @@ def mark_past_completed(today, db_path=DB_PATH) -> int:
         conn.close()
 
 
-def dismiss(restaurant_id, event_id, db_path=DB_PATH):
+def dismiss(restaurant_id, event_id, by=None, source="owner", db_path=DB_PATH):
+    """Keep one game off this restaurant's calendar. `by` the login that
+    removed it (an admin's name in view-as), `source` owner | admin."""
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT OR IGNORE INTO event_dismissals (restaurant_id, event_id) VALUES (?,?)",
-                     (restaurant_id, int(event_id)))
+        conn.execute("INSERT OR IGNORE INTO event_dismissals (restaurant_id, event_id, dismissed_by, source) "
+                     "VALUES (?,?,?,?)", (restaurant_id, int(event_id), (str(by)[:120] if by else None),
+                                          source if source in ("owner", "admin") else "owner"))
         conn.commit()
     finally:
         conn.close()
@@ -546,5 +556,48 @@ def dismissed(restaurant_id, db_path=DB_PATH) -> set:
                                                     (restaurant_id,)).fetchall()}
     except Exception:
         return set()
+    finally:
+        conn.close()
+
+
+# ── putting a removed game back (event re-audit X-4) ───────────────────────
+# A removal used to be permanent: no route, screen or admin action reversed
+# it. Put back is per game, deliberately the ONE way back — a re-follow
+# leaves removals alone, because an owner who removed the one game they are
+# closed for would otherwise get it back silently by toggling the calendar.
+
+def dismissals(restaurant_id, db_path=DB_PATH) -> list:
+    """The games this restaurant removed, newest removal first: each the
+    catalog row (with series_name, short_name, category, slug, league) plus
+    dismissed_at, dismissed_by and dismissed_source (owner | admin)."""
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league, "
+            "d.created_at AS dismissed_at, d.dismissed_by, d.source AS dismissed_source "
+            "FROM event_dismissals d JOIN catalog_events e ON e.id=d.event_id "
+            "JOIN event_series s ON s.id=e.series_id WHERE d.restaurant_id=? "
+            "ORDER BY d.created_at DESC, e.event_date DESC", (restaurant_id,)).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            r["attributes"] = json.loads(r.pop("attributes_json") or "{}")
+        except (TypeError, ValueError):
+            r["attributes"] = {}
+        r.pop("overrides_json", None)
+    return rows
+
+
+def undismiss(restaurant_id, event_id, db_path=DB_PATH) -> bool:
+    """Let the sync copy this game again. True when a removal was lifted."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM event_dismissals WHERE restaurant_id=? AND event_id=?",
+                           (restaurant_id, int(event_id)))
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()

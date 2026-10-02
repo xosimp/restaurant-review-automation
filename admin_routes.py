@@ -4011,8 +4011,15 @@ def admin_api_events(current_user):
 # Every followed calendar's games, and an admin's correction to one: a
 # kickoff the league flexed, a TV change, Week 18's date once it is set.
 # A correction is kept apart from the season file and laid over it on every
-# load (event_intel.store.edit_event), and the restaurants that follow the
-# series are re-synced at once so their schedules and reports move with it.
+# load (event_intel.store.edit_event). The restaurants that follow the
+# series are re-synced on the one admin job pool, bounded in time — never
+# in the request (event re-audit P2-10 / X-3: a series is followed by every
+# client within 120 km of its venue, and each sync can re-record 40 nights).
+# Whatever the bound leaves, the 5am event_sync picks up: it syncs every
+# in-service restaurant through its own cursor.
+
+EVENT_RESYNC_MAX_SECONDS = 120
+
 
 @admin_bp.route("/admin/api/event-catalog")
 @admin_required
@@ -4021,11 +4028,48 @@ def admin_api_event_catalog(current_user):
     return jsonify(ok=True, series=_evs.catalog(), editable=list(_evs.EDITABLE), statuses=list(_evs.STATUSES))
 
 
+def _event_resync_job(event_id, series_id, rids, actor):
+    """The follower re-sync after a catalog correction, on the admin job
+    pool: one restaurant at a time (SQLite has one writer) until
+    EVENT_RESYNC_MAX_SECONDS is spent. Its outcome is its own audit row
+    (event_catalog.resync); the edit's row says only what was dispatched."""
+    import time
+    import admin_events
+    from event_intel import engine as _eve
+    started = time.monotonic()
+    synced, failed, left = 0, 0, 0
+    for i, rid in enumerate(rids):
+        if time.monotonic() - started > EVENT_RESYNC_MAX_SECONDS:
+            left = len(rids) - i
+            break
+        try:
+            r = get_restaurant(rid)
+            if r:
+                _eve.sync_restaurant(r)
+                synced += 1
+        except Exception as e:
+            failed += 1
+            _ops.capture(e, job="event_catalog_resync", context=f"restaurant_id={rid}")
+    said = (f"{synced} following restaurant{'' if synced == 1 else 's'} re-synced"
+            + (f", {failed} failed" if failed else "")
+            + (f", {left} left for the 5am event sync (time bound)" if left else ""))
+    admin_events.record_admin_action(actor, "event_catalog.resync", target=("catalog_event", event_id),
+                                     after={"series_id": series_id, "followers": len(rids), "synced": synced,
+                                            "failed": failed, "left": left},
+                                     result="ok" if not (failed or left) else "partial",
+                                     summary=f"Event #{event_id}: {said}")
+    out = {"ok": not failed, "synced": synced, "failed": failed, "left": left,
+           "message": f"Game corrected · {said}"}
+    if failed:
+        out["error"] = f"Re-sync finished with failures: {said}. The 5am event sync retries them."
+    return out
+
+
 @admin_bp.route("/admin/api/event-catalog/<int:event_id>", methods=["POST"])
 @admin_required
 def admin_api_event_catalog_edit(event_id, current_user):
     import admin_events
-    from event_intel import engine as _eve, store as _evs
+    from event_intel import store as _evs
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(ok=False, error="Send the correction as a JSON object."), 400
@@ -4034,7 +4078,7 @@ def admin_api_event_catalog_edit(event_id, current_user):
     if not changes and not clear:
         return jsonify(ok=False, error="Nothing to change."), 400
     try:
-        got = _evs.edit_event(event_id, changes, clear=clear)
+        got = _evs.edit_event(event_id, changes, clear=clear)        # committed here
     except LookupError as e:
         return jsonify(ok=False, error=e.args[0] if e.args else "No such game in the catalog."), 404
     except ValueError as e:
@@ -4042,24 +4086,32 @@ def admin_api_event_catalog_edit(event_id, current_user):
                                          after={"changes": changes, "clear": clear}, result="refused",
                                          summary=f"Event catalog edit refused: {e}")
         return jsonify(ok=False, error=e.args[0] if e.args else "That correction isn't valid."), 400
-    synced, failed = 0, 0
-    for rid in _evs.followers(got["series_id"]):
-        try:
-            r = get_restaurant(rid)
-            if r:
-                _eve.sync_restaurant(r)
-                synced += 1
-        except Exception as e:
-            failed += 1
-            _ops.capture(e, job="event_catalog_edit", context=f"restaurant_id={rid}")
+    rids = _evs.followers(got["series_id"])
+    n = len(rids)
+    job_id = None
+    if rids:
+        # restaurant_id None: every correction gets its own job — joining a
+        # running one would skip the followers it had already passed.
+        actor = {k: current_user.get(k) for k in ("id", "username", "email")}
+        job_id, _joined = _start_admin_job("event_catalog_resync", None,
+                                           lambda: _event_resync_job(event_id, got["series_id"], rids, actor))
+    many = "" if n == 1 else "s"
+    if not rids:
+        dispatch = "no restaurant follows the series"
+    elif job_id:
+        dispatch = f"re-sync of {n} following restaurant{many} queued"
+    else:
+        dispatch = (f"re-sync of {n} following restaurant{many} not started (the admin job pool is full); "
+                    "the 5am event sync picks them up")
+    # The correction is committed; this row says what was dispatched, never
+    # what the re-sync did (that is the job's own event_catalog.resync row).
     admin_events.record_admin_action(current_user, "event_catalog.edit", target=("catalog_event", event_id),
-                                     before=got["before"], after=got["after"],
-                                     result="ok" if not failed else "partial",
-                                     summary=f"Event #{event_id} corrected; {synced} following restaurant"
-                                             f"{'s' if synced != 1 else ''} re-synced"
-                                             + (f", {failed} failed" if failed else ""))
+                                     before=got["before"],
+                                     after=dict(got["after"], followers=n, resync_job=job_id),
+                                     result="ok" if (job_id or not rids) else "partial",
+                                     summary=f"Event #{event_id} corrected; {dispatch}")
     return jsonify(ok=True, before=got["before"], after=got["after"], overrides=got["overrides"],
-                   synced=synced, failed=failed)
+                   followers=n, job_id=job_id, queued=bool(job_id), message=f"Game corrected · {dispatch}")
 
 
 @admin_bp.route("/admin/api/issues")

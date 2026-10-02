@@ -1746,9 +1746,12 @@ def _do_event_follow_set(u, series_id):
     from event_intel import engine as _ev
     from models import get_restaurant
     from client_api import log_account_event
+    from permissions import acting_via
     r = get_restaurant(_rid(u))
+    # An admin or support login acting through view-as is not the owner
+    # choosing (event re-audit X-5): its follow row says "admin".
     try:
-        got = _ev.set_owner_follow(r, series_id, b["active"], source="owner")
+        got = _ev.set_owner_follow(r, series_id, b["active"], source="admin" if acting_via(u) else "owner")
     except LookupError:
         return {"ok": False, "error": "That calendar isn't in the catalog."}, 404
     log_account_event(_rid(u), "event_follow_set", current_user=u,
@@ -1874,9 +1877,71 @@ def _do_demand_signal_delete(u, signal_id):
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
     import demand_signals as _ds
-    if not _ds.delete(_rid(u), signal_id):
+    from client_api import log_account_event
+    from permissions import acting_via
+    from time_utils import mdy
+    # Who removed it is kept with a game's removal, and an admin in view-as
+    # is named as the admin (event re-audit X-4); Account activity records
+    # every removal (log_account_event attributes view-as itself).
+    via = acting_via(u)
+    by = f"{via.get('admin') or 'Cavnar AI'} (Cavnar AI)" if via else _who(u)
+    gone = _ds.delete(_rid(u), signal_id, by=by, source="admin" if via else "owner")
+    if not gone:
         return {"ok": False, "error": "Not found."}, 404
-    return {"ok": True}, 200
+    what = f"{gone.get('label') or gone.get('kind') or 'date'} on {mdy(gone.get('date'))}"
+    if gone.get("event_id"):
+        log_account_event(_rid(u), "event_game_removed", current_user=u,
+                          detail=f"{what} — kept off the calendar until put back",
+                          extra={"event_id": gone["event_id"]})
+    else:
+        log_account_event(_rid(u), "demand_signal_deleted", current_user=u, detail=what)
+    return {"ok": True, "event_id": gone.get("event_id")}, 200
+
+
+def _removed_games(rid):
+    """The catalog games this restaurant removed, for the events card's
+    Put back list: {event_id, series_id, name, text, date, removed_on,
+    removed_by, by_admin}. Dates M/D/YY."""
+    from event_intel import engine as _ev, store as _evs
+    from models import get_restaurant
+    from time_utils import local_iso, mdy
+    r = get_restaurant(rid)
+    tz = getattr(r, "timezone", None) if r else None
+    out = []
+    for e in _evs.dismissals(rid)[:50]:
+        out.append({"event_id": e["id"], "series_id": e["series_id"], "name": e.get("series_name"),
+                    "text": _ev.describe(e), "date": e.get("event_date"),
+                    "removed_on": mdy(local_iso(e.get("dismissed_at"), tz)) if e.get("dismissed_at") else "",
+                    "removed_by": e.get("dismissed_by"), "by_admin": e.get("dismissed_source") == "admin"})
+    return out
+
+
+def _do_event_dismissals_get(u):
+    """The games removed from this calendar, each with Put back."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    return {"ok": True, "removed": _removed_games(_rid(u))}, 200
+
+
+def _do_event_dismissal_restore(u, event_id):
+    """Put one removed catalog game back: the removal is lifted and this
+    restaurant's copy of the games re-synced at once. Per game on purpose —
+    a re-follow leaves removals alone (store.undismiss's note)."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule's inputs.")
+    from client_api import log_account_event
+    from event_intel import engine as _ev, store as _evs
+    from models import get_restaurant
+    rid = _rid(u)
+    e = _evs.event_by_id(event_id)
+    if not e or not _evs.undismiss(rid, event_id):
+        return {"ok": False, "error": "That game isn't removed here."}, 404
+    r = get_restaurant(rid)
+    if r:
+        _ev.sync_restaurant(r)
+    log_account_event(rid, "event_game_restored", current_user=u, detail=_ev.describe(e)[:200],
+                      extra={"event_id": int(event_id)})
+    return {"ok": True, "removed": _removed_games(rid)}, 200
 
 
 def _cross_training_defaults(restaurant_id) -> dict:
@@ -5587,6 +5652,9 @@ _ROUTES = [
     ("/labor/demand-signals", ["POST"], _do_demand_signals_save, "demand_signals_save"),
     ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
     ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
+    ("/labor/event-dismissals", ["GET"], _do_event_dismissals_get, "event_dismissals_get"),
+    ("/labor/event-dismissals/<int:event_id>/restore", ["POST"], _do_event_dismissal_restore,
+     "event_dismissal_restore"),
     ("/food-cost/game-week", ["GET"], _do_game_week, "game_week"),
     ("/labor/schedule-forecast", ["GET"], _do_schedule_forecast, "schedule_forecast"),
     ("/labor/note-rules", ["GET"], _do_note_rules_get, "note_rules_get"),

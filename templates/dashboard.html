@@ -33506,6 +33506,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       window._memTeach=d.what_nights_teach||[];
       renderSignals();
     });
+    // Games removed from a followed calendar, each with Put back (X-4).
+    jget('/api/labor/event-dismissals',function(d){if(d&&d.ok){window._evRemoved=d.removed||[];renderSignals();}});
     // The reservation feed's own status line, as a caption on this card.
     if(!window._reservationFeed&&!(_rules&&_rules.reservation_feed))jget('/api/labor/rules',function(d){if(d.ok&&d.reservation_feed){window._reservationFeed=d.reservation_feed;renderSignals();}});
   };
@@ -33517,6 +33519,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(rf&&rf.message)h+='<div class="ac-note" style="margin:0 0 10px">'+(rf.label?'<b>'+esc(rf.label)+'</b> · ':'')+esc(rf.message)+'</div>';
     if(window.memTeachHtml)h+=memTeachHtml(window._memTeach);
     h+=evFollowsHtml(window._evFollows||[]);
+    h+=evRemovedHtml(window._evRemoved||[]);
     if(!list.length)h+='<div class="hb-empty">Nothing on the calendar for the next 60 days. A party, a block of reservations or a street fair goes here and the draft plans for it.</div>';
     else{
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
@@ -33556,6 +33559,25 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<button type="button" class="cbtn '+(f.following?'cbtn-text':'cbtn-secondary')+' cbtn-sm" onclick="evFollowSet('+(+f.series_id)+','+(f.following?'false':'true')+',this)">'+(f.following?'Stop following':'Follow')+'</button></div>';}
     return h+'</div>';
   }
+  // Games removed from a followed calendar (✕ on a calendar row): who
+  // removed each and when, and Put back — the one way a removed game
+  // returns (a re-follow leaves removals alone).
+  function evRemovedHtml(list){
+    if(!list||!list.length)return '';
+    var h='<div class="ev-follows"><div class="ev-follows-h">Games you removed</div>';
+    for(var i=0;i<list.length;i++){var g=list[i];
+      h+='<div class="ev-follow off"><div class="ev-follow-t"><b>'+(window.num?window.num(g.text||''):esc(g.text||''))+'</b>'
+        +'<span>Removed'+(g.removed_by?' by '+esc(g.removed_by):'')+(g.removed_on?' on '+esc(g.removed_on):'')+' — not planned for</span></div>'
+        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="evRestore('+(+g.event_id)+',this)">Put back</button></div>';}
+    return h+'</div>';
+  }
+  window.evRestore=function(id,btn){
+    var done=busy(btn,'Putting back…');
+    jsend('/api/labor/event-dismissals/'+id+'/restore',{},function(d){
+      done();if(!d.ok){toast(d.error||'Could not put that game back','error');return;}
+      window._evRemoved=d.removed||[];toast('Put back — the game is on your calendar again','success');loadSignals();
+    });
+  };
   window.evFollowSet=function(id,on,btn){
     var done=busy(btn,on?'Following\u2026':'Stopping\u2026');
     jsend('/api/labor/event-follows/'+id,{active:on},function(d){
@@ -33590,7 +33612,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
   window.deleteSignal=function(id,btn){
     var done=busy(btn,'');
-    jsend('/api/labor/demand-signals/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}toast('Removed','success');loadSignals();},'DELETE');
+    jsend('/api/labor/demand-signals/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}toast(d.event_id?'Removed — Put back under Games you removed brings it back':'Removed','success');loadSignals();},'DELETE');
   };
 
   // ── Shift requests ──

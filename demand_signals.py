@@ -277,25 +277,36 @@ def parse_reservations_csv(text):
     return rows
 
 
-def delete(restaurant_id, signal_id, db_path=DB_PATH) -> bool:
+def delete(restaurant_id, signal_id, db_path=DB_PATH, by=None, source="owner"):
+    """Remove one date. Returns what was removed — {"date", "label", "kind",
+    "source", "event_id"} (event_id set for a catalog game, now kept off
+    this calendar) — or None when there was no such row here. `by` and
+    `source` (owner | admin, view-as) are stored on a game's removal."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT source, ref FROM demand_signals WHERE id=? AND restaurant_id=?",
+        row = conn.execute("SELECT date, label, kind, source, ref FROM demand_signals WHERE id=? AND restaurant_id=?",
                            (int(signal_id), restaurant_id)).fetchone()
         cur = conn.execute("DELETE FROM demand_signals WHERE id=? AND restaurant_id=?", (int(signal_id), restaurant_id))
         conn.commit()
         gone = cur.rowcount > 0
     finally:
         conn.close()
+    if not gone or not row:
+        return None
+    out = {"date": row["date"], "label": row["label"], "kind": row["kind"], "source": row["source"],
+           "event_id": None}
     # A game from the catalog the owner removed stays removed (event_intel:
-    # the daily sync would otherwise write it back the next morning).
-    if gone and row and str(row["source"] or "") == "events" and str(row["ref"] or "").startswith("event:"):
+    # the daily sync would otherwise write it back the next morning) until
+    # it is put back from the events card (store.undismiss).
+    if str(row["source"] or "") == "events" and str(row["ref"] or "").startswith("event:"):
         try:
             from event_intel import store as _ev_store
-            _ev_store.dismiss(restaurant_id, int(str(row["ref"]).split(":", 1)[1]), db_path=db_path)
+            eid = int(str(row["ref"]).split(":", 1)[1])
+            _ev_store.dismiss(restaurant_id, eid, by=by, source=source, db_path=db_path)
+            out["event_id"] = eid
         except Exception:
             pass
-    return gone
+    return out
 
 
 def upcoming(restaurant_id, start=None, end=None, db_path=DB_PATH) -> list:

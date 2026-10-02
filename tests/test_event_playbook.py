@@ -416,10 +416,13 @@ def test_the_catalog_editor_is_admin_only_audited_and_moves_every_follower(db, m
     bad = c.post(f"/admin/api/event-catalog/{wk18['id']}", json={"changes": {"kickoff_local": "noon"}},
                  headers={"X-CSRF": csrf})
     assert bad.status_code == 400 and "24-hour" in bad.get_json()["error"]
+    # The followers' re-sync runs on the admin job pool (event re-audit
+    # P2-10 / X-3); run here inline, as the pool would, to see it land.
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", lambda job_id, fn, *a: fn(*a))
     ok = c.post(f"/admin/api/event-catalog/{wk18['id']}", json={"changes": {"event_date": "2027-01-10",
                                                                             "kickoff_local": "15:25"}},
                 headers={"X-CSRF": csrf}).get_json()
-    assert ok["ok"] and ok["synced"] == 1 and ok["after"]["event_date"] == "2027-01-10"
+    assert ok["ok"] and ok["queued"] and ok["followers"] == 1 and ok["after"]["event_date"] == "2027-01-10"
     # the follower's own calendar has Week 18 now, without waiting for 5am
     assert [s for s in demand_signals.upcoming(r.id, "2027-01-10", "2027-01-10", db_path=db)
             if s.get("ref") == f"event:{wk18['id']}"]

@@ -2491,7 +2491,8 @@ function opsRender(){
 // Event calendar (Event Intelligence phase 2): every followed series and its
 // games. A correction (a flexed kickoff, a TV change, Week 18's date) is
 // kept apart from the season file and laid over it on every load; the
-// restaurants that follow the series re-sync at once. Each save is audited.
+// restaurants that follow the series re-sync on the admin job pool. Each
+// save is audited, and so is the re-sync's outcome.
 function isoMdy(s){ if(!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return '—'; return (+s.slice(5,7)) + '/' + (+s.slice(8,10)) + '/' + s.slice(2,4); }
 async function opsEvents(){
   V().innerHTML = '<div class="sk blk"></div>';
@@ -2527,16 +2528,23 @@ async function evSave(id, btn){
   btn.disabled = true;
   const d = await post('/admin/api/event-catalog/' + id, {changes});
   btn.disabled = false;
-  if(say(d, 'Game corrected · ' + ((d && d.synced) || 0) + ' restaurant' + ((d && d.synced) === 1 ? '' : 's') + ' re-synced')) opsEvents();
+  if(say(d, 'Game corrected')){ opsEvents(); evResynced(d); }
 }
 async function evRevert(id, btn){
   const tr = btn.closest('tr'), fields = [];
   Object.keys(JSON.parse(tr.getAttribute('data-over') || '{}')).forEach(k => fields.push(k));
-  if(!confirm('Hand this game back to the season file? Its corrections stay until the next daily load replaces them.')) return;
+  if(!confirm('Hand this game back to the season file? It takes the season file\'s value now, and the restaurants that follow it re-sync.')) return;
   btn.disabled = true;
   const d = await post('/admin/api/event-catalog/' + id, {clear: fields});
   btn.disabled = false;
-  if(say(d, 'Handed back to the season file')) opsEvents();
+  if(say(d, 'Handed back to the season file')){ opsEvents(); evResynced(d); }
+}
+// The followers' re-sync runs on the admin job pool after the save; its
+// outcome is said when it lands (re-synced, failed, or left for 5am).
+async function evResynced(d){
+  if(!d || !d.job_id) return;
+  const r = await pollJob(jobUrl(d.job_id));
+  say(r, 'Followers re-synced');
 }
 
 // A panel that fills from its own read after the tab is drawn (UI-1's
