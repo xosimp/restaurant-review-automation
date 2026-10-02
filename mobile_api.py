@@ -7711,7 +7711,7 @@ def mobile_schedule_sections_save(current_user):
     from permissions import has_permission, SCHEDULE_DRAFT
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
         return jsonify(ok=False, error="You don't have permission to change the schedule."), 403
-    from models import set_foh_sections, set_shift_section, foh_sections
+    from models import SectionInputError, set_foh_sections, set_shift_section, foh_sections
     rid = current_user["restaurant_id"]
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -7723,8 +7723,8 @@ def mobile_schedule_sections_save(current_user):
                                     data.get("section"),
                                     updated_by=current_user.get("username") or current_user.get("email"))
         return jsonify(ok=True, section=section, sections=foh_sections(rid)), 200
-    except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+    except SectionInputError as e:
+        return jsonify(ok=False, error=e.user_message), 400
 
 
 @mobile_bp.route("/labor/profiles")

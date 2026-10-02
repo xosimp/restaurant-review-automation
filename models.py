@@ -9031,6 +9031,14 @@ def shift_sections_between(restaurant_id: int, start: str, end: str, db_path: st
              "section": named[r["section"].casefold()]} for r in rows if r["section"].casefold() in named]
 
 
+class SectionInputError(ValueError):
+    """A floor-section request a person can fix, with the sentence to show
+    them (`user_message`) — never an internal error's text."""
+    def __init__(self, user_message):
+        super().__init__(user_message)
+        self.user_message = user_message
+
+
 def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start: str, section,
                       updated_by=None, db_path: str = DB_PATH):
     """Put one shift in a named section, or out of any ("" / None). Returns
@@ -9040,14 +9048,14 @@ def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start:
     try:
         day = _dt.strptime(str(date or "")[:10], "%Y-%m-%d").date().isoformat()
     except ValueError:
-        raise ValueError("date is YYYY-MM-DD")
+        raise SectionInputError("Pick a date for the shift.")
     key, start = _av_key(employee), shift_section_start(shift_start)
     if not key or not start:
-        raise ValueError("employee and shift_start are required")
+        raise SectionInputError("Pick the person and the shift first.")
     wanted = " ".join(str(section or "").split())
     named = {n.casefold(): n for n in foh_sections(get_restaurant(restaurant_id, db_path))}
     if wanted and wanted.casefold() not in named:
-        raise ValueError("That section isn't one of this restaurant's.")
+        raise SectionInputError("That section isn't one of this restaurant's.")
     conn = get_conn(db_path)
     try:
         if not wanted:
