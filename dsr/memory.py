@@ -289,6 +289,7 @@ def last_night(restaurant_id, today, user=None, db_path=None):
 
 # How many of the report's unanswered priorities the morning brief carries.
 CARRY_ACTIONS = 2
+NOT_TODAY = ("event_ahead",)     # Tomorrow items about a later day: never carried into the brief's today line
 
 
 def morning_carry(restaurant_id, today, viewer=None, db_path=None):
@@ -348,6 +349,11 @@ def morning_carry(restaurant_id, today, viewer=None, db_path=None):
             "report_label": day_label(report.get("business_date")),
             "provisional": bool(report.get("provisional")), "version": report.get("version"),
             "forecast": tomorrow.get("forecast"), "confidence": tomorrow.get("confidence"),
-            "items": [i for i in tomorrow.get("items") or [] if isinstance(i, dict) and i.get("text")],
+            # About today only: a game two or three days out (event_ahead)
+            # is the brief's game line's to say, counted from the morning —
+            # carried, it said the game twice and "2 days out" beside
+            # "Tomorrow" (re-audit 2 R2-01).
+            "items": [i for i in tomorrow.get("items") or [] if isinstance(i, dict) and i.get("text")
+                      and i.get("kind") not in NOT_TODAY],
             "predictions": [p for p in tomorrow.get("predictions") or [] if isinstance(p, dict) and p.get("text")],
             "actions": actions, "view": view}

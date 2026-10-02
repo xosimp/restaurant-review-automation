@@ -7574,6 +7574,9 @@ svg:hover .hb-xh{opacity:1}
   // measured here (event_memory), green up, red down; the number face.
   function drEffects(list){
     var h='';for(var i=0;i<(list||[]).length;i++){var e=list[i];if(!e||!isNum(e.lift_pct))continue;
+      // A game's own effect: its figure is the game item's (effect_for's,
+      // re-audit 2 R2-02), so the chip names it without a second one.
+      if(e.game_event_id!=null){h+='<span class="'+(e.lift_pct<0?'neg':'pos')+'">'+esc(e.display||e.label||'')+'</span>';continue;}
       h+='<span class="'+(e.lift_pct<0?'neg':'pos')+'">'+esc(e.display||e.label||'')+' '+hn((e.lift_pct>0?'+':(e.lift_pct<0?'\u2212':''))+Math.abs(Math.round(e.lift_pct))+'%')+(isNum(e.n)?' \u00b7 '+hn(e.n)+' night'+(e.n===1?'':'s'):'')+'</span>';}
     return h?'<div class="dr-chips dr-eff">'+h+'</div>':'';
   }
@@ -8314,6 +8317,12 @@ svg:hover .hb-xh{opacity:1}
     if(l)h+=drGameSide('Last '+side+' game',l.describe||'',l);
     else h+='<div class="dr-game-c dim"><div class="k">Last '+esc(side)+' game</div><div class="t">The first one measured here.</div></div>';
     h+='</div>';
+    // The other headline games tonight (playbook.game_night "also"; a
+    // report stored before it carries them only in its text): they shared
+    // the night's sales, so the card names them (re-audit 2 R2-08).
+    var also=(g.also&&g.also.length)?g.also.join('; '):'',at=String(g.text||'').indexOf('Also tonight: ');
+    if(!also&&at>=0)also=String(g.text).slice(at+14).replace(/\.$/,'');
+    if(also)h+=note('Also tonight: '+prose(also)+'.');
     if(g.basis)h+=note(prose(cap(g.basis)));
     return h+'</div>';
   }

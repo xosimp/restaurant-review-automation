@@ -319,22 +319,21 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH, denied=f
     return out[:BRIEF_MEMORY_LINES]
 
 
-def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH, carry=None):
-    """event_intel.playbook.alert for this viewer. What the report's carried
-    today line already says about the game (the first four of its Tomorrow
-    items, the ones that line shows) is left out of this one."""
-    from event_intel import playbook
+def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH):
+    """event_intel.playbook.alert for this viewer. What a today line already
+    says about the game is left out of this one: the report's Tomorrow items
+    the carried today line shows (its `_items`), and a measured effect a
+    today line stated with its figure (its `_said` labels) — only when it is
+    THIS game's (re-audit 2 R2-05)."""
+    from event_intel import gameday, playbook
     sees = "labor" not in denied
     marketing = bool(getattr(restaurant, "module_marketing", 0)) and "marketing" not in denied
-    shown = (carry or {}).get("items") or []
-    carried_line = any(l.get("key") == "today" and l.get("source") == "dsr" for l in lines)
-    effect_said = any(l.get("key") == "today" and l.get("source") != "dsr" and "measured" in str(l.get("text") or "")
-                      for l in lines)
-    from event_intel import gameday
+    today_lines = [l for l in lines if l.get("key") == "today"]
+    shown = next((l.get("_items") or [] for l in today_lines if l.get("source") == "dsr"), None)
+    said = {lab for l in today_lines for lab in l.get("_said") or ()}
     return playbook.alert(restaurant_id, today, sees_sales=sees, sees_labor=sees, marketing=marketing,
                           sees_items=gameday.item_mix_visible(denied=denied),
-                          db_path=db_path, carried=shown[:4] if carried_line else None,
-                          effect_said_today=effect_said)
+                          db_path=db_path, carried=shown, said_labels=said)
 
 
 def _record_read(restaurant_id, brief, view=None, db_path=DB_PATH):
@@ -373,22 +372,40 @@ def _carry_today_line(carry, today, show_forecast=True):
     the report's own forecast for today — with the measured effects it
     applied and its confidence % — its Tomorrow items (time off, rain or
     heat, events and reservations, critically low stock) and what it
-    predicted, as stored. None when the report said nothing about today."""
+    predicted, as stored. None when the report said nothing about today.
+
+    The forecast, its measured effects and a game's measured lift are the
+    Labor view's (`show_forecast`): without it a game item reads as the game
+    alone (its `plain` words; a report stored before them leaves the item
+    to the game line — re-audit 2 R2-07). A game's own effect the forecast
+    applied is named without a figure when the game's item here says it
+    (effect_for's, the one figure — R2-02). `_items` (the items shown) and
+    `_said` (the effect labels stated with a figure) are for the game line
+    (_game_line) and are taken off the line after it."""
+    from dsr.tomorrow import effect_words
     fc = carry.get("forecast") if show_forecast else None
     conf = carry.get("confidence") if show_forecast else None
-    items = [i["text"] for i in carry.get("items") or []][:4]
+    shown = []
+    for i in (carry.get("items") or [])[:4]:
+        if not show_forecast and i.get("kind") == "event":
+            i = dict(i, text=i.get("plain"), has_effect=False)
+        if i.get("text"):
+            shown.append(i)
+    items = [i["text"] for i in shown]
     if not fc and not items:
         return None
     text = "Today, from last night's report"
+    said = []
     if fc and fc.get("typical") is not None:
         text += f": about {_money(fc['typical'])}"
         if fc.get("low") is not None and fc.get("high") is not None:
             text += f" ({_money(fc['low'])}–{_money(fc['high'])})"
         effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        by_item = {i.get("event_id") for i in shown if i.get("kind") == "event" and i.get("has_effect")}
+        figure = lambda e: e.get("game_event_id") is None or e["game_event_id"] not in by_item
+        said = [e.get("label") for e in effects if figure(e)]
         if effects:
-            text += ", with " + ", ".join(
-                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
-                f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+            text += ", with " + ", ".join(effect_words(e, figure=figure(e)) for e in effects)
         if conf and conf.get("pct") is not None:
             text += f"; its range has held {conf['pct']}% of the time"
     if items:
@@ -396,14 +413,14 @@ def _carry_today_line(carry, today, show_forecast=True):
     hol = _holiday_today(today)
     if hol:
         text += f" · {hol}"
-    text += "."
+    text = text.rstrip(".") + "."      # an item's own full stop (a staffing sentence) is not doubled
     if carry.get("provisional"):
         text += " From a provisional report."
     preds = [p["text"] for p in carry.get("predictions") or []] if show_forecast else []
     return {"key": "today", "tone": "neutral", "source": "dsr", "dsr_date": carry.get("report_date"),
             "forecast": bool(fc), "claim_kind": "forecast" if fc else None, "outside": bool(items or hol),
             "confidence_pct": (conf or {}).get("pct"), "predictions": preds,
-            "text": text, "ask": "What should I focus on before service today?"}
+            "text": text, "ask": "What should I focus on before service today?", "_items": shown, "_said": said}
 
 
 def _prime_stamp(pp, health):
@@ -754,12 +771,19 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                if fc.get("low") is not None and fc.get("high") is not None
                else f"from {fc['samples']} past {fc['weekday']}s; range not yet measurable")
         effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        stated = []
         if effects and fc.get("base_sales") is not None:
             # What is listed for today moved this restaurant's sales before
             # (event_memory, measured behind its floor): the day is said as
             # the typical weekday AND the measured effect, never as "typical".
-            said = ", ".join(f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
-                             f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+            # Today's game's own effect is the game line's to say, with
+            # effect_for's figure: named here without one (re-audit 2 R2-02).
+            from dsr.tomorrow import effect_words
+            from event_intel import playbook
+            games = (_safe(playbook.figure_labels, restaurant_id, today, db_path=db_path) or set()) \
+                if any(e.get("kind") == "event" for e in effects) else set()
+            stated = [e.get("label") for e in effects if e.get("label") not in games]
+            said = ", ".join(effect_words(e, figure=e.get("label") not in games) for e in effects)
             text = (f"Today: about {_money(fc['typical_sales'])} — a typical {fc['weekday']} is "
                     f"{_money(fc['base_sales'])}, with {said} ({rng})" + context + ".")
         else:
@@ -767,7 +791,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                     f"({rng})" + context + ".")
         lines.append({"key": "today", "tone": "neutral", "outside": bool(context), "forecast": True,
                       "claim_kind": "forecast", "text": text,
-                      "ask": "What should I focus on before service today?"})
+                      "ask": "What should I focus on before service today?", "_said": stated})
     elif restaurant is not None and not carried:
         # No forecast yet, but the weather and the calendar are still worth
         # knowing — and they are the only "today" the first weeks have.
@@ -789,7 +813,10 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # dollars and the staffing follow the forecast's own gate (the Labor
     # view); the game itself and the campaign do not. Read before the memory
     # lines, shown after them: a game it speaks for is said once (P2-06).
-    game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path, carry)
+    game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path)
+    for l in lines:
+        l.pop("_items", None)       # what the today line told the game line; never sent
+        l.pop("_said", None)
     for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path, denied, game) or []):
         lines.append(ml)
     if game:

@@ -218,7 +218,7 @@ def staffing(restaurant_id, e, db_path=store.DB_PATH):
     """{"games": [{"date", "describe", "roles", "usual"}], "usual": {role:
     median of each game's own usual}, "usual_n", "weekday", "deltas":
     [{"role", "game", "usual", "delta", "every_game", "from"}], "recommend",
-    "n", "mixed", "text", "basis"} for games of the same class and kickoff
+    "n", "mixed", "text", "lift_pct", "basis"} for games of the same class and kickoff
     class, or None with none on file with punches.
 
     Each game is set against ITS OWN usual same weekday (audit 10/1/26: a
@@ -229,7 +229,9 @@ def staffing(restaurant_id, e, db_path=store.DB_PATH):
     SEGMENT_MIN_N clean ones remain; below that every night is said and
     `mixed`, and nothing is planned. A plan needs SEGMENT_MIN_N games, every
     one of them measured at LIFT_FLOOR or more above its usual night, and
-    the role above usual on every one; the lift said is those same nights'.
+    the role above usual on every one. `lift_pct` is those same nights'
+    median lift — data, never in `text` (re-audit 2 R2-03: the game's
+    effect is said once, by effect_for's figure, on the line around it).
     "from" is when the extra person came in (_extra_from), never the
     regular openers' start, or None."""
     try:
@@ -289,8 +291,11 @@ def _staffing(restaurant_id, e, db_path):
         plan = "; ".join(f"{int(round(d['delta']))} more {d['role']}" + (f" from about {d['from']}" if d["from"]
                                                                          else "") for d in recommend)
         said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in recommend)
-        text = (f"Staff above a usual {weekday}: {plan}. On your last {n} {kind} you ran {said}, and sales "
-                f"ran {engine._median(lifts):.0f}% above their usual weekday.")
+        # The plan and what was staffed, never a sales lift of its own: the
+        # game's effect is said once, with effect_for's figure, by the line
+        # around it (re-audit 2 R2-03 — the push already cut it). The lift
+        # these nights ran stays in the data (lift_pct).
+        text = f"Staff above a usual {weekday}: {plan}. On your last {n} {kind} you ran {said}."
     else:
         ups = [d for d in deltas if d["delta"] > 0][:3]
         text = None
@@ -309,6 +314,7 @@ def _staffing(restaurant_id, e, db_path):
     usual_view = {k: engine._median([x["usual"].get(k, 0) for x in nights]) for k in all_roles}
     return {"games": _games_out(nights), "usual": usual_view, "usual_n": usual_n, "weekday": weekday,
             "deltas": deltas, "recommend": recommend, "n": n, "mixed": mixed, "text": text,
+            "lift_pct": round(engine._median(lifts), 1) if lifts else None,
             "basis": (f"punches on file for {n} {kind}, each against the ordinary same weekdays before it; "
                       f"each person counted once, in the role they worked"
                       + ("; some of those nights had something else on too" if mixed else ""))}
@@ -467,7 +473,8 @@ def _rush(restaurant_id, e, db_path):
 
 def game_night(restaurant_id, day, net=None, guests=None, labor_pct=None, db_path=store.DB_PATH):
     """{"event_id", "describe", "tonight": {...}, "last": {...} or None,
-    "others", "text", "basis"} for tonight's followed sports event, or None.
+    "others" (ids), "also" (their words), "text", "basis"} for tonight's
+    followed sports event, or None.
     `net`, `guests` and `labor_pct` are tonight's own figures from the
     report; the usual night and the last game are read here.
 
@@ -530,11 +537,13 @@ def _game_night(restaurant_id, day, net, guests, labor_pct, db_path):
     elif net:
         bits.append(f"it's the first {side} game measured here")
     text = (bits[0] + (f"; {bits[1]}" if len(bits) > 1 else "") + ".") if bits else None
-    if text and others:
-        text += " Also tonight: " + "; ".join(engine.describe(o["event"], with_date=False, tz=tz)
-                                              for o in others) + "."
+    # The other headline games tonight, as the card names them ("Also
+    # tonight", re-audit 2 R2-08) and the text says them.
+    also = [engine.describe(o["event"], with_date=False, tz=tz) for o in others]
+    if text and also:
+        text += " Also tonight: " + "; ".join(also) + "."
     return {"event_id": e["id"], "describe": c["describe"], "side": side, "weekday": weekday,
-            "tonight": tonight, "last": last_out, "others": [o["event"]["id"] for o in others],
+            "tonight": tonight, "last": last_out, "others": [o["event"]["id"] for o in others], "also": also,
             "text": text[0].upper() + text[1:] if text else None,
             "basis": ("tonight's net from this report against the median of ordinary same weekdays in the 8 "
                       "weeks before; the last game as event memory measured it the same way")}
@@ -569,12 +578,78 @@ def _past(restaurant_id, iso_local) -> bool:
         return False
 
 
-_CARRIED = {"event": "effect", "game_staffing": "staffing", "game_prep": "prep"}
+# What a carried Tomorrow item for the game (last night's report, in the
+# brief's today line) already said, and the item's flag that says it held
+# it: an "event" item said the game's effect only when it carried one
+# (has_effect), a "game_staffing" item the plan only when it was one (plan)
+# — re-audit 2 R2-05. A report stored before the flags reads as it did.
+_CARRIED = {"event": ("effect", "has_effect"), "game_staffing": ("staffing", "plan"), "game_prep": ("prep", None)}
+
+
+def game_labels(e) -> set:
+    """The event_memory labels a game's own measured effect is kept under —
+    its demand_signals label, split and normalised as event_memory.flags_for
+    reads it — so a forecast's applied effect can be told to be THIS game's."""
+    import event_memory
+    return set(event_memory.split_labels(engine.label_for(e)))
+
+
+def _said(e, carried, said_labels, day, today) -> set:
+    """What the brief already said about game `e` before its line: the parts
+    a carried item for THIS game held (_CARRIED), and its effect when a
+    today line stated this game's own label with its figure (`said_labels`)
+    — never because that line said some other measured effect, a payday
+    (re-audit 2 R2-05)."""
+    said = set()
+    for i in carried or []:
+        part, flag = _CARRIED.get(i.get("kind"), (None, None))
+        if part and i.get("event_id") == e["id"] and (flag is None or i.get(flag, True)):
+            said.add(part)
+    if day == today and game_labels(e) & set(said_labels or ()):
+        said.add("effect")
+    return said
+
+
+def _lead(restaurant_id, today, db_path):
+    """(game, the other headline games that day, its effect_for) for the
+    next followed headline game in [today, today+ALERT_DAYS], or None. With
+    two on one date, the one with a measured effect here leads (re-audit
+    P4-11)."""
+    followed = store.follows(restaurant_id, db_path=db_path)
+    skip = store.dismissed(restaurant_id, db_path=db_path)
+    rows = [e for e in store.events_for([f["series_id"] for f in followed], today,
+                                        today + timedelta(days=ALERT_DAYS), db_path=db_path)
+            if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip
+            and engine.headline(restaurant_id, e, db_path=db_path)]
+    if not rows:
+        return None
+    same_day = [x for x in rows if x["event_date"] == rows[0]["event_date"]]
+    effects = {x["id"]: engine.effect_for(restaurant_id, x, db_path=db_path) for x in same_day}
+    e = next((x for x in same_day if effects.get(x["id"])), same_day[0])
+    return e, [x for x in same_day if x["id"] != e["id"]], effects.get(e["id"])
+
+
+@engine.read_once
+def figure_labels(restaurant_id, today, db_path=store.DB_PATH) -> set:
+    """The labels whose figure the brief's game line says today: the game
+    the alert leads with, when it is today's and has a measured effect here
+    (effect_for's — the one figure a game is said with). The brief's own
+    forecast line names that effect without a figure (re-audit 2 R2-02).
+    set() when there is none. Never raises."""
+    try:
+        today = _d(today)
+        lead = _lead(restaurant_id, today, db_path)
+        if not lead or not lead[2] or _d(lead[0]["event_date"]) != today:
+            return set()
+        return game_labels(lead[0])
+    except Exception as ex:
+        log.warning("event_intel.playbook figure_labels failed rid=%s: %s", restaurant_id, ex)
+        return set()
 
 
 @engine.read_once
 def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=False, db_path=store.DB_PATH,
-          carried=None, effect_said_today=False, sees_items=None):
+          carried=None, said_labels=(), sees_items=None):
     """The brief line for the next followed game in [today, today+ALERT_DAYS]
     — {"key", "tone", "text", "claim_kind", "outside", "ask", "action"?,
     "event_id", "others", "staffing"?, "rush"?} — or None. `sees_sales` /
@@ -587,30 +662,20 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
     Kickoffs and the guest-text time are on the restaurant's clock (P2-04).
     The line is "inferred" (the email footer's "the game's staffing plan")
     only when it says a staffing plan, and "computed" only for another
-    restaurant's nights (P2-08). One engine.one_read() for all of it (X-2)."""
+    restaurant's nights (P2-08). One engine.one_read() for all of it (X-2).
+
+    `carried` is the report's Tomorrow items the brief's today line shows,
+    `said_labels` the measured-effect labels a today line stated with their
+    figure: what they said about THIS game is not said twice (_said)."""
     try:
         today = _d(today)
-        followed = store.follows(restaurant_id, db_path=db_path)
-        skip = store.dismissed(restaurant_id, db_path=db_path)
-        rows = [e for e in store.events_for([f["series_id"] for f in followed], today,
-                                            today + timedelta(days=ALERT_DAYS), db_path=db_path)
-                if e.get("status") not in ("cancelled", "postponed") and e["id"] not in skip
-                and engine.headline(restaurant_id, e, db_path=db_path)]
-        if not rows:
+        lead = _lead(restaurant_id, today, db_path)
+        if not lead:
             return None
+        e, others, eff = lead
         tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
-        same_day = [x for x in rows if x["event_date"] == rows[0]["event_date"]]
-        effects = {x["id"]: engine.effect_for(restaurant_id, x, db_path=db_path) for x in same_day}
-        e = next((x for x in same_day if effects.get(x["id"])), same_day[0])
-        others = [x for x in same_day if x["id"] != e["id"]]
-        eff = effects.get(e["id"])
         day = _d(e["event_date"])
-        # What last night's report already put in the brief's today line for
-        # this game (its effect, staffing, prep) is not said twice (audit
-        # 10/1/26): `carried` is the report's Tomorrow items.
-        said = {_CARRIED[i["kind"]] for i in (carried or []) if i.get("event_id") == e["id"] and i.get("kind") in _CARRIED}
-        if effect_said_today and day == today:
-            said.add("effect")      # today's forecast line already applied the measured effect
+        said = _said(e, carried, said_labels, day, today)
         weekday = day.strftime("%A")
         side = "home" if e.get("home_away") == "home" else "road"
         parts = [f"{_when(day, today)}: {engine.describe(e, with_date=False, tz=tz)}."]
