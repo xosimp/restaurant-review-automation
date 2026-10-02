@@ -2856,10 +2856,12 @@ def init_db(db_path: str = DB_PATH):
             saved_at        TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, date)
         )""",
-        # One row per employee per published schedule: the tokenised link
-        # they were sent, and whether they have actually opened it. That
-        # last part is the difference between "I sent the schedule" and "the
-        # closing server has seen the schedule".
+        # One row per link sent to an employee for a published schedule
+        # (every send is its own link): the link's token as its SHA-256
+        # ("sha256:<hex>", models._share_hash — never the token itself), and
+        # whether they have actually opened it. That last part is the
+        # difference between "I sent the schedule" and "the closing server
+        # has seen the schedule".
         """CREATE TABLE IF NOT EXISTS schedule_shares (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
@@ -3927,6 +3929,12 @@ def init_db(db_path: str = DB_PATH):
     init_preferences(db_path)
     from menu_intelligence import init_menu_intelligence
     init_menu_intelligence(db_path)
+    # Schedule links stored as their hash with an expiry on every row (SEC-09),
+    # and the staff self-service tables — post-shift pulse, calendar links
+    # (staff_insights; employee audit B6, 10/1/26).
+    migrate_schedule_shares(db_path)
+    from staff_insights import init_staff_insights
+    init_staff_insights(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
     # boot, not on each claim (DATA-6).
     import ops as _ops
@@ -13824,16 +13832,28 @@ def set_staff_contact(restaurant_id: int, employee_name: str, email: str = None,
 
 SCHEDULE_SHARE_TTL_DAYS = 60
 
+# schedule_shares.token holds "sha256:<hex>" of the link's token, never the
+# token itself (SEC-09: SECURITY.md says public pages use hashed or signed
+# tokens, and these were plaintext). The same prefix sales_audit_shares uses.
+_SHARE_HASH_PREFIX = "sha256:"
+
+
+def _share_hash(token) -> str:
+    import hashlib
+    return _SHARE_HASH_PREFIX + hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
 
 def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: str,
                           sent_to: str = None, db_path: str = DB_PATH) -> str:
-    """One tokenised link for one employee's view of one schedule.
+    """One tokenised link for one employee's view of one schedule; returns
+    the token (only its hash is stored).
 
-    Re-publishing the same schedule to the same person reuses their existing
-    token rather than minting a second one, so a link already sitting in
-    someone's inbox never goes dead because the manager hit Publish twice.
-    Re-publishing also pushes the expiry out again, since the link was just
-    deliberately re-sent.
+    Every send mints its own link — the stored hash cannot be turned back
+    into the link an earlier send carried — and a re-send pushes the expiry
+    of that person's earlier links for this week out again too, so a link
+    already sitting in someone's inbox never goes dead because the manager
+    hit Publish twice. The status list folds one person's rows into one
+    (get_schedule_share_status).
 
     Links expire after SCHEDULE_SHARE_TTL_DAYS. Without that they were
     permanent: someone who left the restaurant a year ago still had a working
@@ -13843,67 +13863,133 @@ def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: s
     import secrets as _secrets
     from datetime import datetime as _dt, timedelta as _td
     expires = (_dt.utcnow() + _td(days=SCHEDULE_SHARE_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    token = _secrets.token_urlsafe(24)
     conn = get_conn(db_path)
     try:
-        existing = conn.execute(
-            "SELECT token FROM schedule_shares WHERE schedule_id=? AND employee_name=?",
-            (schedule_id, employee_name)
-        ).fetchone()
-        if existing:
-            conn.execute("UPDATE schedule_shares SET sent_at=datetime('now'), sent_to=?, expires_at=? "
-                         "WHERE schedule_id=? AND employee_name=?",
-                         (sent_to, expires, schedule_id, employee_name))
-            conn.commit()
-            return existing["token"]
-        token = _secrets.token_urlsafe(24)
+        conn.execute("UPDATE schedule_shares SET expires_at=? WHERE schedule_id=? AND employee_name=? "
+                     "AND restaurant_id=?", (expires, schedule_id, employee_name, restaurant_id))
         conn.execute("""
             INSERT INTO schedule_shares (restaurant_id, schedule_id, employee_name, token, sent_to, expires_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (restaurant_id, schedule_id, employee_name, token, sent_to, expires))
+        """, (restaurant_id, schedule_id, employee_name, _share_hash(token), sent_to, expires))
         conn.commit()
         return token
     finally:
         conn.close()
 
 
+def drop_schedule_share(token: str, schedule_id: int, db_path: str = DB_PATH):
+    """Remove the one link a send that did not go out was given."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM schedule_shares WHERE token=? AND schedule_id=?", (_share_hash(token), schedule_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _live_week_row(conn, restaurant_id, week_start):
+    """The version of this week staff are on now: the published copy nothing
+    superseded, the newest (re)publish first; else, for a week sent before
+    the publish stamp existed, the newest copy that was shared. None when no
+    copy of the week is live."""
+    row = conn.execute(
+        "SELECT id, week_start, week_end, schedule_csv, COALESCE(republished_at, published_at) AS live_at "
+        "FROM schedule_history WHERE restaurant_id=? AND week_start=? AND published_at IS NOT NULL "
+        "AND superseded_by IS NULL ORDER BY COALESCE(republished_at, published_at) DESC, id DESC LIMIT 1",
+        (restaurant_id, week_start)).fetchone()
+    if row:
+        return row
+    if conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                    "AND published_at IS NOT NULL LIMIT 1", (restaurant_id, week_start)).fetchone():
+        return None
+    return conn.execute(
+        "SELECT h.id, h.week_start, h.week_end, h.schedule_csv, NULL AS live_at FROM schedule_history h "
+        "WHERE h.restaurant_id=? AND h.week_start=? AND h.superseded_by IS NULL "
+        "AND EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) ORDER BY h.id DESC LIMIT 1",
+        (restaurant_id, week_start)).fetchone()
+
+
+def _share_holder_inactive(conn, restaurant_id, employee_name) -> bool:
+    """Whether the person a link was sent to has been switched off here — a
+    staff login that exists and is deactivated on every membership, or a
+    roster row marked inactive. Read on every open, so a link stops on ANY
+    deactivation path, whichever screen did it (SEC-09 / LG-18)."""
+    def _k(n):
+        return " ".join(str(n or "").split()).casefold()
+    key = _k(employee_name)
+    if not key:
+        return False
+    try:
+        mems = [r for r in conn.execute("SELECT employee_name, is_active FROM memberships WHERE restaurant_id=? "
+                                        "AND employee_name IS NOT NULL", (restaurant_id,)).fetchall()
+                if _k(r["employee_name"]) == key]
+    except sqlite3.OperationalError:
+        mems = []
+    if mems and not any(int(r["is_active"] or 0) for r in mems):
+        return True
+    try:
+        rows = [r for r in conn.execute("SELECT employee_name, active FROM staff_settings WHERE restaurant_id=?",
+                                        (restaurant_id,)).fetchall() if _k(r["employee_name"]) == key]
+    except sqlite3.OperationalError:
+        rows = []
+    return bool(rows) and not any(int(r["active"] if r["active"] is not None else 1) for r in rows)
+
+
 def get_schedule_share(token: str, db_path: str = DB_PATH) -> dict:
-    """Resolve a public token to the schedule and employee it belongs to.
-    Returns None for an unknown token — the public page then 404s rather
-    than leaking whether a token ever existed."""
+    """Resolve a public token to the schedule and employee it belongs to,
+    looked up by its hash. Returns None for an unknown token — the public
+    page then 404s rather than leaking whether a token ever existed.
+
+    A link to a copy of the week that has since been replaced by a new
+    publish follows to the copy staff are on now (`updated` True, `live_at`
+    when that copy went out): it used to keep showing the old shifts as
+    current and keep taking availability against them (SEC-09 / LG-18).
+    `expired` is the link aging out OR its holder having been deactivated."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("""
             SELECT s.id, s.restaurant_id, s.schedule_id, s.employee_name, s.viewed_at, s.view_count,
-                   s.expires_at,
-                   h.week_start, h.week_end, h.schedule_csv, r.name AS restaurant_name
+                   s.expires_at, s.sent_at,
+                   h.week_start, h.week_end, h.schedule_csv, h.published_at, h.superseded_by,
+                   r.name AS restaurant_name
             FROM schedule_shares s
             JOIN schedule_history h ON h.id = s.schedule_id
             JOIN restaurants r ON r.id = s.restaurant_id
             WHERE s.token = ?
-        """, (token,)).fetchone()
+        """, (_share_hash(token),)).fetchone()
+        if not row:
+            return None
+        share = dict(row)
+        share["updated"], share["live_at"] = False, None
+        live = _live_week_row(conn, share["restaurant_id"], share["week_start"])
+        if live and live["id"] != share["schedule_id"]:
+            share.update(schedule_id=live["id"], week_start=live["week_start"], week_end=live["week_end"],
+                         schedule_csv=live["schedule_csv"], updated=True, live_at=live["live_at"])
+        holder_off = _share_holder_inactive(conn, share["restaurant_id"], share["employee_name"])
     finally:
         conn.close()
-    if not row:
-        return None
-    share = dict(row)
     # Distinguished from "no such token" so the page can say "this link has
-    # expired, ask your manager to resend" instead of a bare 404 that reads
-    # like the app is broken to someone who just wants their shifts.
-    share["expired"] = _share_is_expired(share.get("expires_at"))
+    # expired" instead of a bare 404 that reads like the app is broken to
+    # someone who just wants their shifts.
+    share["expired"] = holder_off or _share_is_expired(share.get("expires_at"), share.get("sent_at"))
     return share
 
 
-def _share_is_expired(expires_at) -> bool:
-    """Rows created before expires_at existed have NULL and never expire —
-    they predate the policy, and silently cutting off links already in
-    people's inboxes would strand them mid-week."""
-    if not expires_at:
-        return False
-    from datetime import datetime as _dt
+def _share_is_expired(expires_at, sent_at=None) -> bool:
+    """Past its expiry. A row with none (one written before the policy, or by
+    a path that set none) ages out SCHEDULE_SHARE_TTL_DAYS after it was sent
+    — it used to live forever (SEC-09); boot backfills the column too
+    (migrate_schedule_shares)."""
+    from datetime import datetime as _dt, timedelta as _td
     try:
-        return _dt.utcnow() > _dt.fromisoformat(str(expires_at).replace("T", " "))
+        if expires_at:
+            return _dt.utcnow() > _dt.fromisoformat(str(expires_at).replace("T", " ")[:19])
+        if sent_at:
+            return _dt.utcnow() > _dt.fromisoformat(str(sent_at).replace("T", " ")[:19]) + _td(days=SCHEDULE_SHARE_TTL_DAYS)
     except Exception:
         return False
+    return False
 
 
 def mark_schedule_share_viewed(token: str, db_path: str = DB_PATH):
@@ -13914,24 +14000,75 @@ def mark_schedule_share_viewed(token: str, db_path: str = DB_PATH):
             UPDATE schedule_shares
             SET viewed_at = COALESCE(viewed_at, datetime('now')), view_count = view_count + 1
             WHERE token = ?
-        """, (token,))
+        """, (_share_hash(token),))
         conn.commit()
     finally:
         conn.close()
 
 
 def get_schedule_share_status(restaurant_id: int, schedule_id: int, db_path: str = DB_PATH) -> list:
-    """Who was sent this schedule and who has actually opened it."""
+    """Who was sent this schedule and who has actually opened it — one entry
+    per person: the newest send's channel and time, the first open, every
+    open counted (each send is its own link row)."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("""
             SELECT employee_name, sent_to, sent_at, viewed_at, view_count
             FROM schedule_shares WHERE restaurant_id=? AND schedule_id=?
-            ORDER BY employee_name
+            ORDER BY employee_name, sent_at, id
         """, (restaurant_id, schedule_id)).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    out = {}
+    for r in rows:
+        cur = out.get(r["employee_name"])
+        if cur is None:
+            out[r["employee_name"]] = dict(r)
+            continue
+        cur["sent_to"], cur["sent_at"] = r["sent_to"], r["sent_at"]
+        if r["viewed_at"] and (not cur["viewed_at"] or r["viewed_at"] < cur["viewed_at"]):
+            cur["viewed_at"] = r["viewed_at"]
+        cur["view_count"] = (cur["view_count"] or 0) + (r["view_count"] or 0)
+    return list(out.values())
+
+
+def expire_schedule_shares_for(restaurant_id: int, employee_name: str, db_path: str = DB_PATH) -> int:
+    """End every schedule link this person holds here (any spelling of the
+    name). Returns links ended."""
+    key = " ".join(str(employee_name or "").split()).casefold()
+    if not key:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        ids = [r["id"] for r in conn.execute("SELECT id, employee_name FROM schedule_shares WHERE restaurant_id=? "
+                                             "AND (expires_at IS NULL OR expires_at > datetime('now'))",
+                                             (restaurant_id,)).fetchall()
+               if " ".join(str(r["employee_name"] or "").split()).casefold() == key]
+        for i in ids:
+            conn.execute("UPDATE schedule_shares SET expires_at=datetime('now') WHERE id=?", (i,))
+        conn.commit()
+        return len(ids)
+    finally:
+        conn.close()
+
+
+def migrate_schedule_shares(db_path: str = DB_PATH) -> dict:
+    """Boot, once per row (SEC-09): a token still stored as itself becomes
+    its hash — the link keeps working, since lookup is by hash — and a row
+    with no expiry gets one, SCHEDULE_SHARE_TTL_DAYS after it was sent.
+    Returns {"hashed", "expiry_set"}."""
+    conn = get_conn(db_path)
+    try:
+        plain = conn.execute("SELECT id, token FROM schedule_shares WHERE token NOT LIKE ?",
+                             (_SHARE_HASH_PREFIX + "%",)).fetchall()
+        for r in plain:
+            conn.execute("UPDATE schedule_shares SET token=? WHERE id=?", (_share_hash(r["token"]), r["id"]))
+        cur = conn.execute("UPDATE schedule_shares SET expires_at=datetime(COALESCE(sent_at, datetime('now')), ?) "
+                           "WHERE expires_at IS NULL", (f"+{SCHEDULE_SHARE_TTL_DAYS} days",))
+        conn.commit()
+        return {"hashed": len(plain), "expiry_set": cur.rowcount or 0}
+    finally:
+        conn.close()
 
 
 # ── Email suppression list ──────────────────────────────────────────────────

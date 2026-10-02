@@ -20,6 +20,12 @@ from models import get_restaurant
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/staff")
 
+# The employee's own figures — hours and tips, stats, recognition, the
+# post-shift pulse and the calendar feed (staff_me_routes, employee audit B6)
+# attach to staff_bp as soon as it exists, so they are on it before any app
+# registers it. staff_me_routes reaches this module's helpers at call time.
+import staff_me_routes  # noqa: E402,F401
+
 # Per-IP throttle on the portal's public surface, on top of the per-membership
 # lockout. The membership lockout stops someone grinding one person's PIN;
 # this stops someone spraying one guess across the whole roster, which no
@@ -90,17 +96,45 @@ def _staff_context(current_user):
 
 def _app_url():
     """Where an employee gets the app: the App Store link once it is listed
-    (IOS_APP_STORE_URL), else nothing and the page says to ask a manager."""
+    (IOS_APP_STORE_URL), else "" and the page names the TestFlight invite.
+    Also read by the /s/ schedule-link pages (client_api)."""
     import os as _os_app
     return (_os_app.getenv("IOS_APP_STORE_URL") or "").strip()
+
+
+# The sign-out question: DESIGN_SYSTEM.md's dark tokens and faces, as on
+# staff_login.html. A 44px "stay" link back to the get-the-app page.
+_LOGOUT_PAGE = (
+    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'><meta name='robots' content='noindex,nofollow'>"
+    "<title>Sign out — Cavnar AI for staff</title>"
+    "<link rel='stylesheet' href='/static/fonts/cavnar-fonts.css'>"
+    "<link rel='stylesheet' href='/static/css/cavnar-buttons.css'>"
+    "<style>:root{--paper:#0c0c0c;--ink:#f0ebe0;--ink2:#c4bdb4;--ember2:#e8956a}"
+    "body{margin:0;background:var(--paper);color:var(--ink);font-family:'Apfel Grotezk',-apple-system,"
+    "BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;padding:0 16px}"
+    ".wrap{max-width:420px;margin:15vh auto;text-align:center}"
+    "h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:24px;margin:0 0 8px}"
+    "p{color:var(--ink2);font-size:14.5px;line-height:1.55;margin:0 0 20px}"
+    ".stay{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;margin-top:10px;"
+    "color:var(--ember2);font-weight:700}</style></head><body><div class='wrap'>"
+    "<h1>Sign out?</h1><p>This signs this browser out. Your schedule stays in the Cavnar AI app.</p>"
+    "<form method='post' action='/staff/logout'><button type='submit' class='cbtn cbtn-primary cbtn-lg'>"
+    "Sign out</button></form><a class='stay' href='/staff/'>Stay signed in</a></div></body></html>")
 
 
 def _app_page(restaurant=None, join_code="", error=None, status=200, **extra):
     """The web side of the staff portal: one page saying the portal is in
     the iPhone app (owner, 9/30/26: "no web version for employees"), with
-    the restaurant's join code when the link names one. It keeps the
+    the restaurant code when the link names one. It keeps the
     create-your-account flow because it is the opt-in page registered for
-    the staff verification texts (A2P)."""
+    the staff verification texts (A2P).
+
+    It always says how to get the app — the App Store link once
+    IOS_APP_STORE_URL is set, else the TestFlight invite — and how someone
+    without an iPhone gets their week (the per-week /s/ link). A finished
+    web signup lands on /staff/home?ready=1, signed in, so the ready page
+    can show the restaurant code the app asks for first (C1, UX-08, UX-26)."""
     return render_template("staff_login.html", restaurant=restaurant, roster=[],
                            portal_token="", login_nonce="", join_code=join_code or "",
                            error=error, app_url=_app_url(),
@@ -362,12 +396,9 @@ def portal_logout():
     if request.method != "POST":
         if not request.cookies.get("staff_session"):
             return redirect(url_for("staff.portal_entry"))
-        return ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Sign out</title><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,"
-                "sans-serif;max-width:420px;margin:15vh auto;padding:24px;text-align:center\"><h2>Sign out?</h2>"
-                "<form method='post' action='/staff/logout'><button type='submit' class='cbtn cbtn-primary' "
-                "style='padding:12px 22px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:16px'>"
-                "Sign out</button></form><p><a href='/staff/home'>Back to my shifts</a></p></div>")
+        # The web no longer shows shifts (the portal is in the app), so the
+        # way back is "Stay signed in", not "Back to my shifts" (UX-33).
+        return _LOGOUT_PAGE
     token = request.cookies.get("staff_session")
     if token:
         try:

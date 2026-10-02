@@ -7,24 +7,35 @@
 {# Deliberately NOT the expired page. This is the unknown-token case, and
    saying "expired" would confirm the link had once been real — the exact
    thing the route avoids doing. The wording here works whether the token
-   was mistyped, truncated by a mail client, or never existed at all. #}
+   was mistyped, truncated by a mail client, or never existed at all.
+   `throttled`: this device has tried too many links in a few minutes. #}
 <title>Schedule link</title>
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
 <style>
-  body{margin:0;background:#0c0c0c;color:#f0ebe0;
-       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
-       -webkit-font-smoothing:antialiased;padding:28px 18px;
+  /* DESIGN_SYSTEM.md §1 dark tokens, as on staff_schedule.html. */
+  :root{--paper:#0c0c0c; --ink:#f0ebe0; --ink2:#c4bdb4; --ember2:#e8956a}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 16px;
        display:flex;align-items:center;justify-content:center;min-height:80vh}
   .wrap{max-width:420px;text-align:center}
-  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#e8956a}
-  h1{font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
-  p{color:#8f847b;font-size:14.5px;line-height:1.6;margin:0}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
+  p{color:var(--ink2);font-size:14.5px;line-height:1.6;margin:0 0 12px}
+  p a{color:var(--ember2);font-weight:700}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="kicker">Cavnar AI</div>
+  {% if throttled %}
+  <h1>Too many tries from this device</h1>
+  <p>Wait a few minutes, then open the link from your message again.</p>
+  {% else %}
   <h1>This schedule link didn&rsquo;t work</h1>
-  <p>Double-check you opened the full link from your message. If it still doesn&rsquo;t work, ask your manager to send you a fresh one.</p>
+  <p>Double-check you opened the full link from your message. If it still doesn&rsquo;t work, ask your manager to send it again.</p>
+  {% endif %}
+  <p>Your schedule is also in the Cavnar AI app{% if app_url %} &mdash; <a href="{{ app_url }}">get the app</a>{% else %} (on iPhone, in testing &mdash; ask your manager for the invite){% endif %}.</p>
 </div>
 </body>
 </html>

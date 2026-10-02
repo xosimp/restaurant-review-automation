@@ -4,24 +4,31 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>{% if restaurant %}{{ restaurant.name }} — staff sign in{% else %}Staff sign in{% endif %}</title>
+<title>{% if restaurant %}{{ restaurant.name }} — Cavnar AI for staff{% else %}Cavnar AI for staff{% endif %}</title>
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
+  /* DESIGN_SYSTEM.md §1 dark tokens (the staff pages are dark, like the
+     app's own chrome: paper is the iOS #0c0c0c). --card and --line are this
+     page's names for --paper2 and --paper3. Nothing below names a hex. */
   :root{
-    --paper:#0c0c0c; --card:#151515; --line:#262626;
-    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
+    --paper:#0c0c0c; --paper2:#121212; --paper3:#262626;
+    --card:var(--paper2); --line:var(--paper3);
+    --ink:#f0ebe0; --ink2:#c4bdb4; --ink3:#cdbfa9;
     --ember:#d4583a; --ember2:#e8956a; --red:#e3333f;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);
-       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
-       -webkit-font-smoothing:antialiased;padding:32px 18px 48px;min-height:100vh}
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:32px 16px 48px;min-height:100vh}
+  .hb-num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
   .wrap{max-width:460px;margin:0 auto}
   .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
   /* The cream-on-dark wordmark — this page's ground is #0c0c0c, which is
      exactly what wordmark-light.svg is drawn for. */
   .wordmark{display:block;height:26px;width:auto;margin-bottom:14px}
-  h1{font-size:25px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
+  h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:25px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
   .sub{color:var(--ink3);font-size:14px;margin:0 0 26px}
 
   .who{display:grid;grid-template-columns:1fr 1fr;gap:9px}
@@ -38,8 +45,9 @@
   .pinstep{display:none}
   .pinstep.on{display:block}
   .backrow{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-  .backrow button{background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;
-                  font-family:inherit;padding:4px 6px}
+  /* 44px: a thumb's target (UX-38). */
+  .backrow button{background:none;border:none;color:var(--ink3);font-size:18px;cursor:pointer;
+                  font-family:inherit;min-width:44px;min-height:44px;padding:0 10px;margin-left:-10px}
   .backrow .nm{font-size:18px;font-weight:700}
 
   .dots{display:flex;gap:11px;justify-content:center;margin:8px 0 26px}
@@ -51,7 +59,7 @@
   .pad button{aspect-ratio:1.45;background:var(--card);border:1px solid var(--line);
               border-radius:14px;color:var(--ink);font-family:inherit;font-size:24px;
               font-weight:600;cursor:pointer;transition:background .1s}
-  .pad button:active{background:#232323}
+  .pad button:active{background:var(--paper3)}
   .pad button.act{font-size:14px;color:var(--ink3);font-weight:500}
   /* PINs are 4-8 digits (auth.PIN_MIN_LENGTH..PIN_MAX_LENGTH), so the pad
      cannot guess when one is finished: it submits on this key, on Enter,
@@ -88,7 +96,11 @@
      link"). */
   .legal{margin-top:34px;text-align:center;font-size:12.5px;line-height:1.7;color:var(--ink3)}
 .appcode{display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center}
-.appcode b{font-size:30px;letter-spacing:.18em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.appcode b{font-family:'Space Grotesk',sans-serif;font-size:30px;letter-spacing:.18em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.appcode small{font-size:12.5px;color:var(--ink3)}
+.getapp{margin-top:14px}
+.noiphone{margin-top:14px;color:var(--ink3);font-size:13.5px;line-height:1.55}
+.noiphone b{color:var(--ink2)}
 </style>
 <script src="/static/cavnar-phone.js"></script>
 </head>
@@ -104,11 +116,18 @@
     <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
     {% if restaurant %}<div class="kicker">{{ restaurant.name }}</div>{% endif %}
     <h1>{% if ready %}You&rsquo;re all set{% else %}Your shifts are in the Cavnar AI app{% endif %}</h1>
-    <p class="sub">{% if error %}{{ error }}{% elif ready %}Open the Cavnar AI app on your iPhone, tap <b>I&rsquo;m staff</b>, and sign in with the PIN you just set.{% else %}Your schedule, swaps, time off and today&rsquo;s tasks are in the Cavnar AI iPhone app. Get the app, tap <b>I&rsquo;m staff</b>, then <b>Create your account</b>.{% endif %}</p>
+    <p class="sub" {% if error %}role="alert"{% endif %}>{% if error %}{{ error }}{% elif ready %}Open the Cavnar AI app on your iPhone, tap <b>I&rsquo;m staff</b>, enter your restaurant code{% if join_code %} below{% endif %}, then sign in with the PIN you just set.{% else %}Your schedule, swaps, time off and today&rsquo;s tasks are in the Cavnar AI iPhone app. Get the app, tap <b>I&rsquo;m staff</b>, then <b>Create your account</b>.{% endif %}</p>
+    {# One name for the code everywhere: "restaurant code" (UX-26). On the
+       ready page it is the thing the app asks for next. #}
     {% if join_code %}
-    <div class="empty appcode"><span>Your restaurant&rsquo;s code</span><b>{{ join_code }}</b></div>
+    <div class="empty appcode"><span>Your restaurant code</span><b>{{ join_code }}</b>{% if ready %}<small>The app asks for it once.</small>{% endif %}</div>
     {% endif %}
-    {% if app_url %}<a class="cbtn cbtn-primary" style="width:100%;margin-top:14px" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty">Ask your manager for the invite to the Cavnar AI app.</div>{% endif %}
+    {# Always says how to get the app (C1 / UX-08): the App Store link once
+       it is listed, else the TestFlight invite, still naming the app. #}
+    {% if app_url %}<a class="cbtn cbtn-primary getapp" style="width:100%" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty getapp">The Cavnar AI app is on iPhone, in testing through Apple&rsquo;s TestFlight. Ask your manager for the invite &mdash; it comes by email.</div>{% endif %}
+    {# How an employee without an iPhone gets their week (UX-08): the
+       per-week link, which opens in any browser and takes availability. #}
+    <p class="noiphone"><b>No iPhone?</b> Each week&rsquo;s schedule comes to you as a link, by email or by text where your restaurant sends them &mdash; make sure your manager has your email address. The link opens in any browser, and you can mark the days you can&rsquo;t work there.</p>
 
   <div class="newhere">
     <button type="button" class="linkish" onclick="startSignup()">First time here? Create your account</button>
@@ -121,7 +140,7 @@
  <div id="signup-root" style="display:none">
    <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
    <div class="backrow">
-     <button type="button" onclick="signupBack()">&larr;</button>
+     <button type="button" onclick="signupBack()" aria-label="Back">&larr;</button>
      <span class="nm" id="su-title">Create your account</span>
    </div>
 
@@ -146,9 +165,9 @@
    </div>
 
    <div class="sustep" id="su-where">
-     <h1>Your restaurant's code</h1>
+     <h1>Your restaurant code</h1>
      <p class="hint">Six characters. It's posted in the back of house, or your manager has it.</p>
-     <input id="su-join-in" class="fld code" maxlength="9" autocapitalize="characters" autocomplete="off" placeholder="ABC123">
+     <input id="su-join-in" class="fld code" maxlength="9" autocapitalize="characters" autocomplete="off" placeholder="ABC123" aria-label="Restaurant code">
      <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suFindRestaurant(this)">Continue</button>
    </div>
 
@@ -160,26 +179,26 @@
 
    <div class="sustep" id="su-pin">
      <h1>Choose a PIN</h1>
-     <p class="hint">4 to 8 digits. You'll use this to sign in here and on the restaurant's tablet — don't share it.</p>
-     <div class="dots" id="su-dots"><i></i><i></i><i></i><i></i></div>
+     <p class="hint">4 to 8 digits. You'll use it to sign in to the Cavnar AI app — don't share it.</p>
+     <div class="dots" id="su-dots" role="img" aria-label="PIN: no digits entered"><i></i><i></i><i></i><i></i></div>
      <div class="pad">
-       <button type="button" data-sd="1">1</button>
-       <button type="button" data-sd="2">2</button>
-       <button type="button" data-sd="3">3</button>
-       <button type="button" data-sd="4">4</button>
-       <button type="button" data-sd="5">5</button>
-       <button type="button" data-sd="6">6</button>
-       <button type="button" data-sd="7">7</button>
-       <button type="button" data-sd="8">8</button>
-       <button type="button" data-sd="9">9</button>
-       <button type="button" class="act" onclick="suClearPin()">Clear</button>
-       <button type="button" data-sd="0">0</button>
-       <button type="button" class="act" onclick="suDelPin()">&#9003;</button>
+       <button type="button" data-sd="1" aria-label="1">1</button>
+       <button type="button" data-sd="2" aria-label="2">2</button>
+       <button type="button" data-sd="3" aria-label="3">3</button>
+       <button type="button" data-sd="4" aria-label="4">4</button>
+       <button type="button" data-sd="5" aria-label="5">5</button>
+       <button type="button" data-sd="6" aria-label="6">6</button>
+       <button type="button" data-sd="7" aria-label="7">7</button>
+       <button type="button" data-sd="8" aria-label="8">8</button>
+       <button type="button" data-sd="9" aria-label="9">9</button>
+       <button type="button" class="act" onclick="suClearPin()" aria-label="Clear PIN">Clear</button>
+       <button type="button" data-sd="0" aria-label="0">0</button>
+       <button type="button" class="act" onclick="suDelPin()" aria-label="Delete last digit">&#9003;</button>
      </div>
      <button type="button" id="su-pin-go" class="cbtn cbtn-primary pin-go" onclick="suSetPin()" disabled>Set PIN</button>
    </div>
 
-   <div class="err" id="su-err"></div>
+   <div class="err" id="su-err" role="status" aria-live="polite"></div>
  </div>
 
  <footer class="legal">
@@ -206,6 +225,9 @@
     for (var i = 0; i < box.children.length; i++) {
       box.children[i].className = i < n ? 'f' : '';
     }
+    /* The dots say how many digits are in to a screen reader too (UX-38). */
+    box.setAttribute('aria-label', n ? ('PIN: ' + n + (n === 1 ? ' digit' : ' digits') + ' entered')
+                                     : 'PIN: no digits entered');
   }
 
 
@@ -323,7 +345,7 @@
   window.suFindRestaurant = function(btn){
     if (suBusy) return;
     var code = ($('su-join-in').value || '').trim();
-    if (!code) { suFail('Enter your restaurant’s code.'); return; }
+    if (!code) { suFail('Enter your restaurant code.'); return; }
     suBusy = true;
     var label = btn.textContent;
     btn.textContent = 'Checking…';
@@ -409,7 +431,9 @@
       employee_name: suName, pin: suPin
     }, function(d){
       suBusy = false;
-      if (d.ok) { window.location = '/staff/?ready=1'; return; }
+      /* The signed-in ready page names the restaurant and shows its code —
+         the first thing the app asks for (UX-26). */
+      if (d.ok) { window.location = '/staff/home?ready=1'; return; }
       suPin = ""; suPaintPin();
       suFail(d.error || 'Could not finish setting up your account.');
     });

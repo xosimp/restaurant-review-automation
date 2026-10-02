@@ -919,9 +919,32 @@ def _do_closeout_get(u):
             # Editable prefill for two lines, never saved on its own (#40).
             "suggested": suggested,
             "closeout": closeout.get(_rid(u), day.isoformat()),
+            # How tonight felt to the staff who answered the post-shift
+            # pulse, once enough did that nobody is singled out — context,
+            # never saved into the close-out (staff_insights, MISS-13).
+            "staff_pulse": _staff_pulse_for_closeout(_rid(u), day),
             "previous": closeout.latest(_rid(u), before=(day.isoformat())),
             "fields": list(closeout.FIELDS), "dsr_fields": list(closeout.DSR_FIELDS),
             "labels": dict(closeout.LABELS)}, 200
+
+
+def _staff_pulse_for_closeout(rid, day):
+    try:
+        import staff_insights
+        return staff_insights.pulse_for_closeout(rid, day)
+    except Exception:
+        return None
+
+
+def _do_staff_pulse(u):
+    """How shifts felt to the staff (the post-shift pulse), in aggregate
+    only: below staff_insights.PULSE_MIN_N answers a count and nothing else,
+    and never who said what (MISS-13). ?days= (default 14, at most 90)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import staff_insights
+    return {"ok": True, **staff_insights.pulse_summary(_rid(u), days=request.args.get("days") or 14,
+                                                       today=_local_today(u))}, 200
 
 
 def _do_closeout_save(u):
@@ -3464,7 +3487,18 @@ def _do_people_mention_answer(u, signal_id):
         return {"ok": False, "error": "confirm is true or false"}, 400
     if not _people.answer_mention(_rid(u), int(signal_id), b["confirm"], user=u):
         return {"ok": False, "error": "That mention was already answered."}, 409
-    return {"ok": True, "confirmed": b["confirm"]}, 200
+    told = None
+    if b["confirm"]:
+        # A guest's praise reaches the person it names (staff_insights.
+        # tell_recognition: positive mentions only, the app first) — it used
+        # to stop at the owner (MISS-12). Never fails the confirmation.
+        try:
+            import staff_insights
+            told = staff_insights.tell_recognition(_rid(u), int(signal_id))
+        except Exception as e:
+            import ops as _ops_rec
+            _ops_rec.capture(e, job="recognition_tell", context=f"restaurant_id={_rid(u)} signal_id={signal_id}")
+    return {"ok": True, "confirmed": b["confirm"], "told": told}, 200
 
 
 def _do_issue_cover_answer(u, issue_id):
@@ -5813,6 +5847,7 @@ _ROUTES = [
     ("/people/<key>/erase", ["POST"], _do_person_erase, "person_erase"),
     ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
     ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
+    ("/labor/staff-pulse", ["GET"], _do_staff_pulse, "staff_pulse"),
     ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
     ("/issues/<int:issue_id>/cover-answer", ["POST"], _do_issue_cover_answer, "issue_cover_answer"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),

@@ -5,22 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Link expired</title>
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
 <style>
-  body{margin:0;background:#0c0c0c;color:#f0ebe0;
-       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
-       -webkit-font-smoothing:antialiased;padding:28px 18px;
+  /* DESIGN_SYSTEM.md §1 dark tokens, as on staff_schedule.html. */
+  :root{--paper:#0c0c0c; --ink:#f0ebe0; --ink2:#c4bdb4; --ink3:#cdbfa9; --ember2:#e8956a}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 16px;
        display:flex;align-items:center;justify-content:center;min-height:80vh}
   .wrap{max-width:420px;text-align:center}
-  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#e8956a}
-  h1{font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
-  p{color:#8f847b;font-size:14.5px;line-height:1.6;margin:0}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
+  p{color:var(--ink2);font-size:14.5px;line-height:1.6;margin:0 0 12px}
+  .cbtn{margin-top:8px}
 </style>
 </head>
 <body>
 <div class="wrap">
   {% if restaurant_name %}<div class="kicker">{{ restaurant_name }}</div>{% endif %}
   <h1>This schedule link has expired</h1>
-  <p>Schedule links stop working after a while for privacy. Ask your manager to send you a fresh one.</p>
+  <p>Schedule links stop working after a while, and when someone leaves, for privacy.</p>
+  {# Where the schedule always is now (UX-25). #}
+  <p>Your schedule is always in the Cavnar AI app. No iPhone? Your manager can send this week&rsquo;s link again.</p>
+  {% if app_url %}<a class="cbtn cbtn-primary" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<p>The app is on iPhone, in testing &mdash; ask your manager for the invite.</p>{% endif %}
 </div>
 </body>
 </html>

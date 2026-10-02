@@ -144,22 +144,33 @@ def test_someone_with_no_shifts_gets_a_clear_page_not_an_error(client, db_path):
     assert "not scheduled for any shifts" in body.lower()
 
 
-def test_republishing_reuses_the_link_already_in_someones_inbox(db_path):
+def test_republishing_keeps_the_link_already_in_someones_inbox_working(db_path):
+    """Only a token's hash is stored (SEC-09), so a re-send cannot hand back
+    the earlier link: it mints its own, and the one already in the inbox
+    keeps working. The status list still shows her once."""
     rid = _restaurant(db_path)
     sid = _schedule(db_path, rid)
     first = models.create_schedule_share(rid, sid, "Sofia R.", sent_to="a@x.test", db_path=db_path)
     second = models.create_schedule_share(rid, sid, "Sofia R.", sent_to="a@x.test", db_path=db_path)
-    assert first == second
-    # ...and there's still only one share row for her.
+    assert models.get_schedule_share(first, db_path=db_path)["expired"] is False
+    assert models.get_schedule_share(second, db_path=db_path)["expired"] is False
+    # ...and she is still one entry on the status list.
     assert len(models.get_schedule_share_status(rid, sid, db_path=db_path)) == 1
 
 
 def test_a_token_is_bound_to_one_schedule_so_last_weeks_link_shows_last_week(client, db_path):
+    """Last WEEK's link shows last week, whatever is sent for the next one.
+    (A re-publish of the SAME week is different: the link follows to the copy
+    staff are on now — tests/test_empfix_b6.py, SEC-09.)"""
     rid = _restaurant(db_path)
     old_sid = _schedule(db_path, rid, SCHEDULE_CSV)
     old_token = models.create_schedule_share(rid, old_sid, "Sofia R.", db_path=db_path)
-    new_csv = SCHEDULE_CSV.replace("16:00,22:00", "11:00,15:00")
+    new_csv = SCHEDULE_CSV.replace("16:00,22:00", "11:00,15:00").replace("2026-09-0", "2026-09-1")
     new_sid = _schedule(db_path, rid, new_csv)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_history SET week_start='2026-09-14', week_end='2026-09-20' WHERE id=?", (new_sid,))
+    conn.commit()
+    conn.close()
     models.create_schedule_share(rid, new_sid, "Sofia R.", db_path=db_path)
 
     old_body = client.get(f"/s/{old_token}").get_data(as_text=True)
@@ -260,7 +271,7 @@ def _expire_share(db_path, token, days_ago=1):
     from datetime import datetime, timedelta
     stamp = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
-    conn.execute("UPDATE schedule_shares SET expires_at=? WHERE token=?", (stamp, token))
+    conn.execute("UPDATE schedule_shares SET expires_at=? WHERE token=?", (stamp, models._share_hash(token)))
     conn.commit()
     conn.close()
 
@@ -272,7 +283,7 @@ def test_a_new_share_gets_an_expiry_about_sixty_days_out(db_path):
     sid = _schedule(db_path, rid)
     token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
     row = get_conn(db_path).execute(
-        "SELECT expires_at FROM schedule_shares WHERE token=?", (token,)).fetchone()
+        "SELECT expires_at FROM schedule_shares WHERE token=?", (models._share_hash(token),)).fetchone()
     days_out = (datetime.fromisoformat(row["expires_at"]) - datetime.utcnow()).days
     assert SCHEDULE_SHARE_TTL_DAYS - 1 <= days_out <= SCHEDULE_SHARE_TTL_DAYS
 
@@ -288,17 +299,23 @@ def test_an_expired_link_is_flagged_rather_than_vanishing(db_path):
     assert share is not None and share["expired"] is True
 
 
-def test_links_predating_the_policy_never_expire(db_path):
-    """Rows with NULL expires_at were already in people's inboxes when the
-    policy landed — cutting them off mid-week would strand real staff."""
+def test_a_link_with_no_expiry_ages_out_from_when_it_was_sent(db_path):
+    """Rows with NULL expires_at used to live forever (SEC-09). They now age
+    out SCHEDULE_SHARE_TTL_DAYS after they were sent — a recent one still
+    works, so nobody is stranded mid-week."""
     from models import create_schedule_share, get_schedule_share
     rid = _restaurant(db_path)
     sid = _schedule(db_path, rid)
     token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
     conn = get_conn(db_path)
-    conn.execute("UPDATE schedule_shares SET expires_at=NULL WHERE token=?", (token,))
+    conn.execute("UPDATE schedule_shares SET expires_at=NULL WHERE token=?", (models._share_hash(token),))
     conn.commit(); conn.close()
     assert get_schedule_share(token, db_path=db_path)["expired"] is False
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_shares SET sent_at=datetime('now','-61 days') WHERE token=?",
+                 (models._share_hash(token),))
+    conn.commit(); conn.close()
+    assert get_schedule_share(token, db_path=db_path)["expired"] is True
 
 
 def test_republishing_pushes_the_expiry_back_out(db_path):
@@ -308,8 +325,8 @@ def test_republishing_pushes_the_expiry_back_out(db_path):
     token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
     _expire_share(db_path, token)
     again = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
-    assert again == token                                    # same link, still valid
-    assert get_schedule_share(token, db_path=db_path)["expired"] is False
+    assert again != token                                    # its own link...
+    assert get_schedule_share(token, db_path=db_path)["expired"] is False   # ...and the old one works again
 
 
 def test_the_public_page_says_expired_instead_of_serving_shifts(client, db_path):
