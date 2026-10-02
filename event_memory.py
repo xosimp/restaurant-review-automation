@@ -40,7 +40,9 @@ nightly job that re-reads the last RECENT_NIGHTS and backfills history):
 THE SUMMARIES — event_effects, one row per label: n, median lift, the spread,
 the direction, the last night — kept forever (a per-label summary outlives
 any window). measured_effect() reads the record by label TOKENS, so "cubs"
-counts "Cubs home game" and "Cubs vs Cardinals" alike.
+counts "Cubs home game" and "Cubs vs Cardinals" alike — within one season
+class: a preseason, playoff or special game's label carries its class word,
+and a regular-season label never counts those nights (label_counts).
 
 WHO READS IT
   demand_signals.by_date   a listed event with no figure takes its label's
@@ -251,23 +253,65 @@ def init_event_memory(db_path=DB_PATH):
 CONFOUNDING_MARKED_FROM = "2026-09-30"
 
 
+REKEY_MARK_KEY = "event_memory_rekeyed_through"    # job_cursors: the highest event_outcomes id rekey_record read
+
+
+def _rekey_mark(db_path, value=None):
+    """rekey_record's marker (job_cursors REKEY_MARK_KEY): the highest
+    event_outcomes id it has brought to the rules, read (0 when none), or
+    written when `value` is given."""
+    conn = get_conn(db_path)
+    try:
+        if value is None:
+            r = conn.execute("SELECT value FROM job_cursors WHERE key=?", (REKEY_MARK_KEY,)).fetchone()
+            try:
+                return int(r["value"]) if r and r["value"] else 0
+            except (TypeError, ValueError):
+                return 0
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                     (REKEY_MARK_KEY, str(int(value))))
+        conn.commit()
+        return value
+    finally:
+        conn.close()
+
+
 def rekey_record(db_path=DB_PATH) -> dict:
     """At boot, idempotent: bring the record kept before the re-audit fix
     round (9/29/26) to its rules — every holiday row re-keyed by its date's
     calendar identity (holiday_key, QUALITY-5), every night's rows marked
     `confounded` when the night carried more than one thing (QUALITY-4) —
     and the summaries of every label it touched recomputed. {"rekeyed",
-    "marked"}. Never raises."""
+    "marked"}. Never raises.
+
+    Bounded (event re-audit 2, R4-06): only the rows written since the last
+    pass are read (ids above the job_cursors marker REKEY_MARK_KEY — the
+    primary key's own range), with the whole of each night they fall on;
+    the marker moves once the pass has written. record_night writes keyed,
+    self-marked rows, so after the first boot each later one reads only the
+    nights recorded since — never the whole table."""
     out = {"rekeyed": 0, "marked": 0}
     try:
+        try:
+            mark = _rekey_mark(db_path)
+        except Exception:
+            mark = None              # no job_cursors yet: read everything, keep no marker
         conn = get_conn(db_path)
         try:
+            top = conn.execute("SELECT MAX(id) AS m FROM event_outcomes").fetchone()["m"] or 0
+            if mark is not None and top <= mark:
+                return out
             rows = [dict(r) for r in conn.execute(
                 "SELECT id, restaurant_id, business_date, kind, label, confounded, co_labels, recorded_at "
-                "FROM event_outcomes ORDER BY restaurant_id, business_date, id").fetchall()]
+                "FROM event_outcomes WHERE (restaurant_id, business_date) IN (SELECT restaurant_id, business_date "
+                "FROM event_outcomes WHERE id > ?) ORDER BY restaurant_id, business_date, id",
+                (mark or 0,)).fetchall()]
         finally:
             conn.close()
         if not rows:
+            if mark is not None:
+                _rekey_mark(db_path, value=top)
             return out
         touched = {}
         updates = []
@@ -302,6 +346,8 @@ def rekey_record(db_path=DB_PATH) -> dict:
                     touched.setdefault(rid, set()).add(r["label"])
                     out["marked"] += 1
         if not updates:
+            if mark is not None:
+                _rekey_mark(db_path, value=top)
             return out
         conn = get_conn(db_path)
         try:
@@ -316,6 +362,8 @@ def rekey_record(db_path=DB_PATH) -> dict:
             conn.close()
         for rid, labels in touched.items():
             refresh_effects(rid, labels, db_path=db_path)
+        if mark is not None:
+            _rekey_mark(db_path, value=top)
         if out["rekeyed"] or out["marked"]:
             log.info("event_memory: record re-keyed (%s holiday rows, %s confounding marks)",
                      out["rekeyed"], out["marked"])
@@ -406,7 +454,17 @@ _STOP = {"game", "games", "home", "away", "vs", "v", "versus", "the", "a", "an",
          "tonight", "today", "yesterday", "going", "went", "happening", "nearby", "near", "downtown", "local"}
 _SYNONYMS = {"rainy": "rain", "raining": "rain", "rained": "rain", "storm": "rain", "storms": "rain",
              "stormy": "rain", "thunderstorm": "rain", "thunderstorms": "rain", "showers": "rain",
-             "downpour": "rain", "snowy": "snow", "snowing": "snow", "snowstorm": "snow", "bday": "birthday"}
+             "downpour": "rain", "snowy": "snow", "snowing": "snow", "snowstorm": "snow", "bday": "birthday",
+             "playoffs": "playoff", "postseason": "playoff"}
+# A game's season class is part of its label (event re-audit 2, R1-02 /
+# R4-01 / RX-02): a preseason, playoff or special (a cup match) crowd is its
+# own, so the catalog's label for a non-regular game carries one of these
+# words (engine.label_for), and measured_effect never counts a row whose
+# class word the asked label lacks — "Bulls home game · United Center" is
+# the regular season's alone, though its words are a subset of the
+# preseason label's.
+SEASON_CLASS_WORDS = {"preseason": "preseason", "postseason": "playoff", "special": "special"}
+_CLASS_TOKENS = frozenset(SEASON_CLASS_WORDS.values())
 _NOTHING = {"nothing", "none", "n/a", "na", "normal", "nothing special", "nothing listed", "no", "-", "regular",
             "none noted", "nothing going on", "nothing really", "same as usual", "usual"}
 
@@ -414,7 +472,9 @@ _NOTHING = {"nothing", "none", "n/a", "na", "normal", "nothing special", "nothin
 def normalise_label(text) -> str:
     """"Cubs home game!" -> "cubs": lower case, the words that name the
     thing (at most four), synonyms folded ("rainy" is "rain"), numbers and
-    words that name nothing dropped. "" when nothing is left."""
+    words that name nothing dropped. A season class word
+    (SEASON_CLASS_WORDS) is always kept, in the fourth place when the cap
+    would drop it. "" when nothing is left."""
     toks = []
     for w in re.findall(r"[a-z0-9']+", str(text or "").lower()):
         w = _SYNONYMS.get(w.strip("'"), w.strip("'"))
@@ -422,7 +482,11 @@ def normalise_label(text) -> str:
             continue
         if w not in toks:
             toks.append(w)
-    return " ".join(toks[:4])
+    keep = toks[:4]
+    late = [w for w in toks[4:] if w in _CLASS_TOKENS]
+    if late and not _CLASS_TOKENS & set(keep):
+        keep = keep[:3] + late[:1]
+    return " ".join(keep)
 
 
 def split_labels(text) -> list:
@@ -443,10 +507,24 @@ def _tokens(label) -> set:
     return set(str(label or "").split())
 
 
+def label_counts(asked, label) -> bool:
+    """Whether a recorded night's `label` counts toward the asked label's
+    measured effect: every asked word is in it ("cubs" counts "cubs cards")
+    and it carries no season class word the asked label lacks — a
+    regular-season label never reads a preseason, playoff or special night,
+    and the reverse (SEASON_CLASS_WORDS). `asked` is a label or its token set. The
+    one record match (measured_effect)."""
+    want = asked if isinstance(asked, (set, frozenset)) else _tokens(asked)
+    have = _tokens(label)
+    return bool(want) and want <= have and (have & _CLASS_TOKENS) <= want
+
+
 def _same_thing(a, b) -> bool:
-    """Two labels name one thing when one's words are all in the other's
-    ("cubs" and "cubs cards") — measured_effect's own match. A holiday's key
-    is one word no event label can contain."""
+    """Two labels on ONE night name one thing when one's words are all in
+    the other's ("cubs" and "cubs cards"): a closer's "Bulls game" on a
+    preseason night is that preseason game. Across nights the record is
+    matched by label_counts, which also keeps season classes apart. A
+    holiday's key is one word no event label can contain."""
     ta, tb = _tokens(a), _tokens(b)
     return bool(ta and tb) and (ta <= tb or tb <= ta)
 
@@ -464,13 +542,22 @@ def _confounding(flags, quiet=frozenset(), games=frozenset()) -> dict:
     other label only by the loud things. Neither rule reads the label's OWN
     state, so a game turning loud (or quiet again) changes no row of its
     own — only other labels' — and cannot flip itself back on a re-record
-    (event re-audit P4-08)."""
+    (event re-audit P4-08).
+
+    A closer's note flags_for tied to a thing the night already carries by
+    that thing's words rather than its label (`same`: "Mother's Day" for
+    the holiday keyed "holiday:mothers_day", a campaign's own sentence) is
+    in that thing's group — one thing, never two (event re-audit 2,
+    R1-04)."""
     groups = []                    # [[labels], loud, game]
-    for f in flags:
+    for f in sorted(flags, key=lambda f: bool(f.get("same"))):
         lab = f["label"]
         loud, game = id(f) not in quiet, id(f) in games
+        tied = f.get("same")
+        if tied and not any(tied in g[0] for g in groups):
+            tied = None
         for g in groups:
-            if any(_same_thing(lab, o) for o in g[0]):
+            if (tied in g[0]) if tied else any(_same_thing(lab, o) for o in g[0]):
                 if lab not in g[0]:
                     g[0].append(lab)
                 g[1], g[2] = g[1] or loud, g[2] or game
@@ -562,12 +649,19 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
     if not isos:
         return out
     marks = ",".join("?" for _ in isos)
+    booked = {}
     conn = get_conn(db_path)
     try:
         try:
             for r in conn.execute(f"SELECT date, kind, label, covers, lift_pct, source, ref FROM demand_signals "
-                                  f"WHERE restaurant_id=? AND kind='event' AND date IN ({marks})",
+                                  f"WHERE restaurant_id=? AND kind IN ('event','reservations') AND date IN ({marks})",
                                   (restaurant_id, *isos)).fetchall():
+                if r["kind"] == "reservations":
+                    # Covers booked are a forecast input, never a flag; kept
+                    # only so a closer's note restating them is read as
+                    # nothing new (below).
+                    booked.setdefault(str(r["date"])[:10], []).append(normalise_label(r["label"]))
+                    continue
                 if str(r["source"] or "") == "campaign":
                     # A fill-a-night text (demand_signals.record_campaign) is
                     # the one campaign label, however its words ran ("Text to
@@ -630,6 +724,35 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
             lab, text = PAYDAY_LABELS[day.day]
             out[d].append({"kind": "payday", "label": lab, "raw": text, "source": "calendar",
                            "owner_lift_pct": None, "covers": None})
+        if not known_before:
+            out[d] = _tie_notes(out[d], booked.get(d) or ())
+    return out
+
+
+def _tie_notes(flags, booked=()) -> list:
+    """One night's flags with each closer's note that only restates what
+    the night already carries read as that thing (event re-audit 2, R1-04 —
+    the old close-out prefill offered the holiday, the reservations and a
+    campaign's sentence, and a kept prefill came back as a second thing
+    that is never quiet): a note naming the night's holiday or campaign by
+    its words ("Mother's Day" — the holiday's label is its key,
+    "holiday:mothers_day", which no words match) carries `same`, so
+    _confounding groups it with that flag and the holiday never confounds
+    itself; a note restating the covers booked (`booked`: the night's
+    reservations rows, normalised) is no flag at all — covers booked are a
+    forecast input, and as a flag it was never quiet and knocked the night
+    out of every baseline. A note naming a catalog game is tied above (its
+    `ref`), and one naming a listed event matches its label's words."""
+    carried = [f for f in flags if f["kind"] in ("holiday", "campaign")]
+    out = []
+    for f in flags:
+        if f["kind"] == "influence" and not f.get("ref"):
+            if any(_same_thing(f["label"], b) for b in booked):
+                continue
+            tied = next((g for g in carried if _same_thing(f["label"], normalise_label(g.get("raw")))), None)
+            if tied is not None:
+                f["same"] = tied["label"]
+        out.append(f)
     return out
 
 
@@ -1044,11 +1167,12 @@ def _summary(rows) -> dict | None:
     kinds = [r["kind"] for r in nights]
     kind = max(set(kinds), key=kinds.count)
     clean = [r for r in nights if not int(r.get("confounded") or 0)]
-    use = nights
-    if clean and len(clean) < len(nights) and \
-            _clears_floor(kind, len(clean), _median([float(r["lift_pct"]) for r in clean])):
-        use = clean
-    confounded = any(int(r.get("confounded") or 0) for r in use)
+    # The one clean-nights rule (store.clean_first), on the floor `applies`
+    # decides by (_clears_floor) — effect_for's too (event re-audit 2, R4-03).
+    from event_intel import store as _catalog
+    use, confounded = _catalog.clean_first(
+        nights, EFFECT_MIN_N, outcome=lambda r: r,
+        enough=lambda c: _clears_floor(kind, len(c), _median([float(r["lift_pct"]) for r in c])))
     newest = use[-1]["business_date"]
     med = _weighted_median([(r["lift_pct"], _age_weight(r["business_date"], newest)) for r in use])
     drift = None
@@ -1160,8 +1284,10 @@ def measured_effect(restaurant_id, label, db_path=None):
     sunday", "rain", "1st of month") -> {"median_lift_pct": float, "n": int,
     "last": date} once it has a sample, else None.
 
-    Matched by label TOKENS over the record, one night per date: "cubs"
-    counts every night whose label names the Cubs ("cubs", "cubs cardinals").
+    Matched by label TOKENS over the record, one night per date
+    (label_counts): "cubs" counts every night whose label names the Cubs
+    ("cubs", "cubs cardinals") — never a preseason, playoff or special
+    night unless the label asked carries that class word too.
     A holiday's key (holiday_key, "holiday:new_years_day") is matched
     exactly — New Year's Day never reads New Year's Eve (QUALITY-5).
     Also carries "label", "display", "kind", "low_lift_pct",
@@ -1195,7 +1321,8 @@ def measured_effect(restaurant_id, label, db_path=None):
             conn.close()
     except Exception:
         return None
-    hits = rows if want is None else [r for r in rows if not is_holiday_key(r["label"]) and want <= _tokens(r["label"])]
+    hits = rows if want is None else [r for r in rows
+                                      if not is_holiday_key(r["label"]) and label_counts(want, r["label"])]
     s = _summary(hits)
     if not s:
         return None

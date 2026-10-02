@@ -26,11 +26,13 @@ event_intel.engine — making every restaurant event-aware from one catalog.
                         clock — catalog kickoffs are the series' own zone
   effect_for(rid, e)    this restaurant's measured lift on games like this
                         one, most specific first: same class and prime
-                        time, then same class (game_class: side, preseason
-                        or not, home ground or another) — never across a
-                        class, from event_outcomes, never estimated; for a
-                        frequent series' regular-season game, its label's
-                        measured figure, the one headline judges it by
+                        time, then same class (game_class: side, season
+                        class — regular, preseason, playoffs, special — and
+                        home ground or another) — never across a class,
+                        from event_outcomes, never estimated; for a
+                        frequent series' game (not a playoff game), its
+                        label's measured figure, the one headline judges it
+                        by — the label carries the season class too
   headline(rid, e)      whether a game earns an owner's attention unasked
   one_read()            a call's shared reads (past games, usual nights)
   context_for(rid, d)   the events on a date with their effect: what the
@@ -135,18 +137,45 @@ def haversine_km(lat1, lng1, lat2, lng2):
 HOME_TOKEN = "home venue"      # a home game's label when neither it nor its series names a venue
 
 
+SEASON_CLASSES = ("regular", "preseason", "postseason", "special")
+
+
+def season_class(e) -> str:
+    """"regular", "preseason", "postseason" or "special" (a cup match, an
+    exhibition: store.SEASON_TYPES) — the season class a game is never
+    measured across (game_class, label_for). A game naming no known season
+    type is the regular season's."""
+    st = (e or {}).get("season_type")
+    return st if st in SEASON_CLASSES else "regular"
+
+
+def _class_word(e) -> str:
+    """The season class's word in a label and a sentence ("preseason",
+    "playoff", "special"; "" for the regular season) —
+    event_memory.SEASON_CLASS_WORDS, the words its record match keeps
+    apart."""
+    import event_memory
+    return event_memory.SEASON_CLASS_WORDS.get(season_class(e), "")
+
+
 def label_for(e) -> str:
     """The demand_signals label. A home game always carries a word of its
     own after "home game" — its venue, else its series' home venue, else
     HOME_TOKEN — because "home" and "game" are stop words: a bare "Sox home
     game" normalised to "sox", a subset of the road label "sox road", and
-    measured_effect merged the two (re-audit P1-09)."""
+    measured_effect merged the two (re-audit P1-09). A preseason, playoff or
+    special (cup) game names its class right after the team ("Bulls
+    preseason home game · United Center"), so its nights are never pooled
+    with another class's in any label reader — the quiet test, the
+    forecast, by_date, the baselines (event re-audit 2, R1-02 / R4-01 /
+    RX-02)."""
     short = e.get("short_name") or e.get("series_name") or "Event"
     if e.get("category") == "sports":
+        who = f"{short} {_class_word(e)}".strip()
         if e.get("home_away") == "home":
             venue = e.get("venue") or e.get("series_home_venue") or e.get("home_venue") or HOME_TOKEN
-            return f"{short} home game · {venue}"
-        return f"{short} road game"
+            return f"{who} home game · {venue}"
+        return f"{who} road game"
     return e.get("opponent") or e.get("series_name") or short
 
 
@@ -240,11 +269,12 @@ def describe(e, with_date=True, tz=None) -> str:
 
 def kind_words(e) -> str:
     """"home prime-time games" — the segment an effect is said about. A
-    home game away from the series' ground is its own: "home games at
-    SeatGeek Stadium" (store.alt_venue)."""
+    preseason, playoff or special game's class is said ("preseason home
+    games"), and a home game away from the series' ground is its own:
+    "home games at SeatGeek Stadium" (store.alt_venue)."""
     if e.get("category") != "sports":
         return "nights like it"
-    side = "home" if e.get("home_away") == "home" else "road"
+    side = f"{_class_word(e)} {'home' if e.get('home_away') == 'home' else 'road'}".strip()
     words = f"{side} prime-time games" if e.get("is_primetime") else f"{side} games"
     if store.alt_venue(e):
         words += f" at {e.get('venue') or 'another ground'}"
@@ -383,7 +413,25 @@ def _record_queue(restaurant_id, db_path, value=None):
         conn.close()
 
 
-def _record_past(restaurant, new_past, pending_days, today, db_path):
+def remeasure_past(restaurant, days, today=None, db_path=store.DB_PATH) -> dict:
+    """Re-measure past nights whose flags changed outside a sync — an owner
+    removing a game from their list (demand_signals.delete, event re-audit
+    2, R1-01 / RX-05): the sync's own rule (_record_past) for those nights
+    alone — a restaurant that learns for itself, nights inside PAST_DAYS
+    before its own today — without draining what an earlier pass owes
+    (that stays for the next sync). A night it cannot measure now waits in
+    the record queue. {"nights_recorded", "nights_queued"}. Never raises."""
+    try:
+        today = _d(today) if today else _today(restaurant)
+        recorded, left = _record_past(restaurant, [str(d)[:10] for d in days or ()], set(), today, db_path,
+                                      drain=False)
+        return {"nights_recorded": recorded, "nights_queued": left}
+    except Exception as e:
+        log.warning("event_intel: nights not re-measured rid=%s: %s", getattr(restaurant, "id", None), e)
+        return {"nights_recorded": 0, "nights_queued": 0}
+
+
+def _record_past(restaurant, new_past, pending_days, today, db_path, drain=True):
     """Re-record the past nights whose flags this pass changed, plus the
     ones an earlier pass owed, RECORD_MAX per pass, newest first. The rest
     wait in the restaurant's record queue for the next pass — a bulk follow
@@ -392,7 +440,9 @@ def _record_past(restaurant, new_past, pending_days, today, db_path):
     Only a restaurant that learns for itself (models.learns_for_itself: not
     a demo, not admin-excluded) is measured at all (re-audit P1-05); its
     demand_signals copy is written either way. An `unresolved` if-necessary
-    game's night is never measured here. Returns (recorded, still queued)."""
+    game's night is never measured here. `drain` False measures `new_past`
+    only and leaves the owed nights queued (remeasure_past). Returns
+    (recorded, still queued)."""
     import models
     if not models.learns_for_itself(restaurant):
         return 0, 0
@@ -403,8 +453,8 @@ def _record_past(restaurant, new_past, pending_days, today, db_path):
     except Exception as e:
         log.warning("event_intel: record queue unreadable rid=%s: %s", rid, e)
         owed = []
-    todo = sorted({d for d in list(owed) + list(new_past)
-                   if floor <= d < today.isoformat() and d not in pending_days}, reverse=True)
+    in_window = lambda d: floor <= d < today.isoformat() and d not in pending_days
+    todo = sorted({d for d in (list(owed) if drain else []) + list(new_past) if in_window(d)}, reverse=True)
     if not todo and not owed:
         return 0, 0
     recorded, done = 0, set()
@@ -416,6 +466,8 @@ def _record_past(restaurant, new_past, pending_days, today, db_path):
     except Exception as e:
         log.warning("event_intel: past game nights not recorded rid=%s: %s", rid, e)
     left = [d for d in todo if d not in done]
+    if not drain:
+        left = sorted(set(left) | {d for d in owed if in_window(d)}, reverse=True)
     if sorted(left) != sorted(set(owed)):
         try:
             _record_queue(rid, db_path, value=left)
@@ -520,11 +572,13 @@ def _median(vals):
 
 
 def game_class(e) -> tuple:
-    """(side, preseason?, home ground elsewhere?) — the class a game is
+    """(side, season class, home ground elsewhere?) — the class a game is
     never measured across: a road game is never told what home games did,
-    preseason is its own crowd, and a home game away from the series'
-    ground (store.alt_venue) is its own night."""
-    return (e.get("home_away"), e.get("season_type") == "preseason", store.alt_venue(e))
+    preseason, the playoffs and special games are each their own crowd
+    (season_class — the class label_for carries too, so the label's record
+    and these segments keep the same nights apart), and a home game away
+    from the series' ground (store.alt_venue) is its own night."""
+    return (e.get("home_away"), season_class(e), store.alt_venue(e))
 
 
 def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
@@ -588,11 +642,14 @@ def _regular_games(e, db_path) -> int:
 
 
 def _judged_by_its_label(e, db_path) -> bool:
-    """A frequent series' regular-season game: whether it earns attention is
-    decided by its label's measured figure (event_memory.quiet_game, the
-    baselines' own test), so that figure is the one said about it."""
+    """A frequent series' regular-season, preseason or special game:
+    whether it earns attention is decided by its label's measured figure
+    (event_memory.quiet_game, the baselines' own test), so that figure is
+    the one said about it. The label carries the season class (label_for),
+    so a preseason game's figure is its preseason nights' alone. A playoff
+    game is never quiet, and is said from its own segments."""
     import event_memory
-    return e.get("season_type") not in ("postseason", "preseason") and \
+    return season_class(e) != "postseason" and \
         _regular_games(e, db_path) >= event_memory.FREQUENT_SERIES_GAMES
 
 
@@ -622,9 +679,10 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
     specific segment with SEGMENT_MIN_N nights; None before there are any.
 
     One figure decides and is said (re-audit P4-07): a frequent series'
-    regular-season game earns an owner's attention by its label's measured
-    figure (headline → event_memory.quiet_game), so that is the figure said
-    about it here (_label_effect) — never a segment median that can sit on
+    game (regular-season, preseason or special — its label carries the
+    class) earns an owner's attention by its label's measured figure
+    (headline → event_memory.quiet_game), so that is the figure said about
+    it here (_label_effect) — never a segment median that can sit on
     the other side of EFFECT_FLOOR_PCT. `exact` (a cross-restaurant figure,
     event_intel.peers) and `keep` always read the segments."""
     if not exact and keep is None and _judged_by_its_label(e, db_path):
@@ -637,11 +695,11 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
     mine = game_class(e)
     same_class = lambda g: game_class(g["event"]) == mine
     # Most specific first, and never across a class (game_class) in ANY
-    # segment: a road game is never told what home games did, preseason is
-    # never pooled with the regular season — the old last fallback dropped
-    # the season test, so a preseason game's push said regular-season lifts
-    # (re-audit P3-02) — and a home game at another ground is its own
-    # segment (re-audit SD-02).
+    # segment: a road game is never told what home games did, no season
+    # class is pooled with another (season_class) — the old last
+    # fallback dropped the season test, so a preseason game's push said
+    # regular-season lifts (re-audit P3-02) — and a home game at another
+    # ground is its own segment (re-audit SD-02).
     segs = [
         (kind_words(e), lambda g: same_class(g)
          and bool(g["event"].get("is_primetime")) == bool(e.get("is_primetime"))),
@@ -652,14 +710,17 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
         # ignored (a cross-restaurant figure — event_intel.peers).
         segs = [segs[1]]
     short = e.get("short_name") or e.get("series_name") or ""
+    import event_memory
     for words, in_seg in segs:
         hits = [g for g in games if in_seg(g)]
         # A night that carried something else too (a game on Christmas, on
-        # a rainy payday) is left out while clean nights suffice; when it
-        # has to count, the sentence says so.
-        use, mixed = store.clean_first(hits, SEGMENT_MIN_N)
+        # a rainy payday) is left out while clean nights alone reach the
+        # floor `applies` decides on (EFFECT_MIN_N — the label record's own
+        # rule, event_memory._summary); when they can't, every night counts
+        # and the sentence says so. One more clean night never turns a
+        # pattern into "not enough" (event re-audit 2, R4-03 / R1-05).
+        use, mixed = store.clean_first(hits, event_memory.EFFECT_MIN_N)
         if len(use) >= SEGMENT_MIN_N:
-            import event_memory
             lifts = [float(g["outcome"]["lift_pct"]) for g in use]
             med = _median(lifts)
             basis = (f"{short} {words} have run {med:+.0f}% against a usual same weekday here "
@@ -684,35 +745,39 @@ def headline(restaurant_id, e, db_path=store.DB_PATH) -> bool:
     has event_memory.BASELINE_MIN ordinary same weekdays before it.
 
     It judges from the figure the surfaces say (effect_for, re-audit
-    P4-07): a regular-season game by its label's measured figure — the
-    quiet test's own, which effect_for says for it — and a frequent
-    series' preseason game, its own crowd (game_class), by its own
-    preseason figure, effect_matters on what effect_for says."""
+    P4-07): a frequent series' game by its label's measured figure — the
+    quiet test's own, which effect_for says for it. The label carries the
+    season class (label_for), so a preseason or special game is judged by
+    its own class's nights alone, by the same test every label reader uses
+    (event re-audit 2, R1-02 / R4-01)."""
     import event_memory
-    n = _regular_games(e, db_path)
-    if e.get("season_type") == "preseason" and n >= event_memory.FREQUENT_SERIES_GAMES:
-        return event_memory.effect_matters(effect_for(restaurant_id, e, db_path=db_path))
-    return not event_memory.quiet_game(restaurant_id, label_for(e), n, e.get("season_type"),
-                                       db_path=db_path)
+    return not event_memory.quiet_game(restaurant_id, label_for(e), _regular_games(e, db_path),
+                                       e.get("season_type"), db_path=db_path)
 
 
 def last_like(restaurant_id, e, db_path=store.DB_PATH, tz=None):
-    """The last finished game of the same side (home/road) — and, for a home
-    game, the same ground (store.alt_venue) — with its night: {"event",
+    """The last finished game like this one — most specific first, as
+    effect_for: the same kind (same_kind: game_class and prime time, the
+    push's own test), else the same game_class (side, season class, ground)
+    — never a preseason game for a regular-season one or the reverse (event
+    re-audit 2, R2-04 / R1-06 / R4-05) — with its night: {"event",
     "describe", "net", "baseline", "lift_pct", "covers", "labor_pct",
     "headcount"} or None. `tz` as describe's."""
     import json
-    for g in past_games(restaurant_id, e, db_path=db_path):
-        if g["event"].get("home_away") == e.get("home_away") and store.alt_venue(g["event"]) == store.alt_venue(e):
-            o = g["outcome"]
-            try:
-                heads = json.loads(o.get("headcount_json") or "null")
-            except (TypeError, ValueError):
-                heads = None
-            return {"event": g["event"], "describe": describe(g["event"], tz=tz), "net": o.get("net"),
-                    "baseline": o.get("baseline"), "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
-                    "labor_pct": o.get("labor_pct"), "headcount": heads, "labor_hours": o.get("labor_hours")}
-    return None
+    games = past_games(restaurant_id, e, db_path=db_path)
+    mine = game_class(e)
+    g = next((g for g in games if same_kind(e, g["event"])), None) or \
+        next((g for g in games if game_class(g["event"]) == mine), None)
+    if g is None:
+        return None
+    o = g["outcome"]
+    try:
+        heads = json.loads(o.get("headcount_json") or "null")
+    except (TypeError, ValueError):
+        heads = None
+    return {"event": g["event"], "describe": describe(g["event"], tz=tz), "net": o.get("net"),
+            "baseline": o.get("baseline"), "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
+            "labor_pct": o.get("labor_pct"), "headcount": heads, "labor_hours": o.get("labor_hours")}
 
 
 def context_for(restaurant_id, day, db_path=store.DB_PATH) -> list:

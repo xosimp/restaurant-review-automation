@@ -306,6 +306,21 @@ def delete(restaurant_id, signal_id, db_path=DB_PATH, by=None, source="owner"):
             out["event_id"] = eid
         except Exception:
             pass
+    # A past night that loses an event (a catalog game, or one the owner
+    # listed) is re-measured now, as the sync re-measures a night whose game
+    # it drops and as Put back's re-sync does: its old label stops counting
+    # toward the event's effect, and the night is ordinary again for the
+    # baselines (event re-audit 2, R1-01 / RX-05). The next sync never sees
+    # this night again (the row is gone and the game is dismissed).
+    if str(row["kind"] or "") == "event":
+        try:
+            import models as _m
+            from event_intel import engine as _ev_engine
+            r = _m.get_restaurant(restaurant_id, db_path=db_path)
+            if r is not None:                  # remeasure_past keeps to past nights in its window
+                _ev_engine.remeasure_past(r, [row["date"]], db_path=db_path)
+        except Exception:
+            pass
     return out
 
 

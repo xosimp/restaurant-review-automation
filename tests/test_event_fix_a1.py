@@ -265,12 +265,13 @@ def test_an_unresolved_if_necessary_night_stays_flagged_unmeasured_and_asks_for_
     store.set_follow(r.id, sid, True, db_path=db)
     g4 = _event(db, sid, "2026-10-08")
     engine.sync_restaurant(r, today=date(2026, 10, 5), db_path=db)         # still ahead: an ordinary copy
-    assert _signals(db, r.id)[f"event:{g4['id']}"]["label"] == "Sox home game · Rate Field"
+    assert _signals(db, r.id)[f"event:{g4['id']}"]["label"] == "Sox playoff home game · Rate Field"
     del recorded[:]
     engine.sync_restaurant(r, today=date(2026, 10, 12), db_path=db)
     sig = _signals(db, r.id)[f"event:{g4['id']}"]
     # flagged — not erased into an ordinary night — and not measured
-    assert sig["date"] == "2026-10-08" and sig["label"] == "Sox home game · Rate Field" + engine.UNRESOLVED_SUFFIX
+    assert sig["date"] == "2026-10-08"
+    assert sig["label"] == "Sox playoff home game · Rate Field" + engine.UNRESOLVED_SUFFIX
     assert "2026-10-08" not in recorded
     fl = event_memory.flags_for(r.id, ["2026-10-08"], db_path=db)
     assert event_memory.ordinary_nights(r.id, fl, db_path=db) == set()          # out of every baseline
@@ -289,7 +290,7 @@ def test_an_unresolved_if_necessary_night_stays_flagged_unmeasured_and_asks_for_
     # the result is entered: the copy is the game's own again and the night is measured
     store.edit_event(g4["id"], {"result": "W 4-2"}, db_path=db)
     engine.sync_restaurant(r, today=date(2026, 10, 12), db_path=db)
-    assert _signals(db, r.id)[f"event:{g4['id']}"]["label"] == "Sox home game · Rate Field"
+    assert _signals(db, r.id)[f"event:{g4['id']}"]["label"] == "Sox playoff home game · Rate Field"
     assert "2026-10-08" in recorded
     assert [s for s in store.catalog(db_path=db) if s["id"] == sid][0]["needs_result"] == 0
 
