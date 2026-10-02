@@ -32,6 +32,7 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(snr, "restaurant_roles", lambda rid, db_path=None: list(ROLES))
+    monkeypatch.setattr(snr, "roster_roles", lambda rid, db_path=None: {r.lower() for r in ROLES})
     return db_path
 
 
@@ -69,8 +70,8 @@ def test_two_roles_fit_and_the_owner_picks():
 
 @pytest.mark.parametrize("text,why", [
     ("No more than 4 servers on Monday", "maximum"),
-    ("One more bartender on Fridays", "relative"),
-    ("Fewer servers after 9pm Sunday to Thursday", "hour of the day"),
+    ("One more bartender on Fridays", "doesn't say a number"),
+    ("Fewer servers after 9pm Sunday to Thursday", "doesn't say a number"),
     ("Make sure the closers do side work", "doesn't name one of your roles"),
 ])
 def test_what_code_cannot_hold_says_so(text, why):
@@ -80,7 +81,7 @@ def test_what_code_cannot_hold_says_so(text, why):
 
 def test_game_days_are_a_condition_not_a_standing_rule():
     got = snr.read_sentence("Open with a bartender on game days", ROLES)
-    assert got["kind"] == "unchecked" and "depends on something" in got["why"]
+    assert got["kind"] == "unchecked" and "\u201cgame\u201d" in got["why"]
 
 
 @pytest.mark.parametrize("text", [
@@ -259,7 +260,7 @@ def test_a_dinner_only_day_gets_no_lunch_floor(rid, db):
 
 def test_a_rule_for_a_role_nobody_holds_is_named_not_a_floor(rid, db, monkeypatch):
     snr.add_rule(rid, "Server", 2, ["night"], source_text="Keep two servers at dinner", db_path=db)
-    monkeypatch.setattr(snr, "restaurant_roles", lambda r, db_path=None: ["Bartender"])
+    monkeypatch.setattr(snr, "roster_roles", lambda r, db_path=None: {"bartender"})
     c = _constraints(rid, _next_monday())
     snr.apply_note_rules(c, rid, db_path=db)
     assert schedule_rules.floor_for(c.role_floors, "Server", "Friday", "night") == 0
@@ -282,7 +283,7 @@ def test_every_cut_surface_reads_the_floors_with_the_note_rules(rid, db):
     assert schedule_rules.floor_for(floors, "Line Cook", "Friday", "morning") == 2
     import ask_cavnar_tools
     import strategy_jobs
-    assert "effective_role_floors(restaurant)" in inspect.getsource(schedule_rules.cut_policy)
+    assert "effective_floors_ahead(restaurant)" in inspect.getsource(schedule_rules.cut_policy)
     assert "_sr.effective_role_floors(r)" in inspect.getsource(ask_cavnar_tools)
     assert "_sr.effective_role_floors(restaurant, local.date())" in inspect.getsource(strategy_jobs.staffing_move)
 
@@ -294,3 +295,73 @@ def test_cavnar_ais_questions_never_ride_as_the_owners_instructions():
     assert "partition(SCHED_FINDINGS_HEADER)" in src
     assert "SCHED_FINDINGS_HEADER" in inspect.getsource(schedule_engine._sched_notes_with_findings)
     assert "never instructions" in labor.SCHED_FINDINGS_HEADER
+
+
+# ── blind re-audit regressions (10/2/26) ──────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "keep 2 servers friday, but saturday is 3", "keep a host on saturday but on sunday too",
+    "keep 2 servers on saturday, 1 on monday", "keep 2 servers at lunch and 1 at dinner", "2 bartenders on fri, 3 on sat",
+    "keep 2 bartenders friday and saturday nights, otherwise 1", "keep 1.5 servers monday", "keep 2 or 3 servers friday",
+    "keep two-three servers", "keep a few servers friday", "keep 12 servers saturday",
+    "Keep 2 servers on St. Patrick's Day", "keep 3 servers on 4th of July", "keep 3 servers mothers day",
+    "keep 2 servers tonight", "keep 2 servers this saturday", "keep 2 servers in December",
+    "keep 2 servers every other saturday", "keep 2 servers first friday of the month", "keep 2 trained servers friday",
+    "keep 2 servers on patio", "keep 1 server per section", "Erik wants 2 servers friday",
+    "keep 2 servers friday, maria opens", "keep 2 servers until 9pm", "Keep 4 servers for the Bears game",
+    "We usually run 3 servers on Friday", "keep 2 bussers on saturday besides sunday",
+])
+def test_the_allowlist_never_offers_a_rule_that_means_something_else(text):
+    names = ["Erik Johnson", "Maria Lopez"]
+    assert snr.read_sentence(text, ROLES + ["Busser"], names)["kind"] in ("unchecked", "person"), text
+
+
+@pytest.mark.parametrize("text,role,n,parts,days", [
+    ("Keep 2 servers M-F", "Server", 2, ["morning", "night"], ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]),
+    ("Keep 2 bartenders Fri. Sat. and Sun.", "Bartender", 2, ["morning", "night"], ["Friday", "Saturday", "Sunday"]),
+    ("2 hosts in the a.m. Fridays", "Host", 2, ["morning"], ["Friday"]),
+    ("keep 2 servers saturday PM", "Server", 2, ["night"], ["Saturday"]),
+    ("keep 2 hostesses fri", "Host", 2, ["morning", "night"], ["Friday"]),
+    ("Never let it drop below 2 line cooks", "Line Cook", 2, ["morning", "night"], None),
+    ("Don't cut the host", "Host", 1, ["morning", "night"], None),
+    ("3+ servers saturday dinner", "Server", 3, ["night"], ["Saturday"]),
+    ("Servers: 4 on Friday night", "Server", 4, ["night"], ["Friday"]),
+    ("keep 3 servers every day other than monday", "Server", 3, ["morning", "night"],
+     ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]),
+    ("the host should always be on friday nights", "Host", 1, ["night"], ["Friday"]),
+])
+def test_plain_minimums_in_everyday_shapes_are_read(text, role, n, parts, days):
+    got = snr.read_sentence(text, ROLES)
+    assert got["kind"] == "rule", (text, got)
+    r = got["rule"]
+    assert (r["role"], r["min"], r["dayparts"], r["days"]) == (role, n, parts, days)
+
+
+def test_the_same_rule_from_a_second_sentence_shows_as_made(rid, db):
+    snr.add_rule(rid, "Server", 2, ["night"], days=["Friday"], source_text="Keep 2 servers Friday dinner", db_path=db)
+    snr.add_rule(rid, "Server", 2, ["night"], days=["Friday"], source_text="2 servers fri night", db_path=db)
+    got = snr.read_notes(rid, "Keep 2 servers Friday dinner. 2 servers fri night.", db_path=db)
+    assert got[0]["rule_id"] and got[1]["rule_id"] == got[0]["rule_id"]
+    with pytest.raises(ValueError, match="isn't a day"):
+        snr.add_rule(rid, "Server", 2, ["night"], days=["fri"], db_path=db)
+
+
+def test_a_lunch_only_day_gets_no_dinner_floor_and_a_late_close_still_does(rid, db):
+    snr.add_rule(rid, "Host", 1, ["morning", "night"], db_path=db)
+    c = _constraints(rid, _next_monday())
+    c.close_times = {"Monday": "2:00pm", "Friday": "1:00am"}
+    snr.apply_note_rules(c, rid, db_path=db)
+    assert schedule_rules.floor_for(c.role_floors, "Host", "Monday", "night") == 0
+    assert schedule_rules.floor_for(c.role_floors, "Host", "Friday", "night") == 1
+
+
+def test_a_cut_is_judged_by_the_day_and_daypart_it_names(rid, db):
+    import response_validation as rv
+    snr.add_rule(rid, "Line Cook", 2, ["morning"], days=["Friday"], db_path=db)
+    pol = schedule_rules.cut_policy(models.get_restaurant(rid, db_path=db))
+    assert pol.get("role_floor_spec")
+    ctx = rv.ValidationContext(restaurant_id=rid, surface="ask", policy=pol)
+    out = rv.validate("Cut Friday lunch to 1 line cook.", ctx)
+    assert "A2" in out.codes, out.to_dict()
+    # A Thursday cut to 1 is not below anything the owner set.
+    assert "A2" not in rv.validate("Cut Thursday lunch to 2 line cooks.", ctx).codes

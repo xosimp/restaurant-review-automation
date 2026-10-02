@@ -1044,8 +1044,11 @@ _FOOD_SAFETY_RE = re.compile(
     re.I)
 _ROLE_WORDS = r"(?:cooks?|servers?|bartenders?|hosts?|bussers?|dishwashers?|runners?|managers?|barbacks?|expos?|closers?)"
 _CUT_TO_RE = re.compile(
-    r"\b(?:cut|trim|drop|go|down|bring\s+(?:it|them)|run)\s+(?:down\s+)?to\s+(?P<n>\d+|one|two|three|four|a\s+single|"
-    r"a\s+lone|just\s+one|only\s+one|zero|no)\s+(?P<role>" + _ROLE_WORDS + r")\b", re.I)
+    # "Cut Friday lunch to 1 line cook": up to three words between the verb
+    # and "to", and one before the role (blind re-audit, 10/2/26).
+    r"\b(?:cut|trim|drop|go|down|bring\s+(?:it|them)|run)\s+(?:[a-z']+\s+){0,3}?(?:down\s+)?to\s+"
+    r"(?P<n>\d+|one|two|three|four|a\s+single|a\s+lone|just\s+one|only\s+one|zero|no)\s+(?:[a-z]+\s+)?"
+    r"(?P<role>" + _ROLE_WORDS + r")\b", re.I)
 _SEND_HOME_RE = re.compile(
     r"\b(?i:send|let)\s+(?P<who>[A-Z][a-z]{2,}|(?i:the\s+(?:only|last|lone)\s+(?:closer|keyholder|manager)))\s+"
     r"(?:\w+\s+){0,2}?(?i:home)\b|\b(?i:cut|send\s+home)\s+(?P<who2>[A-Z][a-z]{2,})\b", re.UNICODE)
@@ -2191,7 +2194,16 @@ class _Run:
 
     def staffing_cut(self, s):
         pol = self.ctx.policy
-        floors = {str(k).strip().lower().rstrip("s"): v for k, v in (pol.get("role_floors") or {}).items()}
+        floors = pol.get("role_floors") or {}
+        if pol.get("role_floor_spec"):
+            # Each sentence's own day and daypart (schedule_rules.cut_policy):
+            # "cut Friday lunch to 1 line cook" meets Friday lunch's floor.
+            try:
+                from labor import note_floors
+                floors = note_floors(s, pol["role_floor_spec"], pol.get("role_minimums")) or floors
+            except Exception:
+                pass
+        floors = {str(k).strip().lower().rstrip("s"): v for k, v in floors.items()}
         # A role with no floor of its own is held to the restaurant's "never
         # cut below" default (policy cut_floor_default, from
         # schedule_rules.cut_policy), and to CUT_FLOOR_DEFAULT when the

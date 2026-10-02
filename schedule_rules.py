@@ -543,6 +543,35 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
         return base
 
 
+def effective_floors_ahead(restaurant, day=None, db_path=DB_PATH) -> dict:
+    """effective_role_floors for this week and next, the higher of the two
+    per role, day and daypart — a cut or a plan item may be about either
+    week, and a one-week note rule for the week being planned must hold."""
+    from datetime import date as _date, timedelta as _td
+    if not hasattr(restaurant, "role_floors_json"):
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant)
+    try:
+        if day is None:
+            from time_utils import restaurant_now
+            day = restaurant_now(restaurant, naive=True).date()
+        day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
+    except Exception:
+        day = _date.today()
+    a = effective_role_floors(restaurant, day, db_path=db_path)
+    b = effective_role_floors(restaurant, day + _td(days=7), db_path=db_path)
+    out = {}
+    for role in set(a) | set(b):
+        spec = {"morning": 0, "night": 0, "days": {}}
+        for d in DAYS:
+            for part in ("morning", "night"):
+                v = max(floor_for(a, role, d, part), floor_for(b, role, d, part))
+                if v:
+                    spec["days"].setdefault(d, {})[part] = v
+        out[role] = spec
+    return out
+
+
 def cut_policy(restaurant, text: str = "") -> dict:
     """The Response Validation Layer's A2 inputs for one restaurant, as
     ValidationContext.policy keys: {"role_floors": {role: floor},
@@ -559,7 +588,14 @@ def cut_policy(restaurant, text: str = "") -> dict:
         if restaurant is None:
             return {}
         from labor import note_floors
-        return {"role_floors": note_floors(text, effective_role_floors(restaurant), role_minimums(restaurant)),
+        spec = effective_floors_ahead(restaurant)
+        mins = role_minimums(restaurant)
+        # role_floors: for a caller's own text (the smallest a vague one
+        # could mean); role_floor_spec + role_minimums: the A2 check reads
+        # each sentence's own day and daypart off them, so "cut Friday lunch
+        # to 1 line cook" meets Friday lunch's floor, note rules included
+        # (blind re-audit, 10/2/26).
+        return {"role_floors": note_floors(text, spec, mins), "role_floor_spec": spec, "role_minimums": mins,
                 "cut_floor_default": cut_floor_default(restaurant)}
     except Exception:
         return {}

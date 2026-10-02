@@ -24446,7 +24446,7 @@ function snrHtml(d) {
     var q = '<div class="snr-q">“' + _escHtml(x.text) + '”</div>';
     if (x.rule_id) {
       used[x.rule_id] = 1;
-      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(x.enforced) + '</div>'
+      h += '<div class="snr-row ' + (x.stale ? 'warn' : 'ok') + '">' + q + '<div class="snr-s">' + (x.stale ? '<b>' + _escHtml(x.stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(x.enforced) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Remove the rule</button></div>') + '</div>';
     } else if (x.kind === 'rule') {
       h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
@@ -24466,8 +24466,8 @@ function snrHtml(d) {
   if (rest.length) {
     h += '<div class="snr-h" style="margin-top:6px">Rules from earlier notes</div>';
     for (i = 0; i < rest.length; i++) {
-      h += '<div class="snr-row ok">' + (rest[i].source_text ? '<div class="snr-q">“' + _escHtml(rest[i].source_text) + '”</div>' : '')
-        + '<div class="snr-s"><b>A rule the draft is checked against:</b> ' + _numText(rest[i].words) + '</div>'
+      h += '<div class="snr-row ' + (rest[i].stale ? 'warn' : 'ok') + '">' + (rest[i].source_text ? '<div class="snr-q">“' + _escHtml(rest[i].source_text) + '”</div>' : '')
+        + '<div class="snr-s">' + (rest[i].stale ? '<b>' + _escHtml(rest[i].stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(rest[i].words) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + rest[i].id + '">Remove the rule</button></div>') + '</div>';
     }
   }
