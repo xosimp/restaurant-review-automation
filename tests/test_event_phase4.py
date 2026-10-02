@@ -263,10 +263,14 @@ def test_an_unplayed_if_necessary_game_is_never_completed_or_measured(db):
     engine.sync_restaurant(r, today=date(2026, 10, 12), db_path=db)
     c = models.get_conn(db)
     try:
-        refs = {row["ref"] for row in c.execute("SELECT ref FROM demand_signals WHERE restaurant_id=?", (r.id,))}
+        refs = {row["ref"]: row["label"] for row in c.execute("SELECT ref, label FROM demand_signals "
+                                                              "WHERE restaurant_id=?", (r.id,))}
     finally:
         c.close()
-    assert f"event:{sox['id']}" not in refs
+    # Re-audit P4-03 (deliberate change): the night stays flagged — out of
+    # every baseline — and says it waits on a result; it is not measured
+    # (tests/test_event_fix_a1.py).
+    assert refs[f"event:{sox['id']}"].endswith(engine.UNRESOLVED_SUFFIX)
 
 
 def test_a_playoff_game_always_headlines_and_counts_only_regular_seasons(db):

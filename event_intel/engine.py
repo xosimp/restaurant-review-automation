@@ -19,11 +19,16 @@ event_intel.engine — making every restaurant event-aware from one catalog.
                         drops "home"/"away" as stop words: the forecast,
                         schedule and predictions then learn each one's lift
                         through the machinery they already use
-  describe(e)           "Bears vs New York Jets · Sun 10/4/26 · 12pm · FOX"
+  describe(e, tz=)      "Bears vs New York Jets · Sun 10/4/26 · 12pm · FOX",
+                        the start on the restaurant's clock when `tz` is
+                        given (local_kickoff)
+  local_kickoff(e, tz)  (date, "HH:MM") of a game's start on a restaurant's
+                        clock — catalog kickoffs are the series' own zone
   effect_for(rid, e)    this restaurant's measured lift on games like this
-                        one, most specific first: same home/away and prime
-                        time, then same home/away, then every game of the
-                        series — from event_outcomes, never estimated
+                        one, most specific first: same class and prime
+                        time, then same class (game_class: side, preseason
+                        or not, home ground or another) — never across a
+                        class, from event_outcomes, never estimated
   context_for(rid, d)   the events on a date with their effect: what the
                         report, the brief and Ask say about it
   last_like(rid, e)     the last finished game of the same kind, with what
@@ -41,8 +46,18 @@ log = logging.getLogger(__name__)
 
 PAST_DAYS = 400          # game nights this far back are flagged (event_memory reads 400 days of history)
 AHEAD_DAYS = 120         # and this far ahead
-RECORD_MAX = 40          # past game nights re-recorded per restaurant per pass
+RECORD_MAX = 40          # past game nights re-recorded per restaurant per pass; the rest are queued
+RECORD_QUEUE_PREFIX = "event_sync_record:"   # job_cursors: the nights a later pass still owes
 SEGMENT_MIN_N = 2        # nights a segment needs before it is said
+# past_games reads at most this far back (POS and punches are kept 1095
+# days, so an older night can be neither re-measured nor re-read) and at
+# most this many of the newest measured games of each class (side, season
+# class, home ground) — so a Home load, which reads each past game's
+# punches, checks and items, costs the same in a team's fifth season as in
+# its second (re-audit X-2).
+PAST_GAMES_DAYS = 1095
+PAST_GAMES_PER_CLASS = 16
+UNRESOLVED_SUFFIX = " · if necessary"   # a past if-necessary game's copy while no result is in
 SIGNAL_SOURCE = "events"
 SYNC_CURSOR_KEY = "event_sync"
 SYNC_MAX_SECONDS = 600
@@ -62,12 +77,20 @@ def haversine_km(lat1, lng1, lat2, lng2):
 
 # ── words ───────────────────────────────────────────────────────────────────
 
+HOME_TOKEN = "home venue"      # a home game's label when neither it nor its series names a venue
+
+
 def label_for(e) -> str:
+    """The demand_signals label. A home game always carries a word of its
+    own after "home game" — its venue, else its series' home venue, else
+    HOME_TOKEN — because "home" and "game" are stop words: a bare "Sox home
+    game" normalised to "sox", a subset of the road label "sox road", and
+    measured_effect merged the two (re-audit P1-09)."""
     short = e.get("short_name") or e.get("series_name") or "Event"
     if e.get("category") == "sports":
         if e.get("home_away") == "home":
-            venue = e.get("venue")
-            return f"{short} home game" + (f" · {venue}" if venue else "")
+            venue = e.get("venue") or e.get("series_home_venue") or e.get("home_venue") or HOME_TOKEN
+            return f"{short} home game · {venue}"
         return f"{short} road game"
     return e.get("opponent") or e.get("series_name") or short
 
@@ -88,9 +111,52 @@ def _clock(hhmm):
     return f"{(h % 12) or 12}{'' if m == 0 else f':{m:02d}'}{'am' if h < 12 else 'pm'}"
 
 
-def describe(e, with_date=True) -> str:
+def local_kickoff(e, tz=None):
+    """(date, "HH:MM" or None) of a game's start on the restaurant's clock.
+    A catalog kickoff is wall-clock time in the game's own `timezone`, else
+    its series' (`series_timezone`), else store.DEFAULT_TZ — every bundled
+    file is Central — and a restaurant 115 km from Soldier Field may be on
+    Eastern time (re-audit P2-04). `tz` is the restaurant's clock: a
+    Restaurant, an IANA name, or None to keep the catalog's own. The date
+    moves with the time across midnight. None for a game with no date.
+    Never raises."""
+    if not e or not e.get("event_date"):
+        return None
+    day = _d(e["event_date"])
+    k = str(e.get("kickoff_local") or "")
+    if len(k) < 5 or k[2] != ":":
+        return day, None
+    if tz is None:
+        return day, k[:5]
+    try:
+        from datetime import datetime, time as _time
+        from zoneinfo import ZoneInfo
+        from time_utils import restaurant_tz
+        src = e.get("timezone") or e.get("series_timezone") or store.DEFAULT_TZ
+        at = datetime.combine(day, _time(int(k[:2]), int(k[3:5])), tzinfo=ZoneInfo(src))
+        here = at.astimezone(restaurant_tz(tz))
+        return here.date(), here.strftime("%H:%M")
+    except Exception:
+        return day, k[:5]
+
+
+def restaurant_clock(restaurant_id, db_path=store.DB_PATH):
+    """A restaurant's timezone name for local_kickoff / describe(tz=), or
+    None (the catalog's own clock) when it can't be read. Never raises."""
+    try:
+        import models
+        r = models.get_restaurant(restaurant_id, db_path=db_path)
+        return getattr(r, "timezone", None) or None
+    except Exception:
+        return None
+
+
+def describe(e, with_date=True, tz=None) -> str:
     """One line a person reads: who, against whom, when, where it's shown.
-    `with_date` False where the date is already said (a day's own row)."""
+    `with_date` False where the date is already said (a day's own row).
+    `tz` (the restaurant's clock — a Restaurant or an IANA name) says the
+    start, and its date, on that clock (local_kickoff); without it the
+    catalog's own clock."""
     from time_utils import mdy
     short = e.get("short_name") or e.get("series_name") or ""
     if e.get("category") == "sports" and e.get("opponent"):
@@ -98,14 +164,16 @@ def describe(e, with_date=True) -> str:
     else:
         who = e.get("opponent") or e.get("series_name") or short
     bits = [who]
+    lk = local_kickoff(e, tz)
     if not with_date:
         pass
-    elif e.get("event_date"):
-        bits.append(f"{_d(e['event_date']).strftime('%a')} {mdy(e['event_date'])}")
+    elif lk:
+        bits.append(f"{lk[0].strftime('%a')} {mdy(lk[0])}")
     else:
         bits.append("date to be set")
-    if _clock(e.get("kickoff_local")):
-        bits.append(_clock(e["kickoff_local"]) + (" (prime time)" if e.get("is_primetime") else ""))
+    start = lk[1] if lk else e.get("kickoff_local")      # a date to be set keeps the catalog's clock
+    if _clock(start):
+        bits.append(_clock(start) + (" (prime time)" if e.get("is_primetime") else ""))
     if e.get("broadcast"):
         bits.append(e["broadcast"])
     if (e.get("attributes") or {}).get("holiday"):
@@ -116,11 +184,16 @@ def describe(e, with_date=True) -> str:
 
 
 def kind_words(e) -> str:
-    """"home prime-time games" — the segment an effect is said about."""
+    """"home prime-time games" — the segment an effect is said about. A
+    home game away from the series' ground is its own: "home games at
+    SeatGeek Stadium" (store.alt_venue)."""
     if e.get("category") != "sports":
         return "nights like it"
     side = "home" if e.get("home_away") == "home" else "road"
-    return f"{side} prime-time games" if e.get("is_primetime") else f"{side} games"
+    words = f"{side} prime-time games" if e.get("is_primetime") else f"{side} games"
+    if store.alt_venue(e):
+        words += f" at {e.get('venue') or 'another ground'}"
+    return words
 
 
 # ── follows and sync ────────────────────────────────────────────────────────
@@ -137,7 +210,12 @@ def ensure_follows(restaurant, db_path=store.DB_PATH) -> list:
         if s.get("lat") is None or s.get("lng") is None or not s.get("radius_km"):
             continue
         km = round(haversine_km(float(lat), float(lng), float(s["lat"]), float(s["lng"])), 1)
-        if km <= float(s["radius_km"]) and store.auto_follow(restaurant.id, s["id"], km, db_path=db_path):
+        reach = km <= float(s["radius_km"])
+        # An auto follow tracks where the restaurant is now: a corrected
+        # address outside the radius withdraws it, and its distance is kept
+        # current (re-audit P1-07). An owner's or admin's row is theirs.
+        store.refresh_auto_follow(restaurant.id, s["id"], km, reach, db_path=db_path)
+        if reach and store.auto_follow(restaurant.id, s["id"], km, db_path=db_path):
             added.append(s["slug"])
     return added
 
@@ -147,7 +225,7 @@ def _today(restaurant):
         from time_utils import restaurant_now
         return restaurant_now(restaurant).date()
     except Exception:
-        return date.today()
+        return store.local_today()
 
 
 def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
@@ -160,19 +238,27 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
     events = store.events_for([f["series_id"] for f in followed], today - timedelta(days=PAST_DAYS),
                               today + timedelta(days=AHEAD_DAYS), db_path=db_path)
     skip = store.dismissed(rid, db_path=db_path)
-    want, used = {}, set()
+    want, used, pending_days = {}, set(), set()
     for e in events:
         if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
             continue
-        if (e.get("attributes") or {}).get("if_necessary") and not e.get("result") \
-                and str(e.get("event_date") or "") < today.isoformat():
-            continue        # may never have been played: never copied, never measured
-        label, n = label_for(e), 1
+        base = label_for(e)
+        if store.unresolved(e, today=today):
+            # An if-necessary game past its date with no result may or may
+            # not have been played. Its night stays flagged — out of every
+            # baseline, never an ordinary night (re-audit P4-03: erasing it
+            # put a playoff night into 8 weeks of baselines) — and is not
+            # measured here. The label says so, so a result or a
+            # cancellation entered later changes the copy and the night is
+            # re-recorded as what it was.
+            base += UNRESOLVED_SUFFIX
+            pending_days.add(e["event_date"])
+        label, n = base, 1
         # Two games of one series on a date (a doubleheader) need two labels:
         # demand_signals keeps one row per date and label.
         while (e["event_date"], label) in used:
             n += 1
-            label = f"{label_for(e)} · game {n}"
+            label = f"{base} · game {n}"
         used.add((e["event_date"], label))
         want[f"event:{e['id']}"] = (e["event_date"], label)
     conn = demand_signals.get_conn(db_path)
@@ -210,16 +296,77 @@ def sync_restaurant(restaurant, today=None, db_path=store.DB_PATH) -> dict:
         conn.commit()
     finally:
         conn.close()
-    recorded = 0
-    if new_past:
-        try:
-            import event_memory
-            for day in sorted(set(new_past), reverse=True)[:RECORD_MAX]:
-                recorded += event_memory.record_night(rid, day, db_path=db_path).get("recorded", 0)
-        except Exception as e:
-            log.warning("event_intel: past game nights not recorded rid=%s: %s", rid, e)
+    recorded, left = _record_past(restaurant, new_past, pending_days, today, db_path)
     return {"followed": [f["slug"] for f in followed], "added": added, "moved": moved, "removed": removed,
-            "nights_recorded": recorded}
+            "nights_recorded": recorded, "nights_queued": left}
+
+
+def _record_queue(restaurant_id, db_path, value=None):
+    """The past nights this restaurant's sync still owes a re-record
+    (job_cursors `event_sync_record:<rid>`, a JSON list of ISO dates): read,
+    or written when `value` is given ([] removes the row)."""
+    import json
+    key = f"{RECORD_QUEUE_PREFIX}{restaurant_id}"
+    conn = store.get_conn(db_path)
+    try:
+        if value is None:
+            r = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+            try:
+                got = json.loads(r["value"]) if r and r["value"] else []
+            except (TypeError, ValueError):
+                got = []
+            return [str(d)[:10] for d in got if d] if isinstance(got, list) else []
+        if value:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (key, json.dumps(sorted(set(value), reverse=True))))
+        else:
+            conn.execute("DELETE FROM job_cursors WHERE key=?", (key,))
+        conn.commit()
+        return value
+    finally:
+        conn.close()
+
+
+def _record_past(restaurant, new_past, pending_days, today, db_path):
+    """Re-record the past nights whose flags this pass changed, plus the
+    ones an earlier pass owed, RECORD_MAX per pass, newest first. The rest
+    wait in the restaurant's record queue for the next pass — a bulk follow
+    change (a Bulls season, 60+ nights) used to re-record 40 and leave the
+    others stale or unmeasured for good (re-audit P1-06 / P4-13 / X-1).
+    Only a restaurant that learns for itself (models.learns_for_itself: not
+    a demo, not admin-excluded) is measured at all (re-audit P1-05); its
+    demand_signals copy is written either way. An `unresolved` if-necessary
+    game's night is never measured here. Returns (recorded, still queued)."""
+    import models
+    if not models.learns_for_itself(restaurant):
+        return 0, 0
+    rid = restaurant.id
+    floor = (today - timedelta(days=PAST_DAYS)).isoformat()
+    try:
+        owed = _record_queue(rid, db_path)
+    except Exception as e:
+        log.warning("event_intel: record queue unreadable rid=%s: %s", rid, e)
+        owed = []
+    todo = sorted({d for d in list(owed) + list(new_past)
+                   if floor <= d < today.isoformat() and d not in pending_days}, reverse=True)
+    if not todo and not owed:
+        return 0, 0
+    recorded, done = 0, set()
+    try:
+        import event_memory
+        for day in todo[:RECORD_MAX]:
+            recorded += event_memory.record_night(rid, day, db_path=db_path).get("recorded", 0)
+            done.add(day)
+    except Exception as e:
+        log.warning("event_intel: past game nights not recorded rid=%s: %s", rid, e)
+    left = [d for d in todo if d not in done]
+    if sorted(left) != sorted(set(owed)):
+        try:
+            _record_queue(rid, db_path, value=left)
+        except Exception as e:
+            log.warning("event_intel: record queue not written rid=%s: %s", rid, e)
+    return recorded, len(left)
 
 
 def run_event_sync(db_path=None, now=None) -> dict:
@@ -231,9 +378,11 @@ def run_event_sync(db_path=None, now=None) -> dict:
     import models
     db = db_path or store.DB_PATH
     store.load_bundled(db_path=db)
-    # Yesterday's games are played (the Central-time date is close enough
-    # for a catalog flag; each restaurant's own today drives its sync).
-    store.mark_past_completed(date.today() - timedelta(days=1), db_path=db)
+    # Games before today are played — today on each game's own clock
+    # (store.local_today: Central for every bundled file), never the
+    # server's UTC date, which is tomorrow from 7pm Central (re-audit X-6).
+    # Each restaurant's own today drives its sync.
+    store.mark_past_completed(db_path=db)
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "added": 0, "recorded": 0}
     lock = threading.Lock()
     conn = store.get_conn(db)
@@ -315,25 +464,43 @@ def _median(vals):
     return None if not n else (s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0)
 
 
+def game_class(e) -> tuple:
+    """(side, preseason?, home ground elsewhere?) — the class a game is
+    never measured across: a road game is never told what home games did,
+    preseason is its own crowd, and a home game away from the series'
+    ground (store.alt_venue) is its own night."""
+    return (e.get("home_away"), e.get("season_type") == "preseason", store.alt_venue(e))
+
+
 def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
-    """Finished events of the same series before this one, with what each
-    night measured here: [{event, outcome}] newest first."""
+    """Played games of the same series before this one (store.played as of
+    its date: never a cancelled or postponed one, never an if-necessary game
+    with no result), with what each night measured here: [{event, outcome}]
+    newest first. Bounded: games inside PAST_GAMES_DAYS of this one, and at
+    most PAST_GAMES_PER_CLASS of the newest measured games of each
+    game_class — effect_for's segments sit inside one class, so each is the
+    median of its newest nights (re-audit X-2)."""
     if not e.get("event_date"):
-        before = date.max.isoformat()
+        before = store.local_today(e.get("timezone") or e.get("series_timezone")).isoformat()
     else:
         before = e["event_date"]
-    rows = [x for x in store.events_for([e["series_id"]], None, before, db_path=db_path)
-            if x["event_date"] < before and x["id"] != e.get("id")]
+    lo = (_d(before) - timedelta(days=PAST_GAMES_DAYS)).isoformat()
+    rows = [x for x in store.events_for([e["series_id"]], lo, before, db_path=db_path)
+            if x["event_date"] < before and x["id"] != e.get("id") and store.played(x, today=before)]
     outs = _outcomes(restaurant_id, [x["event_date"] for x in rows], db_path,
                      series_word=e.get("short_name") or e.get("series_name"))
     # One night, one game: a doubleheader's two events share one outcome row
     # and would count it twice toward a segment's floor (audit 10/1/26).
-    seen, got = set(), []
-    for x in rows:
+    seen, got, per = set(), [], {}
+    for x in sorted(rows, key=lambda r: r["event_date"], reverse=True):
         if x["event_date"] in outs and x["event_date"] not in seen:
             seen.add(x["event_date"])
+            k = game_class(x)
+            if per.get(k, 0) >= PAST_GAMES_PER_CLASS:
+                continue
+            per[k] = per.get(k, 0) + 1
             got.append({"event": x, "outcome": outs[x["event_date"]]})
-    return sorted(got, key=lambda g: g["event"]["event_date"], reverse=True)
+    return got
 
 
 def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
@@ -345,17 +512,18 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
         games = [g for g in games if keep(g["event"]["event_date"])]
     if not games:
         return None
-    side = e.get("home_away")
-    pre = lambda x: x.get("season_type") == "preseason"
-    same_class = lambda g: pre(g["event"]) == pre(e)
-    # Most specific first, and never across sides: a road game is never
-    # told what home games did. Preseason is kept apart while regular-season
-    # nights suffice (audit 10/1/26).
+    mine = game_class(e)
+    same_class = lambda g: game_class(g["event"]) == mine
+    # Most specific first, and never across a class (game_class) in ANY
+    # segment: a road game is never told what home games did, preseason is
+    # never pooled with the regular season — the old last fallback dropped
+    # the season test, so a preseason game's push said regular-season lifts
+    # (re-audit P3-02) — and a home game at another ground is its own
+    # segment (re-audit SD-02).
     segs = [
-        (kind_words(e), lambda g: g["event"].get("home_away") == side and same_class(g)
+        (kind_words(e), lambda g: same_class(g)
          and bool(g["event"].get("is_primetime")) == bool(e.get("is_primetime"))),
-        (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side and same_class(g)),
-        (kind_words(dict(e, is_primetime=0)), lambda g: g["event"].get("home_away") == side),
+        (kind_words(dict(e, is_primetime=0)), same_class),
     ]
     if exact:
         # One segment, no fallback: same side, same season class, prime time
@@ -405,19 +573,20 @@ def headline(restaurant_id, e, db_path=store.DB_PATH) -> bool:
                                        db_path=db_path)
 
 
-def last_like(restaurant_id, e, db_path=store.DB_PATH):
-    """The last finished game of the same side (home/road) with its night:
-    {"event", "describe", "net", "baseline", "lift_pct", "covers",
-    "labor_pct", "headcount"} or None."""
+def last_like(restaurant_id, e, db_path=store.DB_PATH, tz=None):
+    """The last finished game of the same side (home/road) — and, for a home
+    game, the same ground (store.alt_venue) — with its night: {"event",
+    "describe", "net", "baseline", "lift_pct", "covers", "labor_pct",
+    "headcount"} or None. `tz` as describe's."""
     import json
     for g in past_games(restaurant_id, e, db_path=db_path):
-        if g["event"].get("home_away") == e.get("home_away"):
+        if g["event"].get("home_away") == e.get("home_away") and store.alt_venue(g["event"]) == store.alt_venue(e):
             o = g["outcome"]
             try:
                 heads = json.loads(o.get("headcount_json") or "null")
             except (TypeError, ValueError):
                 heads = None
-            return {"event": g["event"], "describe": describe(g["event"]), "net": o.get("net"),
+            return {"event": g["event"], "describe": describe(g["event"], tz=tz), "net": o.get("net"),
                     "baseline": o.get("baseline"), "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
                     "labor_pct": o.get("labor_pct"), "headcount": heads, "labor_hours": o.get("labor_hours")}
     return None
@@ -429,29 +598,33 @@ def context_for(restaurant_id, day, db_path=store.DB_PATH) -> list:
     day = _d(day).isoformat()
     followed = store.follows(restaurant_id, db_path=db_path)
     out = []
+    tz = restaurant_clock(restaurant_id, db_path=db_path) if followed else None
     for e in store.events_for([f["series_id"] for f in followed], day, day, db_path=db_path):
-        out.append({"event": e, "describe": describe(e), "label": label_for(e),
+        out.append({"event": e, "describe": describe(e, tz=tz), "label": label_for(e),
                     "effect": effect_for(restaurant_id, e, db_path=db_path),
-                    "last_like": last_like(restaurant_id, e, db_path=db_path)})
+                    "last_like": last_like(restaurant_id, e, db_path=db_path, tz=tz)})
     return out
 
 
 def upcoming(restaurant_id, days=14, today=None, db_path=store.DB_PATH) -> list:
-    """The followed events in the next `days`, each with its effect. Without
-    `today`, the restaurant's own local date (never the server's UTC one)."""
+    """The followed events in the next `days` that will be played here —
+    never a cancelled or postponed game, nor one this restaurant removed
+    from its list (store.dismissed), as every other reader (re-audit
+    P1-04) — each {"event", "describe", "label", "status", "effect"}.
+    Without `today`, the restaurant's own local date (never the server's
+    UTC one)."""
+    tz = restaurant_clock(restaurant_id, db_path=db_path)
     if today:
         start = _d(today)
     else:
-        try:
-            import models
-            start = _today(models.get_restaurant(restaurant_id, db_path=db_path))
-        except Exception:
-            start = date.today()
+        start = store.local_today(tz)
     followed = store.follows(restaurant_id, db_path=db_path)
     rows = store.events_for([f["series_id"] for f in followed], start, start + timedelta(days=int(days)),
                             db_path=db_path)
-    return [{"event": e, "describe": describe(e), "label": label_for(e),
-             "effect": effect_for(restaurant_id, e, db_path=db_path)} for e in rows]
+    gone = store.dismissed(restaurant_id, db_path=db_path) if rows else set()
+    return [{"event": e, "describe": describe(e, tz=tz), "label": label_for(e), "status": e.get("status"),
+             "effect": effect_for(restaurant_id, e, db_path=db_path)} for e in rows
+            if e.get("status") not in ("cancelled", "postponed") and e["id"] not in gone]
 
 
 def context_by_ref(restaurant_id, ref, db_path=store.DB_PATH):
@@ -464,7 +637,8 @@ def context_by_ref(restaurant_id, ref, db_path=store.DB_PATH):
         return None
     if not e:
         return None
-    return {"event": e, "describe": describe(e), "describe_short": describe(e, with_date=False),
+    tz = restaurant_clock(restaurant_id, db_path=db_path)
+    return {"event": e, "describe": describe(e, tz=tz), "describe_short": describe(e, with_date=False, tz=tz),
             "label": label_for(e), "effect": effect_for(restaurant_id, e, db_path=db_path)}
 
 
@@ -500,7 +674,7 @@ def follow_choices(restaurant, today=None, db_path=store.DB_PATH) -> list:
         out.append({"series_id": s["id"], "slug": s["slug"], "name": s["name"], "category": s["category"],
                     "following": bool(f and f["active"]), "source": f["source"] if f else None,
                     "distance_km": km if km is not None else (f or {}).get("distance_km"), "in_reach": reach,
-                    "next": describe(nxt[0]) if nxt else None, "season": season})
+                    "next": describe(nxt[0], tz=restaurant) if nxt else None, "season": season})
     return out
 
 

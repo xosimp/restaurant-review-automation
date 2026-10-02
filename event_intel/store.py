@@ -191,8 +191,11 @@ def upsert_events(series_id, events, season=None, timezone=None, source_url=None
                 "opponent=excluded.opponent, venue=excluded.venue, broadcast=excluded.broadcast, "
                 "is_primetime=excluded.is_primetime, "
                 # a season file says "scheduled" for a game since played:
-                # a completed (or cancelled) game never goes back
-                "status=CASE WHEN excluded.status='scheduled' AND catalog_events.status<>'scheduled' "
+                # a completed game never goes back. A postponed or cancelled
+                # one the file reinstates does (re-audit P1-03: a rescheduled
+                # game stayed postponed for good, copied and measured nowhere);
+                # an admin's own status is laid back over it below.
+                "status=CASE WHEN excluded.status='scheduled' AND catalog_events.status='completed' "
                 "THEN catalog_events.status ELSE excluded.status END, "
                 "result=COALESCE(excluded.result, catalog_events.result), attributes_json=excluded.attributes_json, "
                 "source_url=excluded.source_url, updated_at=datetime('now')", vals)
@@ -309,11 +312,15 @@ def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
         # so a cleared "cancelled" used to stand for good (audit 10/1/26).
         cleared = [k for k in (clear or ()) if k not in clean]
         if cleared:
-            s = conn.execute("SELECT slug FROM event_series WHERE id=?", (row["series_id"],)).fetchone()
+            s = conn.execute("SELECT slug, timezone FROM event_series WHERE id=?", (row["series_id"],)).fetchone()
             file_vals = _season_values(s["slug"] if s else None, row["external_id"]) or {}
             sets = {k: file_vals.get(k) for k in cleared if k in file_vals}
+            # "Past" on the game's own clock, never the server's UTC date: an
+            # admin clearing tonight's postponed status after 7pm Central
+            # got "completed" for a game still being played (re-audit X-6).
+            today = local_today(row["timezone"] or (s["timezone"] if s else None)).isoformat()
             if "status" in sets and sets["status"] == "scheduled" and row["event_date"] and \
-                    (file_vals.get("event_date") or row["event_date"]) < datetime.utcnow().strftime("%Y-%m-%d"):
+                    (file_vals.get("event_date") or row["event_date"]) < today:
                 sets["status"] = "completed"       # a past game the file still calls scheduled was played
             if sets:
                 cols = ", ".join(f"{k}=?" for k in sets)
@@ -333,7 +340,11 @@ def edit_event(event_id, changes, clear=(), db_path=DB_PATH) -> dict:
 
 def catalog(db_path=DB_PATH) -> list:
     """Every series with its games (dated or not) and how many restaurants
-    follow it — the admin catalog editor's read."""
+    follow it — the admin catalog editor's read. Each game carries
+    `needs_result` (an if-necessary game whose date has passed with no
+    result and no cancellation — `unresolved`: its night is held out of
+    every baseline, unmeasured, until a result or a cancellation is entered)
+    and each series `needs_result`, how many of its games do."""
     conn = get_conn(db_path)
     try:
         series = [dict(r) for r in conn.execute("SELECT * FROM event_series ORDER BY name").fetchall()]
@@ -341,6 +352,7 @@ def catalog(db_path=DB_PATH) -> list:
             s["followers"] = conn.execute("SELECT COUNT(*) AS n FROM event_follows WHERE series_id=? AND active=1",
                                           (s["id"],)).fetchone()["n"]
             s["events"] = []
+            today = local_today(s.get("timezone")).isoformat()
             for r in conn.execute("SELECT * FROM catalog_events WHERE series_id=? ORDER BY event_date IS NULL, "
                                   "event_date, kickoff_local, external_id", (s["id"],)).fetchall():
                 ev = dict(r)
@@ -348,8 +360,12 @@ def catalog(db_path=DB_PATH) -> list:
                     ev["overrides"] = json.loads(ev.pop("overrides_json") or "{}")
                 except (TypeError, ValueError):
                     ev["overrides"] = {}
+                ev["attributes"] = attributes_of(ev)
                 ev.pop("attributes_json", None)
+                ev["needs_result"] = unresolved(
+                    ev, today=local_today(ev["timezone"]).isoformat() if ev.get("timezone") else today)
                 s["events"].append(ev)
+            s["needs_result"] = sum(1 for ev in s["events"] if ev["needs_result"])
             s.pop("meta_json", None)
         return series
     finally:
@@ -420,6 +436,7 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
     # so a reader taking a date's first event takes the one that matters
     # (Event Intelligence phase 4).
     sql = (f"SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league, "
+           f"s.timezone AS series_timezone, s.home_venue AS series_home_venue, "
            f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season "
            f"AND o.season_type='regular') AS series_games FROM catalog_events e "
            f"JOIN event_series s ON s.id=e.series_id WHERE e.series_id IN ({marks}) AND e.event_date IS NOT NULL")
@@ -450,7 +467,8 @@ def events_for(series_ids, start=None, end=None, db_path=DB_PATH) -> list:
 def event_by_id(event_id, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league "
+        r = conn.execute("SELECT e.*, s.name AS series_name, s.short_name, s.category, s.slug, s.league, "
+                         "s.timezone AS series_timezone, s.home_venue AS series_home_venue "
                          "FROM catalog_events e JOIN event_series s ON s.id=e.series_id WHERE e.id=?",
                          (int(event_id),)).fetchone()
     finally:
@@ -511,20 +529,153 @@ def now_iso():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def mark_past_completed(today, db_path=DB_PATH) -> int:
+def mark_past_completed(today=None, db_path=DB_PATH) -> int:
     """A scheduled event whose date has passed is completed (its result,
-    when a source gives one, is kept or added later)."""
+    when a source gives one, is kept or added later). "Passed" is against
+    `today` when given, else each game's own local date (its timezone, or
+    its series', `local_today`) — never the server's UTC date, which runs a
+    day ahead of Central every evening (re-audit X-6). An if-necessary game
+    with no result stays scheduled (`unresolved`: it may never have been
+    played — phase 4 audit)."""
     conn = get_conn(db_path)
     try:
-        # An if-necessary playoff game with no result may never have been
-        # played: it stays scheduled (and unmeasured — engine.sync_restaurant)
-        # until a result or a cancellation is entered (phase 4 audit).
-        cur = conn.execute("UPDATE catalog_events SET status='completed', updated_at=datetime('now') "
-                           "WHERE status='scheduled' AND event_date IS NOT NULL AND event_date < ? "
-                           "AND NOT (COALESCE(attributes_json, '') LIKE '%\"if_necessary\": true%' "
-                           "AND COALESCE(result, '') = '')", (str(today)[:10],))
+        rows = conn.execute(
+            "SELECT e.id, e.event_date, e.status, e.result, e.attributes_json, "
+            "COALESCE(e.timezone, s.timezone) AS tz FROM catalog_events e JOIN event_series s ON s.id=e.series_id "
+            "WHERE e.status='scheduled' AND e.event_date IS NOT NULL").fetchall()
+        todays, ids = {}, []
+        for r in rows:
+            t = _iso(today) if today else todays.setdefault(r["tz"], local_today(r["tz"]).isoformat())
+            ev = dict(r)
+            if str(ev["event_date"])[:10] < t and not unresolved(ev, today=t):
+                ids.append(ev["id"])
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            conn.execute(f"UPDATE catalog_events SET status='completed', updated_at=datetime('now') "
+                         f"WHERE status='scheduled' AND id IN ({','.join('?' for _ in chunk)})", chunk)
         conn.commit()
-        return cur.rowcount
+        return len(ids)
+    finally:
+        conn.close()
+
+
+# ── one game's state: the predicates every reader shares (re-audit P4-03/04) ─
+
+DEFAULT_TZ = "America/Chicago"      # a game or series that names no timezone
+
+
+def local_today(tz=None):
+    """Today's date on a clock — an IANA name, a Restaurant, or None for
+    DEFAULT_TZ (Central) — through time_utils, never the server's own
+    date."""
+    from time_utils import restaurant_now
+    return restaurant_now(tz or DEFAULT_TZ).date()
+
+
+def _iso(v) -> str:
+    return v.isoformat() if hasattr(v, "isoformat") else str(v)[:10]
+
+
+def attributes_of(e) -> dict:
+    """A game's attributes, from a parsed `attributes` dict or the stored
+    `attributes_json`. Never raises."""
+    a = e.get("attributes")
+    if isinstance(a, dict):
+        return a
+    try:
+        out = json.loads(e.get("attributes_json") or "{}")
+        return out if isinstance(out, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _event_today(e, today):
+    return _iso(today) if today else local_today(e.get("timezone") or e.get("series_timezone")).isoformat()
+
+
+def unresolved(e, today=None) -> bool:
+    """An if-necessary game whose date has passed (before `today`, else the
+    game's own local date) with no result entered and still `scheduled` —
+    not cancelled, not postponed, not marked completed by an admin. It may
+    or may not have been played: nothing may count it as played (no
+    "played" count, no game-night figure, no recent game), and its night is
+    neither a game night nor an ordinary one — it stays flagged, out of
+    every baseline, and unmeasured until a result or a cancellation is
+    entered (engine.sync_restaurant; the admin catalog's `needs_result`)."""
+    if not e or not e.get("event_date") or not attributes_of(e).get("if_necessary"):
+        return False
+    if str(e.get("result") or "").strip() or (e.get("status") or "scheduled") != "scheduled":
+        return False
+    return str(e["event_date"])[:10] < _event_today(e, today)
+
+
+def played(e, today=None) -> bool:
+    """A game that happened: its date has passed (before `today`, else the
+    game's own local date), it was neither cancelled nor postponed, and it
+    is not an `unresolved` if-necessary game. The one test for "played"
+    (gameday.season_value, playbook.game_night, Ask's recent games,
+    engine.past_games)."""
+    if not e or not e.get("event_date"):
+        return False
+    if e.get("status") in ("cancelled", "postponed"):
+        return False
+    t = _event_today(e, today)
+    return str(e["event_date"])[:10] < t and not unresolved(e, today=t)
+
+
+def alt_venue(e) -> bool:
+    """A home game played away from the series' own ground (season file
+    `attributes.alt_venue`: the Fire's 11/7/26 game at SeatGeek Stadium,
+    19 km from Soldier Field). Its own segment in engine.effect_for, never
+    pooled with the home venue's nights (re-audit SD-02)."""
+    return (e or {}).get("home_away") == "home" and bool(attributes_of(e or {}).get("alt_venue"))
+
+
+def unresolved_refs(refs, today=None, db_path=DB_PATH) -> set:
+    """The demand_signals refs ("event:<id>") whose catalog game is
+    `unresolved` — for a reader holding only a night's flags (event_memory's
+    record_night). Never raises."""
+    ids = {}
+    for ref in refs or ():
+        try:
+            ids[int(str(ref).split(":", 1)[1])] = ref
+        except (IndexError, TypeError, ValueError):
+            continue
+    if not ids:
+        return set()
+    try:
+        conn = get_conn(db_path)
+        try:
+            marks = ",".join("?" for _ in ids)
+            rows = conn.execute(f"SELECT e.id, e.event_date, e.status, e.result, e.attributes_json, e.timezone, "
+                                f"s.timezone AS series_timezone FROM catalog_events e JOIN event_series s "
+                                f"ON s.id=e.series_id WHERE e.id IN ({marks})", list(ids)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return set()
+    return {ids[r["id"]] for r in rows if unresolved(dict(r), today=today)}
+
+
+# ── auto-follows that no longer reach (re-audit P1-07) ─────────────────────
+
+def refresh_auto_follow(restaurant_id, series_id, distance_km, in_reach, db_path=DB_PATH) -> bool:
+    """An AUTO follow row brought up to date with where the restaurant is:
+    in reach, its distance refreshed; out of reach, withdrawn (deleted, so a
+    restaurant that moves back is followed again). An owner's or admin's
+    row is never touched. True when an auto follow was withdrawn."""
+    conn = get_conn(db_path)
+    try:
+        if in_reach:
+            conn.execute("UPDATE event_follows SET distance_km=?, updated_at=datetime('now') WHERE restaurant_id=? "
+                         "AND series_id=? AND source='auto' AND COALESCE(distance_km, -1) <> ?",
+                         (distance_km, restaurant_id, int(series_id), distance_km))
+            conn.commit()
+            return False
+        cur = conn.execute("DELETE FROM event_follows WHERE restaurant_id=? AND series_id=? AND source='auto'",
+                           (restaurant_id, int(series_id)))
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
