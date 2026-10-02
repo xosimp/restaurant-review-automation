@@ -184,6 +184,15 @@ def _digest_run(db_path, monkeypatch, rid):
     monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
     monkeypatch.setattr(scheduler, "get_owner_emails", lambda r: ["o1@x.test"])
     monkeypatch.setattr(scheduler._emails, "deliver", lambda **k: sent.append(k) or _Ok())
+    # The digest's summary is a model call: stubbed, never a live request
+    # (the conftest guard fails a test that reaches the API).
+    import ai_utils
+    from types import SimpleNamespace as _NS
+    _reply = _NS(content=[_NS(type="text", text="HEADLINE: A steady week\nREVIEWS: One new review.\n"
+                                                "ACTION: none this week")],
+                 stop_reason="end_turn", usage=_NS(input_tokens=1, output_tokens=1))
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: _reply)
+    monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
     scheduler.run_weekly_digests()
     return sent
 

@@ -8,6 +8,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+# The checkout's .env holds production keys (Anthropic, Resend, Twilio,
+# Stripe…). hosted_dashboard.py and scheduler.py call load_dotenv() at
+# import, so on a developer machine every test that imported either one
+# carried the live keys — a test could reach a real provider, and which
+# ones did depended on test order (CI has no .env, so it never showed).
+# Loading is a no-op for the whole session, before any app module imports
+# it: the suite sees the environment CI sees. A test that needs a key sets
+# it with monkeypatch.setenv.
+import dotenv as _dotenv
+_dotenv.load_dotenv = lambda *a, **k: False
+
 # Security controls that would otherwise refuse or block in a test process:
 # a pepper so staff PINs can be set, no live breach lookups, and the admin
 # 2FA gate off except in the test that turns it on.
