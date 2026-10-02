@@ -42,7 +42,7 @@ def instagram_connect(current_user):
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
-    from meta_api import SCOPES as scope
+    from meta_api import login_params
     # Signed, like the iOS flow: a bare restaurant id let anyone finish the
     # public dialog with their own Meta account and bind their page to any
     # restaurant (MOD-MKT-5). "web~" tells the callback to answer the popup.
@@ -51,7 +51,7 @@ def instagram_connect(current_user):
     params = urllib.parse.urlencode({
         "client_id":     app_id,
         "redirect_uri":  redirect_uri,
-        "scope":         scope,
+        **login_params(),
         "auth_type":     "rerequest",
         "response_type": "code",
         "state":         state,

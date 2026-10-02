@@ -28,6 +28,18 @@ SCOPES = ("instagram_basic,instagram_content_publish,instagram_manage_insights,p
           "pages_manage_posts,pages_show_list,business_management,read_insights")
 
 
+def login_params() -> dict:
+    """What the connect dialog asks for. An app set up as Facebook Login for
+    Business (Cavnar AI's is, 10/2/26) names a configuration - the
+    permissions and assets chosen in Meta's dashboard (Facebook Login for
+    Business -> Configurations) - by `config_id` instead of a scope list.
+    META_LOGIN_CONFIG_ID set: the configuration; unset: the scope list."""
+    config_id = os.getenv("META_LOGIN_CONFIG_ID", "").strip()
+    if config_id:
+        return {"config_id": config_id}
+    return {"scope": SCOPES}
+
+
 def oauth_dialog_url(params: str) -> str:
     """The user-facing (non-Graph) OAuth dialog also carries a version prefix."""
     return f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?{params}"

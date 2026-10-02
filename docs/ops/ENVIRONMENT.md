@@ -104,6 +104,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `META_APP_ID` | `""` | Meta app (Instagram/Facebook connect). | mobile_api.py, scheduler.py, social_routes.py |
 | `META_APP_SECRET` | `""` | Its secret. | scheduler.py, social_routes.py |
 | `META_REDIRECT_URI` | `"https://dashboard.cavnar.ai/instagram/callback"` | Meta OAuth callback. | mobile_api.py, social_routes.py |
+| `META_LOGIN_CONFIG_ID` | `""` | The Facebook Login for Business configuration the Instagram & Facebook connect dialog names (`config_id`); unset sends the scope list instead (`meta_api.login_params`). | meta_api.py |
 | `META_GRAPH_VERSION` | `"v21.0"` | Graph API version (default v21.0). | meta_api.py |
 | `TOAST_API_BASE` | `"https://ws-api.toasttab.com"` | Toast API host. | toast.py |
 | `TOAST_SANDBOX` | `""` | Use Toast's sandbox. | toast.py |

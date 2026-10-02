@@ -433,3 +433,22 @@ def test_an_expiring_token_keeps_metas_own_date(app, db_path, monkeypatch):
     _graph(monkeypatch, ATTACKER_OAUTH + [("GET", "debug_token", FakeResp(200, {"data": {"expires_at": 1798761600}}))])
     app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
     assert _meta_fields(db_path, rid)["ig_token_expires"] == "2027-01-01"
+
+
+def test_a_login_for_business_configuration_replaces_the_scope_list(app, db_path, monkeypatch):
+    """The Cavnar AI Meta app is Facebook Login for Business (10/2/26): with
+    META_LOGIN_CONFIG_ID set, the dialog names that configuration, not scopes."""
+    import urllib.parse
+    rid = _restaurant(db_path)
+    monkeypatch.setenv("META_APP_ID", "app")
+    c = app.test_client()
+    from auth import create_user, create_session
+    uid = create_user(rid, "o", "o@meta.test", "pw-1234567", db_path=db_path)
+    import auth as _a
+    _a.set_user_role(uid, "owner", db_path=db_path)
+    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(c.get("/instagram/connect").headers["Location"]).query)
+    assert "scope" in q and "config_id" not in q
+    monkeypatch.setenv("META_LOGIN_CONFIG_ID", "cfg-123")
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(c.get("/instagram/connect").headers["Location"]).query)
+    assert q["config_id"] == ["cfg-123"] and "scope" not in q
