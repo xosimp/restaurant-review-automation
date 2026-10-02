@@ -172,6 +172,10 @@ def sends(monkeypatch):
                         out["push"].append((t, list(user_ids or []), data)) or 1)
     monkeypatch.setattr(notify, "TWILIO_SID", "AC1")
     monkeypatch.setattr(notify, "TWILIO_TOKEN", "tok")
+    # Midday at the restaurant: between 10pm and 8am a staff text is held
+    # until morning (people.deliver, employee audit M8), whenever the suite runs.
+    from datetime import datetime as _dt
+    monkeypatch.setattr(people, "staff_local_now", lambda rid: _dt(2026, 10, 1, 12, 0))
     return out
 
 

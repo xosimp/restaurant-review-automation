@@ -10505,72 +10505,89 @@ def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_labe
         contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
     base_url = config.base_url()
     try:
-        reachable = _people.reach(rid, names)
+        reachable = _people.reach(rid, names, purpose="schedule")
     except Exception as _re:
         _ops.capture(_re, job="schedule_publish_reach", context=f"restaurant_id={rid}")
         reachable = {n: {"push_user_id": None, "sms": None,
                          "email": ((contacts.get(n.lower()) or {}).get("email") or "").strip() or None}
                      for n in names}
     posted = "changed" if updated else "is posted"
-    sent, unreachable, failed, failed_tokens = [], [], [], []
+    sent, unreachable, failed = [], [], []
     for name in names:
         ch = reachable.get(name) or {}
         email = (ch.get("email") or "").strip()
-        shifts = employee_shifts_from_csv(csv_text, name)
-        count = f"{len(shifts)} shift{'' if len(shifts) == 1 else 's'}"
-        if ch.get("push_user_id"):
-            token = create_schedule_share(rid, schedule_id, name, sent_to="app")
-            try:
-                import push as _push
-                queued = _push.fire_push(rid, "staff_schedule", f"Your schedule — {restaurant.name}",
-                                         f"The week of {week_label} {posted}: {count}.",
-                                         data={"kind": "staff_schedule", "module": "staff", "schedule_id": schedule_id},
-                                         user_ids=[ch["push_user_id"]])
-            except Exception as _pe:
-                print(f"[publish] push failed for {name}: {_pe}")
-                queued = 0
-            if queued:
-                sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "shifts": len(shifts)})
-                continue
-            _drop_share(token, schedule_id)
-        if ch.get("sms"):
-            token = create_schedule_share(rid, schedule_id, name, sent_to=ch["sms"])
-            try:
-                from notify import send_sms as _send_sms_staff
-                texted = bool(_send_sms_staff(
-                    ch["sms"], f"{restaurant.name}: your schedule for the week of {week_label} "
-                               f"{'was updated' if updated else 'is posted'} ({count}). {base_url}/s/{token} "
-                               f"Reply STOP to stop these texts.", use_case="staff"))
-            except Exception as _se:
-                print(f"[publish] staff text failed for {name}: {_se}")
-                texted = False
-            if texted:
-                sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms", "shifts": len(shifts)})
-                continue
-            _drop_share(token, schedule_id)
-        if not email:
+        if not (ch.get("push_user_id") or ch.get("sms") or email):
             unreachable.append({"employee_name": name,
                                 "reason": "no app, text consent or email address on file"})
             continue
-        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
-        err = None
-        try:
-            from emails import send_staff_schedule_email
-            res = send_staff_schedule_email(
-                to_email=email, employee_name=name, restaurant_name=restaurant.name,
-                week_label=f"{week_label} (updated)" if updated else week_label,
-                link=f"{base_url}/s/{token}", shifts=shifts,
-                reply_to=restaurant.owner_email or None, restaurant_id=rid)
-        except Exception as e:
-            res, err = None, str(e)
-        if not getattr(res, "ok", False):
-            failed.append({"employee_name": name,
-                           "error": err or getattr(res, "error", None) or "The email was not sent."})
-            failed_tokens.append(token)
-            continue
-        sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
-    for t in failed_tokens:
-        _drop_share(t, schedule_id)
+        shifts = employee_shifts_from_csv(csv_text, name)
+        count = f"{len(shifts)} shift{'' if len(shifts) == 1 else 's'}"
+        # people.deliver is the one rule (employee audit C4/M8): the app, then
+        # a text, then email — a push counted only once Apple took it (the
+        # rest of the chain runs by itself when no device did), a text held
+        # from 10pm to 8am unless the week has a shift before then. Each
+        # channel's share row is written only for a send that happened.
+        box = {}
+
+        def _sms_text(phone, name=name, count=count, box=box):
+            box["sms_token"] = create_schedule_share(rid, schedule_id, name, sent_to=phone)
+            return (f"{restaurant.name}: your schedule for the week of {week_label} "
+                    f"{'was updated' if updated else 'is posted'} ({count}). {base_url}/s/{box['sms_token']} "
+                    f"Reply STOP to stop these texts.")
+
+        def _sms_undo(box=box):
+            if box.get("sms_token"):
+                _drop_share(box.pop("sms_token"), schedule_id)
+
+        def _email_send(name=name, email=email, shifts=shifts, box=box):
+            token = create_schedule_share(rid, schedule_id, name, sent_to=email)
+            try:
+                from emails import send_staff_schedule_email
+                res = send_staff_schedule_email(
+                    to_email=email, employee_name=name, restaurant_name=restaurant.name,
+                    week_label=f"{week_label} (updated)" if updated else week_label,
+                    link=f"{base_url}/s/{token}", shifts=shifts,
+                    reply_to=restaurant.owner_email or None, restaurant_id=rid)
+            except Exception as e:
+                res, box["email_error"] = None, str(e)
+            if not getattr(res, "ok", False):
+                box.setdefault("email_error", getattr(res, "error", None) or "The email was not sent.")
+                _drop_share(token, schedule_id)
+                return False
+            return True
+
+        def _outcome(channel, name=name):
+            # The app's share row only once the push reached a phone (COM-12).
+            if channel == "push":
+                try:
+                    create_schedule_share(rid, schedule_id, name, sent_to="app")
+                except Exception as e:
+                    print(f"[publish] app share not recorded for {name}: {e}")
+
+        first = min((s.get("date") for s in shifts if s.get("date")), default=None)
+        how = _people.deliver(
+            rid, name, ch, alert_type="staff_schedule", title="Your schedule",
+            body=f"The week of {week_label} {posted}: {count}.",
+            data={"kind": "schedule", "event": "schedule_changed" if updated else "schedule_posted",
+                  "tab": "today", "schedule_id": schedule_id},
+            purpose="schedule", sms_text=_sms_text, sms_undo=_sms_undo,
+            sms_meta=lambda box=box: {"share": [schedule_id, box.get("sms_token")]},
+            email_send=_email_send, shift_date=first, on_outcome=_outcome)
+        if how == "push":
+            # Queued to their phone; "delivery: pending" until Apple answers
+            # (the app's share row appears then, or a text/email goes instead).
+            sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "delivery": "pending",
+                         "shifts": len(shifts)})
+        elif how in ("sms", "sms_held"):
+            sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms",
+                         **({"delivery": "held_until_morning"} if how == "sms_held" else {}), "shifts": len(shifts)})
+        elif how == "email":
+            sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
+        elif email:
+            failed.append({"employee_name": name, "error": box.get("email_error") or "The email was not sent."})
+        else:
+            unreachable.append({"employee_name": name,
+                                "reason": "no app, text consent or email address on file"})
     return sent, unreachable, failed
 
 

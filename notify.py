@@ -801,7 +801,11 @@ BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "
                              # Manager tasks, not briefings (re-audit A-6): a
                              # drop request for tonight unheard because the
                              # owner chose "calm" is a shift nobody covers.
-                             "shift_request", "labor_reminder"})
+                             "shift_request", "labor_reminder",
+                             # An employee wrote to the manager on duty
+                             # (staff_comms, employee audit): the same kind
+                             # of task, never held by a level or budget.
+                             "employee_message"})
 BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
 
@@ -2112,13 +2116,16 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
     send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz,
                             restaurant_id=restaurant_id)
     try:
-        from push import fire_push
+        from push import fire_push, console_user_ids
+        # Named logins, never "everyone at the restaurant": this carries an
+        # IP address and is the console's own security alert (COM-03).
         fire_push(
             restaurant_id, "login",
             "New sign-in",
             f"{restaurant_name} — signed in from {ip}",
             data={"alert_type": "login"},
             db_path=db_path,
+            user_ids=console_user_ids(restaurant_id, db_path=db_path),
         )
     except Exception as e:
         print(f"[LoginAlert] push error: {e}")
@@ -2143,13 +2150,16 @@ def send_staff_signin_alert(restaurant_id: int, restaurant_name: str, owner_emai
     then gets switched off entirely.
     """
     try:
-        from push import fire_push
+        from push import fire_push, console_user_ids
+        # To the owners and managers only — never to a teammate's phone
+        # (COM-03).
         fire_push(
             restaurant_id, "staff_signin",
             "Staff sign-in",
             f"{employee_name or 'Someone'} opened the staff portal",
             data={"alert_type": "staff_signin"},
             db_path=db_path,
+            user_ids=console_user_ids(restaurant_id, db_path=db_path),
         )
     except Exception as e:
         print(f"[StaffSignIn] push error: {e}")

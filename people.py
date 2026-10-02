@@ -410,7 +410,85 @@ def update_person(restaurant_id, key, fields, updated_by=None, may_manage_logins
     return get_person(restaurant_id, row["key"], db_path=db), changed
 
 
-# ── Reaching a person when their week goes out (Friction audit #17) ─────────
+# ── Reaching a person on staff (Friction #17; employee audit C4/M8/H14) ─────
+#
+# ONE rule for every notice to one employee — a published week, a request
+# decided, a swap asked of them, a reminder, an announcement, a message:
+#
+#   1. The app, when their login has a live device here (push.fire_push
+#      narrowed to that login, a staff alert type). It counts only when
+#      Apple took it: if no device did, `on_failed` runs the rest of the
+#      chain (COM-12/LG-33). A queued push used to be "told".
+#   2. A text, when they ticked the consent box AND it covers this notice's
+#      purpose (preferences.staff_sms_scope, COM-09) AND the staff messaging
+#      service is configured (staff_sms_ready). Between 10pm and 8am
+#      restaurant time it is held until 8am (staff_reminders releases it),
+#      unless it is about a shift before then (M8/COM-11).
+#   3. Email to the address on file.
+#
+# Between 10pm and 8am a push still goes, silently (data["quiet"]: no sound,
+# no banner) — except an urgent announcement.
+
+STAFF_QUIET_START_HOUR = 22     # 10pm restaurant-local
+STAFF_QUIET_END_HOUR = 8        # 8am
+
+# What a notice is FOR — the consent scope a text needs. A reminder is worth
+# a push or nothing (an hour-before text per shift is not what anyone
+# consented to); the rest fall back to email when there is no text consent.
+_TYPE_PURPOSE = {"staff_schedule": "schedule", "staff_request": "request", "staff_reminder": "reminder",
+                 "staff_announcement": "announcement", "staff_urgent": "announcement",
+                 "staff_message": "message", "staff_notice": "notice"}
+_PUSH_ONLY_PURPOSES = frozenset({"reminder"})
+# tell()'s email_type → the alert type, for callers that predate the types.
+_EMAIL_TYPE_ALERT = {"shift_request": "staff_request", "time_off": "staff_request",
+                     "staff_schedule": "staff_schedule", "staff_announcement": "staff_announcement",
+                     "staff_message": "staff_message"}
+# A caller's `nav` that names a tab rather than a staff path ("inbox",
+# "messages") is read as the tab.
+_TAB_ALIASES = {"messages": "inbox", "message": "inbox", "schedule": "today", "profile": "me"}
+
+
+def _is_urgent(priority) -> bool:
+    """"urgent", "p1", 1 or 0 (push.P1_ACT_NOW / P0) → an urgent notice."""
+    if isinstance(priority, bool):
+        return priority
+    if isinstance(priority, int):
+        return priority <= 1
+    return str(priority or "").strip().lower() in ("urgent", "p1", "p0", "1", "0")
+
+
+def _staff_data(alert_type, nav=None, data=None) -> dict:
+    """The push payload fields for a staff notice, from a caller's `nav`
+    and `data`: every key rides the payload; `kind` is the short type
+    ("request", "announcement"…); a `nav` that is a tab name, not a
+    "staff/…" path, becomes the `tab` (push.staff_nav then builds the path
+    with the request, announcement, thread or sheet id)."""
+    import push
+    out = {}
+    for src in (data, nav):
+        if isinstance(src, dict):
+            out.update({k: v for k, v in src.items() if v is not None})
+        elif isinstance(src, str) and src.strip():
+            out["nav"] = src.strip()
+    nav_s = str(out.get("nav") or "").strip()
+    if nav_s and not nav_s.startswith("staff/"):
+        tab = _TAB_ALIASES.get(nav_s.lower(), nav_s.lower())
+        out.pop("nav", None)
+        if tab in push.STAFF_TABS:
+            out.setdefault("tab", tab)
+    short = alert_type[len("staff_"):]
+    kind = str(out.get("kind") or "").strip().lower()
+    out["kind"] = kind[len("staff_"):] if kind.startswith("staff_") else (kind or short)
+    return out
+
+# The consent the staff app shows beside its "text me" switch
+# (GET /staff/api/preferences → schedule_texts_consent). The app sends
+# consent_version=preferences.STAFF_SMS_CONSENT_VERSION with the switch, and
+# only that wording covers request notices. Register the staff A2P campaign
+# with this same sentence (H14 — an ops task).
+STAFF_SMS_CONSENT_TEXT = ("Text me about my schedule and my requests: a posted or changed week, swaps, "
+                          "open shifts and time off. Msg & data rates may apply. Reply STOP to stop.")
+
 
 def staff_sms_ready() -> bool:
     """Staff texts go only on their own registered messaging service
@@ -421,16 +499,66 @@ def staff_sms_ready() -> bool:
     return bool(notify.TWILIO_SID and notify.TWILIO_TOKEN and notify.TWILIO_STAFF_MESSAGING_SERVICE_SID)
 
 
-def reach(restaurant_id, names, db_path=None) -> dict:
-    """{name: {"push_user_id", "sms", "email"}} for each scheduled name.
+def staff_alert_type(kind) -> str:
+    """"request" or "staff_request" → "staff_request"; anything unknown is
+    a "staff_notice"."""
+    import push
+    k = str(kind or "").strip().lower()
+    if k in push.STAFF_ALERT_TYPES:
+        return k
+    k = f"staff_{k}"
+    return k if k in push.STAFF_ALERT_TYPES else "staff_notice"
 
-    push_user_id — the staff login whose phone has the app registered.
+
+def staff_local_now(restaurant_id):
+    """The restaurant's wall clock (naive local) — the one clock staff quiet
+    hours read. Tests pin it here."""
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True)
+
+
+def staff_quiet(now_local) -> bool:
+    """Whether a staff notice now would land between 10pm and 8am."""
+    return now_local.hour >= STAFF_QUIET_START_HOUR or now_local.hour < STAFF_QUIET_END_HOUR
+
+
+def staff_release_at(now_local):
+    """The next 8am (naive local) — when a text held overnight goes."""
+    from datetime import datetime as _dt, timedelta as _td
+    at = _dt.combine(now_local.date(), _dt.min.time()).replace(hour=STAFF_QUIET_END_HOUR)
+    return at if now_local < at else at + _td(days=1)
+
+
+def _before_release(now_local, shift_date) -> bool:
+    """A notice about a shift on or before the morning a held text would go
+    out is a same-day change: it cannot wait for 8am."""
+    if not shift_date or now_local is None:
+        return False
+    from datetime import date as _date
+    try:
+        d = _date.fromisoformat(str(shift_date)[:10])
+    except ValueError:
+        return False
+    return d <= staff_release_at(now_local).date()
+
+
+def reach(restaurant_id, names, purpose=None, db_path=None) -> dict:
+    """{name: {"push_user_id", "sms", "sms_scope", "email"}} for each name.
+
+    push_user_id — the login with a live device here that a staff push
+                   reaches (push.staff_device_users: what fire_push delivers
+                   to, an active membership).
     sms          — the number they signed up with, ONLY when they ticked
-                   "text me when my schedule is posted" (memberships.
-                   schedule_texts_at) and staff texts are configured.
+                   the "text me" box (memberships.schedule_texts_at), staff
+                   texts are configured, the number never replied STOP, and
+                   — with `purpose` — their consent covers it.
+    sms_scope    — the purposes that consent covers (preferences.
+                   staff_sms_scope; a consent from before scopes covers
+                   "schedule" only). tell/deliver re-check it per notice.
     email        — the address on file (staff_contacts), the fallback.
     """
     import staff_settings
+    import preferences
     from models import get_conn
     db = _db(db_path)
     contacts = _contacts(restaurant_id, db)
@@ -438,32 +566,37 @@ def reach(restaurant_id, names, db_path=None) -> dict:
     for m in _memberships(restaurant_id, db):
         if m.get("is_active") and m.get("user_is_active", 1) and m.get("employee_name"):
             members[staff_settings.name_key(m["employee_name"])] = m
-    tokens, phones = set(), {}
+    tokens, phones, scopes = set(), {}, {}
     ids = [int(m["user_id"]) for m in members.values() if m.get("user_id")]
     if ids:
+        try:
+            import push
+            tokens = push.staff_device_users(restaurant_id, ids, db_path=db)
+        except Exception:
+            tokens = set()
         conn = get_conn(db)
         try:
             marks = ",".join("?" * len(ids))
-            try:
-                tokens = {r["user_id"] for r in conn.execute(
-                    f"SELECT DISTINCT user_id FROM device_tokens WHERE disabled_reason IS NULL AND user_id IN ({marks})",
-                    ids).fetchall()}
-            except Exception:
-                tokens = set()
             phones = {r["id"]: r["phone"] for r in conn.execute(
                 f"SELECT id, phone FROM users WHERE id IN ({marks})", ids).fetchall()}
         finally:
             conn.close()
+        scopes = preferences.staff_sms_scopes([(u, restaurant_id) for u in ids], db_path=db)
     sms_on = staff_sms_ready()
     out = {}
     for n in names or []:
         k = staff_settings.name_key(n)
         m = members.get(k) or {}
         uid = m.get("user_id")
-        sms = None
+        sms, scope = None, []
         if sms_on and m.get("schedule_texts_at"):
             sms = (phones.get(uid) or m.get("claimed_by_phone") or "").strip() or None
-        out[n] = {"push_user_id": uid if uid in tokens else None, "sms": sms,
+            if sms:
+                legacy = preferences.STAFF_SMS_LEGACY_SCOPE
+                scope = list(scopes.get((int(uid), int(restaurant_id)), legacy) if uid else legacy)
+            if not scope or (purpose is not None and purpose not in scope):
+                sms = None
+        out[n] = {"push_user_id": uid if uid in tokens else None, "sms": sms, "sms_scope": scope if sms else [],
                   "email": ((contacts.get(k) or {}).get("email") or "").strip() or None}
     # A number that replied STOP is not a text channel, whatever its consent
     # says (#107): staff reach checked the tick-box alone, so a STOP was
@@ -474,69 +607,242 @@ def reach(restaurant_id, names, db_path=None) -> dict:
         stopped = notify.sms_stopped_phones(candidates, db_path=db)
         for c in out.values():
             if c["sms"] in stopped:
-                c["sms"] = None
+                c["sms"], c["sms_scope"] = None, []
     return out
 
 
-def tell(restaurant_id, name, title, lines, *, email_type="staff_notice", channel=None, db_path=None):
+def _place(restaurant_id, db):
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db)
+        return (getattr(r, "location_name", None) or getattr(r, "name", None) or "your restaurant") if r \
+            else "your restaurant"
+    except Exception:
+        return "your restaurant"
+
+
+def _send_staff_text(restaurant_id, phone, text) -> bool:
+    import notify
+    with notify.sms_context(restaurant_id):
+        return bool(notify.send_sms(phone, text, use_case="staff"))
+
+
+def _send_staff_email(restaurant_id, email, place, title, lines, email_type="staff_notice") -> bool:
+    import html as _h
+    import emails
+    from config import base_url
+    lines = [str(x) for x in (lines or []) if str(x or "").strip()] or [title]
+    html = emails.report_shell(kicker=_h.escape(place), title=_h.escape(title), subtitle="",
+                               sections=[emails.report_paragraph(_h.escape(x)) for x in lines],
+                               cta_label="Open the staff portal", cta_url=base_url() + "/staff")
+    res = emails.deliver(email_type=email_type, restaurant_id=restaurant_id, payload={
+        "from": emails.sender("client"), "to": [email],
+        "subject": f"{title} — {place}", "preheader": lines[0][:120], "html": html})
+    return bool(getattr(res, "ok", False))
+
+
+class _Once:
+    """A caller's outcome hook, run at most once (the push pool and the
+    synchronous path may both reach the end)."""
+
+    def __init__(self, fn):
+        import threading
+        self._fn, self._lock, self.done = fn, threading.Lock(), False
+
+    def __call__(self, outcome):
+        with self._lock:
+            if self.done:
+                return
+            self.done = True
+        if self._fn is not None:
+            try:
+                self._fn(outcome)
+            except Exception as e:
+                print(f"[people] outcome hook failed: {e!r}")
+
+
+def deliver(restaurant_id, name, channel, *, alert_type, title, body, data=None, purpose=None,
+            email_lines=None, email_type="staff_notice", sms_text=None, sms_undo=None, sms_meta=None,
+            email_send=None, shift_date=None, on_outcome=None, now_local=None, db_path=None):
+    """Deliver one notice to one employee by the rule above. Returns
+    "push" (queued to their phone; the text/email chain runs by itself if no
+    device takes it), "sms", "sms_held" (goes at 8am), "email" or None.
+
+    `on_outcome(channel_or_None)` runs once with what actually happened —
+    "push" only when Apple accepted it, else the fallback's result. A None
+    means nobody was told: tell a manager there (the "Open shift, nobody
+    told" pattern).
+
+    `sms_text` (str or callable(phone) -> str), `sms_undo()` and
+    `sms_meta()` let a caller with its own text (a published week's share
+    link) use the chain; `email_send()` -> bool likewise replaces the
+    generic email. `shift_date` (ISO) marks a notice about a shift: one on
+    or before the next 8am is sent through the night."""
+    import push
+    db = _db(db_path)
+    channel = channel or {}
+    alert_type = alert_type if alert_type in push.STAFF_ALERT_TYPES else staff_alert_type(alert_type)
+    purpose = purpose or _TYPE_PURPOSE.get(alert_type, "notice")
+    done = _Once(on_outcome)
+    try:
+        now_local = now_local or staff_local_now(restaurant_id)
+    except Exception:
+        now_local = None
+    quiet = bool(now_local is not None and staff_quiet(now_local)) and alert_type != "staff_urgent"
+    place = _place(restaurant_id, db)
+    lines = [str(x) for x in ([body] + list(email_lines or [])) if str(x or "").strip()] or [title]
+
+    def _fallback():
+        if purpose in _PUSH_ONLY_PURPOSES:
+            return None
+        phone = channel.get("sms")
+        scope = channel.get("sms_scope")
+        if scope is None:
+            import preferences
+            scope = preferences.STAFF_SMS_LEGACY_SCOPE
+        if phone and purpose in scope:
+            try:
+                if callable(sms_text):
+                    text = sms_text(phone)
+                else:
+                    from config import base_url
+                    text = sms_text or (f"{place}: {' '.join(lines)} {base_url()}/staff "
+                                        "Reply STOP to stop these texts.")
+                if quiet and not _before_release(now_local, shift_date):
+                    import staff_reminders
+                    from time_utils import restaurant_tz
+                    from models import get_restaurant
+                    release_local = staff_release_at(now_local)
+                    tz = restaurant_tz(get_restaurant(restaurant_id, db))
+                    if staff_reminders.hold_text(restaurant_id, name, purpose, title, text, lines,
+                                                 release_local.replace(tzinfo=tz), email_type=email_type,
+                                                 meta=(sms_meta() if callable(sms_meta) else None), db_path=db):
+                        return "sms_held"
+                elif _send_staff_text(restaurant_id, phone, text):
+                    return "sms"
+            except Exception as e:
+                print(f"[people] staff text failed rid={restaurant_id}: {e!r}")
+            if callable(sms_undo):
+                try:
+                    sms_undo()
+                except Exception:
+                    pass
+        email = channel.get("email")
+        if email:
+            try:
+                ok = email_send() if callable(email_send) else \
+                    _send_staff_email(restaurant_id, email, place, title, lines, email_type)
+                if ok:
+                    return "email"
+            except Exception as e:
+                print(f"[people] staff email failed rid={restaurant_id}: {e!r}")
+        return None
+
+    uid = channel.get("push_user_id")
+    if uid:
+        pdata = _staff_data(alert_type, data=data)
+        if quiet:
+            pdata["quiet"] = True
+        try:
+            queued = push.fire_push(restaurant_id, alert_type, f"{title} — {place}", " ".join(lines)[:220],
+                                    data=pdata, db_path=db, user_ids=[uid],
+                                    on_delivered=lambda: done("push"),
+                                    on_failed=lambda: done(_fallback()))
+        except Exception as e:
+            print(f"[people] staff push failed rid={restaurant_id}: {e!r}")
+            queued = 0
+        if queued:
+            return "push"
+    res = _fallback()
+    done(res)
+    return res
+
+
+def tell_staff(restaurant_id, employee_name, kind, title, body, *, nav=None, data=None, priority=None, lines=None,
+               purpose=None, shift_date=None, email_type=None, channel=None, on_outcome=None, db_path=None):
+    """THE helper for telling one employee something (employee audit C4).
+
+    kind     — "schedule" | "request" | "notice" | "reminder" |
+               "announcement" | "urgent" | "message" (or the full
+               push.STAFF_ALERT_TYPES name, "staff_request").
+    title    — the headline ("Your swap went through").
+    body     — one sentence: the push and text body, the email's first line.
+    nav      — where the staff app opens: {"tab": "today|tasks|requests|me|
+               inbox", "request_id" | "announcement_id" | "thread_id" |
+               "assignment_id": id, "event": "swap_asked", ...}, or just a
+               tab name ("inbox"); every key rides the push payload. Without
+               a tab, the kind's default (push.STAFF_DEFAULT_TAB).
+    data     — more payload fields (merged under nav's).
+    priority — "urgent" (or 1 / "p1") sends it as "staff_urgent": P1, breaks
+               Focus, never quiet, nobody can mute it. Otherwise the kind's.
+    lines    — further sentences for the email.
+    purpose  — the consent scope a text needs; defaults from the kind
+               (schedule, request; others never text).
+    shift_date — ISO date of the shift this is about: on or before the next
+               8am it is sent through the night.
+    on_outcome — callable(channel or None), once, with what really happened.
+
+    Returns "push" | "sms" | "sms_held" | "email" | None (see deliver)."""
+    db = _db(db_path)
+    base = staff_alert_type(kind)
+    urgent = _is_urgent(priority)
+    alert_type = "staff_urgent" if urgent else base
+    purpose = purpose or _TYPE_PURPOSE.get(base, "notice")
+    if channel is None:
+        try:
+            channel = reach(restaurant_id, [employee_name], db_path=db).get(employee_name) or {}
+        except Exception as e:
+            print(f"[people] reach failed rid={restaurant_id}: {e!r}")
+            channel = {}
+    payload = _staff_data(base, nav=nav, data=data)       # `kind` stays what it is about
+    if urgent:
+        payload["urgent"] = True
+    return deliver(restaurant_id, employee_name, channel, alert_type=alert_type, title=title, body=body,
+                   data=payload, purpose=purpose, email_lines=lines,
+                   email_type=email_type or "staff_notice", shift_date=shift_date, on_outcome=on_outcome,
+                   db_path=db)
+
+
+def tell(restaurant_id, name, title, lines, *, email_type="staff_notice", channel=None, kind=None, nav=None,
+         data=None, priority=None, purpose=None, shift_date=None, on_outcome=None, db_path=None):
     """One notice to one person on staff, on the channel `reach` picks —
     the app, a text they agreed to, email as the fallback — the same order
-    a published week uses. Returns "push", "sms", "email" or None (nobody
-    could be reached, or every channel failed).
+    a published week uses: tell_staff with the first line as the body.
+    Returns "push", "sms", "sms_held", "email" or None.
 
     Staff notices went by email only, so a person with no address on file
     was never told their drop was approved, their swap went through or
     their time off was decided (F2-5, F2-12). `lines` are plain sentences;
-    the first is the push/text body."""
-    import html as _h
+    the first is the push/text body. Without `kind`, `email_type` names it
+    (shift_request / time_off → a request notice, opening Requests)."""
     lines = [str(x) for x in (lines or []) if str(x or "").strip()] or [title]
-    db = _db(db_path)
-    if channel is None:
-        try:
-            channel = reach(restaurant_id, [name], db_path=db).get(name) or {}
-        except Exception as e:
-            print(f"[people] reach failed rid={restaurant_id}: {e!r}")
-            channel = {}
+    return tell_staff(restaurant_id, name, kind or _EMAIL_TYPE_ALERT.get(email_type, "staff_notice"), title,
+                      lines[0], lines=lines[1:], nav=nav, data=data, priority=priority, purpose=purpose,
+                      shift_date=shift_date, email_type=email_type, channel=channel, on_outcome=on_outcome,
+                      db_path=db_path)
+
+
+def tell_deciders(restaurant_id, title, body, *, request_id=None, request_kind=None, alert_type="shift_request",
+                  data=None, db_path=None) -> int:
+    """THE helper for telling the people who decide staff requests — every
+    console login holding SCHEDULE_DRAFT, whether or not their brief is on
+    (strategy_jobs._reach(deciders=True), F2-6). With `request_id` and
+    `request_kind` ("shift" | "swap" | "time_off" | …) the push offers
+    Approve / Deny and opens that request (push.CATEGORY_REQUEST). Never a
+    staff-app phone: _reach reads the console's devices only. Returns how
+    many people it reached. Never raises."""
     try:
-        from models import get_restaurant
-        r = get_restaurant(restaurant_id, db)
-        place = (getattr(r, "location_name", None) or getattr(r, "name", None) or "your restaurant") if r else "your restaurant"
-    except Exception:
-        place = "your restaurant"
-    if channel.get("push_user_id"):
-        try:
-            import push
-            if push.fire_push(restaurant_id, "staff_schedule", f"{title} — {place}", " ".join(lines)[:220],
-                              data={"kind": "staff_notice", "module": "staff"}, db_path=db,
-                              user_ids=[channel["push_user_id"]]):
-                return "push"
-        except Exception as e:
-            print(f"[people] staff push failed rid={restaurant_id}: {e!r}")
-    if channel.get("sms"):
-        try:
-            import notify
-            from config import base_url
-            with notify.sms_context(restaurant_id):
-                if notify.send_sms(channel["sms"], f"{place}: {' '.join(lines)} {base_url()}/staff "
-                                                   "Reply STOP to stop these texts.", use_case="staff"):
-                    return "sms"
-        except Exception as e:
-            print(f"[people] staff text failed rid={restaurant_id}: {e!r}")
-    if channel.get("email"):
-        try:
-            import emails
-            from config import base_url
-            html = emails.report_shell(kicker=_h.escape(place), title=_h.escape(title), subtitle="",
-                                       sections=[emails.report_paragraph(_h.escape(x)) for x in lines],
-                                       cta_label="Open the staff portal", cta_url=base_url() + "/staff")
-            res = emails.deliver(email_type=email_type, restaurant_id=restaurant_id, payload={
-                "from": emails.sender("client"), "to": [channel["email"]],
-                "subject": f"{title} — {place}", "preheader": lines[0][:120], "html": html})
-            if getattr(res, "ok", False):
-                return "email"
-        except Exception as e:
-            print(f"[people] staff email failed rid={restaurant_id}: {e!r}")
-    return None
+        import strategy_jobs
+        from permissions import SCHEDULE_DRAFT
+        payload = dict(data or {})
+        payload.setdefault("tab", "labor")
+        if request_id:
+            payload.update(request_id=request_id, request_kind=request_kind or "shift")
+        return int(strategy_jobs._reach(restaurant_id, alert_type, title, body, payload, _db(db_path),
+                                        lines=[body], deciders=True, permissions=[SCHEDULE_DRAFT]) or 0)
+    except Exception as e:
+        print(f"[people] deciders notice failed rid={restaurant_id}: {e!r}")
+        return 0
 
 
 def reach_summary(reachable: dict) -> dict:

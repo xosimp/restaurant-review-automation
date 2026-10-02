@@ -640,14 +640,37 @@ def api_preferences(current_user):
     import staff_settings
     st = staff_settings.for_name(rid, name) if name else {}
     return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"),
-                   schedule_texts=_schedule_texts(current_user["id"], rid))
+                   schedule_texts=_schedule_texts(current_user["id"], rid), **_texts_consent(current_user["id"], rid))
 
 
-def _schedule_texts(user_id, rid, value=None):
-    """Read (value None) or set this employee's own "text me when my
-    schedule is posted" (memberships.schedule_texts_at). Only ever set from
-    their own tick on an unchecked-by-default box — the signup consent
-    covered the one-time code, nothing more (Friction audit #17)."""
+def _texts_consent(user_id, rid) -> dict:
+    """What the "text me" switch means and whether it can do anything
+    (employee audit H14): `sms_available` is false while the staff messaging
+    service is not configured (TWILIO_STAFF_MESSAGING_SERVICE_SID) — the app
+    hides the switch; `schedule_texts_consent` is the sentence to show beside
+    it, sent back as `consent_version`; `schedule_texts_scope` is what the
+    consent on file covers (["schedule"] for one given on the old wording)."""
+    import people
+    import preferences
+    on = _schedule_texts(user_id, rid)
+    scope = []
+    if on:
+        scope = preferences.staff_sms_scopes([(user_id, rid)]).get((int(user_id), int(rid)),
+                                                                    list(preferences.STAFF_SMS_LEGACY_SCOPE))
+    return {"sms_available": people.staff_sms_ready(),
+            "schedule_texts_consent": people.STAFF_SMS_CONSENT_TEXT,
+            "schedule_texts_consent_version": preferences.STAFF_SMS_CONSENT_VERSION,
+            "schedule_texts_scope": scope}
+
+
+def _schedule_texts(user_id, rid, value=None, consent_version=None):
+    """Read (value None) or set this employee's own "text me" consent
+    (memberships.schedule_texts_at, and what it covers in
+    preferences.staff_sms_scope). Only ever set from their own tick on an
+    unchecked-by-default box — the signup consent covered the one-time code,
+    nothing more (Friction audit #17). The wording they were shown decides
+    the scope: `consent_version` 2 (people.STAFF_SMS_CONSENT_TEXT) covers
+    schedule and request notices, an older app's box the schedule only."""
     from models import get_conn as _gc
     conn = _gc()
     try:
@@ -659,6 +682,9 @@ def _schedule_texts(user_id, rid, value=None):
                            (user_id, rid)).fetchone()
     finally:
         conn.close()
+    if value is not None:
+        import preferences
+        preferences.set_staff_sms_scope(user_id, rid, consent_version=consent_version, on=bool(value))
     return bool(row and row["schedule_texts_at"])
 
 
@@ -671,9 +697,11 @@ def api_preferences_save(current_user):
     if not name:
         return jsonify(ok=False, error="No employee name on this session."), 400
     body = request.get_json(silent=True) or {}
-    if set(body) == {"schedule_texts"}:
+    if "schedule_texts" in body and set(body) <= {"schedule_texts", "consent_version"}:
         # The texts switch alone: nothing about dayparts or hours changes.
-        return jsonify(ok=True, schedule_texts=_schedule_texts(current_user["id"], rid, bool(body["schedule_texts"])))
+        on = _schedule_texts(current_user["id"], rid, bool(body["schedule_texts"]),
+                             consent_version=body.get("consent_version"))
+        return jsonify(ok=True, schedule_texts=on, **_texts_consent(current_user["id"], rid))
     import staff_settings
     try:
         row = staff_settings.upsert(rid, name, preferred_dayparts=body.get("preferred_dayparts") if "preferred_dayparts" in body else None,
@@ -1061,6 +1089,11 @@ def _resolve_job_role_from_data(restaurant_id, name):
         pass
     return None
 
+
+# The staff app's push registration and notification switches (employee audit
+# C4) add their routes to staff_bp: imported here, at the end, so they exist
+# before any app registers the blueprint (Flask refuses routes after that).
+import staff_device_routes  # noqa: E402,F401
 
 # Running late, the inbox (announcements) and the thread with the managers
 # live in staff_comms_routes and attach to staff_bp when it is imported —

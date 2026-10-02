@@ -57,7 +57,26 @@ ORG_KEYS = (
 LOGIN_KEYS = {"push_enabled": True, "push_muted_types": [], "quiet_start": None, "quiet_end": None}
 # Alert types no login can mute on their own phone: health and safety, an
 # issue assigned to them, the coverage gap they are being asked to fill.
-UNMUTABLE_TYPES = frozenset({"health", "issue", "issue_escalated", "coverage", "critical_low"})
+UNMUTABLE_TYPES = frozenset({"health", "issue", "issue_escalated", "coverage", "critical_low",
+                             # an announcement the manager marked urgent
+                             # ("storm: don't come in") reaches every employee
+                             "staff_urgent"})
+
+# ── the staff app's own choices (employee audit C4/H3/H14) ──────────────────
+# Stored as login-scope rows like LOGIN_KEYS (per login and location) but
+# kept apart from them: the console's notification settings never list them.
+#
+# staff_sms_scope — what the employee's own "text me" consent covers. The box
+# used to read "when my schedule is posted" and was used for every notice
+# (COM-09). A consent given on the current wording (STAFF_SMS_CONSENT_VERSION)
+# covers schedule AND request notices; one given before it, with no row here,
+# covers the schedule only. Never anything else (announcements, messages,
+# reminders go by the app or email).
+STAFF_SMS_CONSENT_VERSION = 2
+STAFF_SMS_PURPOSES = ("schedule", "request")
+STAFF_SMS_LEGACY_SCOPE = ("schedule",)
+# The staff alert types an employee may mute on their own phone.
+STAFF_MUTABLE_TYPES = ("staff_reminder",)
 
 
 def get_conn(db_path=None):
@@ -355,6 +374,69 @@ def push_allowed(user_id, restaurant_id, alert_type, now_local=None, db_path=Non
         if _in_window(now_local.hour * 60 + now_local.minute, o["quiet_start"], o["quiet_end"]):
             return False
     return True
+
+
+def set_staff_sms_scope(user_id, restaurant_id, consent_version=None, on=True, db_path=None) -> list:
+    """Record what this employee's text consent covers, from the wording
+    they were shown: the current wording (consent_version >=
+    STAFF_SMS_CONSENT_VERSION) covers STAFF_SMS_PURPOSES; an older app's
+    box covers the schedule only. Off clears it. Returns the scope."""
+    if not on:
+        scope = []
+    else:
+        try:
+            v = int(consent_version or 0)
+        except (TypeError, ValueError):
+            v = 0
+        scope = list(STAFF_SMS_PURPOSES if v >= STAFF_SMS_CONSENT_VERSION else STAFF_SMS_LEGACY_SCOPE)
+    _set("login", _login_scope(user_id, restaurant_id), "staff_sms_scope", scope, set_by=user_id, db_path=db_path)
+    return scope
+
+
+def staff_sms_scopes(pairs, db_path=None) -> dict:
+    """{(user_id, restaurant_id): [purposes]} for the logins that recorded a
+    scope; a pair with no row is absent (the caller applies
+    STAFF_SMS_LEGACY_SCOPE to a consent given before scopes existed). One
+    query for the whole roster."""
+    keys = {_login_scope(u, r): (int(u), int(r)) for u, r in pairs if u is not None and r is not None}
+    if not keys:
+        return {}
+    try:
+        conn = get_conn(db_path)
+        try:
+            marks = ",".join("?" * len(keys))
+            rows = conn.execute(f"SELECT scope_id, value FROM preferences WHERE scope='login' AND "
+                                f"key='staff_sms_scope' AND scope_id IN ({marks})", list(keys)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        try:
+            v = json.loads(r["value"]) if r["value"] is not None else []
+        except (TypeError, ValueError):
+            v = []
+        out[keys[r["scope_id"]]] = [p for p in (v or []) if p in STAFF_SMS_PURPOSES]
+    return out
+
+
+def staff_muted(user_id, restaurant_id, db_path=None) -> list:
+    """The staff alert types this employee muted on their own phone."""
+    muted = login_overrides(user_id, restaurant_id, db_path=db_path).get("push_muted_types") or []
+    return sorted(t for t in muted if t in STAFF_MUTABLE_TYPES)
+
+
+def set_staff_muted(user_id, restaurant_id, alert_type, muted, db_path=None) -> list:
+    """Mute or unmute one STAFF_MUTABLE_TYPES type on this employee's own
+    phone (the same push_muted_types push.fire_push already applies).
+    Returns the staff types now muted."""
+    if alert_type not in STAFF_MUTABLE_TYPES:
+        raise ValueError(f"{alert_type} cannot be muted here")
+    current = set(login_overrides(user_id, restaurant_id, db_path=db_path).get("push_muted_types") or [])
+    current = (current | {alert_type}) if muted else (current - {alert_type})
+    set_login_overrides(user_id, restaurant_id, {"push_muted_types": sorted(current)}, db_path=db_path)
+    return staff_muted(user_id, restaurant_id, db_path=db_path)
 
 
 # ── one read, with where it came from ───────────────────────────────────────
