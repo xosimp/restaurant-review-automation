@@ -300,4 +300,4 @@ def test_a_quiet_game_confounds_nothing_and_is_no_concurrent_change(db, monkeypa
     import outcomes
     assert "quiet_flags(rid, cat)" in inspect.getsource(outcomes)
     src = inspect.getsource(event_memory)
-    assert "marks = _confounding(loud)" in src
+    assert "marks = _confounding(flags, quiet=quiet_flags(" in src

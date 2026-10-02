@@ -286,7 +286,8 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
                 on the published schedule who never arrived. A late arrival
                 closes theirs, so it is not suggested.
     influence — tonight's dated events and reservations (demand_signals) and
-                the holiday, if tonight is one.
+                the holiday, if tonight is one — never a followed game from
+                the catalog, which the night already carries.
 
     A suggestion is never saved on its own: the closer sees it in the box and
     keeps, edits or clears it."""
@@ -322,6 +323,13 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
         import demand_signals
         for s in demand_signals.upcoming(restaurant_id, day, day, db_path=db_path):
             label = (s.get("label") or "").strip()
+            # A followed game (source "events", the catalog's copy) is
+            # already flagged on the night: prefilled here, the closer's
+            # saved note read it back as a second thing that is never quiet,
+            # knocking every game night out of the baselines (event re-audit
+            # P1-02). The influence box is for what only the closer knows.
+            if str(s.get("source") or "") == "events":
+                continue
             if label:
                 bits.append(label + (f" ({s['covers']} covers booked)" if s.get("covers") else ""))
     except Exception:
