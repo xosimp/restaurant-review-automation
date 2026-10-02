@@ -84,10 +84,17 @@ restaurant 5; restaurant 4 is Will's demo copy.
     other days, a lean by posted date, as review-diagnosis evidence and in Ask.
   - What games did at other restaurants that follow the team, behind the
     privacy floor (eight restaurants from five owners, the viewer's out,
-    rounded to 5%), said as theirs and never planned on. Blind-audited the same
-    day: praise no longer counts as strain, quiet games confound nothing, an
-    unplayed playoff game is never measured, note rules are owner-only and
+    rounded to 5%), said as theirs and never planned on — materialised
+    nightly, so a request never reads other restaurants' nights. Blind-audited
+    the same day: praise no longer counts as strain, quiet games confound
+    nothing but another game, an unplayed playoff game is never measured (the
+    admin's Event calendar asks for its result), note rules are owner-only and
     read nothing that could mean something else.
+  - Re-audited the same day: one clean-nights rule and one same-kind rule for
+    every game read (a game at another ground is its own), kickoffs and send
+    times on the restaurant's clock, the measured game leads when two share a
+    date, one rule for who sees the item mix, and a removed game comes back
+    only through Put back (web and iOS), with who removed it.
   - Not built (each needs an events or sports API): concerts and festivals,
     road closures, the final whistle, watch-party searches.
 - **10/1 — Event Intelligence phase 3.**
@@ -101,13 +108,13 @@ restaurant 5; restaurant 4 is Will's demo copy.
 - **10/1 — Event Intelligence phase 2.**
   - The morning brief names a followed game up to three days out: what games
     like it did here (or the last one, as one night), a staffing plan by role
-    and the rush around kickoff once two games are measured, and a game-day
-    campaign to start.
+    and the rush around kickoff once two games are measured (clean nights; a
+    jump only where the games jumped), and a game-day campaign to start.
   - The nightly report sets tonight's game against the last one of the same
     side, and the day after says who worked games like tomorrow's.
   - Owners follow or stop following a calendar from the Labor events card; the
     admin console's Event calendar corrects a game (Week 18's date when the
-    league sets it) and re-syncs every follower.
+    league sets it); its followers re-sync on the admin job pool, bounded.
 
 - **9/30.**
   - The Reports tab and a figure strip per night.
