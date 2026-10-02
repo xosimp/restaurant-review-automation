@@ -58,12 +58,8 @@ def _people(n, role):
 
 
 def _same_class(e, g):
-    """The same game_class (engine.game_class: side, preseason or not, the
-    home ground or another — the class no measured segment ever crosses)
-    and the same kickoff class (prime time or not). An alt-venue home game
-    is never staffed off the home ground's nights (re-audit SD-02)."""
-    return engine.game_class(g) == engine.game_class(e) and \
-        bool(g.get("is_primetime")) == bool(e.get("is_primetime"))
+    """engine.same_kind — the one same-kind test (gameday uses it too)."""
+    return engine.same_kind(e, g)
 
 
 # ── the usual night ─────────────────────────────────────────────────────────
@@ -228,7 +224,7 @@ def staffing(restaurant_id, e, db_path=store.DB_PATH):
     Each game is set against ITS OWN usual same weekday (audit 10/1/26: a
     Monday game and a Thursday game pooled their usual nights and the plan
     named a third weekday); a role's delta is the median of those per-game
-    deltas. The nights are effect_for's (engine.clean_first, re-audit
+    deltas. The nights are effect_for's (store.clean_first, re-audit
     P2-03): a night that carried something else too is left out while
     SEGMENT_MIN_N clean ones remain; below that every night is said and
     `mixed`, and nothing is planned. A plan needs SEGMENT_MIN_N games, every
@@ -267,7 +263,7 @@ def _staffing(restaurant_id, e, db_path):
                        "confounded": int(g["outcome"].get("confounded") or 0)})
     if not nights:
         return None
-    nights, mixed = engine.clean_first(nights, confounded=lambda x: x["confounded"])
+    nights, mixed = store.clean_first(nights, engine.SEGMENT_MIN_N, outcome=lambda x: x)
     usual_n = sum(len(x["own"]) for x in nights)
     all_roles = sorted({k for n in nights for k in n["usual"]})
     deltas = []
@@ -395,7 +391,7 @@ def rush(restaurant_id, e, db_path=store.DB_PATH):
 
     Each game's kickoff is read on the restaurant's own clock
     (engine.local_kickoff — the checks' hours are the restaurant's; re-audit
-    P2-04). The nights are effect_for's (engine.clean_first, re-audit
+    P2-04). The nights are effect_for's (store.clean_first, re-audit
     P2-03). A pattern needs SEGMENT_MIN_N clean games whose peaks agree
     within RUSH_AGREE_HOURS and every one of which ran above usual at its
     peak — a "jump" is never promised from games that ran below usual in
@@ -439,7 +435,7 @@ def _rush(restaurant_id, e, db_path):
                               for h in hours]})
     if not out:
         return None
-    use, mixed = engine.clean_first(out, confounded=lambda x: x["confounded"])
+    use, mixed = store.clean_first(out, engine.SEGMENT_MIN_N, outcome=lambda x: x)
     # A pattern only when the games' own peaks sit within an hour of each
     # other (audit 10/1/26: +1 and -1 agreed "about the median" and the
     # kickoff hour was named, where neither game peaked), every one of them
@@ -573,18 +569,6 @@ def _past(restaurant_id, iso_local) -> bool:
         return False
 
 
-def _on_clock(e, tz):
-    """The game as it falls on the restaurant's clock (engine.local_kickoff):
-    its date and start there, for a rule that reads a time of day — the
-    guest-text window is the restaurant's own 8am-9pm, and _past compares
-    with the restaurant's now (re-audit P2-04). The game itself when it has
-    no start."""
-    lk = engine.local_kickoff(e, tz)
-    if not lk or not lk[1]:
-        return e
-    return dict(e, event_date=lk[0].isoformat(), kickoff_local=lk[1])
-
-
 _CARRIED = {"event": "effect", "game_staffing": "staffing", "game_prep": "prep"}
 
 
@@ -681,7 +665,7 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             parts.append("Prep for " + "; ".join(p["text"] for p in prep[:3]) + ".")
         elif mix and mix.get("text") and mix["n"] == 1:
             parts.append(mix["text"])
-        plan = gameday.send_plan(_on_clock(e, tz)) if marketing else None
+        plan = gameday.send_plan(e, tz=tz) if marketing else None
         if plan and _past(restaurant_id, plan["text_at"]):
             plan = None      # an early kickoff's "the evening before" is already gone on game day
         if plan:
@@ -695,7 +679,7 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 # line already carried left an "inference" on a line with none).
                 "claim_kind": "inferred" if staffed else claim,
                 "outside": True, "text": " ".join(parts),
-                "ask": f"How should we get ready for {engine.describe(e, tz=tz)}?"}
+                "ask": gameday.ask_for(e, tz=tz)}
         if staffed:
             line["staffing"] = {k: st[k] for k in ("recommend", "basis", "n")}
         if marketing:

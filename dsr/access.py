@@ -456,6 +456,12 @@ def tomorrow_for(facts, user, view, withheld=None):
         t["items"] = [i for i in t.get("items") or [] if i.get("kind") not in ("rest_day", "game_staffing")]
     elif isinstance(t.get("labor"), dict) and view != OWNER:
         t["labor"] = {k: v for k, v in t["labor"].items() if not str(k).lower().startswith(OWNER_ONLY_PREFIXES)}
+    # A game's item mix and the prep sized from it follow the one item-mix
+    # rule (gameday.item_mix_visible: the Labor or the Food Cost view —
+    # re-audit X-8), as in the brief, Ask and Food Cost's game week.
+    from event_intel import gameday
+    if not gameday.item_mix_visible(denied=withheld or []):
+        t["items"] = [i for i in t.get("items") or [] if i.get("kind") != "game_prep"]
     ok = _cite_rule(user, view)
     t["predictions"] = [p for p in t.get("predictions") or []
                         if isinstance(p, dict) and all(ok(c) for c in predictions.cites_for(p.get("key")))]

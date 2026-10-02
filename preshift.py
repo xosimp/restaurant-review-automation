@@ -46,7 +46,7 @@ def _game_line(restaurant_id, label, ref, db_path=DB_PATH):
         return None
     if not e:
         return f"Game tonight: {label}."
-    what = engine.describe(e, with_date=False)
+    what = engine.describe(e, with_date=False, tz=engine.restaurant_clock(restaurant_id, db_path=db_path))
     return f"Game tonight: {what}." if e.get("category") == "sports" else f"Nearby tonight: {what}."
 
 

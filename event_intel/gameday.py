@@ -77,8 +77,7 @@ def _same_kind(e, g) -> bool:
     """Games a plan for `e` may rest on: the same engine.game_class (side,
     preseason, the home ground or another — re-audit SD-02, A1 handoff 6)
     and the same kickoff class (prime time or not)."""
-    return (engine.game_class(g) == engine.game_class(e)
-            and bool(g.get("is_primetime")) == bool(e.get("is_primetime")))
+    return engine.same_kind(e, g)
 
 
 def _items_by_date(restaurant_id, dates, db_path) -> dict:
@@ -465,7 +464,12 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
                 and engine.headline(restaurant_id, e, db_path=db_path)]
         if not rows:
             return None
-        e = rows[0]
+        # Two headline games on one date: the one with a measured effect
+        # leads and the others are named — never "order for a usual week"
+        # beside a measured game that day (re-audit P4-11, as playbook.alert).
+        same_day = [x for x in rows if x["event_date"] == rows[0]["event_date"]]
+        e = next((x for x in same_day if engine.effect_for(restaurant_id, x, db_path=db_path)), same_day[0])
+        others = [x for x in same_day if x["id"] != e["id"]]
         mix = item_mix(restaurant_id, e, db_path=db_path)
         bump = order_bump(restaurant_id, e, mix=mix, db_path=db_path)
         why = unplanned_words(mix, "order")
@@ -481,7 +485,10 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
         else:
             text = "No game like it measured here yet — order for a usual week."
         tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+        if others:
+            text += " Also that day: " + "; ".join(engine.describe(o, with_date=False, tz=tz) for o in others) + "."
         return {"event_id": e["id"], "describe": engine.describe(e, tz=tz), "text": text, "order": bump,
+                "others": [o["id"] for o in others],
                 "items": (mix or {}).get("items") or [], "basis": (bump or mix or {}).get("basis")}
     except Exception as ex:
         log.warning("event_intel.gameday week_note failed rid=%s: %s", restaurant_id, ex)

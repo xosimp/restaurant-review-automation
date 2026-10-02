@@ -147,11 +147,11 @@ def _game_prep(rid, event, db_path):
             return {"text": "Prep for " + "; ".join(p["text"] for p in prep[:3]), "tone": "warn",
                     "basis": mix["basis"]}
         if mix and mix.get("text"):
-            # "One game" only when it was one (re-audit P3-04): several games
-            # whose items didn't rise on every one are not a pattern either,
-            # and say so — the words gameday.week_note uses.
-            why = "One game" if mix.get("n") == 1 else "Not on every game"
-            return {"text": f"{mix['text']} {why} — not yet a pattern to prep on.", "tone": None,
+            # Why there is no plan, in the words Food Cost's game week uses:
+            # one game, nights that had something else on, or not on every
+            # game (re-audit P3-04 — "One game" only when it was one).
+            why = gameday.unplanned_words(mix, "prep")
+            return {"text": f"{mix['text']} {why}" if why else mix["text"], "tone": None,
                     "basis": mix["basis"]}
     except Exception:
         return None

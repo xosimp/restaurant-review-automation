@@ -564,19 +564,12 @@ def _past_games(restaurant_id, e, db_path):
     return got
 
 
-def clean_first(items, confounded=None):
-    """(the nights to use, mixed?) — the one clean-nights rule (QUALITY-4):
-    a night that carried something else too (a game on New Year's Eve, on a
-    rainy payday) is left out while SEGMENT_MIN_N clean nights remain; below
-    that every night counts and `mixed` says some of them were shared, so
-    the sentence says so and nothing is planned on it (effect_for, and
-    playbook.staffing / rush — re-audit P2-03). `confounded(x)` reads one
-    item's flag; by default a past_games entry's outcome."""
-    flag = confounded or (lambda g: int((g.get("outcome") or {}).get("confounded") or 0))
-    clean = [x for x in items if not flag(x)]
-    if len(clean) >= SEGMENT_MIN_N:
-        return clean, False
-    return list(items), len(clean) < len(items)
+def same_kind(e, g) -> bool:
+    """Games a plan for `e` may rest on — staffing, the rush and the item
+    mix alike: the same game_class (side, preseason or not, the home ground
+    or another — re-audit SD-02) and the same kickoff class (prime time or
+    not). The one test playbook and gameday both use."""
+    return game_class(g) == game_class(e) and bool(g.get("is_primetime")) == bool(e.get("is_primetime"))
 
 
 def _regular_games(e, db_path) -> int:
@@ -664,7 +657,7 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
         # A night that carried something else too (a game on Christmas, on
         # a rainy payday) is left out while clean nights suffice; when it
         # has to count, the sentence says so.
-        use, mixed = clean_first(hits)
+        use, mixed = store.clean_first(hits, SEGMENT_MIN_N)
         if len(use) >= SEGMENT_MIN_N:
             import event_memory
             lifts = [float(g["outcome"]["lift_pct"]) for g in use]

@@ -164,12 +164,20 @@ def test_with_too_few_clean_games_the_plan_is_said_mixed_and_never_recommended(d
     assert line["claim_kind"] == "measured" and line["tone"] == "neutral"
 
 
-def test_effect_for_staffing_and_the_rush_share_one_clean_nights_rule():
-    for fn in (engine.effect_for, playbook._staffing, playbook._rush):
-        assert "clean_first(" in inspect.getsource(fn), fn.__name__
+def test_effect_for_staffing_the_rush_and_the_item_mix_share_one_clean_nights_rule():
+    from event_intel import gameday
+    for fn in (engine.effect_for, playbook._staffing, playbook._rush, gameday.item_mix):
+        assert "store.clean_first(" in inspect.getsource(fn), fn.__name__
+    assert not hasattr(engine, "clean_first")
     clean = lambda c: {"outcome": {"confounded": c}}
-    assert engine.clean_first([clean(0), clean(0), clean(1)]) == ([clean(0), clean(0)], False)
-    assert engine.clean_first([clean(0), clean(1)]) == ([clean(0), clean(1)], True)
+    assert store.clean_first([clean(0), clean(0), clean(1)], 2) == ([clean(0), clean(0)], False)
+    assert store.clean_first([clean(0), clean(1)], 2) == ([clean(0), clean(1)], True)
+
+
+def test_staffing_the_rush_and_the_item_mix_share_one_same_kind_rule():
+    from event_intel import gameday
+    for fn in (playbook._same_class, gameday._same_kind):
+        assert "engine.same_kind(" in inspect.getsource(fn), fn.__name__
 
 
 # ── P2-01: a "jump" only from games that ran above usual ───────────────────
@@ -381,12 +389,19 @@ def test_the_day_after_says_one_game_only_when_it_was_one(monkeypatch):
     from dsr import tomorrow
     e = {"category": "sports", "id": 1}
     monkeypatch.setattr(gameday, "prep_lines", lambda *a, **k: [])
-    monkeypatch.setattr(gameday, "item_mix", lambda *a, **k: {"n": 3, "basis": "b", "items": [{"item": "Wings"}],
+    wings = [{"item": "Wings", "every_game": False}]
+    monkeypatch.setattr(gameday, "item_mix", lambda *a, **k: {"n": 3, "basis": "b", "items": wings,
                                                                "text": "Your last 3 home games sold a median 48 Wings "
                                                                        "(usual 20) — against a usual Sunday."})
     assert tomorrow._game_prep(1, e, None)["text"].endswith(
         "against a usual Sunday. Not on every game — not yet a pattern to prep on.")
-    monkeypatch.setattr(gameday, "item_mix", lambda *a, **k: {"n": 1, "basis": "b", "items": [{"item": "Wings"}],
+    # Two games, one of them a night with something else on: not "One game".
+    monkeypatch.setattr(gameday, "item_mix", lambda *a, **k: {"n": 2, "confounded": True, "basis": "b",
+                                                               "items": [{"item": "Wings", "every_game": True}],
+                                                               "text": "Your last 2 home games sold a median 50 Wings."})
+    assert tomorrow._game_prep(1, e, None)["text"] == ("Your last 2 home games sold a median 50 Wings. Not yet a "
+                                                       "pattern to prep on.")
+    monkeypatch.setattr(gameday, "item_mix", lambda *a, **k: {"n": 1, "basis": "b", "items": wings,
                                                                "text": "Your last home game sold 54 Wings."})
     assert tomorrow._game_prep(1, e, None)["text"] == ("Your last home game sold 54 Wings. One game — not yet a "
                                                        "pattern to prep on.")

@@ -2034,7 +2034,15 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     """The Event Intelligence catalog for this restaurant (event_intel): the
     teams and events it follows, the next games with what games like each
     did here (measured, never assumed), the last game of the same kind and
-    what that night sold, and the recent games' nights."""
+    what that night sold, and the recent games' nights. One call shares its
+    reads (engine.one_read — past games, usual nights and punches are read
+    once across the games it plans, re-audit X-2)."""
+    from event_intel import engine
+    with engine.one_read():
+        return _read_events_once(restaurant_id, days=days, past=past, _viewer=_viewer)
+
+
+def _read_events_once(restaurant_id, days=21, past=4, _viewer=None):
     from event_intel import engine, store
     from time_utils import mdy
     today = _local_today_of(restaurant_id)
