@@ -32,6 +32,24 @@ def _safe(fn, *a, **k):
         return None
 
 
+def _game_line(restaurant_id, label, ref, db_path=DB_PATH):
+    """The lineup's line for a followed game (a demand_signals row with
+    source "events"), or None when it is a quiet game or unreadable."""
+    try:
+        import event_memory
+        from event_intel import engine, store
+        mem_db = None if db_path == DB_PATH else db_path
+        if event_memory.quiet_catalog(restaurant_id, label, ref, db_path=mem_db):
+            return None
+        e = store.event_by_id(int(str(ref).split(":", 1)[1]), db_path=db_path)
+    except Exception:
+        return None
+    if not e:
+        return f"Game tonight: {label}."
+    what = engine.describe(e, with_date=False)
+    return f"Game tonight: {what}." if e.get("category") == "sports" else f"Nearby tonight: {what}."
+
+
 def build(restaurant_id, day=None, db_path=DB_PATH):
     """{"day", "weekday", "items": [{"kind", "text"}]} — staff-safe by design."""
     from models import get_restaurant
@@ -122,6 +140,14 @@ def build(restaurant_id, day=None, db_path=DB_PATH):
             text = "Guests were texted an invitation for tonight — expect some to mention it."
         elif sig.get("source") == "post":
             text = f"Promoted today: {label.split(': ', 1)[-1]}. Guests may ask for it."
+        elif sig.get("source") == "events":
+            # A followed game from the catalog — not something the owner
+            # booked. A quiet one (a frequent series not measured to matter
+            # here, event_memory's one quiet test) earns no line at lineup;
+            # the rest are said as games (event re-audit P1-08, P4-02).
+            text = _game_line(restaurant_id, label, sig.get("ref"), db_path)
+            if not text:
+                continue
         else:
             text = f"On the books tonight: {label}" + (f" ({sig['covers']} covers)" if sig.get("covers") else "") + "."
         items.append({"kind": "promotion" if sig.get("source") in ("campaign", "post") else "event", "text": text})

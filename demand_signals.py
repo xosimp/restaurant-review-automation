@@ -434,9 +434,20 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     event_memory.EFFECT_MIN_N nights (`lift_source` "measured",
     `measured_n`), else nothing — an event with no figure and no record is
     `assumed`. Every event with a record carries it in `measured` so an
-    owner's own figure is said beside what was measured."""
+    owner's own figure is said beside what was measured. A catalog game is
+    `context` (never a label, a lift or `assumed`) until its record matters
+    (event_memory.effect_matters, label_matters' own test)."""
     if not dates:
         return {}
+
+    def _matters(measured):
+        # event_memory.effect_matters — the test inside label_matters (False
+        # on any error: a catalog game is context until it matters).
+        try:
+            import event_memory
+            return event_memory.effect_matters(measured)
+        except Exception:
+            return False
     signals = upcoming(restaurant_id, min(dates), max(dates), db_path=db_path)
     typical = typical_covers(restaurant_id, db_path=db_path)
     out = {}
@@ -468,14 +479,24 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
             measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
         # A game or event from the catalog (event_intel, source "events") is
         # not the owner saying the night will be busy: until this restaurant
-        # has MEASURED nights like it past the floor it is context only —
-        # never an assumed-busier night, never a reason to hold a cut, never
-        # a label the schedule reads as the owner's (audit 10/1/26).
+        # has MEASURED nights like it to matter — event_memory.effect_matters,
+        # the one test behind label_matters (the headline, the baselines) and
+        # the forecast (effects_for_day): enough nights AND past
+        # EFFECT_FLOOR_PCT — it is context only: never an assumed-busier
+        # night, never a reason to hold a cut (strategy_jobs._pulse_suppressed
+        # reads `labels`), never a label the schedule reads as the owner's. A game
+        # measured NOT to matter (a Bulls night at +1% over 12 nights) is the
+        # surest context of all (audit 10/1/26; event re-audit P1-01, P4-10).
         if s.get("kind") == "event" and str(s.get("source") or "") == "events" \
-                and not (measured and measured.get("applies")):
-            note = (f" (measured {measured['median_lift_pct']:+.0f}% here over {measured['n']} "
-                    f"night{'s' if measured['n'] != 1 else ''} so far, not enough to plan on)" if measured
-                    else " (no measured effect here yet)")
+                and not _matters(measured):
+            if not measured:
+                note = " (no measured effect here yet)"
+            else:
+                nights = f"{measured['n']} night{'s' if measured['n'] != 1 else ''}"
+                note = (f" (measured {measured['median_lift_pct']:+.0f}% here over {nights}: no measurable "
+                        f"effect to plan on)" if measured.get("applies")
+                        else f" (measured {measured['median_lift_pct']:+.0f}% here over {nights} so far, not "
+                             f"enough to plan on)")
             entry.setdefault("context", []).append(s["label"] + note)
             continue
         if measured:

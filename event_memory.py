@@ -246,6 +246,11 @@ def init_event_memory(db_path=DB_PATH):
     rekey_record(db_path)
 
 
+# The day record_night started marking each night's confounding itself
+# (QUALITY-4, 9b6ffd62, 9/29/26): rows recorded since carry their own marks.
+CONFOUNDING_MARKED_FROM = "2026-09-30"
+
+
 def rekey_record(db_path=DB_PATH) -> dict:
     """At boot, idempotent: bring the record kept before the re-audit fix
     round (9/29/26) to its rules — every holiday row re-keyed by its date's
@@ -258,8 +263,8 @@ def rekey_record(db_path=DB_PATH) -> dict:
         conn = get_conn(db_path)
         try:
             rows = [dict(r) for r in conn.execute(
-                "SELECT id, restaurant_id, business_date, kind, label, confounded, co_labels FROM event_outcomes "
-                "ORDER BY restaurant_id, business_date, id").fetchall()]
+                "SELECT id, restaurant_id, business_date, kind, label, confounded, co_labels, recorded_at "
+                "FROM event_outcomes ORDER BY restaurant_id, business_date, id").fetchall()]
         finally:
             conn.close()
         if not rows:
@@ -282,6 +287,13 @@ def rekey_record(db_path=DB_PATH) -> dict:
         for r in rows:
             nights.setdefault((r["restaurant_id"], r["business_date"]), []).append(r)
         for (rid, _d), group in nights.items():
+            # Only a night recorded before record_night marked its own
+            # confounding: a later night's marks know which games were quiet
+            # (_confounding's quiet and games), which this pass cannot —
+            # re-marking it by the plain rule at every boot undid them (event
+            # re-audit P4-08).
+            if any(str(r.get("recorded_at") or "") >= CONFOUNDING_MARKED_FROM for r in group):
+                continue
             marks = _confounding([{"label": r["label"]} for r in group])
             for r in group:
                 conf, co = marks[r["label"]]
@@ -439,26 +451,36 @@ def _same_thing(a, b) -> bool:
     return bool(ta and tb) and (ta <= tb or tb <= ta)
 
 
-def _confounding(flags) -> dict:
+def _confounding(flags, quiet=frozenset(), games=frozenset()) -> dict:
     """{label: (confounded 0|1, co_labels JSON or None)} for one night's
     flags (QUALITY-4): the night's labels grouped into the distinct things
     that happened (_same_thing), and every label on a night with more than
     one thing is confounded, carrying the others' labels. A closer's "Cubs
-    game" beside the owner's listed "Cubs home game" is one thing."""
-    groups = []
+    game" beside the owner's listed "Cubs home game" is one thing.
+
+    `quiet` (ids of quiet_flags) are games that confound no label but a
+    game's, and `games` (ids of catalog-game flags) the games: a game's own
+    row is confounded by everything else on its night, quiet or loud; any
+    other label only by the loud things. Neither rule reads the label's OWN
+    state, so a game turning loud (or quiet again) changes no row of its
+    own — only other labels' — and cannot flip itself back on a re-record
+    (event re-audit P4-08)."""
+    groups = []                    # [[labels], loud, game]
     for f in flags:
         lab = f["label"]
+        loud, game = id(f) not in quiet, id(f) in games
         for g in groups:
-            if any(_same_thing(lab, o) for o in g):
-                if lab not in g:
-                    g.append(lab)
+            if any(_same_thing(lab, o) for o in g[0]):
+                if lab not in g[0]:
+                    g[0].append(lab)
+                g[1], g[2] = g[1] or loud, g[2] or game
                 break
         else:
-            groups.append([lab])
+            groups.append([[lab], loud, game])
     out = {}
     for g in groups:
-        others = [o[0] for o in groups if o is not g]
-        for lab in g:
+        others = [o[0][0] for o in groups if o is not g and (o[1] or g[2])]
+        for lab in g[0]:
             out[lab] = (1, json.dumps(others)) if others else (0, None)
     return out
 
@@ -570,10 +592,22 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
             try:
                 for r in conn.execute(f"SELECT business_date, influence FROM close_outs WHERE restaurant_id=? "
                                       f"AND business_date IN ({marks})", (restaurant_id, *isos)).fetchall():
+                    d = str(r["business_date"])[:10]
+                    games = [g for g in out[d] if g["kind"] == "event"
+                             and str(g.get("ref") or "").startswith("event:")]
                     for lab in split_labels(r["influence"]):
-                        out[str(r["business_date"])[:10]].append(
-                            {"kind": "influence", "label": lab, "raw": r["influence"], "source": "close_out",
-                             "owner_lift_pct": None, "covers": None})
+                        f = {"kind": "influence", "label": lab, "raw": r["influence"], "source": "close_out",
+                             "owner_lift_pct": None, "covers": None}
+                        # The closer naming the catalog game flagged that
+                        # night ("Bulls game", or the old close-out prefill's
+                        # "Bulls home game · United Center") is that game:
+                        # quiet while it is, its kin in a baseline — never a
+                        # second, never-quiet thing that knocks the night out
+                        # of every baseline (event re-audit P1-02).
+                        same = next((g for g in games if _same_thing(lab, g["label"])), None)
+                        if same is not None:
+                            f["ref"], f["game"] = same["ref"], same["raw"]
+                        out[d].append(f)
             except Exception as e:
                 log.warning("event_memory: close-outs unreadable rid=%s: %s", restaurant_id, e)
             try:
@@ -608,31 +642,49 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
 # matter — the same test measured_effect uses to apply an effect (`applies`,
 # EFFECT_MIN_N nights) past EFFECT_FLOOR_PCT — and while quiet it:
 #   * leaves its night in other nights' baselines (ordinary_nights),
-#   * confounds no other label's night (record_night),
+#   * confounds no other label's night but another game's (record_night),
 #   * is no concurrent change to an outcome (outcomes.concurrent_changes),
-#   * earns no unasked surface (event_intel.engine.headline, the same test).
-# A playoff game and an infrequent series (the Bears) are never quiet. A
-# game's own baseline never holds its own series' or venue's nights, so a
-# series that does matter is not measured against itself (phase 4 audit).
+#   * earns no unasked surface (event_intel.engine.headline, the same test;
+#     memory_lines; the pre-shift notes),
+#   * is context, never a planned lift or a held cut (demand_signals.by_date).
+# A closer's note naming the same game that night ("Bulls game") is that
+# game (flags_for), never a second, never-quiet thing. A playoff game and an
+# infrequent series (the Bears) are never quiet. A game's own baseline never
+# holds its own label's nights (the same series, the same side) or a home
+# game at its venue, so a series that does matter is not measured against
+# itself — and home and road stay apart (event re-audit P4-06).
 FREQUENT_SERIES_GAMES = 30
 _MATTERS_SECONDS = 60
 _matters_memo = {}
 
 
+def effect_matters(eff) -> bool:
+    """A measured_effect a plan may act on: it applies (EFFECT_MIN_N nights,
+    _clears_floor) and its median is past EFFECT_FLOOR_PCT. The one test
+    behind label_matters, effects_for_day and demand_signals.by_date."""
+    return bool(eff and eff.get("applies") and abs(eff.get("median_lift_pct") or 0) >= EFFECT_FLOOR_PCT)
+
+
 def label_matters(restaurant_id, label, db_path=None) -> bool:
     """Games like `label` measured here past EFFECT_FLOOR_PCT on enough
-    nights to apply (memoised a minute). Never raises."""
+    nights to apply (effect_matters; memoised a minute). Never raises."""
     key = (restaurant_id, str(label or ""), db_path)
     hit = _matters_memo.get(key)
     import time as _t
     if hit and _t.monotonic() - hit[0] < _MATTERS_SECONDS:
         return hit[1]
-    eff = measured_effect(restaurant_id, label, db_path=db_path)
-    out = bool(eff and eff.get("applies") and abs(eff.get("median_lift_pct") or 0) >= EFFECT_FLOOR_PCT)
+    out = effect_matters(measured_effect(restaurant_id, label, db_path=db_path))
     if len(_matters_memo) > 5000:
         _matters_memo.clear()
     _matters_memo[key] = (_t.monotonic(), out)
     return out
+
+
+def _forget_matters(restaurant_id):
+    """Drop the restaurant's memoised label_matters answers (a label's state
+    just changed)."""
+    for k in [k for k in list(_matters_memo) if k[0] == restaurant_id]:
+        _matters_memo.pop(k, None)
 
 
 def quiet_game(restaurant_id, label, regular_games, season_type=None, db_path=None) -> bool:
@@ -670,35 +722,56 @@ def _catalog_info(refs, db_path=None) -> dict:
                                  "home_away": r["home_away"]} for r in rows}
 
 
+def _catalog_refs(flags) -> set:
+    """The catalog refs ("event:<id>") flags carry — a listed game's, and a
+    closer's note that names it (flags_for)."""
+    return {f.get("ref") for f in flags or [] if str(f.get("ref") or "").startswith("event:")}
+
+
 def quiet_flags(restaurant_id, flags, info=None, db_path=None) -> set:
-    """The ids (id(flag)) of the catalog flags in `flags` that are quiet."""
-    info = info if info is not None else _catalog_info(
-        {f.get("ref") for f in flags or [] if str(f.get("ref") or "").startswith("event:")}, db_path=db_path)
+    """The ids (id(flag)) of the catalog flags in `flags` that are quiet —
+    a game's flag, and a closer's note flags_for tied to it (judged by the
+    game's own label, `game`)."""
+    info = info if info is not None else _catalog_info(_catalog_refs(flags), db_path=db_path)
     out = set()
     for f in flags or []:
-        i = info.get(f.get("ref")) if f.get("kind") == "event" else None
-        if i and quiet_game(restaurant_id, f.get("raw") or f.get("label"), i["regular"], i["season_type"],
-                            db_path=db_path):
+        i = info.get(f.get("ref")) if f.get("kind") in ("event", "influence") else None
+        if i and quiet_game(restaurant_id, f.get("game") or f.get("raw") or f.get("label"), i["regular"],
+                            i["season_type"], db_path=db_path):
             out.add(id(f))
     return out
+
+
+def quiet_catalog(restaurant_id, label, ref, db_path=None) -> bool:
+    """Whether one demand_signals catalog row (source "events", `ref`
+    "event:<id>", its `label`) is a quiet game — quiet_flags for one row,
+    for a surface that reads the rows themselves (the pre-shift notes)."""
+    f = {"kind": "event", "label": normalise_label(label), "raw": label, "ref": ref}
+    return id(f) in quiet_flags(restaurant_id, [f], db_path=db_path)
 
 
 def ordinary_nights(restaurant_id, flags_by_day, db_path=None, tonight=None) -> set:
     """The ISO dates in `flags_by_day` ({iso: flags}, flags_for) that count
     as ordinary for a baseline: nothing flagged but quiet games — and, when
     `tonight` (the measured night's flags) carries a catalog game, none of
-    that game's own series or a home game at its venue (a Bulls night is
-    never measured against other United Center nights). Never raises."""
-    refs = {f.get("ref") for fl in list(flags_by_day.values()) + [tonight or []] for f in (fl or [])
-            if f.get("kind") == "event" and str(f.get("ref") or "").startswith("event:")}
+    its kin: a game of the same series on the same side (its own label), or
+    a home game at its venue (a Bulls home night is never measured against
+    other United Center nights). The series' other side stays in: a quiet
+    Bulls road night is an ordinary night for a Bulls home game and the
+    reverse, so home and road are measured apart, each on enough ordinary
+    nights (event re-audit P4-06). Never raises."""
+    refs = set()
+    for fl in list(flags_by_day.values()) + [tonight or []]:
+        refs |= _catalog_refs(fl)
     info = _catalog_info(refs, db_path=db_path) if refs else {}
     mine = [info[f["ref"]] for f in (tonight or []) if f.get("ref") in info]
-    series = {m["series_id"] for m in mine}
+    sides = {(m["series_id"], m["home_away"] == "home") for m in mine}
     venues = {m["venue"] for m in mine if m["home_away"] == "home" and m["venue"]}
 
     def _kin(f):
         i = info.get(f.get("ref"))
-        return bool(i) and (i["series_id"] in series or (i["home_away"] == "home" and i["venue"] in venues))
+        return bool(i) and ((i["series_id"], i["home_away"] == "home") in sides
+                            or (i["home_away"] == "home" and i["venue"] in venues))
 
     out = set()
     for d, fl in flags_by_day.items():
@@ -830,16 +903,12 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
                 # kept for each, marked confounded (QUALITY-4) — a label is
                 # measured on its own nights where it has enough of them.
                 # A quiet game (a frequent series not measured to matter)
-                # confounds no other label; it is itself confounded by
-                # anything else that happened (phase 4 audit).
-                quiet = quiet_flags(restaurant_id, flags, db_path=db_path)
-                loud = [f for f in flags if id(f) not in quiet]
-                marks = _confounding(loud)
-                for f in flags:
-                    if id(f) in quiet:
-                        others = sorted({o["label"] for o in flags
-                                         if o is not f and not _same_thing(o["label"], f["label"])})
-                        marks[f["label"]] = (1, json.dumps(others)) if others else (0, None)
+                # confounds no label but another game; a game is confounded
+                # by everything else on its night, quiet or loud — one rule
+                # whatever its own state (_confounding, event re-audit P4-08).
+                info = _catalog_info(_catalog_refs(flags), db_path=db_path)
+                marks = _confounding(flags, quiet=quiet_flags(restaurant_id, flags, info=info, db_path=db_path),
+                                     games={id(f) for f in flags if f.get("ref") in info})
                 seen = set()
                 for f in flags:
                     key = (f["kind"], f["label"])
@@ -994,6 +1063,7 @@ def refresh_effects(restaurant_id, labels, db_path=None):
     labels = {l for l in (labels or ()) if l}
     if not labels:
         return
+    flipped = []
     try:
         conn = get_conn(db_path)
         try:
@@ -1001,6 +1071,11 @@ def refresh_effects(restaurant_id, labels, db_path=None):
                 rows = [dict(r) for r in conn.execute(
                     "SELECT * FROM event_outcomes WHERE restaurant_id=? AND label=?", (restaurant_id, lab)).fetchall()]
                 s = _summary(rows)
+                old = conn.execute("SELECT kind, n, median_lift_pct FROM event_effects WHERE restaurant_id=? "
+                                   "AND label=?", (restaurant_id, lab)).fetchone()
+                if "event" in {(old["kind"] if old else None), (s["kind"] if s else None)} and \
+                        _summary_matters(dict(old) if old else None) != _summary_matters(s):
+                    flipped.append(lab)
                 if not s:
                     conn.execute("DELETE FROM event_effects WHERE restaurant_id=? AND label=?", (restaurant_id, lab))
                     continue
@@ -1024,6 +1099,23 @@ def refresh_effects(restaurant_id, labels, db_path=None):
             conn.close()
     except Exception as e:
         log.warning("event_memory: summaries not refreshed rid=%s: %s", restaurant_id, e)
+        return
+    if flipped:
+        # A game's quiet/loud state decides other nights' baselines and other
+        # labels' confounding: the nights recorded under the old state are
+        # re-recorded (queue_rerecord, the backfill cursor), and the answers
+        # memoised under it are dropped (event re-audit P4-08).
+        _forget_matters(restaurant_id)
+        queue_rerecord(restaurant_id, db_path=db_path)
+
+
+def _summary_matters(s) -> bool:
+    """effect_matters for a stored or fresh summary (event_effects row or
+    _summary): whether the label, as recorded, is past the floor."""
+    if not s:
+        return False
+    return _clears_floor(s.get("kind"), int(s.get("n") or 0), s.get("median_lift_pct")) and \
+        abs(float(s.get("median_lift_pct") or 0)) >= EFFECT_FLOOR_PCT
 
 
 # ── reading ────────────────────────────────────────────────────────────────
@@ -1217,6 +1309,8 @@ def effects_for_day(restaurant_id, day, db_path=None, flags=None) -> dict | None
             if f["kind"] not in KNOWN_BEFORE:
                 continue
             e = measured_effect(restaurant_id, f["label"], db_path=db_path)
+            # effect_matters, spelled out (tests/test_mem_int_measurement.py
+            # reads this floor in the source).
             if not e or not e["applies"] or abs(e["median_lift_pct"]) < EFFECT_FLOOR_PCT:
                 continue
             cur = best.get(f["kind"])
@@ -1336,8 +1430,16 @@ def memory_lines(req):
     # the rain observed); today and ahead only what is known before.
     fl = flags_for(rid, [d for d in days if d >= today], db_path=db_path, known_before=True)
     fl.update(flags_for(rid, [d for d in days if d < today], db_path=db_path))
+    asked = getattr(req, "surface", "") == "ask"
     for d in sorted(fl):
+        # A quiet game (and a closer's note naming it) earns no unasked line
+        # — not the brief's "Remembered:", not the report's, schedule's,
+        # labor read's or weekly plan's prompt; Ask, being asked, still has
+        # it (event re-audit P4-01).
+        quiet = set() if asked else quiet_flags(rid, fl[d], db_path=db_path)
         for f in fl[d]:
+            if id(f) in quiet:
+                continue
             e = measured_effect(rid, f["label"], db_path=db_path)
             if not e:
                 continue
@@ -1517,6 +1619,43 @@ def reset_backfill(restaurant_id, db_path=None):
         log.warning("event_memory: backfill not reset rid=%s: %s", restaurant_id, e)
 
 
+RERECORD_PREFIX = "event_memory_rerecord:"
+
+
+def queue_rerecord(restaurant_id, db_path=None):
+    """Ask for the restaurant's history to be recorded again — a label's
+    quiet/loud state changed (refresh_effects), so every night recorded
+    under the old state (its baselines, other labels' confounding) is stale.
+    A marker in job_cursors that remember_restaurant drains through the
+    backfill cursor: at once when the backfill is finished, else when the
+    one under way finishes (a restart mid-way would starve its oldest
+    nights). Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (f"{RERECORD_PREFIX}{restaurant_id}", datetime.now().isoformat(timespec="seconds")))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("event_memory: re-record not queued rid=%s: %s", restaurant_id, e)
+
+
+def _rerecord_queued(restaurant_id, db_path=None, clear=False) -> bool:
+    key = f"{RERECORD_PREFIX}{restaurant_id}"
+    conn = get_conn(db_path)
+    try:
+        if clear:
+            conn.execute("DELETE FROM job_cursors WHERE key=?", (key,))
+            conn.commit()
+            return False
+        return conn.execute("SELECT 1 FROM job_cursors WHERE key=?", (key,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def _history_nights(restaurant_id, start, end, db_path=None) -> list:
     """The nights in [start, end] with a final net on file, newest first."""
     import canonical_facts as cf
@@ -1547,6 +1686,14 @@ def remember_restaurant(restaurant, today=None, db_path=None) -> dict:
     reached = _backfill_cursor(rid, db_path=db_path)
     floor = today - timedelta(days=BACKFILL_DAYS)
     top = (date.fromisoformat(reached) - timedelta(days=1)) if reached else (yesterday - timedelta(days=RECENT_NIGHTS))
+    # A label's quiet/loud state changed (queue_rerecord): once no backfill
+    # is under way, read the history again from the top (event re-audit
+    # P4-08). One under way finishes first, then this restarts it.
+    if (not reached or top < floor) and _rerecord_queued(rid, db_path=db_path):
+        _rerecord_queued(rid, db_path=db_path, clear=True)
+        if reached:
+            reset_backfill(rid, db_path=db_path)
+            reached, top = None, yesterday - timedelta(days=RECENT_NIGHTS)
     backfilled = 0
     if top >= floor:
         nights = _history_nights(rid, floor, top, db_path=db_path)[:BACKFILL_NIGHTS_PER_RUN]
