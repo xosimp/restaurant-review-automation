@@ -190,7 +190,7 @@ RUN_OK, RUN_FAILED, RUN_PARTIAL = 1, 0, 2
 _RESULT_KEYS = ("attempted", "ok", "failed", "skipped", "hit_bound", "held", "retried")
 # Counters that are not a success when a job reports no `attempted` of its
 # own: everything else it counts ({sent: 99}, {diagnosed: 3}) is.
-_NOT_SUCCESS = frozenset(("attempted", "failed", "skipped", "held", "retried", "hit_bound", "closed",
+_NOT_SUCCESS = frozenset(("attempted", "failed", "skipped", "held", "retried", "hit_bound", "closed", "not_yet",
                           "not_supported", "empty", "expired", "unsupported", "missed"))
 
 # How often a running job proves it is alive (job_runs.pulse_at), and how

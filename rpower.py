@@ -89,6 +89,14 @@ class RPowerError(Exception):
     """Any failure reaching or reading RPOWER."""
 
 
+class RPowerNoSalesYet(RPowerError):
+    """RPOWER answered, with nothing posted yet for the business date — a
+    state, not a failure: at opening no check has closed, and RPOWER's
+    cloud copy can trail the store by hours (Simple EJ's, 10/1/26: nothing
+    from 11am until 3pm, $1,825 at 3pm). intraday reads `not_yet`."""
+    not_yet = True
+
+
 class RPowerAuthError(RPowerError):
     """The token is missing, expired or not authorised for this store.
 
@@ -1208,7 +1216,7 @@ def fetch_sales_today(restaurant_id: int, business_date) -> float:
     # An open day by definition: straight from RPOWER, no archive question.
     value = (_business_days(restaurant_id, business_date, business_date, use_archive=False) or {}).get(day)
     if value is None:
-        raise RPowerError(f"RPOWER has no sales posted for {day} yet")
+        raise RPowerNoSalesYet(f"RPOWER has no sales posted for {day} yet")
     return float(value)
 
 

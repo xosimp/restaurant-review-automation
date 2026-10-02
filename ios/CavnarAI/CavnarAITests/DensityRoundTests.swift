@@ -109,16 +109,18 @@ final class DensityRoundTests: XCTestCase {
     // MARK: #32 — the inbox's why
 
     func testTheReviewsWhyLineReadsTheUrgentOnesTopic() throws {
-        func review(_ id: Int, urgency: String, sentiment: String, _ cats: [String]) throws -> Review {
+        func review(_ id: Int, urgency: String, sentiment: String, rating: Int = 2, _ cats: [String]) throws -> Review {
             try decode(Review.self, """
-                {"id": \(id), "platform": "google", "rating": 2, "text": "x", "sentiment": "\(sentiment)",
+                {"id": \(id), "platform": "google", "rating": \(rating), "text": "x", "sentiment": "\(sentiment)",
                  "response_status": "pending", "urgency": "\(urgency)", "categories": \(cats)}
                 """)
         }
         // Array.description of [String] is valid JSON: ["wait_time", "food"].
+        // The positive one is 5 stars: since 9/30/26 a 1-2 star review owed a
+        // reply is urgent whatever its sentiment (Review.isUrgent).
         let rows = [try review(1, urgency: "high", sentiment: "negative", ["wait_time"]),
                     try review(2, urgency: "high", sentiment: "negative", ["wait_time", "food"]),
-                    try review(3, urgency: "normal", sentiment: "positive", [])]
+                    try review(3, urgency: "normal", sentiment: "positive", rating: 5, [])]
         XCTAssertEqual(ReviewsWhyLine.make(urgent: 2, reviews: rows), "2 urgent \u{2014} both about wait time")
         XCTAssertNil(ReviewsWhyLine.make(urgent: 0, reviews: [rows[2]]))
     }
