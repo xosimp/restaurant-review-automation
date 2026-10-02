@@ -3864,10 +3864,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         staff_availability = staff_availability or []
         _av_lines = []
         _note_lines = []
+        from models import availability_blocked_days as _av_blocked
         for av in staff_availability:
             _name = av.get("employee_name","")
-            _avail = _jav.loads(av.get("available_days") or "[]")
-            _unavail = _jav.loads(av.get("unavailable_days") or "[]")
+            # This week's reading of the row: a weekday blocked only
+            # between two dates ("Fridays until 12/15") counts when this
+            # week's day falls inside them (employee audit M5).
+            _unavail = [d for d in week_days if d in _av_blocked(av, week_dates)]
+            _avail = [d for d in week_days if d not in _unavail] if _unavail else _jav.loads(av.get("available_days") or "[]")
             _anote = " ".join(str(av.get("notes") or "").split())[:200]
             parts = []
             if _avail:
@@ -4604,7 +4608,8 @@ def break_window(shift_start: str, shift_end: str, meal_break_after_hours) -> st
     return f"{_fmt_minutes(mid)}–{_fmt_minutes(mid + 30)}"
 
 
-def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None) -> list:
+def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None,
+                             restaurant_id=None) -> list:
     """One employee's own shifts, pulled out of the generated schedule CSV.
 
     The CSV is the schedule's source of truth (see generate_optimized_schedule's
@@ -4612,6 +4617,10 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     so a staff-facing view reads from it rather than from a second copy that
     could drift. Matching is case- and whitespace-insensitive because names
     arrive from POS exports with inconsistent spacing.
+
+    With `restaurant_id`, a shift a manager put in a floor section carries
+    `section` ("Patio" — models.shift_sections, employee audit V12); a
+    restaurant that names no sections gets no key at all.
     """
     import csv as _csv
     import io as _io
@@ -4619,6 +4628,14 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     target = (employee_name or "").strip().lower()
     if not schedule_csv or not target:
         return []
+    sections = {}
+    if restaurant_id:
+        try:
+            from models import sections_for_employee
+            sections = sections_for_employee(int(restaurant_id), employee_name) or {}
+        except Exception as e:
+            print(f"[labor] shift sections unavailable rid={restaurant_id}: {e!r}")
+            sections = {}
     shifts = []
     try:
         reader = _csv.DictReader(_io.StringIO(schedule_csv))
@@ -4640,6 +4657,11 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
                 "notes": staff_facing_note(row.get("notes")),
                 "break": break_window(row.get("shift_start"), row.get("shift_end"), meal_break_after_hours),
             })
+            if sections:
+                from models import shift_section_start
+                sec = sections.get((shifts[-1]["date"], shift_section_start(shifts[-1]["start"])))
+                if sec:
+                    shifts[-1]["section"] = sec
     except Exception:
         return []
     shifts.sort(key=lambda s: (s["date"], s["start"]))

@@ -7660,6 +7660,55 @@ def mobile_schedule_replacements(current_user):
         return jsonify(ok=False, error=_safe_err(e), replacements=[]), 500
 
 
+@mobile_bp.route("/labor/schedule/sections")
+@mobile_login_required
+def mobile_schedule_sections(current_user):
+    """The restaurant's named floor sections and who is in which between
+    `start` and `end` (iso dates) — the Schedule Studio's section picker,
+    web (/api/labor/schedule/sections) and phone alike (employee audit V12).
+    {ok, sections: [names], assigned: [{date, employee, shift_start
+    ("HH:MM"), section}], foh_roles: [lowercase roles the picker is for]}."""
+    import json as _json
+    from models import foh_sections, shift_sections_between, get_restaurant
+    rid = current_user["restaurant_id"]
+    start, end = (request.args.get("start") or "")[:10], (request.args.get("end") or "")[:10]
+    r = get_restaurant(rid)
+    names = foh_sections(r) if r else []
+    assigned = shift_sections_between(rid, start, end) if (names and start and end) else []
+    try:
+        foh = [str(x).strip().lower() for x in (_json.loads(getattr(r, "foh_roles_json", None) or "[]") or [])
+               if str(x).strip()]
+    except Exception:
+        foh = []
+    return jsonify(ok=True, sections=names, assigned=assigned, foh_roles=foh or ["server"]), 200
+
+
+@mobile_bp.route("/labor/schedule/sections", methods=["POST"])
+@mobile_login_required
+def mobile_schedule_sections_save(current_user):
+    """Name the sections ({sections: ["Patio", "Bar"]}) or put one shift in
+    one ({date, employee, shift_start, section}; "" takes it out). Saved at
+    once, apart from the week's rows: a section is not a schedule edit and
+    rides to the staff app beside the published shift."""
+    from permissions import has_permission, SCHEDULE_DRAFT
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="You don't have permission to change the schedule."), 403
+    from models import set_foh_sections, set_shift_section, foh_sections
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Send sections, or date, employee, shift_start and section."), 400
+    try:
+        if "sections" in data:
+            return jsonify(ok=True, sections=set_foh_sections(rid, data.get("sections"))), 200
+        section = set_shift_section(rid, data.get("date"), data.get("employee"), data.get("shift_start"),
+                                    data.get("section"),
+                                    updated_by=current_user.get("username") or current_user.get("email"))
+        return jsonify(ok=True, section=section, sections=foh_sections(rid)), 200
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
 @mobile_bp.route("/labor/profiles")
 @mobile_login_required
 def mobile_shift_profiles(current_user):

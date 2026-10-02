@@ -464,44 +464,51 @@ def api_availability(current_user):
     note. The automation audit's one workflow where the person with the
     information had no way to enter it: availability was typed by a
     manager on the console on staff's behalf. The name comes from the
-    session, so there is nobody else's to read."""
+    session, so there is nobody else's to read.
+
+    Each weekday is `any`, `off` or `window` (earliest/latest as "17:00"),
+    either with optional `from`/`until` dates — "not before 5pm on
+    Tuesdays until 12/15/26" (employee audit M5). `updated_at` is the
+    version a save must send back (staff_settings.save_own_availability)."""
     rid, name = _staff_context(current_user)
-    from models import get_staff_availability, init_staff_availability
-    mine = next((r for r in (get_staff_availability(rid) or [])
-                 if (r.get("employee_name") or "").strip().lower() == name.strip().lower()), None)
-    import json as _j
-    blocked = []
-    if mine:
-        try:
-            blocked = list(_j.loads(mine.get("unavailable_days") or "[]") or [])
-        except Exception:
-            blocked = []
-    return jsonify(ok=True, days=list(_DAYS), unavailable_days=blocked,
-                   notes=(mine or {}).get("notes") or "", updated_at=(mine or {}).get("updated_at"))
+    import staff_settings
+    return jsonify(ok=True, **staff_settings.own_availability(rid, name))
 
 
 @staff_bp.route("/api/availability", methods=["POST"])
 @staff_login_required
 def api_availability_save(current_user):
+    """Save this employee's availability: `week` (the new shape) or
+    `unavailable_days` (older apps), with `notes` and — always — the
+    `updated_at` the screen loaded. A save against a version that has moved
+    on is a 409 with the record as it is now: an app whose load failed has
+    no version to send, so it can never save an empty week over the real
+    one (PERF-05), and the app and the /s/ link cannot overwrite each other.
+    The answer names the published shifts the new availability rules out
+    (`conflicts`, `conflicts_text`) — the managers hear about them too
+    (LG-35) — and a `hint` when the note reads like dates away (WF-32)."""
     rid, name = _staff_context(current_user)
     if not name:
         return jsonify(ok=False, error="No employee name on this session."), 400
-    body = request.get_json(silent=True) or {}
-    raw = body.get("unavailable_days")
-    if not isinstance(raw, list):
-        return jsonify(ok=False, error="unavailable_days must be a list of weekday names."), 400
-    available, blocked, notes, err = availability_from_submission(raw, body.get("notes"))
-    if err:
-        return jsonify(ok=False, error=err), 400
-    from models import save_staff_availability, init_staff_availability, log_event
-    save_staff_availability(rid, name, available, blocked, notes=notes)
-    # The schedule generator reads staff_availability (get_unavailability_map)
-    # on its next draft; the owner's activity log says who changed what.
-    try:
-        log_event(rid, "availability_updated", {"employee": name, "unavailable_days": blocked})
-    except Exception:
-        pass
-    return jsonify(ok=True, unavailable_days=blocked, notes=notes or "")
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(ok=False, error="Send your availability as a JSON object."), 400
+    week, raw = body.get("week"), body.get("unavailable_days")
+    if week is None and not isinstance(raw, list):
+        return jsonify(ok=False, error="Send week, or unavailable_days as a list of weekday names."), 400
+    import staff_settings
+    res = staff_settings.save_own_availability(
+        rid, name, body["updated_at"] if "updated_at" in body else staff_settings.MISSING,
+        week=week, unavailable_days=raw,
+        notes=body.get("notes") if "notes" in body else staff_settings.KEEP, source="app")
+    status = res.pop("status", 200)
+    if not res.get("ok"):
+        return jsonify(**res), status
+    av = res.pop("availability")
+    res.pop("updated_at", None)        # the same as av["updated_at"]
+    # The top level keeps the old answer's fields (unavailable_days, notes)
+    # beside the new ones.
+    return jsonify(**av, **res), 200
 
 
 @staff_bp.route("/api/time-off")

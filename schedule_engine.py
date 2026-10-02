@@ -1419,18 +1419,22 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     # a missed top-up is a far smaller problem than deterministically
     # violating a constraint a human specifically wrote down.
     notes_restricted: set = set()
+    # This week's reading of each row: a weekday blocked only between two
+    # dates counts when this week's day is inside them (employee audit M5).
+    from models import availability_blocked_days as _av_blocked
+    _topup_dates = sorted({r.get("date") for r in preview_rows if r.get("date")})
     for a in _avail_rows:
         name = a.get("employee_name")
         if not name:
             continue
         try:
-            unavailable_by_emp[name] = set(_json_avail.loads(a.get("unavailable_days") or "[]"))
+            unavailable_by_emp[name] = _av_blocked(a, _topup_dates or None)
         except Exception:
             unavailable_by_emp[name] = set()
         try:
             avail = _json_avail.loads(a.get("available_days") or "[]")
             if avail:
-                available_by_emp[name] = set(avail)
+                available_by_emp[name] = set(_WEEKDAYS) - unavailable_by_emp[name]
         except Exception:
             pass
         if (a.get("notes") or "").strip():
@@ -2613,9 +2617,12 @@ def _quality_signals(restaurant_id, result, **extra):
     # a new restaurant. A failure to load one must cost that dimension, not
     # the whole evaluation — which is exactly what returning {} does, since
     # a dimension with no data withdraws instead of scoring zero.
+    # Availability is read for the week being judged: a weekday blocked
+    # only between two dates counts inside them (employee audit M5).
+    _sig_week = list((result or {}).get("week_dates") or []) or None
     for key, fn in (("tenure", get_employee_tenure), ("leader_flags", get_leader_flags),
                     ("prior_pattern", get_prior_shift_pattern),
-                    ("availability", get_unavailability_map)):
+                    ("availability", lambda rid: get_unavailability_map(rid, week_dates=_sig_week))):
         try:
             signals[key] = fn(restaurant_id) or {}
         except Exception:
@@ -4099,7 +4106,7 @@ def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, const
             v = after[new[0]]
             label = _rules.LABELS.get(v["kind"], v["kind"])
             return False, label if v.get("detail") in (None, "", label) else f"{label} ({v['detail']})"
-        availability = get_unavailability_map(restaurant_id)
+        availability = get_unavailability_map(restaurant_id, week_dates=list(c.week_dates or []) or None)
         idx = _sq._SwapIndex(rows, availability, {}, _rules_for_swaps(c))
         if not idx.replacement_legal(index, name, allow_double=True):
             return False, "would break a rule (hours, rest, or a shift that overlaps one they already have)"

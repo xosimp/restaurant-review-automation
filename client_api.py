@@ -11686,6 +11686,19 @@ def labor_schedule_replacements(current_user):
     return _m("mobile_schedule_replacements")(current_user)
 
 
+# Floor sections per shift (employee audit V12): the Studio's picker.
+@client_bp.route("/api/labor/schedule/sections")
+@login_required
+def labor_schedule_sections(current_user):
+    return _m("mobile_schedule_sections")(current_user)
+
+
+@client_bp.route("/api/labor/schedule/sections", methods=["POST"])
+@login_required
+def labor_schedule_sections_save(current_user):
+    return _m("mobile_schedule_sections_save")(current_user)
+
+
 @client_bp.route("/api/labor/capability-changes")
 @login_required
 def labor_capability_changes(current_user):

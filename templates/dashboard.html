@@ -24836,6 +24836,7 @@ function ssRenderShift() {
     + '<div class="sw-kv"><span>Their week</span><b class="hb-num' + (wk.hours > ceil ? ' bad' : '') + '">' + _schedHrs(wk.hours) + 'h of ' + ceil + 'h</b></div>'
     + '<div class="sw-kv"><span>Days on</span><b class="hb-num">' + wk.days + '</b></div>'
     + (sc ? '<div class="sw-kv"><span>Operational score</span><b class="hb-num">' + sc + ' / 5</b></div>' : '')
+    + '<div id="ss-sd-sec">' + _ssSecHtml(i) + '</div>'
     + (r.needs_review ? '<div class="sw-flag bad">' + _escHtml(r.review_reason || 'Breaks a rule') + '</div>' : '')
     + (_schedOverrides[i] ? '<div class="sw-flag">You changed this shift; Save to re-score the week.</div>' : '')
     + '<div class="sw-sub">Why ' + _escHtml(r.employee || 'this person') + '</div><div class="sw-note">' + (why && why.why ? _escHtml(why.why) : 'No facts on file for this assignment.') + '</div>'
@@ -24870,6 +24871,97 @@ function ssSwapTo(i, name) {
   _schedOverrides[i] = true; _swSelRow = r;
   schedAfterEdit();
   toast(name + ' takes ' + was + '’s shift', 'success');
+}
+// ── floor sections (employee audit V12) ────────────────────────────────
+// A server's section on a shift ("Patio"), from the restaurant's named
+// sections. Saved at once through /api/labor/schedule/sections, apart from
+// the week's rows, and shown to the employee beside the published shift.
+// No sections named: an FOH shift offers only "Name floor sections".
+var _ssSec = {names: null, map: {}, range: '', foh: ['server'], naming: false};
+function _ssSecStart(s) {
+  var m = _schedMinutes(s);
+  return m === null ? String(s || '').toLowerCase() : ('0' + Math.floor(m / 60)).slice(-2) + ':' + ('0' + (m % 60)).slice(-2);
+}
+function _ssSecKey(date, emp, start) {
+  return String(date || '') + '|' + String(emp || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase() + '|' + _ssSecStart(start);
+}
+function _ssSecRange() {
+  var lo = '', hi = '', k, d;
+  for (k = 0; k < _schedRows.length; k++) {
+    d = _schedRows[k].date || '';
+    if (!d) continue;
+    if (!lo || d < lo) lo = d;
+    if (!hi || d > hi) hi = d;
+  }
+  return lo ? lo + '|' + hi : '';
+}
+function _ssSecLoad() {
+  var rg = _ssSecRange(); if (!rg || rg === _ssSec.range) return;
+  _ssSec.range = rg;
+  var p = rg.split('|');
+  fetch('/api/labor/schedule/sections?start=' + encodeURIComponent(p[0]) + '&end=' + encodeURIComponent(p[1]), {credentials: 'same-origin'})
+    .then(apiJson).then(function (d) {
+      if (!d || !d.ok) { _ssSec.range = ''; return; }
+      _ssSec.names = d.sections || []; _ssSec.foh = d.foh_roles || ['server']; _ssSec.map = {};
+      var a = d.assigned || [], k;
+      for (k = 0; k < a.length; k++) _ssSec.map[_ssSecKey(a[k].date, a[k].employee, a[k].shift_start)] = a[k].section;
+      _ssSecRefresh();
+    }).catch(function () { _ssSec.range = ''; });
+}
+function _ssSecRefresh() {
+  var box = document.getElementById('ss-sd-sec');
+  if (box && _swSel !== null && _schedRows[_swSel]) box.innerHTML = _ssSecHtml(_swSel);
+}
+function _ssSecHtml(i) {
+  var r = _schedRows[i]; if (!r) return '';
+  if (_ssSec.names === null || _ssSecRange() !== _ssSec.range) { _ssSecLoad(); return ''; }
+  var cur = _ssSec.map[_ssSecKey(r.date, r.employee, r.shift_start)] || '';
+  var foh = false, k;
+  for (k = 0; k < _ssSec.foh.length; k++) if (String(r.role || '').toLowerCase().indexOf(_ssSec.foh[k]) === 0) foh = true;
+  if (_ssSec.naming) {
+    return '<div class="sw-sub">Floor sections</div>'
+      + '<input type="text" class="ac-input" id="ss-sec-names" maxlength="600" aria-label="Floor sections, separated by commas" placeholder="Patio, Bar, Section 3" value="' + _escAttr(_ssSec.names.join(', ')) + '">'
+      + '<div class="sw-note">Separate them with commas. Removing one takes it off every shift.</div>'
+      + '<div class="ss-sd-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="ssSecSaveNames(this)">Save sections</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="_ssSec.naming=false;_ssSecRefresh()">Cancel</button></div>';
+  }
+  if (!_ssSec.names.length) {
+    return foh ? '<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="_ssSec.naming=true;_ssSecRefresh()">Name floor sections</button>' : '';
+  }
+  if (!foh && !cur) return '';
+  var opts = '<option value="">No section</option>';
+  for (k = 0; k < _ssSec.names.length; k++) {
+    opts += '<option value="' + _escAttr(_ssSec.names[k]) + '"' + (_ssSec.names[k] === cur ? ' selected' : '') + '>' + _escHtml(_ssSec.names[k]) + '</option>';
+  }
+  return '<div class="sw-kv"><label for="ss-sec-pick">Section</label><select class="ac-select" id="ss-sec-pick" onchange="ssSecPick(' + i + ',this)">' + opts + '</select></div>'
+    + '<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="_ssSec.naming=true;_ssSecRefresh()">Edit sections</button>';
+}
+function ssSecPick(i, sel) {
+  var r = _schedRows[i]; if (!r || !sel) return;
+  var want = sel.value, key = _ssSecKey(r.date, r.employee, r.shift_start), was = _ssSec.map[key] || '';
+  sel.disabled = true;
+  fetch('/api/labor/schedule/sections', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({date: r.date, employee: r.employee, shift_start: r.shift_start, section: want})})
+    .then(apiJson).then(function (d) {
+      sel.disabled = false;
+      if (!d || !d.ok) { sel.value = was; toast((d && d.error) || 'Couldn’t save the section', 'error'); return; }
+      if (d.section) _ssSec.map[key] = d.section; else delete _ssSec.map[key];
+      toast(d.section ? (r.employee || 'This shift') + ' is in ' + d.section : 'Section cleared', 'success');
+    }).catch(function () { sel.disabled = false; sel.value = was; toast('Couldn’t save the section', 'error'); });
+}
+function ssSecSaveNames(btn) {
+  var inp = document.getElementById('ss-sec-names'); if (!inp) return;
+  var parts = String(inp.value || '').split(','), names = [], k, n;
+  for (k = 0; k < parts.length; k++) { n = parts[k].replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, ''); if (n) names.push(n); }
+  var done = cbtnBusy(btn, 'Saving…');
+  fetch('/api/labor/schedule/sections', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sections: names})})
+    .then(apiJson).then(function (d) {
+      done();
+      if (!d || !d.ok) { toast((d && d.error) || 'Couldn’t save the sections', 'error'); return; }
+      _ssSec.naming = false; _ssSec.range = ''; _ssSec.names = null;
+      _ssSecRefresh();
+      toast(d.sections.length ? 'Sections saved' : 'Sections removed', 'success');
+    }).catch(function () { done(); toast('Couldn’t save the sections', 'error'); });
 }
 // ── hover insight ──────────────────────────────────────────────────────
 var _ssTipT = null;
