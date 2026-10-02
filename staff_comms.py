@@ -75,7 +75,7 @@ MESSAGE_PUSH_QUIET_MINUTES = 10
 # The manager-side notice type. "shift_request" is the staff-request type
 # push/notify already treat right: P2, Labor, never held by the briefing
 # budget, uncollapsible. Its nav is overridden per notice (data["nav"]).
-MANAGER_NOTICE_TYPE = "shift_request"
+MANAGER_NOTICE_TYPE = "employee_message"
 INBOX_NAV = "labor/inbox"
 # Rate limits (per staff login): a stuck button or a script must not page
 # every manager on the team.
@@ -751,6 +751,7 @@ def _deliver_announcement(restaurant_id, aid, title, body, priority, members, db
                           data={"kind": "announcement", "announcement_id": aid, "nav": "inbox"},
                           priority="urgent" if priority == "urgent" else None,
                           channel=channels.get(name) or {}, db_path=db_path)
+        via = "sms" if via == "sms_held" else via   # held overnight, sent at 8am
         counts[via if via in counts else "none"] += 1
         conn = get_conn(db_path)
         try:
@@ -770,6 +771,7 @@ def _announcement_out(a, rcpts, local_day=None) -> dict:
     via = {"push": 0, "sms": 0, "email": 0, "none": 0}
     for r in rcpts:
         k = r["delivered_via"] or "none"
+        k = "sms" if k == "sms_held" else k
         via[k if k in via else "none"] += 1
     expired = bool(a.get("expires_on") and local_day and a["expires_on"] < local_day.isoformat())
     return {"id": a["id"], "title": a["title"], "body": a["body"], "priority": a["priority"],

@@ -160,7 +160,7 @@ def test_running_late_records_a_self_report_and_tells_the_deciders_once(app, db_
     # The decider set, once: P2 shift_request type, deciders=True, SCHEDULE_DRAFT, the ETA in the text.
     (m,) = told["managers"]
     from permissions import SCHEDULE_DRAFT
-    assert m["type"] == "shift_request" and m["deciders"] is True and m["permissions"] == [SCHEDULE_DRAFT]
+    assert m["type"] == "employee_message" and m["deciders"] is True and m["permissions"] == [SCHEDULE_DRAFT]
     assert "20 minutes late" in m["body"] and "11:20am" in m["body"] and "bus is late" in m["body"]
     assert "request_id" not in m["data"]          # not an Approve/Deny request push
     assert m["data"]["nav"] == "labor/inbox"

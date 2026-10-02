@@ -61,7 +61,7 @@ def module_of(nav_path) -> str:
 _ALERT_NAV = {
     "labor_over": "labor", "labor_reminder": "labor", "coverage": "labor/schedule",
     "schedule_drafted": "labor/schedule", "schedule_publish_pending": "labor/schedule",
-    "schedule_publish_held": "labor/schedule", "shift_request": "labor/requests",
+    "schedule_publish_held": "labor/schedule", "shift_request": "labor/requests", "employee_message": "labor/inbox",
     "food_waste": "inventory", "price_spike": "inventory/invoices", "critical_low": "inventory/order",
     "order_send_pending": "inventory/order", "order_send_held": "inventory/order",
     "order_send_voided": "inventory/order",

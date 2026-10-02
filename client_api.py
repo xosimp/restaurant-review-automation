@@ -8493,6 +8493,7 @@ _NOTIFICATION_LABELS = {
     # Their own types now (re-audit A-6, A-18): each used to borrow a label
     # that described something else, or none at all.
     "shift_request":    "A staff request needs you",
+    "employee_message": "A message from your team",
     "labor_reminder":   "Waiting on you in Labor",
     "schedule_publish_pending": "Next week's schedule going out",
     "schedule_publish_held": "Next week's schedule was held",

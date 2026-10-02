@@ -12363,6 +12363,8 @@ NON_ALERT_TYPES = (
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
     # request and what became of it, and the 9am "waiting on you in Labor".
     "shift_request", "labor_reminder",
+    # An employee's message to the manager on duty (staff_comms).
+    "employee_message",
     # Auto-publish's held notice and a milestone (re-audit A-18), and a
     # supplier order the trusted-order job held back (A-22).
     "schedule_publish_held", "milestone", "order_send_held",
