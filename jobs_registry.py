@@ -235,6 +235,11 @@ JOBS = {
         cadence="Mon 6am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="Competitor analysis", description="Weekly competitor analysis for full-tier clients (Places + Claude), on the Intel lane",
         target=("scheduler", "run_weekly_competitor_analysis"), max_minutes=200, lane="intel"),
+    "competitor_daily": dict(
+        cadence="daily 8am CT", sla_minutes=26 * 60, sends=False, runnable=True,
+        label="Competitor ratings", description="Daily re-read of the tracked competitors' ratings and review counts "
+                    "and the restaurant's own (Places details only); the full analysis again when one moved",
+        target=("scheduler", "run_daily_competitor_ratings"), max_minutes=25, lane="intel"),
     "ai_visibility": dict(
         cadence="Mon 7am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="AI visibility", description="Weekly AI visibility checks for full-tier clients (Perplexity), on the Intel lane",

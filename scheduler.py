@@ -2949,6 +2949,56 @@ def run_weekly_competitor_analysis(retry_only=False):
     return counts
 
 
+_COMPETITOR_DAILY_CURSOR_KEY = "competitor_daily_cursor"
+COMPETITOR_DAILY_MAX_SECONDS = 20 * 60
+
+
+def run_daily_competitor_ratings():
+    """Daily (owner, 10/2/26) — every full-tier client in service whose
+    competitor read did not already run today: re-read the tracked
+    competitors' ratings and review counts and the restaurant's own
+    (competitor.check_ratings: Places details only, no model call), and run
+    the full analysis again when one moved enough to change what the read
+    says. Bounded and resumable (resumable_sweep). Returns
+    {attempted, ok, failed, skipped, hit_bound, reanalysed}."""
+    import competitor
+    from models import get_all_restaurants, in_service, is_full_tier
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "reanalysed": 0}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    eligible = []
+    for r in get_all_restaurants():
+        if not (r.google_place_id and r.id and is_full_tier(r) and in_service(r)):
+            continue
+        if str(getattr(r, "competitor_updated_at", "") or "")[:10] == today:
+            counts["skipped"] += 1          # the full read ran today already
+            continue
+        eligible.append(r.id)
+
+    def _one(rid):
+        counts["attempted"] += 1
+        res = competitor.check_ratings(rid)
+        if not res.get("ok"):
+            if res.get("reason") == "no competitor read to refresh yet":
+                counts["skipped"] += 1
+                counts["attempted"] -= 1
+                return
+            counts["failed"] += 1
+            _record(rid, "competitor", False, error=res.get("reason") or "ratings check failed", provider="places")
+            return
+        counts["ok"] += 1
+        if res.get("reanalyse"):
+            full = competitor.run_competitor_analysis(rid) or {}
+            if full.get("ok") is not False:
+                counts["reanalysed"] += 1
+                _record(rid, "competitor", True, provider="places")
+
+    if eligible:
+        _done, hit = resumable_sweep(_COMPETITOR_DAILY_CURSOR_KEY, sorted(eligible), _one,
+                                     COMPETITOR_DAILY_MAX_SECONDS, workers=1, job="competitor_daily")
+        counts["hit_bound"] = bool(hit)
+    return counts
+
+
 def run_weekly_ai_visibility(retry_only=False):
     """Weekly, from Monday 7am (ISO-week claim, Monday–Wednesday catch-up,
     then a daily `retry_only` pass until each restaurant has one success
@@ -4461,6 +4511,13 @@ def scheduler_loop():
                 if not _ops.run_in_lane("intel", "competitor_analysis", run_weekly_competitor_analysis,
                                         retry_only=True, claim="competitor_retry"):
                     _ops.release_period("competitor_retry", str(today))
+
+            # Every morning at 8, after the weekly Intel runs: the tracked
+            # competitors' ratings re-read, the full read again only when one
+            # moved (owner, 10/2/26: a week-old comparison read as current).
+            if _due(now, 8) and _ops.claim_period("competitor_daily", str(today)):
+                if not _ops.run_in_lane("intel", "competitor_daily", run_daily_competitor_ratings):
+                    _ops.release_period("competitor_daily", str(today))
 
             # An hour after the competitor run, so the two weekly Intel jobs
             # do not compete for the same minute.
