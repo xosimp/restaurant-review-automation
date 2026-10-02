@@ -428,6 +428,7 @@ KEEP_COLUMNS = {
     ("restaurants", "toast_token_expires"): "a date",
     ("issue_links", "token_hash"): "the hash of a one-time link, not the link",
     ("staff_signups", "token_hash"): "the hash of a one-time link, not the link",
+    ("staff_pin_resets", "token_hash"): "the hash of a one-time PIN-reset token, not the token",
     ("ai_validation_log", "tokens"): "words from the model's own output, not credentials",
     ("push_deliveries", "device_token_id"): "an id",
     ("user_passkeys", "credential_id"): "a passkey's public id (passkeys.py); its key is a public key, and "
