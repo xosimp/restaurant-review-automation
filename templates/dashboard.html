@@ -5904,8 +5904,10 @@ svg:hover .hb-xh{opacity:1}
       var act=(l.action&&l.action.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(l.action.nav)+'">'+esc(l.action.label)+'</button>':'';
       // The action sits in the answers' row, after Done | Not for us behind
       // a thin rule (9/25/26), not at the far right of the line.
-      var acts=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
-      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+hbBriefExtra(l)+acts+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+      // lineActs, never acts: a var is the whole function's, and this loop's
+      // last string replaced the Still open list (304 blank rows, 10/2/26).
+      var lineActs=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+hbBriefExtra(l)+lineActs+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
@@ -5971,7 +5973,9 @@ svg:hover .hb-xh{opacity:1}
   // Everything still open, as a checklist - the answer to "what's left?",
   // which used to mean opening six screens (workflow audit #8).
   function renderOpen(acts){
-    if(!acts||!acts.length)return '';
+    // Only ever a list of items: a string here drew one blank row per
+    // character (10/2/26).
+    if(!acts||Object.prototype.toString.call(acts)!=='[object Array]'||!acts.length)return '';
     var h='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
     for(var a=0;a<acts.length;a++){var y=acts[a];
       h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
