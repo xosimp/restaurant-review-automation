@@ -24279,7 +24279,15 @@ function studioClose(opts) {
   document.body.classList.remove('ss-open'); ssDock();
   if (!opts.toTab) ssTabOn(false);
   if (!opts.fromPop && window.location.pathname === '/schedule/studio') {
-    if (_ssFromDash) { _ssFromDash = false; history.back(); }
+    if (opts.toTab) {
+      // Another tab closed it: that tab routes itself (switchTab, dsrOpen).
+      // history.back() here landed AFTER the tab's own click — its popstate
+      // routed to wherever the owner was before the Studio, so Home opened
+      // Reports (owner, 10/1/26). Swap the Studio's address for the
+      // dashboard's in place instead; nothing asynchronous follows.
+      _ssFromDash = false; history.replaceState(null, '', '/');
+    }
+    else if (_ssFromDash) { _ssFromDash = false; history.back(); }
     else { history.replaceState(null, '', '/#labor'); if (window.cavNav) cavNav('labor', {replace: true}); }
   }
   ssLaunchRefresh();
