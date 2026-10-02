@@ -85,7 +85,8 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS offboarding_steps (
 # keys with no disconnect of their own.
 INTEGRATION_FIELDS = {
     "google": ("gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_account_id", "gmb_location_id"),
-    "meta": ("ig_token", "ig_user_id", "ig_token_expires", "fb_page_token", "fb_page_id", "fb_token_expires"),
+    "meta": ("ig_token", "ig_user_id", "ig_token_expires", "fb_page_token", "fb_page_id", "fb_token_expires",
+             "fb_page_name", "ig_username"),
     "toast": ("toast_client_id", "toast_client_secret", "toast_restaurant_guid", "toast_access_token",
               "toast_token_expires", "toast_last_synced", "toast_sync_error"),
     "square": ("square_access_token", "square_location_id", "square_last_synced", "square_sync_error"),

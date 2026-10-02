@@ -14272,6 +14272,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .ac-conn .t span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ac-conn .t span.err{color:var(--red)}
 .ac-conn .t span.warn{color:var(--amber)}
+/* A name the owner must be able to read in full (the Page and Instagram the
+   Meta connection bound, 10/2/26): wrap, never an ellipsis. */
+.ac-conn .t span.wrap{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 .ac-conn .a{flex:none;display:flex;gap:6px}
 
 /* Disclosure */
@@ -14385,7 +14388,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
 {% set _pos_on = (restaurant.toast_restaurant_guid and not restaurant.toast_sync_error) or (restaurant.square_location_id and not restaurant.square_sync_error) or (restaurant.clover_merchant_id and not restaurant.clover_sync_error) or (restaurant.rpower_store_mid and not restaurant.rpower_sync_error) %}
 {% set _pos_err = (restaurant.toast_restaurant_guid and restaurant.toast_sync_error) or (restaurant.square_location_id and restaurant.square_sync_error) or (restaurant.clover_merchant_id and restaurant.clover_sync_error) or (restaurant.rpower_store_mid and restaurant.rpower_sync_error) %}
-{% set _conn_count = (1 if restaurant.gmb_refresh_token else 0) + (1 if restaurant.ig_token else 0) + (1 if _pos_on else 0) %}
+{% set _conn_count = (1 if restaurant.gmb_refresh_token else 0) + (1 if (restaurant.ig_token or restaurant.fb_page_token) else 0) + (1 if _pos_on else 0) %}
 {% set _profile_done = (1 if restaurant.owner_name else 0) + (1 if restaurant.owner_phone else 0) + (1 if restaurant.timezone else 0) + (1 if restaurant.voice_notes else 0) %}
 {% set _alerts_on = restaurant.alert_1star or restaurant.alert_2star or restaurant.alert_health or restaurant.alert_neg_spike or restaurant.alert_negative_trend or restaurant.alert_no_response or restaurant.alert_5star or restaurant.alert_rating_threshold or restaurant.alert_labor_over or restaurant.alert_any_review %}
 {% set _is_owner = current_user.role in ('owner', 'client') %}
@@ -15088,7 +15091,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           {% if _principal %}<div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}{% endif %}
         </div>
         <div class="ac-conn">
-          {% if restaurant.ig_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Connected &mdash; posts generated content directly</span></div>
+          {# Named (10/2/26): which Page and which Instagram the one Meta sign-in
+             bound - a Page with no Instagram linked connects Facebook alone. #}
+          {% if restaurant.ig_token or restaurant.fb_page_token %}<div class="ic {{ 'on' if restaurant.ig_token else 'warn' }}" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span class="wrap">{% if restaurant.fb_page_name %}Facebook: {{ restaurant.fb_page_name }}{% else %}Facebook connected{% endif %}</span><span class="wrap{{ '' if restaurant.ig_token else ' warn' }}">{% if restaurant.ig_token %}Instagram{% if restaurant.ig_username %}: @{{ restaurant.ig_username }}{% else %} connected{% endif %}{% else %}No Instagram linked to this Page{% endif %}</span></div>
           {% if _principal %}<div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)">Disconnect</button></div>{% endif %}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
           {% if _principal %}<div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}{% endif %}
@@ -16937,19 +16942,49 @@ function cloverDisconnect(btn){
     else{btn.disabled=false;toast(d.error||'Failed','error');}
   }).catch(function(){btn.disabled=false;toast('Request failed','error');});
 }
+// Instagram & Facebook (10/2/26): one Meta sign-in connects the restaurant's
+// Facebook Page and the Instagram account linked to that Page. The popup
+// either binds the one Page shared or asks which Page this restaurant is;
+// it answers with the Page and the Instagram it bound, from this site only.
+// A blocked popup, a window closed early and every refusal say so in words.
+var IG_CONNECT_ERRORS = {
+  denied: 'You didn\u2019t allow Cavnar AI on Facebook. Nothing was connected \u2014 connect again and choose Continue.',
+  no_pages: 'Facebook didn\u2019t share a Page. Sign in with a Facebook account that\u2019s an admin of the restaurant\u2019s Page, and tick that Page when Facebook asks.',
+  pages_failed: 'Facebook didn\u2019t send the Page list. Nothing was connected \u2014 try again.',
+  token_failed: 'Facebook didn\u2019t finish the sign-in. Nothing was connected \u2014 try again.',
+  no_code: 'The Facebook window closed before it finished. Nothing was connected \u2014 try again.',
+  state_invalid: 'That connection link expired. Nothing was connected \u2014 start again here.',
+  page_gone: 'That Page isn\u2019t shared with Cavnar AI any more. Nothing was connected \u2014 try again.',
+  save_failed: 'The connection couldn\u2019t be saved. Try connecting again.'
+};
 function igConnect(){
-  var popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
+  var popup = window.open('/instagram/connect','ig_connect','width=600,height=760,left=200,top=80');
+  if(!popup){ toast('Your browser blocked the Facebook window. Allow pop-ups for this site, then connect again.','error'); return; }
+  var settled = false;
   function igHandler(e){
-    if(!e.data || !e.data.ig) return;
+    if(e.origin !== window.location.origin || !e.data || !e.data.ig) return;
+    settled = true;
     window.removeEventListener('message', igHandler);
     if(e.data.ig === 'connected'){
-      toast('Instagram & Facebook connected ✓','success');
-      setTimeout(function(){location.reload();}, 1000);
+      var what = 'Facebook: ' + (e.data.page || 'your Page') + (e.data.instagram ? ' \u00b7 Instagram: @' + (e.data.username || '') : ' \u2014 no Instagram is linked to that Page');
+      toast('Connected \u2014 ' + what, e.data.instagram ? 'success' : 'warning');
+      setTimeout(function(){location.reload();}, 1600);
     } else {
-      toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
+      toast(IG_CONNECT_ERRORS[e.data.msg] || 'The connection didn\u2019t finish. Nothing was connected \u2014 try again.','error');
     }
   }
   window.addEventListener('message', igHandler);
+  var watch = setInterval(function(){
+    var closed = true;
+    try { closed = popup.closed; } catch(err) { closed = false; }
+    if(!closed) return;
+    clearInterval(watch);
+    setTimeout(function(){
+      if(settled) return;
+      window.removeEventListener('message', igHandler);
+      toast('The Facebook window closed before it finished. Nothing was connected.','warning');
+    }, 900);
+  }, 600);
 }
 
 function gmbConnect(){
@@ -26327,7 +26362,7 @@ function genContent(fromCalendar){
       typewriterEffect(box, _genContent, true);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var nlBtn=document.getElementById('mkt-as-newsletter-btn');
-      if(nlBtn)nlBtn.style.display=(selCt==='weekly_email'&&d.content)?'inline-block':'none';
+      if(nlBtn)nlBtn.style.display=(selCt==='weekly_email'&&d.content)?'':'none';
       var tagEl=document.getElementById('output-tags');
       if(tagEl){var tl=d.tags&&d.tags.label;tagEl.textContent=tl?('About: '+tl):'';tagEl.style.display=tl?'inline-flex':'none';}
       var igBtn=document.getElementById('ig-post-btn');
@@ -26337,7 +26372,8 @@ function genContent(fromCalendar){
       var photoRow=document.getElementById('mkt-photo-row');
       var _isGooglePost=selCt==='google_promo';
       var _isPost=_mktIsSocial(selCt);
-      if(photoRow)photoRow.style.display=(_isPost&&_igConnected&&!_isGooglePost)?'flex':'none';
+      // A photo goes to Facebook too, so a Facebook-only connection offers it (10/2/26).
+      if(photoRow)photoRow.style.display=(_isPost&&(_igConnected||_fbConnected)&&!_isGooglePost)?'flex':'none';
       // A Google Promo belongs on the Google listing, not Instagram — so that
       // one type swaps the destinations rather than adding a third button.
       // A text or an email gets no publish button at all (AUX-4).
@@ -26349,13 +26385,15 @@ function genContent(fromCalendar){
       } else if(_isGooglePost){
         if(igBtn)igBtn.style.display='none';
         if(fbBtn)fbBtn.style.display='none';
-        if(_ggConnected&&ggBtn)ggBtn.style.display='inline-block';
+        if(_ggConnected&&ggBtn)ggBtn.style.display='';
         if(_ggConnected&&ggCta)ggCta.style.display='flex';
       } else {
         if(ggBtn)ggBtn.style.display='none';
         if(ggCta)ggCta.style.display='none';
-        if(_igConnected&&igBtn)igBtn.style.display='inline-block';
-        if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
+        // '' hands display back to .cbtn (inline-flex): 'inline-block' stacked each
+        // button's icon above its words (10/2/26).
+        if(_igConnected&&igBtn)igBtn.style.display='';
+        if(_fbConnected&&fbBtn)fbBtn.style.display='';
       }
       loadRecentTopics();
       loadMktPerformance();

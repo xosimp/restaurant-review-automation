@@ -583,10 +583,9 @@ def test_page_tokens_never_reach_the_log(app, db_path, monkeypatch, capsys):
         ("POST", "oauth/access_token", FakeResp(200, {"access_token": "short"})),
         ("GET", "me/accounts", FakeResp(200, {"data": [{"id": "page1", "name": "Page",
                                                          "access_token": "SECRET-PAGE-TOKEN"}]})),
-        ("GET", "page1", FakeResp(200, {"id": "page1"})),
     ])
     resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
-    assert b"no_ig_account" in resp.data
+    assert b"ig:'connected'" in resp.data      # Facebook alone (10/2/26)
     out = capsys.readouterr().out
     assert "SECRET-PAGE-TOKEN" not in out and "page1" in out
 

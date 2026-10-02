@@ -7346,7 +7346,7 @@ def mobile_instagram_authorize(current_user):
     if not app_id:
         return jsonify(ok=False, error="Instagram isn't configured on this server yet — contact will@cavnar.ai."), 503
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
-    scope = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_manage_posts,pages_show_list,business_management,read_insights"
+    from meta_api import SCOPES as scope
     params = urllib.parse.urlencode({
         "client_id": app_id, "redirect_uri": redirect_uri, "scope": scope,
         "auth_type": "rerequest", "response_type": "code",
@@ -7365,6 +7365,7 @@ def mobile_instagram_disconnect(current_user):
     update_restaurant(current_user["restaurant_id"], {
         "ig_token": None, "ig_user_id": None, "ig_token_expires": None,
         "fb_page_token": None, "fb_page_id": None, "fb_token_expires": None,
+        "fb_page_name": None, "ig_username": None,
     })
     return jsonify(ok=True)
 

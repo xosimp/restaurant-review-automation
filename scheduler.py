@@ -1556,8 +1556,11 @@ def refresh_expiring_tokens():
     try:
         today = _chi_now().date().isoformat()
         soon = (_chi_now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        # No expiry stored is a Page token that never expires (social_routes
+        # reads Meta's own expires_at at connect, 10/2/26): nothing to refresh.
+        # Exchanging one failed every pass and logged a broken connection.
         due = {r.id: r for r in get_all_restaurants()
-               if r.ig_token and (r.ig_token_expires or "2000-01-01") <= soon}
+               if r.ig_token and r.ig_token_expires and r.ig_token_expires <= soon}
     except Exception as e:
         log.error(f"refresh_expiring_tokens error: {e}")
         _ops.capture(e, job="refresh_tokens", context="outer")

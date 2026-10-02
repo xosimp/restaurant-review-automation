@@ -21,6 +21,13 @@ def graph_url(path: str) -> str:
     return f"{GRAPH_BASE}/{GRAPH_VERSION}/{path.lstrip('/')}"
 
 
+# What the connect dialog asks for, web and phone alike (social_routes,
+# mobile_api). Every one but email/public_profile needs Meta App Review
+# before anyone without a role on the Meta app can grant it.
+SCOPES = ("instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,"
+          "pages_manage_posts,pages_show_list,business_management,read_insights")
+
+
 def oauth_dialog_url(params: str) -> str:
     """The user-facing (non-Graph) OAuth dialog also carries a version prefix."""
     return f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?{params}"

@@ -146,8 +146,10 @@ def _web_state(rid):
 ATTACKER_OAUTH = [
     ("POST", "oauth/access_token", FakeResp(200, {"access_token": "short-attacker"}), _is_code_exchange),
     ("POST", "oauth/access_token", FakeResp(200, {"access_token": "long-attacker"}), _is_long_exchange),
-    ("GET", "me/accounts", FakeResp(200, {"data": [{"id": "attacker_page", "access_token": "attacker-page-token"}]})),
-    ("GET", "attacker_page", FakeResp(200, {"instagram_business_account": {"id": "attacker_ig"}})),
+    ("GET", "me/accounts", FakeResp(200, {"data": [{"id": "attacker_page", "name": "Attacker",
+                                                     "access_token": "attacker-page-token",
+                                                     "instagram_business_account": {"id": "attacker_ig",
+                                                                                    "username": "atk"}}]})),
 ]
 
 
@@ -200,17 +202,28 @@ def test_a_tampered_mobile_state_connects_nothing(app, db_path, monkeypatch):
     assert not _meta_fields(db_path, rid)["ig_token"]
 
 
-# ── #2 no Instagram business account ──────────────────────────────────────
+# ── #2 a Page with no Instagram linked ─────────────────────────────────────
 
-def test_no_instagram_business_account_on_any_page_writes_nothing_and_says_so(app, db_path, monkeypatch):
-    """A6 Meta #2: pages exist, none has an IG business account."""
-    rid = _restaurant(db_path)
-    _graph(monkeypatch, ATTACKER_OAUTH[:3] + [("GET", "attacker_page", FakeResp(200, {"id": "attacker_page"}))])
+def test_a_page_with_no_instagram_connects_facebook_alone_and_says_so(app, db_path, monkeypatch):
+    """10/2/26: a Facebook Page with no Instagram linked used to save nothing,
+    Facebook included. It connects Facebook, clears any old Instagram (the two
+    never point at different businesses), and the popup names what it bound."""
+    rid = _restaurant(db_path, ig_token="old-ig", ig_user_id="old_ig")
+    _graph(monkeypatch, ATTACKER_OAUTH[:2] + [
+        ("GET", "me/accounts", FakeResp(200, {"data": [{"id": "fb_only", "name": "EJ's Page", "access_token": "fb-tok"}]}))])
     resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
-    assert resp.status_code == 200
-    assert b"no_ig_account" in resp.data
+    assert resp.status_code == 200 and b"ig:'connected'" in resp.data and b"instagram:false" in resp.data
     after = _meta_fields(db_path, rid)
-    assert not after["ig_token"] and not after["fb_page_token"]
+    assert (after["fb_page_id"], after["ig_token"], after["ig_user_id"]) == ("fb_only", None, None)
+    assert get_restaurant(rid, db_path=db_path).fb_page_name == "EJ's Page"
+
+
+def test_a_sign_in_that_shares_no_page_writes_nothing_and_says_so(app, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, ATTACKER_OAUTH[:2] + [("GET", "me/accounts", FakeResp(200, {"data": []}))])
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    assert b"no_pages" in resp.data
+    assert not _meta_fields(db_path, rid)["fb_page_token"]
 
 
 # ── #3 token exchange failures ────────────────────────────────────────────
@@ -231,8 +244,10 @@ def test_a_callback_with_no_code_writes_nothing(app, db_path, monkeypatch):
     rid = _restaurant(db_path)
     fake = _graph(monkeypatch, [])
     resp = app.test_client().get(f"/instagram/callback?error=access_denied&state={rid}")
-    assert b"no_code" in resp.data
+    assert b"msg:'denied'" in resp.data
     assert fake.calls == []
+    resp = app.test_client().get(f"/instagram/callback?state={rid}")
+    assert b"no_code" in resp.data
 
 
 def test_a_non_json_token_exchange_answer_ends_in_the_popups_error_not_a_500(app, db_path, monkeypatch):
@@ -337,3 +352,84 @@ def test_disconnect_clears_instagram_and_facebook_together(app, db_path, monkeyp
     assert not any([after["ig_token"], after["ig_user_id"], after["fb_page_token"], after["fb_page_id"]])
     status = client.get("/api/instagram-status").get_json()
     assert status == {"connected": False, "fb_connected": False}
+
+
+# ── Which Page (10/2/26: one sign-in can manage several restaurants' Pages) ─
+
+TWO_PAGES = ATTACKER_OAUTH[:2] + [
+    ("GET", "me/accounts", FakeResp(200, {"data": [
+        {"id": "other_client", "name": "Other <Client>", "access_token": "other-tok",
+         "instagram_business_account": {"id": "other_ig", "username": "otherclient"}},
+        {"id": "ej_page", "name": "Simple EJ's", "access_token": "ej-tok",
+         "instagram_business_account": {"id": "ej_ig", "username": "simpleejs"}},
+    ]})),
+]
+
+
+def _pick_from(html):
+    import re
+    return re.search(rb'name="pick" value="([^"]+)"', html).group(1).decode()
+
+
+def test_several_pages_are_never_guessed_the_popup_asks_which(app, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, TWO_PAGES)
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    html = resp.data
+    assert b"Which Page is this restaurant?" in html
+    assert b"Other &lt;Client&gt;" in html and b"Instagram @simpleejs" in html
+    assert b"other-tok" not in html and b"ej-tok" not in html and b"long-attacker" not in html
+    assert not _meta_fields(db_path, rid)["fb_page_token"], "nothing is bound until a Page is chosen"
+
+
+def test_the_chosen_page_and_its_instagram_are_bound(app, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, TWO_PAGES)
+    c = app.test_client()
+    pick = _pick_from(c.get(f"/instagram/callback?code=c&state={_web_state(rid)}").data)
+    resp = c.post("/instagram/choose", data={"pick": pick, "page": "ej_page"})
+    assert b"ig:'connected'" in resp.data and b'"simpleejs"' in resp.data
+    after = _meta_fields(db_path, rid)
+    assert (after["fb_page_id"], after["ig_user_id"]) == ("ej_page", "ej_ig")
+    r = get_restaurant(rid, db_path=db_path)
+    assert (r.fb_page_name, r.ig_username) == ("Simple EJ's", "simpleejs")
+    # Meta would not describe the token here, so no expiry is stored: read
+    # as a live, never-expiring Page token, and never "refreshed".
+    assert after["ig_token_expires"] is None
+
+
+def test_a_tampered_or_foreign_pick_binds_nothing(app, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, TWO_PAGES)
+    c = app.test_client()
+    pick = _pick_from(c.get(f"/instagram/callback?code=c&state={_web_state(rid)}").data)
+    assert b"state_invalid" in c.post("/instagram/choose", data={"pick": pick[:-4] + "AAAA", "page": "ej_page"}).data
+    assert b"page_gone" in c.post("/instagram/choose", data={"pick": pick, "page": "not_shared"}).data
+    assert not _meta_fields(db_path, rid)["fb_page_token"]
+
+
+def test_an_expired_pick_binds_nothing(app, db_path, monkeypatch):
+    import social_routes
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, TWO_PAGES)
+    pick = social_routes._seal_pick(rid, False, "long-attacker")
+    monkeypatch.setattr(social_routes, "PICK_TTL_SECONDS", -1)
+    assert b"state_invalid" in app.test_client().post("/instagram/choose", data={"pick": pick, "page": "ej_page"}).data
+
+
+def test_a_never_expiring_page_token_stores_no_expiry_and_is_not_refreshed(app, db_path, monkeypatch):
+    import inspect
+    import scheduler
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, ATTACKER_OAUTH + [("GET", "debug_token", FakeResp(200, {"data": {"expires_at": 0}}))])
+    app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    assert _meta_fields(db_path, rid)["ig_token_expires"] is None
+    assert "r.ig_token and r.ig_token_expires and r.ig_token_expires <= soon" in \
+        inspect.getsource(scheduler.refresh_expiring_tokens)
+
+
+def test_an_expiring_token_keeps_metas_own_date(app, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, ATTACKER_OAUTH + [("GET", "debug_token", FakeResp(200, {"data": {"expires_at": 1798761600}}))])
+    app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    assert _meta_fields(db_path, rid)["ig_token_expires"] == "2027-01-01"

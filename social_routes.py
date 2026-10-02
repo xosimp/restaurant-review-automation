@@ -15,6 +15,7 @@ def get_conn(db_path=None):
     bare get_conn() calls in this module and they opened ./reviews.db."""
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from auth import login_required
+from csrf import csrf_exempt
 from meta_api import graph_url, oauth_dialog_url
 
 # Exception text handed to a client, with credentials stripped — a requests
@@ -41,7 +42,7 @@ def instagram_connect(current_user):
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
-    scope        = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_manage_posts,pages_show_list,business_management,read_insights"
+    from meta_api import SCOPES as scope
     # Signed, like the iOS flow: a bare restaurant id let anyone finish the
     # public dialog with their own Meta account and bind their page to any
     # restaurant (MOD-MKT-5). "web~" tells the callback to answer the popup.
@@ -63,7 +64,7 @@ def _ig_popup_error(code, sentence):
     open. Nothing in it comes from the request or from Meta."""
     return (
         "<html><body><script>"
-        "window.opener&&window.opener.postMessage({ig:'error',msg:'" + code + "'},'*');"
+        "window.opener&&window.opener.postMessage({ig:'error',msg:'" + code + "'},window.location.origin);"
         "window.close();"
         "</script><p>" + sentence + "</p></body></html>"
     )
@@ -105,6 +106,9 @@ def instagram_callback():
         return _ig_popup_error(code_, sentence)
 
     if not code:
+        # Meta sends error=access_denied when the person says no in its dialog.
+        if request.args.get("error") == "access_denied":
+            return _fail("denied", "You didn't allow Cavnar AI on Facebook. Nothing was connected.")
         return _fail("no_code", "Connection failed.")
     if not rid:
         return _fail("state_invalid", "This connection link expired or didn't start here. "
@@ -126,71 +130,200 @@ def instagram_callback():
         print(f"[social] IG token exchange failed: {r.status} {_safe_err(why)}")
         return _fail("token_failed", "Token exchange failed.")
 
-    # Exchange for long-lived token (60 days)
+    # Exchange for long-lived token (60 days). The Page tokens read with it
+    # never expire; their real expiry is read from Meta below.
     r2 = _graph("post", graph_url("oauth/access_token"), data={
         "grant_type": "fb_exchange_token", "client_id": app_id,
         "client_secret": app_secret, "fb_exchange_token": short_token,
     })
     long_token = (r2.body or {}).get("access_token") or short_token
 
-    # Get Facebook pages
-    r3 = _graph("get", graph_url("me/accounts"), params={"access_token": long_token})
-    pages = (r3.body or {}).get("data") or []
-    ig_user_id = None
-    page_token = long_token
-    matched_page = None
+    pages, answer = _read_pages(long_token)
+    if pages is None:
+        print(f"[social] Page list unreadable: {answer.status} "
+              f"{_safe_err((answer.error or {}).get('message') or 'no message')}")
+        return _fail("pages_failed", "Facebook didn't send the Page list. Nothing was connected — try again.")
+    if not pages:
+        return _fail("no_pages", "Facebook didn't share any Page. Sign in with a Facebook account that's an admin "
+                                 "of the restaurant's Page, and tick that Page when Facebook asks.")
+    if len(pages) == 1:
+        return _connect_page(rid, pages[0], mobile)
+    # More than one Page (someone who runs several restaurants' Pages, 10/2/26):
+    # never guess. The first Page with Instagram used to be bound, whoever's it was.
+    return _page_picker(pages, _seal_pick(rid, mobile, long_token))
 
-    for page in pages:
-        r4 = _graph("get", graph_url(page['id']), params={
-            "fields": "instagram_business_account",
-            "access_token": page.get("access_token", long_token),
-        })
-        ig_data = (r4.body or {}).get("instagram_business_account")
-        if ig_data:
-            ig_user_id = ig_data.get("id")
-            page_token = page.get("access_token", long_token)
-            matched_page = page
-            break
 
-    if not ig_user_id:
-        # me/accounts carries every Page's access_token: the log gets the
-        # Page ids and names, never the body (MB-9).
-        print(f"[social] No IG business account on {len(pages)} Page(s): "
-              + ", ".join(f"{p.get('id')} ({p.get('name') or '?'})" for p in pages[:10]))
-        return _fail("no_ig_account", "No Instagram business account found.")
+# ── Which Page, and its Instagram (10/2/26) ─────────────────────────────────
+#
+# One Meta sign-in can manage many Pages - Danny runs marketing for more than
+# one restaurant. The callback binds the one Page shared, or shows a picker:
+# each Page by name with the Instagram account linked to it. The choice comes
+# back to /instagram/choose carrying `pick`, the restaurant and the sign-in's
+# token sealed (Fernet, a key derived from SECRET_KEY, 15 minutes) - nothing
+# is stored until a Page is chosen, and the pick cannot be forged or replayed
+# after it expires. A Page with no Instagram linked still connects Facebook.
 
-    from datetime import datetime, timedelta
-    expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
-    update_data = {
-        "ig_token": page_token,
-        "ig_user_id": ig_user_id,
-        "ig_token_expires": expires,
-    }
-    # Save Facebook page token/id from the matched page
-    if matched_page:
-        update_data["fb_page_token"]    = matched_page.get("access_token", long_token)
-        update_data["fb_page_id"]       = matched_page.get("id", "")
-        update_data["fb_token_expires"] = expires
-    elif pages:
-        update_data["fb_page_token"]    = pages[0].get("access_token", long_token)
-        update_data["fb_page_id"]       = pages[0].get("id", "")
-        update_data["fb_token_expires"] = expires
+PICK_TTL_SECONDS = 15 * 60
+
+
+def _pick_fernet():
+    import base64
+    import hashlib
+    from cryptography.fernet import Fernet
+    secret = os.getenv("SECRET_KEY")
+    if not secret:
+        raise RuntimeError("SECRET_KEY is not set; cannot seal the Page choice")
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(("meta-page-pick:" + secret).encode()).digest()))
+
+
+def _seal_pick(rid, mobile, user_token):
+    import json as _json
+    return _pick_fernet().encrypt(_json.dumps({"rid": int(rid), "m": bool(mobile), "t": user_token}).encode()).decode()
+
+
+def _open_pick(blob):
+    """{"rid", "m", "t"} from a sealed pick, or None when it is forged,
+    tampered or older than PICK_TTL_SECONDS."""
+    import json as _json
     try:
-        _update_r(rid, update_data)
+        return _json.loads(_pick_fernet().decrypt((blob or "").encode(), ttl=PICK_TTL_SECONDS))
+    except Exception:
+        return None
+
+
+def _read_pages(user_token):
+    """([{"id", "name", "token", "ig_id", "ig_username"}], answer) for every
+    Page the sign-in shared, or (None, answer) when Meta's list is unreadable."""
+    answer = _graph("get", graph_url("me/accounts"), params={
+        "fields": "id,name,access_token,instagram_business_account{id,username}",
+        "limit": 100, "access_token": user_token,
+    })
+    if not answer.ok:
+        return None, answer
+    out = []
+    for p in (answer.body or {}).get("data") or []:
+        if not p.get("id") or not p.get("access_token"):
+            continue
+        ig = p.get("instagram_business_account") or {}
+        out.append({"id": str(p["id"]), "name": (p.get("name") or "").strip() or "Untitled Page",
+                    "token": p["access_token"], "ig_id": str(ig["id"]) if ig.get("id") else None,
+                    "ig_username": (ig.get("username") or "").strip() or None})
+    return out, answer
+
+
+def _token_expiry(token):
+    """The token's real expiry from Meta (debug_token): None for a Page
+    token that never expires (expires_at 0) or one Meta wouldn't describe
+    - data_freshness reads a missing expiry as live, and refresh_expiring_tokens
+    leaves it alone. Else YYYY-MM-DD."""
+    app_id, app_secret = os.getenv("META_APP_ID", ""), os.getenv("META_APP_SECRET", "")
+    if not (app_id and app_secret and token):
+        return None
+    d = _graph("get", graph_url("debug_token"), params={"input_token": token,
+                                                         "access_token": f"{app_id}|{app_secret}"})
+    try:
+        at = int(((d.body or {}).get("data") or {}).get("expires_at") or 0)
+    except (TypeError, ValueError):
+        at = 0
+    if not at:
+        return None
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(at, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _js_str(value):
+    """A value for an inline script, safe inside <script>."""
+    import json as _json
+    return _json.dumps(value or "").replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+def _connect_page(rid, page, mobile):
+    """Bind one Page (and its Instagram, when linked) to the restaurant and
+    answer the popup or the phone. A Page without Instagram clears any old
+    Instagram binding, so the two never point at different businesses."""
+    expires = _token_expiry(page["token"])
+    update = {"fb_page_token": page["token"], "fb_page_id": page["id"], "fb_page_name": page["name"],
+              "fb_token_expires": expires}
+    if page.get("ig_id"):
+        update.update({"ig_token": page["token"], "ig_user_id": page["ig_id"],
+                       "ig_username": page.get("ig_username"), "ig_token_expires": expires})
+    else:
+        update.update({"ig_token": None, "ig_user_id": None, "ig_username": None, "ig_token_expires": None})
+    try:
+        from models import update_restaurant as _update_r
+        _update_r(rid, update)
     except Exception as e:
         # Nothing saved is never "connected" (MB-21).
-        print(f"[social] IG connection save failed for restaurant {rid}: {_safe_err(e)}")
-        return _fail("save_failed", "The connection couldn't be saved. Try connecting again.")
-    print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
-
+        print(f"[social] Meta connection save failed for restaurant {rid}: {_safe_err(e)}")
+        if mobile:
+            return redirect("cavnarai://ig-callback?status=error")
+        return _ig_popup_error("save_failed", "The connection couldn't be saved. Try connecting again.")
+    has_ig = bool(page.get("ig_id"))
+    print(f"[social] Meta connected for restaurant {rid}: Page {page['id']}"
+          + (f" + Instagram {page['ig_id']}" if has_ig else " (no Instagram linked)"))
     if mobile:
-        return redirect("cavnarai://ig-callback?status=connected")
+        return redirect("cavnarai://ig-callback?status=connected" + ("" if has_ig else "&instagram=none"))
+    import html as _h
+    words = (f"Facebook: {_h.escape(page['name'])}" + (f" · Instagram: @{_h.escape(page['ig_username'] or '')}"
+             if has_ig else " · Instagram isn't linked to this Page"))
     return (
-        "<html><body><script>"
-        "window.opener&&window.opener.postMessage({ig:'connected'},'*');"
-        "window.close();"
-        "</script><p>Instagram connected! Close this window.</p></body></html>"
+        "<html><body style=\"font-family:-apple-system,sans-serif;background:#141110;color:#f0ebe0;padding:28px\"><script>"
+        "window.opener&&window.opener.postMessage({ig:'connected',page:" + _js_str(page["name"])
+        + ",username:" + _js_str(page.get("ig_username") if has_ig else "") + ",instagram:" + ("true" if has_ig else "false")
+        + "},window.location.origin);window.close();"
+        "</script><p>Connected. " + words + ". You can close this window.</p></body></html>"
     )
+
+
+def _page_picker(pages, pick):
+    """The popup's Page choice: each Page by name with its Instagram, one
+    button each. Dark, like the dashboard; every name escaped."""
+    import html as _h
+    rows = ""
+    for p in pages:
+        ig = (f"Instagram @{_h.escape(p['ig_username'])}" if p.get("ig_id") and p.get("ig_username")
+              else ("Instagram linked" if p.get("ig_id") else "No Instagram linked to this Page"))
+        rows += ('<form method="post" action="/instagram/choose" style="margin:0">'
+                 f'<input type="hidden" name="pick" value="{_h.escape(pick)}">'
+                 f'<input type="hidden" name="page" value="{_h.escape(p["id"])}">'
+                 '<button type="submit" style="width:100%;text-align:left;display:block;padding:14px 16px;margin:0 0 10px;'
+                 'border-radius:12px;border:1px solid rgba(240,235,224,.14);background:#1e1a18;color:#f0ebe0;cursor:pointer;font:inherit">'
+                 f'<b style="display:block;font-size:16px">{_h.escape(p["name"])}</b>'
+                 f'<span style="font-size:14px;color:#a89f94">{ig}</span></button></form>')
+    return (
+        '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Choose the Page — Cavnar AI</title></head>'
+        '<body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#141110;color:#f0ebe0">'
+        '<div style="max-width:520px;margin:0 auto;padding:28px 22px">'
+        '<div style="font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#d4583a">Cavnar AI</div>'
+        '<h1 style="font-size:22px;margin:8px 0 6px">Which Page is this restaurant?</h1>'
+        '<p style="font-size:15px;line-height:1.5;color:#a89f94;margin:0 0 20px">This Facebook account manages more than '
+        'one Page. Pick this restaurant\'s — Cavnar AI posts to it and to the Instagram linked to it, nothing else.</p>'
+        + rows + '<p style="font-size:13px;color:#7d756c;margin-top:16px">This choice expires in 15 minutes.</p></div></body></html>'
+    )
+
+
+@social_bp.route("/instagram/choose", methods=["POST"])
+@csrf_exempt
+def instagram_choose():
+    """The picker's answer. The sealed `pick` is the whole authority - it
+    names the restaurant and carries the sign-in, can't be forged, and
+    expires in PICK_TTL_SECONDS - so this needs no session (the phone's
+    in-app browser has none), and a stale or tampered one binds nothing."""
+    data = _open_pick(request.form.get("pick"))
+    if not data:
+        return _ig_popup_error("state_invalid", "This choice expired. Nothing was connected — start again from "
+                                                "Account → Connections.")
+    mobile = bool(data.get("m"))
+    pages, answer = _read_pages(data.get("t"))
+    chosen = next((p for p in (pages or []) if p["id"] == str(request.form.get("page") or "")), None)
+    if not chosen:
+        if mobile:
+            return redirect("cavnarai://ig-callback?status=error")
+        return _ig_popup_error("page_gone", "That Page isn't shared with Cavnar AI any more. Nothing was connected "
+                                            "— start again.")
+    return _connect_page(int(data["rid"]), chosen, mobile)
+
 
 @social_bp.route("/api/post-to-instagram", methods=["POST"])
 @login_required
@@ -464,7 +597,9 @@ def instagram_disconnect(current_user):
     if denied:
         return denied
     from models import update_restaurant
-    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": ""})
+    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": "",
+                                                      "ig_token_expires": None, "fb_token_expires": None,
+                                                      "fb_page_name": None, "ig_username": None})
     return jsonify(ok=True)
 
 @social_bp.route("/api/debug-insights")
