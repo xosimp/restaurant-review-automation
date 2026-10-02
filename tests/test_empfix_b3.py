@@ -342,6 +342,29 @@ def test_a_staffing_gap_the_week_already_had_does_not_block_a_cover(db, told):
     assert srq.claim(rid, req["id"], "Cara", now=NOW)["status"] == "covered"
 
 
+def test_staff_notices_carry_the_request_where_people_tell_takes_it(db, monkeypatch):
+    """The notification rebuild (B2) lets people.tell route a notice to the
+    request and send a same-day change through quiet hours; the old tell
+    takes none of it, and nothing is passed that it doesn't take."""
+    seen = []
+
+    def new_tell(rid, name, title, lines, *, email_type="staff_notice", channel=None, db_path=None,
+                 data=None, nav=None, purpose=None, shift_date=None):
+        seen.append({"data": data, "nav": nav, "purpose": purpose, "shift_date": shift_date})
+        return "push"
+    monkeypatch.setattr(people, "tell", new_tell)
+    monkeypatch.setattr(srq, "_tell_managers", lambda *a, **k: None)
+    rid = _restaurant(db, SERVERS)
+    _publish(db, rid, [(W1[1], "Ana", "Server", "5:00pm", "10:00pm", 5)])
+    req = srq.request_drop(rid, "Ana", W1[1], "5:00pm", now=NOW)
+    srq.decide(rid, req["id"], False, now=NOW)
+    assert seen[-1] == {"data": {"request_id": req["id"]}, "nav": "requests", "purpose": "request",
+                        "shift_date": W1[1]}
+    monkeypatch.setattr(people, "tell", lambda rid, name, title, lines, **kw: seen.append(kw) or "push")
+    srq.decide(rid, srq.request_drop(rid, "Ana", W1[1], "5:00pm", now=NOW)["id"], False, now=NOW)
+    assert "data" not in seen[-1], "an older tell is never handed what it can't take"
+
+
 def test_the_owner_routes_are_web_and_mobile_twins():
     import strategy_routes
     paths = {p for p, _m, _f, _e in strategy_routes._ROUTES}

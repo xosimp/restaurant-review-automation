@@ -34,6 +34,7 @@ Four invariants (SCHED audit, employee audit H9):
     and declines notify the people they touch (SCHED-21, LG-29).
 """
 import json
+import threading
 from datetime import date, datetime, timedelta
 
 from models import DB_PATH
@@ -1411,6 +1412,31 @@ def _email_staff(restaurant_id, people, subject, lines, db_path) -> int:
     return len(_tell_staff(restaurant_id, people, subject, lines, db_path))
 
 
+# The request a notice is about, for the staff notice's own routing (set by
+# _notify for the duration of one event).
+_ctx = threading.local()
+
+
+def _tell_extras(req, offer=None) -> dict:
+    """What people.tell can carry about a request — the shift's date (quiet
+    hours send a same-day change at once), the request to open, the
+    Requests tab — passed only where people.tell takes it (the notification
+    rebuild, employee audit B2)."""
+    if not req and not offer:
+        return {}
+    try:
+        import inspect
+        import people as _people
+        accepts = set(inspect.signature(_people.tell).parameters)
+    except Exception:
+        return {}
+    want = {"purpose": "request", "nav": "requests",
+            "shift_date": str((req or {}).get("date") or "")[:10] or None,
+            "data": {k: v for k, v in (("request_id", (req or {}).get("id")),
+                                       ("offer_id", (offer or {}).get("id"))) if v}}
+    return {k: v for k, v in want.items() if k in accepts and v}
+
+
 def _tell_staff(restaurant_id, people, subject, lines, db_path, channels=None) -> list:
     """_email_staff, returning the names actually reached."""
     import people as _people
@@ -1424,10 +1450,11 @@ def _tell_staff(restaurant_id, people, subject, lines, db_path, channels=None) -
             print(f"[shift_requests] reach failed rid={restaurant_id}: {e!r}")
             channels = {}
     reached = []
+    extra = _tell_extras(getattr(_ctx, "req", None))
     for person in names:
         try:
             if _people.tell(restaurant_id, person, subject, lines, email_type="shift_request",
-                            channel=channels.get(person) or {}, db_path=db_path):
+                            channel=channels.get(person) or {}, db_path=db_path, **extra):
                 reached.append(person)
         except Exception as e:
             print(f"[shift_requests] staff notice failed rid={restaurant_id}: {e!r}")
@@ -1533,6 +1560,14 @@ def _broadcast_open(restaurant_id, req, db_path, opener_line):
 def _notify(restaurant_id, event, req, db_path=DB_PATH):
     if not req:
         return
+    _ctx.req = req
+    try:
+        _notify_event(restaurant_id, event, req, db_path)
+    finally:
+        _ctx.req = None
+
+
+def _notify_event(restaurant_id, event, req, db_path):
     try:
         who, when, role = req.get("employee_name") or "", _when(req), req.get("role") or ""
         reason = f" — “{req['reason']}”" if req.get("reason") else ""
@@ -1682,7 +1717,7 @@ def _notify_offer(restaurant_id, event, offer, req, db_path, channel=None):
             if offer.get("note"):
                 lines.append(f"Their note: {offer['note']}")
             return _people.tell(restaurant_id, name, "Can you take a shift?", lines, email_type="shift_request",
-                                channel=channel, db_path=db_path)
+                                channel=channel, db_path=db_path, **_tell_extras(req, offer))
         if event == "offer_declined":
             _tell_managers(restaurant_id, "Offer declined",
                            f"{name} can't take {when}" + (f" ({role})" if role else "") + ". Offer it to someone else in Labor.",
