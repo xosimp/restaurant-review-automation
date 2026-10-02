@@ -93,6 +93,9 @@ def _games_ahead(rid, tmr, db_path):
     except Exception:
         return []
     out = []
+    # The start on the restaurant's own clock (engine.describe tz, re-audit
+    # P2-04): a catalog kickoff is the series' zone.
+    tz = engine.restaurant_clock(rid, **kw) if rows else None
     for e in rows:
         if e.get("status") in ("cancelled", "postponed") or e["id"] in skip:
             continue
@@ -105,7 +108,7 @@ def _games_ahead(rid, tmr, db_path):
             continue
         day = date.fromisoformat(e["event_date"])
         gap = (day - tmr).days + 1
-        text = f"{day.strftime('%A')}: {engine.describe(e, with_date=False)} — {gap} days out"
+        text = f"{day.strftime('%A')}: {engine.describe(e, with_date=False, tz=tz)} — {gap} days out"
         try:
             eff = engine.effect_for(rid, e, **kw)
             last = None if eff else engine.last_like(rid, e, **kw)
@@ -144,7 +147,11 @@ def _game_prep(rid, event, db_path):
             return {"text": "Prep for " + "; ".join(p["text"] for p in prep[:3]), "tone": "warn",
                     "basis": mix["basis"]}
         if mix and mix.get("text"):
-            return {"text": mix["text"] + " One game — not yet a pattern to prep on.", "tone": None,
+            # "One game" only when it was one (re-audit P3-04): several games
+            # whose items didn't rise on every one are not a pattern either,
+            # and say so — the words gameday.week_note uses.
+            why = "One game" if mix.get("n") == 1 else "Not on every game"
+            return {"text": f"{mix['text']} {why} — not yet a pattern to prep on.", "tone": None,
                     "basis": mix["basis"]}
     except Exception:
         return None
@@ -559,15 +566,19 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                           "event_id": (ctx or {}).get("event", {}).get("id")})
             # Who worked games like it, by role (event_intel.playbook,
             # phase 2): a plan where measured, else what the last one
-            # staffed. The Labor view's (access.tomorrow_for).
-            st = _game_staffing(rid, (ctx or {}).get("event"), db_path)
+            # staffed. The Labor view's (access.tomorrow_for). The staffing
+            # and the item mix walk the same past games and usual nights:
+            # read once (engine.one_read, re-audit X-2).
+            from event_intel import engine as _one
+            with _one.one_read():
+                st = _game_staffing(rid, (ctx or {}).get("event"), db_path)
+                # What games like it sold (event_intel.gameday, phase 3): a
+                # prep plan past the floor, the last one as a fact below it.
+                prep = _game_prep(rid, (ctx or {}).get("event"), db_path)
             if st and st.get("text"):
                 items.append({"kind": "game_staffing", "tone": "warn" if st.get("recommend") else None,
                               "text": st["text"], "basis": st.get("basis"),
                               "event_id": (ctx or {}).get("event", {}).get("id")})
-            # What games like it sold (event_intel.gameday, phase 3): a prep
-            # plan past the floor, the last one as a fact below it.
-            prep = _game_prep(rid, (ctx or {}).get("event"), db_path)
             if prep:
                 items.append(dict(prep, kind="game_prep", event_id=(ctx or {}).get("event", {}).get("id")))
 

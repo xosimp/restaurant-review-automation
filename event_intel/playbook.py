@@ -58,11 +58,12 @@ def _people(n, role):
 
 
 def _same_class(e, g):
-    """Same side (home/road), same kickoff class (prime time or not) and
-    the same season class (preseason is its own crowd) — never across."""
-    pre = lambda x: x.get("season_type") == "preseason"
-    return (g.get("home_away") == e.get("home_away")
-            and bool(g.get("is_primetime")) == bool(e.get("is_primetime")) and pre(g) == pre(e))
+    """The same game_class (engine.game_class: side, preseason or not, the
+    home ground or another — the class no measured segment ever crosses)
+    and the same kickoff class (prime time or not). An alt-venue home game
+    is never staffed off the home ground's nights (re-audit SD-02)."""
+    return engine.game_class(g) == engine.game_class(e) and \
+        bool(g.get("is_primetime")) == bool(e.get("is_primetime"))
 
 
 # ── the usual night ─────────────────────────────────────────────────────────
@@ -70,23 +71,27 @@ def _same_class(e, g):
 def usual_nights(restaurant_id, day, db_path=store.DB_PATH) -> list:
     """ISO dates of the ordinary same weekdays in the BASELINE_WEEKS before
     `day`: every night event_memory flags is left out, except a frequent
-    series' game it has not measured to matter (ordinary_nights)."""
-    import event_memory
+    series' game it has not measured to matter (ordinary_nights). Read once
+    per engine.one_read() (re-audit X-2: staffing, the rush and the item
+    mix each asked for the same nights)."""
     day = _d(day)
+    return list(engine.memo(("usual_nights", restaurant_id, day.isoformat(), db_path),
+                            lambda: _usual_nights(restaurant_id, day, db_path)))
+
+
+def _usual_nights(restaurant_id, day, db_path):
+    import event_memory
     weeks = getattr(event_memory, "BASELINE_WEEKS", 8)
     same = [day - timedelta(weeks=k) for k in range(1, weeks + 1)]
+    # One read of the flags, the night itself with them: ordinary as event
+    # memory counts it — a frequent series' unmeasured game leaves its night
+    # in, never tonight's own kin (event_memory.ordinary_nights, phase 4).
     try:
-        flags = event_memory.flags_for(restaurant_id, same, db_path=db_path)
+        flags = event_memory.flags_for(restaurant_id, [day] + same, db_path=db_path)
     except Exception:
         flags = {}
-    # Ordinary as event memory counts it: a frequent series' unmeasured game
-    # leaves its night in (event_memory.ordinary_nights, phase 4).
-    try:
-        tonight = event_memory.flags_for(restaurant_id, [day], db_path=db_path).get(day.isoformat())
-    except Exception:
-        tonight = None
     ok = event_memory.ordinary_nights(restaurant_id, {d.isoformat(): flags.get(d.isoformat()) for d in same},
-                                      db_path=db_path, tonight=tonight)
+                                      db_path=db_path, tonight=flags.get(day.isoformat()))
     return [d.isoformat() for d in same if d.isoformat() in ok]
 
 
@@ -130,7 +135,12 @@ def _minutes(t):
 
 def _roles_on(restaurant_id, iso, db_path):
     """({role: people}, {role: [shift start minutes]}) for one night from the
-    stored punches, or (None, None) with none on file."""
+    stored punches, or (None, None) with none on file. Read once per
+    engine.one_read()."""
+    return engine.memo(("roles_on", restaurant_id, iso, db_path), lambda: _read_roles(restaurant_id, iso, db_path))
+
+
+def _read_roles(restaurant_id, iso, db_path):
     try:
         import shift_facts
         rows = shift_facts.rows(restaurant_id, since=iso, until=iso, db_path=db_path)
@@ -162,87 +172,150 @@ def _usual_word(nights):
     return f"a usual {days.pop()}'s" if len(days) == 1 else "their usual weekday's"
 
 
+EXTRA_MATCH_MINUTES = 30   # a game night's shift start "is" a usual night's when this close
+EXTRA_AGREE_MINUTES = 60   # the extra person's start is said only when the games agree this closely
+
+
+def _extra_starts(starts, usual, k):
+    """The k shift starts on one game night that are beyond its usual
+    nights (re-audit P2-02): each start is matched against every usual
+    night's starts for the role (the nearest within EXTRA_MATCH_MINUTES,
+    each usual start used once), and the starts left unmatched most often
+    are the extra people's — the later on a tie. `usual` is each usual
+    night's start list for the role ([] where nobody worked it). [] with no
+    start on file for the game or for any usual night."""
+    if k < 1 or not starts or not usual:
+        return []
+    g = sorted(starts)
+    misses = [0] * len(g)
+    for night in usual:
+        pool = sorted(night)
+        for i, s in enumerate(g):
+            j = min(range(len(pool)), key=lambda x: abs(pool[x] - s)) if pool else None
+            if j is not None and abs(pool[j] - s) <= EXTRA_MATCH_MINUTES:
+                pool.pop(j)
+            else:
+                misses[i] += 1
+    pick = sorted(range(len(g)), key=lambda i: (-misses[i], -g[i]))[:k]
+    return [g[i] for i in pick]
+
+
+def _extra_from(role, nights):
+    """When the extra person in `role` came in, across the game nights: the
+    middle of the starts beyond usual (_extra_starts), said only when they
+    sit within EXTRA_AGREE_MINUTES of each other — else None, and the plan
+    names no time. Never the regular openers' start (re-audit P2-02)."""
+    import math
+    got = []
+    for n in nights:
+        k = int(math.floor(n["roles"].get(role, 0) - n["usual"].get(role, 0) + 1e-9))
+        # A usual night whose punches carry the role but no readable start
+        # says nothing about when its people came in: left out.
+        known = [s.get(role) or [] for r, s in n["own"] if not r.get(role) or s.get(role)]
+        got += _extra_starts(n["starts"].get(role) or [], known, k)
+    if not got or max(got) - min(got) > EXTRA_AGREE_MINUTES:
+        return None
+    return _clock_min(sorted(got)[len(got) // 2])
+
+
 def staffing(restaurant_id, e, db_path=store.DB_PATH):
     """{"games": [{"date", "describe", "roles", "usual"}], "usual": {role:
     median of each game's own usual}, "usual_n", "weekday", "deltas":
     [{"role", "game", "usual", "delta", "every_game", "from"}], "recommend",
-    "n", "text", "basis"} for games of the same side, kickoff and season
+    "n", "mixed", "text", "basis"} for games of the same class and kickoff
     class, or None with none on file with punches.
 
     Each game is set against ITS OWN usual same weekday (audit 10/1/26: a
     Monday game and a Thursday game pooled their usual nights and the plan
     named a third weekday); a role's delta is the median of those per-game
-    deltas. A plan needs SEGMENT_MIN_N games, every one of them measured at
-    LIFT_FLOOR or more above its usual night, and the role above usual on
-    every one; the lift said is those same nights'."""
+    deltas. The nights are effect_for's (engine.clean_first, re-audit
+    P2-03): a night that carried something else too is left out while
+    SEGMENT_MIN_N clean ones remain; below that every night is said and
+    `mixed`, and nothing is planned. A plan needs SEGMENT_MIN_N games, every
+    one of them measured at LIFT_FLOOR or more above its usual night, and
+    the role above usual on every one; the lift said is those same nights'.
+    "from" is when the extra person came in (_extra_from), never the
+    regular openers' start, or None."""
     try:
-        games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path) if _same_class(e, g["event"])]
-        if not games:
-            return None
-        nights, usual_all = [], set()
-        for g in games:
-            iso = g["event"]["event_date"]
-            roles, starts = _roles_on(restaurant_id, iso, db_path)
-            if not roles:
-                continue
-            own = [r for r in (_roles_on(restaurant_id, u, db_path)[0]
-                               for u in usual_nights(restaurant_id, iso, db_path=db_path)) if r]
-            if len(own) < USUAL_MIN:
-                continue
-            keys = set(roles) | {k for u in own for k in u}
-            usual = {k: engine._median([u.get(k, 0) for u in own]) for k in keys}
-            usual_all.update(f"{iso}:{i}" for i in range(len(own)))
-            nights.append({"date": iso, "describe": engine.describe(g["event"]), "roles": roles, "starts": starts,
-                           "usual": usual, "lift_pct": g["outcome"].get("lift_pct")})
-        if not nights:
-            return None
-        all_roles = sorted({k for n in nights for k in n["usual"]})
-        deltas = []
-        for role in all_roles:
-            per = [n["roles"].get(role, 0) - n["usual"].get(role, 0) for n in nights]
-            delta = engine._median(per)
-            if abs(delta) < 1:
-                continue
-            starts = sorted(m for n in nights for m in (n["starts"].get(role) or []))
-            deltas.append({"role": role, "game": engine._median([n["roles"].get(role, 0) for n in nights]),
-                           "usual": engine._median([n["usual"].get(role, 0) for n in nights]), "delta": delta,
-                           "every_game": all(p >= 1 for p in per) if delta > 0 else all(p <= -1 for p in per),
-                           "from": _clock_min(starts[len(starts) // 2]) if starts else None})
-        deltas.sort(key=lambda x: (-x["delta"], x["role"]))
-        weekday = _d(e["event_date"]).strftime("%A") if e.get("event_date") else _d(nights[0]["date"]).strftime("%A")
-        n = len(nights)
-        lifts = [float(x["lift_pct"]) for x in nights if x.get("lift_pct") is not None]
-        recommend = []
-        if n >= engine.SEGMENT_MIN_N and len(lifts) == n and all(l >= LIFT_FLOOR for l in lifts):
-            recommend = [d for d in deltas if d["delta"] >= 1 and d["every_game"]][:3]
-        kind = engine.kind_words(e)
-        gword = _usual_word(nights)
-        if recommend:
-            plan = "; ".join(f"{int(round(d['delta']))} more {d['role']}" + (f" from about {d['from']}" if d["from"]
-                                                                             else "") for d in recommend)
-            said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in recommend)
-            text = (f"Staff above a usual {weekday}: {plan}. On your last {n} {kind} you ran {said}, and sales "
-                    f"ran {engine._median(lifts):.0f}% above their usual weekday.")
-        else:
-            ups = [d for d in deltas if d["delta"] > 0][:3]
-            text = None
-            if ups and n == 1:
-                last = nights[0]
-                said = ", ".join(f"{last['roles'].get(d['role'], 0):g} {d['role']} against {gword} "
-                                 f"{last['usual'].get(d['role'], 0):g}" for d in ups)
-                text = f"On {_mdy(last['date'])} you ran {said} — what was staffed, not yet a pattern to plan on."
-            elif ups:
-                said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in ups)
-                text = (f"On your last {n} {kind} you ran a median {said} — what was staffed, not yet a pattern "
-                        f"to plan on.")
-        usual_view = {k: engine._median([x["usual"].get(k, 0) for x in nights]) for k in all_roles}
-        return {"games": _games_out(nights), "usual": usual_view, "usual_n": len(usual_all), "weekday": weekday,
-                "deltas": deltas, "recommend": recommend, "n": n, "text": text,
-                "basis": (f"punches on file for {n} {kind}, each against the ordinary same weekdays before it; "
-                          f"each person counted once, in the role they worked")}
+        with engine.one_read():
+            return _staffing(restaurant_id, e, db_path)
     except Exception as ex:
         log.warning("event_intel.playbook staffing failed rid=%s: %s", restaurant_id, ex)
         return None
+
+
+def _staffing(restaurant_id, e, db_path):
+    games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path) if _same_class(e, g["event"])]
+    if not games:
+        return None
+    tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+    nights = []
+    for g in games:
+        iso = g["event"]["event_date"]
+        roles, starts = _roles_on(restaurant_id, iso, db_path)
+        if not roles:
+            continue
+        own = [x for x in (_roles_on(restaurant_id, u, db_path)
+                           for u in usual_nights(restaurant_id, iso, db_path=db_path)) if x[0]]
+        if len(own) < USUAL_MIN:
+            continue
+        keys = set(roles) | {k for u, _s in own for k in u}
+        usual = {k: engine._median([u.get(k, 0) for u, _s in own]) for k in keys}
+        nights.append({"date": iso, "describe": engine.describe(g["event"], tz=tz), "roles": roles,
+                       "starts": starts or {}, "own": [(u, s or {}) for u, s in own], "usual": usual,
+                       "lift_pct": g["outcome"].get("lift_pct"),
+                       "confounded": int(g["outcome"].get("confounded") or 0)})
+    if not nights:
+        return None
+    nights, mixed = engine.clean_first(nights, confounded=lambda x: x["confounded"])
+    usual_n = sum(len(x["own"]) for x in nights)
+    all_roles = sorted({k for n in nights for k in n["usual"]})
+    deltas = []
+    for role in all_roles:
+        per = [n["roles"].get(role, 0) - n["usual"].get(role, 0) for n in nights]
+        delta = engine._median(per)
+        if abs(delta) < 1:
+            continue
+        deltas.append({"role": role, "game": engine._median([n["roles"].get(role, 0) for n in nights]),
+                       "usual": engine._median([n["usual"].get(role, 0) for n in nights]), "delta": delta,
+                       "every_game": all(p >= 1 for p in per) if delta > 0 else all(p <= -1 for p in per),
+                       "from": _extra_from(role, nights) if delta > 0 else None})
+    deltas.sort(key=lambda x: (-x["delta"], x["role"]))
+    weekday = _d(e["event_date"]).strftime("%A") if e.get("event_date") else _d(nights[0]["date"]).strftime("%A")
+    n = len(nights)
+    lifts = [float(x["lift_pct"]) for x in nights if x.get("lift_pct") is not None]
+    recommend = []
+    if not mixed and n >= engine.SEGMENT_MIN_N and len(lifts) == n and all(l >= LIFT_FLOOR for l in lifts):
+        recommend = [d for d in deltas if d["delta"] >= 1 and d["every_game"]][:3]
+    kind = engine.kind_words(e)
+    gword = _usual_word(nights)
+    if recommend:
+        plan = "; ".join(f"{int(round(d['delta']))} more {d['role']}" + (f" from about {d['from']}" if d["from"]
+                                                                         else "") for d in recommend)
+        said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in recommend)
+        text = (f"Staff above a usual {weekday}: {plan}. On your last {n} {kind} you ran {said}, and sales "
+                f"ran {engine._median(lifts):.0f}% above their usual weekday.")
+    else:
+        ups = [d for d in deltas if d["delta"] > 0][:3]
+        text = None
+        if ups and n == 1:
+            last = nights[0]
+            said = ", ".join(f"{last['roles'].get(d['role'], 0):g} {d['role']} against {gword} "
+                             f"{last['usual'].get(d['role'], 0):g}" for d in ups)
+            text = f"On {_mdy(last['date'])} you ran {said} — what was staffed, not yet a pattern to plan on."
+        elif ups:
+            said = ", ".join(f"{d['game']:g} {d['role']} against {gword} {d['usual']:g}" for d in ups)
+            text = (f"On your last {n} {kind} you ran a median {said} — what was staffed, not yet a pattern "
+                    f"to plan on.")
+        if text and mixed:
+            text += (" That night had something else on too." if n == 1 else
+                     " Some of those nights had something else on too.")
+    usual_view = {k: engine._median([x["usual"].get(k, 0) for x in nights]) for k in all_roles}
+    return {"games": _games_out(nights), "usual": usual_view, "usual_n": usual_n, "weekday": weekday,
+            "deltas": deltas, "recommend": recommend, "n": n, "mixed": mixed, "text": text,
+            "basis": (f"punches on file for {n} {kind}, each against the ordinary same weekdays before it; "
+                      f"each person counted once, in the role they worked"
+                      + ("; some of those nights had something else on too" if mixed else ""))}
 
 
 def _games_out(nights):
@@ -265,7 +338,12 @@ def _service_hour(h):
 
 def _hourly(restaurant_id, iso, db_path):
     """{hour: net} for one business date from the checks on file, by the
-    hour each check opened; {} with none."""
+    hour each check opened (the restaurant's own clock); {} with none. Read
+    once per engine.one_read()."""
+    return engine.memo(("hourly", restaurant_id, iso, db_path), lambda: _read_hourly(restaurant_id, iso, db_path))
+
+
+def _read_hourly(restaurant_id, iso, db_path):
     conn = store.get_conn(db_path)
     try:
         rows = conn.execute("SELECT substr(opened_at, 12, 2) AS h, SUM(net_sales) AS net FROM pos_tickets "
@@ -311,117 +389,159 @@ def _hours_span(h1, h2):
 
 def rush(restaurant_id, e, db_path=store.DB_PATH):
     """{"games": [{"date", "kickoff", "peak_hour", "offset", "game", "usual",
-    "hours": [{"hour", "game", "usual"}]}], "n", "pattern_offset" or None,
-    "text", "basis"} for games of the same side and kickoff class with
-    checks on file, or None."""
+    "hours": [{"hour", "game", "usual"}]}], "n", "mixed", "pattern_offset"
+    or None, "text", "basis"} for games of the same class and kickoff class
+    with checks on file, or None.
+
+    Each game's kickoff is read on the restaurant's own clock
+    (engine.local_kickoff — the checks' hours are the restaurant's; re-audit
+    P2-04). The nights are effect_for's (engine.clean_first, re-audit
+    P2-03). A pattern needs SEGMENT_MIN_N clean games whose peaks agree
+    within RUSH_AGREE_HOURS and every one of which ran above usual at its
+    peak — a "jump" is never promised from games that ran below usual in
+    every hour (re-audit P2-01)."""
     try:
-        games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path)
-                 if _same_class(e, g["event"]) and g["event"].get("kickoff_local")]
-        out = []
-        for g in games:
-            iso = g["event"]["event_date"]
-            tonight = _hourly(restaurant_id, iso, db_path)
-            if not tonight:
-                continue
-            usual_curves = [c for c in (_hourly(restaurant_id, u, db_path)
-                                        for u in usual_nights(restaurant_id, iso, db_path=db_path)) if c]
-            if len(usual_curves) < USUAL_MIN:
-                continue
-            hours = sorted({h for c in usual_curves for h in c} | set(tonight), key=_service_hour)
-            usual = {h: engine._median([c.get(h, 0.0) for c in usual_curves]) for h in hours}
-            peak = max(hours, key=lambda h: (tonight.get(h, 0.0) - usual[h], -_service_hour(h)))
-            kick = int(str(g["event"]["kickoff_local"])[:2])
-            out.append({"date": iso, "kickoff": g["event"]["kickoff_local"], "peak_hour": peak,
-                        "offset": _service_hour(peak) - _service_hour(kick),
-                        "game": round(tonight.get(peak, 0.0), 2), "usual": round(usual[peak], 2),
-                        "usual_n": len(usual_curves),
-                        "hours": [{"hour": h, "game": round(tonight.get(h, 0.0), 2), "usual": round(usual[h], 2)}
-                                  for h in hours]})
-        if not out:
-            return None
-        # A pattern only when the games' own peaks sit within an hour of each
-        # other (audit 10/1/26: +1 and -1 agreed "about the median" and the
-        # kickoff hour was named, where neither game peaked).
-        offs = [x["offset"] for x in out]
-        agree = len(out) >= engine.SEGMENT_MIN_N and max(offs) - min(offs) <= RUSH_AGREE_HOURS
-        pattern = min(offs) if agree else None
-        span = (max(offs) - min(offs)) if agree else None
-        last = out[0]
-        weekday = _d(last["date"]).strftime("%A")
-        if last["game"] <= last["usual"]:
-            text = None
-        elif pattern is not None:
-            text = (f"On your last {len(out)} {engine.kind_words(e)} the biggest jump over a usual night came "
-                    f"{_offsets_words(pattern, span, engine.start_word(e))}.")
-        else:
-            text = (f"On {_mdy(last['date'])} the biggest jump over a usual {weekday} came {_span(last['peak_hour'])}, "
-                    f"{_offset_words(last['offset'], engine.start_word(e))} ({engine._clock(last['kickoff'])}): {_money(last['game'])} "
-                    f"against {_money(last['usual'])}.")
-        return {"games": out, "n": len(out), "pattern_offset": pattern, "pattern_span": span, "text": text,
-                "basis": "checks on file by the hour they opened, against the median of the same hour on ordinary "
-                         "same weekdays before each game"}
+        with engine.one_read():
+            return _rush(restaurant_id, e, db_path)
     except Exception as ex:
         log.warning("event_intel.playbook rush failed rid=%s: %s", restaurant_id, ex)
         return None
+
+
+def _rush(restaurant_id, e, db_path):
+    games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path)
+             if _same_class(e, g["event"]) and g["event"].get("kickoff_local")]
+    if not games:
+        return None
+    tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+    out = []
+    for g in games:
+        lk = engine.local_kickoff(g["event"], tz)
+        if not lk or not lk[1]:
+            continue
+        iso = g["event"]["event_date"]
+        tonight = _hourly(restaurant_id, iso, db_path)
+        if not tonight:
+            continue
+        usual_curves = [c for c in (_hourly(restaurant_id, u, db_path)
+                                    for u in usual_nights(restaurant_id, iso, db_path=db_path)) if c]
+        if len(usual_curves) < USUAL_MIN:
+            continue
+        hours = sorted({h for c in usual_curves for h in c} | set(tonight), key=_service_hour)
+        usual = {h: engine._median([c.get(h, 0.0) for c in usual_curves]) for h in hours}
+        peak = max(hours, key=lambda h: (tonight.get(h, 0.0) - usual[h], -_service_hour(h)))
+        kick = int(lk[1][:2])
+        out.append({"date": iso, "kickoff": lk[1], "peak_hour": peak,
+                    "offset": _service_hour(peak) - _service_hour(kick),
+                    "game": round(tonight.get(peak, 0.0), 2), "usual": round(usual[peak], 2),
+                    "usual_n": len(usual_curves), "confounded": int(g["outcome"].get("confounded") or 0),
+                    "hours": [{"hour": h, "game": round(tonight.get(h, 0.0), 2), "usual": round(usual[h], 2)}
+                              for h in hours]})
+    if not out:
+        return None
+    use, mixed = engine.clean_first(out, confounded=lambda x: x["confounded"])
+    # A pattern only when the games' own peaks sit within an hour of each
+    # other (audit 10/1/26: +1 and -1 agreed "about the median" and the
+    # kickoff hour was named, where neither game peaked), every one of them
+    # an actual jump over usual (re-audit P2-01), and on clean nights.
+    offs = [x["offset"] for x in use]
+    agree = (not mixed and len(use) >= engine.SEGMENT_MIN_N and max(offs) - min(offs) <= RUSH_AGREE_HOURS
+             and all(x["game"] > x["usual"] for x in use))
+    pattern = min(offs) if agree else None
+    span = (max(offs) - min(offs)) if agree else None
+    last = use[0]
+    weekday = _d(last["date"]).strftime("%A")
+    if last["game"] <= last["usual"]:
+        text = None
+    elif pattern is not None:
+        text = (f"On your last {len(use)} {engine.kind_words(e)} the biggest jump over a usual night came "
+                f"{_offsets_words(pattern, span, engine.start_word(e))}.")
+    else:
+        text = (f"On {_mdy(last['date'])} the biggest jump over a usual {weekday} came {_span(last['peak_hour'])}, "
+                f"{_offset_words(last['offset'], engine.start_word(e))} ({engine._clock(last['kickoff'])}): "
+                f"{_money(last['game'])} against {_money(last['usual'])}.")
+    return {"games": use, "n": len(use), "mixed": mixed, "pattern_offset": pattern, "pattern_span": span,
+            "text": text,
+            "basis": "checks on file by the hour they opened, against the median of the same hour on ordinary "
+                     "same weekdays before each game"
+                     + ("; some of those nights had something else on too" if mixed else "")}
 
 
 # ── tonight's game against the last one like it (the nightly report) ───────
 
 def game_night(restaurant_id, day, net=None, guests=None, labor_pct=None, db_path=store.DB_PATH):
     """{"event_id", "describe", "tonight": {...}, "last": {...} or None,
-    "text", "basis"} for the first followed sports event on `day`, or None.
+    "others", "text", "basis"} for tonight's followed sports event, or None.
     `net`, `guests` and `labor_pct` are tonight's own figures from the
-    report; the usual night and the last game are read here."""
+    report; the usual night and the last game are read here.
+
+    Never an if-necessary game with no result in (store.unresolved as of
+    the morning after: it may never have been played — re-audit P2-07).
+    With two headline games tonight, the one with a measured effect here
+    leads and the others are named (re-audit P4-11)."""
     try:
-        sports = [c for c in engine.context_for(restaurant_id, day, db_path=db_path)
-                  if c["event"].get("category") == "sports"
-                  and c["event"].get("status") not in ("cancelled", "postponed")
-                  and c["event"]["id"] not in store.dismissed(restaurant_id, db_path=db_path)
-                  and engine.headline(restaurant_id, c["event"], db_path=db_path)]
-        if not sports:
-            return None
-        c = sports[0]
-        e = c["event"]
-        weekday = _d(day).strftime("%A")
-        side = "home" if e.get("home_away") == "home" else "road"
-        tonight = {"net": net, "guests": guests, "labor_pct": labor_pct}
-        heads, _roles = _roles_on(restaurant_id, _d(day).isoformat(), db_path)
-        tonight["headcount"] = sum(heads.values()) if heads else None
-        u = usual_net(restaurant_id, day, db_path=db_path) if net else None
-        if u and net:
-            tonight.update(usual=u["median"], usual_n=u["n"], lift_pct=round((float(net) / u["median"] - 1) * 100, 1))
-        last = engine.last_like(restaurant_id, e, db_path=db_path)
-        last_out = None
-        if last and last.get("net"):
-            le = last["event"]
-            last_out = {"event_id": le["id"], "date": le["event_date"], "describe": last["describe"],
-                        "net": last["net"], "usual": last.get("baseline"), "lift_pct": last.get("lift_pct"),
-                        "headcount": sum(last["headcount"].values()) if isinstance(last.get("headcount"), dict)
-                        else None, "labor_pct": last.get("labor_pct"),
-                        "weekday": _d(le["event_date"]).strftime("%A")}
-        bits = []
-        if net and tonight.get("lift_pct") is not None:
-            bits.append(f"Tonight's game sold {_money(net)}, {tonight['lift_pct']:+.0f}% against a usual {weekday} "
-                        f"({_money(tonight['usual'])})")
-        elif net:
-            bits.append(f"Tonight's game sold {_money(net)}; there are too few ordinary {weekday}s on file to say "
-                        f"what a usual one is")
-        if last_out:
-            s = f"your last {side} game, {last_out['describe']}, sold {_money(last_out['net'])}"
-            if last_out.get("lift_pct") is not None:
-                s += f", {float(last_out['lift_pct']):+.0f}% against a usual {last_out['weekday']}"
-            bits.append(s)
-        elif net:
-            bits.append(f"it's the first {side} game measured here")
-        text = (bits[0] + (f"; {bits[1]}" if len(bits) > 1 else "") + ".") if bits else None
-        return {"event_id": e["id"], "describe": c["describe"], "side": side, "weekday": weekday,
-                "tonight": tonight, "last": last_out,
-                "text": text[0].upper() + text[1:] if text else None,
-                "basis": ("tonight's net from this report against the median of ordinary same weekdays in the 8 "
-                          "weeks before; the last game as event memory measured it the same way")}
+        with engine.one_read():
+            return _game_night(restaurant_id, day, net, guests, labor_pct, db_path)
     except Exception as ex:
         log.warning("event_intel.playbook game_night failed rid=%s: %s", restaurant_id, ex)
         return None
+
+
+def _game_night(restaurant_id, day, net, guests, labor_pct, db_path):
+    after = _d(day) + timedelta(days=1)
+    gone = store.dismissed(restaurant_id, db_path=db_path)
+    sports = [c for c in engine.context_for(restaurant_id, day, db_path=db_path)
+              if c["event"].get("category") == "sports"
+              and c["event"].get("status") not in ("cancelled", "postponed")
+              and c["event"]["id"] not in gone
+              and not store.unresolved(c["event"], today=after)
+              and engine.headline(restaurant_id, c["event"], db_path=db_path)]
+    if not sports:
+        return None
+    c = next((x for x in sports if x.get("effect")), sports[0])
+    others = [x for x in sports if x is not c]
+    e = c["event"]
+    tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+    weekday = _d(day).strftime("%A")
+    side = "home" if e.get("home_away") == "home" else "road"
+    tonight = {"net": net, "guests": guests, "labor_pct": labor_pct}
+    heads, _roles = _roles_on(restaurant_id, _d(day).isoformat(), db_path)
+    tonight["headcount"] = sum(heads.values()) if heads else None
+    u = usual_net(restaurant_id, day, db_path=db_path) if net else None
+    if u and net:
+        tonight.update(usual=u["median"], usual_n=u["n"], lift_pct=round((float(net) / u["median"] - 1) * 100, 1))
+    last = engine.last_like(restaurant_id, e, db_path=db_path, tz=tz)
+    last_out = None
+    if last and last.get("net"):
+        le = last["event"]
+        last_out = {"event_id": le["id"], "date": le["event_date"], "describe": last["describe"],
+                    "net": last["net"], "usual": last.get("baseline"), "lift_pct": last.get("lift_pct"),
+                    "headcount": sum(last["headcount"].values()) if isinstance(last.get("headcount"), dict)
+                    else None, "labor_pct": last.get("labor_pct"),
+                    "weekday": _d(le["event_date"]).strftime("%A")}
+    bits = []
+    if net and tonight.get("lift_pct") is not None:
+        bits.append(f"Tonight's game sold {_money(net)}, {tonight['lift_pct']:+.0f}% against a usual {weekday} "
+                    f"({_money(tonight['usual'])})")
+    elif net:
+        bits.append(f"Tonight's game sold {_money(net)}; there are too few ordinary {weekday}s on file to say "
+                    f"what a usual one is")
+    if last_out:
+        s = f"your last {side} game, {last_out['describe']}, sold {_money(last_out['net'])}"
+        if last_out.get("lift_pct") is not None:
+            s += f", {float(last_out['lift_pct']):+.0f}% against a usual {last_out['weekday']}"
+        bits.append(s)
+    elif net:
+        bits.append(f"it's the first {side} game measured here")
+    text = (bits[0] + (f"; {bits[1]}" if len(bits) > 1 else "") + ".") if bits else None
+    if text and others:
+        text += " Also tonight: " + "; ".join(engine.describe(o["event"], with_date=False, tz=tz)
+                                              for o in others) + "."
+    return {"event_id": e["id"], "describe": c["describe"], "side": side, "weekday": weekday,
+            "tonight": tonight, "last": last_out, "others": [o["event"]["id"] for o in others],
+            "text": text[0].upper() + text[1:] if text else None,
+            "basis": ("tonight's net from this report against the median of ordinary same weekdays in the 8 "
+                      "weeks before; the last game as event memory measured it the same way")}
 
 
 # ── the morning brief's game alert ──────────────────────────────────────────
@@ -453,16 +573,37 @@ def _past(restaurant_id, iso_local) -> bool:
         return False
 
 
+def _on_clock(e, tz):
+    """The game as it falls on the restaurant's clock (engine.local_kickoff):
+    its date and start there, for a rule that reads a time of day — the
+    guest-text window is the restaurant's own 8am-9pm, and _past compares
+    with the restaurant's now (re-audit P2-04). The game itself when it has
+    no start."""
+    lk = engine.local_kickoff(e, tz)
+    if not lk or not lk[1]:
+        return e
+    return dict(e, event_date=lk[0].isoformat(), kickoff_local=lk[1])
+
+
 _CARRIED = {"event": "effect", "game_staffing": "staffing", "game_prep": "prep"}
 
 
+@engine.read_once
 def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=False, db_path=store.DB_PATH,
           carried=None, effect_said_today=False, sees_items=None):
     """The brief line for the next followed game in [today, today+ALERT_DAYS]
     — {"key", "tone", "text", "claim_kind", "outside", "ask", "action"?,
-    "event_id", "staffing"?, "rush"?} — or None. `sees_sales` /
+    "event_id", "others", "staffing"?, "rush"?} — or None. `sees_sales` /
     `sees_labor` are the viewer's (a manager's brief says the game and the
-    marketing draft, never the dollars it may not read)."""
+    marketing draft, never the dollars it may not read).
+
+    With two headline games on that date, the one with a measured effect
+    here leads and the others are named — never "plan a usual <weekday>"
+    while another game that day has a measured effect (re-audit P4-11).
+    Kickoffs and the guest-text time are on the restaurant's clock (P2-04).
+    The line is "inferred" (the email footer's "the game's staffing plan")
+    only when it says a staffing plan, and "computed" only for another
+    restaurant's nights (P2-08). One engine.one_read() for all of it (X-2)."""
     try:
         today = _d(today)
         followed = store.follows(restaurant_id, db_path=db_path)
@@ -473,7 +614,12 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 and engine.headline(restaurant_id, e, db_path=db_path)]
         if not rows:
             return None
-        e = rows[0]
+        tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+        same_day = [x for x in rows if x["event_date"] == rows[0]["event_date"]]
+        effects = {x["id"]: engine.effect_for(restaurant_id, x, db_path=db_path) for x in same_day}
+        e = next((x for x in same_day if effects.get(x["id"])), same_day[0])
+        others = [x for x in same_day if x["id"] != e["id"]]
+        eff = effects.get(e["id"])
         day = _d(e["event_date"])
         # What last night's report already put in the brief's today line for
         # this game (its effect, staffing, prep) is not said twice (audit
@@ -483,16 +629,18 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             said.add("effect")      # today's forecast line already applied the measured effect
         weekday = day.strftime("%A")
         side = "home" if e.get("home_away") == "home" else "road"
-        parts = [f"{_when(day, today)}: {engine.describe(e, with_date=False)}."]
+        parts = [f"{_when(day, today)}: {engine.describe(e, with_date=False, tz=tz)}."]
+        if others:
+            parts.append("Also that day: "
+                         + "; ".join(engine.describe(o, with_date=False, tz=tz) for o in others) + ".")
         claim = "context"
-        eff = engine.effect_for(restaurant_id, e, db_path=db_path)
         st = rush_out = None
         if sees_sales and "effect" not in said:
             if eff:
                 claim = "measured"
                 parts.append(eff["basis"][0].upper() + eff["basis"][1:] + ".")
             else:
-                last = engine.last_like(restaurant_id, e, db_path=db_path)
+                last = engine.last_like(restaurant_id, e, db_path=db_path, tz=tz)
                 if last and last.get("net") and last.get("lift_pct") is not None:
                     parts.append(f"No pattern measured yet: your last {side} game, {last['describe']}, sold "
                                  f"{_money(last['net'])}, {float(last['lift_pct']):+.0f}% against a usual "
@@ -506,13 +654,16 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 if pe:
                     parts.append(pe["text"] + ".")
                     claim = "computed"       # another restaurant's measured nights, not context
+        staffed = False
         if sees_labor:
             st = staffing(restaurant_id, e, db_path=db_path)
             if st and st.get("recommend") and "staffing" not in said:
                 parts.append(st["text"])
+                staffed = True
             rush_out = rush(restaurant_id, e, db_path=db_path)
-            if rush_out and rush_out.get("pattern_offset") is not None and e.get("kickoff_local"):
-                kick = int(str(e["kickoff_local"])[:2])
+            lk = engine.local_kickoff(e, tz)
+            if rush_out and rush_out.get("pattern_offset") is not None and lk and lk[1]:
+                kick = int(lk[1][:2])
                 lo, sp = rush_out["pattern_offset"], rush_out.get("pattern_span") or 0
                 parts.append(f"Expect the jump around {_hours_span(kick + lo, kick + lo + sp)} "
                              f"({_offsets_words(lo, sp, engine.start_word(e))}, as on your last {rush_out['n']}).")
@@ -530,19 +681,22 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             parts.append("Prep for " + "; ".join(p["text"] for p in prep[:3]) + ".")
         elif mix and mix.get("text") and mix["n"] == 1:
             parts.append(mix["text"])
-        plan = gameday.send_plan(e) if marketing else None
+        plan = gameday.send_plan(_on_clock(e, tz)) if marketing else None
         if plan and _past(restaurant_id, plan["text_at"]):
             plan = None      # an early kickoff's "the evening before" is already gone on game day
         if plan:
             parts.append(f"Text your guests {plan['text_words']} (a starting rule, not yet measured here).")
         line = {"key": f"event_ahead:{e['id']}", "event_id": e["id"], "source": "events",
-                "tone": "action" if (st and st.get("recommend")) else "neutral",
+                "others": [o["id"] for o in others],
+                "tone": "action" if staffed else "neutral",
                 # A staffing plan is read from measured nights, not measured
-                # itself: the email's footer names it an inference.
-                "claim_kind": "inferred" if (st and st.get("recommend")) else claim,
+                # itself: the email's footer names it an inference — only when
+                # the line says one (re-audit P2-08: a plan the report's today
+                # line already carried left an "inference" on a line with none).
+                "claim_kind": "inferred" if staffed else claim,
                 "outside": True, "text": " ".join(parts),
-                "ask": f"How should we get ready for {engine.describe(e)}?"}
-        if st and st.get("recommend"):
+                "ask": f"How should we get ready for {engine.describe(e, tz=tz)}?"}
+        if staffed:
             line["staffing"] = {k: st[k] for k in ("recommend", "basis", "n")}
         if marketing:
             import nav

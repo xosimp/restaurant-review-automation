@@ -28,7 +28,11 @@ event_intel.engine — making every restaurant event-aware from one catalog.
                         one, most specific first: same class and prime
                         time, then same class (game_class: side, preseason
                         or not, home ground or another) — never across a
-                        class, from event_outcomes, never estimated
+                        class, from event_outcomes, never estimated; for a
+                        frequent series' regular-season game, its label's
+                        measured figure, the one headline judges it by
+  headline(rid, e)      whether a game earns an owner's attention unasked
+  one_read()            a call's shared reads (past games, usual nights)
   context_for(rid, d)   the events on a date with their effect: what the
                         report, the brief and Ask say about it
   last_like(rid, e)     the last finished game of the same kind, with what
@@ -36,6 +40,8 @@ event_intel.engine — making every restaurant event-aware from one catalog.
 
 Nothing here calls a model. Reads never raise into their caller.
 """
+import contextlib
+import contextvars
 import logging
 import math
 from datetime import date, timedelta
@@ -65,6 +71,55 @@ SYNC_MAX_SECONDS = 600
 
 def _d(v):
     return v if isinstance(v, date) else date.fromisoformat(str(v)[:10])
+
+
+# ── one read: what a single call reads once (re-audit X-2) ─────────────────
+#
+# A game's plan (playbook.alert: staffing, the rush, the item mix) walks the
+# same past games, and each past game the same usual nights, three times
+# over; consecutive games' usual nights overlap seven weeks in eight. Inside
+# `one_read()` each of those reads (past_games, playbook.usual_nights and its
+# per-night punches and checks) is made once and shared. The scope is the
+# calling context's only (contextvars): nothing is kept between calls, so a
+# figure is never older than the call that says it.
+
+_ONE_READ = contextvars.ContextVar("event_intel_one_read", default=None)
+
+
+@contextlib.contextmanager
+def one_read():
+    """Share reads within one call; reentrant (an inner scope joins the
+    outer one)."""
+    if _ONE_READ.get() is not None:
+        yield
+        return
+    token = _ONE_READ.set({})
+    try:
+        yield
+    finally:
+        _ONE_READ.reset(token)
+
+
+def read_once(fn):
+    """A public read run inside one_read() (playbook.alert: a whole brief
+    line's reads shared)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapped(*a, **k):
+        with one_read():
+            return fn(*a, **k)
+    return wrapped
+
+
+def memo(key, fn):
+    """fn() once per `key` inside one_read(); a plain call outside it."""
+    m = _ONE_READ.get()
+    if m is None:
+        return fn()
+    if key not in m:
+        m[key] = fn()
+    return m[key]
 
 
 def haversine_km(lat1, lng1, lat2, lng2):
@@ -479,7 +534,13 @@ def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
     newest first. Bounded: games inside PAST_GAMES_DAYS of this one, and at
     most PAST_GAMES_PER_CLASS of the newest measured games of each
     game_class — effect_for's segments sit inside one class, so each is the
-    median of its newest nights (re-audit X-2)."""
+    median of its newest nights (re-audit X-2). Read once per one_read()."""
+    key = ("past_games", restaurant_id, e.get("series_id"), e.get("event_date"), e.get("id"),
+           e.get("short_name") or e.get("series_name"), db_path)
+    return list(memo(key, lambda: _past_games(restaurant_id, e, db_path)))
+
+
+def _past_games(restaurant_id, e, db_path):
     if not e.get("event_date"):
         before = store.local_today(e.get("timezone") or e.get("series_timezone")).isoformat()
     else:
@@ -503,10 +564,78 @@ def past_games(restaurant_id, e, db_path=store.DB_PATH) -> list:
     return got
 
 
+def clean_first(items, confounded=None):
+    """(the nights to use, mixed?) — the one clean-nights rule (QUALITY-4):
+    a night that carried something else too (a game on New Year's Eve, on a
+    rainy payday) is left out while SEGMENT_MIN_N clean nights remain; below
+    that every night counts and `mixed` says some of them were shared, so
+    the sentence says so and nothing is planned on it (effect_for, and
+    playbook.staffing / rush — re-audit P2-03). `confounded(x)` reads one
+    item's flag; by default a past_games entry's outcome."""
+    flag = confounded or (lambda g: int((g.get("outcome") or {}).get("confounded") or 0))
+    clean = [x for x in items if not flag(x)]
+    if len(clean) >= SEGMENT_MIN_N:
+        return clean, False
+    return list(items), len(clean) < len(items)
+
+
+def _regular_games(e, db_path) -> int:
+    """The series' regular-season games in the game's season (catalog
+    `series_games`, else counted) — what makes a series frequent."""
+    n = e.get("series_games")
+    if n is None:
+        conn = store.get_conn(db_path)
+        try:
+            r = conn.execute("SELECT COUNT(*) AS n FROM catalog_events WHERE series_id=? AND season=? "
+                             "AND season_type='regular'", (e.get("series_id"), e.get("season"))).fetchone()
+            n = int(r["n"] or 0) if r else 0
+        finally:
+            conn.close()
+    return int(n or 0)
+
+
+def _judged_by_its_label(e, db_path) -> bool:
+    """A frequent series' regular-season game: whether it earns attention is
+    decided by its label's measured figure (event_memory.quiet_game, the
+    baselines' own test), so that figure is the one said about it."""
+    import event_memory
+    return e.get("season_type") not in ("postseason", "preseason") and \
+        _regular_games(e, db_path) >= event_memory.FREQUENT_SERIES_GAMES
+
+
+def _label_effect(restaurant_id, e, db_path):
+    """effect_for's answer for a game judged by its label: the label's
+    measured figure (event_memory.measured_effect — the one the quiet test
+    and the forecast use), in effect_for's shape, or None below
+    SEGMENT_MIN_N nights."""
+    import event_memory
+    m = event_memory.measured_effect(restaurant_id, label_for(e), db_path=db_path)
+    if not m or int(m.get("n") or 0) < SEGMENT_MIN_N:
+        return None
+    short = e.get("short_name") or e.get("series_name") or ""
+    words = kind_words(dict(e, is_primetime=0))
+    med, lo, hi, n = float(m["median_lift_pct"]), float(m["low_lift_pct"]), float(m["high_lift_pct"]), int(m["n"])
+    basis = (f"{short} {words} have run {med:+.0f}% against a usual same weekday here "
+             f"(median of {n}, {lo:+.0f}% to {hi:+.0f}%"
+             + ("; some of those nights had something else on too" if m.get("confounded") else "") + ")")
+    return {"segment": f"{short} {words}".strip(), "n": n, "median_lift_pct": round(med, 1),
+            "low_pct": round(lo, 1), "high_pct": round(hi, 1), "confounded": bool(m.get("confounded")),
+            "dates": list(m.get("dates") or []), "basis": basis, "applies": bool(m.get("applies"))}
+
+
 def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
     """{"segment", "n", "median_lift_pct", "low_pct", "high_pct", "dates",
-    "basis"} for games like this one at this restaurant, the most specific
-    segment with SEGMENT_MIN_N nights; None before there are any."""
+    "basis", "applies"} for games like this one at this restaurant, the most
+    specific segment with SEGMENT_MIN_N nights; None before there are any.
+
+    One figure decides and is said (re-audit P4-07): a frequent series'
+    regular-season game earns an owner's attention by its label's measured
+    figure (headline → event_memory.quiet_game), so that is the figure said
+    about it here (_label_effect) — never a segment median that can sit on
+    the other side of EFFECT_FLOOR_PCT. `exact` (a cross-restaurant figure,
+    event_intel.peers) and `keep` always read the segments."""
+    if not exact and keep is None and _judged_by_its_label(e, db_path):
+        return _label_effect(restaurant_id, e, db_path)
     games = past_games(restaurant_id, e, db_path=db_path)
     if keep is not None:
         games = [g for g in games if keep(g["event"]["event_date"])]
@@ -535,9 +664,9 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
         # A night that carried something else too (a game on Christmas, on
         # a rainy payday) is left out while clean nights suffice; when it
         # has to count, the sentence says so.
-        clean = [g for g in hits if not int(g["outcome"].get("confounded") or 0)]
-        use, mixed = (clean, False) if len(clean) >= SEGMENT_MIN_N else (hits, len(clean) < len(hits))
+        use, mixed = clean_first(hits)
         if len(use) >= SEGMENT_MIN_N:
+            import event_memory
             lifts = [float(g["outcome"]["lift_pct"]) for g in use]
             med = _median(lifts)
             basis = (f"{short} {words} have run {med:+.0f}% against a usual same weekday here "
@@ -545,7 +674,8 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
                      + ("; some of those nights had something else on too" if mixed else "") + ")")
             return {"segment": f"{short} {words}".strip(), "n": len(use), "median_lift_pct": round(med, 1),
                     "low_pct": round(min(lifts), 1), "high_pct": round(max(lifts), 1), "confounded": mixed,
-                    "dates": [g["event"]["event_date"] for g in use], "basis": basis}
+                    "dates": [g["event"]["event_date"] for g in use], "basis": basis,
+                    "applies": len(use) >= event_memory.EFFECT_MIN_N}
     return None
 
 
@@ -557,19 +687,19 @@ def headline(restaurant_id, e, db_path=store.DB_PATH) -> bool:
     season), and a frequent series' game (Bulls, Blackhawks, Fire) only once
     games like it are measured to matter here — event_memory.quiet_game,
     the one test the baselines use too (phase 4 audit). Until then it is
-    context: on the calendar and in Ask, and measured every night it
-    happens."""
+    context: on the calendar and in Ask, and measured on every night that
+    has event_memory.BASELINE_MIN ordinary same weekdays before it.
+
+    It judges from the figure the surfaces say (effect_for, re-audit
+    P4-07): a regular-season game by its label's measured figure — the
+    quiet test's own, which effect_for says for it — and a frequent
+    series' preseason game, its own crowd (game_class), by its own
+    preseason figure, effect_matters on what effect_for says."""
     import event_memory
-    n = e.get("series_games")
-    if n is None:
-        conn = store.get_conn(db_path)
-        try:
-            r = conn.execute("SELECT COUNT(*) AS n FROM catalog_events WHERE series_id=? AND season=? "
-                             "AND season_type='regular'", (e.get("series_id"), e.get("season"))).fetchone()
-            n = int(r["n"] or 0) if r else 0
-        finally:
-            conn.close()
-    return not event_memory.quiet_game(restaurant_id, label_for(e), int(n or 0), e.get("season_type"),
+    n = _regular_games(e, db_path)
+    if e.get("season_type") == "preseason" and n >= event_memory.FREQUENT_SERIES_GAMES:
+        return event_memory.effect_matters(effect_for(restaurant_id, e, db_path=db_path))
+    return not event_memory.quiet_game(restaurant_id, label_for(e), n, e.get("season_type"),
                                        db_path=db_path)
 
 
