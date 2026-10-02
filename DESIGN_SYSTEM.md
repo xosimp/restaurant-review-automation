@@ -27,7 +27,7 @@ in the same words; a platform may add a capability the other can't have
 
 | iOS | Web |
 |---|---|
-| Push with lock-screen action categories (`PushManager`, §12 *Lock-screen actions*) · the Home-screen / Lock Screen widget (`CavnarWaitingWidget`) · the queued-send Live Activity (`PendingSendLiveActivity`) · App Intents / Shortcuts (`Core/CavnarAppIntents.swift`) · Home-screen quick actions (`Core/SystemEntry.swift`) · haptics (`Haptic`) · document scan (`InvoiceScanSheet`, VisionKit) · the offline write queue (`PendingWriteQueue`) · Face ID and app passcode (`LockedView`, `CavnarPasscodePad`) · the privacy shield over the app switcher | The ⌘K / Ctrl+K / "/" command palette (`cavPalette`) · URL routing — every panel and deep link is a real URL (`history.pushState`) · CSV exports and templates · the wide multi-column plan and settings screens |
+| Push with lock-screen action categories (`PushManager`, §12 *Lock-screen actions*) · the Home-screen / Lock Screen widget (`CavnarWaitingWidget`), and the staff tier's "Next shift" widget (`CavnarNextShiftWidget`, from `StaffShiftSnapshot`) · the queued-send Live Activity (`PendingSendLiveActivity`) · App Intents / Shortcuts (`Core/CavnarAppIntents.swift`) · Home-screen quick actions (`Core/SystemEntry.swift`) · haptics (`Haptic`) · document scan (`InvoiceScanSheet`, VisionKit) · the offline write queue (`PendingWriteQueue`; the staff tier's task ticks: `StaffOfflineQueue`) · Face ID and app passcode (`LockedView`, `CavnarPasscodePad`) · the privacy shield over the app switcher | The ⌘K / Ctrl+K / "/" command palette (`cavPalette`) · URL routing — every panel and deep link is a real URL (`history.pushState`) · CSV exports and templates · the wide multi-column plan and settings screens |
 
 ---
 
@@ -632,6 +632,21 @@ in again button; the page stops polling behind it. Pollers skip ticks while
 **Unverified or partial data** carries `CavnarCaveat` (iOS) or the caveat
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.
+
+**Task sheet lines (staff app, iOS).** The whole row is the tick (44pt
+minimum, `contentShape`), led by `StaffCheckDisc` — the `.cv-ok` disc at
+28pt (scaled with Dynamic Type): `.cavnarGreen` lit from the top-left, a dark
+tick, a faint halo; a hollow ink3 ring when not done, red once overdue; a
+tick still travelling or parked offline is the done disc held back. A sheet's
+progress is `StaffEmberProgressBar`, a 6pt ember capsule (the web `.ts-bar`),
+never a system `ProgressView`. A reading or note saves with a compact
+`CavnarChipButtonStyle(tone: .cavnarPaper3)` "Save" or Return, never an
+ember primary per line; a photo line offers "Take photo" (secondary, camera
+glyph) then "Choose from library" (text). What a line has to say sits under
+it (`StaffLineNoteView`): a critical reading out of range in a red-bordered
+`RedBg` block headed "Tell your manager now", a refusal in red, "Will send
+when you're back online" in amber. The phone's copy reads "Your sheets as of
+4:05pm" above the sheets, with Try again.
 
 **Unsent and dropped offline changes (iOS).** The amber pill at the top of
 RootView says what the offline queue holds ("Offline — 2 changes will send

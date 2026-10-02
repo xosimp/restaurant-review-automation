@@ -2,7 +2,8 @@ import SwiftUI
 import WidgetKit
 
 /// The widget extension (Friction audit #47): the "what's waiting · last
-/// night" widget for the Home Screen and Lock Screen, and the auto-publish
+/// night" widget for the Home Screen and Lock Screen, the staff "Next shift"
+/// widget, and the auto-publish
 /// countdown Live Activity. It never signs in and never calls the API — the
 /// app writes WidgetSnapshot into the shared app group and starts the
 /// activity; this target only draws them.
@@ -11,6 +12,8 @@ struct CavnarWidgetsBundle: WidgetBundle {
     var body: some Widget {
         CavnarWaitingWidget()
         CavnarLastNightWidget()
+        // The staff tier's: the employee's own next shift (MISS-11).
+        CavnarNextShiftWidget()
         PendingSendLiveActivity()
     }
 }
