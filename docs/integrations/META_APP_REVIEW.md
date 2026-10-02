@@ -40,7 +40,7 @@ with a linked Instagram professional account.
 | 0:25 | Facebook login popup: enter email and password, sign in | "Meta login: the owner signs in to Facebook." |
 | 0:40 | "Continue as …", the Page and Instagram choice, the permissions screen. **Hold on it for 3 seconds**, then Continue / Save | "The owner chooses their Page and Instagram account and grants Cavnar AI these permissions." |
 | 1:00 | Back in Cavnar AI: "Which Page is this restaurant?" → pick the Page (if more than one) → the Connections card shows the Page name and @instagram username | "pages_show_list and business_management: Cavnar AI lists the Pages this person manages, including Pages owned by a business portfolio. instagram_basic: it reads the linked Instagram account's username." |
-| 1:20 | Marketing → Content: a drafted post with a photo → **Post to Facebook** → success | "pages_manage_posts: the owner reviewed this post; clicking Post to Facebook publishes it to their Page." |
+| 1:20 | Marketing → Write: a topic → **Generate** → **Add a photo** → **Post to Facebook** → success | "pages_manage_posts: the owner reviewed this post; clicking Post to Facebook publishes it to their Page." |
 | 1:40 | New tab: the Facebook Page, the post visible on it | "The post is live on the restaurant's Facebook Page." |
 | 1:55 | Back → **Post to Instagram** → success | "instagram_content_publish: clicking Post to Instagram publishes the same post to the linked Instagram account." |
 | 2:10 | New tab: instagram.com profile, the post visible | "The post is live on Instagram." |
@@ -83,16 +83,16 @@ For each Instagram post the owner published through Cavnar AI, Cavnar AI reads t
 1. Go to https://dashboard.cavnar.ai and sign in with the test login below.
 2. Open Account → Connections and click "Connect Instagram & Facebook". Sign in with a Facebook account that manages a Page linked to an Instagram professional account, and grant the permissions.
 3. If you manage more than one Page, choose one on "Which Page is this restaurant?".
-4. Open Marketing → Content, choose a post with a photo, and click "Post to Facebook", then "Post to Instagram".
+4. Open Marketing, type a topic under Write and click Generate. Click "Add a photo" (Instagram needs one), then click "Post to Facebook", then "Post to Instagram".
 5. Marketing → Analytics shows each published post's reach and engagement once Meta reports it, usually within a day.
 
 The app uses Facebook Login for Business with a user access token, not a system-user token.
 
-Test login: _(an owner login on a demo restaurant, made for the reviewer; never a client's account)_
+Test login: username `metareview` (user 9, an owner login on the demo restaurant The Copper Table, rid 3, is_demo, 2FA off), created 10/2/26. The password is in Will's password manager, never in this repo.
 
 ## Before submitting
 
 - The configuration "Cavnar AI Connect" carries all eight permissions.
 - The review request lists all eight; `instagram_business_*` are not included.
-- Business verification is complete (Review → Verification).
+- Business verification is complete (done, per Will 10/2/26).
 - Privacy policy and data-deletion URLs are set in App settings → Basic.
