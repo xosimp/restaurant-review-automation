@@ -91,8 +91,20 @@ struct RootView: View {
     @State private var warmedTabs: Set<AppTab> = []
 
     private var loginCoverUp: Bool {
-        guard !staffSessionStore.isAuthenticated else { return false }
+        guard !staffSessionStore.isAuthenticated, !staffDeviceEntry else { return false }
         return !sessionStore.isAuthenticated || loginLifted == false
+    }
+
+    // A phone the staff app has signed in on opens on the staff PIN pad,
+    // not the owner's username form (H10 / UX-02). "Owner or manager? Sign
+    // in here" on that pad sets this, for the rest of the process.
+    @State private var ownerLoginChosen = false
+
+    /// No session of either kind, on a staff phone: the staff sign-in is the
+    /// root.
+    private var staffDeviceEntry: Bool {
+        !staffSessionStore.isAuthenticated && !sessionStore.isAuthenticated
+            && staffSessionStore.isStaffDevice && !ownerLoginChosen
     }
 
     var body: some View {
@@ -104,9 +116,33 @@ struct RootView: View {
             // land on. The backend enforces the same boundary independently
             // (auth._console_denied), so this is the convenience half of it,
             // not the security half.
-            if staffSessionStore.isAuthenticated {
+            if staffSessionStore.isAuthenticated && !staffSessionStore.isLocked {
                 StaffPortalView()
+                    // A new sign-in (another location, a reset PIN) is a
+                    // new portal, never the last session's screens.
+                    .id(staffSessionStore.sessionGeneration)
                     .transition(.opacity)
+                    // Push after every staff sign-in, and on a launch into a
+                    // live session: the person's details, then permission
+                    // and the token under the staff login (C4).
+                    .task(id: staffSessionStore.sessionGeneration) {
+                        await staffSessionStore.refreshAfterSignIn()
+                    }
+                    .overlay(alignment: .bottom) {
+                        if staffSessionStore.notificationAsk {
+                            StaffNotificationAskCard(staff: staffSessionStore)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.25),
+                               value: staffSessionStore.notificationAsk)
+            } else if staffSessionStore.isAuthenticated || staffDeviceEntry {
+                // The idle lock, an ended staff session, a PIN change: this
+                // phone's PIN pad, on its last person.
+                StaffLoginView(onOwnerSignIn: staffSessionStore.isAuthenticated ? nil : {
+                    ownerLoginChosen = true
+                })
+                .transition(.opacity)
             } else if sessionStore.isAuthenticated {
                 if sessionStore.isLocked {
                     // introReady: on a cold launch this mounts UNDER the splash;
@@ -275,6 +311,12 @@ struct RootView: View {
                 return ok
             }
             PushManager.shared.router = deepLinkRouter
+            // The staff tier files its push token with its own bearer and
+            // opens its own notices (C4).
+            PushManager.shared.staffSession = staffSessionStore
+            // At merge with I2: staffSessionStore.onExplicitSignOut =
+            // { StaffCache.purgeAll() } — an explicit sign-out (never an
+            // ended session or the idle lock) takes the cached screens too.
             // Every location switch, whichever screen made it (F3-4, F3-11).
             session.onLocationSwitched = { _ in didSwitchLocation() }
         }
@@ -352,10 +394,14 @@ struct RootView: View {
                 }
             case .background:
                 sessionStore.noteBackgrounded()
+                staffSessionStore.noteBackgrounded()
             case .active:
                 // Before the shield drops: if the grace period ran out the
                 // lock has to be up before any dashboard frame is drawn.
                 sessionStore.lockIfGraceExpired()
+                // The staff tier's shared-device lock: 15 minutes away and
+                // the PIN pad is back (M4 / WF-25).
+                staffSessionStore.lockIfIdle()
                 privacyShieldUp = false
                 // Foreground is a reconnect opportunity for anything queued
                 // while offline, and for a push token that failed to register.
@@ -371,6 +417,11 @@ struct RootView: View {
         // gate — by unlocking, or by signing in on a fresh install.
         .onChange(of: sessionStore.isLocked) { _, locked in
             if !locked { coldLaunchIntroPending = false }
+        }
+        .onChange(of: staffSessionStore.isAuthenticated) { _, signedIn in
+            // After a staff sign-in, this phone's next sign-out lands on the
+            // staff PIN pad again, not the owner form chosen earlier.
+            if signedIn { ownerLoginChosen = false }
         }
         .onChange(of: sessionStore.isAuthenticated) { _, authenticated in
             DebugFrameWatchdog.mark("isAuthenticated=\(authenticated)")

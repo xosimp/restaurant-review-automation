@@ -97,13 +97,10 @@ struct LoginView: View {
             .fullScreenCover(isPresented: $showingStaffSignIn) {
                 // Full screen rather than a sheet: this is the whole of the
                 // employee product, not a detour inside the owner one.
-                StaffLoginView()
-                    .overlay(alignment: .topTrailing) {
-                        Button("Close") { showingStaffSignIn = false }
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(18)
-                    }
+                // Its own Close (44pt, labelled). Once a staff sign-in
+                // lands, RootView roots this phone on the staff app — and on
+                // the staff PIN pad from then on, not this form (H10).
+                StaffLoginView(onClose: { showingStaffSignIn = false })
             }
             .navigationDestination(
                 isPresented: Binding(
