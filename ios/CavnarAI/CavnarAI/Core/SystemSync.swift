@@ -9,8 +9,10 @@ import WidgetKit
 ///
 /// Reads with the stored owner token directly rather than waiting on the
 /// SessionStore: at a cold launch the store installs its token on a Task,
-/// and this runs from the scene's first activation. A staff session never
-/// has an owner token, so a staff phone's widget stays empty.
+/// and this runs from the scene's first activation. A staff session has no
+/// owner token: its phone gets the "Next shift" widget instead, from the
+/// staff session's own /staff/api/shifts (refreshStaff, MISS-11), and the
+/// owner surfaces stay empty.
 @MainActor
 final class WidgetSnapshotService {
     static let shared = WidgetSnapshotService()
@@ -41,6 +43,14 @@ final class WidgetSnapshotService {
     /// activation, which on a shared back-office phone could be hours away
     /// (F3-8).
     static func clearForSignOut() {
+        clearOwnerSurfaces()
+        StaffShiftSnapshot.clear()
+        WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
+    }
+
+    /// The owner's widgets, quick actions and countdowns — gone on a phone
+    /// with no owner session, whether or not a staff session is there.
+    static func clearOwnerSurfaces() {
         WidgetSnapshot.clear()
         WidgetSnapshot.allWidgetKinds.forEach { WidgetCenter.shared.reloadTimelines(ofKind: $0) }
         UIApplication.shared.shortcutItems = []
@@ -129,8 +139,18 @@ final class WidgetSnapshotService {
 
     func refresh(force: Bool = false) async {
         guard let token = Keychain.get(Keychain.Key.sessionToken), !token.isEmpty else {
-            Self.clearForSignOut()
+            if let staffToken = Keychain.get(Keychain.Key.staffSessionToken), !staffToken.isEmpty {
+                Self.clearOwnerSurfaces()
+                await refreshStaff(bearer: staffToken, force: force)
+            } else {
+                Self.clearForSignOut()
+            }
             return
+        }
+        // An owner phone carries no employee's shifts.
+        if Keychain.get(Keychain.Key.staffSessionToken) == nil, StaffShiftSnapshot.load() != nil {
+            StaffShiftSnapshot.clear()
+            WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
         }
         if inFlight { return }
         if !force, let last = lastRefresh, Date().timeIntervalSince(last) < Self.minInterval { return }
@@ -167,6 +187,95 @@ final class WidgetSnapshotService {
                 [QuickAction.approveRepliesItem(waiting: waiting.replies)].compactMap { $0 }
         }
         if let p { PendingSendActivities.sync(p.actions ?? []) }
+    }
+
+    // MARK: Staff tier — the "Next shift" widget (MISS-11)
+
+    private var lastStaffRefresh: Date?
+
+    /// /staff/api/shifts as the widget needs it: only the stable fields
+    /// (date, start, end, role), so a change to the portal's own models
+    /// can't break the widget. Legs carry both `start` and `shift_start`.
+    struct StaffShiftsRead: Decodable {
+        struct Leg: Decodable {
+            let start: String?
+            let end: String?
+            let shiftStart: String?
+            let shiftEnd: String?
+            let role: String?
+            enum CodingKeys: String, CodingKey {
+                case start, end, role
+                case shiftStart = "shift_start"
+                case shiftEnd = "shift_end"
+            }
+        }
+        struct Day: Decodable {
+            let date: String
+            let shift: Leg?
+            let shifts: [Leg]?
+        }
+        let published: Bool?
+        let week: [Day]?
+    }
+
+    /// The snapshot one read makes: every leg of every day, in order; the
+    /// window starts at the read's first day (the restaurant's today).
+    nonisolated static func staffSnapshot(from read: StaffShiftsRead, now: Date) -> StaffShiftSnapshot? {
+        let days = read.week ?? []
+        guard let first = days.first?.date else {
+            // Never published: say so; a read with no days at all says nothing.
+            return read.published == false
+                ? StaffShiftSnapshot(published: false, shifts: [], windowStart: Self.isoDay(now), updatedAt: now)
+                : nil
+        }
+        let shifts = days.flatMap { day -> [StaffShiftSnapshot.Shift] in
+            let legs = (day.shifts?.isEmpty == false ? day.shifts : nil) ?? day.shift.map { [$0] } ?? []
+            return legs.map {
+                StaffShiftSnapshot.Shift(date: day.date, start: $0.start ?? $0.shiftStart,
+                                         end: $0.end ?? $0.shiftEnd, role: $0.role)
+            }
+        }
+        return StaffShiftSnapshot(published: read.published ?? true, shifts: shifts,
+                                  windowStart: first, updatedAt: now)
+    }
+
+    nonisolated static func isoDay(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
+    /// Writes the staff widget's snapshot from a read the portal already
+    /// made, so the schedule screen can keep the widget current without a
+    /// second request.
+    static func recordStaffShifts(_ read: StaffShiftsRead, now: Date = Date()) {
+        guard let snap = staffSnapshot(from: read, now: now) else { return }
+        if snap != StaffShiftSnapshot.load() { StaffShiftSnapshot.save(snap) }
+        WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
+    }
+
+    /// The staff session's own shifts for the widget. A failed read keeps
+    /// the last snapshot (it says its own staleness); an ended session
+    /// clears it.
+    private func refreshStaff(bearer: String, force: Bool) async {
+        if inFlight { return }
+        if !force, let last = lastStaffRefresh, Date().timeIntervalSince(last) < Self.minInterval { return }
+        inFlight = true
+        defer { inFlight = false }
+        do {
+            let read: StaffShiftsRead = try await client.sendWithBearer("/staff/api/shifts", bearer: bearer)
+            lastStaffRefresh = Date()
+            Self.recordStaffShifts(read)
+        } catch is APIClient.SessionExpiredError {
+            StaffShiftSnapshot.clear()
+            WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
+        } catch let error as APIClient.APIError where error.status == 401 {
+            StaffShiftSnapshot.clear()
+            WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
+        } catch {
+            // Offline or the server is unwell: the last snapshot stands.
+        }
     }
 
     /// Last night's net and its measured change. `.none` when this login has

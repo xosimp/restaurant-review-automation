@@ -2,177 +2,273 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-// MARK: - Models (GET /staff/api/tasks — task_sheets.staff_view)
-
-struct StaffSheetLine: Decodable, Hashable, Identifiable {
-    let lineID: Int
-    let label: String
-    let section: String?
-    let dueAt: String?
-    let proof: String?
-    let proofLabel: String?
-    let critical: Bool?
-    let done: Bool
-    let overdue: Bool?
-    let completedBy: String?
-    let completedAt: String?
-    let late: Bool?
-    let flagged: Bool?
-    let proofValue: String?
-    let photo: String?
-
-    var id: Int { lineID }
-
-    enum CodingKeys: String, CodingKey {
-        case label, section, proof, critical, done, overdue, late, flagged, photo
-        case lineID = "line_id"
-        case dueAt = "due_at"
-        case proofLabel = "proof_label"
-        case completedBy = "completed_by"
-        case completedAt = "completed_at"
-        case proofValue = "proof_value"
-    }
-}
-
-struct StaffSheet: Decodable, Hashable, Identifiable {
-    let id: Int
-    let title: String
-    let shiftKind: String
-    let shiftStart: String?
-    let shiftEnd: String?
-    let assignees: [String]
-    let unassigned: Bool
-    let status: String
-    let done: Int
-    let total: Int
-    let overdue: Int?
-    let lines: [StaffSheetLine]
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, assignees, unassigned, status, done, total, overdue, lines
-        case shiftKind = "shift_kind"
-        case shiftStart = "shift_start"
-        case shiftEnd = "shift_end"
-    }
-}
-
-struct StaffSignoff: Decodable, Hashable {
-    let shiftKind: String
-    let signedBy: String?
-
-    enum CodingKeys: String, CodingKey {
-        case shiftKind = "shift_kind"
-        case signedBy = "signed_by"
-    }
-}
-
-struct StaffTickResponse: Decodable {
-    let ok: Bool
-    let error: String?
-    let late: Bool?
-    let flagged: Bool?
-}
-
-enum StaffSheetFormat {
-    /// "10:30am" from the server's local wall clock ("2026-10-05T10:30:00").
-    static func clock(_ iso: String?) -> String {
-        guard let iso, iso.count >= 16,
-              let h = Int(iso.dropFirst(11).prefix(2)) else { return "" }
-        let m = String(iso.dropFirst(14).prefix(2))
-        let hour = h % 12 == 0 ? 12 : h % 12
-        return "\(hour)\(m == "00" ? "" : ":" + m)\(h >= 12 ? "pm" : "am")"
-    }
-
-    static func kind(_ k: String) -> String {
-        ["opening": "Opening", "closing": "Closing", "mid": "Mid", "any": "All day"][k] ?? k
-    }
-}
-
 // MARK: - Your sheets today
 
 /// The staff app's Tasks tab (task_sheets.py): each sheet the published
 /// schedule puts this person on, in order, with due times; a line that
 /// needs a reading, a note or a photo asks for it before it ticks. A manager
-/// also sees the floor and signs a shift off.
+/// also sees the floor, last night's closing note on the opening sheet, and
+/// signs a shift off.
+///
+/// The whole row is the tick (UX-05), at once on screen and put back if the
+/// server refuses; the server's answer replaces the sheet in place
+/// (PERF-08). With no connection the phone's copy stays up "as of 4:05pm"
+/// and ticks and readings wait to send (PERF-09); a photo is taken with the
+/// camera first and shrunk on the phone before it goes (UX-24, PERF-06).
+///
+/// The section reads /tasks itself (StaffTasksStore). `response` is the
+/// container's read, used only as a first paint; `reload` is kept for the
+/// container's call and not needed.
 struct StaffTaskSheetsSection: View {
     @Environment(StaffSessionStore.self) private var staff
-    let response: StaffTasksResponse
+    private let seed: StaffTasksResponse?
+    private let store: StaffTasksStore
     let reload: () async -> Void
 
+    init(response: StaffTasksResponse? = nil, store: StaffTasksStore? = nil,
+         reload: @escaping () async -> Void = {}) {
+        self.seed = response
+        self.store = store ?? StaffTasksStore.shared
+        self.reload = reload
+    }
+
     @State private var values: [String: String] = [:]
-    @State private var busy: Set<String> = []
-    @State private var message: String?
-    @State private var messageIsBad = false
-    @State private var photoItem: PhotosPickerItem?
-    @State private var photoTarget: (sheet: Int, line: Int)?
+    @FocusState private var focused: String?
+    @State private var untick: LineRef?
+    @State private var camera: LineRef?
+    @State private var library: LineRef?
+    @State private var libraryItem: PhotosPickerItem?
     @State private var signingOff: String?
     @State private var signoffNote = ""
+    /// The tick's disc grows with the text (Dynamic Type), from 28pt.
+    @ScaledMetric(relativeTo: .body) private var discSize: CGFloat = 28
+    private let network = NetworkMonitor.shared
+
+    /// Where a line's reading, photo and note start: past the disc.
+    private var inset: CGFloat { discSize + 12 }
+
+    /// One line on one sheet — what a dialog or a picker is about.
+    struct LineRef: Identifiable {
+        let sheet: StaffSheet
+        let line: StaffSheetLine
+        var id: String { StaffSheetMerge.key(sheet.id, line.lineID) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let message {
-                Text(message)
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(messageIsBad ? Color.cavnarRed : Color.cavnarInk2)
-            }
-            let sheets = response.sheets ?? []
-            if sheets.isEmpty {
-                Text("No task sheet is yours today. Your sheets show here on the days the schedule puts you on a shift that has one.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                    .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
-            }
-            ForEach(sheets) { sheet in sheetCard(sheet) }
-            if response.manager == true { floor }
+            statusLine
+            content
         }
-        .onChange(of: photoItem) { _, item in
-            guard let item, let target = photoTarget else { return }
-            Task { await upload(item, sheet: target.sheet, line: target.line) }
+        .task {
+            store.attach(staff)
+            if let seed { store.seed(seed) }
+            await store.refreshIfNeeded()
+        }
+        .cavnarPostedOverlay(store.posted) { store.posted = nil }
+        .confirmationDialog(untick.map { "Mark \u{201C}\($0.line.label)\u{201D} not done?" } ?? "",
+                            isPresented: Binding(get: { untick != nil }, set: { if !$0 { untick = nil } }),
+                            titleVisibility: .visible, presenting: untick) { ref in
+            Button("Mark not done", role: .destructive) {
+                Haptic.light()
+                Task { await store.tick(ref.sheet, ref.line, done: false) }
+            }
+            Button("Keep it done", role: .cancel) {}
+        } message: { _ in
+            Text("Your manager sees it as not done until it's ticked again.")
+        }
+        .fullScreenCover(item: $camera) { ref in
+            StaffCameraPicker { image in
+                camera = nil
+                if let image { Task { await store.sendPhoto(image, sheet: ref.sheet, line: ref.line) } }
+            }
+            .ignoresSafeArea()
+        }
+        .photosPicker(isPresented: Binding(get: { library != nil }, set: { if !$0 && libraryItem == nil { library = nil } }),
+                      selection: $libraryItem, matching: .images)
+        .onChange(of: libraryItem) { _, item in
+            guard let item, let ref = library else { return }
+            libraryItem = nil
+            library = nil
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    return
+                }
+                await store.sendPhoto(image, sheet: ref.sheet, line: ref.line)
+            }
         }
         .alert("Sign off the \(StaffSheetFormat.kind(signingOff ?? "").lowercased()) shift?",
                isPresented: Binding(get: { signingOff != nil }, set: { if !$0 { signingOff = nil } })) {
             TextField("Anything to note (optional)", text: $signoffNote)
-            Button("Sign off") { Task { await signOff() } }
+            Button("Sign off") {
+                let kind = signingOff ?? ""
+                signingOff = nil
+                Task { await store.signOff(kind, note: signoffNote) }
+            }
             Button("Cancel", role: .cancel) { signingOff = nil }
         } message: {
-            Text("It records every sheet on the shift as it stands now.")
+            Text("It records every sheet on the shift as it stands now. A closing note is shown to tomorrow's opener.")
         }
     }
 
-    // MARK: one sheet
+    // MARK: What state the screen is in
+
+    /// "Showing your sheets as of 4:05pm", ticks waiting to send, a failed
+    /// refresh with Try again — said once, above the sheets.
+    @ViewBuilder
+    private var statusLine: some View {
+        if store.queuedCount > 0 {
+            let n = store.queuedCount
+            Label {
+                Text(network.isOnline
+                     ? "\(n) tick\(n == 1 ? "" : "s") waiting to send"
+                     : "Offline. \(n) tick\(n == 1 ? "" : "s") will send when you're back online.")
+            } icon: {
+                Image(systemName: "icloud.slash")
+            }
+            .font(.cavnarBody(CavnarType.secondary, weight: 600))
+            .foregroundStyle(Color.cavnarAmber)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.cavnarAmberBg, in: Capsule())
+            .accessibilityElement(children: .combine)
+        }
+        if store.payload != nil, store.showingCached, let asOf = store.asOf {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Your sheets as of \(StaffSheetFormat.asOf(asOf))"
+                     + (store.loadError.map { ". \($0)" } ?? ""))
+                    .font(.cavnarBody(CavnarType.caption))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                tryAgain
+            }
+        }
+        if let banner = store.banner {
+            Text(banner)
+                .font(.cavnarBody(CavnarType.secondary))
+                .foregroundStyle(Color.cavnarRed)
+                .onTapGesture { store.banner = nil }
+        }
+    }
+
+    private var tryAgain: some View {
+        Button {
+            Task { await store.load() }
+        } label: {
+            Text(store.isLoading ? "Checking" : "Try again")
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                .foregroundStyle(Color.cavnarEmber2)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(store.isLoading)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let payload = store.payload {
+            if let note = store.lastNightNote { lastNightCard(note) }
+            let sheets = store.sheets
+            if sheets.isEmpty {
+                Text("No task sheet is yours today. Your sheets show here on the days the schedule puts you on a shift that has one.")
+                    .font(.cavnarBody(CavnarType.body))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cavnarCard()
+            }
+            ForEach(sheets) { sheet in sheetCard(sheet) }
+            if payload.manager { floorSection(payload) }
+        } else if let error = store.loadError, !store.isLoading {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(error)
+                    .font(.cavnarBody(CavnarType.body))
+                    .foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+                tryAgain
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
+        } else {
+            // The house loading state (DESIGN_SYSTEM §10).
+            VStack(alignment: .leading, spacing: 8) {
+                CavnarSkeletonBar(height: 3).frame(width: 180)
+                Text("Loading your sheets").font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    // MARK: Last night's note (COM-16)
+
+    private func lastNightCard(_ note: StaffLastNightNote) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("LAST NIGHT'S NOTE")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .kerning(1.3)
+                .foregroundStyle(Color.cavnarInk3)
+                .accessibilityAddTraits(.isHeader)
+            Text(note.note)
+                .font(.cavnarBody(CavnarType.body))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+            let by = [note.signedBy, note.dateLabel].compactMap { $0 }.filter { !$0.isEmpty }
+            if !by.isEmpty {
+                Text("\(note.shiftKind == "any" ? "Signed off" : "Closing signed off") by " + by.joined(separator: " · "))
+                    .font(.cavnarBody(CavnarType.caption))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: One sheet
 
     private func sheetCard(_ s: StaffSheet) -> some View {
         let open = s.status == "open"
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(s.title).font(.cavnarBody(16.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                    Text(meta(s)).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(s.title)
+                            .font(.cavnarBody(CavnarType.emphasis, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                        let meta = meta(s)
+                        if !meta.isEmpty {
+                            Text(meta).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Text("\(s.done)/\(s.total)")
+                        .font(.cavnarNumber(16, weight: 700))
+                        .foregroundStyle(s.total > 0 && s.done == s.total ? Color.cavnarGreen : Color.cavnarInk2)
                 }
-                Spacer(minLength: 8)
-                Text("\(s.done)/\(s.total)").font(.cavnarNumber(16, weight: 700)).foregroundStyle(Color.cavnarInk2)
+                StaffEmberProgressBar(done: s.done, total: s.total)
             }
-            ProgressView(value: Double(s.done), total: Double(max(s.total, 1)))
-                .tint(s.overdue ?? 0 > 0 ? Color.cavnarRed : Color.cavnarGreen)
-                .padding(.vertical, 10)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(s.title). \(s.done) of \(s.total) done"
+                                + ((s.overdue ?? 0) > 0 ? ", \(s.overdue ?? 0) overdue" : ""))
+            .accessibilityAddTraits(.isHeader)
+            .padding(.bottom, 6)
             if !open {
                 Text("This sheet closed at the end of the shift.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3).padding(.bottom, 6)
+                    .font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 6)
             }
             ForEach(Array(s.lines.enumerated()), id: \.element.id) { i, line in
                 if let sec = line.section, !sec.isEmpty, i == 0 || s.lines[i - 1].section != sec {
                     Text(sec.uppercased())
-                        .font(.cavnarBody(11, weight: 700)).kerning(1.2)
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).kerning(1.2)
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, 10).padding(.bottom, 2)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 lineRow(s, line, open: open)
             }
         }
-        .padding(14)
-        .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
     }
 
     private func meta(_ s: StaffSheet) -> String {
@@ -185,69 +281,176 @@ struct StaffTaskSheetsSection: View {
         return bits.joined(separator: " · ")
     }
 
+    // MARK: One line
+
     @ViewBuilder
     private func lineRow(_ s: StaffSheet, _ l: StaffSheetLine, open: Bool) -> some View {
-        let proof = l.proof ?? "none"
-        let key = "\(s.id)-\(l.lineID)"
+        let key = StaffSheetMerge.key(s.id, l.lineID)
+        let overlay = store.overlay(key)
+        let busy = store.isBusy(key)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 12) {
-                if open && (proof == "none" || l.done) {
-                    Button {
-                        Haptic.light()
-                        Task { await tick(s.id, l.lineID, done: !l.done) }
-                    } label: {
-                        Image(systemName: l.done ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 24))
-                            .foregroundStyle(l.done ? Color.cavnarGreen : (l.overdue == true ? Color.cavnarRed : Color.cavnarInk3))
+            Button {
+                tap(s, l, open: open)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    StaffCheckDisc(done: l.done, overdue: l.overdue == true, pending: overlay?.state, size: discSize)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(l.label)
+                            .font(.cavnarBody(CavnarType.body + 0.5))
+                            .foregroundStyle(l.done ? Color.cavnarInk3 : Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        tags(l)
+                        if let sub = subline(l, overlay: overlay) {
+                            Text(sub).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                        }
                     }
-                    .disabled(busy.contains(key))
-                    .accessibilityLabel(l.done ? "Mark not done: \(l.label)" : "Mark done: \(l.label)")
-                } else {
-                    Image(systemName: l.done ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(l.done ? Color.cavnarGreen : (l.overdue == true ? Color.cavnarRed : Color.cavnarInk3))
-                        .accessibilityHidden(true)
+                    .padding(.top, 3)
+                    Spacer(minLength: 0)
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(l.label)
-                        .font(.cavnarBody(15.5))
-                        .foregroundStyle(l.done ? Color.cavnarInk3 : Color.cavnarInk)
-                    tags(l)
-                    if let sub = subline(l) {
-                        Text(sub).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
-                    }
-                }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+                .contentShape(Rectangle())
             }
-            if open && !l.done && (proof == "number" || proof == "note") {
-                HStack(spacing: 8) {
-                    TextField(l.proofLabel ?? (proof == "number" ? "Reading" : "Your note"),
-                              text: Binding(get: { values[key] ?? "" }, set: { values[key] = $0 }))
-                        .keyboardType(proof == "number" ? .decimalPad : .default)
-                        .font(.cavnarBody(15))
-                        .padding(10)
-                        .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: 9))
-                    Button("Save") {
-                        Task { await tick(s.id, l.lineID, done: true, value: values[key]) }
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
-                    .disabled(busy.contains(key) || (values[key] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                .padding(.leading, 36)
+            .buttonStyle(.plain)
+            .disabled(!open || busy)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(l.label)
+            .accessibilityValue(accessibilityValue(l, overlay: overlay))
+            .accessibilityHint(open ? accessibilityHint(l) : "")
+            .accessibilityAddTraits(l.done ? .isSelected : [])
+
+            if open && !l.done && (l.proofKind == "number" || l.proofKind == "note") {
+                readingField(s, l, key: key, busy: busy)
             }
-            if open && !l.done && proof == "photo" {
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Text(busy.contains(key) ? "Uploading…" : "Add photo")
-                        .font(.cavnarBody(14, weight: 600))
-                }
-                .simultaneousGesture(TapGesture().onEnded { photoTarget = (s.id, l.lineID) })
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(busy.contains(key))
-                .padding(.leading, 36)
+            if open && !l.done && l.proofKind == "photo" {
+                photoControls(s, l, key: key, busy: busy)
+            }
+            if let token = l.photo, l.done {
+                StaffProofThumbnail(token: token, store: store)
+                    .padding(.leading, inset)
+            }
+            if let note = store.note(key) {
+                StaffLineNoteView(note: note)
+                    .padding(.leading, inset)
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+    }
+
+    /// The row's one tap: tick a plain line; ask before un-ticking; go to
+    /// the reading, or the camera, for a line that needs proof first.
+    private func tap(_ s: StaffSheet, _ l: StaffSheetLine, open: Bool) {
+        guard open else { return }
+        let key = StaffSheetMerge.key(s.id, l.lineID)
+        if l.done {
+            untick = LineRef(sheet: s, line: l)
+            return
+        }
+        switch l.proofKind {
+        case "number", "note":
+            focused = key
+        case "photo":
+            if store.heldPhotos[key] != nil {
+                Task { await store.retryHeldPhoto(key) }
+            } else if StaffCameraPicker.isAvailable {
+                camera = LineRef(sheet: s, line: l)
+            } else {
+                library = LineRef(sheet: s, line: l)
+            }
+        default:
+            Haptic.light()
+            Task { await store.tick(s, l, done: true) }
+        }
+    }
+
+    /// A reading or a note, saved with a compact button or Return (UX-17).
+    private func readingField(_ s: StaffSheet, _ l: StaffSheetLine, key: String, busy: Bool) -> some View {
+        let text = values[key] ?? ""
+        let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let save = {
+            // No haptic here: the Save chip gives its own, and Return
+            // needs none (one haptic per action, M2).
+            guard !empty, !busy else { return }
+            let value = text
+            Task {
+                await store.tick(s, l, done: true, value: value)
+                if store.note(key).map(Self.isRefusal) != true { values[key] = nil }
+            }
+        }
+        return HStack(spacing: 8) {
+            TextField(l.proofLabel ?? (l.proofKind == "number" ? "Reading" : "Your note"),
+                      text: Binding(get: { values[key] ?? "" }, set: { values[key] = $0 }))
+                // Numbers and punctuation, not the decimal pad: the pad has
+                // no Return key, and Return saves.
+                .keyboardType(l.proofKind == "number" ? .numbersAndPunctuation : .default)
+                .submitLabel(.done)
+                .focused($focused, equals: key)
+                .onSubmit(save)
+                .font(.cavnarBody(CavnarType.body))
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .accessibilityLabel("\(l.proofLabel ?? (l.proofKind == "number" ? "Reading" : "Note")) for \(l.label)")
+            Button(action: save) {
+                Text("Save").frame(minWidth: 44, minHeight: 32)
+            }
+            .buttonStyle(CavnarChipButtonStyle(tone: Color.cavnarPaper3))
+            .disabled(empty || busy)
+            .opacity(empty || busy ? 0.5 : 1)
+            .accessibilityLabel("Save \(l.label)")
+        }
+        .padding(.leading, inset)
+    }
+
+    private static func isRefusal(_ note: StaffTasksStore.LineNote) -> Bool {
+        if case .error = note { return true }
+        return false
+    }
+
+    /// Camera first ("Take photo"), the library second (UX-24).
+    @ViewBuilder
+    private func photoControls(_ s: StaffSheet, _ l: StaffSheetLine, key: String, busy: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if busy {
+                HStack(spacing: 10) {
+                    CavnarSkeletonBar(height: 3).frame(width: 80)
+                    Text("Sending the photo").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                }
+                .frame(minHeight: 44)
+                .accessibilityElement(children: .combine)
+            } else if store.heldPhotos[key] != nil {
+                Button {
+                    Task { await store.retryHeldPhoto(key) }
+                } label: {
+                    Label("Send photo", systemImage: "arrow.up.circle")
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: !network.isOnline))
+                .disabled(!network.isOnline)
+            } else {
+                HStack(spacing: 14) {
+                    if StaffCameraPicker.isAvailable {
+                        Button {
+                            camera = LineRef(sheet: s, line: l)
+                        } label: {
+                            Label("Take photo", systemImage: "camera")
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                    Button {
+                        library = LineRef(sheet: s, line: l)
+                    } label: {
+                        Text(StaffCameraPicker.isAvailable ? "Choose from library" : "Choose a photo")
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.leading, inset)
     }
 
     @ViewBuilder
@@ -271,35 +474,60 @@ struct StaffTaskSheetsSection: View {
         }
     }
 
-    private func subline(_ l: StaffSheetLine) -> String? {
+    private func subline(_ l: StaffSheetLine, overlay: StaffLineOverlay?) -> String? {
+        if overlay?.state == .queued { return l.done ? "Ticked here · not sent yet" : "Un-ticked here · not sent yet" }
+        if overlay?.state == .sending { return l.done ? "Saving" : nil }
         if l.done {
-            var s = "\(l.completedBy ?? "") · \(StaffSheetFormat.clock(l.completedAt))"
-            if let v = l.proofValue { s += " · \(l.proofLabel.map { $0 + ": " } ?? "")\(v)" }
-            if l.photo != nil { s += " · photo added" }
-            return s
+            var s = [l.completedBy, StaffSheetFormat.clock(l.completedAt)].compactMap { $0 }.filter { !$0.isEmpty }
+                .joined(separator: " · ")
+            if let v = l.proofValue { s += (s.isEmpty ? "" : " · ") + "\(l.proofLabel.map { $0 + ": " } ?? "")\(v)" }
+            return s.isEmpty ? nil : s
         }
         if let due = l.dueAt { return "Due \(StaffSheetFormat.clock(due))" }
         return nil
     }
 
-    // MARK: the floor (managers)
+    // MARK: VoiceOver (UX-18)
+
+    private func accessibilityValue(_ l: StaffSheetLine, overlay: StaffLineOverlay?) -> String {
+        var parts: [String] = [l.done ? "Done" : "Not done"]
+        if overlay?.state == .queued { parts.append("waiting to send") }
+        if l.critical == true { parts.append("critical") }
+        if l.overdue == true { parts.append("overdue") }
+        if l.flagged == true { parts.append("out of range") }
+        if l.late == true { parts.append("late") }
+        if let sub = subline(l, overlay: overlay), overlay == nil { parts.append(sub) }
+        return parts.joined(separator: ", ")
+    }
+
+    private func accessibilityHint(_ l: StaffSheetLine) -> String {
+        if l.done { return "Double-tap to mark it not done." }
+        switch l.proofKind {
+        case "number": return "Needs a reading. Double-tap to enter it."
+        case "note": return "Needs a note. Double-tap to write it."
+        case "photo": return "Needs a photo. Double-tap to take one."
+        default: return "Double-tap to mark it done."
+        }
+    }
+
+    // MARK: The floor (managers)
 
     @ViewBuilder
-    private var floor: some View {
+    private func floorSection(_ payload: StaffTasksPayload) -> some View {
         Text("THE FLOOR · TODAY")
-            .font(.cavnarBody(11, weight: 700)).kerning(1.3)
-            .foregroundStyle(Color.cavnarEmber2)
+            .font(.cavnarBody(CavnarType.kicker, weight: 700)).kerning(1.3)
+            .foregroundStyle(Color.cavnarInk3)
             .padding(.top, 10)
-        let others = response.floor ?? []
-        if others.isEmpty {
-            Text("No other sheets went out today.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+            .accessibilityAddTraits(.isHeader)
+        if payload.floor.isEmpty {
+            Text("No other sheets went out today.").font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
         }
-        ForEach(others) { s in
+        ForEach(payload.floor) { s in
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(s.title).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    Text(s.title).font(.cavnarBody(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
                     Text(s.unassigned ? "Unassigned" : s.assignees.joined(separator: ", "))
-                        .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer()
                 if let o = s.overdue, o > 0 {
@@ -307,98 +535,24 @@ struct StaffTaskSheetsSection: View {
                 }
                 Text("\(s.done)/\(s.total)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
             }
-            .padding(13)
-            .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 10))
+            .cavnarCard()
+            .accessibilityElement(children: .combine)
         }
-        let signed = Dictionary((response.signoffs ?? []).map { ($0.shiftKind, $0) }, uniquingKeysWith: { a, _ in a })
-        ForEach(response.canSignOff ?? [], id: \.self) { kind in
+        let signed = Dictionary(payload.signoffs.map { ($0.shiftKind, $0) }, uniquingKeysWith: { a, _ in a })
+        ForEach(payload.canSignOff, id: \.self) { kind in
             if let s = signed[kind] {
                 Text("\(StaffSheetFormat.kind(kind)) signed off by \(s.signedBy ?? "a manager").")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
             } else {
+                // Secondary: the sheets' ticks are the work here, and one
+                // screen spends one primary (DESIGN_SYSTEM §5, UX-17).
                 Button("Sign off the \(StaffSheetFormat.kind(kind).lowercased()) shift") {
                     signoffNote = ""
                     signingOff = kind
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle())
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: store.isBusy("signoff-" + kind)))
+                .disabled(store.isBusy("signoff-" + kind))
             }
-        }
-    }
-
-    // MARK: writes
-
-    private func say(_ text: String?, bad: Bool = false) {
-        message = text
-        messageIsBad = bad
-    }
-
-    private func tick(_ sheet: Int, _ line: Int, done: Bool, value: String? = nil) async {
-        struct Body: Encodable {
-            let assignment_id: Int
-            let line_id: Int
-            let done: Bool
-            let value: String?
-        }
-        let key = "\(sheet)-\(line)"
-        busy.insert(key)
-        defer { busy.remove(key) }
-        do {
-            let r: StaffTickResponse = try await staff.authed("/staff/api/tasks/complete", method: .post,
-                                                              body: Body(assignment_id: sheet, line_id: line, done: done, value: value))
-            if !r.ok { say(r.error ?? "That didn't save — try again.", bad: true); return }
-            if r.flagged == true { say("Saved — that reading is outside its limits, so your manager will see it flagged.", bad: true) }
-            else if r.late == true { say("Saved, after its due time.") }
-            else { say(nil) }
-            values[key] = nil
-            await reload()
-        } catch {
-            say((error as? APIClient.APIError)?.message ?? "That didn't save — check your connection.", bad: true)
-        }
-    }
-
-    private func upload(_ item: PhotosPickerItem, sheet: Int, line: Int) async {
-        struct Body: Encodable {
-            let assignment_id: Int
-            let line_id: Int
-            let image_b64: String
-            let mime: String
-        }
-        let key = "\(sheet)-\(line)"
-        busy.insert(key)
-        defer { busy.remove(key); photoItem = nil; photoTarget = nil }
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data),
-              let jpeg = image.jpegData(compressionQuality: 0.8) else {
-            say("That photo couldn't be read — try another.", bad: true)
-            return
-        }
-        do {
-            let r: StaffTickResponse = try await staff.authed("/staff/api/tasks/photo", method: .post,
-                                                              body: Body(assignment_id: sheet, line_id: line,
-                                                                         image_b64: jpeg.base64EncodedString(), mime: "image/jpeg"))
-            if !r.ok { say(r.error ?? "That photo didn't upload.", bad: true); return }
-            say("Photo saved.")
-            await reload()
-        } catch {
-            say((error as? APIClient.APIError)?.message ?? "That photo didn't upload — check your connection.", bad: true)
-        }
-    }
-
-    private func signOff() async {
-        struct Body: Encodable {
-            let shift_kind: String
-            let note: String
-        }
-        guard let kind = signingOff else { return }
-        signingOff = nil
-        do {
-            let r: StaffTickResponse = try await staff.authed("/staff/api/tasks/signoff", method: .post,
-                                                              body: Body(shift_kind: kind, note: signoffNote))
-            if !r.ok { say(r.error ?? "That didn't sign off.", bad: true); return }
-            say("Signed off.")
-            await reload()
-        } catch {
-            say((error as? APIClient.APIError)?.message ?? "That didn't sign off — check your connection.", bad: true)
         }
     }
 }
