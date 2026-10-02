@@ -13467,6 +13467,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div id="mkt-win-platforms" style="margin-top:14px"></div>
     </div>
 
+    {# Your website (web_analytics, 10/2/26): the site's Google Analytics and
+       Search Console, read every morning; what moved and what else happened
+       that day - moved together, never "caused". Filled by loadMktWebsite. #}
+    <section class="hb-card wa-site" id="mkt-web" aria-labelledby="mkt-web-h" style="margin-bottom:16px">
+      <div class="hb-kicker" id="mkt-web-h">Your website</div>
+      <div id="mkt-web-body"><div class="dr-pulse wide" role="status" aria-label="Loading your website"><i></i></div></div>
+    </section>
+
     <!-- What posts did to the till. Correlational, and said so. -->
     <div class="hb-card" id="mkt-attr-card" style="display:none;margin-bottom:16px;padding:20px 22px">
       <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales</div>
@@ -14275,6 +14283,48 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* A name the owner must be able to read in full (the Page and Instagram the
    Meta connection bound, 10/2/26): wrap, never an ellipsis. */
 .ac-conn .t span.wrap{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+/* Your website on Marketing → Analytics (web_analytics, 10/2/26). */
+.wa-site{padding:22px 24px}
+.wa-site .hb-stats{margin-top:14px}
+.wa-site .hb-stat .s.up{color:var(--hb-good)}.wa-site .hb-stat .s.down{color:var(--hb-bad)}
+.wa-line{margin-top:18px}
+.wa-line .hb-cl{height:120px}.wa-line .hb-cl svg{width:100%;height:120px;display:block}
+.wa-line .ax{display:flex;justify-content:space-between;font-size:13px;color:var(--ink3);margin-top:4px}
+.wa-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:22px}
+.wa-cols h4{margin:0 0 10px;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember)}
+.wa-bar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;margin-bottom:10px;font-size:15px;color:var(--ink2)}
+.wa-bar .tr{grid-column:1 / -1;height:6px;border-radius:999px;background:var(--hb-line2);overflow:hidden}
+.wa-bar .tr i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--ember2),var(--ember));box-shadow:0 0 10px var(--hb-tint2)}
+.wa-q{width:100%;border-collapse:collapse;font-size:15px}
+.wa-q td{padding:7px 0;border-top:1px solid var(--hb-line2);color:var(--ink2)}
+.wa-q td.r{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink);white-space:nowrap;padding-left:12px}
+.wa-q tr:first-child td{border-top:none}
+.wa-moves{margin-top:22px}
+.wa-move{padding:12px 14px;border-radius:12px;background:var(--sf-recess);box-shadow:inset 3px 0 0 var(--hb-line);margin-bottom:10px}
+.wa-move.up{box-shadow:inset 3px 0 0 var(--hb-good)}.wa-move.down{box-shadow:inset 3px 0 0 var(--hb-bad)}
+.wa-move .t{font-size:15.5px;color:var(--ink);line-height:1.5}
+.wa-move .ctx{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.wa-move .ctx span{font-size:13px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 10px}
+.wa-site .wa-basis{font-size:13.5px;color:var(--ink3);margin-top:10px;line-height:1.5}
+.wa-site .wa-empty{font-size:15.5px;line-height:1.6;color:var(--ink2);margin-top:8px}
+@media (max-width:760px){.wa-cols{grid-template-columns:minmax(0,1fr)}.wa-site{padding:18px}}
+/* Website analytics setup (web_analytics, 10/2/26): numbered steps, the
+   address to copy, then the two fields. */
+.wa-steps{display:flex;flex-direction:column;gap:16px;margin-top:4px}
+.wa-step{display:flex;gap:14px;align-items:flex-start}
+.wa-step>.n{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--ember);background:var(--hb-tint2,rgba(212,88,58,.16))}
+.wa-step>div{flex:1;min-width:0}
+.wa-step b{display:block;font-size:15.5px;color:var(--ink);margin-bottom:3px}
+.wa-step p{margin:0;font-size:15px;line-height:1.55;color:var(--ink2)}
+.wa-email{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px}
+.wa-email code{font-size:14px;color:var(--ink);background:var(--paper2);border:1px solid var(--ac-line);border-radius:9px;padding:8px 11px;overflow-wrap:anywhere;min-width:0}
+.wa-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:8px}
+.wa-fields .ac-field label{font-size:13.5px;font-weight:600;color:var(--ink2)}
+.wa-fields .ac-field small{font-size:13px;color:var(--ink3);line-height:1.45}
+.wa-acts{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+.wa-check{display:flex;gap:8px;align-items:flex-start;font-size:15px;line-height:1.5;color:var(--ink2);margin-top:8px}
+.wa-check.bad{color:var(--red)}
+@media (max-width:640px){.wa-fields{grid-template-columns:minmax(0,1fr)}}
 .ac-conn .a{flex:none;display:flex;gap:6px}
 
 /* Disclosure */
@@ -15098,6 +15148,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
           {% if _principal %}<div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}{% endif %}
         </div>
+        {# Website analytics (web_analytics, 10/2/26): the site's Google Analytics
+           and Search Console, read-only through Cavnar AI's service account.
+           The steps and the two fields open in #wa-card below the grid. #}
+        {% set _wa_on = restaurant.ga4_property_id or restaurant.gsc_site_url %}
+        <div class="ac-conn" id="wa-conn">
+          <div class="ic {{ 'err' if (_wa_on and restaurant.web_analytics_error) else ('on' if (_wa_on and restaurant.web_analytics_synced_at) else '') }}" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ember2)"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></div>
+          <div class="t"><b>Website analytics</b><span class="wrap{{ ' err' if (_wa_on and restaurant.web_analytics_error) else '' }}" id="wa-conn-line">{% if _wa_on and restaurant.web_analytics_error %}{{ restaurant.web_analytics_error }}{% elif _wa_on %}{{ 'Google Analytics' if restaurant.ga4_property_id else '' }}{{ ' · ' if (restaurant.ga4_property_id and restaurant.gsc_site_url) else '' }}{{ 'Search Console' if restaurant.gsc_site_url else '' }}{{ ' — read every morning' if restaurant.web_analytics_synced_at else ' — first read pending' }}{% else %}Not connected &mdash; visits, Google searches and booking clicks{% endif %}</span></div>
+          {% if _principal %}<div class="a"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="waOpen(this)" aria-controls="wa-card" aria-expanded="false">{{ 'Edit' if _wa_on else 'Connect' }}</button></div>{% endif %}
+        </div>
         {% if _pos_any and not restaurant.toast_restaurant_guid %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'toast') else None)) }}{% if _pos_any and not restaurant.toast_restaurant_guid %}</div>{% endif %}
         {% if _pos_any and not restaurant.square_location_id %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'square') else None)) }}{% if _pos_any and not restaurant.square_location_id %}</div>{% endif %}
         {% if _pos_any and not restaurant.clover_merchant_id %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'clover') else None)) }}{% if _pos_any and not restaurant.clover_merchant_id %}</div>{% endif %}
@@ -15108,6 +15167,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {% if _pos_any and _pos_idle %}<div class="ac-conn ac-pos-switch"><div class="ic" aria-hidden="true">&#8644;</div><div class="t"><b>Switch POS</b><span>{{ _pos_idle|join(', ') }}</span></div>
           <div class="a"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" aria-expanded="false" onclick="acctPosOthers(this)">Show</button></div></div>{% endif %}
         {% if _principal %}<div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>{% endif %}
+      </div>
+
+      <div class="ac-card wa-card" id="wa-card" hidden style="margin-top:14px">
+        <div class="ac-card-h"><div><h3>Website analytics</h3><p>Cavnar AI reads your website&rsquo;s Google Analytics and Search Console every morning &mdash; read-only &mdash; and lines them up with your sales, games, posts and reviews.</p></div></div>
+        <div id="wa-body" aria-live="polite"><div class="dr-pulse wide" role="status" aria-label="Loading"><i></i></div></div>
       </div>
 
       <div class="ac-card" style="margin-top:14px">
@@ -16987,6 +17051,166 @@ function igConnect(){
   }, 600);
 }
 
+// Marketing → Analytics: the website, from /api/marketing/website. Figures
+// are Google's own, the comparison is the same length of time just before,
+// and "What moved" names what else happened that day, never a cause.
+function loadMktWebsite(){
+  var b = document.getElementById('mkt-web-body'); if(!b) return;
+  fetch('/api/marketing/website',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d || !d.ok){ b.innerHTML = '<div class="wa-empty">' + _escHtml((d && d.error) || 'Couldn’t load your website figures.') + '</div>'; return; }
+    b.innerHTML = mktWebsiteHtml(d);
+  }).catch(function(){ b.innerHTML = '<div class="wa-empty">Couldn’t reach Cavnar AI — try again.</div>'; });
+}
+function mktWebsiteHtml(d){
+  var e = _escHtml, h = '', i;
+  if(!d.connected){
+    return '<div class="wa-empty">Connect your website’s Google Analytics to see visits, Google searches and clicks to book or order here, lined up with your sales, games and posts.</div>'
+      + '<div style="margin-top:12px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\'account/connections\')">Connect in Account</button></div>';
+  }
+  if(!d.available){
+    return '<div class="wa-empty">' + (d.error ? e(d.error) : (d.configured ? 'Cavnar AI is reading your website for the first time — this fills in within a few minutes.' : 'Website analytics is being switched on for Cavnar AI.')) + '</div>';
+  }
+  var t = d.totals || [];
+  if(t.length){
+    h += '<div class="hb-stats">';
+    for(i = 0; i < Math.min(t.length, 4); i++){
+      var x = t[i], cls = !x.pct ? '' : (x.pct > 0 ? ' up' : ' down');
+      h += '<div class="hb-stat"><div class="k">' + e(x.label) + '</div><div class="v hb-num">' + e(Number(x.value).toLocaleString('en-US')) + '</div>'
+        + '<div class="s hb-num' + cls + '">' + (x.pct == null ? 'last 28 days' : (x.pct >= 0 ? '+' : '') + x.pct + '% vs the 28 days before') + '</div></div>';
+    }
+    h += '</div>';
+    if(t.length > 4){
+      h += '<div class="wa-basis">';
+      for(i = 4; i < t.length; i++) h += (i > 4 ? ' · ' : '') + e(t[i].label) + ' <span class="hb-num">' + e(Number(t[i].value).toLocaleString('en-US')) + '</span>' + (t[i].pct == null ? '' : ' (' + (t[i].pct >= 0 ? '+' : '') + t[i].pct + '%)');
+      h += '</div>';
+    }
+  }
+  var line = d.line || [], vals = [];
+  for(i = 0; i < line.length; i++) vals.push(line[i].value == null ? 0 : line[i].value);
+  if(vals.length > 6 && window.CavnarCharts){
+    h += '<div class="wa-line"><div class="hb-cl">' + CavnarCharts.glowLine(vals, 1000, 120, '#e8956a', {pad: 8, floor: 0}) + '</div>'
+      + '<div class="ax hb-num"><span>' + e(mdy(line[0].day)) + '</span><span>Website visits a day</span><span>' + e(mdy(line[line.length - 1].day)) + '</span></div></div>';
+  }
+  var ch = d.channels || [], cl = d.clicks || [], q = d.queries || [];
+  if(ch.length || q.length || cl.length){
+    h += '<div class="wa-cols"><div>';
+    if(ch.length){
+      h += '<h4>Where visits came from</h4>';
+      for(i = 0; i < ch.length; i++) h += '<div class="wa-bar"><span>' + e(ch[i].name) + '</span><span class="hb-num">' + (ch[i].share == null ? '' : ch[i].share + '%') + '</span><div class="tr"><i style="width:' + Math.max(2, ch[i].share || 0) + '%"></i></div></div>';
+    }
+    if(cl.length){
+      h += '<h4 style="margin-top:18px">Clicks out of the site</h4>';
+      for(i = 0; i < Math.min(cl.length, 5); i++) h += '<div class="wa-bar"><span>' + e(cl[i].name) + (cl[i].family === 'booking_clicks' ? ' · booking' : cl[i].family === 'ordering_clicks' ? ' · ordering' : cl[i].family === 'checkout_clicks' ? ' · checkout' : '') + '</span><span class="hb-num">' + e(Number(cl[i].value).toLocaleString('en-US')) + '</span></div>';
+    }
+    h += '</div><div>';
+    if(q.length){
+      h += '<h4>Top Google searches</h4><table class="wa-q"><tbody>';
+      for(i = 0; i < Math.min(q.length, 8); i++) h += '<tr><td>' + e(q[i].query) + '</td><td class="r">' + e(Number(q[i].clicks).toLocaleString('en-US')) + ' clicks</td></tr>';
+      h += '</tbody></table>' + (d.queries_through ? '<div class="wa-basis">The 28 days to ' + e(d.queries_through) + ' (Search Console runs 2–3 days behind)</div>' : '');
+    }
+    h += '</div></div>';
+  }
+  var sg = d.signals || [];
+  h += '<div class="wa-moves"><h4 style="margin:0 0 10px;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember)">What moved</h4>';
+  if(!sg.length) h += '<div class="wa-empty" style="margin-top:0">Nothing unusual — each day looks like a typical one of its weekday.</div>';
+  for(i = 0; i < Math.min(sg.length, 6); i++){
+    var m = sg[i], up = m.kind === 'spike' || m.kind === 'trend_up';
+    h += '<div class="wa-move ' + (up ? 'up' : 'down') + '"><div class="t">' + (typeof num === 'function' ? num(m.text) : e(m.text)) + '</div>';
+    if(m.context && m.context.length){
+      h += '<div class="ctx"><span>Same day:</span>';
+      for(var c = 0; c < m.context.length; c++) h += '<span>' + e(m.context[c]) + '</span>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += (d.signals_basis ? '<div class="wa-basis">' + e(d.signals_basis.charAt(0).toUpperCase() + d.signals_basis.slice(1)) + '.</div>' : '') + '</div>';
+  return h;
+}
+
+// ── Website analytics (web_analytics, 10/2/26) ─────────────────────────
+// The owner adds Cavnar AI's read-only Google service account in Google
+// Analytics (Viewer) and Search Console (Restricted user), then pastes the
+// GA4 property ID and the Search Console property here. Save checks each
+// with Google and, when one can be read, starts the first year-long read.
+var _wa = null;
+function waOpen(btn){
+  var card = document.getElementById('wa-card'); if(!card) return;
+  var open = card.hidden; card.hidden = !open;
+  if(btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if(open){ waLoad(); card.scrollIntoView({behavior:'smooth', block:'nearest'}); }
+}
+function waLoad(){
+  fetch('/api/web-analytics',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d || !d.ok){ document.getElementById('wa-body').innerHTML = '<div class="hb-empty">' + _escHtml((d && d.error) || 'Couldn’t load this — try again.') + '</div>'; return; }
+    _wa = d; waRender();
+  }).catch(function(){ var b = document.getElementById('wa-body'); if(b) b.innerHTML = '<div class="hb-empty">Couldn’t reach Cavnar AI — try again.</div>'; });
+}
+function waRender(checks){
+  var b = document.getElementById('wa-body'); if(!b || !_wa) return;
+  var d = _wa, e = _escHtml;
+  if(!d.configured){
+    b.innerHTML = '<div class="ac-note">Website analytics is being switched on for Cavnar AI. You’ll be able to connect it here shortly.</div>';
+    return;
+  }
+  var email = d.service_email || '';
+  var h = '<div class="wa-steps">'
+    + '<div class="wa-step"><span class="n">1</span><div><b>Copy Cavnar AI’s read-only address</b><p>It can read your analytics and nothing else — it can’t change your site, your account or your settings.</p>'
+    + '<div class="wa-email"><code id="wa-email">' + e(email) + '</code><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="waCopy(this)">Copy</button></div></div></div>'
+    + '<div class="wa-step"><span class="n">2</span><div><b>Add it in Google Analytics</b><p>Admin → Property access management → + → Add users. Paste the address, choose <b style="display:inline;font-size:inherit">Viewer</b>, untick “Notify new users by email”, then Add.</p></div></div>'
+    + '<div class="wa-step"><span class="n">3</span><div><b>Add it in Search Console (optional)</b><p>Settings → Users and permissions → Add user. Paste the address and choose <b style="display:inline;font-size:inherit">Restricted</b>. This adds what people searched on Google to find you.</p></div></div>'
+    + '<div class="wa-step"><span class="n">4</span><div><b>Tell Cavnar AI which ones</b>'
+    + '<div class="wa-fields">'
+    + '<div class="ac-field"><label for="wa-ga4">GA4 property ID</label><input class="ac-input" id="wa-ga4" inputmode="numeric" autocomplete="off" placeholder="412345678" value="' + e(d.ga4_property_id || '') + '"><small>Google Analytics → Admin → Property details. A number, not the G- ID.</small></div>'
+    + '<div class="ac-field"><label for="wa-gsc">Search Console property</label><input class="ac-input" id="wa-gsc" autocomplete="off" placeholder="sc-domain:yoursite.com" value="' + e(d.gsc_site_url || '') + '"><small>Exactly as Search Console shows it, e.g. sc-domain:yoursite.com or https://yoursite.com/.</small></div>'
+    + '</div>'
+    + '<div class="wa-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="wa-save" onclick="waSave(this)">Save and check</button>'
+    + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="waDisconnect(this)">Disconnect</button>' : '')
+    + '</div><div id="wa-checks">' + waChecksHtml(checks) + '</div>'
+    + (d.synced_at && !checks ? '<div class="wa-check">Last read ' + e(typeof mdy === 'function' ? mdy(String(d.synced_at).slice(0, 10)) : String(d.synced_at).slice(0, 10)) + '. Cavnar AI reads it again every morning.</div>' : '')
+    + (d.error && !checks ? '<div class="wa-check bad">' + e(d.error) + '</div>' : '')
+    + '</div></div></div>';
+  b.innerHTML = h;
+}
+function waChecksHtml(checks){
+  if(!checks) return '';
+  var out = '', names = {ga4: 'Google Analytics', gsc: 'Search Console'}, k, said = {};
+  for(k in names){
+    if(!checks.hasOwnProperty(k)) continue;
+    var c = checks[k] || {};
+    // One refusal for both (the sign-in itself failed) is said once.
+    if(!c.ok && c.error && said[c.error]) continue;
+    if(!c.ok && c.error) said[c.error] = 1;
+    out += c.ok ? '<div class="wa-check"><i class="cv-ok" aria-hidden="true"></i><span>' + names[k] + ' can be read. Cavnar AI is reading the last year now — the Marketing tab fills in within a few minutes.</span></div>'
+                : '<div class="wa-check bad"><i class="cv-warn" aria-hidden="true"></i><span>' + _escHtml(c.error || (names[k] + ' couldn’t be read yet.')) + '</span></div>';
+  }
+  return out;
+}
+function waCopy(btn){
+  var t = (document.getElementById('wa-email') || {}).textContent || '';
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(function(){ toast('Copied','success'); }); }
+}
+function waSave(btn){
+  var done = cbtnBusy(btn, 'Checking…');
+  var body = {ga4_property_id: (document.getElementById('wa-ga4') || {}).value || '', gsc_site_url: (document.getElementById('wa-gsc') || {}).value || ''};
+  fetch('/api/web-analytics',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+    done();
+    if(!d || !d.ok){ toast((d && d.error) || 'Couldn’t save that — try again.','error'); return; }
+    _wa = d; waRender(d.checks || {});
+    var line = document.getElementById('wa-conn-line');
+    if(line){ var parts = []; if(d.ga4_property_id) parts.push('Google Analytics'); if(d.gsc_site_url) parts.push('Search Console');
+      line.textContent = parts.length ? parts.join(' · ') + (d.syncing ? ' — reading now' : '') : 'Not connected — visits, Google searches and booking clicks'; }
+    toast(d.syncing ? 'Saved — reading your website analytics now' : 'Saved', d.syncing ? 'success' : 'warning');
+  }).catch(function(){ done(); toast('Couldn’t reach Cavnar AI — try again.','error'); });
+}
+function waDisconnect(btn){
+  if(!confirm('Stop reading your website analytics? What’s already been read stays.')) return;
+  var done = cbtnBusy(btn, '…');
+  fetch('/api/web-analytics/disconnect',{method:'POST',credentials:'same-origin'}).then(apiJson).then(function(d){
+    done(); if(!d || !d.ok){ toast((d && d.error) || 'Couldn’t disconnect — try again.','error'); return; }
+    toast('Disconnected','success'); setTimeout(function(){ location.reload(); }, 700);
+  }).catch(function(){ done(); toast('Couldn’t reach Cavnar AI — try again.','error'); });
+}
+
 function gmbConnect(){
   var popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
   if(!popup){ toast('Your browser blocked the Google window. Allow pop-ups for this site, then connect again.','error'); return; }
@@ -17148,7 +17372,7 @@ window.switchMktTab = function(tab) {
     }
   }
   if (tab === 'analytics' && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
-  if (tab === 'analytics') { loadMktWindow(); loadMktAttribution(); }
+  if (tab === 'analytics') { loadMktWindow(); loadMktAttribution(); loadMktWebsite(); }
   if (tab === 'queue') loadMktQueue();
   if (tab === 'campaigns') { loadGuestOverview(); if (window.cpPaint) cpPaint(); }
 };
@@ -29909,7 +30133,7 @@ window.cpInvitesToggle = function(el) {
 // someone, and hands its card to the Studio so a send on any channel records
 // the card as acted on (mktOppRecKey -> rec_key).
 var MKT_OPP_KIND = {slow_night: 'Slow night', holiday: 'Holiday', category_dip: 'Sales dip', dish_promote: 'Dish',
-                    dish_praise: 'Guest favorite', list_idle: 'Your list', posting: 'Posting'};
+                    dish_praise: 'Guest favorite', list_idle: 'Your list', posting: 'Posting', web_dip: 'Website'};
 var MKT_OPP_VISIBLE = 3;   /* marketing_opportunities.VISIBLE; .mkt-opps-list.collapsed shows three */
 var _mktOpps = [], _mktOppsChecked = [], _mktOppsSources = [];
 var _mktOppSt = {open: false, seq: 0, opened: {}, drafting: false, focused: ''};

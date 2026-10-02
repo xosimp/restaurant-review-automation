@@ -184,6 +184,12 @@ AI-drafted social posts (brand-voice fields on `restaurants`: `voice_notes`, `vi
 
 ---
 
+## Website analytics (`web_analytics.py`, 10/2/26)
+
+**Files**: `web_analytics.py`; routes in `client_api.py` (`/api/web-analytics`, `/api/web-analytics/disconnect`, `/api/web-analytics/sync`, `/api/marketing/website`) with `/mobile/api/` twins; the daily `web_analytics` job (`scheduler.run_daily_web_analytics`); the `website` source in `marketing_opportunities`, `data_freshness` and `data_health`; Ask's `read_website_analytics`.
+
+**Stance**: the client's own website and Google search, read-only. One Google service account (`GA_SERVICE_ACCOUNT_JSON`, signed with `cryptography`, no Google client library) is added by the client as a Viewer in GA4 and a Restricted user in Search Console; the owner pastes the property ID and site URL on Account → Connections (owner-only; checked with one tiny report each; the first read backfills 400 days off the request thread). Stored per day and metric — visits, users, page views, engaged visits, visits by channel, menu-page views, clicks out grouped as booking / ordering / checkout (Stripe stays "checkout" until a restaurant says what it sells there), Google search clicks, appearances and position — plus the top 25 searches of the last 28 days. `signals` judges each day against the median of the same weekday over the 8 weeks before (never with fewer than 6 of them, never for a gap under the metric's floor) and 3-week runs, and lists what else happened that day — sales against the weekday's typical night, a game or event, a post, new reviews — as things that moved together, never a cause. In-app only (owner, 10/2/26): Marketing → Analytics' "Your website", a "Cavnar AI found" card for a 3-week fall in booking clicks, ordering clicks, visits or search clicks, and Ask. No model call, no push, no text. Dormant without the key.
+
 ## Intel
 
 **Files**: `competitor.py`, `competitor_intel_format.py`, AI-visibility pieces in `admin_routes.py`/`client_api.py`/`mobile_api.py` reading `ai_visibility_runs`.

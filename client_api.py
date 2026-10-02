@@ -12012,3 +12012,157 @@ def labor_schedule_history_detail(current_user, history_id):
 @login_required
 def labor_schedule_history_delete(current_user, history_id):
     return _m("mobile_schedule_history_delete")(history_id, current_user)
+
+
+# ── Website analytics (web_analytics, 10/2/26) ──────────────────────────────
+# The client adds Cavnar AI's read-only service account in Google Analytics
+# (Viewer) and Search Console (Restricted user) and pastes the property ID and
+# site URL here. Owner-only to change, like every connection; anyone with the
+# console can see whether it's connected. Web and phone share these bodies.
+
+WEB_ANALYTICS_SYNC_COOLDOWN_MINUTES = 10
+
+
+def _web_analytics_status(rid):
+    import web_analytics as _wa
+    r = get_restaurant(rid)
+    return {"configured": _wa.configured(), "service_email": _wa.service_email(),
+            "ga4_property_id": getattr(r, "ga4_property_id", None) or None,
+            "gsc_site_url": getattr(r, "gsc_site_url", None) or None,
+            "synced_at": getattr(r, "web_analytics_synced_at", None),
+            "error": getattr(r, "web_analytics_error", None)}
+
+
+def _do_web_analytics_get(current_user):
+    from permissions import is_principal
+    out = _web_analytics_status(current_user["restaurant_id"])
+    out.update(ok=True, can_edit=bool(is_principal(current_user)))
+    return out, 200
+
+
+def _start_web_analytics_sync(rid):
+    """The first read (a year of history) off the request thread, once per
+    WEB_ANALYTICS_SYNC_COOLDOWN_MINUTES. False when one is already running."""
+    import ops
+    import web_analytics as _wa
+    if not ops.claim_cooldown(f"web_analytics_sync:{rid}", WEB_ANALYTICS_SYNC_COOLDOWN_MINUTES):
+        return False
+
+    def _run():
+        try:
+            _wa.sync(rid)
+        except Exception as e:
+            try:
+                ops.capture(e, job="web_analytics", context=f"restaurant_id={rid} first sync")
+            except Exception:
+                print(f"[web_analytics] first sync failed for {rid}: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
+
+def _do_web_analytics_set(current_user):
+    """Body {"ga4_property_id", "gsc_site_url"} — either or both; "" clears
+    one. Each given is checked with Google (one tiny report) and saved
+    whether or not Google lets us in yet, so "add the address, then press
+    Check again" works; the answer says which parts can be read."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "website analytics")
+    if denied is not None:
+        return {"ok": False, "owner_only": True, "error": "Only the account owner can change website analytics."}, 403
+    import web_analytics as _wa
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    fields = {}
+    if "ga4_property_id" in data:
+        raw = data.get("ga4_property_id")
+        pid = _wa.clean_property_id(raw)
+        if str(raw or "").strip() and not pid:
+            return {"ok": False, "error": "That isn't a GA4 property ID. It's a number like 412345678, under "
+                                          "Google Analytics → Admin → Property details (not the G- measurement ID)."}, 400
+        fields["ga4_property_id"] = pid or None
+    if "gsc_site_url" in data:
+        raw = data.get("gsc_site_url")
+        site = _wa.clean_site_url(raw)
+        if str(raw or "").strip() and not site:
+            return {"ok": False, "error": "Paste the Search Console property exactly as it shows there: "
+                                          "\"sc-domain:yoursite.com\" or a full URL like https://yoursite.com/."}, 400
+        fields["gsc_site_url"] = site or None
+    if not fields:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    before = _web_analytics_status(rid)
+    if not fields.get("ga4_property_id", before["ga4_property_id"]) and \
+            not fields.get("gsc_site_url", before["gsc_site_url"]):
+        fields.update(web_analytics_error=None, web_analytics_synced_at=None)
+    update_restaurant(rid, fields)
+    log_account_event(rid, "web_analytics_changed", current_user,
+                      detail=", ".join(f"{k}={'set' if v else 'cleared'}" for k, v in fields.items()
+                                       if k in ("ga4_property_id", "gsc_site_url")))
+    checks = {}
+    if _wa.configured():
+        try:
+            checks = _wa.verify(fields.get("ga4_property_id"), fields.get("gsc_site_url"))
+        except Exception as e:
+            checks = {"error": _safe_err(e)}
+    started = bool(_wa.configured() and any((c or {}).get("ok") for c in checks.values() if isinstance(c, dict))
+                   and _start_web_analytics_sync(rid))
+    out = _web_analytics_status(rid)
+    out.update(ok=True, checks=checks, syncing=started, can_edit=True)
+    return out, 200
+
+
+def _do_web_analytics_disconnect(current_user):
+    from permissions import principal_only
+    if principal_only(current_user, "website analytics") is not None:
+        return {"ok": False, "owner_only": True, "error": "Only the account owner can change website analytics."}, 403
+    rid = current_user["restaurant_id"]
+    update_restaurant(rid, {"ga4_property_id": None, "gsc_site_url": None, "web_analytics_synced_at": None,
+                            "web_analytics_error": None})
+    log_account_event(rid, "web_analytics_disconnected", current_user)
+    return {"ok": True}, 200
+
+
+def _do_web_analytics_sync(current_user):
+    """Read now (owner or manager): the same read as the 7am job."""
+    import web_analytics as _wa
+    rid = current_user["restaurant_id"]
+    st = _web_analytics_status(rid)
+    if not (st["ga4_property_id"] or st["gsc_site_url"]):
+        return {"ok": False, "error": "Connect Google Analytics or Search Console first."}, 400
+    if not _wa.configured():
+        return {"ok": False, "error": "Website analytics isn't set up on this server yet."}, 503
+    if not _start_web_analytics_sync(rid):
+        return {"ok": True, "already_syncing": True, "message": "A read is already running."}, 200
+    return {"ok": True, "started": True, "message": "Reading your website analytics now."}, 200
+
+
+def _do_marketing_website(current_user):
+    import web_analytics as _wa
+    return dict(_wa.summary(current_user["restaurant_id"]), ok=True), 200
+
+
+@client_bp.route("/api/web-analytics", methods=["GET", "POST"])
+@login_required
+def web_analytics_api(current_user):
+    payload, status = (_do_web_analytics_get if request.method == "GET" else _do_web_analytics_set)(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/web-analytics/disconnect", methods=["POST"])
+@login_required
+def web_analytics_disconnect_api(current_user):
+    payload, status = _do_web_analytics_disconnect(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/web-analytics/sync", methods=["POST"])
+@login_required
+def web_analytics_sync_api(current_user):
+    payload, status = _do_web_analytics_sync(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/marketing/website")
+@login_required
+def marketing_website_api(current_user):
+    payload, status = _do_marketing_website(current_user)
+    return jsonify(**payload), status

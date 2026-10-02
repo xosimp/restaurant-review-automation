@@ -3014,6 +3014,39 @@ def run_daily_competitor_ratings():
     return counts
 
 
+_WEB_ANALYTICS_CURSOR_KEY = "web_analytics_cursor"
+WEB_ANALYTICS_MAX_SECONDS = int(os.getenv("WEB_ANALYTICS_MAX_SECONDS", str(15 * 60)))
+
+
+def run_daily_web_analytics():
+    """Daily (owner, 10/2/26) — every restaurant in service with a GA4
+    property or a Search Console site: the website's last days into
+    web_analytics_daily (web_analytics.sync; the first read backfills a
+    year). Read-only Google calls, no model. Dormant until the service
+    account key is set. Bounded and resumable (resumable_sweep). Returns
+    {attempted, ok, failed, skipped, hit_bound}."""
+    import web_analytics
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    ids = web_analytics.eligible()
+    if not web_analytics.configured():
+        counts["skipped"] = len(ids)
+        return counts
+
+    def _one(rid):
+        counts["attempted"] += 1
+        res = web_analytics.sync(rid)
+        if res.get("ok"):
+            counts["ok"] += 1
+        else:
+            counts["failed"] += 1
+
+    if ids:
+        _done, hit = resumable_sweep(_WEB_ANALYTICS_CURSOR_KEY, ids, _one, WEB_ANALYTICS_MAX_SECONDS,
+                                     workers=1, job="web_analytics")
+        counts["hit_bound"] = bool(hit)
+    return counts
+
+
 def run_weekly_ai_visibility(retry_only=False):
     """Weekly, from Monday 7am (ISO-week claim, Monday–Wednesday catch-up,
     then a daily `retry_only` pass until each restaurant has one success
@@ -4533,6 +4566,12 @@ def scheduler_loop():
             if _due(now, 8) and _ops.claim_period("competitor_daily", str(today)):
                 if not _ops.run_in_lane("intel", "competitor_daily", run_daily_competitor_ratings):
                     _ops.release_period("competitor_daily", str(today))
+
+            # The website's analytics (GA4, Search Console), every morning at 7:
+            # yesterday is complete on Google's side by then (10/2/26).
+            if _due(now, 7) and _ops.claim_period("web_analytics", str(today)):
+                if not _ops.run_in_lane("intel", "web_analytics", run_daily_web_analytics):
+                    _ops.release_period("web_analytics", str(today))
 
             # An hour after the competitor run, so the two weekly Intel jobs
             # do not compete for the same minute.

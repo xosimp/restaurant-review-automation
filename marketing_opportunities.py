@@ -54,7 +54,7 @@ import models as _models
 from models import DB_PATH
 
 CACHE_KIND = "mkt_opps"
-VERSION = 2
+VERSION = 3          # 3: the website source (10/2/26)
 
 SLOW_LOOKAHEAD_DAYS = 7
 SLOW_CARDS = 2
@@ -81,13 +81,14 @@ WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", 
 ALL_CHANNELS = ("text", "email", "social")
 # Every key kind the feed shows — what a Studio send may name as its card.
 FEED_KINDS = ("slow_day", "holiday_promo", "category_dip", "dish_promote", "dish_praise", "list_idle",
-              "post_this_week", "first_post")
+              "post_this_week", "first_post", "web_dip")
 
 # What the feed reads, for the empty state: each says checked, no data yet
 # (and why), or couldn't be read (re-audit OPP-14).
 SOURCES = (("slow_nights", "slow nights ahead"), ("holidays", "holidays"), ("categories", "category sales"),
            ("dish_margins", "dish margins and sales"), ("dish_praise", "dishes guests praise"),
-           ("lists", "your text and email lists"), ("posting", "your posting"))
+           ("lists", "your text and email lists"), ("posting", "your posting"),
+           ("website", "your website"))
 SOURCE_LABELS = dict(SOURCES)
 # Sources whose figures are Food Cost's (plate margins): Food Cost logins only.
 FOOD_SOURCES = ("dish_margins",)
@@ -533,6 +534,43 @@ def _utc_age_days(value, utc_now):
     return max(0.0, (utc_now - when).total_seconds() / 86400.0)
 
 
+# Which falling website figure is worth a card, most direct first: people
+# trying to book, then visits, then Google search (web_analytics, 10/2/26).
+WEB_DIP_METRICS = ("booking_clicks", "ordering_clicks", "sessions", "search_clicks")
+
+
+def website(restaurant_id, restaurant=None, db_path=DB_PATH):
+    """A website figure that fell three weeks running (web_analytics.signals'
+    trend_down) — one card, the most direct figure first. A run, not a
+    single day: one quiet Tuesday is not worth a campaign."""
+    import web_analytics
+    r = restaurant or _get_restaurant(restaurant_id, db_path)
+    if not (web_analytics.clean_property_id(getattr(r, "ga4_property_id", None))
+            or web_analytics.clean_site_url(getattr(r, "gsc_site_url", None))):
+        return Found(state="no_data", note="no website analytics connected")
+    sig = web_analytics.signals(restaurant_id, db_path=None if db_path in (None, DB_PATH) else db_path)
+    if not sig.get("available"):
+        return Found(state="no_data", note="the website hasn't been read yet")
+    downs = {i["metric"]: i for i in sig.get("items") or [] if i["kind"] == "trend_down"}
+    for metric in WEB_DIP_METRICS:
+        item = downs.get(metric)
+        if not item:
+            continue
+        weeks = item.get("weeks") or []
+        return Found([_card(
+            _key("web_dip", metric), "web_dip", f"{item['label']} are down 3 weeks running",
+            item["text"], subject=metric,
+            facts=[f"{int(round(item['value'])):,} in the week to {item['day_label'].replace('week to ', '')}",
+                   f"{int(round(item['typical'])):,} three weeks before"],
+            prompt=("Get more people booking a table" if metric == "booking_clicks" else
+                    "Get more people ordering online" if metric == "ordering_clicks" else
+                    "Bring people back to the website"),
+            channels=("social", "email"),
+            evidence={"n": len(weeks) or 4, "kind": "weeks", "basis": "the website's own weekly figures"},
+            sources=("website",), score=58)])
+    return Found()
+
+
 def posting(restaurant_id, now, restaurant=None, db_path=DB_PATH, utc_now=None):
     """Home's posting cards, by Home's rule (re-audit OPP-17): more than
     POST_IDLE_DAYS since a post went LIVE (post_this_week, "Nothing has gone
@@ -615,7 +653,8 @@ def build(restaurant_id, db_path=DB_PATH, now=None, restaurant=None) -> dict:
              ("dish_margins", lambda: dish_margins(restaurant_id, db_path, praise=shared.get("praise"),
                                                    mentions=shared.get("mentions"))),
              ("lists", lambda: lists(restaurant_id, now, db_path)),
-             ("posting", lambda: posting(restaurant_id, now, restaurant, db_path)))
+             ("posting", lambda: posting(restaurant_id, now, restaurant, db_path)),
+             ("website", lambda: website(restaurant_id, restaurant, db_path)))
     for key, fn in steps:
         try:
             found = fn()
@@ -659,6 +698,7 @@ def fingerprint(restaurant_id, today, db_path=DB_PATH, restaurant=None) -> str:
             parts.append(None)
         parts.append((getattr(restaurant, "skip_holidays", None) or "").strip().lower())
         parts.append(int(getattr(restaurant, "module_inventory", 0) or 0))
+        parts.append([getattr(restaurant, "ga4_property_id", None), getattr(restaurant, "gsc_site_url", None)])
     conn = get_conn(db_path)
     try:
         for sql, args in (
@@ -675,6 +715,10 @@ def fingerprint(restaurant_id, today, db_path=DB_PATH, restaurant=None) -> str:
                 ("SELECT MAX(created_at) FROM guest_newsletters WHERE restaurant_id=?", (restaurant_id,)),
                 ("SELECT COUNT(*), MAX(COALESCE(posted_at, created_at)), COUNT(post_id) FROM marketing_content_log "
                  "WHERE restaurant_id=?", (restaurant_id,)),
+                # The website's figures (web_analytics): a new day or a
+                # restated one moves the website source.
+                ("SELECT COUNT(*), MAX(day), SUM(value) FROM web_analytics_daily WHERE restaurant_id=? "
+                 "AND day >= date(?, '-70 days')", (restaurant_id, today.isoformat())),
                 ("SELECT COUNT(*), MAX(date), SUM(sales), SUM(COALESCE(final, 1)) FROM labor_daily_history "
                  "WHERE restaurant_id=? AND date >= date(?, '-70 days')", (restaurant_id, today.isoformat())),
                 ("SELECT COUNT(*), MAX(business_date), SUM(value) FROM dsr_metrics WHERE restaurant_id=? "

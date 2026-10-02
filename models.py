@@ -455,6 +455,13 @@ class Restaurant:
     # has an answer on screen.
     fb_page_name: Optional[str]          = None
     ig_username: Optional[str]           = None
+    # Website analytics (web_analytics, 10/2/26): the GA4 property and the
+    # Search Console site our read-only service account was added to, and
+    # the last read's time and refusal in the owner's words.
+    ga4_property_id: Optional[str]       = None
+    gsc_site_url: Optional[str]          = None
+    web_analytics_synced_at: Optional[str] = None
+    web_analytics_error: Optional[str]   = None
     gmb_access_token: Optional[str]      = None
     gmb_refresh_token: Optional[str]     = None
     gmb_account_id: Optional[str]        = None
@@ -905,6 +912,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "fb_page_id", "TEXT"),
         ("restaurants", "fb_page_name", "TEXT"),
         ("restaurants", "ig_username", "TEXT"),
+        ("restaurants", "ga4_property_id", "TEXT"),
+        ("restaurants", "gsc_site_url", "TEXT"),
+        ("restaurants", "web_analytics_synced_at", "TEXT"),
+        ("restaurants", "web_analytics_error", "TEXT"),
         ("restaurants", "docusign_envelope_id", "TEXT"),
         ("restaurants", "contract_status", "TEXT"),
         ("restaurants", "stripe_customer_id", "TEXT"),
@@ -3958,6 +3969,9 @@ def init_db(db_path: str = DB_PATH):
     # A person's scheduling notes confirmed as holds (person_note_holds).
     from person_note_holds import init_holds
     init_holds(db_path)
+    # The website's daily analytics and top searches (web_analytics, 10/2/26).
+    from web_analytics import init_web_analytics
+    init_web_analytics(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -4388,7 +4402,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -5056,6 +5070,10 @@ def _restaurant_from_row(row) -> Restaurant:
         fb_page_id=row["fb_page_id"] if "fb_page_id" in row.keys() else None,
         fb_page_name=row["fb_page_name"] if "fb_page_name" in row.keys() else None,
         ig_username=row["ig_username"] if "ig_username" in row.keys() else None,
+        ga4_property_id=row["ga4_property_id"] if "ga4_property_id" in row.keys() else None,
+        gsc_site_url=row["gsc_site_url"] if "gsc_site_url" in row.keys() else None,
+        web_analytics_synced_at=row["web_analytics_synced_at"] if "web_analytics_synced_at" in row.keys() else None,
+        web_analytics_error=row["web_analytics_error"] if "web_analytics_error" in row.keys() else None,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
