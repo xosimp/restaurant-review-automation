@@ -6,19 +6,36 @@
     "fiscal_period_scheme": "445",
     "dsr_gross_basis": "all",
     "dsr_enabled": true,
-    "dsr_notify": false,
-    "dsr_deadline_hour": 4
+    "dsr_notify": true,
+    "dsr_deadline_hour": 4,
+    "dsr_late_night_hour": 22
   },
   "_why": {
     "fiscal_week_start_dow": "Weeks run Wednesday to Tuesday (Python weekday 2 = Wednesday).",
     "fiscal_year_start / fiscal_period_scheme": "\"A mixture of 4 and 5 week periods ... must line up with Back Office.\" A 4-4-5 year from Wed 12/31/25 puts Period 9 Week 1 on 8/26/26, as on his sheet.",
     "dsr_gross_basis": "\"Gross sales = everything included. Net sales = gross - comps, voids, tax etc.\" Gross = items + tax + voids; net unchanged.",
-    "dsr_notify": "Off until Will has watched a few real nights; then on for Erik and Jim.",
+    "dsr_notify": "On for Erik and Jim (emailed nightly since 9/28 and 9/30). Danny's Manager login is left off it (login_prefs.nightly_report=0, Will 10/2/26).",
     "budget": "\"I want to set budget daily\" — entered per day in the weekly grid.",
-    "influence": "\"What was going on — Cubs, Bears, World Cup, event.\" The close-out's influence field."
+    "influence": "\"What was going on — Cubs, Bears, World Cup, event.\" The close-out's influence field.",
+    "dsr_late_night_hour": "Erik, 10/2/26: \"after 10pm is late night and should be tracked separately\" — checks opened from 10pm, or after midnight."
   },
   "_confirm": [
-    "Back Office's period start dates for the current fiscal year (a screenshot of its fiscal calendar) — confirms 4-4-5 from 12/31/25, or gives the exact lengths.",
     "On the first live RPower night: our 'everything included' gross against RPower's own gross and net (detail.source_checks), and whether 'etc.' also covers service charges or gift cards."
-  ]
+  ],
+  "_confirmed": [
+    "Fiscal calendar: 4-4-5 from Wed 12/31/25 matches Back Office (Erik, 10/2/26)."
+  ],
+  "_answers_1002": {
+    "tock": "Pending — Erik checking his plan (Premium / Premium Unlimited needed for API).",
+    "rpower_departments": "Unanswered — Training and Utility PM still have no FOH/BOH category.",
+    "net_etc": "Pending — whether net also excludes service charges / gift cards.",
+    "petty_cash_check_requests_cc_register": "Yes, wanted in Cavnar AI. RPower holds no payouts/pay-ins for EJ's (pos_payouts empty), so they must come from Back Office exports.",
+    "back_office_exports": "Pending — Erik sending items+PLU+unit cost, a count, a recipe, a week of invoices (auto-email ideally).",
+    "manager_schedule": "Monday 10/5/26.",
+    "danielle_benedict": "Confirmed — back on the roster 10/2/26.",
+    "seventh_day_warning": "OK for managers (already shown to any login with Labor).",
+    "google_reconnect": "OK — once the GBP allowlist clears.",
+    "delivery": "Wants delivery sales tracked separately; starting DoorDash and/or UberEats. RPower's Delivery profit center is unused; the report already splits by profit center.",
+    "kitchen_stations": "Jim: Sauté, Fry, Grill, Pantry (set 10/2/26). Still need: how many of each per shift, and who is trained on which."
+  }
 }
