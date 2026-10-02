@@ -49,3 +49,11 @@ def test_the_preshift_and_ask_read_games_on_the_restaurants_clock_in_one_read():
     src = inspect.getsource(preshift)
     assert "describe(e, with_date=False, tz=engine.restaurant_clock(" in src
     assert "engine.one_read()" in inspect.getsource(ask_cavnar_tools._read_events)
+
+
+def test_home_lists_alerts_by_the_same_audience_rule_as_the_bell_and_the_push():
+    # Event re-audit 2, R3-07: one rule (client_api.sees_alert → push.audience_of).
+    import home_brief
+    src = inspect.getsource(home_brief)
+    assert "sees_alert(current_user, alert_type)" in src
+    assert "_NOTIFICATION_MODULE.get(alert_type" not in src

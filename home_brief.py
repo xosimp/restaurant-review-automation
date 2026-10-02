@@ -1323,10 +1323,13 @@ def _build(current_user, present=True):
     # module or role filter, so a shift manager's Home listed — and counted
     # in "N alerts fired" — the Food Cost alerts that role cannot open
     # (MOD-HOME-1).
-    from client_api import _NOTIFICATION_MODULE, _sees
+    # One audience rule with the bell and the push (client_api.sees_alert →
+    # push.audience_of): the big-game heads-up opens Ask but is for Labor
+    # readers only (event re-audit 2, R3-07).
+    from client_api import sees_alert
 
     def _visible(alert_type):
-        return _sees(current_user, _NOTIFICATION_MODULE.get(alert_type, "reviews"))
+        return sees_alert(current_user, alert_type)
     alerts_7d = [a for a in alerts_7d if _visible(a["alert_type"])]
     recent_alerts = [a for a in recent_alerts if _visible(a["alert_type"])]
     alerts_since = sum(int(a.get("n") or 0) for a in alerts_since_by_type if _visible(a["alert_type"]))
