@@ -1,0 +1,8 @@
+{"src": "B7 V10 good", "ctx": "staff_answer", "text": "Phones stay in the locker during service.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_answer-000", "good": true}
+{"src": "B7 V10 good count", "ctx": "staff_answer", "text": "Call the manager on duty at least 2 hours before your shift if you can't make it.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_answer-001", "good": true}
+{"src": "B7 V10 pay", "ctx": "staff_answer", "text": "Shift meal is after close, and your hourly rate covers it.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_answer-002"}
+{"src": "B7 V10 tip pool", "ctx": "staff_answer", "text": "Phones stay in the locker; the tip pool is split at close.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_answer-003"}
+{"src": "B7 V10 another person", "ctx": "staff_answer", "text": "Ask Marco for the locker key.", "expect": {"verdict": "refuse", "rules": ["N1", "S1"]}, "id": "staff_answer-004"}
+{"src": "B7 V10 invented figure", "ctx": "staff_answer", "text": "Call at least 4 hours before your shift.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "staff_answer-005"}
+{"src": "B7 V10 the reader's own name", "ctx": "staff_answer", "text": "Priya, phones stay in the locker during service.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_answer-006", "good": true}
+{"src": "B7 V10 discipline", "ctx": "staff_answer", "text": "Phones out during service means you'll be written up.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_answer-007"}

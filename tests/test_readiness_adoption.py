@@ -39,6 +39,11 @@ NOT_APPLICABLE_SITES = {
     # Memory audit 9/29/26 (conversations): the rolling notes of one Ask
     # chat, written from that chat's own turns and nothing else.
     ("ask_conversations.py", "_summarize_call"): "notes on one Ask chat, from that chat's own turns",
+    # Employee audit B7 (10/1/26): a translation of text a manager approved,
+    # and an answer from the owner's own house rules, docs and task sheets
+    # (cited line by line; with none on file there is no call).
+    ("staff_knowledge.py", "_translate"): "a translation of manager-approved text, held to figure parity",
+    ("staff_knowledge.py", "answer"): "an answer from the owner's own house rules and docs, cited line by line",
 }
 
 

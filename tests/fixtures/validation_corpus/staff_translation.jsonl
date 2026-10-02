@@ -1,0 +1,3 @@
+{"src": "B7 V11 good", "ctx": "staff_translation", "text": "Viernes con mucho trabajo: alrededor de 25% más, con más movimiento entre 6–8pm.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_translation-000", "good": true}
+{"src": "B7 V11 money in translation", "ctx": "staff_translation", "text": "Viernes con mucho trabajo: 25% más, unos $900 más.", "expect": {"verdict": "refuse", "rules": ["F1", "S1"]}, "id": "staff_translation-001"}
+{"src": "B7 V11 roster name in translation", "ctx": "staff_translation", "text": "Viernes con mucho trabajo: 25% más. Jake abre la puerta 6–8pm.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_translation-002"}

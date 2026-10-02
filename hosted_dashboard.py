@@ -288,6 +288,17 @@ app.register_blueprint(issue_link_bp)
 # the same posture mobile_bp already takes.
 from staff_routes import staff_bp
 app.register_blueprint(staff_bp)
+# The staff brief's approval, house rules, docs and certifications (console,
+# web + mobile twins) and the employee's language, docs and ask
+# (staff_knowledge_routes, employee audit B7). The web half is CSRF-protected
+# like strategy_bp; the staff half takes the staff portal's posture above.
+from staff_knowledge_routes import staff_knowledge_bp, knowledge_bp, knowledge_mobile_bp
+if not getattr(knowledge_bp, "_csrf_wired", False):
+    csrf_protect(knowledge_bp)
+    knowledge_bp._csrf_wired = True
+app.register_blueprint(knowledge_bp)
+app.register_blueprint(knowledge_mobile_bp)
+app.register_blueprint(staff_knowledge_bp)
 _check_duplicate_routes()
 
 app.after_request(ensure_csrf_cookie)

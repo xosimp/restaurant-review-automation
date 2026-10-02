@@ -397,6 +397,11 @@ JOBS = {
         cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Pre-shift nudge", description="The pre-shift notes before service",
         target=("strategy_jobs", "run_preshift_nudge"), claim="intraday", max_minutes=10),
+    "cert_reminders": dict(
+        cadence="every 20 minutes (10am local, once a day)", sla_minutes=2 * 60, sends=True, runnable=True,
+        label="Certificate reminders",
+        description="Tell each person, and the owner, about a certificate expiring within 30 days",
+        target=("staff_knowledge", "run_cert_reminders"), claim="intraday", max_minutes=10),
     "task_sheets": dict(
         cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Task sheets", description="Issue today's sheets from the published schedule, open critical-miss issues, close ended shifts",

@@ -1,0 +1,18 @@
+{"src": "B7 V3 good rewrite", "ctx": "staff_brief", "text": "Busy Friday tonight, about 25% busier than average, with the rush around 6–8pm. The Bears play the Packers at 7:20pm, and the salmon was 86'd last night.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_brief-000", "good": true}
+{"src": "B7 V3 good short", "ctx": "staff_brief", "text": "Expect a busy Friday with the rush around 6–8pm. Watch service speed tonight.", "expect": {"verdict": "pass", "rules": []}, "id": "staff_brief-001", "good": true}
+{"src": "B7 V3 sales dollars", "ctx": "staff_brief", "text": "Last Friday did $8,400, so expect a big night.", "expect": {"verdict": "refuse", "rules": ["F1", "S1"]}, "id": "staff_brief-002"}
+{"src": "B7 V3 bare dollar sign", "ctx": "staff_brief", "text": "Push the $ specials tonight.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-003"}
+{"src": "B7 V3 dollars word", "ctx": "staff_brief", "text": "We are a few thousand dollars behind this week.", "expect": {"verdict": "refuse", "rules": ["F1", "S1"]}, "id": "staff_brief-004"}
+{"src": "B7 V3 labor percent", "ctx": "staff_brief", "text": "Labor cost ran high last week, so stay sharp.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-005"}
+{"src": "B7 V3 SPLH", "ctx": "staff_brief", "text": "Our SPLH has to come up tonight.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-006"}
+{"src": "B7 V3 prime cost", "ctx": "staff_brief", "text": "Prime cost is the focus tonight.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-007"}
+{"src": "B7 V3 margins", "ctx": "staff_brief", "text": "Sell the salmon; it has the best margins.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-008"}
+{"src": "B7 V3 a teammate", "ctx": "staff_brief", "text": "Jake is on the door tonight, so seat fast.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-009"}
+{"src": "B7 V3 a teammate possessive", "ctx": "staff_brief", "text": "Dana's section is the patio tonight.", "expect": {"verdict": "refuse", "rules": ["N1", "S1"]}, "id": "staff_brief-010"}
+{"src": "B7 V3 reliability", "ctx": "staff_brief", "text": "Reliability scores are being reviewed this week.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-011"}
+{"src": "B7 V3 discipline", "ctx": "staff_brief", "text": "Anyone late tonight gets a write-up.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-012"}
+{"src": "B7 V3 invented figure", "ctx": "staff_brief", "text": "Expect about 35% more guests than a normal Friday.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "staff_brief-013"}
+{"src": "B7 V3 invented count", "ctx": "staff_brief", "text": "Guests mentioned slow service in 9 reviews.", "expect": {"verdict": "refuse", "rules": ["F1"]}, "id": "staff_brief-014"}
+{"src": "B7 V3 invented cause", "ctx": "staff_brief", "text": "It will be busy because the Bears are winning.", "expect": {"verdict": "refuse", "rules": ["K1"]}, "id": "staff_brief-015"}
+{"src": "B7 V3 a name not in the input", "ctx": "staff_brief", "text": "Chef Ramon has a new special tonight.", "expect": {"verdict": "refuse", "rules": ["N1"]}, "id": "staff_brief-016"}
+{"src": "B7 V3 comps", "ctx": "staff_brief", "text": "Keep comps down tonight.", "expect": {"verdict": "refuse", "rules": ["S1"]}, "id": "staff_brief-017"}

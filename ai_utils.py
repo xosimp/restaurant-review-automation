@@ -890,6 +890,13 @@ MODELS = {
     "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET),
     # A starter task sheet the owner accepts line by line (task_sheets.starter_lines).
     "task_sheets":         ("TASK_SHEET_MODEL",       SONNET),
+    # Read by staff (employee audit B7, 10/1/26): the day's one rewrite of
+    # the lineup notes a manager approves (staff_brief.draft), a translation
+    # of manager-approved text (staff_knowledge.translate_for), and an
+    # answer from the house rules that cites its lines (staff_knowledge.answer).
+    "staff_brief":         ("STAFF_BRIEF_MODEL",      HAIKU),
+    "staff_translation":   ("STAFF_TRANSLATION_MODEL", HAIKU),
+    "staff_answer":        ("STAFF_ANSWER_MODEL",     SONNET),
 }
 
 

@@ -1959,5 +1959,118 @@
     "reply_rate_30d"
    ]
   ]
+ },
+ "staff_brief": {
+  "surface": "staff_brief",
+  "audience": "staff",
+  "delivery": "unattended",
+  "facts": [
+   {
+    "key": "global",
+    "value": 25.0,
+    "unit": "%",
+    "kind": "measured"
+   },
+   {
+    "key": "global",
+    "value": 6.0,
+    "unit": "",
+    "kind": "measured"
+   },
+   {
+    "key": "global",
+    "value": 4.0,
+    "unit": "",
+    "kind": "measured"
+   },
+   {
+    "key": "global",
+    "value": 86.0,
+    "unit": "",
+    "kind": "measured"
+   },
+   {
+    "key": "global",
+    "value": 72.0,
+    "unit": "",
+    "kind": "measured"
+   },
+   {
+    "key": "global",
+    "value": 40.0,
+    "unit": "%",
+    "kind": "measured"
+   }
+  ],
+  "context_text": "Expect a busy Friday — typically about 25% busier than an average day.\nBusiest around 6–8pm on a usual Friday.\nWatch service speed tonight: it has come up in 4 recent reviews, mostly on Fridays.\n86'd last night: Salmon. Check with the kitchen before recommending dishes that use it.\nGame tonight: Bears at Packers, 7:20pm.\nWeather: sunny, high of 72°, 40% chance of rain.",
+  "policy": {
+   "refuse_on_names": true,
+   "check_counts": true,
+   "people_denied": [
+    "Jake Moss",
+    "Dana Lee",
+    "Priya Shah",
+    "Marco Ruiz"
+   ]
+  }
+ },
+ "staff_answer": {
+  "surface": "staff_answer",
+  "audience": "staff",
+  "delivery": "interactive",
+  "facts": [
+   {
+    "key": "global",
+    "value": 2.0,
+    "unit": "",
+    "kind": "measured"
+   }
+  ],
+  "context_text": "Phones stay in the locker during service.\nShift meal is after close, from the staff menu.\nCall the manager on duty at least 2 hours before your shift if you can't make it.",
+  "cause_anchors": [
+   {
+    "text": "Phones stay in the locker during service.",
+    "strength": "supported"
+   },
+   {
+    "text": "Shift meal is after close, from the staff menu.",
+    "strength": "supported"
+   },
+   {
+    "text": "Call the manager on duty at least 2 hours before your shift if you can't make it.",
+    "strength": "supported"
+   }
+  ],
+  "untrusted": [
+   "Can I keep my phone on me during service?"
+  ],
+  "policy": {
+   "refuse_on_names": true,
+   "check_counts": true,
+   "people_denied": [
+    "Jake Moss",
+    "Dana Lee",
+    "Priya Shah",
+    "Marco Ruiz"
+   ],
+   "people_allowed": [
+    "Priya Shah"
+   ]
+  }
+ },
+ "staff_translation": {
+  "surface": "staff_translation",
+  "audience": "staff",
+  "delivery": "unattended",
+  "context_text": "Busy Friday tonight: about 25% busier, busiest around 6–8pm.",
+  "policy": {
+   "typed_only": true,
+   "people_denied": [
+    "Jake Moss",
+    "Dana Lee",
+    "Priya Shah",
+    "Marco Ruiz"
+   ]
+  }
  }
 }
