@@ -356,7 +356,12 @@ def test_the_fires_seatgeek_game_is_marked_an_alternate_venue(db):
     g = fire["761935"]
     assert g["venue"] == "SeatGeek Stadium" and g["home_away"] == "home"
     assert g["attributes"] == {"alt_venue": True}
-    assert sum(1 for e in fire.values() if (e.get("attributes") or {}).get("alt_venue")) == 1
+    # The one MLS game away from Soldier Field; the cup matches (season_type
+    # "special") played at SeatGeek carry it too, as their own class.
+    assert sum(1 for e in fire.values() if (e.get("attributes") or {}).get("alt_venue")
+               and (e.get("season_type") or "regular") == "regular") == 1
+    assert all((e.get("attributes") or {}).get("alt_venue") for e in fire.values()
+               if e.get("venue") == "SeatGeek Stadium" and e.get("home_away") == "home")
     # Loaded into the catalog with it.
     s = store.series_by_slug("mls-chicago-fire", db_path=db)
     row = [e for e in store.events_for([s["id"]], "2026-11-07", "2026-11-07", db_path=db)
