@@ -92,9 +92,14 @@ def test_signing_out_clears_what_the_lock_screen_shows():
     # One helper, called here and by SessionStore at sign-out itself (F3-8).
     assert "Self.clearForSignOut()" in signed_out
     signed_out = sync.split("static func clearForSignOut() {", 1)[1].split("\n    }\n", 1)[0]
-    assert "WidgetSnapshot.clear()" in signed_out
-    assert "PendingSendActivities.endAll()" in signed_out
-    assert "shortcutItems = []" in signed_out
+    # The owner's surfaces go through one helper (also run on a staff-only
+    # phone, employee audit I4), and the staff next-shift widget with them.
+    assert "clearOwnerSurfaces()" in signed_out
+    assert "StaffShiftSnapshot.clear()" in signed_out
+    owner = sync.split("static func clearOwnerSurfaces() {", 1)[1].split("\n    }\n", 1)[0]
+    assert "WidgetSnapshot.clear()" in owner
+    assert "PendingSendActivities.endAll()" in owner
+    assert "shortcutItems = []" in owner
 
 
 def test_app_shortcuts_only_open_the_app_except_undo():
@@ -248,9 +253,12 @@ def test_marketing_posts_to_every_connected_channel_behind_one_confirm():
 # ── #49: the staff portal's requests ─────────────────────────────────────────
 
 def test_the_ios_staff_portal_asks_for_time_off_and_swaps():
+    # The bar is a TabView since the employee audit (I2): Requests is a tab,
+    # and Give up / Swap open from Today's shifts.
     portal = _read(APP, "Features", "Staff", "StaffPortalView.swift")
-    assert 'case requests = "Requests"' in portal
-    assert "StaffShiftChangeSheet(day:" in portal
+    assert ".tag(StaffTab.requests)" in portal and "StaffRequestsView(" in portal
+    today = _read(APP, "Features", "Staff", "StaffTodayView.swift")
+    assert "StaffShiftChangeSheet(day:" in today
     views = _read(APP, "Features", "Staff", "StaffRequestsViews.swift")
     server = _read(ROOT, "staff_routes.py")
     for route in ("/api/time-off", "/api/shift-requests", "/api/colleagues"):

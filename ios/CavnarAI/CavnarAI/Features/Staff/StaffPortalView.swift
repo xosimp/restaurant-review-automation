@@ -138,47 +138,40 @@ private struct StaffOptionalRefresh: ViewModifier {
     }
 }
 
-/// Tasks: I4's StaffTaskSheetsSection on the store's tasks, with a failed
-/// load said as a failure and retried, never an endless pulse (C7).
+/// Tasks: I4's StaffTaskSheetsSection, which reads /tasks itself (the one
+/// read path: version 2, last night's note, the "as of" copy, the offline
+/// queue) and says its own loading and failed states (C7). A pull forces a
+/// read.
 private struct StaffTasksTab: View {
     let store: StaffPortalStore
 
     var body: some View {
         StaffTabScroll(refresh: { await store.reloadTasks() }) {
             StaffScreenTitle(title: "Tasks")
-            switch store.tasks.phase {
-            case .ready:
-                if let tasks = store.tasks.value {
-                    StaffTaskSheetsSection(response: tasks) {
-                        await store.reloadTasks()
-                    }
-                }
-            case .failed:
-                StaffLoadFailed(what: "your sheets", message: store.tasks.error) {
-                    await store.reloadTasks()
-                }
-            case .loading:
-                StaffLoadingLine(text: "Loading your sheets")
-            }
+            StaffTaskSheetsSection()
         }
     }
 }
 
-/// Requests: I3's StaffRequestsView (it loads its own lists). A pull
-/// rebuilds it, which reloads them, and catches the badge up; a tab
-/// switch never does (it stays mounted, UX-12).
+/// Requests: I3's StaffRequestsView (it loads its own lists). A pull bumps
+/// `refresh`, which reloads them, and catches the badge up; a tab switch
+/// never does (it stays mounted, UX-12). With `portal`, every answer
+/// reloads the badges and the week.
 private struct StaffRequestsTab: View {
     let store: StaffPortalStore
     @State private var generation = 0
 
     var body: some View {
-        StaffTabScroll(refresh: {
-            generation += 1
-            await store.reloadBadges()
-        }) {
-            StaffScreenTitle(title: "Requests")
-            StaffRequestsView()
-                .id(generation)
+        ScrollViewReader { proxy in
+            StaffTabScroll(refresh: {
+                generation += 1
+                await store.reloadBadges()
+            }) {
+                StaffScreenTitle(title: "Requests")
+                StaffRequestsView(refresh: generation, portal: store) { id in
+                    withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
         }
     }
 }

@@ -88,6 +88,21 @@ enum StaffCache {
         writeIndex(index)
     }
 
+    /// The copies under the keys `match` picks, in every scope but `kept` —
+    /// a read cached per session (StaffReadCache) drops the last session's
+    /// copy as the next one writes, so a shared phone holds one person's.
+    static func purge(keys match: (String) -> Bool, except kept: String? = nil) {
+        var index = readIndex()
+        for (scope, keys) in index.keys where scope != kept {
+            let gone = keys.filter(match)
+            guard !gone.isEmpty else { continue }
+            for key in gone { SecureCache.delete(key: fileKey(key, scope)) }
+            let left = keys.filter { !match($0) }
+            index.keys[scope] = left.isEmpty ? nil : left
+        }
+        writeIndex(index)
+    }
+
     /// Every staff copy on this phone — for an explicit sign-out.
     static func purgeAll() {
         let index = readIndex()

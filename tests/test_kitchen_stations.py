@@ -7,6 +7,7 @@ on each and which stations each daypart needs; the scheduler matches cooks to
 stations, adds a trained cook where a station is uncovered, and never trims
 the only trained cover."""
 import json
+import re
 
 import pytest
 
@@ -190,4 +191,5 @@ def test_a_cook_sees_their_station_on_their_shift(db_path, monkeypatch):
     out = staff_schedule.shifts_for_employee(rid, "Bo Chan", today=date(2026, 10, 5))
     assert out["today"]["station"] == "Grill" and out["today"]["start"] == "4:00pm"
     swift = open("ios/CavnarAI/CavnarAI/Features/Staff/StaffModels.swift").read()
-    assert "?? c.decodeIfPresent(String.self, forKey: .start)" in swift, "the app reads the API's start/end"
+    assert re.search(r"\?\? \(?(try\? )?c\.decodeIfPresent\(String\.self, forKey: \.start\)", swift), \
+        "the app reads the API's start/end"

@@ -138,10 +138,10 @@ struct StaffTasksAPI: Sendable {
     }
 
     /// Transport, status and decode — the staff tier's rules, as
-    /// APIClient's private `perform` has them: a 401/403 carrying the
-    /// server's sentence is that sentence; a bare 401 (or one that says the
-    /// session expired) is SessionExpiredError, which the store turns into a
-    /// staff sign-out. A transport failure is rethrown as the URLError it
+    /// APIClient's `classifyAuthRefusal` has them: any 401 on /staff/api, or
+    /// a refusal that says the session expired, is SessionExpiredError, which
+    /// the store turns into an ended session (the PIN pad); a 403 with the
+    /// server's sentence is that sentence. A transport failure is rethrown as the URLError it
     /// is, so the caller can park the tick (StaffOfflineQueue.isTransport).
     private func perform<T: Decodable>(_ request: URLRequest, on session: URLSession) async throws -> T {
         let (data, response) = try await session.data(for: request)
@@ -149,12 +149,18 @@ struct StaffTasksAPI: Sendable {
             throw APIClient.APIError(kind: .server, message: "The server sent something unreadable.")
         }
         let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
-        if http.statusCode == 401 || http.statusCode == 403 {
-            if envelope?.sessionExpired == true { throw APIClient.SessionExpiredError() }
-            if let message = envelope?.error {
-                throw APIClient.APIError(kind: .server, message: message, status: http.statusCode, body: data)
-            }
-            throw APIClient.SessionExpiredError()
+        // The staff transport's one rule (APIClient.classifyAuthRefusal):
+        // any 401 on /staff/api is an ended session even with a sentence —
+        // the server's session gate always sends one (C2). Every route here
+        // is /staff/api/tasks*, none of which uses 401 for a wrong credential.
+        switch APIClient.classifyAuthRefusal(status: http.statusCode, body: data, authenticated: true,
+                                             expiresOn401: true) {
+        case .sessionEnded(let message)?:
+            throw APIClient.SessionExpiredError(message: message)
+        case .refused(let message)?:
+            throw APIClient.APIError(kind: .server, message: message, status: http.statusCode, body: data)
+        case nil:
+            break
         }
         guard (200..<300).contains(http.statusCode) else {
             throw APIClient.APIError(kind: .server,

@@ -401,8 +401,11 @@ final class StaffSessionStore {
 
     /// The session ended on the server (expired, PIN reset, deactivated).
     /// Only when it is still this store's session: a slow request from the
-    /// previous sign-in must not end the next one.
-    private func sessionEnded(sentToken: String?, message: String?) {
+    /// previous sign-in must not end the next one. Not an explicit sign-out:
+    /// the person lands on their PIN pad with the server's sentence and
+    /// their cached screens stay. Transports outside `authed` (the tasks
+    /// routes' StaffTasksAPI) call this on a SessionExpiredError.
+    func sessionEnded(sentToken: String?, message: String?) {
         guard sentToken != nil, sentToken == token else { return }
         clearLocal(notice: message ?? "Your shift session ended — sign in again.")
     }
@@ -424,13 +427,21 @@ final class StaffSessionStore {
     /// reaching an owner endpoint even by accident. Any 401 on /staff/api is
     /// an ended session and signs this store out (C2); `wrongCredential401`
     /// is for Change PIN, whose 401 is a wrong current PIN.
+    ///
+    /// A query string travels as `query:`, never inside `path`: the path is
+    /// appended as a path component, which escapes "?" (a 404 on the
+    /// server). `headers` carries values a route reads from a header (the
+    /// tasks version, `X-Staff-Tasks-Version`).
     func authed<Response: Decodable>(_ path: String,
                                      method: APIClient.HTTPMethod = .get,
                                      body: (any Encodable)? = nil,
+                                     query: [String: String] = [:],
+                                     headers: [String: String] = [:],
                                      wrongCredential401: Bool = false) async throws -> Response {
         guard let token else { throw APIClient.SessionExpiredError(message: "Sign in again.") }
         do {
-            return try await client.sendWithBearer(path, method: method, body: body, bearer: token,
+            return try await client.sendWithBearer(path, method: method, body: body, query: query,
+                                                   headers: headers, bearer: token,
                                                    wrongCredential401: wrongCredential401)
         } catch let error as APIClient.SessionExpiredError {
             sessionEnded(sentToken: token, message: error.message)

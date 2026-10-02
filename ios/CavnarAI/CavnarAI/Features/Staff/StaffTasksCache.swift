@@ -3,61 +3,43 @@ import WidgetKit
 
 /// The staff app's last good read of a route, kept on the phone so a walk-in
 /// with no signal still shows today's sheets, labelled "as of 4:05pm"
-/// (PERF-09, MISS-10). Small and generic so the schedule and the brief can
-/// use it too: `save(value, path:, token:)` after a read, `load(_:path:token:)`
-/// before one.
+/// (PERF-09, MISS-10): `save(value, path:, token:)` after a read,
+/// `load(_:path:token:)` before one.
 ///
-/// Encrypted at rest (SecureCache: complete file protection). Each entry is
-/// bound to the staff session that read it — a one-way fingerprint of its
-/// token — so the next person signed in on a shared phone never sees the
-/// last one's sheets, and a new session simply starts empty.
+/// One store for the staff app: this is I2's StaffCache (SecureCache,
+/// complete file protection; `StaffCache.purgeAll()` on an explicit
+/// sign-out clears it with everything else) under the PIN session's scope
+/// (`StaffCache.sessionScope(token:)`), so the next person signed in on a
+/// shared phone never sees the last one's sheets, and a new session simply
+/// starts empty. Writing drops any other session's copy of the same route.
 @MainActor
 enum StaffReadCache {
-    static let storeKey = "staff-read-cache.v1"
-
-    private struct Entry: Codable {
-        let owner: String
-        let savedAt: Date
-        let body: Data
-    }
-
-    static func save<T: Encodable>(_ value: T, path: String, token: String?, now: Date = Date()) {
-        let owner = StaffOfflineQueue.fingerprint(token: token)
-        guard !owner.isEmpty, let body = try? JSONEncoder().encode(value) else { return }
-        // Another session's entries go as this one writes.
-        var all = entries().filter { $0.value.owner == owner }
-        all[path] = Entry(owner: owner, savedAt: now, body: body)
-        write(all)
+    static func save<T: Encodable>(_ value: T, path: String, token: String?) {
+        guard let token, !token.isEmpty else { return }
+        let scope = StaffCache.sessionScope(token: token)
+        StaffCache.purge(keys: { $0 == path }, except: scope)
+        StaffCache.save(value, key: path, scope: scope)
     }
 
     static func load<T: Decodable>(_ type: T.Type, path: String, token: String?) -> (value: T, savedAt: Date)? {
-        let owner = StaffOfflineQueue.fingerprint(token: token)
-        guard !owner.isEmpty, let entry = entries()[path], entry.owner == owner,
-              let value = try? JSONDecoder().decode(T.self, from: entry.body) else { return nil }
-        return (value, entry.savedAt)
+        guard let token, !token.isEmpty,
+              let hit = StaffCache.load(type, key: path, scope: StaffCache.sessionScope(token: token)) else { return nil }
+        return (hit.value, hit.savedAt)
     }
 
+    /// Every route read kept this way (the /staff/api/… keys), every session.
     static func clear() {
-        SecureCache.delete(key: storeKey)
-    }
-
-    private static func entries() -> [String: Entry] {
-        guard let data = SecureCache.read(key: storeKey),
-              let all = try? JSONDecoder().decode([String: Entry].self, from: data) else { return [:] }
-        return all
-    }
-
-    private static func write(_ all: [String: Entry]) {
-        if all.isEmpty { clear(); return }
-        if let data = try? JSONEncoder().encode(all) { SecureCache.write(data, key: storeKey) }
+        StaffCache.purge(keys: { $0.hasPrefix("/staff/api/") })
     }
 }
 
 /// Everything of the staff session the phone keeps between launches: the
 /// read cache, unsent ticks, the task screen's state and the next-shift
-/// widget. One call for a staff sign-out (StaffSessionStore.signOut should
-/// call it; until it does, StaffTasksStore calls it when it sees the token
-/// go, and WidgetSnapshotService clears the widget on the next activation).
+/// widget. RootView runs it (with `StaffCache.purgeAll()`) from
+/// `StaffSessionStore.onExplicitSignOut` — Sign out, "Not you?", a deleted
+/// account. When the token goes any other way (an ended session),
+/// StaffTasksStore runs it too, since that session's ticks can no longer be
+/// sent; the idle lock keeps the token, so it keeps everything.
 @MainActor
 enum StaffLocalData {
     static func clearForSignOut() {

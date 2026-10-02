@@ -22,8 +22,11 @@ import Observation
 //                                          swap or offer, after reading the
 //                                          inbox
 //   await store.reloadShifts()             after a drop / swap / claim
-//   await store.reloadTasks()              Tasks' own reload
-//   store.tasks / store.shifts / store.profile …   StaffSection<T> values
+//   await store.reloadTasks()              Tasks' pull: I4's StaffTasksStore
+//                                          reads /tasks itself (version 2,
+//                                          its cache and offline queue) — the
+//                                          one /tasks read path
+//   store.shifts / store.profile …         StaffSection<T> values
 //   store.session                          the StaffSessionStore (authed calls)
 
 /// The four tabs of the bar (Part C): Today · Tasks · Requests · Me.
@@ -94,7 +97,6 @@ final class StaffPortalStore {
     // Sections
     var profile = StaffSection<StaffProfile>()
     var shifts = StaffSection<StaffShiftsResponse>()
-    var tasks = StaffSection<StaffTasksResponse>()
     var waiting = StaffSection<StaffWaitingResponse>()
     var inbox = StaffSection<StaffInboxBadge>()
     var brief = StaffSection<StaffPersonalBrief>()
@@ -129,7 +131,9 @@ final class StaffPortalStore {
     // MARK: Deep links
 
     func apply(_ link: StaffDeepLink) {
-        focus = link
+        // Requests and the inbox read `focus` (the request / announcement /
+        // thread it names) and consume it; the other tabs only switch.
+        focus = (link.tab == .inbox || link.tab == .requests) ? link : nil
         if link.tab == .inbox {
             selectedTab = .today
             showingInbox = true
@@ -148,7 +152,7 @@ final class StaffPortalStore {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.reloadProfile() }
             group.addTask { await self.reloadShifts() }
-            group.addTask { await self.reloadTasks() }
+            group.addTask { await self.refreshTasks() }
             group.addTask { await self.reloadBadges() }
             group.addTask { await self.reloadBrief() }
             group.addTask { await self.reloadStats() }
@@ -205,8 +209,24 @@ final class StaffPortalStore {
         await reloadCoworkers()
     }
 
+    /// Tasks has one read path: I4's StaffTasksStore, which sends
+    /// `X-Staff-Tasks-Version: 2`, keeps last night's note, the phone's
+    /// "as of" copy and the offline tick queue. A pull forces a read.
     func reloadTasks() async {
-        await load("/staff/api/tasks", into: \.tasks) { (r: StaffTasksResponse) in r }
+        guard let session else { return }
+        let tasks = StaffTasksStore.shared
+        tasks.attach(session)
+        await tasks.load()
+    }
+
+    /// The portal's refresh (start, foreground, Today's pull): Tasks reads
+    /// only when its copy is over a minute old, so the tab's own appearance
+    /// right after doesn't read twice.
+    func refreshTasks() async {
+        guard let session else { return }
+        let tasks = StaffTasksStore.shared
+        tasks.attach(session)
+        await tasks.refreshIfNeeded()
     }
 
     func reloadBadges() async {
@@ -233,7 +253,7 @@ final class StaffPortalStore {
     }
 
     func reloadEarnings() async {
-        await load("/staff/api/earnings?days=14", into: \.earnings, cacheKey: "earnings") { (r: StaffEarnings) in r }
+        await load("/staff/api/earnings", query: ["days": "14"], into: \.earnings, cacheKey: "earnings") { (r: StaffEarnings) in r }
     }
 
     func reloadRecognition() async {
@@ -254,7 +274,7 @@ final class StaffPortalStore {
         }
         let date = hero.day.date
         if coworkers.value?.date != date { coworkers.value = nil }
-        await load("/staff/api/colleagues?date=\(date)", into: \.coworkers) { (r: StaffCoworkersResponse) in r }
+        await load("/staff/api/colleagues", query: ["date": date], into: \.coworkers) { (r: StaffCoworkersResponse) in r }
     }
 
     // MARK: Running late (H1)
@@ -294,6 +314,7 @@ final class StaffPortalStore {
 
     private func load<Response: Decodable & StaffRefusable, Value>(
         _ path: String,
+        query: [String: String] = [:],
         into keyPath: ReferenceWritableKeyPath<StaffPortalStore, StaffSection<Value>>,
         cacheKey: String? = nil,
         _ pick: (Response) -> Value?
@@ -301,7 +322,7 @@ final class StaffPortalStore {
         guard let session else { return }
         self[keyPath: keyPath].isLoading = true
         do {
-            let response: Response = try await session.authed(path)
+            let response: Response = try await session.authed(path, query: query)
             if !response.ok {
                 fail(keyPath, response.error ?? "That didn't load.")
                 return

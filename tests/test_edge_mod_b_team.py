@@ -433,12 +433,17 @@ def test_the_ios_checklist_never_names_a_date_of_its_own():
     """A4 #44 / MOD-EMP-5, as task sheets settle it (9/30/26): the day a sheet
     belongs to is the server's business day, so the phone sends none — a
     device clock or calendar can no longer file a tick under the wrong day."""
-    import re
-    src = _swift_staff_portal()
-    gets = re.findall(r'authed\("(/staff/api/tasks[^"]*)"\)', src)
-    assert gets, "no task fetch found"
-    assert not any("date=" in g for g in gets), gets
-    assert "func taskDay" not in src
+    import pathlib
+    staff = pathlib.Path(__file__).resolve().parent.parent / "ios" / "CavnarAI" / "CavnarAI" / "Features" / "Staff"
+    # The one /tasks read is StaffTasksAPI (employee audit I4): the path and
+    # the request it builds carry no day of the phone's own.
+    api = (staff / "StaffTasksAPI.swift").read_text()
+    assert 'static let tasksPath = "/staff/api/tasks"' in api, "no task fetch found"
+    assert "makeRequest(Self.tasksPath" in api
+    assert "date=" not in api and "queryItems" not in api
+    for name in ("StaffPortalView.swift", "StaffPortalStore.swift", "StaffTasksStore.swift",
+                 "StaffTaskSheetsView.swift", "StaffTasksAPI.swift"):
+        assert "func taskDay" not in (staff / name).read_text(), name
 
 
 def test_a_server_role_spelled_in_lower_case_still_sees_the_server_checklist(db_path, rid, staff_app):

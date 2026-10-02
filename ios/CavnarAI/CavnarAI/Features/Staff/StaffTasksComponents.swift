@@ -158,42 +158,51 @@ struct StaffProofThumbnail: View {
 /// what to do, a refusal in red, a quiet word otherwise.
 struct StaffLineNoteView: View {
     let note: StaffTasksStore.LineNote
+    /// Opens the manager thread about this line (I3's
+    /// StaffMessageThreadView, the draft naming the reading). Offered under
+    /// a critical alert the server raised; offline the alert says to tell
+    /// them in person, so no button.
+    var onMessage: (() -> Void)? = nil
 
     var body: some View {
         switch note {
         case let .alert(alert, offline):
             VStack(alignment: .leading, spacing: 4) {
-                Label {
-                    Text(alert.title).font(.cavnarBody(CavnarType.body, weight: 700))
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13, weight: .bold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Label {
+                        Text(alert.title).font(.cavnarBody(CavnarType.body, weight: 700))
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundStyle(Color.cavnarRed)
+                    if let message = alert.message, !message.isEmpty {
+                        Text(Self.body(of: message, title: alert.title))
+                            .font(.cavnarBody(CavnarType.secondary))
+                            .foregroundStyle(Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !offline, alert.managerAlerted != true {
+                        Text("The app couldn't reach a manager for you, so tell them in person.")
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                            .foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if !offline {
+                        Text("Your manager has been sent this too.")
+                            .font(.cavnarBody(CavnarType.caption))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
                 }
-                .foregroundStyle(Color.cavnarRed)
-                if let message = alert.message, !message.isEmpty {
-                    Text(Self.body(of: message, title: alert.title))
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isStaticText)
+                if !offline, let onMessage {
+                    StaffTextButton(title: "Message your manager", action: onMessage)
+                        .accessibilityHint("Opens your messages with your manager, about this reading")
                 }
-                if !offline, alert.managerAlerted != true {
-                    Text("The app couldn't reach a manager for you, so tell them in person.")
-                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarRed)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if !offline {
-                    Text("Your manager has been sent this too.")
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                // A one-tap "Message manager" belongs here once the staff
-                // app has a message thread to open (employee audit I3).
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.cavnarRedBg, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
             .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarRed.opacity(0.5), lineWidth: 1))
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isStaticText)
         case let .error(text):
             Text(text)
                 .font(.cavnarBody(CavnarType.secondary))

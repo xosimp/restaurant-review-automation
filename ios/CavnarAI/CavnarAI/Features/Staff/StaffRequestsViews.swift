@@ -57,7 +57,7 @@ enum StaffUI {
 
 /// A button label while its request runs: the verb with the house shimmer,
 /// still under Reduce Motion — never "…" (UX-27).
-struct StaffBusyLabel: View {
+struct StaffShimmerLabel: View {
     let text: String
     var color: Color = .white
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -88,7 +88,7 @@ struct StaffTextButton: View {
             action()
         } label: {
             Group {
-                if busy { StaffBusyLabel(text: busyTitle ?? title, color: tone) } else { Text(title) }
+                if busy { StaffShimmerLabel(text: busyTitle ?? title, color: tone) } else { Text(title) }
             }
             .font(.cavnarBody(14.5, weight: 700))
             .foregroundStyle(disabled ? Color.cavnarInk3 : tone)
@@ -134,17 +134,12 @@ struct StaffUndoCapsule: View {
 }
 
 extension StaffSessionStore {
-    /// A staff GET with a query string. `authed(_:)` puts its path through
-    /// appendingPathComponent, which escapes a "?" — so a query has to
-    /// travel as `query:`. Same bearer, same sign-out on an ended session.
+    /// A staff GET with a query string — `authed(_:query:)`, so it shares
+    /// the store's transport, bearer and ended-session rule (an ended
+    /// session lands on the PIN pad with the server's sentence; it is not
+    /// an explicit sign-out, so this person's cached screens stay).
     func staffGet<Response: Decodable>(_ path: String, query: [String: String]) async throws -> Response {
-        guard let token else { throw APIClient.APIError(message: "Not signed in.") }
-        do {
-            return try await APIClient.shared.sendWithBearer(path, query: query, bearer: token)
-        } catch let error as APIClient.SessionExpiredError {
-            signOut()
-            throw error
-        }
+        try await authed(path, query: query)
     }
 }
 
@@ -188,10 +183,14 @@ struct StaffShiftChangeBody: Encodable, Equatable {
 struct StaffRequestsView: View {
     var refresh: Int = 0
     var portal: StaffPortalStore?
+    /// Scrolls the tab's scroll view to a row (the container's
+    /// ScrollViewReader), for a push that opened a request.
+    var scrollTo: ((String) -> Void)?
 
-    init(refresh: Int = 0, portal: StaffPortalStore? = nil) {
+    init(refresh: Int = 0, portal: StaffPortalStore? = nil, scrollTo: ((String) -> Void)? = nil) {
         self.refresh = refresh
         self.portal = portal
+        self.scrollTo = scrollTo
     }
 
     @Environment(StaffSessionStore.self) private var staff
@@ -207,6 +206,8 @@ struct StaffRequestsView: View {
     @State private var undoTask: Task<Void, Never>?
     @State private var showingTimeOff = false
     @State private var messaging: MessageSheet?
+    /// The rows a push opened (portal.focus), ringed until the next load.
+    @State private var focused: Set<String> = []
 
     /// The tier-2 confirms: what moves, named (UX-14).
     enum Confirm: Identifiable {
@@ -232,7 +233,8 @@ struct StaffRequestsView: View {
             switch self {
             case .ask(let a): return a.confirmMessage
             case .offer(let o):
-                return "It goes on your schedule\(o.role.map { " as \($0)" } ?? ""), and your manager hears you said yes."
+                return ["It goes on your schedule\(o.role.map { " as \($0)" } ?? ""), and your manager hears you said yes.",
+                    o.overtimeNote ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
             case .claim(let s):
                 return ["It goes on your schedule\(s.role.map { " as \($0)" } ?? "").", s.overtimeNote ?? ""]
                     .filter { !$0.isEmpty }.joined(separator: " ")
@@ -273,6 +275,7 @@ struct StaffRequestsView: View {
         }
         .task { await reload() }
         .onChange(of: refresh) { _, _ in Task { await reload() } }
+        .onChange(of: portal?.focus) { _, _ in takeFocus() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await reload() } } }
         // Leaving inside the Undo window keeps the request — the safe side.
         .onDisappear { cancelUndo() }
@@ -351,7 +354,7 @@ struct StaffRequestsView: View {
                     confirming = .ask(ask)
                 } label: {
                     Group {
-                        if busy.contains(key) { StaffBusyLabel(text: "Answering", color: .cavnarInk) } else { Text("Accept") }
+                        if busy.contains(key) { StaffShimmerLabel(text: "Answering", color: .cavnarInk) } else { Text("Accept") }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -363,7 +366,9 @@ struct StaffRequestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+        .staffFocusRing(focused.contains(key))
         .accessibilityElement(children: .contain)
+        .id(key)
     }
 
     private func offerRow(_ offer: StaffShiftOffer) -> some View {
@@ -380,6 +385,9 @@ struct StaffRequestsView: View {
             if offer.forCoverage {
                 StaffUI.note("Your manager needs this one covered.")
             }
+            if let ot = offer.overtimeNote {
+                StaffUI.note(ot, color: .cavnarAmber)
+            }
             HStack(spacing: 10) {
                 Button {
                     Task { await act(key, "/staff/api/offers/\(offer.id)/respond",
@@ -390,7 +398,7 @@ struct StaffRequestsView: View {
                     confirming = .offer(offer)
                 } label: {
                     Group {
-                        if busy.contains(key) { StaffBusyLabel(text: "Answering", color: .cavnarInk) } else { Text("Take it") }
+                        if busy.contains(key) { StaffShimmerLabel(text: "Answering", color: .cavnarInk) } else { Text("Take it") }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -402,7 +410,9 @@ struct StaffRequestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+        .staffFocusRing(focused.contains(key))
         .accessibilityElement(children: .contain)
+        .id(key)
     }
 
     private func openRow(_ shift: StaffOpenShift) -> some View {
@@ -429,7 +439,9 @@ struct StaffRequestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+        .staffFocusRing(focused.contains(key))
         .accessibilityElement(children: .contain)
+        .id(key)
     }
 
     // MARK: Your requests
@@ -509,7 +521,9 @@ struct StaffRequestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+        .staffFocusRing(focused.contains(key))
         .accessibilityElement(children: .contain)
+        .id(key)
     }
 
     private func shiftRow(_ r: StaffMyShiftRequest) -> some View {
@@ -552,7 +566,9 @@ struct StaffRequestsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+        .staffFocusRing(focused.contains(key))
         .accessibilityElement(children: .contain)
+        .id(key)
     }
 
     // MARK: Actions
@@ -650,6 +666,40 @@ struct StaffRequestsView: View {
         // A refresh that failed keeps what loaded before, and says so.
         refreshNote = failed && (board.value != nil || timeOff.value != nil)
             ? "Couldn\u{2019}t refresh just now — this is what loaded earlier." : nil
+        takeFocus()
+    }
+
+    /// A push that opened Requests (StaffPortalStore.focus): the request it
+    /// names is scrolled to and ringed. Taken once the lists are in, then
+    /// consumed.
+    private func takeFocus() {
+        guard let portal, let link = portal.focus, link.tab == .requests else { return }
+        guard link.itemID != nil else { portal.consumeFocus(); return }
+        guard board.value != nil || timeOff.value != nil else { return }
+        portal.consumeFocus()
+        let wanted = StaffRequestsFocus.keys(for: link, board: board.value)
+        let present = Set(StaffYourRequest.merged(timeOff: timeOff.value ?? [], shifts: board.value?.requests ?? [])
+                            .map(\.id))
+            .union((board.value?.asks ?? []).map { "ask\($0.id)" })
+            .union((board.value?.offers ?? []).map { "offer\($0.id)" })
+            .union((board.value?.open ?? []).map { "open\($0.id)" })
+        let hits = wanted.filter(present.contains)
+        focused = Set(hits)
+        if let first = hits.first { scrollTo?(first) }
+    }
+}
+
+extension View {
+    /// The row a notification opened: an ink3 ring on the card (not red,
+    /// not ember — it is a pointer, not a state).
+    func staffFocusRing(_ on: Bool) -> some View {
+        overlay {
+            if on {
+                RoundedRectangle(cornerRadius: CavnarRadius.card)
+                    .strokeBorder(Color.cavnarInk3, lineWidth: 1.5)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 
@@ -686,7 +736,7 @@ struct StaffTimeOffSheet: View {
                         Task { await send() }
                     } label: {
                         Group {
-                            if sending { StaffBusyLabel(text: "Sending") } else { Text("Ask for these days") }
+                            if sending { StaffShimmerLabel(text: "Sending") } else { Text("Ask for these days") }
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -780,7 +830,7 @@ struct StaffShiftChangeSheet: View {
                         Task { await send() }
                     } label: {
                         Group {
-                            if sending { StaffBusyLabel(text: "Sending") }
+                            if sending { StaffShimmerLabel(text: "Sending") }
                             else { Text(mode == .swap ? "Ask to swap" : "Ask to give it up") }
                         }
                         .frame(maxWidth: .infinity)

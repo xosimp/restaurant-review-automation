@@ -1,121 +1,10 @@
 import SwiftUI
 
 // The employee's own settings (employee audit wave 2, I3): My availability
-// by hours and dates (M5, B8), What I'd like, the pre-shift card, and the
-// older Change your PIN section. Availability and preferences open as
-// sheets from Me (UX-31); a failed load never shows an editable form
-// (UX-07/PERF-05). Same /staff/api/* routes the web portal used.
-
-// MARK: - Before service (GET /staff/api/preshift)
-
-struct StaffPreshiftItem: Decodable, Hashable {
-    let kind: String
-    let text: String
-}
-
-struct StaffPreshiftFocus: Decodable, Hashable {
-    let item: String
-    let line: String?
-}
-
-struct StaffPreshiftResponse: Decodable {
-    let ok: Bool
-    let items: [StaffPreshiftItem]?
-    /// False on a day off (nothing to read), nil when no schedule is
-    /// published (can't tell — the card stays), true on a working day.
-    let working: Bool?
-    /// Manager-approved text only (B7), in the reader's language.
-    let briefText: String?
-    let focus: StaffPreshiftFocus?
-
-    enum CodingKeys: String, CodingKey {
-        case ok, items, working, focus
-        case briefText = "brief_text"
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        ok = c.staffBool(.ok)
-        items = try? c.decodeIfPresent([StaffPreshiftItem].self, forKey: .items)
-        working = try? c.decodeIfPresent(Bool.self, forKey: .working)
-        let b = c.staffString(.briefText)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        briefText = (b?.isEmpty ?? true) ? nil : b
-        focus = try? c.decodeIfPresent(StaffPreshiftFocus.self, forKey: .focus)
-    }
-}
-
-/// Today's lineup read (preshift.py, staff_brief.personal) — staff-safe by
-/// construction: no money, no other names. `StaffPreshiftCard()` shows
-/// nothing on a day off (UX-36), when there's nothing, or when it failed —
-/// it is a bonus, not the page.
-struct StaffPreshiftCard: View {
-    @Environment(StaffSessionStore.self) private var staff
-    @State private var payload: StaffPreshiftResponse?
-
-    private static let tags = ["you": "You", "station": "Station", "volume": "Volume", "rush": "Rush",
-                               "watch": "Watch", "stock": "86 risk", "eighty_sixed": "86\u{2019}d",
-                               "event": "Today", "weather": "Weather", "promotion": "Promotion"]
-
-    /// Running low and 86'd are a warning; everything else carries no verdict.
-    private static func tone(_ kind: String) -> CavnarTone {
-        kind == "stock" || kind == "eighty_sixed" ? .warning : .neutral
-    }
-
-    private var items: [StaffPreshiftItem] { payload?.items ?? [] }
-    private var shows: Bool {
-        guard let payload, payload.working != false else { return false }
-        return !items.isEmpty || payload.briefText != nil || payload.focus != nil
-    }
-
-    var body: some View {
-        Group {
-            if shows, let payload {
-                VStack(alignment: .leading, spacing: 10) {
-                    StaffUI.header("Before service")
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let brief = payload.briefText {
-                            HomeMixedText.make(brief, size: CavnarType.body, color: .cavnarInk)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let focus = payload.focus {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("TONIGHT\u{2019}S FOCUS")
-                                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                                    .tracking(1.0)
-                                    .foregroundStyle(Color.cavnarInk3)
-                                HomeMixedText.make(focus.item, size: CavnarType.body, weight: 700, color: .cavnarInk)
-                                if let line = focus.line {
-                                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                let tone = Self.tone(item.kind)
-                                Text((Self.tags[item.kind] ?? item.kind.capitalized).uppercased())
-                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
-                                    .foregroundStyle(tone.foreground)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Capsule().fill(tone.background))
-                                HomeMixedText.make(item.text, size: 14.5, color: .cavnarInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .accessibilityElement(children: .combine)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .cavnarCard()
-                }
-                .padding(.bottom, 4)
-            }
-        }
-        .task {
-            payload = try? await staff.authed("/staff/api/preshift")
-        }
-    }
-}
+// by hours and dates (M5, B8) and What I'd like. Both open as sheets from
+// Me (UX-31); a failed load never shows an editable form (UX-07/PERF-05).
+// Same /staff/api/* routes the web portal used. (Today's "Before service"
+// card is StaffBriefCard; Change PIN is I1's StaffChangePinView.)
 
 // MARK: - Shared controls
 
@@ -244,7 +133,7 @@ struct StaffAvailabilitySheet: View {
                 Task { await save() }
             } label: {
                 Group {
-                    if saving { StaffBusyLabel(text: "Saving") } else { Text("Save my availability") }
+                    if saving { StaffShimmerLabel(text: "Saving") } else { Text("Save my availability") }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -514,7 +403,7 @@ struct StaffPreferencesSheet: View {
             Task { await save() }
         } label: {
             Group {
-                if saving { StaffBusyLabel(text: "Saving") } else { Text("Save") }
+                if saving { StaffShimmerLabel(text: "Saving") } else { Text("Save") }
             }
             .frame(maxWidth: .infinity)
         }
@@ -556,125 +445,6 @@ struct StaffPreferencesSheet: View {
             }
         } catch {
             self.error = StaffErrorText.message(error)
-        }
-    }
-}
-
-// MARK: - Entry rows (for a container that still shows these inline)
-
-/// `StaffAvailabilitySection()` — one row that opens My availability. The
-/// editor itself is `StaffAvailabilitySheet`; Me opens it the same way.
-struct StaffAvailabilitySection: View {
-    @Environment(StaffSessionStore.self) private var staff
-    @State private var open = false
-
-    var body: some View {
-        AccountSection(kicker: "My availability") {
-            AccountNavRow(label: "Days and hours you can work", showsDivider: false) { open = true }
-        }
-        .sheet(isPresented: $open) { StaffAvailabilitySheet().environment(staff) }
-    }
-}
-
-/// `StaffPreferencesSection()` — one row that opens What I'd like.
-struct StaffPreferencesSection: View {
-    @Environment(StaffSessionStore.self) private var staff
-    @State private var open = false
-
-    var body: some View {
-        AccountSection(kicker: "What I\u{2019}d like") {
-            AccountNavRow(label: "Shifts and hours you\u{2019}d rather have", showsDivider: false) { open = true }
-        }
-        .sheet(isPresented: $open) { StaffPreferencesSheet().environment(staff) }
-    }
-}
-
-// MARK: - Change your PIN (older inline form)
-
-/// Kept for the container that still mounts it; Me opens I1's
-/// `StaffChangePinView` instead. Needs the current PIN — a shared device
-/// left signed in must not let the next person lock out its owner. The
-/// change ends this person's staff sessions, so the app signs out.
-struct StaffChangePinSection: View {
-    @Environment(StaffSessionStore.self) private var staff
-    @State private var current = ""
-    @State private var newPin = ""
-    @State private var confirm = ""
-    @State private var message: String?
-    @State private var ok = false
-    @State private var saving = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            StaffUI.header("Change your PIN")
-            VStack(spacing: 8) {
-                pinField("Current PIN", text: $current)
-                pinField("New PIN", text: $newPin)
-                pinField("Confirm new PIN", text: $confirm)
-            }
-            Button {
-                Task { await save() }
-            } label: {
-                Group {
-                    if saving { StaffBusyLabel(text: "Saving", color: .cavnarInk) } else { Text("Save new PIN") }
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-            .disabled(saving || current.isEmpty || newPin.isEmpty)
-            if let message {
-                Text(message)
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(ok ? Color.cavnarGreen : Color.cavnarRed)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func pinField(_ placeholder: String, text: Binding<String>) -> some View {
-        SecureField(placeholder, text: text)
-            .keyboardType(.numberPad)
-            .font(.cavnarNumber(17, weight: 600))
-            .padding(12)
-            .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
-            .onChange(of: text.wrappedValue) { _, v in
-                let digits = String(v.filter(\.isNumber).prefix(8))
-                if digits != v { text.wrappedValue = digits }
-            }
-    }
-
-    private struct SaveBody: Encodable {
-        let currentPin: String
-        let newPin: String
-        enum CodingKeys: String, CodingKey {
-            case currentPin = "current_pin"
-            case newPin = "new_pin"
-        }
-    }
-
-    private func save() async {
-        ok = false
-        guard newPin == confirm else {
-            message = "The two new PINs don\u{2019}t match."
-            return
-        }
-        saving = true
-        defer { saving = false }
-        do {
-            let r: StaffOKResponse = try await staff.authed(
-                "/staff/api/pin", method: .post, body: SaveBody(currentPin: current, newPin: newPin))
-            guard r.ok else {
-                message = r.error ?? "Could not change your PIN."
-                return
-            }
-            Haptic.success()
-            ok = true
-            message = "PIN changed \u{2014} sign in with your new PIN."
-            current = ""; newPin = ""; confirm = ""
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
-            staff.signOut()
-        } catch {
-            message = StaffErrorText.message(error, fallback: "Could not change your PIN.")
         }
     }
 }

@@ -125,7 +125,7 @@ struct StaffForgotPinView: View {
     private func pinStep(confirming: Bool) -> some View {
         VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                if !restaurant.isEmpty { StaffKicker(text: restaurant.uppercased()) }
+                if !restaurant.isEmpty { StaffSignInKicker(text: restaurant.uppercased()) }
                 Text(confirming ? "Type it again" : (who.isEmpty ? "Choose a new PIN" : "A new PIN for \(who)"))
                     .font(.cavnarHeadline(22))
                     .foregroundStyle(Color.cavnarInk)
@@ -633,7 +633,7 @@ struct StaffLocationSwitcherView: View {
     private func pinPad(_ target: StaffSwitchResponse) -> some View {
         VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                StaffKicker(text: (target.restaurant ?? "").uppercased())
+                StaffSignInKicker(text: (target.restaurant ?? "").uppercased())
                 Text(target.employeeName ?? "Your PIN")
                     .font(.cavnarHeadline(22))
                     .foregroundStyle(Color.cavnarInk)

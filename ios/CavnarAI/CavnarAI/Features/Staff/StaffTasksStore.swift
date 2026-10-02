@@ -182,8 +182,8 @@ final class StaffTasksStore {
             seededWithoutNote = false
             StaffReadCache.save(fresh, path: StaffTasksAPI.tasksPath, token: token)
             await syncQueueOverlays()
-        } catch is APIClient.SessionExpiredError {
-            staff.signOut()
+        } catch let ended as APIClient.SessionExpiredError {
+            staff.sessionEnded(sentToken: token, message: ended.message)
         } catch {
             loadError = Self.describe(error, haveCopy: payload != nil)
             if payload != nil { showingCached = true }
@@ -213,9 +213,9 @@ final class StaffTasksStore {
                 return
             }
             await absorb(r, key: key)
-        } catch is APIClient.SessionExpiredError {
+        } catch let ended as APIClient.SessionExpiredError {
             overlays[key] = nil
-            staff.signOut()
+            staff.sessionEnded(sentToken: token, message: ended.message)
         } catch {
             if StaffOfflineQueue.isTransport(error) {
                 await queue.enqueue(body, label: line.label, owner: owner)
@@ -285,7 +285,7 @@ final class StaffTasksStore {
             overlays[refused.tick.key] = nil
             notes[refused.tick.key] = .error("Not sent: \(refused.reason)")
         }
-        if replay.sessionEnded { staff.signOut() }
+        if replay.sessionEnded { staff.sessionEnded(sentToken: token, message: nil) }
         await syncQueueOverlays()
     }
 
@@ -363,8 +363,8 @@ final class StaffTasksStore {
                 thumbnails[token] = image
             }
             await absorb(r, key: key)
-        } catch is APIClient.SessionExpiredError {
-            staff.signOut()
+        } catch let ended as APIClient.SessionExpiredError {
+            staff.sessionEnded(sentToken: token, message: ended.message)
         } catch {
             if StaffOfflineQueue.isTransport(error) {
                 heldPhotos[key] = jpeg
@@ -413,8 +413,8 @@ final class StaffTasksStore {
             guard r.ok else { banner = r.error ?? "That didn't sign off."; return }
             posted = "Signed off"
             await load()
-        } catch is APIClient.SessionExpiredError {
-            staff.signOut()
+        } catch let ended as APIClient.SessionExpiredError {
+            staff.sessionEnded(sentToken: token, message: ended.message)
         } catch {
             banner = StaffOfflineQueue.isTransport(error)
                 ? "Signing off needs a connection. Try again when you're back online."

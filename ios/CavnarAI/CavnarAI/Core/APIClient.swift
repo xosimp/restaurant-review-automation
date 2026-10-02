@@ -587,16 +587,25 @@ actor APIClient {
         }
     }
 
+    /// The request URL: `path` under the base, then `query` as real query
+    /// items. A query must travel as `query:` — `appendingPathComponent`
+    /// escapes a "?" inside `path` to %3F, so "/staff/api/earnings?days=14"
+    /// written into the path reaches the server as a 404 (employee audit
+    /// integration). Items are sorted by name so the URL is stable.
+    nonisolated static func composeURL(base: URL, path: String, query: [String: String]) -> URL {
+        let url = base.appendingPathComponent(path)
+        guard !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        return components.url ?? url
+    }
+
     private func buildRequest(
         path: String, method: String, body: (any Encodable)?, query: [String: String],
         bearerOverride: String? = nil, omitAuth: Bool = false
     ) throws -> URLRequest {
-        var url = baseURL.appendingPathComponent(path)
-        if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-            if let composed = components.url { url = composed }
-        }
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: Self.composeURL(base: baseURL, path: path, query: query))
         request.httpMethod = method
         // The staff tier passes its own bearer rather than using this actor's
         // stored owner token. Keeping the two apart is the point: a staff

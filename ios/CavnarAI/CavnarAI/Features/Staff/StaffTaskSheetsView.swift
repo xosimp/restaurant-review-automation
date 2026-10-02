@@ -17,10 +17,11 @@ import UIKit
 /// camera first and shrunk on the phone before it goes (UX-24, PERF-06).
 ///
 /// The section keeps its own state (StaffTasksStore) and reads /tasks
-/// itself when it has to. `response` is the container's read
-/// (StaffPortalStore.tasks): taken as fresh, and a newer one (the
-/// container's pull to refresh) replaces what is shown. `reload` is kept for
-/// the container's call; the section doesn't need it.
+/// itself — the app's one /tasks read path (the portal's Tasks tab mounts
+/// `StaffTaskSheetsSection()`, and its pull calls the same store). The
+/// optional `response` seeds the section from a read a caller already
+/// holds (taken as fresh; a newer one replaces what is shown); `reload` is
+/// the caller's hook and the section doesn't need it.
 struct StaffTaskSheetsSection: View {
     @Environment(StaffSessionStore.self) private var staff
     private let seed: StaffTasksResponse?
@@ -42,6 +43,8 @@ struct StaffTaskSheetsSection: View {
     @State private var libraryItem: PhotosPickerItem?
     @State private var signingOff: String?
     @State private var signoffNote = ""
+    /// The manager thread about a flagged reading (I3's thread view).
+    @State private var messageAbout: StaffLineMessage?
     /// The tick's disc grows with the text (Dynamic Type), from 28pt.
     @ScaledMetric(relativeTo: .body) private var discSize: CGFloat = 28
     private let network = NetworkMonitor.shared
@@ -66,11 +69,15 @@ struct StaffTaskSheetsSection: View {
             if let seed { store.seed(seed) }
             await store.refreshIfNeeded()
         }
-        // The container's pull to refresh hands in a newer read.
+        // A caller's newer read (its pull to refresh) replaces what is shown.
         .onChange(of: seed?.sheets) { _, _ in
             if let seed { store.seed(seed) }
         }
         .cavnarPostedOverlay(store.posted) { store.posted = nil }
+        .sheet(item: $messageAbout) { about in
+            StaffMessageThreadView(context: about.context, draft: about.draft)
+                .environment(staff)
+        }
         .confirmationDialog(untick.map { "Mark \u{201C}\($0.line.label)\u{201D} not done?" } ?? "",
                             isPresented: Binding(get: { untick != nil }, set: { if !$0 { untick = nil } }),
                             titleVisibility: .visible, presenting: untick) { ref in
@@ -335,8 +342,11 @@ struct StaffTaskSheetsSection: View {
                     .padding(.leading, inset)
             }
             if let note = store.note(key) {
-                StaffLineNoteView(note: note)
-                    .padding(.leading, inset)
+                StaffLineNoteView(note: note) {
+                    messageAbout = StaffLineMessage.about(sheet: s, line: l,
+                                                          reading: l.proofValue ?? overlay?.value)
+                }
+                .padding(.leading, inset)
             }
         }
         .padding(.vertical, 8)

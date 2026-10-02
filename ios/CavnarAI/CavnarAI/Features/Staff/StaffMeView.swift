@@ -70,8 +70,9 @@ struct StaffMeView: View {
                     Button {
                         Haptic.light()
                         // An explicit sign-out leaves no copy of this
-                        // person's week on a shared phone (I2's StaffCache).
-                        StaffCache.purgeAll()
+                        // person's week on a shared phone: RootView's
+                        // onExplicitSignOut hook purges StaffCache and the
+                        // tasks cache/queue/widget snapshot (one path).
                         staff.signOut()
                     } label: {
                         Text("Sign out")
@@ -104,13 +105,13 @@ struct StaffMeView: View {
         case .preferences: StaffPreferencesSheet()
         case .language: StaffLanguageSheet()
         case .calendar: StaffCalendarSheet()
-        case .email: StaffEmailEditView(store: staff)
-        case .changePin: StaffChangePinView(store: staff)
-        case .locations: StaffLocationSwitcherView(store: staff)
+        case .email: StaffEmailEditView(staff: staff, current: me.value?.email ?? "")
+        case .changePin: StaffChangePinView(staff: staff)
+        case .locations: StaffLocationSwitcherView(staff: staff)
         case .docs: StaffDocsSheet()
         case .help: StaffHelpSheet()
         case .messages: StaffMessageThreadView(store: store)
-        case .deleteAccount: StaffDeleteAccountView(store: staff)
+        case .deleteAccount: StaffDeleteAccountView(staff: staff)
         }
     }
 
@@ -324,7 +325,7 @@ struct StaffLanguageSheet: View {
                                 } label: {
                                     AccountKVRow(label: choice.name, showsDivider: i < langs.languages.count - 1) {
                                         if saving == choice.code {
-                                            StaffBusyLabel(text: "Saving", color: .cavnarInk3)
+                                            StaffShimmerLabel(text: "Saving", color: .cavnarInk3)
                                                 .font(.cavnarBody(CavnarType.secondary))
                                         } else if choice.code == langs.language {
                                             Image(systemName: "checkmark")
@@ -555,7 +556,7 @@ struct StaffDocsSheet: View {
                 Task { await ask() }
             } label: {
                 Group {
-                    if asking { StaffBusyLabel(text: "Looking it up") } else { Text("Ask") }
+                    if asking { StaffShimmerLabel(text: "Looking it up") } else { Text("Ask") }
                 }
                 .frame(maxWidth: .infinity)
             }

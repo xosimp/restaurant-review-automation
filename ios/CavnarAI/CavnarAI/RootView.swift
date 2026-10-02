@@ -314,9 +314,15 @@ struct RootView: View {
             // The staff tier files its push token with its own bearer and
             // opens its own notices (C4).
             PushManager.shared.staffSession = staffSessionStore
-            // At merge with I2: staffSessionStore.onExplicitSignOut =
-            // { StaffCache.purgeAll() } — an explicit sign-out (never an
-            // ended session or the idle lock) takes the cached screens too.
+            // An explicit sign-out (Sign out, "Not you?", a deleted
+            // account — never an ended session or the idle lock) takes this
+            // person's cached screens with it: the portal's StaffCache, and
+            // the tasks cache, offline tick queue and next-shift widget.
+            // The one place this happens; screens just call signOut().
+            staffSessionStore.onExplicitSignOut = {
+                StaffCache.purgeAll()
+                StaffLocalData.clearForSignOut()
+            }
             // Every location switch, whichever screen made it (F3-4, F3-11).
             session.onLocationSwitched = { _ in didSwitchLocation() }
         }

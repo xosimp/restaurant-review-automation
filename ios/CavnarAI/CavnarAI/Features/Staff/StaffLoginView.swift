@@ -84,7 +84,7 @@ struct StaffLoginView: View {
 
     private var codeEntry: some View {
         VStack(alignment: .leading, spacing: 14) {
-            StaffKicker(text: "STAFF SIGN IN")
+            StaffSignInKicker(text: "STAFF SIGN IN")
             Text("Enter your restaurant code")
                 .font(.cavnarHeadline(25))
                 .foregroundStyle(Color.cavnarInk)
@@ -117,7 +117,7 @@ struct StaffLoginView: View {
 
             if !staff.savedLocations.isEmpty {
                 // Several restaurants on one phone (M12): each is one tap.
-                StaffKicker(text: "ON THIS PHONE").padding(.top, 14)
+                StaffSignInKicker(text: "ON THIS PHONE").padding(.top, 14)
                 ForEach(staff.savedLocations) { saved in
                     Button {
                         portalCode = saved.code
@@ -156,7 +156,7 @@ struct StaffLoginView: View {
 
     private var rosterPicker: some View {
         VStack(alignment: .leading, spacing: 14) {
-            StaffKicker(text: restaurantName.uppercased())
+            StaffSignInKicker(text: restaurantName.uppercased())
             Text("Who's signing in?")
                 .font(.cavnarHeadline(25))
                 .foregroundStyle(Color.cavnarInk)
@@ -233,7 +233,7 @@ struct StaffLoginView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     if !restaurantName.isEmpty {
-                        StaffKicker(text: restaurantName.uppercased())
+                        StaffSignInKicker(text: restaurantName.uppercased())
                     }
                     Text(person.name)
                         .font(.cavnarHeadline(24))
@@ -584,7 +584,7 @@ struct StaffBusyLabel: View {
     }
 }
 
-struct StaffKicker: View {
+struct StaffSignInKicker: View {
     let text: String
 
     var body: some View {

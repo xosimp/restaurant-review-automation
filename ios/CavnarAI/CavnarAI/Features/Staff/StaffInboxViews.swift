@@ -21,9 +21,14 @@ struct StaffInboxView: View {
     @State private var acking: Set<Int> = []
     @State private var ackError: [Int: String] = [:]
     @State private var messaging = false
+    /// Translated announcements the reader flipped to what the manager wrote.
+    @State private var showingOriginal: Set<Int> = []
+    /// The announcement a push opened (store.focus), ringed until read.
+    @State private var focusedAnnouncement: Int?
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     StaffPulseCard(store: store)
@@ -38,7 +43,7 @@ struct StaffInboxView: View {
                             CavnarEmptyHearth(title: "Nothing from your manager yet",
                                               message: "Announcements for the team land here. Tap Got it so your manager knows you read one.")
                         } else {
-                            ForEach(payload.announcements) { announcementRow($0) }
+                            ForEach(payload.announcements) { announcementRow($0).id($0.id) }
                         }
                     }
                     StaffUI.header("Your manager")
@@ -47,9 +52,15 @@ struct StaffInboxView: View {
                 .padding(20)
             }
             .cavnarEmberRefreshable { await reload() }
+            .onChange(of: focusedAnnouncement) { _, id in
+                guard let id else { return }
+                withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .top) }
+            }
+            }
             .accountSheetChrome("Inbox")
         }
         .task { await reload() }
+        .onChange(of: store.focus) { _, _ in takeFocus() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await reload() } } }
         .sheet(isPresented: $messaging, onDismiss: { Task { await reload() } }) {
             StaffMessageThreadView(store: store).environment(staff)
@@ -106,11 +117,21 @@ struct StaffInboxView: View {
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarRed)
             }
-            HomeMixedText.make(a.title, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
+            let text = a.shown(original: showingOriginal.contains(a.id))
+            HomeMixedText.make(text.title, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
-            if !a.body.isEmpty {
-                HomeMixedText.make(a.body, size: CavnarType.body, color: .cavnarInk2)
+            if !text.body.isEmpty {
+                HomeMixedText.make(text.body, size: CavnarType.body, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if a.translated {
+                // Translated for this reader at delivery (S9): one tap shows
+                // what the manager wrote, and back.
+                let original = showingOriginal.contains(a.id)
+                StaffTextButton(title: original ? "Show translation" : "Show original") {
+                    if original { showingOriginal.remove(a.id) } else { showingOriginal.insert(a.id) }
+                }
+                .accessibilityHint(original ? "Shows this in your language" : "Shows what your manager wrote")
             }
             if !a.byline.isEmpty {
                 HomeMixedText.make(a.byline, size: CavnarType.caption, color: .cavnarInk3)
@@ -133,7 +154,7 @@ struct StaffInboxView: View {
                     Task { await ack(a.id) }
                 } label: {
                     Group {
-                        if acking.contains(a.id) { StaffBusyLabel(text: "Saving", color: .cavnarInk) } else { Text("Got it") }
+                        if acking.contains(a.id) { StaffShimmerLabel(text: "Saving", color: .cavnarInk) } else { Text("Got it") }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -152,7 +173,26 @@ struct StaffInboxView: View {
                     .strokeBorder(Color.cavnarRed.opacity(0.7), lineWidth: 1.5)
             }
         }
+        // The one a notification opened, until it's read.
+        .staffFocusRing(focusedAnnouncement == a.id && !a.isRead && !a.isUrgent)
         .accessibilityElement(children: .contain)
+    }
+
+    /// A push that opened the inbox (StaffPortalStore.focus): a manager's
+    /// reply opens the thread; an announcement is scrolled to and ringed.
+    /// Taken once, then consumed.
+    private func takeFocus() {
+        guard let link = store.focus, link.tab == .inbox else { return }
+        if StaffInboxFocus.opensThread(link) {
+            store.consumeFocus()
+            messaging = true
+            return
+        }
+        guard let id = link.itemID else { store.consumeFocus(); return }
+        // Wait for the list, so the row exists to scroll to.
+        guard inbox.value != nil else { return }
+        store.consumeFocus()
+        if inbox.value?.announcements.contains(where: { $0.id == id }) == true { focusedAnnouncement = id }
     }
 
     private func ack(_ id: Int) async {
@@ -180,6 +220,16 @@ struct StaffInboxView: View {
                 inbox = .failed(StaffErrorText.message(error, fallback: "Your inbox didn\u{2019}t load."))
             }
         }
+        takeFocus()
+    }
+}
+
+/// How a staff link that opens the inbox lands (push.py's staff notices).
+enum StaffInboxFocus {
+    /// A manager's reply (staff_message / kind "message" / a thread id)
+    /// opens the thread; anything else is an announcement.
+    static func opensThread(_ link: StaffDeepLink) -> Bool {
+        link.alertType == "staff_message" || link.kind == "message"
     }
 }
 
@@ -320,7 +370,7 @@ struct StaffMessageThreadView: View {
                 Task { await send() }
             } label: {
                 Group {
-                    if sending { StaffBusyLabel(text: "Sending") } else { Text("Send") }
+                    if sending { StaffShimmerLabel(text: "Sending") } else { Text("Send") }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -381,8 +431,11 @@ struct StaffMessageThreadView: View {
 /// nothing is due or the read failed. Today can mount it under the hero;
 /// the Inbox shows it at the top. Calls use the environment's session.
 struct StaffPulseCard: View {
-    init() {}
-    init(store: StaffPortalStore) {}
+    private let portal: StaffPortalStore?
+    init() { portal = nil }
+    /// With the portal store, the card reads again on each portal refresh
+    /// (pull, foreground), so one answered in the Inbox leaves Today too.
+    init(store: StaffPortalStore) { portal = store }
 
     @Environment(StaffSessionStore.self) private var staff
     @State private var due: StaffPulseDue?
@@ -403,7 +456,7 @@ struct StaffPulseCard: View {
                 StaffUI.note(error)
             }
         }
-        .task {
+        .task(id: portal?.lastAttempt) {
             let r: StaffPulseState? = try? await staff.authed("/staff/api/pulse")
             due = r?.due
         }
@@ -449,7 +502,7 @@ struct StaffPulseCard: View {
                     Task { await send(due) }
                 } label: {
                     Group {
-                        if sending { StaffBusyLabel(text: "Sending", color: .cavnarInk) } else { Text("Send") }
+                        if sending { StaffShimmerLabel(text: "Sending", color: .cavnarInk) } else { Text("Send") }
                     }
                     .frame(maxWidth: .infinity)
                 }

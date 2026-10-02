@@ -363,6 +363,30 @@ enum StaffSheetMerge {
     }
 }
 
+/// "Message your manager" under a critical reading (employee audit I4 → I3):
+/// the thread opens about the sheet's day, with the line named and a draft
+/// that says what was read and the range it should be in.
+struct StaffLineMessage: Identifiable, Equatable {
+    let context: StaffMessageContext
+    let draft: String
+    var id: String { context.label }
+
+    static func about(sheet: StaffSheet, line: StaffSheetLine, reading: String?) -> StaffLineMessage {
+        let label = "\(sheet.title) \u{00B7} \(line.label)"
+        var draft = "\(line.label) on the \(sheet.title) sheet"
+        if let r = reading?.trimmingCharacters(in: .whitespaces), !r.isEmpty {
+            draft += " read \(r)"
+        }
+        if let range = StaffSheetMerge.rangeLabel(line) {
+            draft += " \u{2014} it should be \(range)."
+        } else {
+            draft += " is out of range."
+        }
+        return StaffLineMessage(context: StaffMessageContext(shiftDate: sheet.taskDate, label: label),
+                                draft: draft + " ")
+    }
+}
+
 /// On-device sizing for a proof photo. The server refuses an image over
 /// 3.5 MB and a body over 5 MB, and re-encodes to 1280 px anyway; a 12–48 MP
 /// original at JPEG 0.8 was often 3–5 MB (PERF-06).

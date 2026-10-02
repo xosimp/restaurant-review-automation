@@ -334,11 +334,14 @@ struct StaffShiftOffer: Decodable, Identifiable, Hashable {
     let note: String?
     let forCoverage: Bool
     let createdAt: String?
+    /// The overtime heads-up for taking it (`pickup_overtime_note`, S9).
+    let overtimeNote: String?
 
     enum CodingKeys: String, CodingKey {
         case id, status, date, role, note
         case requestId = "request_id", shiftStart = "shift_start", shiftEnd = "shift_end"
         case employeeName = "employee_name", forCoverage = "for_coverage", createdAt = "created_at"
+        case overtimeNote = "pickup_overtime_note"
     }
 
     init(from decoder: Decoder) throws {
@@ -356,6 +359,7 @@ struct StaffShiftOffer: Decodable, Identifiable, Hashable {
         note = (n?.isEmpty ?? true) ? nil : n
         forCoverage = c.staffBool(.forCoverage)
         createdAt = c.staffString(.createdAt)
+        overtimeNote = StaffOvertimeNote.read(c.staffString(.overtimeNote))
     }
 
     var shiftLabel: String { StaffDay.shift(date, shiftStart, shiftEnd) }
@@ -364,6 +368,27 @@ struct StaffShiftOffer: Decodable, Identifiable, Hashable {
     var headline: String {
         if let employeeName { return "Your manager offered you \(employeeName)'s shift" }
         return "Your manager offered you an extra shift"
+    }
+}
+
+/// The server's overtime sentence, trimmed; nil when empty.
+enum StaffOvertimeNote {
+    static func read(_ raw: String?) -> String? {
+        let t = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (t?.isEmpty ?? true) ? nil : t
+    }
+}
+
+/// Which rows a staff link to Requests points at (push.py: `request_id`,
+/// with `request_kind`): a time-off request, or a shift request — mine,
+/// a swap asked of me, an open shift, or an offer made from it.
+enum StaffRequestsFocus {
+    static func keys(for link: StaffDeepLink, board: StaffRequestsBoard?) -> [String] {
+        guard let id = link.itemID else { return [] }
+        if (link.requestKind ?? "").lowercased().contains("time") { return ["to\(id)"] }
+        var keys = ["sr\(id)", "ask\(id)", "open\(id)"]
+        keys += (board?.offers ?? []).filter { $0.requestId == id }.map { "offer\($0.id)" }
+        return keys
     }
 }
 
@@ -380,16 +405,16 @@ struct StaffOpenShift: Decodable, Identifiable, Hashable {
     let postedByManager: Bool
     let canTake: Bool?
     let whyNot: String?
-    /// "This 7h pickup takes you past 40 hours that week" — staff_insights.
-    /// pickup_overtime_note, when the board carries it (not wired on the
-    /// server yet; shown as soon as it is).
+    /// "This 7h pickup takes you past 40 hours that week (to 43h)." —
+    /// shift_requests.for_staff's `pickup_overtime_note` (S9; hours only,
+    /// null when they can't take it). `overtime_note` is read too.
     let overtimeNote: String?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, date, role
         case shiftStart = "shift_start", shiftEnd = "shift_end", employeeName = "employee_name"
         case postedByManager = "posted_by_manager", canTake = "can_take", whyNot = "why_not"
-        case overtimeNote = "overtime_note"
+        case overtimeNote = "overtime_note", pickupOvertimeNote = "pickup_overtime_note"
     }
 
     init(from decoder: Decoder) throws {
@@ -405,7 +430,7 @@ struct StaffOpenShift: Decodable, Identifiable, Hashable {
         postedByManager = c.staffBool(.postedByManager)
         canTake = try? c.decodeIfPresent(Bool.self, forKey: .canTake)
         whyNot = c.staffString(.whyNot)
-        overtimeNote = c.staffString(.overtimeNote)
+        overtimeNote = StaffOvertimeNote.read(c.staffString(.pickupOvertimeNote) ?? c.staffString(.overtimeNote))
     }
 
     var shiftLabel: String { StaffDay.shift(date, shiftStart, shiftEnd) }
@@ -1080,11 +1105,19 @@ struct StaffAnnouncement: Decodable, Identifiable, Hashable {
     let createdByName: String
     let expiresOn: String?
     var ackedAt: String?
+    /// The reader's language (staff_comms.staff_announcements, S9). When
+    /// delivery translated the text, `title`/`body` are the translation and
+    /// `originalTitle`/`originalBody` what the manager wrote.
+    let language: String?
+    let translated: Bool
+    let originalTitle: String?
+    let originalBody: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, body, priority
+        case id, title, body, priority, language, translated
         case createdAt = "created_at", createdByName = "created_by_name"
         case expiresOn = "expires_on", ackedAt = "acked_at"
+        case originalTitle = "original_title", originalBody = "original_body"
     }
 
     init(from decoder: Decoder) throws {
@@ -1097,9 +1130,22 @@ struct StaffAnnouncement: Decodable, Identifiable, Hashable {
         createdByName = c.staffString(.createdByName) ?? ""
         expiresOn = c.staffString(.expiresOn)
         ackedAt = c.staffString(.ackedAt)
+        language = c.staffString(.language)
+        originalTitle = c.staffString(.originalTitle)
+        originalBody = c.staffString(.originalBody)
+        // Only a real translation offers "Show original": the flag and a
+        // text to show.
+        translated = c.staffBool(.translated) && (originalTitle != nil || originalBody != nil)
     }
 
     var isUrgent: Bool { priority == "urgent" }
+
+    /// The title and body to show: the translation, or what the manager
+    /// wrote when the reader asked for the original.
+    func shown(original: Bool) -> (title: String, body: String) {
+        guard original, translated else { return (title, body) }
+        return (originalTitle ?? title, originalBody ?? body)
+    }
     var isRead: Bool { ackedAt != nil }
 
     /// "Erik S · 9/21/26 · 6:45pm" — who sent it and when, on this phone.

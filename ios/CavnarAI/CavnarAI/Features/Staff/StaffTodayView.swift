@@ -6,6 +6,7 @@ import SwiftUI
 ///   the hero: the next shift, EVERY leg of a double, role · station ·
 ///     section · hours, notes, the break, "Starts in 2h 15m", and the
 ///     one-tap row (Running late · Give up / Swap · Checklist · Message)
+///   How did your shift go? (only after a finished shift due a rating)
 ///   Waiting on you (only when a swap or an offer waits)
 ///   hours this week, the overtime heads-up, last shift's tips
 ///   Before service (only on a working day)
@@ -17,6 +18,7 @@ import SwiftUI
 /// fail says so in place with Try again.
 struct StaffTodayView: View {
     let store: StaffPortalStore
+    @Environment(StaffSessionStore.self) private var staff
 
     @State private var changing: ShiftChange?
     @State private var lateLeg: LateTarget?
@@ -128,6 +130,10 @@ struct StaffTodayView: View {
             }
             .padding(16)
             .cavnarCard()
+            // The portal didn't load: leaving must not depend on Me
+            // loading either (a shared phone handed on mid-outage).
+            StaffTextButton(title: "Sign out", tone: .cavnarRed) { staff.signOut() }
+                .accessibilityHint("Signs you out of this phone. The next person signs in with their PIN.")
         case .ready:
             if let shifts = store.shifts.value {
                 ready(shifts)
@@ -146,6 +152,9 @@ struct StaffTodayView: View {
             let hero = StaffTodayPlan.hero(week: week, now: now)
             heroCard(hero, shifts: shifts)
                 .staffRise(0, clock)
+            // "How did your shift go?" — only after a finished shift the
+            // server says is due a rating (V6); otherwise it draws nothing.
+            StaffPulseCard(store: store)
             if let sentence = StaffWaiting.sentence(store.waiting.value) {
                 StaffWaitingStrip(sentence: sentence) { store.selectedTab = .requests }
                     .staffRise(1, clock)
