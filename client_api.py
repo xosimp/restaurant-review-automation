@@ -8678,7 +8678,8 @@ _ISSUE_WHERE = {"review": "Reviews · a guest review", "stock": "Food Cost · ru
                 "labor": "Labor", "coverage": "Labor · a shift to cover", "no_show": "Labor · a no-show",
                 "checklist": "Operations · a checklist", "plan": "Operations · the weekly plan",
                 "loss": "Operations · comps and voids", "task_missed": "Labor · a missed task",
-                "task_sheet": "Labor · a task sheet", "task_pattern": "Labor · task sheets"}
+                "task_sheet": "Labor · a task sheet", "task_pattern": "Labor · task sheets",
+                "task_flag": "Labor · a reading out of range"}
 
 
 def _notification_nav(r):

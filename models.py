@@ -7452,6 +7452,11 @@ def init_shift_requests(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_offers_rest ON shift_offers(restaurant_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_offers_request ON shift_offers(request_id)")
+    # The retention deletes' indexes (ops._RETENTION_COLUMN): offers, and the
+    # floor sections (made with the base schema in init_db, before this).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_offers_created ON shift_offers(created_at)")
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shift_sections'").fetchone():
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_sections_date ON shift_sections(date)")
     # One live request per shift, whatever version of the week it was asked
     # against (LG-09): the duplicate check keyed on the published row's id,
     # so a republish let one shift carry two. An extra shift a manager
@@ -9096,6 +9101,42 @@ def move_shift_section(restaurant_id: int, date: str, shift_start: str, from_nam
     finally:
         if own:
             conn.close()
+
+
+def carry_shift_sections(conn, restaurant_id: int, before_rows: list, after_rows: list) -> int:
+    """A stored week rewritten (schedule_versions.write_on — the Studio's
+    save, a swap, a cover): every shift that changed hands keeps its floor
+    section. A shift is its slot — date, start, end, role; a slot whose
+    people went from {A, …} to {B, …} with exactly one leaving (A) and one
+    arriving (B) moved from A to B, and A's section row moves with it
+    (move_shift_section, on the caller's transaction). A slot where two
+    left and two arrived is ambiguous and left alone. The Studio's swap
+    (ssSwapTo) and a typed-over name both save this way; the requests path
+    also moves it explicitly, which is then a no-op. Returns sections moved."""
+    if not before_rows or not after_rows:
+        return 0
+    if not conn.execute("SELECT 1 FROM shift_sections WHERE restaurant_id=? LIMIT 1", (restaurant_id,)).fetchone():
+        return 0
+
+    def slots(rows):
+        out = {}
+        for r in rows:
+            name = " ".join(str(r.get("employee") or "").split())
+            if not name or not r.get("date"):
+                continue
+            k = (str(r["date"])[:10], shift_section_start(r.get("shift_start")),
+                 shift_section_start(r.get("shift_end")), str(r.get("role") or "").strip().lower())
+            out.setdefault(k, {})[_av_key(name)] = name
+        return out
+    before, after = slots(before_rows), slots(after_rows)
+    moved = 0
+    for k, was in before.items():
+        now = after.get(k) or {}
+        left = [was[x] for x in was if x not in now]
+        came = [now[x] for x in now if x not in was]
+        if len(left) == 1 and len(came) == 1:
+            moved += bool(move_shift_section(restaurant_id, k[0], k[1], left[0], came[0], conn=conn))
+    return moved
 
 # ── Client data helpers ───────────────────────────────────────────────────────
 

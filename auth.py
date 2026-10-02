@@ -1799,20 +1799,12 @@ def mask_phone_last4(phone) -> str:
 
 def staff_admin_user_ids(restaurant_id: int, db_path: str = DB_PATH) -> list:
     """The owners' and managers' logins at this restaurant — the explicit
-    audience for a staff-account notice. Never an employee, never Cavnar AI's
-    own internal logins. push.console_user_ids (the notifications wave's one
-    rule for "the logins who run this restaurant") is used when present."""
-    try:
-        import push as _push_ids
-        console_ids = getattr(_push_ids, "console_user_ids", None)
-        if console_ids is not None:
-            try:
-                ids = console_ids(restaurant_id, db_path=db_path)
-            except TypeError:
-                ids = console_ids(restaurant_id)
-            return sorted(int(i) for i in (ids or []))
-    except Exception as exc:
-        print(f"[staff_alert] console_user_ids unavailable rid={restaurant_id}: {exc}")
+    audience for a staff-account notice (a PIN lock, a spray, a claim). Never
+    an employee, never Cavnar AI's own internal logins, and by role, not by
+    who has a phone: push.console_user_ids is every non-employee console
+    login with a device — any console role, internal logins included — so
+    it is not this audience (S9). fire_push narrows these ids to their
+    devices; when none took it, the owner is emailed."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(

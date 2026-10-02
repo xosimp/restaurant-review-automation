@@ -315,7 +315,7 @@ def test_an_announcement_reaches_its_audience_and_counts_who_read_it(app, db_pat
     assert inbox["unread"] == 1 and inbox["unread_messages"] == 0
     (item,) = inbox["announcements"]
     assert set(item) == {"id", "title", "body", "priority", "created_at", "created_by_name", "acked_at",
-                         "expires_on"}
+                         "expires_on", "language", "translated", "original_title", "original_body"}
     assert item["acked_at"] is None and item["created_at"].endswith("Z")
     ack = ana.post(f"/staff/api/announcements/{item['id']}/ack")
     assert ack.status_code == 200 and ack.get_json()["acked_at"]

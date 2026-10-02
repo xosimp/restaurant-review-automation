@@ -373,6 +373,8 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         if latest and int(expected_version) != latest:
             raise StaleVersion(latest)
     hours = round(sum(_hours(r) for r in rows_from_csv(schedule_csv)), 1)
+    old = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                       (history_id, restaurant_id)).fetchone()
     cur = conn.execute(
         "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
         "edited_at=datetime('now'), edited_by=? WHERE id=? AND restaurant_id=?",
@@ -382,6 +384,15 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         raise LookupError("that schedule is gone")
     _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
                                        saved_authority)
+    # A shift that changed hands in this rewrite keeps its floor section —
+    # the Studio's swap saves here, as do covers and swaps (employee audit
+    # B8 gap). Inside the caller's transaction.
+    try:
+        _models_mod.carry_shift_sections(conn, restaurant_id, rows_from_csv(old[0] if old else ""),
+                                         rows_from_csv(schedule_csv))
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            raise
     return version
 
 

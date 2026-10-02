@@ -866,6 +866,29 @@ class Constraints:
         return True, ""
 
 
+def cert_key(cert) -> str:
+    """One spelling for a certificate name wherever it was typed: the roster's
+    settings use snake_case (staff_settings.CERTIFICATIONS: "food_handler"),
+    the certificate records free text ("Food handler", "food-handler")."""
+    return "_".join(str(cert or "").strip().lower().replace("-", " ").split())
+
+
+def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
+    """{person name_key: {cert_key}} expired by the week's first day — or by
+    today, once the week has begun (staff_knowledge.expired_certs)."""
+    try:
+        from datetime import date as _date
+        import staff_knowledge
+        days = sorted(str(d)[:10] for d in (week_dates or []) if d)
+        first = _date.fromisoformat(days[0]) if days else _date.today()
+        on = max(first, _date.today())
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        raw = staff_knowledge.expired_certs(restaurant_id, today=on, **kw) or {}
+        return {k: {cert_key(x) for x in v} for k, v in raw.items()}
+    except Exception:
+        return {}
+
+
 def _load_json(raw, default):
     try:
         return json.loads(raw or "") or default
@@ -907,6 +930,11 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception:
         pass
 
+    # Certificates past their expiry (staff_knowledge.staff_certs) are not
+    # held: an expired food-handler card does not satisfy a role that needs
+    # one (employee audit B7 handoff). Valid on the week's first day is the
+    # test — cert_ok has no day of its own.
+    expired = _expired_certs(restaurant_id, c.week_dates, db_path)
     # roster + per-person settings
     try:
         import staff_settings as _ss
@@ -937,7 +965,9 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 if win:
                     c.time_windows[key] = win
             if st.get("certifications"):
-                c.certifications[key] = {str(x).strip().lower() for x in st["certifications"] if str(x).strip()}
+                gone = expired.get(_ss.name_key(e["name"]), set())
+                c.certifications[key] = {cert_key(x) for x in st["certifications"] if str(x).strip()
+                                         and cert_key(x) not in gone}
                 if c.certifications[key] & {"manager", "keyholder"}:
                     c.keyholders.add(key)
             if st.get("preferred_dayparts") or st.get("desired_hours"):
@@ -950,7 +980,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         c.keyholders |= {n.strip().lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
     except Exception:
         pass
-    c.role_requirements = {str(k).strip().lower(): {str(x).strip().lower() for x in (v or []) if str(x).strip()}
+    c.role_requirements = {str(k).strip().lower(): {cert_key(x) for x in (v or []) if str(x).strip()}
                            for k, v in (_load_json(getattr(restaurant, "role_requirements_json", None), {}) or {}).items() if k}
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
     c.foh_roles = {str(x).strip().lower() for x in foh if str(x).strip()} or {"server"}

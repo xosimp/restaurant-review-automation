@@ -18,6 +18,7 @@ auto-routed to a manager — the approving manager may be the subject of one.
 Anything else is created by the owner, from the app or from Ask.
 """
 import hashlib
+import re
 import config
 import secrets
 from datetime import datetime, timedelta
@@ -1053,6 +1054,42 @@ def auto_close(restaurant_id, db_path=DB_PATH):
     for row in rows:
         _resolve(restaurant_id, row["id"], "Closed automatically: the reply to this review was posted.", db_path)
     return len(rows)
+
+
+_LATE_CLAUSE = re.compile(r" They said(?: at [^ ]+)? they'd be about \d+ minutes late\.")
+
+
+def note_running_late(restaurant_id, day_isos, name_keys, sentence, db_path=DB_PATH) -> int:
+    """The employee said they're running late after their "hasn't clocked in"
+    issue had already opened (staff_comms.report_late): the open issue says
+    so — `sentence` (staff_comms.hold_sentence) in place of any earlier ETA,
+    right after the clock-in line — so the manager reading it knows before
+    calling round for a cover. The clock-in check still closes it when they
+    punch (resolve_coverage). Returns issues annotated."""
+    keys = [f"coverage:{d}:{k}" for d in sorted({str(x)[:10] for x in day_isos if x})
+            for k in sorted({k for k in name_keys if k})]
+    if not keys or not (sentence or "").strip():
+        return 0
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(f"SELECT id, detail FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
+                            f"AND status!='resolved' AND source_key IN ({','.join('?' * len(keys))})",
+                            (restaurant_id, *keys)).fetchall()
+        n = 0
+        for r in rows:
+            detail = _LATE_CLAUSE.sub("", r["detail"] or "")
+            anchor = "with no clock-in on the POS."
+            if anchor in detail:
+                detail = detail.replace(anchor, anchor + sentence, 1)
+            else:
+                detail = (detail + sentence).strip()
+            conn.execute("UPDATE ops_issues SET detail=? WHERE id=? AND restaurant_id=?",
+                         (detail[:2000], r["id"], restaurant_id))
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
 
 
 def resolve_coverage(restaurant_id, day_iso, arrived_keys, db_path=DB_PATH):

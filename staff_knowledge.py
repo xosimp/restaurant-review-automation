@@ -118,6 +118,8 @@ _DDL = [
         UNIQUE (restaurant_id, employee_key, cert)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_staff_certs_expiry ON staff_certs(restaurant_id, expires_on)",
+    # The retention delete's index (ops._RETENTION_COLUMN).
+    "CREATE INDEX IF NOT EXISTS idx_staff_translations_created ON staff_translations(created_at)",
 ]
 
 
@@ -295,12 +297,14 @@ def _translate(restaurant_id, text, lang, reader=None, db_path=DB_PATH):
     return v.text.strip(), "ok"
 
 
-def translate_for(membership_id, text, restaurant_id=None, db_path=DB_PATH) -> str:
+def translate_for(membership_id, text, restaurant_id=None, db_path=DB_PATH, cache_only=False) -> str:
     """`text` in this membership's language, or `text` itself (English, no
     preference, a failed or refused translation). For MANAGER-APPROVED
     text only: the approved brief, the focus line, an announcement (B5).
     Cached per (restaurant, text, language); a failure is remembered for
-    TRANSLATE_RETRY_HOURS so a page read never retries a model call."""
+    TRANSLATE_RETRY_HOURS so a page read never retries a model call.
+    `cache_only`: never call the model — a list read (the staff inbox) shows
+    what delivery translated, and the original when nothing was."""
     text = str(text or "")
     if not text.strip() or not membership_id:
         return text
@@ -316,6 +320,8 @@ def translate_for(membership_id, text, restaurant_id=None, db_path=DB_PATH) -> s
         hit = _cached_translation(rid, h, lang, db_path)
         if hit and hit["status"] == "ok" and hit["translated"]:
             return hit["translated"]
+        if cache_only:
+            return text
         if hit and hit["status"] != "ok":
             try:
                 at = datetime.strptime(hit["created_at"], "%Y-%m-%d %H:%M:%S")

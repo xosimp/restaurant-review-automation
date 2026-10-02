@@ -48,23 +48,35 @@ def _published_weeks(restaurant_id: int, today):
     single newest one meant that the moment next week was published, the
     rest of this week vanished from the portal and everybody read "off"
     from Friday to Sunday."""
-    from models import get_conn, _ensure_history_columns
-    conn = get_conn()
+    import models as _m
+    conn = _m.get_conn()
     try:
-        _ensure_history_columns(conn)
-        rows = conn.execute(
-            "SELECT h.id, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND (h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
-            "ORDER BY h.generated_at DESC, h.id DESC LIMIT 60", (restaurant_id,)).fetchall()
+        _m._ensure_history_columns(conn)
+        # Each week's live copy by the one rule (models._live_week_row, which
+        # the /s/ link and staff_insights read too): the published copy
+        # nothing superseded, newest (re)publish first, else — a week sent
+        # before the stamp — its newest shared copy. A superseded copy that
+        # still has share rows (every publish writes them) is not live, and
+        # a re-published older copy is (LG-34): the old query judged by id.
+        weeks = conn.execute(
+            "SELECT week_start, MAX(week_end) AS week_end, MAX(id) AS newest FROM schedule_history h "
+            "WHERE h.restaurant_id=? AND (h.published_at IS NOT NULL OR EXISTS "
+            "(SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
+            "GROUP BY week_start ORDER BY newest DESC LIMIT 60", (restaurant_id,)).fetchall()
+        live = []
+        for w in weeks:
+            we = _parse_day(w["week_end"])
+            if we and we < today:
+                continue
+            row = _m._live_week_row(conn, restaurant_id, w["week_start"])
+            if row:
+                live.append(row)
     finally:
         conn.close()
-    out = []
-    for r in rows:
-        ws, we = _parse_day(r["week_start"]), _parse_day(r["week_end"])
-        if we and we < today:
-            continue
-        out.append({"id": r["id"], "start": ws, "end": we})
-    return out
+    # Newest live copy first, so it owns a date two copies cover (_owner_of).
+    live.sort(key=lambda r: (str(r["live_at"] or ""), r["id"]), reverse=True)
+    return [{"id": r["id"], "start": _parse_day(r["week_start"]), "end": _parse_day(r["week_end"])}
+            for r in live if not (_parse_day(r["week_end"]) and _parse_day(r["week_end"]) < today)]
 
 
 def _owner_of(weeks, d):
