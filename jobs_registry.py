@@ -289,6 +289,11 @@ JOBS = {
         cadence="hourly (9am local)", sla_minutes=_H, sends=True, runnable=True,
         label="Labor reminders", description="What is waiting on each manager before the next shifts",
         target=("strategy_jobs", "run_labor_reminders"), max_minutes=20),
+    "open_shift_watch": dict(
+        cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
+        label="Open shifts",
+        description="Expire shift requests whose shift has passed; tell deciders about open shifts still unclaimed 12 hours before they start",
+        target=("shift_requests", "run_open_shift_watch"), max_minutes=15),
     "auto_draft_schedule": dict(
         cadence="hourly (6am local on each restaurant's draft day)", sla_minutes=_H, sends=True, runnable=True,
         label="Auto-draft", description="Draft next week's schedule for owners who opted in (a draft; nothing reaches staff)",

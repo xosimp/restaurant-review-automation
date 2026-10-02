@@ -33775,17 +33775,90 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // swaps waiting on a colleague.
     var h='';
     if(pend.length)h+='<div class="shr-row"><div class="who"><b>'+pend.length+' request'+(pend.length===1?'':'s')+' waiting on you</b><span class="sub">answered in Waiting on you, at the top of Labor</span></div><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="var w=document.getElementById(\'lb2-wait\');if(w&&!w.hidden)w.scrollIntoView({behavior:\'smooth\',block:\'start\'})">Answer →</button></div>';
-    // A swap you approved moves only when the colleague says yes (SCHED-21).
+    // A swap you approved moves only when the colleague says yes (SCHED-21);
+    // a colleague who isn't on the app can say yes in person (LG-12).
     if(wait.length){h+='<div class="sr-k" style="margin:16px 0 4px">Waiting on a colleague</div>';
       for(i=0;i<wait.length;i++){var w=wait[i];
-        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">you approved it · waiting on '+esc(w.target_name||'')+' to accept in the staff portal</span></div></div>';}
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">you approved it · waiting on '+esc(w.target_name||'')+' to accept in the Cavnar AI app</span></div>'
+          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrAgreed('+(+w.id)+',this)">They agreed in person</button></div>';}
     }
+    // Offers waiting on one named person (H2): the coverage issue's ask or
+    // a manager's pick, answered in the staff app.
+    var offers=d.offers||[],byReq={};
+    for(i=0;i<offers.length;i++){(byReq[offers[i].request_id]=byReq[offers[i].request_id]||[]).push(offers[i].name);}
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
-    if(!open.length)h+='<div class="hb-empty">No open shifts. An approved request without a named replacement shows here until somebody claims it in the staff portal.</div>';
-    for(i=0;i<open.length;i++){var o=open[i];
-      h+='<div class="shr-row"><div class="who"><span class="shr-open"><i></i>open</span> <b>'+_shrWhen(o)+'</b><span class="sub">was '+esc(o.employee_name)+' · nobody has claimed it yet</span></div></div>';
+    if(!open.length)h+='<div class="hb-empty">No open shifts. An approved drop without a named replacement, or one you post below, shows here until somebody picks it up in the Cavnar AI app.</div>';
+    for(i=0;i<open.length;i++){var o=open[i],who=o.employee_name?'was '+esc(o.employee_name):'extra shift',asked=byReq[o.id]||[];
+      h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+'</span></div>'
+        +'<input type="text" class="ac-input" data-shr-offer list="lb2-people-names" autocomplete="off" placeholder="Offer it to…" aria-label="Offer it to" style="width:150px">'
+        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
+        +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
+    // A manager posts a shift open: somebody's, or an extra one (H2).
+    h+='<div class="sr-k" style="margin:18px 0 6px">Post an open shift</div>'
+      +'<div class="lb2-form" id="shr-post">'
+      +'<div class="ac-field"><label for="shr-date">Date</label><input class="ac-input" id="shr-date" type="date"></div>'
+      +'<div class="ac-field n"><label for="shr-start">Starts</label><input class="ac-input" id="shr-start" placeholder="5:00pm"></div>'
+      +'<div class="ac-field n"><label for="shr-end">Ends</label><input class="ac-input" id="shr-end" placeholder="10:00pm"></div>'
+      +'<div class="ac-field"><label for="shr-role">Role</label><input class="ac-input" id="shr-role" placeholder="Server"></div>'
+      +'<div class="ac-field"><label for="shr-emp">Whose shift</label><input class="ac-input" id="shr-emp" list="lb2-people-names" autocomplete="off" placeholder="Blank for an extra shift"></div>'
+      +'<div class="ac-field"><label for="shr-to">Offer to</label><input class="ac-input" id="shr-to" list="lb2-people-names" autocomplete="off" placeholder="Blank for the whole team"></div>'
+      +'<div class="ac-field w"><label for="shr-note">Note</label><input class="ac-input" id="shr-note" maxlength="200" placeholder="e.g. Bears game, all hands"></div>'
+      +'<button type="button" class="cbtn cbtn-primary" onclick="shrPost(this)">Post it</button></div>'
+      +'<div class="lb2-intro" id="shr-post-status" style="margin-top:6px"></div>';
     el.innerHTML=h;
+    _shrNames();
+  };
+  // The roster's active names for the offer and post boxes.
+  function _shrNames(){
+    var dl=document.getElementById('lb2-people-names'),names=_rstActiveNames(),o='',i;
+    if(!dl){dl=document.createElement('datalist');dl.id='lb2-people-names';document.body.appendChild(dl);}
+    if(dl.options&&dl.options.length)return;
+    for(i=0;i<names.length;i++)o+='<option value="'+esc(names[i])+'">';
+    dl.innerHTML=o;
+  }
+  function _shrV(id){var x=document.getElementById(id);return x?String(x.value||'').trim():'';}
+  window.shrPost=function(btn){
+    var st=document.getElementById('shr-post-status'),body={date:_shrV('shr-date'),shift_start:_shrV('shr-start'),shift_end:_shrV('shr-end'),role:_shrV('shr-role'),employee:_shrV('shr-emp'),offer_to:_shrV('shr-to'),note:_shrV('shr-note')};
+    if(!body.date||!body.shift_start){if(st)st.textContent='Pick a date and a start time.';return;}
+    var done=busy(btn,'Posting…');
+    jsend('/api/labor/open-shifts',body,function(d){
+      done();
+      if(!d.ok){if(st)st.textContent=d.error||'Could not post that shift.';return;}
+      if(st)st.textContent='';
+      toast(d.offer?'Offered to '+(d.offer.name||'them')+' in the Cavnar AI app':'Posted — the team can pick it up in the app','success');
+      loadShiftRequests();
+    });
+  };
+  window.shrOffer=function(id,btn){
+    var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr-open')))row=row.parentNode;
+    var box=row?row.querySelector('[data-shr-offer]'):null,name=box?String(box.value||'').trim():'';
+    if(!name){toast('Name who to offer it to','error');return;}
+    var done=busy(btn,'Offering…');
+    jsend('/api/labor/shift-requests/'+id+'/offer',{name:name},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not offer that shift','error');return;}
+      toast('Offered to '+((d.offer||{}).name||name)+' in the Cavnar AI app','success');
+      loadShiftRequests();
+    });
+  };
+  window.shrCancelOpen=function(id,btn){
+    var done=busy(btn,'Removing…');
+    jsend('/api/labor/shift-requests/'+id+'/cancel',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not take it off','error');return;}
+      toast('Taken off the open board','success');
+      loadShiftRequests();
+    });
+  };
+  window.shrAgreed=function(id,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/shift-requests/'+id+'/colleague-agreed',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not record that','error');return;}
+      toast((d.request||{}).status==='covered'?'Swapped — both shifts moved':'Noted — waiting on your approval','success');
+      loadShiftRequests();if(window.lb2LoadWaiting)lb2LoadWaiting();
+    });
   };
   window.decideShiftRequest=function(id,decision,btn){
     var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr')))row=row.parentNode;
@@ -34885,8 +34958,10 @@ window.cavPalette = cavPalette;
          Shift requests row used to hold, density round #27); blank opens
          it for anyone to claim. */
       var rep = (r.kind || 'drop') === 'swap' ? '' : '<input type="text" class="ac-input lb2-wait-rep" data-shr-rep list="lb2-people-names" data-people-picker autocomplete="off" placeholder="Anyone can claim it, or name who takes it" aria-label="Who takes it">';
+      /* The note travels with the answer to the employee (COM-14). */
+      var note = '<input type="text" class="ac-input lb2-wait-rep" data-shr-note maxlength="200" autocomplete="off" placeholder="Note to them (optional)" aria-label="Note to them">';
       h += '<div class="ac-row" data-wait-key="shift_request-' + e(r.id) + '"><div class="l"><b>' + e(r.employee_name) + ' asked to ' + e(what) + '</b><span>' + e(_schedDayOf(r.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(r.date)) + '</span>' + (r.reason ? ' · ' + e(r.reason) : '') + '</span></div>'
-         + '<div class="c">' + rep + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'approve\',this)">Approve</button></div></div>';
+         + '<div class="c">' + rep + note + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'approve\',this)">Approve</button></div></div>';
       n++;
     }
     el.innerHTML = h;
@@ -34930,6 +35005,8 @@ window.cavPalette = cavPalette;
   window.lb2DecideShift = function (id, decision, btn) {
     var row = btn && btn.closest ? btn.closest('.ac-row') : null, rep = row ? row.querySelector('[data-shr-rep]') : null, body = {decision: decision};
     if (decision === 'approve' && rep && String(rep.value || '').trim()) body.replacement = String(rep.value).trim();
+    var nt = row ? row.querySelector('[data-shr-note]') : null;
+    if (nt && String(nt.value || '').trim()) body.note = String(nt.value).trim();
     var done = cbtnBusy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
     postJ('/api/labor/shift-requests/' + id + '/decide', body, function (d) {
       done();

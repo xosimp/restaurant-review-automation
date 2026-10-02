@@ -236,7 +236,7 @@ def _do_issue_ask_cover(u, issue_id):
         return {"ok": False, "error": "Who should be asked?"}, 400
     if _limited(u, "issue_text", 20, 3600):
         return _SLOW_DOWN
-    out = intraday.ask_to_cover(_rid(u), issue_id, name, user_id=u.get("id"))
+    out = intraday.ask_to_cover(_rid(u), issue_id, name, user_id=u.get("id"), actor=_who(u))
     return out, (200 if out.get("ok") else 400)
 
 
@@ -2913,7 +2913,11 @@ def _do_shift_requests_list(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see shift requests.")
     import shift_requests as _sq_req
-    return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u))}, 200
+    # `offers`: shifts offered to one named person, still waiting on them
+    # (H2) — an open shift offered only by name is in `open` with
+    # offer_only = 1.
+    return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
+            "offers": _sq_req.live_offers(_rid(u))}, 200
 
 
 def _do_shift_request_decide(u, request_id):
@@ -2925,9 +2929,11 @@ def _do_shift_request_decide(u, request_id):
     decision = (b.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return {"ok": False, "error": "decision must be approve or deny."}, 400
+    note = b.get("note") if isinstance(b.get("note"), str) else None
     try:
+        # `note` reaches the employee with the answer (COM-14).
         row = _sq_req.decide(_rid(u), request_id, decision == "approve", decided_by=_who(u),
-                             replacement=(b.get("replacement") or "").strip() or None)
+                             replacement=(b.get("replacement") or "").strip() or None, note=note)
     except _sq_req.ShiftRequestError as e:
         return {"ok": False, "error": str(e)}, 400
     if not row:
@@ -2936,6 +2942,91 @@ def _do_shift_request_decide(u, request_id):
     # The account log is owner-facing: M/D/YY, as time off's is (F2-15).
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {mdy(row['date'])} {row['shift_start']}: {row['status']}")
+    return {"ok": True, "request": row}, 200
+
+
+def _shift_label(row):
+    from time_utils import mdy
+    who = (row.get("employee_name") or "").strip() or "extra"
+    return f"{who} {mdy(row['date'])} {row['shift_start']}" + (f" ({row['role']})" if row.get("role") else "")
+
+
+def _do_open_shift_post(u):
+    """{date, shift_start, employee?, shift_end?, role?, offer_to?, note?}
+    — a manager puts a shift on the open board: somebody's shift on the
+    published week (`employee`), or an extra one (`shift_end` + `role`).
+    With `offer_to` it is offered to that one person in their app instead
+    of the whole team (H2). Audited on the account log."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import shift_requests as _sq_req
+    from client_api import log_account_event
+    b = _body()
+    s = lambda k: b.get(k).strip() if isinstance(b.get(k), str) else None  # noqa: E731
+    if not s("date") or not s("shift_start"):
+        return {"ok": False, "error": "date and shift_start are required."}, 400
+    try:
+        out = _sq_req.post_open_shift(_rid(u), s("date"), s("shift_start"), shift_end=s("shift_end"), role=s("role"),
+                                      employee=s("employee"), actor=_who(u), note=s("note"), offer_to=s("offer_to"))
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 400
+    row, offer = out["request"], out["offer"]
+    log_account_event(_rid(u), "open_shift_posted", current_user=u,
+                      detail=_shift_label(row) + (f": offered to {offer['name']}" if offer else ": open to the team"))
+    return {"ok": True, "request": row, "offer": offer}, 200
+
+
+def _do_shift_request_offer(u, request_id):
+    """{name, note?} — offer an open shift to one named person (H2)."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import shift_requests as _sq_req
+    from client_api import log_account_event
+    b = _body()
+    name = (b.get("name") or "").strip() if isinstance(b.get("name"), str) else ""
+    if not name:
+        return {"ok": False, "error": "Who should it be offered to?"}, 400
+    try:
+        offer = _sq_req.offer_shift(_rid(u), request_id, name, actor=_who(u),
+                                    note=b.get("note") if isinstance(b.get("note"), str) else None)
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 400
+    row = _sq_req._get_row(_rid(u), request_id, None) or {}
+    log_account_event(_rid(u), "open_shift_offered", current_user=u,
+                      detail=(_shift_label(row) if row else f"request {request_id}") + f": offered to {offer['name']}")
+    return {"ok": True, "offer": offer}, 200
+
+
+def _do_shift_request_colleague_agreed(u, request_id):
+    """The colleague in a swap said yes in person — a decider records it
+    for someone who isn't on the app (LG-12). An approved swap then goes
+    ahead. Audited on the account log."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not decide shift requests.")
+    import shift_requests as _sq_req
+    from client_api import log_account_event
+    try:
+        row = _sq_req.colleague_agreed(_rid(u), request_id, _who(u))
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if not row:
+        return {"ok": False, "error": "That swap isn't waiting on the colleague any more."}, 404
+    log_account_event(_rid(u), "shift_swap_agreed_for", current_user=u,
+                      detail=f"{_shift_label(row)} with {row.get('target_name')}: agreed in person, {row['status']}")
+    return {"ok": True, "request": row}, 200
+
+
+def _do_shift_request_cancel(u, request_id):
+    """Take an open shift off the board. The holder, anyone it was offered
+    to and the teammates told about it hear it's gone. Audited."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import shift_requests as _sq_req
+    from client_api import log_account_event
+    row = _sq_req.cancel_open(_rid(u), request_id, actor=_who(u))
+    if not row:
+        return {"ok": False, "error": "That shift isn't open any more."}, 404
+    log_account_event(_rid(u), "open_shift_cancelled", current_user=u, detail=_shift_label(row))
     return {"ok": True, "request": row}, 200
 
 
@@ -5757,6 +5848,11 @@ _ROUTES = [
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
+    ("/labor/open-shifts", ["POST"], _do_open_shift_post, "open_shift_post"),
+    ("/labor/shift-requests/<int:request_id>/offer", ["POST"], _do_shift_request_offer, "shift_request_offer"),
+    ("/labor/shift-requests/<int:request_id>/colleague-agreed", ["POST"], _do_shift_request_colleague_agreed,
+     "shift_request_colleague_agreed"),
+    ("/labor/shift-requests/<int:request_id>/cancel", ["POST"], _do_shift_request_cancel, "shift_request_cancel"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),

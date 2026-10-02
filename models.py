@@ -7411,9 +7411,46 @@ def init_shift_requests(db_path: str = DB_PATH):
     for name, decl in (("kind", "TEXT DEFAULT 'drop'"),   # drop | swap
                        ("target_name", "TEXT"), ("target_date", "TEXT"), ("target_start", "TEXT"), ("target_end", "TEXT"),
                        # a swap moves the colleague's shift too, so it needs their yes (SCHED-21)
-                       ("target_accepted_at", "TEXT")):
+                       ("target_accepted_at", "TEXT"),
+                       # employee audit B3: the manager's note with the answer
+                       # (COM-14); the once-only "still unclaimed" reminder
+                       # (C8); who was told a shift is open, to tell them when
+                       # it isn't (LG-29); an open shift offered only to named
+                       # people (H2); the decider who recorded a colleague's
+                       # in-person yes (LG-12).
+                       ("decision_note", "TEXT"), ("escalated_at", "TEXT"), ("told_json", "TEXT"),
+                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
+    # An open shift offered to one named person (shift_requests.offer_shift):
+    # the coverage issue's "Ask Ana to cover", or a manager's pick.
+    conn.execute("""CREATE TABLE IF NOT EXISTS shift_offers (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+        request_id   INTEGER NOT NULL REFERENCES shift_change_requests(id),
+        name         TEXT    NOT NULL,
+        name_key     TEXT    NOT NULL,
+        status       TEXT    NOT NULL DEFAULT 'offered',   -- offered | accepted | declined | withdrawn | expired
+        note         TEXT,
+        issue_id     INTEGER,
+        created_by   TEXT,
+        created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+        answered_at  TEXT
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_offers_rest ON shift_offers(restaurant_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_offers_request ON shift_offers(request_id)")
+    # One live request per shift, whatever version of the week it was asked
+    # against (LG-09): the duplicate check keyed on the published row's id,
+    # so a republish let one shift carry two. An extra shift a manager
+    # posted has no holder ('') and may be posted more than once.
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_shift_requests_live ON shift_change_requests("
+                     "restaurant_id, lower(trim(employee_name)), date, shift_start) "
+                     "WHERE status IN ('pending','approved','open') AND employee_name <> ''")
+    except sqlite3.IntegrityError as e:
+        # Duplicates from before the index: the transactional check still
+        # guards new requests; the index lands once they are answered.
+        print(f"[models] uq_shift_requests_live not created yet: {e}")
     conn.commit()
     conn.close()
 
@@ -14294,6 +14331,32 @@ def mark_schedule_share_viewed(token: str, db_path: str = DB_PATH):
             WHERE token = ?
         """, (token,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_schedule_shares_seen_in_app(restaurant_id: int, schedule_ids, employee_name: str,
+                                     db_path: str = None) -> int:
+    """The staff app showed this person these published weeks: their share
+    rows count as seen, as opening the emailed link does — so "9 of 14 have
+    seen it" counts app users too (employee audit COM-07). Stamps viewed_at
+    once (the first sighting); the link's own view_count stays the link's.
+    Returns the rows newly stamped."""
+    ids = [int(i) for i in (schedule_ids or []) if i]
+    key = " ".join(str(employee_name or "").split()).casefold()
+    if not ids or not key:
+        return 0
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(f"SELECT id, employee_name FROM schedule_shares WHERE restaurant_id=? AND viewed_at IS NULL "
+                            f"AND schedule_id IN ({marks})", (restaurant_id, *ids)).fetchall()
+        hit = [r["id"] for r in rows if " ".join(str(r["employee_name"] or "").split()).casefold() == key]
+        for sid in hit:
+            conn.execute("UPDATE schedule_shares SET viewed_at=datetime('now') WHERE id=? AND viewed_at IS NULL", (sid,))
+        if hit:
+            conn.commit()
+        return len(hit)
     finally:
         conn.close()
 

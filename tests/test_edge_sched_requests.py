@@ -98,7 +98,9 @@ def _csv_rows(db_path, hid):
 
 def _open(rid, name, date, start, today=TODAY):
     req = srq.request_drop(rid, name, date, start, today=today)
-    return srq.decide(rid, req["id"], True, decided_by="mgr")
+    # Decided on the same pinned day it was asked: approving a shift that
+    # has already started is refused (employee audit H9 / LG-07).
+    return srq.decide(rid, req["id"], True, decided_by="mgr", today=today)
 
 
 def _racing_legality(monkeypatch):

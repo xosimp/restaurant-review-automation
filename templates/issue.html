@@ -53,7 +53,7 @@
   {% if done is mapping and done.asked %}
     <div class="card">
       {% if done.asked.ok %}
-        <div class="ok">Asked {{ done.asked.name }} by {{ 'text' if done.asked.via == 'sms' else 'email' }} — they'll reply to you.</div>
+        {% if done.asked.offer_id %}<div class="ok">Offered the shift to {{ done.asked.name }} in the Cavnar AI app — their answer lands on this issue.</div>{% else %}<div class="ok">Asked {{ done.asked.name }} by {{ 'text' if done.asked.via == 'sms' else 'email' }} — they'll call you to say yes or no.</div>{% endif %}
       {% else %}
         <div class="detail">{{ done.asked.error }}</div>
       {% endif %}
