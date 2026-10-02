@@ -83,7 +83,8 @@ def test_the_2026_bears_season_is_in_the_catalog(db):
     assert len(rows) == 20                                    # 3 preseason + 17 regular
     assert sum(1 for r in rows if r["season_type"] == "preseason") == 3
     week18 = [r for r in rows if r["external_id"] == "2026-reg-18"][0]
-    assert week18["event_date"] is None and week18["opponent"] == "Minnesota Vikings"
+    # Dated by the league after the file was first written (scripts/refresh_seasons.py, 10/2/26).
+    assert week18["event_date"] == "2027-01-09" and week18["opponent"] == "Minnesota Vikings"
     prime = sorted(r["event_date"] for r in rows if r["is_primetime"])
     assert prime == ["2026-09-28", "2026-10-22", "2026-11-02", "2026-11-08", "2026-12-19"]
     done = {r["event_date"]: r["result"] for r in rows if r["status"] == "completed"}
@@ -115,7 +116,7 @@ def test_each_game_becomes_the_restaurants_own_event_and_sync_is_idempotent(db, 
     r = _restaurant(db)
     engine.ensure_follows(r, db_path=db)
     got = engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
-    assert got["added"] == 19                                 # every dated game; Week 18 waits for its date
+    assert got["added"] == 20                                 # every game, Week 18 dated since 10/2/26
     sig = {s["date"]: s for s in demand_signals.upcoming(r.id, "2026-08-01", "2027-02-01", db_path=db)}
     assert sig["2026-10-04"]["label"] == "Bears home game · Soldier Field"
     assert sig["2026-10-11"]["label"] == "Bears road game"
@@ -136,7 +137,8 @@ def test_a_moved_game_moves_and_an_unfollowed_team_goes(db, monkeypatch):
                                "date": "2027-01-10", "kickoff": "12:00", "home_away": "away",
                                "opponent": "Minnesota Vikings", "venue": "U.S. Bank Stadium"}], db_path=db)
     got = engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
-    assert got["added"] == 1
+    assert got["moved"] == 1                                  # the league moved Week 18 a day
+    assert demand_signals.upcoming(r.id, "2027-01-09", "2027-01-09", db_path=db) == []
     assert demand_signals.upcoming(r.id, "2027-01-10", "2027-01-10", db_path=db)[0]["label"] == "Bears road game"
     store.set_follow(r.id, sid, False, db_path=db)
     gone = engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)

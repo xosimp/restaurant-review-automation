@@ -4,7 +4,7 @@
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
  ],
- "fetched": "2026-10-01",
+ "fetched": "2026-10-02",
  "series": {
   "slug": "nhl-chicago-blackhawks",
   "name": "Chicago Blackhawks",
@@ -99,7 +99,8 @@
    "opponent": "Utah Mammoth",
    "venue": "Delta Center",
    "broadcast": "ESPN+, HULU, Disney+",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 0-6"
   },
   {
    "external_id": "2026020022",
@@ -192,7 +193,7 @@
    "date": "2026-10-23",
    "kickoff": "19:00",
    "home_away": "home",
-   "opponent": "Montr\u00e9al Canadiens",
+   "opponent": "Montréal Canadiens",
    "venue": "United Center",
    "broadcast": "NHLN, CHSN",
    "status": "scheduled"
@@ -568,7 +569,7 @@
    "date": "2027-01-04",
    "kickoff": "18:30",
    "home_away": "away",
-   "opponent": "Montr\u00e9al Canadiens",
+   "opponent": "Montréal Canadiens",
    "venue": "Centre Bell",
    "broadcast": "CHSN",
    "status": "scheduled"
