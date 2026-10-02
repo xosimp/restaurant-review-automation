@@ -172,7 +172,9 @@ def test_the_portal_keeps_available_and_unavailable_days_disjoint(client, db_pat
     rid = _restaurant(db_path)
     uid, _ = _staff(db_path, rid)
     client.set_cookie("staff_session", create_staff_session(uid, rid, db_path=db_path))
-    client.post("/staff/api/availability", json={"unavailable_days": ["Monday"], "notes": "not before 10am"})
+    # The version the screen loaded (no row yet: null) — PERF-05, fix_B8.
+    client.post("/staff/api/availability", json={"unavailable_days": ["Monday"], "notes": "not before 10am",
+                                                  "updated_at": None})
     row = _row(db_path, rid)
     assert not set(json.loads(row["available_days"])) & set(json.loads(row["unavailable_days"]))
     assert row["notes"] == "not before 10am"

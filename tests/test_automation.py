@@ -557,7 +557,8 @@ def test_staff_can_enter_their_own_availability(db_path, monkeypatch):
     monkeypatch.setattr(staff_routes, "staff_login_required", lambda f: f, raising=False)
     user = {"id": 9, "restaurant_id": rid, "employee_name": "Dee", "role": "employee"}
     with app.test_request_context("/staff/api/availability", method="POST",
-                                  json={"unavailable_days": ["friday", "Sunday", "nope"], "notes": "not before 10"}):
+                                  json={"unavailable_days": ["friday", "Sunday", "nope"], "notes": "not before 10",
+                                        "updated_at": None}):      # the version loaded (PERF-05, fix_B8)
         out = staff_routes.api_availability_save.__wrapped__(user) if hasattr(staff_routes.api_availability_save, "__wrapped__") \
             else staff_routes.api_availability_save(user)
     body = out.get_json() if hasattr(out, "get_json") else out[0].get_json()

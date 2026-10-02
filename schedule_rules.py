@@ -644,6 +644,32 @@ def window_allows(lo, hi, start_m, end_m) -> tuple:
     return True, ""
 
 
+def window_holds(window, day, week_dates=None, today=None) -> bool:
+    """Whether a time window ({earliest, latest, from?, until?}, one
+    weekday's entry in staff_settings.time_windows) applies this week: one
+    with dates ("not before 5pm on Tuesdays until 12/15/26" — employee
+    audit M5) holds on this week's `day` inside them; with no week, while
+    it has not ended. A window with no dates always holds."""
+    f, u = (window or {}).get("from"), (window or {}).get("until")
+    if not (f or u):
+        return True
+    from models import bounds_apply
+    dates = [d for d in (week_dates or []) if _weekday_of(d) == day]
+    if dates:
+        return any(bounds_apply({"from": f, "until": u}, d) for d in dates)
+    if week_dates:
+        return False
+    from datetime import date as _date
+    return not u or u >= (today or _date.today()).isoformat()
+
+
+def _weekday_of(iso) -> str:
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
+    except (TypeError, ValueError):
+        return ""
+
+
 def row_hours(row) -> float:
     try:
         return float(row.get("scheduled_hours") or 0)
@@ -906,7 +932,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 win = {}
                 for day, w in st["time_windows"].items():
                     lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
-                    if lo is not None or hi is not None:
+                    if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates):
                         win[day] = (lo, hi)
                 if win:
                     c.time_windows[key] = win
@@ -936,16 +962,29 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         except (TypeError, ValueError):
             continue
 
-    # weekday availability + free-text notes
+    # weekday availability + free-text notes. A weekday blocked for good is
+    # a weekday rule; one blocked only between two dates ("Fridays until
+    # 12/15", day_bounds — employee audit M5) blocks the dates of this week
+    # inside them, and only those.
     try:
+        from models import availability_day_bounds, availability_blocked_dates
         for a in get_staff_availability(restaurant_id, db_path) or []:
             key = (a.get("employee_name") or "").strip().lower()
             if not key:
                 continue
-            c.unavailable_days[key] = set(_load_json(a.get("unavailable_days"), []))
+            blocked = set(_load_json(a.get("unavailable_days"), []))
             avail = _load_json(a.get("available_days"), [])
             if avail:
-                c.unavailable_days[key] |= {d for d in DAYS if d not in avail}
+                blocked |= {d for d in DAYS if d not in avail}
+            dated = availability_day_bounds(a)
+            c.unavailable_days[key] = {d for d in blocked if d not in dated}
+            if dated and not c.week_dates:
+                # No week to place them in: while they last, they hold.
+                from models import availability_blocked_days
+                c.unavailable_days[key] |= availability_blocked_days(a)
+            elif dated:
+                for d in availability_blocked_dates(a, c.week_dates):
+                    c.blocked_dates.setdefault(key, {}).setdefault(d, LABELS["unavailable_day"])
             if (a.get("notes") or "").strip():
                 c.notes[key] = a["notes"].strip()
     except Exception:

@@ -618,6 +618,9 @@ NAME_STORES = (
      "unique": ("employee_key", "role"), "fold": "fill"},
     {"table": "person_quarters", "cols": ("employee_name",), "key": "employee_key",
      "unique": ("employee_key", "quarter"), "fold": "sum"},
+    # A server's floor section per shift (models.shift_sections, V12).
+    {"table": "shift_sections", "cols": ("employee_name",), "key": "employee_key",
+     "unique": ("date", "employee_key", "shift_start"), "fold": "newest"},
     # What the draft learned about a person, and the owner's dismissals of
     # it (memory re-audit 9/29/26, INVENTORY-2): the pattern key carries the
     # name, so these are re-keyed, not just re-pointed (_repoint_patterns).

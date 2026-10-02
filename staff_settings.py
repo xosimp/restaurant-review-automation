@@ -132,7 +132,45 @@ def _clean_windows(raw):
             raise StaffSettingsError(f"{d}: the window ends before it starts")
         if lo or hi:
             out[d] = {"earliest": lo or None, "latest": hi or None}
+            # Dates the window holds between ("not before 5pm on Tuesdays
+            # until 12/15/26" — employee audit M5); read per week by
+            # schedule_rules.window_holds.
+            f, u = _clean_bound(w.get("from"), d), _clean_bound(w.get("until"), d)
+            if f and u and f > u:
+                raise StaffSettingsError(f"{d}: the window ends before it starts")
+            if f:
+                out[d]["from"] = f
+            if u:
+                out[d]["until"] = u
     return out
+
+
+def _keep_window_dates(raw, cleaned, stored) -> dict:
+    """An editor that knows nothing of a window's dates (the owner's iOS
+    roster sends {earliest, latest} only) must not turn "until 12/15" into
+    for good: a day sent with the same times and no from/until keys keeps
+    the dates on file. Sending the keys, even empty, sets them."""
+    out = {}
+    for d, w in cleaned.items():
+        sent = next((v for k, v in (raw or {}).items() if str(k).strip().capitalize() == d), {}) or {}
+        old = stored.get(d) or {}
+        if "from" not in sent and "until" not in sent and \
+                (old.get("earliest"), old.get("latest")) == (w.get("earliest"), w.get("latest")):
+            w = dict(w, **{k: old[k] for k in ("from", "until") if old.get(k)})
+        out[d] = w
+    return out
+
+
+def _clean_bound(raw, day) -> str:
+    """An iso date ("2026-12-15") or None; anything else is refused."""
+    from datetime import datetime
+    v = str(raw or "").strip()[:10]
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        raise StaffSettingsError(f"{day}: '{raw}' is not a date (YYYY-MM-DD)")
 
 
 def _flag(v) -> bool:
@@ -189,6 +227,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             is_minor = True
     if is_minor is not None and not _flag(is_minor) and minor_age_band is None:
         minor_age_band = ""
+    raw_windows = time_windows
     if time_windows is not None:
         time_windows = _clean_windows(time_windows)
     if certifications is not None:
@@ -220,6 +259,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                                          "max_hours": None, "daypart_availability": {}, "is_minor": False,
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
                                          "desired_hours": None, "experienced": False, "minor_age_band": None}
+        if time_windows is not None:
+            time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
             "active": int(_flag(active)) if active is not None else int(current["active"]),
             "employment_type": (employment_type or None) if employment_type is not None else current["employment_type"],
@@ -257,6 +298,11 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
                       json.dumps(new["preferred_dayparts"]), new["desired_hours"], new["experienced"],
                       new["minor_age_band"], (updated_by or "").strip()[:120] or None))
+        if time_windows is not None and time_windows != (current.get("time_windows") or {}):
+            # The staff app edits these windows on its availability screen
+            # and saves against that row's version (save_own_availability).
+            from models import touch_staff_availability
+            touch_staff_availability(conn, restaurant_id, name)
         conn.commit()
         row = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=? AND employee_name=?",
                            (restaurant_id, name)).fetchone()
@@ -644,3 +690,318 @@ def smoothed_rate(misses, shifts, base, prior=NO_SHOW_PRIOR_SHIFTS) -> float:
         return round((float(misses) + prior * float(base)) / (float(shifts) + prior), 2)
     except (TypeError, ValueError, ZeroDivisionError):
         return 0.0
+
+
+# ── an employee's own availability (staff app and the /s/<token> link) ──────
+#
+# One record, one save, whichever surface it comes from (employee audit M5:
+# MISS-8, WF-32, LG-35, PERF-05). The weekdays someone can't work live in
+# staff_availability (unavailable_days, plus day_bounds for the ones blocked
+# only between two dates); the hours they can work on a day are the SAME
+# time windows the owner sets above (staff_settings.time_windows, with an
+# optional from/until) — one representation, read by schedule_rules as a
+# hard constraint. A save carries the version it loaded (staff_availability
+# .updated_at) and is refused when the row has moved on, so the app and the
+# link cannot silently overwrite each other, and a failed load can never be
+# saved back as an empty week.
+
+AVAILABILITY_STATUSES = ("any", "off", "window")
+KEEP = object()
+# A save that sent no version at all (an app from before PERF-05): never
+# matches, so it is refused once the request itself is valid.
+MISSING = object()
+TIME_OFF_HINT = {"kind": "time_off",
+                 "text": "Dates you're away go in a time-off request — your manager answers it and the schedule "
+                         "keeps you off those days. Availability is your usual week."}
+_AWAY_RE = None
+
+
+def _av_conn(db_path):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports):
+    this section's callers are routes that pass no db_path."""
+    import models
+    return models.get_conn() if db_path in (None, DB_PATH) else models.get_conn(db_path)
+
+
+def _hhmm(t):
+    """'5:00pm' → '17:00' (what the app's time pickers read), or None."""
+    from schedule_rules import parse_minutes
+    m = parse_minutes(t or "")
+    return None if m is None else f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _windows_for(restaurant_id, name, conn) -> tuple:
+    """(stored name or None, {day: window}) from this person's staff_settings row."""
+    key = name_key(name)
+    for r in conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=?", (restaurant_id,)).fetchall():
+        if name_key(r["employee_name"]) == key:
+            return r["employee_name"], _row(r)["time_windows"]
+    return None, {}
+
+
+def _state_of(row, windows) -> dict:
+    """{off: set, bounds: {day: {from, until}}, windows: {day: window}}."""
+    from models import availability_stored_blocks, availability_day_bounds
+    off = availability_stored_blocks(row) if row else set()
+    return {"off": off, "bounds": availability_day_bounds(row) if row else {},
+            "windows": {d: w for d, w in (windows or {}).items() if d not in off}}
+
+
+def _payload(row, windows, today) -> dict:
+    """What GET /staff/api/availability answers: `week` is the new shape,
+    `unavailable_days` the one older apps read. An entry whose dates have
+    passed reads as "any"."""
+    st, iso = _state_of(row, windows), today.isoformat()
+    week, unavailable = [], []
+    for d in DAYS:
+        b = st["bounds"].get(d) or {}
+        w = st["windows"].get(d) or {}
+        if d in st["off"] and not (b.get("until") and b["until"] < iso):
+            week.append({"day": d, "status": "off", "earliest": None, "latest": None,
+                         "from": b.get("from"), "until": b.get("until")})
+            unavailable.append(d)
+        elif w and not (w.get("until") and w["until"] < iso):
+            week.append({"day": d, "status": "window", "earliest": _hhmm(w.get("earliest")),
+                         "latest": _hhmm(w.get("latest")), "from": w.get("from"), "until": w.get("until")})
+        else:
+            week.append({"day": d, "status": "any", "earliest": None, "latest": None, "from": None, "until": None})
+    return {"days": list(DAYS), "week": week, "unavailable_days": unavailable,
+            "notes": (row or {}).get("notes") or "", "updated_at": (row or {}).get("updated_at"),
+            "time_off_hint": TIME_OFF_HINT["text"]}
+
+
+def own_availability(restaurant_id, employee_name, db_path=DB_PATH, today=None) -> dict:
+    """This person's availability as the staff app and the link show it."""
+    from models import staff_availability_for
+    conn = _av_conn(db_path)
+    try:
+        row = staff_availability_for(restaurant_id, employee_name, conn=conn)
+        _, windows = _windows_for(restaurant_id, employee_name, conn)
+    finally:
+        conn.close()
+    return _payload(row, windows, today or _today(restaurant_id))
+
+
+def away_hint(notes):
+    """A note that reads like dates away ("away Oct 3–6", "vacation
+    12/20-12/27") belongs in a time-off request, where a manager answers
+    it and the schedule blocks those dates (WF-32). None otherwise."""
+    import re
+    global _AWAY_RE
+    if _AWAY_RE is None:
+        _AWAY_RE = re.compile(
+            r"\b(away|vacation|holiday|trip|out of town|wedding)\b|\b\d{1,2}/\d{1,2}\b|"
+            r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b", re.I)
+    return dict(TIME_OFF_HINT) if notes and _AWAY_RE.search(str(notes)) else None
+
+
+def _target_from_week(week, today) -> tuple:
+    """(off days, their dates, time windows) from the app's `week`, or
+    raises StaffSettingsError. A day left out is "any"."""
+    from schedule_rules import parse_minutes, _fmt_minutes
+    if not isinstance(week, list):
+        raise StaffSettingsError("week is a list of {day, status}")
+    off, bounds, raw_windows = set(), {}, {}
+    for e in week:
+        if not isinstance(e, dict):
+            raise StaffSettingsError("week is a list of {day, status}")
+        d = str(e.get("day") or "").strip().capitalize()
+        if d not in DAYS:
+            raise StaffSettingsError(f"'{e.get('day')}' is not a weekday")
+        status = str(e.get("status") or "any").strip().lower()
+        if status not in AVAILABILITY_STATUSES:
+            raise StaffSettingsError(f"{d}: status is any, off or window")
+        f, u = _clean_bound(e.get("from"), d), _clean_bound(e.get("until"), d)
+        if status == "any":
+            continue
+        if u and u < today.isoformat():
+            raise StaffSettingsError(f"{d}: that end date has passed")
+        if f and u and f > u:
+            raise StaffSettingsError(f"{d}: the end date is before the start date")
+        if status == "off":
+            off.add(d)
+            if f or u:
+                bounds[d] = {"from": f, "until": u}
+            continue
+        lo, hi = parse_minutes(e.get("earliest") or ""), parse_minutes(e.get("latest") or "")
+        if lo is None and hi is None:
+            raise StaffSettingsError(f"{d}: give the earliest start or the latest finish")
+        raw_windows[d] = {"earliest": _fmt_minutes(lo) if lo is not None else "",
+                          "latest": _fmt_minutes(hi) if hi is not None else "",
+                          "from": f or "", "until": u or ""}
+    return off, bounds, _clean_windows(raw_windows)
+
+
+def _conflicts(shifts, state) -> list:
+    """The shifts `state` rules out, each with a `reason`."""
+    from datetime import datetime
+    from schedule_rules import parse_minutes, window_allows, window_holds, _fmt_minutes
+    from models import bounds_apply
+    out = []
+    for s in shifts:
+        try:
+            d = datetime.strptime(s["date"], "%Y-%m-%d").strftime("%A")
+        except (KeyError, ValueError, TypeError):
+            continue
+        reason = None
+        if d in state["off"] and bounds_apply(state["bounds"].get(d), s["date"]):
+            reason = f"you marked {d}s unavailable"
+        else:
+            w = state["windows"].get(d)
+            if w and window_holds(w, d, [s["date"]]):
+                lo, hi = parse_minutes(w.get("earliest") or ""), parse_minutes(w.get("latest") or "")
+                ok, which = window_allows(lo, hi, parse_minutes(s.get("shift_start")), parse_minutes(s.get("shift_end")))
+                if not ok:
+                    reason = (f"you said not before {_fmt_minutes(lo)} on {d}s" if which == "early"
+                              else f"you said not after {_fmt_minutes(hi)} on {d}s")
+        if reason:
+            out.append(dict(s, reason=reason))
+    return out
+
+
+def _shift_label(s) -> str:
+    """"Fri 10/9/26 5:00pm"."""
+    from datetime import datetime
+    from time_utils import mdy
+    from schedule_rules import parse_minutes, _fmt_minutes
+    m = parse_minutes(s.get("shift_start"))
+    try:
+        dow = datetime.strptime(s["date"], "%Y-%m-%d").strftime("%a")
+    except (KeyError, ValueError, TypeError):
+        dow = ""
+    return f"{dow} {mdy(s.get('date'))} {_fmt_minutes(m) if m is not None else s.get('shift_start') or ''}".strip()
+
+
+def _listed(conflicts) -> str:
+    labels = [_shift_label(c) for c in conflicts]
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+
+def conflicts_text(conflicts) -> str:
+    """"You're still on Fri 10/9/26 5:00pm — ask to drop it." ("" for none)."""
+    if not conflicts:
+        return ""
+    return f"You're still on {_listed(conflicts)} — ask to drop {'it' if len(conflicts) == 1 else 'them'}."
+
+
+def _tell_deciders(restaurant_id, name, new_conflicts, db_path) -> int:
+    """The people who can change the schedule hear about published shifts
+    the new availability rules out (LG-35). Returns how many were reached;
+    never raises."""
+    if not new_conflicts:
+        return 0
+    try:
+        import strategy_jobs
+        from permissions import SCHEDULE_DRAFT
+        one = len(new_conflicts) == 1
+        title = f"{name}'s availability changed"
+        body = (f"{name} is still scheduled {_listed(new_conflicts)}, which "
+                f"{'no longer fits' if one else 'no longer fit'} what they said they can work. "
+                f"Find cover or talk to them.")
+        return int(strategy_jobs._reach(restaurant_id, "shift_request", title, body, {"tab": "labor"}, db_path,
+                                        lines=[body], deciders=True, permissions=[SCHEDULE_DRAFT]) or 0)
+    except Exception as e:
+        print(f"[staff_settings] availability conflict notice failed rid={restaurant_id}: {e!r}")
+        return 0
+
+
+def save_own_availability(restaurant_id, employee_name, expected_updated_at, week=None,
+                          unavailable_days=None, notes=KEEP, source="app", db_path=DB_PATH, today=None) -> dict:
+    """The one save for an employee's own availability — the staff app
+    (POST /staff/api/availability) and the schedule link
+    (POST /s/<token>/availability) both call it.
+
+    `expected_updated_at` is the `updated_at` the caller loaded (None when
+    the person had no row); a row that has moved on since refuses the save
+    with status 409 and the record as it is now. `week` ([{day, status:
+    any|off|window, earliest, latest, from, until}]) replaces the whole week,
+    time windows included; without it, `unavailable_days` (the link's and
+    older apps' list of weekdays) changes only which days are off — a day
+    still off keeps its dates, and the windows are left alone. `notes` left
+    as KEEP keeps the stored note; None or "" clears it.
+
+    Returns {ok, status, error?, stale?, availability, updated_at,
+    conflicts, conflicts_text, hint, managers_told}: `conflicts` are this
+    person's shifts on live published weeks from today that the new
+    availability rules out, each with a `reason`; the deciders are told of
+    the ones the old availability allowed."""
+    from models import staff_availability_for, write_staff_availability, log_event
+    import time_off as _to
+    from datetime import timedelta
+    today = today or _today(restaurant_id)
+    name = " ".join(str(employee_name or "").split())
+    if not name:
+        return {"ok": False, "status": 400, "error": "No employee name on this session."}
+    try:
+        if week is not None:
+            off, bounds, windows = _target_from_week(week, today)
+        else:
+            if not isinstance(unavailable_days, list):
+                raise StaffSettingsError("unavailable_days must be a list of weekday names.")
+            wanted = {str(x).strip().capitalize() for x in unavailable_days}
+            off, bounds, windows = {d for d in DAYS if d in wanted}, None, None
+    except StaffSettingsError as e:
+        return {"ok": False, "status": 400, "error": str(e)}
+    if len(off) == len(DAYS):
+        return {"ok": False, "status": 400, "error": "Every day blocked — leave at least one you can work.",
+                "hint": dict(TIME_OFF_HINT)}
+    clean_notes = KEEP if notes is KEEP else ((str(notes or "").strip())[:300] or None)
+
+    conn = _av_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = staff_availability_for(restaurant_id, name, conn=conn)
+        ss_name, stored_windows = _windows_for(restaurant_id, name, conn)
+        version = (row or {}).get("updated_at")
+        if expected_updated_at is MISSING or (expected_updated_at or None) != (version or None):
+            conn.rollback()
+            return {"ok": False, "status": 409, "stale": True,
+                    "error": ("Reload your availability, then make your change again." if expected_updated_at is MISSING
+                              else "Your availability was changed somewhere else after this screen loaded. "
+                                   "Here it is now — make your change again."),
+                    "availability": _payload(row, stored_windows, today)}
+        before = _state_of(row, stored_windows)
+        if bounds is None:
+            bounds = {d: b for d, b in before["bounds"].items() if d in off}
+        keep_note = (row or {}).get("notes") if clean_notes is KEEP else clean_notes
+        stamp = write_staff_availability(conn, restaurant_id, row["employee_name"] if row else name,
+                                         off, keep_note, bounds, previous=version)
+        windows_changed = windows is not None and windows != stored_windows
+        if windows_changed and ss_name:
+            conn.execute("UPDATE staff_settings SET time_windows=?, updated_by=?, updated_at=datetime('now') "
+                         "WHERE restaurant_id=? AND employee_name=?",
+                         (json.dumps(windows), name[:120], restaurant_id, ss_name))
+        elif windows_changed:
+            conn.execute("INSERT INTO staff_settings (restaurant_id, employee_name, time_windows, updated_by, "
+                         "updated_at) VALUES (?,?,?,?,datetime('now'))",
+                         (restaurant_id, name[:120], json.dumps(windows), name[:120]))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    final_windows = windows if windows is not None else stored_windows
+    after = {"off": set(off), "bounds": bounds, "windows": {d: w for d, w in final_windows.items() if d not in off}}
+    if windows_changed:
+        _log_roster_changes(restaurant_id, ss_name or name, {"time_windows": stored_windows},
+                            {"time_windows": windows}, {"time_windows": windows}, db_path=db_path)
+    try:
+        shifts = _to.published_conflicts(restaurant_id, name, today, today + timedelta(days=70), db_path=db_path)
+    except Exception as e:
+        print(f"[staff_settings] published shifts unread rid={restaurant_id}: {e!r}")
+        shifts = []
+    conflicts = _conflicts(shifts, after)
+    was = {(c["date"], c["shift_start"]) for c in _conflicts(shifts, before)}
+    told = _tell_deciders(restaurant_id, name, [c for c in conflicts if (c["date"], c["shift_start"]) not in was],
+                          db_path)
+    try:
+        log_event(restaurant_id, "availability_updated",
+                  {"employee": name, "unavailable_days": [d for d in DAYS if d in off], "source": source,
+                   "time_windows": sorted(after["windows"]), "conflicts": len(conflicts)}, db_path=db_path)
+    except Exception:
+        pass
+    payload = _payload(staff_availability_for(restaurant_id, name, db_path=db_path), final_windows, today)
+    return {"ok": True, "status": 200, "availability": payload, "updated_at": stamp,
+            "conflicts": conflicts, "conflicts_text": conflicts_text(conflicts),
+            "hint": away_hint(keep_note), "managers_told": told}

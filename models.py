@@ -381,6 +381,7 @@ class Restaurant:
     close_times_json: Optional[str]      = None   # e.g. {"Monday":"9:00pm","Friday":"10:00pm"} — per-day close time, used to hard-cap generated shift_end
     role_close_buffer_json: Optional[str] = None  # e.g. {"Bartender":60} — minutes a role may run past close; any role not listed defaults to 0 (must end at or before close)
     section_count: Optional[int]         = None
+    foh_sections_json: Optional[str]     = None   # ["Patio","Bar","Section 3"] — names for shift_sections (V12)
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
@@ -841,6 +842,12 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_requirements_json", "TEXT"),
         ("restaurants", "foh_roles_json", "TEXT"),
         ("restaurants", "patio_roles_json", "TEXT"),
+        # The floor's named sections ("Patio", "Bar", "Section 3") a server
+        # is put in per shift (shift_sections; employee audit V12, 10/2/26).
+        ("restaurants", "foh_sections_json", "TEXT"),
+        # {"Friday": {"from": null, "until": "2026-12-15"}} — a blocked
+        # weekday that holds only between two dates (employee audit M5).
+        ("staff_availability", "day_bounds", "TEXT"),
         ("restaurants", "role_cross_training_json", "TEXT"),
         ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
         ("restaurants", "reservation_provider", "TEXT"),
@@ -2535,8 +2542,26 @@ def init_db(db_path: str = DB_PATH):
             available_days   TEXT    NOT NULL DEFAULT '[]',
             unavailable_days TEXT,
             notes            TEXT,
+            day_bounds       TEXT,
             updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, employee_name)
+        )""",
+        # A server's floor section on one shift (employee audit V12). Not a
+        # schedule_csv column: the CSV's eight columns are read by position
+        # in places, and a section has to survive a re-publish of the week.
+        # Keyed by the shift — date, person (staff_settings.name_key) and
+        # start — and read beside it by labor.employee_shifts_from_csv.
+        """CREATE TABLE IF NOT EXISTS shift_sections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            date           TEXT    NOT NULL,
+            employee_key   TEXT    NOT NULL,
+            employee_name  TEXT    NOT NULL,
+            shift_start    TEXT    NOT NULL,
+            section        TEXT    NOT NULL,
+            updated_by     TEXT,
+            updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, date, employee_key, shift_start)
         )""",
         # Where to reach each member of staff. Employees are identified by
         # NAME throughout this app (they come from POS shift data, not a
@@ -4366,7 +4391,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
-        "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
+        "section_count","foh_sections_json","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
@@ -5178,6 +5203,7 @@ def _restaurant_from_row(row) -> Restaurant:
         # the admin scheduling form (section count, daypart split, sched
         # notes, etc.) silently had zero effect on generated schedules.
         section_count=row["section_count"]           if "section_count" in row.keys() else None,
+        foh_sections_json=row["foh_sections_json"]   if "foh_sections_json" in row.keys() else None,
         daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
         delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
@@ -6583,9 +6609,13 @@ def init_staff_availability(db_path: str = DB_PATH):
         available_days  TEXT    NOT NULL DEFAULT '[]',
         unavailable_days TEXT,
         notes           TEXT,
+        day_bounds      TEXT,
         updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(restaurant_id, employee_name)
     )""")
+    # A table made before day_bounds existed (ensure_columns does the same
+    # at boot; this covers a database set up through this helper alone).
+    _apply_migration(conn, "ALTER TABLE staff_availability ADD COLUMN day_bounds TEXT")
     conn.commit()
     conn.close()
 
@@ -8606,23 +8636,23 @@ def sibling_location_shifts(restaurant_id: int, dates: list,
         conn.close()
 
 
-def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH, week_dates=None) -> dict:
     """{employee_name: {days they cannot work}} from staff_availability.
 
     The what-if pass needs this in a form it can test cheaply: a swap that
     puts somebody on a day they said they cannot work is not an
     improvement, it is a broken schedule with a better score.
+
+    A weekday blocked only between two dates ("Fridays until 12/15/26",
+    day_bounds) counts when one of `week_dates` falls inside its dates;
+    with no week, while it has not ended (availability_blocked_days).
     """
-    import json as _j
     out = {}
     for row in get_staff_availability(restaurant_id, db_path=db_path) or []:
         name = (row.get("employee_name") or "").strip()
         if not name:
             continue
-        try:
-            blocked = set(_j.loads(row.get("unavailable_days") or "[]") or [])
-        except Exception:
-            blocked = set()
+        blocked = availability_blocked_days(row, week_dates)
         if blocked:
             out[name] = blocked
     return out
@@ -8678,25 +8708,195 @@ def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:
     conn.close()
     return [dict(r) for r in rows]
 
-def save_staff_availability(restaurant_id: int, employee_name: str,
-                             available_days: list, unavailable_days: list = None,
-                             notes: str = None, db_path: str = DB_PATH):
+_AV_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_KEEP = object()
+
+
+def _av_key(name) -> str:
+    """staff_settings.name_key, inlined: staff_settings imports models."""
+    return " ".join(str(name or "").split()).casefold()
+
+
+def availability_stamp(previous=None) -> str:
+    """The updated_at a staff_availability save writes: microseconds, and
+    always after `previous`. The row's updated_at is the version the staff
+    app and the /s/ link send back (employee audit PERF-05): at whole
+    seconds two saves in one second shared a version, and the second
+    writer's stale copy would have matched."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    now = _dt.now(_tz.utc).replace(tzinfo=None)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S.%f")
+    prev = str(previous or "")
+    if prev and stamp <= prev:
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                stamp = (_dt.strptime(prev, fmt) + _td(microseconds=1)).strftime("%Y-%m-%d %H:%M:%S.%f")
+                break
+            except ValueError:
+                continue
+        else:
+            stamp = prev + "1"
+    return stamp
+
+
+def _av_json(raw, default):
     import json as _j
-    conn = get_conn(db_path)
+    try:
+        v = _j.loads(raw or "null")
+    except Exception:
+        return default
+    return v if isinstance(v, type(default)) else default
+
+
+def availability_day_bounds(row) -> dict:
+    """{weekday: {"from": iso|None, "until": iso|None}} — the blocked
+    weekdays that hold only between two dates."""
+    out = {}
+    for d, b in (_av_json((row or {}).get("day_bounds"), {}) or {}).items():
+        if d in _AV_DAYS and isinstance(b, dict) and (b.get("from") or b.get("until")):
+            out[d] = {"from": b.get("from") or None, "until": b.get("until") or None}
+    return out
+
+
+def bounds_apply(bounds, day_iso) -> bool:
+    """Whether a {from, until} entry holds on `day_iso` (both ends
+    inclusive; either may be open). No bounds: always."""
+    if not bounds:
+        return True
+    f, u = bounds.get("from"), bounds.get("until")
+    d = str(day_iso or "")[:10]
+    return (not f or d >= f) and (not u or d <= u)
+
+
+def availability_stored_blocks(row) -> set:
+    blocked = {d for d in _av_json((row or {}).get("unavailable_days"), []) if d in _AV_DAYS}
+    avail = [d for d in _av_json((row or {}).get("available_days"), []) if d in _AV_DAYS]
+    if avail:
+        blocked |= {d for d in _AV_DAYS if d not in avail}
+    return blocked
+
+
+def availability_blocked_days(row, dates=None, today=None) -> set:
+    """The weekdays this availability row blocks. Every weekday blocked
+    for good, and each one blocked between two dates (day_bounds) when one
+    of `dates` with that weekday falls inside them — or, with no dates,
+    while it has not ended. The one reading of a row for any reader that
+    asks by weekday (the prompt, the top-up, the swap index)."""
+    from datetime import date as _date, datetime as _dt
+    stored, bounds = availability_stored_blocks(row), availability_day_bounds(row)
+    out = {d for d in stored if d not in bounds}
+    if not bounds:
+        return out
+    if dates:
+        for iso in dates:
+            try:
+                wd = _dt.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
+            except (TypeError, ValueError):
+                continue
+            if wd in stored and wd in bounds and bounds_apply(bounds[wd], iso):
+                out.add(wd)
+        return out
+    floor = (today or _date.today()).isoformat()
+    for d in stored & set(bounds):
+        if not bounds[d].get("until") or bounds[d]["until"] >= floor:
+            out.add(d)
+    return out
+
+
+def availability_blocked_dates(row, dates) -> set:
+    """The iso dates among `dates` a weekday blocked between two dates
+    covers (the date-exact half of availability_blocked_days)."""
+    from datetime import datetime as _dt
+    stored, bounds = availability_stored_blocks(row), availability_day_bounds(row)
+    out = set()
+    for iso in dates or []:
+        try:
+            wd = _dt.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
+        except (TypeError, ValueError):
+            continue
+        if wd in stored and wd in bounds and bounds_apply(bounds[wd], iso):
+            out.add(str(iso)[:10])
+    return out
+
+
+def staff_availability_for(restaurant_id: int, employee_name: str, db_path: str = DB_PATH, conn=None):
+    """This person's staff_availability row, whatever case their name was
+    saved in, or None."""
+    own = conn is None
+    conn = conn or get_conn(db_path)
+    try:
+        key = _av_key(employee_name)
+        for r in conn.execute("SELECT * FROM staff_availability WHERE restaurant_id=?", (restaurant_id,)).fetchall():
+            if _av_key(r["employee_name"]) == key:
+                return dict(r)
+        return None
+    finally:
+        if own:
+            conn.close()
+
+
+def write_staff_availability(conn, restaurant_id, employee_name, blocked, notes, day_bounds,
+                             previous=None) -> str:
+    """Write one person's row on `conn` (the caller commits) and return its
+    new updated_at. `blocked` is every blocked weekday, the dated ones too:
+    a reader that does not know about day_bounds then errs toward "can't
+    work", never toward scheduling someone on a day they ruled out.
+    `available_days` is its complement, so the row cannot contradict
+    itself (CLIENT-11)."""
+    import json as _j
+    blocked = [d for d in _AV_DAYS if d in set(blocked or [])]
+    bounds = {d: b for d, b in (day_bounds or {}).items() if d in blocked and b and (b.get("from") or b.get("until"))}
+    stamp = availability_stamp(previous)
+    existing = staff_availability_for(restaurant_id, employee_name, conn=conn)
+    name = existing["employee_name"] if existing else " ".join(str(employee_name or "").split())
     conn.execute("""INSERT INTO staff_availability
-        (restaurant_id, employee_name, available_days, unavailable_days, notes, updated_at)
-        VALUES (?,?,?,?,?,datetime('now'))
+        (restaurant_id, employee_name, available_days, unavailable_days, notes, day_bounds, updated_at)
+        VALUES (?,?,?,?,?,?,?)
         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET
             available_days=excluded.available_days,
             unavailable_days=excluded.unavailable_days,
             notes=excluded.notes,
+            day_bounds=excluded.day_bounds,
             updated_at=excluded.updated_at""",
-        (restaurant_id, employee_name,
-         _j.dumps(available_days or []),
-         _j.dumps(unavailable_days or []) if unavailable_days else None,
-         notes))
-    conn.commit()
-    conn.close()
+        (restaurant_id, name, _j.dumps([d for d in _AV_DAYS if d not in blocked]),
+         _j.dumps(blocked) if blocked else None, notes,
+         _j.dumps(bounds) if bounds else None, stamp))
+    return stamp
+
+
+def touch_staff_availability(conn, restaurant_id, employee_name):
+    """Move this person's availability version on, for a change to their
+    time windows (staff_settings), which the staff app edits on the same
+    screen: the version the app holds then no longer matches, and its save
+    is refused instead of silently undoing the owner's change."""
+    row = staff_availability_for(restaurant_id, employee_name, conn=conn)
+    if row:
+        conn.execute("UPDATE staff_availability SET updated_at=? WHERE id=?",
+                     (availability_stamp(row.get("updated_at")), row["id"]))
+    else:
+        write_staff_availability(conn, restaurant_id, employee_name, [], None, None)
+
+
+def save_staff_availability(restaurant_id: int, employee_name: str,
+                             available_days: list, unavailable_days: list = None,
+                             notes: str = None, db_path: str = DB_PATH, day_bounds=_KEEP):
+    """A manager's (or the admin's) save of the weekdays someone can't
+    work. The row is this person's whatever case the name was typed in.
+    A weekday blocked between two dates (an employee's own "Fridays until
+    12/15") keeps its dates while it stays blocked, unless `day_bounds` is
+    passed; a day unblocked drops them."""
+    conn = get_conn(db_path)
+    try:
+        current = staff_availability_for(restaurant_id, employee_name, conn=conn)
+        blocked = set(unavailable_days or [])
+        if available_days:
+            blocked |= {d for d in _AV_DAYS if d not in set(available_days)}
+        bounds = availability_day_bounds(current) if day_bounds is _KEEP else (day_bounds or {})
+        write_staff_availability(conn, restaurant_id, employee_name, blocked, notes, bounds,
+                                 previous=(current or {}).get("updated_at"))
+        conn.commit()
+    finally:
+        conn.close()
 
 def delete_staff_availability(restaurant_id: int, employee_name: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)
@@ -8704,6 +8904,148 @@ def delete_staff_availability(restaurant_id: int, employee_name: str, db_path: s
                  (restaurant_id, employee_name))
     conn.commit()
     conn.close()
+
+
+# ── Floor sections per shift (employee audit V12) ─────────────────────────────
+#
+# A restaurant names its sections once ("Patio", "Bar", "Section 3",
+# restaurants.foh_sections_json); a manager puts a server in one per shift
+# in the Schedule Studio; the staff app reads it beside the shift. Nothing
+# named: nothing assigned and nothing returned, so a restaurant that never
+# uses sections sees no change. section_count (the floor cap) is separate.
+
+FOH_SECTIONS_MAX = 30
+
+
+def shift_section_start(shift_start) -> str:
+    """A shift's start as one spelling ("17:00"), so "5:00pm" and "17:00"
+    name the same shift."""
+    from schedule_rules import parse_minutes
+    m = parse_minutes(shift_start)
+    if m is None:
+        return " ".join(str(shift_start or "").split()).lower()
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def foh_sections(restaurant) -> list:
+    """The restaurant's named sections, in the owner's order ([] for none).
+    Takes a Restaurant or an id."""
+    r = restaurant if hasattr(restaurant, "foh_sections_json") else get_restaurant(int(restaurant))
+    raw = _av_json(getattr(r, "foh_sections_json", None) if r else None, [])
+    return [str(x) for x in raw if isinstance(x, str) and x.strip()]
+
+
+def clean_foh_sections(names) -> list:
+    """Trimmed, de-duplicated (case-blind), at most FOH_SECTIONS_MAX names
+    of 40 characters. Raises ValueError for anything but a list."""
+    if not isinstance(names, list):
+        raise ValueError("sections is a list of names")
+    out, seen = [], set()
+    for n in names:
+        n = " ".join(str(n or "").split())[:40]
+        if n and n.casefold() not in seen:
+            seen.add(n.casefold())
+            out.append(n)
+    if len(out) > FOH_SECTIONS_MAX:
+        raise ValueError(f"at most {FOH_SECTIONS_MAX} sections")
+    return out
+
+
+def set_foh_sections(restaurant_id: int, names, db_path: str = DB_PATH) -> list:
+    import json as _j
+    clean = clean_foh_sections(names)
+    update_restaurant(restaurant_id, {"foh_sections_json": _j.dumps(clean) if clean else None}, db_path=db_path)
+    return clean
+
+
+def shift_sections_between(restaurant_id: int, start: str, end: str, db_path: str = DB_PATH) -> list:
+    """[{date, employee, shift_start, section}] assigned between two iso
+    dates, in sections that are still named (a section the owner removed
+    from the list is not shown anywhere)."""
+    named = {n.casefold(): n for n in foh_sections(get_restaurant(restaurant_id, db_path))}
+    if not named:
+        return []
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT date, employee_name, shift_start, section FROM shift_sections "
+                            "WHERE restaurant_id=? AND date BETWEEN ? AND ? ORDER BY date, shift_start",
+                            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
+    finally:
+        conn.close()
+    return [{"date": r["date"], "employee": r["employee_name"], "shift_start": r["shift_start"],
+             "section": named[r["section"].casefold()]} for r in rows if r["section"].casefold() in named]
+
+
+def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start: str, section,
+                      updated_by=None, db_path: str = DB_PATH):
+    """Put one shift in a named section, or out of any ("" / None). Returns
+    the section as the owner spelled it, or None. Raises ValueError for a
+    section that is not one of the restaurant's or an unreadable shift."""
+    from datetime import datetime as _dt
+    try:
+        day = _dt.strptime(str(date or "")[:10], "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        raise ValueError("date is YYYY-MM-DD")
+    key, start = _av_key(employee), shift_section_start(shift_start)
+    if not key or not start:
+        raise ValueError("employee and shift_start are required")
+    wanted = " ".join(str(section or "").split())
+    named = {n.casefold(): n for n in foh_sections(get_restaurant(restaurant_id, db_path))}
+    if wanted and wanted.casefold() not in named:
+        raise ValueError("That section isn't one of this restaurant's.")
+    conn = get_conn(db_path)
+    try:
+        if not wanted:
+            conn.execute("DELETE FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
+                         (restaurant_id, day, key, start))
+        else:
+            conn.execute("""INSERT INTO shift_sections (restaurant_id, date, employee_key, employee_name, shift_start,
+                                section, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))
+                            ON CONFLICT(restaurant_id, date, employee_key, shift_start) DO UPDATE SET
+                                section=excluded.section, employee_name=excluded.employee_name,
+                                updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+                         (restaurant_id, day, key, " ".join(str(employee).split()), start,
+                          named[wanted.casefold()], (str(updated_by or "").strip()[:120] or None)))
+        conn.commit()
+    finally:
+        conn.close()
+    return named[wanted.casefold()] if wanted else None
+
+
+def sections_for_employee(restaurant_id: int, employee_name: str, db_path: str = DB_PATH) -> dict:
+    """{(iso date, shift start as "HH:MM" — shift_section_start): section} for
+    one person, named sections only. {} when the restaurant names none."""
+    named = {n.casefold(): n for n in foh_sections(get_restaurant(restaurant_id, db_path))}
+    if not named:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT date, shift_start, section FROM shift_sections WHERE restaurant_id=? AND employee_key=?",
+                            (restaurant_id, _av_key(employee_name))).fetchall()
+    finally:
+        conn.close()
+    return {(r["date"], r["shift_start"]): named[r["section"].casefold()]
+            for r in rows if r["section"].casefold() in named}
+
+
+def move_shift_section(restaurant_id: int, date: str, shift_start: str, from_name: str, to_name: str,
+                       conn=None, db_path: str = DB_PATH) -> bool:
+    """A shift that changed hands (a swap, a claimed open shift) keeps its
+    section: the row moves to the new person. On `conn` when given (inside
+    the caller's transaction; the caller commits). True when one moved."""
+    own = conn is None
+    conn = conn or get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=? "
+                           "WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
+                           (_av_key(to_name), " ".join(str(to_name or "").split()), restaurant_id,
+                            str(date or "")[:10], _av_key(from_name), shift_section_start(shift_start)))
+        if own:
+            conn.commit()
+        return cur.rowcount > 0
+    finally:
+        if own:
+            conn.close()
 
 # ── Client data helpers ───────────────────────────────────────────────────────
 
