@@ -456,7 +456,10 @@
    "opponent": "Columbus Crew",
    "venue": "SeatGeek Stadium",
    "broadcast": "Apple TV",
-   "status": "scheduled"
+   "status": "scheduled",
+   "attributes": {
+    "alt_venue": true
+   }
   }
  ]
 }

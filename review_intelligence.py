@@ -1211,7 +1211,7 @@ EVIDENCE RULES — these bound what you may claim:
 - `evidence_review_ids` MUST be ids listed above. Never write an id that is not on this page. An id you did not see is a fabricated citation.
 - State no figure — a dollar amount, a percentage, a count, a rating — that does not appear above.
 - Name a person, a dish, a role, a shift or a weekday ONLY if it appears above. If no dish is listed, your cause may not turn on a dish.
-- You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED" (the "Guests" line is module "guests", the "Game nights" line module "games") or to the "Shifts" (module "shifts"), "Worked" (module "worked") or "Nightly reports" (module "nightly") lines under "WHAT CHANGED ON THOSE SHIFTS" only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
+- {evidence_rule} If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
 - A schedule edit, an event, a guest text or a close-out note on the same shifts is something that moved WITH the complaints: say they coincide, never that one caused the other. Quote no figure from a close-out note.
 - Correlation in a 90-day window is not proof. If the reviews and a figure moved together, say they moved together; do not say one caused the other.
 - `confidence` is "high" only when the complaints are specific AND concentrated AND a figure from another system points the same way. It is "low" when you are reasoning mostly from the theme name.
@@ -1223,11 +1223,46 @@ Return this exact shape:
   "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
   "what_would_confirm": "one concrete thing the owner could check or observe this week that would tell the two apart, 1 sentence",
   "evidence_review_ids": [ids from above that this cause rests on, 2-6 of them],
-  "operational_evidence": [{{"module": "labor|food_cost|waste|marketing|guests|games|shifts|worked|nightly", "metric": "what it is", "value": "the figure exactly as given above"}}],
+  "operational_evidence": {evidence_shape},
   "confidence": "high" | "medium" | "low",
   "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
   "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
 }}"""
+
+
+# The lines a diagnosis may cite by name, with the module each one is.
+_RECORDED_LINE_NAMES = (("guests", "Guests"), ("games", "Game nights"))
+_SLICE_LINE_NAMES = (("shifts", "Shifts"), ("worked", "Worked"), ("nightly", "Nightly reports"))
+
+
+def _or_list(parts):
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " or " + parts[-1]
+
+
+def evidence_guide(cl_lines) -> dict:
+    """{"evidence_rule", "evidence_shape"} for DIAGNOSE_PROMPT, built from the
+    lines ACTUALLY passed for this cluster (`cl_lines`, the same dict the
+    answer is verified against). Re-audit 10/1/26, P4-12: the prompt named
+    the "Game nights" line and offered module `games` to every cluster, even
+    a food-quality one the line is withheld from, so the model was told
+    about a module with no data on its page."""
+    have = [m for m in OPERATIONAL_MODULES if m in (cl_lines or {})]
+    named = [(m, n) for m, n in _RECORDED_LINE_NAMES if m in have]
+    recorded = ""
+    if named:
+        recorded = " (" + ", ".join(f'the "{n}" line {"is " if i == 0 else ""}module "{m}"'
+                                    for i, (m, n) in enumerate(named)) + ")"
+    sliced = [f'"{n}" (module "{m}")' for m, n in _SLICE_LINE_NAMES if m in have]
+    rule = (f'You may connect this cluster to a figure under "WHAT THE OTHER SYSTEMS RECORDED"{recorded}'
+            + (f' or to the {_or_list(sliced)} line{"s" if len(sliced) > 1 else ""} under '
+               f'"WHAT CHANGED ON THOSE SHIFTS"' if sliced else "")
+            + " only by naming that figure in `operational_evidence`.")
+    if not have:
+        return {"evidence_rule": rule,
+                "evidence_shape": "[] (no other system reported a figure for this cluster — leave it empty)"}
+    shape = ('[{"module": "' + "|".join(have) + '", "metric": "what it is", '
+             '"value": "the figure exactly as given above"}]')
+    return {"evidence_rule": rule, "evidence_shape": shape}
 
 
 def _diagnosis_inputs(restaurant_id, cluster, db_path, with_texts=False):
@@ -2115,6 +2150,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                 memory_block=diagnosis_memory(restaurant_id, "review_diagnosis",
                                               diagnosis_subjects(cluster["category"]), db_path=db_path),
                 cause_vocabulary=CAUSE_VOCABULARY,
+                **evidence_guide(cl_lines),
             )
             msg = create_with_retry(
                 client,

@@ -131,7 +131,10 @@ def test_the_slice_reads_the_nightly_reports_no_shows_and_guests():
 def test_the_diagnosis_may_cite_the_worked_and_nightly_lines():
     import review_intelligence as ri
     assert {"worked", "nightly", "guests"} <= set(ri.OPERATIONAL_MODULES)
-    assert "labor|food_cost|waste|marketing|guests|games|shifts|worked|nightly" in ri.DIAGNOSE_PROMPT
+    # The module list is built per cluster from its lines (re-audit P4-12).
+    shape = ri.evidence_guide({m: None for m in ri.OPERATIONAL_MODULES})["evidence_shape"]
+    assert "labor|food_cost|waste|marketing|shifts|guests|worked|nightly|games" in shape
+    assert "{evidence_shape}" in ri.DIAGNOSE_PROMPT
     import inspect
     assert 'cl_lines.update({k: v for k, v in (sl.get("lines") or {}).items()' in inspect.getsource(ri.diagnose)
 

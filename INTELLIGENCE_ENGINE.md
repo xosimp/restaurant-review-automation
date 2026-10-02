@@ -56,7 +56,14 @@ one restaurant ever seeing another's data. Written before implementation
    (see *Who may teach* below). An admin's answer — support triage or a
    view-as — teaches no learner. A deleted restaurant's rows under a
    tombstoned (negative) id still count (`DATABASE_SCHEMA.md` → *What
-   delete_restaurant keeps*).
+   delete_restaurant keeps*). **One named exception to the one table**
+   (re-audit 10/1/26, P4-05): what a team's games did at other restaurants
+   reads `event_peer_effects` — one median percentage and its night count
+   per restaurant × series × side × season class, written for each
+   restaurant by the same bounded, resumable nightly features pass beside
+   its feature row — and nothing else; a request never reads another
+   restaurant's per-night `event_outcomes` (*Game effects across
+   restaurants* below).
 3. **Nothing is generated to fill a gap.** A pattern exists only when a
    permutation test and a false-discovery correction say so; a benchmark
    only when the cohort is large enough; a confidence score only from
@@ -118,6 +125,7 @@ other modules need.
 | `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
 | `intel_confidence_log` | per week × cohort × kind: the ISO week's own mean confidence (current `trust_version` snapshots only), acceptance, success, `n` (recommendations, not event rows), `orgs`; the trailing year's in `trailing_n`, `trailing_mean_confidence`, `trailing_acceptance_rate`, `trailing_success_rate`, `trailing_orgs` | aggregates |
 | `intel_rec_events` effect columns (boot ALTERs) | `metric`, `effect_pct`, `effect_z` (signed so positive = better), `baseline_kind`, `after_end`, `tags_json` — what a counted result MOVED (BM4-6) | tenant-keyed; filled only for results `rec_learning.learned_verdict` counts |
+| `event_peer_effects` (boot, `event_intel.init_event_intel` → `peers.init_peers`) | one row per restaurant × followed series × side (home / away) × season class (preseason or not): its own measured median `median_lift_pct` over the same segment only (`engine.effect_for(exact=True)`), `nights`, `first_night`, `computed_at`; written by the nightly features pass, replaced whole per restaurant; none for a restaurant that may not teach, none of a converted demo's demo-era nights | a percentage and a count, no dollars, no names; read only by `event_intel.peers` behind the published band's floor |
 | `intel_dna` | one row per restaurant-week of its Restaurant DNA: `dims_json` `{dim: {raw, z, n, basis, norm}}`, `coverage`, `version` | ratios, rates, shares and bands only — never dollars; `assert_anonymous` on every row |
 | `intel_benchmark_facts` | per restaurant × metric × week: the engine's `compare()` payload (kinds self/peers/platform/industry/market — never the viewer-dependent `location`), `available` | the restaurant's own comparisons only |
 | `intel_effects` | per restaurant × kind × metric × week: the neighbour prediction fact (`predict.predict_effect`), `available` | counts, a median and an interval only |
@@ -226,14 +234,36 @@ whole organisation left out (`privacy.org_map`), at least `benchmarks.MIN_QUARTI
 restaurants from `MIN_ORGS` organisations with none over `MAX_ORG_SHARE`, each
 from the same segment only and no demo-era night, the Harrell–Davis median
 rounded to 5 points, n said as a floor, passed through `assert_anonymous`.
-Computed on request (memoised a minute and dropped on any restaurant change), said
-as theirs in the brief's game alert and Ask's `read_events`, and never
-applied to a forecast, a staffing plan or a push.
+
+Two halves (re-audit 10/1/26, P4-05 — it used to run `effect_for` for every
+follower, per viewer, per request, reading their `event_outcomes` live):
+
+- **Nightly, per restaurant** — `peers.store_member_effects`, called by
+  `jobs.run_features` beside the feature row (same worker pool, wall clock
+  and cursor; one restaurant's failure is captured as `event_peers` and the
+  pass moves on): its own median per followed series × side × season class
+  into `event_peer_effects`, its demo-era nights left out, nothing for a
+  restaurant that may not teach.
+- **On request** — `peers.peer_effect` reads the segment's rows (one indexed
+  query, joined to active follows, memoised a minute per segment and shared
+  by every viewer, dropped on any restaurant change) and applies only the
+  viewer-dependent part: the viewer and its organisation out, who may teach
+  NOW (an exclusion takes effect at once), a row whose `first_night` falls
+  before its restaurant's `learning_since` refused until re-measured, then the
+  floors above.
+
+Said as theirs in the brief's game alert and Ask's `read_events`, with when
+Cavnar AI plans on the restaurant's own nights instead (`peers.plan_words`:
+`event_memory.EFFECT_MIN_N` games measured and a median past
+`EFFECT_FLOOR_PCT`, the forecast's own test), and never applied to a
+forecast, a staffing plan or a push.
 
 ## Background jobs
 
 - **`intelligence_features`** nightly at 3am server time: for each active
-  restaurant, compute this ISO week's feature row (upsert). Worker pool of
+  restaurant, compute this ISO week's feature row (upsert), its DNA row and
+  its game medians (`event_peer_effects`, *Game effects across
+  restaurants*). Worker pool of
   4, wall-clock bound of 4 minutes, and a cursor in `job_cursors` so the
   next night resumes where this one stopped — `run_daily_fetch`'s pattern.
 - **`intelligence_learning`** nightly at 4am: once, `jobs.purge_google_pooled`

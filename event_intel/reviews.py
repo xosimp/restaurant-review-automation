@@ -45,7 +45,8 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
     in the period. `game_pct` / `other_pct` are None below REVIEW_MIN_EACH;
     `text` only when both clear it and they sit REVIEW_GAP_POINTS apart."""
     try:
-        today = today or engine._today(_restaurant(restaurant_id, db_path))
+        restaurant = _restaurant(restaurant_id, db_path)
+        today = today or engine._today(restaurant)
         today = today if isinstance(today, date) else date.fromisoformat(str(today)[:10])
         start = today - timedelta(days=int(days))
         followed = store.follows(restaurant_id, db_path=db_path)
@@ -62,12 +63,16 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
         from models import REVIEW_TIME_AXIS_BARE as AXIS
         conn = store.get_conn(db_path)
         try:
+            # A day either side, then each stamp's own local day (below).
             rows = conn.execute(
-                f"SELECT substr({AXIS}, 1, 10) AS day, categories, sentiment, rating FROM reviews WHERE restaurant_id=? "
-                f"AND deleted_at IS NULL AND processed=1 AND substr({AXIS}, 1, 10) >= ? AND substr({AXIS}, 1, 10) < ?",
-                (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
+                f"SELECT {AXIS} AS stamp, categories, sentiment, rating FROM reviews WHERE restaurant_id=? "
+                f"AND deleted_at IS NULL AND processed=1 AND substr({AXIS}, 1, 10) >= ? AND substr({AXIS}, 1, 10) <= ?",
+                (restaurant_id, (start - timedelta(days=1)).isoformat(), today.isoformat())).fetchall()
         finally:
             conn.close()
+        tz = getattr(restaurant, "timezone", None)
+        rows = [dict(r, day=local_day(r["stamp"], tz)) for r in rows]
+        rows = [r for r in rows if start.isoformat() <= r["day"] < today.isoformat()]
         if not rows:
             return None
         g_n = g_s = o_n = o_s = 0
@@ -99,6 +104,24 @@ def game_night_reviews(restaurant_id, today=None, days=REVIEW_LOOKBACK_DAYS, db_
     except Exception as ex:
         log.warning("event_intel.reviews failed rid=%s: %s", restaurant_id, ex)
         return None
+
+
+def local_day(stamp, tz=None) -> str:
+    """The restaurant's own day ("YYYY-MM-DD") a review's time-axis stamp
+    falls on (re-audit 10/1/26, X-7). The stored axis is local wall-clock
+    already — fetcher and gmb store review_date in the restaurant's zone
+    (MOD-REV-9) and models.save_reviews stamps fetched_at the same way — so a
+    naive stamp keeps its own date; one that carries an offset ("…Z",
+    "…+00:00": a CSV import, an older row) is converted to the restaurant's
+    zone first (time_utils.parse_stored_dt), where its first ten characters
+    were a UTC date. Unreadable: its first ten characters."""
+    from time_utils import parse_stored_dt, restaurant_tz
+    raw = str(stamp or "")
+    try:
+        dt = parse_stored_dt(raw, tz=restaurant_tz(tz)) if len(raw) > 10 else None
+    except Exception:
+        dt = None
+    return dt.date().isoformat() if dt is not None else raw[:10]
 
 
 def _restaurant(restaurant_id, db_path):
