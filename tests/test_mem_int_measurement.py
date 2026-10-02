@@ -93,6 +93,10 @@ CALLERS = {
     # the measured effects of their nights, through effects_for_day's floor.
     ("demand.py", "prep_list"): "floor inside",
     ("inventory.py", "order_window_effects"): "floor inside",
+    # Event re-audit P4-07 (10/1/26): a frequent series' game is said with
+    # the label's own measured figure — the one engine.headline judged it by
+    # — and carries that figure's `applies` into effect_for's answer.
+    ("event_intel/engine.py", "_label_effect"): "checks",
 }
 
 
