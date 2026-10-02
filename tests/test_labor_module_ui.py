@@ -343,7 +343,10 @@ def test_labor_ops_renderers_can_reach_the_home_helpers_they_call():
     for fn in ("function lb2LoadTimeOff(){", "function lb2LoadCovers(){"):
         start = src.index(fn)
         body = src[start:src.index("\n}\n", start)]
-        assert "mdy(" in body and "esc(" in body, fn
+        # Covers' dates are drawn by lb2CovChips since 10/2/26.
+        helpers = body + (src[src.index("function lb2CovChips("):src.index("function lb2CoversAll(")]
+                          if "lb2LoadCovers" in fn else "")
+        assert "mdy(" in helpers and "esc(" in body, fn
         # Neither renderer clears its text class any more: the body keeps
         # .lb2-op-body so the empty sentence is set at the tile's 15px.
         assert "className=''" not in body, fn

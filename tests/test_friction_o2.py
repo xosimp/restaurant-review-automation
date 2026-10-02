@@ -249,7 +249,9 @@ def test_pos_guest_counts_are_offered_never_written(db_path, monkeypatch):
     assert cl.post("/api/labor/covers", json={"from_pos": True, "rows": [{"date": y, "covers": 212}]}).get_json()["ok"]
     src = _conn(db_path).execute("SELECT source FROM covers_daily WHERE date=?", (y,)).fetchone()["source"]
     assert src == "pos_confirmed"
-    assert "data-cov-pos=" in _src()
+    # Since covers fill themselves nightly (covers.sync_from_pos), the web
+    # card no longer draws the offer (owner, 10/2/26); the API keeps it.
+    assert "data-cov-pos=" not in _src()
 
 
 # ── #36 DSR budget prefill (U2-11) ───────────────────────────────────────────
