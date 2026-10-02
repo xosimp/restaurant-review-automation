@@ -76,6 +76,31 @@ def _catalog_context(rid, signal, db_path):
         return None
 
 
+def _game_labels(event):
+    """event_intel.playbook.game_labels — the labels a game's own measured
+    effect is kept under — or () when it can't be read."""
+    try:
+        from event_intel import playbook
+        return playbook.game_labels(event)
+    except Exception:
+        return ()
+
+
+def effect_words(e, figure=True) -> str:
+    """One measured effect a forecast applied, as every forecast sentence
+    says it — the report's Tomorrow basis and both of the brief's today
+    lines: "Payday +8% (measured 6 times here)". With `figure` False (a
+    game's own effect, whose figure the game's line says — effect_for's,
+    re-audit 2 R2-02) it is named without one: "Bears home game · Soldier
+    Field's measured effect"."""
+    name = e.get("display") or e.get("label")
+    if not figure:
+        own = "'" if str(name).endswith("s") else "'s"
+        return f"{name}{own} measured effect"
+    return (f"{name} {e['lift_pct']:+.0f}% (measured {e['n']} "
+            f"time{'s' if e.get('n') != 1 else ''} here)")
+
+
 GAMES_AHEAD_DAYS = 2      # beyond the day after: a game shows on the three reports before it
 
 
@@ -538,6 +563,7 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                           "text": f"{short}{f', high {hi}°' if hi is not None else ''}"})
 
     events = _events(rid, tmr, db_path)
+    game_labels = {}      # a measured-effect label -> the game whose item says its figure
     # A quiet catalog game (a frequent series not measured to matter here)
     # is no item, and the owner's own events and reservations come first,
     # so three of them are never pushed out by team games (phase 4 audit).
@@ -559,10 +585,19 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
             # A catalog event (event_intel: a Bears game) reads as the game —
             # who, when, on what — with what games like it did here, measured.
             ctx = _catalog_context(rid, e, db_path)
-            text = ctx["describe_short"] if ctx else str(e.get("label"))
-            if ctx and ctx.get("effect"):
+            plain = ctx["describe_short"] if ctx else str(e.get("label"))
+            text = plain
+            has_effect = bool(ctx and ctx.get("effect"))
+            if has_effect:
+                # The game's one figure (effect_for's): the forecast's own
+                # copy of this game's effect is named without one below
+                # (re-audit 2 R2-02).
                 text += f". {ctx['effect']['basis']}"
-            items.append({"kind": "event", "tone": "warn", "text": text,
+                game_labels.update({lab: ctx["event"]["id"] for lab in _game_labels(ctx["event"])})
+            # `plain` is the game without its measured lift — what a login
+            # without the Labor view reads in the brief (R2-07); `has_effect`
+            # whether this item said the game's effect (R2-05).
+            items.append({"kind": "event", "tone": "warn", "text": text, "plain": plain, "has_effect": has_effect,
                           "event_id": (ctx or {}).get("event", {}).get("id")})
             # Who worked games like it, by role (event_intel.playbook,
             # phase 2): a plan where measured, else what the last one
@@ -577,7 +612,7 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                 prep = _game_prep(rid, (ctx or {}).get("event"), db_path)
             if st and st.get("text"):
                 items.append({"kind": "game_staffing", "tone": "warn" if st.get("recommend") else None,
-                              "text": st["text"], "basis": st.get("basis"),
+                              "text": st["text"], "basis": st.get("basis"), "plan": bool(st.get("recommend")),
                               "event_id": (ctx or {}).get("event", {}).get("id")})
             if prep:
                 items.append(dict(prep, kind="game_prep", event_id=(ctx or {}).get("event", {}).get("id")))
@@ -601,15 +636,20 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
     fc = _forecast(rid, tmr, db_path)
     forecast = None
     if fc and fc.get("available"):
+        # A game's own effect the forecast applied is that game's item's to
+        # say, with effect_for's figure: here it is named, never given a
+        # second figure (re-audit 2 R2-02). `game_event_id` marks it for
+        # every reader of the stored effects (the brief's today line, the
+        # report's chips).
+        effects = [dict(e, game_event_id=game_labels[e.get("label")])
+                   if isinstance(e, dict) and e.get("label") in game_labels else e for e in fc.get("effects") or []]
         basis = f"the median of the last {fc.get('samples')} {wd}s"
-        if fc.get("effects"):
-            basis += ", " + ", ".join(
-                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
-                f"time{'s' if e['n'] != 1 else ''} here)" for e in fc["effects"])
+        if effects:
+            basis += ", " + ", ".join(effect_words(e, figure=e.get("game_event_id") is None) for e in effects)
         forecast = {"typical": fc.get("typical_sales"), "low": fc.get("low"), "high": fc.get("high"),
                     "samples": fc.get("samples"), "weekday": wd,
                     "base": fc.get("base_sales"), "effect_pct": fc.get("effect_pct"),
-                    "effects": fc.get("effects") or [],
+                    "effects": effects,
                     "text": (f"{_money(fc['low'])}–{_money(fc['high'])}" if fc.get("low") is not None
                              and fc.get("high") is not None else _money(fc["typical_sales"])),
                     "basis": basis}

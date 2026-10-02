@@ -143,8 +143,9 @@ def test_a_staffing_plan_needs_measured_games_that_all_ran_the_role_above_usual(
     plan = st["recommend"]
     assert [(p["role"], p["delta"], p["from"]) for p in plan] == [("Bartender PM", 1, "3:50pm")]
     assert st["text"] == ("Staff above a usual Sunday: 1 more Bartender PM from about 3:50pm. On your last 2 home "
-                          "games you ran 4 Bartender PM against a usual Sunday's 3, and sales ran 25% above their "
-                          "usual weekday.")
+                          "games you ran 4 Bartender PM against a usual Sunday's 3.")
+    # the lift those games ran is data, never a second figure in the text (re-audit 2 R2-03)
+    assert st["lift_pct"] == 25.0
     # roles that matched a usual Sunday are not said
     assert {d["role"] for d in st["deltas"]} == {"Bartender PM"}
 

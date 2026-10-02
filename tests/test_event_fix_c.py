@@ -147,7 +147,7 @@ def test_a_confounded_game_never_joins_a_staffing_plan_while_clean_ones_suffice(
     st = playbook.staffing(r.id, _jaguars(db), db_path=db)
     assert st["n"] == 2 and not st["mixed"] and [g["date"] for g in st["games"]] == ["2026-10-04", "2026-09-20"]
     assert st["text"].startswith("Staff above a usual Sunday: 1 more Bartender PM")
-    assert "On your last 2 home games" in st["text"] and "sales ran 25% above" in st["text"]
+    assert "On your last 2 home games" in st["text"] and st["lift_pct"] == 25.0      # data, not text (R2-03)
 
 
 def test_with_too_few_clean_games_the_plan_is_said_mixed_and_never_recommended(db):
@@ -563,7 +563,8 @@ def test_every_unasked_game_surface_asks_the_one_quiet_test():
     from dsr import tomorrow
     headline = re.compile(r"\b(?:engine|_eng)\.headline\(")
     # Surfaces that hold the catalog game: engine.headline.
-    for fn in (playbook.alert,                # the brief's game alert (morning_brief._game_line)
+    assert "_lead(" in inspect.getsource(inspect.unwrap(playbook.alert))    # the alert's game: playbook._lead
+    for fn in (playbook._lead,                # the brief's game alert (morning_brief._game_line)
                playbook._game_night,          # the report's game night (dsr.block_intel._game)
                tomorrow.build,                # the report's Tomorrow event items (staffing, prep)
                tomorrow._games_ahead,         # the report's games two and three days out
