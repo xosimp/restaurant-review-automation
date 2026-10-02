@@ -960,6 +960,7 @@ def test_the_feed_leads_marketing_under_the_header():
     panel = _between('id="panel-marketing"', '<div id="mkt-tab-content" role="tabpanel"')
     assert '<section class="mkt-opps" id="mkt-opps" data-nav="marketing/opportunities"' in panel
     assert panel.index('id="mkt-tab-content-btn"') < panel.index('class="hb-top"') < panel.index('id="mkt-opps"')
+    assert '<header class="ss-top mkt-top">' in panel and '<span class="ss-name">Marketing Studio</span>' in panel
     assert '<nav class="ss-steps mkt-steps" role="tablist" aria-label="Marketing sections">' in panel
 
 
