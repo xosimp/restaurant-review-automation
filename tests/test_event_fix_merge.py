@@ -119,7 +119,7 @@ def test_stamps_job_history_and_the_events_card_follow_the_merge():
     import event_memory
     src = inspect.getsource(event_memory)
     assert src.count("when = at or _restaurant_now(restaurant_id)") == 2
-    assert '"event_sync_one"' in inspect.getsource(admin_routes) and '"event_catalog_resync"' in inspect.getsource(admin_routes)
+    assert '"pos_sync_one", "event_sync_one")' in inspect.getsource(admin_routes)
     from pathlib import Path
     html = (Path(__file__).resolve().parent.parent / "templates" / "dashboard.html").read_text()
     assert "function _evReload(d){loadSignals();if(d&&d.refreshing)setTimeout(loadSignals,2500);}" in html

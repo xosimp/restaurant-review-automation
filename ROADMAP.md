@@ -74,7 +74,11 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 - **10/1 — Event Intelligence phase 4 (no new APIs).**
   - The Blackhawks, Bulls and Fire seasons and the White Sox postseason, from
-    each league's own published schedule, as season files.
+    each league's own published schedule, as season files. Since the second
+    re-audit: the Fire's cup matches (U.S. Open Cup, Leagues Cup), the Bulls'
+    local TV (CHSN), the White Sox 2026 regular season and a Cubs 2026 file.
+    Still by hand in the admin's Event calendar: the Sox ALDS games 4 and 5
+    (if necessary) need a result or a cancellation once the series ends.
   - A frequent series (40-odd home games) stays context until this restaurant
     measures it to matter: its nights stay in the usual-night baselines, and
     it earns no alert, games-ahead item or game-night line until then. A
@@ -95,6 +99,14 @@ restaurant 5; restaurant 4 is Will's demo copy.
     times on the restaurant's clock, the measured game leads when two share a
     date, one rule for who sees the item mix, and a removed game comes back
     only through Put back (web and iOS), with who removed it.
+  - Re-audited a second time the same day: a game's season class (preseason,
+    playoff, cup) is part of its label, so no reader pools one class with
+    another; one figure per game in the brief and the report, the forecast's
+    own once the label's effect applies; removing a past game re-measures its
+    night; the follow switch and Put back save at once and re-sync on the
+    bounded admin pool; event changes reach Account activity; one rule for
+    who reads the guest text and its send time; the big-game heads-up shows
+    only to the Labor readers it was pushed to; the follow switch on iOS.
   - Not built (each needs an events or sports API): concerts and festivals,
     road closures, the final whistle, watch-party searches.
 - **10/1 — Event Intelligence phase 3.**

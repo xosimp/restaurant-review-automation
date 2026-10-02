@@ -125,7 +125,7 @@ other modules need.
 | `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
 | `intel_confidence_log` | per week × cohort × kind: the ISO week's own mean confidence (current `trust_version` snapshots only), acceptance, success, `n` (recommendations, not event rows), `orgs`; the trailing year's in `trailing_n`, `trailing_mean_confidence`, `trailing_acceptance_rate`, `trailing_success_rate`, `trailing_orgs` | aggregates |
 | `intel_rec_events` effect columns (boot ALTERs) | `metric`, `effect_pct`, `effect_z` (signed so positive = better), `baseline_kind`, `after_end`, `tags_json` — what a counted result MOVED (BM4-6) | tenant-keyed; filled only for results `rec_learning.learned_verdict` counts |
-| `event_peer_effects` (boot, `event_intel.init_event_intel` → `peers.init_peers`) | one row per restaurant × followed series × side (home / away) × season class (preseason or not): its own measured median `median_lift_pct` over the same segment only (`engine.effect_for(exact=True)`), `nights`, `first_night`, `computed_at`; written by the nightly features pass, replaced whole per restaurant; none for a restaurant that may not teach, none of a converted demo's demo-era nights | a percentage and a count, no dollars, no names; read only by `event_intel.peers` behind the published band's floor |
+| `event_peer_effects` (boot, `event_intel.init_event_intel` → `peers.init_peers`) | one row per restaurant × followed series × side (home / away) × season class (preseason or the regular season — no playoff or special segment, and the home ground only): its own measured median `median_lift_pct` over the same segment only (`engine.effect_for(exact=True)`), `nights`, `first_night`, `computed_at`; written by the nightly features pass, replaced whole per restaurant; none for a restaurant that may not teach, none of a converted demo's demo-era nights | a percentage and a count, no dollars, no names; read only by `event_intel.peers` behind the published band's floor |
 | `intel_dna` | one row per restaurant-week of its Restaurant DNA: `dims_json` `{dim: {raw, z, n, basis, norm}}`, `coverage`, `version` | ratios, rates, shares and bands only — never dollars; `assert_anonymous` on every row |
 | `intel_benchmark_facts` | per restaurant × metric × week: the engine's `compare()` payload (kinds self/peers/platform/industry/market — never the viewer-dependent `location`), `available` | the restaurant's own comparisons only |
 | `intel_effects` | per restaurant × kind × metric × week: the neighbour prediction fact (`predict.predict_effect`), `available` | counts, a median and an interval only |
@@ -251,6 +251,13 @@ follower, per viewer, per request, reading their `event_outcomes` live):
   NOW (an exclusion takes effect at once), a row whose `first_night` falls
   before its restaurant's `learning_since` refused until re-measured, then the
   floors above.
+- **No figure where no segment is kept** (event re-audit 2, 10/1/26) — a
+  home game at another ground (`store.alt_venue`: the Fire at SeatGeek
+  Stadium), a playoff game and a special (cup) game get none
+  (`engine.season_class` outside regular and preseason): the nightly half
+  materialises only the home ground's regular-season and preseason nights,
+  and quoting those under a playoff or cup heading would be another crowd's
+  figure.
 
 Said as theirs in the brief's game alert and Ask's `read_events`, with when
 Cavnar AI plans on the restaurant's own nights instead (`peers.plan_words`:
