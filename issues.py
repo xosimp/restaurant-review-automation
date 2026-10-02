@@ -417,7 +417,8 @@ def _fall_back(r, who, reason, db_path=DB_PATH):
 
 _KIND_MODULE = {"review": "reviews", "stock": "food", "labor": "labor", "coverage": "labor",
                 "no_show": "labor", "checklist": "ops", "plan": "ops", "loss": "ops",
-                "task_missed": "labor", "task_sheet": "labor", "task_pattern": "labor"}
+                "task_missed": "labor", "task_sheet": "labor", "task_pattern": "labor",
+                "task_flag": "labor"}
 
 
 def _issue_key(r):
@@ -427,7 +428,9 @@ def _issue_key(r):
 # Issues that are not a problem surfacing: a weekly plan item and a single
 # guest's review routed to a manager (no recommendation could precede one
 # review) — everything else is checked for a recommendation first.
-_NOT_A_MISS = ("plan", "review", "task_missed", "task_sheet", "task_pattern")   # a skipped duty is not a detection Cavnar AI missed
+# A skipped duty, or a reading an employee took out of range on a critical
+# task-sheet line (task_flag, COM-10), is not a detection Cavnar AI missed.
+_NOT_A_MISS = ("plan", "review", "task_missed", "task_sheet", "task_pattern", "task_flag")
 
 
 def _note_missed(restaurant_id, kind, key, title, db_path=DB_PATH):

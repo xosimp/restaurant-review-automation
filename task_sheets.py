@@ -17,7 +17,11 @@ checklist everyone could see and nobody owned got done by Erik. So:
   due times when it is issued, so a line added at noon does not make this
   morning's opener late. With no published schedule for the day it is issued
   unassigned: whoever signs in on that job code sees it, and the owner's day
-  view says "no schedule published" — itself a finding.
+  view says "no schedule published" — itself a finding. While it is open its
+  PEOPLE follow the live published week: a same-day cover or swap hands it
+  to whoever now works the shift (refresh_assignees; every read checks the
+  week's signature, and re-reads the CSV only when it changed). A sheet
+  nobody works that day is recorded status='none' and never shown.
 - A COMPLETION is immutable: a tick writes a row, an un-tick writes another
   (undone=1). The newest row per line is its state. Late (after its due
   time) and flagged (a number outside its range) are stamped on the row.
@@ -26,7 +30,8 @@ checklist everyone could see and nobody owned got done by Erik. So:
   by side. Staff tick their own sheets; a manager also sees the floor and
   signs the shift off.
 - Misses reach someone (`run_job`, every 20 minutes): a critical line past
-  due opens a texted issue for the routed manager; a sheet left unfinished
+  due opens a texted issue for the routed manager (and a critical reading
+  out of its range does the moment it is ticked); a sheet left unfinished
   at shift end opens a quiet issue (Home and the issue list); three misses of
   one line by one person in 14 days is a pattern the owner sees once.
 
@@ -49,6 +54,8 @@ PROOF_KINDS = ("none", "photo", "number", "note")
 CLOSE_GRACE_MINUTES = 30
 PATTERN_MISSES = 3
 PATTERN_DAYS = 14
+# evaluate() sweeps every open sheet; one older than this closes quietly.
+STALE_DAYS = 3
 MAX_LINES = 80
 MAX_SHEETS = 60
 LABEL_MAX = 240
@@ -132,7 +139,7 @@ def init_schema(conn):
         shift_end      TEXT,
         sheet_version  INTEGER NOT NULL,
         lines_json     TEXT    NOT NULL,       -- the lines as issued, with their due times
-        status         TEXT    NOT NULL DEFAULT 'open',   -- open | done | partial | missed
+        status         TEXT    NOT NULL DEFAULT 'open',   -- open | done | partial | missed | none (nobody on it today)
         done_count     INTEGER,
         line_count     INTEGER,
         closed_at      TEXT,
@@ -180,6 +187,29 @@ def init_schema(conn):
         UNIQUE(restaurant_id, task_date, shift_kind)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_task_signoff_date ON task_signoffs(task_date)")
+    _add_columns(conn)
+
+
+# Columns added after the tables first shipped (employee audit B4, 10/2/26),
+# added here at boot only:
+#   task_assignments.schedule_sig — the published week (id, version, stamps)
+#     the row's people were resolved from. A sheet re-resolves its people
+#     when the live week changes under it (a same-day cover or swap, LG-15),
+#     and a day whose rows all carry the live signature reads no CSV at all
+#     (PERF-08). status='none' is a sheet whose job code nobody works that
+#     shift today: recorded, so the day settles, and never shown.
+#   task_proof_media.uploaded_by_user_id — whose upload, for the per-login
+#     photo cap (SEC-13).
+_LATE_COLUMNS = (("task_assignments", "schedule_sig", "TEXT"),
+                 ("task_proof_media", "uploaded_by_user_id", "INTEGER"))
+
+
+def _add_columns(conn):
+    for table, col, decl in _LATE_COLUMNS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_media_uploader ON task_proof_media(uploaded_by_user_id, created_at)")
 
 
 def migrate_templates(conn):
@@ -524,22 +554,50 @@ def business_day(restaurant_id, restaurant=None, now_local=None) -> date:
     return business_date(r, now_local or local_now(restaurant_id, r))
 
 
-def published_day_shifts(restaurant_id, day) -> tuple:
+def _published_owner(restaurant_id, day):
+    """The id of the newest PUBLISHED week covering `day`, or None."""
+    from staff_schedule import _published_weeks, _owner_of
+    return _owner_of(_published_weeks(restaurant_id, day), day)
+
+
+def published_day_shifts(restaurant_id, day, owner=None) -> tuple:
     """(shifts, published) for one business date: every shift on the
     newest PUBLISHED week that covers it, as [{employee, role, start, end}]
     with local datetimes (labor.timed_shifts_from_csv). A draft never
-    assigns anyone a sheet — staff_schedule's own rule."""
-    from staff_schedule import _published_weeks, _owner_of
-    from models import get_schedule_history_detail
+    assigns anyone a sheet — staff_schedule's own rule. Reads only the
+    week's CSV (models.get_published_week_csv, PERF-12)."""
     import labor
-    weeks = _published_weeks(restaurant_id, day)
-    owner = _owner_of(weeks, day)
+    if owner is None:
+        owner = _published_owner(restaurant_id, day)
     if owner is None:
         return [], False
-    detail = get_schedule_history_detail(owner, restaurant_id) or {}
+    week = _models_mod.get_published_week_csv(owner, restaurant_id) or {}
     iso = day.isoformat()
-    shifts = [s for s in labor.timed_shifts_from_csv(detail.get("schedule_csv") or "") if s["start"][:10] == iso]
+    shifts = [s for s in labor.timed_shifts_from_csv(week.get("schedule_csv") or "") if s["start"][:10] == iso]
     return shifts, True
+
+
+def _schedule_sig(restaurant_id, day, db_path=DB_PATH):
+    """(signature, owner id) of the live published week for `day`, without
+    reading its CSV: the week's id, its newest version (every cover, swap and
+    edit appends one — schedule_versions.write_on), and its edit and publish
+    stamps. "none" when no published week covers the day."""
+    owner = _published_owner(restaurant_id, day)
+    if owner is None:
+        return "none", None
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT edited_at, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (owner, restaurant_id)).fetchone()
+        try:
+            ver = conn.execute("SELECT MAX(version) FROM schedule_versions WHERE history_id=?", (owner,)).fetchone()[0]
+        except Exception:
+            ver = None
+    finally:
+        conn.close()
+    if not row:
+        return "none", None
+    return f"{owner}:{ver or 0}:{row['edited_at'] or ''}:{row['published_at'] or ''}", owner
 
 
 def _pick(sheet, shifts):
@@ -585,83 +643,215 @@ def _due_at(kind, offset, start, end):
     return at.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _snapshot_lines(sheet, start, end):
+    """The lines as issued, with each one's due time and the offset it came
+    from (so a re-resolved shift can move its due times)."""
+    return [{"line_id": l["id"], "label": l["label"], "section": l["section"],
+             "due_offset_min": l["due_offset_min"],
+             "due_at": _due_at(sheet["shift_kind"], l["due_offset_min"], start, end),
+             "proof": l["proof"], "proof_label": l["proof_label"], "min_value": l["min_value"],
+             "max_value": l["max_value"], "critical": l["critical"]} for l in sheet["lines"]]
+
+
+def _moved_lines(kind, lines, old_start, old_end, start, end):
+    """The issued lines with their due times following a re-resolved shift.
+    A line issued with its offset is recomputed; an older snapshot (no
+    offset kept) moves by the shift's own move — exact, since a due time is
+    start + offset (end - offset for a closing sheet)."""
+    anchor_old = old_end if kind == "closing" else old_start
+    anchor_new = end if kind == "closing" else start
+    delta = None
+    if anchor_old and anchor_new:
+        delta = datetime.fromisoformat(anchor_new) - datetime.fromisoformat(anchor_old)
+    out = []
+    for l in lines:
+        l = dict(l)
+        if l.get("due_offset_min") is not None:
+            l["due_at"] = _due_at(kind, l["due_offset_min"], start, end)
+        elif l.get("due_at") and delta is not None:
+            l["due_at"] = (datetime.fromisoformat(l["due_at"]) + delta).strftime("%Y-%m-%dT%H:%M:%S")
+        out.append(l)
+    return out
+
+
+def _sheets_due(restaurant_id, weekday, db_path=DB_PATH):
+    """Ids of the active sheets with lines that run on this weekday — one
+    small read, no line payloads."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.days_of_week FROM task_sheets s WHERE s.restaurant_id=? AND s.active=1 AND EXISTS "
+            "(SELECT 1 FROM task_sheet_lines l WHERE l.sheet_id=s.id AND l.active=1)", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = set()
+    for r in rows:
+        days = [int(d) for d in (r["days_of_week"] or "").split(",") if d.strip().isdigit()]
+        if not days or weekday in days:
+            out.add(r["id"])
+    return out
+
+
+def _settle(restaurant_id, day, r, db_path=DB_PATH, force=False) -> tuple:
+    """(issued, re-resolved) for one business day. Issues every sheet due
+    that day with no row yet, and re-resolves the people on each row still
+    open whose published week has changed since (a same-day cover or swap,
+    LG-15) — or on every open row, with force. A sheet nobody works that day
+    is recorded status='none', so a settled day reads no schedule at all
+    (PERF-08)."""
+    due = _sheets_due(restaurant_id, day.weekday(), db_path)
+    if not due:
+        return 0, 0
+    iso = day.isoformat()
+    conn = get_conn(db_path)
+    try:
+        existing = {row["sheet_id"]: row for row in conn.execute(
+            "SELECT * FROM task_assignments WHERE restaurant_id=? AND task_date=?", (restaurant_id, iso))}
+    finally:
+        conn.close()
+    try:
+        sig, owner = _schedule_sig(restaurant_id, day, db_path)
+    except Exception:
+        sig, owner = None, None
+    todo = [sid for sid in sorted(due) if sid not in existing]
+    stale = [row for row in existing.values() if row["status"] in ("open", "none")
+             and (force or (sig is not None and (row["schedule_sig"] or "") != sig))]
+    if not todo and not stale:
+        return 0, 0
+    try:
+        shifts, published = published_day_shifts(restaurant_id, day, owner=owner) if owner else ([], False)
+    except Exception:
+        shifts, published = [], False
+    made = changed = 0
+    sheets = {s["id"]: s for s in list_sheets(restaurant_id, db_path=db_path)} if todo else {}
+    conn = get_conn(db_path)
+    try:
+        for sid in todo:
+            s = sheets.get(sid)
+            if not s or not s["lines"]:
+                continue
+            status = "open"
+            if published:
+                pick = _pick(s, shifts)
+                if pick is None:
+                    # Nobody on this code works this shift today: recorded,
+                    # never shown, re-resolved if the week changes.
+                    names, unassigned, start, end, status = [], 0, None, None, "none"
+                else:
+                    names, start, end = pick
+                    unassigned = 0
+            else:
+                names, unassigned = [], 1
+                start, end = _hours_window(r, day)
+            lines = _snapshot_lines(s, start, end)
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO task_assignments (restaurant_id, sheet_id, task_date, job_code, shift_kind, title, "
+                "assignees_json, unassigned, shift_start, shift_end, sheet_version, lines_json, line_count, status, "
+                "schedule_sig) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (restaurant_id, s["id"], iso, s["job_code"], s["shift_kind"], s["title"],
+                 json.dumps(names), unassigned, start, end, s["version"], json.dumps(lines), len(lines), status, sig))
+            made += (cur.rowcount or 0) if status == "open" else 0
+        for row in stale:
+            changed += _reresolve(conn, row, shifts, published, sig)
+        conn.commit()
+    finally:
+        conn.close()
+    return made, changed
+
+
+def _reresolve(conn, row, shifts, published, sig) -> int:
+    """Put the people the live published week names on one still-open row
+    (1 when they changed). The lines stay as issued; their due times follow
+    the shift. No published week now: the row keeps its people. Nobody on
+    the code now: a row nobody has ticked becomes 'none'; one somebody
+    started keeps its people."""
+    a_id = row["id"]
+    current = json.loads(row["assignees_json"] or "[]")
+    update = None
+    if published:
+        pick = _pick({"job_code": row["job_code"], "shift_kind": row["shift_kind"]}, shifts)
+        if pick is None:
+            if row["status"] == "open":
+                ticked = conn.execute("SELECT 1 FROM task_line_completions WHERE assignment_id=? LIMIT 1",
+                                      (a_id,)).fetchone()
+                if not ticked:
+                    update = ([], 0, row["shift_start"], row["shift_end"], "none")
+        else:
+            names, start, end = pick
+            if (row["status"] == "none" or row["unassigned"] or names != current
+                    or start != row["shift_start"] or end != row["shift_end"]):
+                update = (names, 0, start, end, "open")
+    if update is None:
+        conn.execute("UPDATE task_assignments SET schedule_sig=? WHERE id=?", (sig, a_id))
+        return 0
+    names, unassigned, start, end, status = update
+    lines = json.loads(row["lines_json"] or "[]")
+    if status == "open":
+        lines = _moved_lines(row["shift_kind"], lines, row["shift_start"], row["shift_end"], start, end)
+    conn.execute("UPDATE task_assignments SET assignees_json=?, unassigned=?, shift_start=?, shift_end=?, "
+                 "lines_json=?, status=?, schedule_sig=? WHERE id=? AND status IN ('open','none')",
+                 (json.dumps(names), unassigned, start, end, json.dumps(lines), status, sig, a_id))
+    return 1
+
+
 def ensure_day(restaurant_id, day=None, restaurant=None, db_path=DB_PATH) -> int:
-    """Issue today's assignments from the published schedule. Idempotent:
-    a sheet already issued for the day keeps its people and its lines as
-    issued (a line added at noon does not make this morning's opener late;
-    a schedule edited after publishing re-resolves future days only)."""
+    """Issue the day's assignments from the published schedule, and keep the
+    people on the ones still open in step with the live published week.
+    Idempotent: a sheet already issued keeps its lines as issued (a line
+    added at noon does not make this morning's opener late), and a day whose
+    rows all match the live week reads no schedule at all. Returns how many
+    sheets were issued."""
     r = restaurant or _restaurant(restaurant_id)
     if r is None:
         return 0
     day = day or business_day(restaurant_id, r)
-    weekday = day.weekday()
-    sheets = [s for s in list_sheets(restaurant_id, db_path=db_path) if s["lines"]
-              and (not s["days_of_week"] or weekday in s["days_of_week"])]
-    if not sheets:
+    return _settle(restaurant_id, day, r, db_path=db_path)[0]
+
+
+def refresh_assignees(restaurant_id, day=None, db_path=DB_PATH) -> int:
+    """After a cover or swap on `day` (shift_requests._cover/_execute_swap):
+    when `day` is the restaurant's business day, re-resolve the people on
+    today's still-open sheets now, so the person now on the shift can tick
+    it and a miss is filed against them, not the person who dropped it.
+    Any other day: nothing (that day is issued from the live week when it
+    comes). Returns how many sheets changed hands. Never raises — the cover
+    has already happened, and staff_view re-resolves on its next read."""
+    try:
+        r = _restaurant(restaurant_id)
+        if r is None:
+            return 0
+        today = business_day(restaurant_id, r)
+        if day is not None:
+            d = day if isinstance(day, date) else date.fromisoformat(str(day)[:10])
+            if d != today:
+                return 0
+        return _settle(restaurant_id, today, r, db_path=db_path, force=True)[1]
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="task_sheets_refresh", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         return 0
-    conn = get_conn(db_path)
-    try:
-        have = {row[0] for row in conn.execute("SELECT sheet_id FROM task_assignments WHERE restaurant_id=? AND task_date=?",
-                                               (restaurant_id, day.isoformat()))}
-    finally:
-        conn.close()
-    todo = [s for s in sheets if s["id"] not in have]
-    if not todo:
-        return 0
-    try:
-        shifts, published = published_day_shifts(restaurant_id, day)
-    except Exception:
-        shifts, published = [], False
-    made = 0
-    conn = get_conn(db_path)
-    try:
-        for s in todo:
-            if published:
-                pick = _pick(s, shifts)
-                if pick is None:
-                    continue           # nobody on this code works this shift today
-                names, start, end = pick
-                unassigned = 0
-            else:
-                names, unassigned = [], 1
-                start, end = _hours_window(r, day)
-            lines = [{"line_id": l["id"], "label": l["label"], "section": l["section"],
-                      "due_at": _due_at(s["shift_kind"], l["due_offset_min"], start, end),
-                      "proof": l["proof"], "proof_label": l["proof_label"], "min_value": l["min_value"],
-                      "max_value": l["max_value"], "critical": l["critical"]} for l in s["lines"]]
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO task_assignments (restaurant_id, sheet_id, task_date, job_code, shift_kind, title, "
-                "assignees_json, unassigned, shift_start, shift_end, sheet_version, lines_json, line_count) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (restaurant_id, s["id"], day.isoformat(), s["job_code"], s["shift_kind"], s["title"],
-                 json.dumps(names), unassigned, start, end, s["version"], json.dumps(lines), len(lines)))
-            made += cur.rowcount or 0
-        conn.commit()
-    finally:
-        conn.close()
-    return made
 
 
 # ── reading an assignment's state ───────────────────────────────────────────
 
 def _latest(conn, assignment_ids):
-    """{(assignment_id, line_id): newest completion row} — undone rows included."""
+    """{(assignment_id, line_id): newest completion row} — undone rows
+    included — each with its proof photo's token (`media_token`), joined
+    here rather than read one photo at a time (PERF-08)."""
     if not assignment_ids:
         return {}
     qs = ",".join("?" * len(assignment_ids))
-    rows = conn.execute(f"SELECT * FROM task_line_completions WHERE assignment_id IN ({qs}) ORDER BY id",
+    rows = conn.execute(f"SELECT c.*, m.token AS media_token FROM task_line_completions c "
+                        f"LEFT JOIN task_proof_media m ON m.id=c.proof_media_id AND m.restaurant_id=c.restaurant_id "
+                        f"WHERE c.assignment_id IN ({qs}) ORDER BY c.id",
                         tuple(assignment_ids)).fetchall()
     out = {}
     for r in rows:
         out[(r["assignment_id"], r["line_id"])] = r
     return out
-
-
-def _media_token(conn, media_id):
-    if not media_id:
-        return None
-    row = conn.execute("SELECT token FROM task_proof_media WHERE id=?", (media_id,)).fetchone()
-    return row[0] if row else None
 
 
 def _assignment_view(conn, a, latest, now_local_iso):
@@ -679,7 +869,7 @@ def _assignment_view(conn, a, latest, now_local_iso):
             "late": bool(c["late"]) if is_done else False,
             "flagged": bool(c["flagged"]) if is_done else False,
             "proof_value": c["proof_value"] if is_done else None,
-            "photo": _media_token(conn, c["proof_media_id"]) if is_done and c["proof_media_id"] else None,
+            "photo": c["media_token"] if is_done and c["proof_media_id"] else None,
         })
     total = len(lines)
     status = a["status"]
@@ -697,12 +887,25 @@ def _assignment_view(conn, a, latest, now_local_iso):
 def _assignments(restaurant_id, day_iso, db_path=DB_PATH, now_local=None):
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND task_date=? "
+        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND task_date=? AND status <> 'none' "
                             "ORDER BY CASE shift_kind WHEN 'opening' THEN 0 WHEN 'mid' THEN 1 WHEN 'any' THEN 2 ELSE 3 END, "
                             "lower(job_code), id", (restaurant_id, day_iso)).fetchall()
         latest = _latest(conn, [r["id"] for r in rows])
         now_iso = (now_local or local_now(restaurant_id)).strftime("%Y-%m-%dT%H:%M:%S")
         return [_assignment_view(conn, r, latest, now_iso) for r in rows]
+    finally:
+        conn.close()
+
+
+def assignment_view(restaurant_id, assignment_id, db_path=DB_PATH, now_local=None) -> dict:
+    """One sheet as staff_view shows it — what a tick returns, so the app
+    replaces that sheet instead of reading every sheet again (PERF-08)."""
+    conn = get_conn(db_path)
+    try:
+        a = _assignment_row(conn, restaurant_id, assignment_id)
+        latest = _latest(conn, [a["id"]])
+        now_iso = (now_local or local_now(restaurant_id)).strftime("%Y-%m-%dT%H:%M:%S")
+        return _assignment_view(conn, a, latest, now_iso)
     finally:
         conn.close()
 
@@ -761,7 +964,8 @@ def staff_view(restaurant_id, employee_name, job_roles=(), db_path=DB_PATH) -> d
     """What one employee sees: today's sheets that are theirs (named on the
     schedule for that job code and shift, or an unassigned sheet on their job
     code), in order, with due times. A manager also gets the floor — every
-    sheet for today — and may sign a shift off."""
+    sheet for today — and may sign a shift off; a manager opening today also
+    gets last night's closing sign-off note (`last_night_note`, COM-16)."""
     r = _restaurant(restaurant_id)
     day = business_day(restaurant_id, r)
     ensure_day(restaurant_id, day, restaurant=r, db_path=db_path)
@@ -770,34 +974,115 @@ def staff_view(restaurant_id, employee_name, job_roles=(), db_path=DB_PATH) -> d
     mine = [a for a in rows if _mine(a, employee_name, job_roles)]
     manager = any(is_manager_code(j) for j in job_roles) or any(a["manager"] and _key(employee_name) in
                                                                {_key(n) for n in a["assignees"]} for a in rows)
+    opening = manager and any(a["shift_kind"] == "opening" for a in mine)
     return {"task_date": day.isoformat(), "sheets": mine, "manager": manager,
             "floor": [a for a in rows if a not in mine] if manager else [],
             "signoffs": _signoffs(restaurant_id, day.isoformat(), db_path) if manager else [],
-            "can_sign_off": sorted({a["shift_kind"] for a in rows}) if manager else []}
+            "can_sign_off": sorted({a["shift_kind"] for a in rows}) if manager else [],
+            "last_night_note": last_night_note(restaurant_id, day, db_path=db_path) if opening else None}
+
+
+def last_night_note(restaurant_id, day, db_path=DB_PATH):
+    """The note the manager left signing off the previous business day's
+    close (an all-day sign-off when the restaurant runs all-day sheets), for
+    today's opener: {note, signed_by, signed_at, task_date, date_label}, or
+    None when there was no note. It was stored and shown only to managers,
+    only on the day it was written (COM-16)."""
+    prev = (day - timedelta(days=1)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM task_signoffs WHERE restaurant_id=? AND task_date=? "
+                           "AND shift_kind IN ('closing','any') AND COALESCE(note,'')<>'' "
+                           "ORDER BY CASE shift_kind WHEN 'closing' THEN 0 ELSE 1 END, id DESC LIMIT 1",
+                           (restaurant_id, prev)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    from time_utils import mdy
+    return {"note": row["note"], "signed_by": row["signed_by"], "signed_at": row["signed_at"],
+            "shift_kind": row["shift_kind"], "task_date": prev, "date_label": mdy(prev)}
 
 
 def _assignment_row(conn, restaurant_id, assignment_id):
     a = conn.execute("SELECT * FROM task_assignments WHERE id=? AND restaurant_id=?",
                      (int(assignment_id), restaurant_id)).fetchone()
-    if not a:
+    if not a or a["status"] == "none":
         raise TaskSheetError("That sheet isn't here.")
     return a
 
 
+class NotYourSheet(TaskSheetError):
+    """The sheet is someone else's — the route answers 403."""
+
+
+# A tick is filed under its assignment's business date, and only a sheet for
+# today, or one day either side (a closer after midnight, an opener whose
+# phone is a day off), can be ticked: an assignment that escaped closing must
+# not be "completed" days later (LG-30).
+TICK_WINDOW_DAYS = 1
+# Proof photos one login may upload in an hour — far above a real shift
+# (a sheet holds at most MAX_LINES lines), well below a flood (SEC-13).
+PHOTO_UPLOADS_PER_HOUR = 60
+TELL_MANAGER = "Tell your manager now"
+
+
+def _range_label(lo, hi):
+    if lo is not None and hi is not None:
+        return f"{lo:g}–{hi:g}"
+    if lo is not None:
+        return f"at least {lo:g}"
+    return f"at most {hi:g}"
+
+
+def _photo_cap_reached(conn, user_id) -> bool:
+    if not user_id:
+        return False
+    n = conn.execute("SELECT COUNT(*) FROM task_proof_media WHERE uploaded_by_user_id=? "
+                     "AND created_at >= datetime('now', '-1 hour')", (user_id,)).fetchone()[0]
+    return n >= PHOTO_UPLOADS_PER_HOUR
+
+
 def complete_line(restaurant_id, assignment_id, line_id, done=True, employee_name=None, job_roles=(),
-                  user_id=None, value=None, media_id=None, db_path=DB_PATH, now_local=None) -> dict:
+                  user_id=None, value=None, media_id=None, db_path=DB_PATH, now_local=None, photo=None) -> dict:
     """Tick (or un-tick) one line. Only a sheet that is this employee's —
-    named on it, or an unassigned sheet on their job code — and only while it
-    is open. A number is checked against its range (flagged, never refused);
-    a photo, number or note line needs its proof to tick."""
+    named on it, or an unassigned sheet on their job code — only while it
+    is open, and only a sheet for the business day ± TICK_WINDOW_DAYS. A
+    number is checked against its range (flagged, never refused); a photo,
+    number or note line needs its proof to tick.
+
+    `photo` is (raw bytes, mime): it is checked and stored only once the
+    sheet and line are known to be this person's, in the same transaction
+    as the tick, and counts toward PHOTO_UPLOADS_PER_HOUR (LG-31, SEC-13).
+
+    A critical line read out of its range opens a high issue for the routed
+    manager (`taskflag:<assignment>:<line>`, texted like a missed critical
+    line) and the result carries `alert` with "Tell your manager now"
+    (COM-10)."""
     now_local = now_local or local_now(restaurant_id)
     conn = get_conn(db_path)
     try:
         a = _assignment_row(conn, restaurant_id, assignment_id)
+        today = business_day(restaurant_id, now_local=now_local)
+        try:
+            task_day = date.fromisoformat(str(a["task_date"])[:10])
+        except ValueError:
+            task_day = None
+        if task_day is None or abs((task_day - today).days) > TICK_WINDOW_DAYS:
+            raise TaskSheetError("That sheet is from another day and can't be ticked now.")
         view = {"assignees": json.loads(a["assignees_json"] or "[]"), "unassigned": bool(a["unassigned"]),
                 "job_code": a["job_code"]}
+        if not _mine(view, employee_name or "", job_roles) and task_day == today:
+            # The week may have changed under the sheet (a cover, a swap)
+            # since it was last read: re-resolve today's people, then judge.
+            conn.close()
+            ensure_day(restaurant_id, today, db_path=db_path)
+            conn = get_conn(db_path)
+            a = _assignment_row(conn, restaurant_id, assignment_id)
+            view = {"assignees": json.loads(a["assignees_json"] or "[]"), "unassigned": bool(a["unassigned"]),
+                    "job_code": a["job_code"]}
         if not _mine(view, employee_name or "", job_roles):
-            raise TaskSheetError("That sheet isn't yours today.")
+            raise NotYourSheet("That sheet isn't yours today.")
         if a["status"] != "open":
             raise TaskSheetError("That sheet closed at the end of the shift.")
         line = next((l for l in json.loads(a["lines_json"] or "[]") if l["line_id"] == int(line_id)), None)
@@ -818,11 +1103,21 @@ def complete_line(restaurant_id, assignment_id, line_id, done=True, employee_nam
                 stored = " ".join(str(value or "").split())[:300]
                 if not stored:
                     raise TaskSheetError("Add a note to tick this off.")
-            elif proof == "photo" and not media_id:
+            elif proof == "photo" and not media_id and not photo:
                 raise TaskSheetError("Add a photo to tick this off.")
             elif value not in (None, ""):
                 stored = " ".join(str(value).split())[:300]
+        jpeg = None
+        if done and photo is not None:
+            if _photo_cap_reached(conn, user_id):
+                raise TaskSheetError("That's a lot of photos in an hour — wait a few minutes and try again.")
+            jpeg = _encode_photo(photo[0], photo[1] if len(photo) > 1 else "")
         late = 1 if (done and line.get("due_at") and now_local.strftime("%Y-%m-%dT%H:%M:%S") > line["due_at"]) else 0
+        if jpeg is not None:
+            cur = conn.execute("INSERT INTO task_proof_media (restaurant_id, token, mime, data, uploaded_by_user_id) "
+                               "VALUES (?,?,?,?,?)",
+                               (restaurant_id, secrets.token_urlsafe(18), "image/jpeg", jpeg, user_id))
+            media_id = cur.lastrowid
         conn.execute("INSERT INTO task_line_completions (restaurant_id, assignment_id, line_id, completed_by, "
                      "completed_by_user_id, completed_local, proof_value, proof_media_id, late, flagged, undone) "
                      "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -830,23 +1125,66 @@ def complete_line(restaurant_id, assignment_id, line_id, done=True, employee_nam
                       now_local.strftime("%Y-%m-%dT%H:%M:%S"), stored, media_id if done else None,
                       late, flagged, 0 if done else 1))
         conn.commit()
+        a = dict(a)
     finally:
         conn.close()
-    return {"late": bool(late), "flagged": bool(flagged)}
+    out = {"late": bool(late), "flagged": bool(flagged)}
+    if done and flagged and line.get("critical"):
+        out["alert"] = _flag_critical(restaurant_id, a, line, stored, employee_name, now_local, db_path)
+    return out
 
 
-def store_photo(restaurant_id, raw: bytes, mime: str = "", db_path=DB_PATH) -> int:
-    """A proof photo: resized and re-encoded like a marketing photo, kept in
-    its own table (never in the marketing library, never public)."""
+def _flag_critical(restaurant_id, a, line, reading, who, now_local, db_path=DB_PATH) -> dict:
+    """A critical line read out of its range (a walk-in at 46°F): a high
+    issue for the routed manager, once per line per sheet, texted like a
+    critical line missed. Returns what the employee is told. Never raises —
+    the reading is already recorded."""
+    import issues
+    what = line.get("proof_label") or line["label"]
+    allowed = _range_label(line.get("min_value"), line.get("max_value"))
+    manager_told = False
+    try:
+        issue, _token = issues.create_issue(
+            restaurant_id, "task_flag", f"Out of range: {what} read {reading}"[:200],
+            detail=f"{line['label']} — allowed {allowed}. Read {reading} by {who or 'staff'} at "
+                   f"{_clock(now_local.strftime('%Y-%m-%dT%H:%M:%S'))} on {a['title'] or a['job_code']} "
+                   f"({SHIFT_KIND_LABEL.get(a['shift_kind'], '')}).",
+            severity="high", source_key=f"taskflag:{a['id']}:{line['line_id']}",
+            meta={"modules": ["labor"], "assignment_id": a["id"], "task_date": a["task_date"],
+                  "line_id": line["line_id"], "reading": reading}, db_path=db_path)
+        manager_told = bool(issue and issue.get("assignee_name"))
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="task_flag_issue", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+    return {"critical": True, "title": TELL_MANAGER,
+            "message": f"{TELL_MANAGER}: {what} read {reading}, outside {allowed}.",
+            "manager_alerted": manager_told}
+
+
+def _encode_photo(raw: bytes, mime: str = "") -> bytes:
+    """A proof photo resized and re-encoded like a marketing photo (1280 px
+    on the long edge, JPEG), or TaskSheetError in words the person can act on."""
     import marketing_media
     try:
         data, _w, _h = marketing_media.encode_jpeg(raw, mime, max_edge=1280)
     except marketing_media.MediaError as e:
         raise TaskSheetError(str(e))
+    return data
+
+
+def store_photo(restaurant_id, raw: bytes, mime: str = "", db_path=DB_PATH, user_id=None) -> int:
+    """A proof photo: resized and re-encoded like a marketing photo, kept in
+    its own table (never in the marketing library, never public). The staff
+    routes no longer call this — complete_line(photo=...) stores the photo
+    only after the sheet is known to be the caller's (LG-31)."""
+    data = _encode_photo(raw, mime)
     conn = get_conn(db_path)
     try:
-        cur = conn.execute("INSERT INTO task_proof_media (restaurant_id, token, mime, data) VALUES (?,?,?,?)",
-                           (restaurant_id, secrets.token_urlsafe(18), "image/jpeg", data))
+        cur = conn.execute("INSERT INTO task_proof_media (restaurant_id, token, mime, data, uploaded_by_user_id) "
+                           "VALUES (?,?,?,?,?)", (restaurant_id, secrets.token_urlsafe(18), "image/jpeg", data, user_id))
         conn.commit()
         return cur.lastrowid
     finally:
@@ -908,7 +1246,12 @@ def evaluate(restaurant_id, now_local=None, db_path=DB_PATH) -> dict:
     sheet whose shift ended CLOSE_GRACE_MINUTES ago closes as done, partial
     or missed, and an unfinished one opens a quiet issue (Home, the issue
     list — not a text); a line one person missed PATTERN_MISSES times in
-    PATTERN_DAYS days is a pattern the owner sees once a month."""
+    PATTERN_DAYS days is a pattern the owner sees once a month.
+
+    Every open row is swept, however old: one left open by a paused or
+    failing job used to stay open (and tickable) forever once it fell out of
+    a 3-day window (LG-30). A row older than STALE_DAYS closes quietly — no
+    text about a line due last week, no issue on Home for it."""
     import issues
     r = _restaurant(restaurant_id)
     if r is None:
@@ -916,11 +1259,11 @@ def evaluate(restaurant_id, now_local=None, db_path=DB_PATH) -> dict:
     now_local = now_local or local_now(restaurant_id, r)
     now_iso = now_local.strftime("%Y-%m-%dT%H:%M:%S")
     ensure_day(restaurant_id, business_day(restaurant_id, r, now_local), restaurant=r, db_path=db_path)
+    recent_from = (now_local.date() - timedelta(days=STALE_DAYS)).isoformat()
     conn = get_conn(db_path)
     try:
         open_rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND status='open' "
-                                 "AND task_date >= ?", (restaurant_id, (now_local.date() - timedelta(days=3)).isoformat())
-                                 ).fetchall()
+                                 "ORDER BY task_date, id", (restaurant_id,)).fetchall()
         latest = _latest(conn, [a["id"] for a in open_rows])
     finally:
         conn.close()
@@ -928,7 +1271,8 @@ def evaluate(restaurant_id, now_local=None, db_path=DB_PATH) -> dict:
     closed_rows = []
     for a in open_rows:
         lines = json.loads(a["lines_json"] or "[]")
-        for l in lines:
+        stale = a["task_date"] < recent_from
+        for l in ([] if stale else lines):
             if not l.get("critical") or not l.get("due_at") or l["due_at"] >= now_iso:
                 continue
             if _line_state(latest, a["id"], l["line_id"]):
@@ -965,7 +1309,7 @@ def evaluate(restaurant_id, now_local=None, db_path=DB_PATH) -> dict:
         # EJ's has none yet) is not a nightly issue about work no one owned:
         # the owner's day view says "no schedule published". One someone
         # started, or one with a name on it, is.
-        if status != "done" and not (a["unassigned"] and done == 0):
+        if status != "done" and not stale and not (a["unassigned"] and done == 0):
             closed_rows.append(a)
             try:
                 issues.create_issue(restaurant_id, "task_sheet", _describe(a, done, total)[:200],
@@ -1061,7 +1405,7 @@ def report(restaurant_id, days=14, db_path=DB_PATH, today=None) -> dict:
     since = today - timedelta(days=int(days))
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND status <> 'open' "
+        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND status NOT IN ('open','none') "
                             "AND task_date >= ? AND task_date < ?", (restaurant_id, since.isoformat(), today.isoformat())
                             ).fetchall()
         latest = _latest(conn, [a["id"] for a in rows])
@@ -1140,7 +1484,7 @@ def yesterday_line(restaurant_id, today=None, db_path=DB_PATH):
     y = (today - timedelta(days=1)).isoformat()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND task_date=?",
+        rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND task_date=? AND status <> 'none'",
                             (restaurant_id, y)).fetchall()
         latest = _latest(conn, [a["id"] for a in rows])
     finally:

@@ -9762,6 +9762,36 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
     return d
 
 
+def get_published_week_csv(history_id: int, restaurant_id: int, with_stations: bool = False,
+                           db_path: str = DB_PATH):
+    """{id, week_start, week_end, schedule_csv, published_at, edited_at} for
+    one week — the three fields the staff paths (task sheets, the portal's
+    shifts) actually use, without get_schedule_history_detail's SELECT * and
+    its four JSON parses (PERF-12). `with_stations` adds `stations`, the only
+    slice of review_json those paths read. Scoped to restaurant_id like the
+    full reader: None for a missing id or another tenant's."""
+    import json as _json_pw
+    cols = "id, week_start, week_end, schedule_csv, published_at, edited_at" + (", review_json" if with_stations else "")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(f"SELECT {cols} FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    if with_stations:
+        try:
+            review = _json_pw.loads(d.pop("review_json", None) or "null") or {}
+        except Exception:
+            review = {}
+        d["stations"] = review.get("stations") if isinstance(review, dict) else None
+    return d
+
+
 def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
     """Deletes one schedule history row, scoped to restaurant_id so one
     tenant can never delete another's by guessing an id — the explicit user

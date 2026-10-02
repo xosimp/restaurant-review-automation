@@ -150,8 +150,9 @@ def add_cache_headers(response):
 
 # Per-tenant or per-operator content: never stored by a browser or a proxy.
 # /audit/r/ is a revocable share link to one prospect's figures: a cached
-# copy would outlive the revocation.
-_NO_STORE_PREFIXES = ("/api/", "/mobile/api/", "/admin", "/audit/r/")
+# copy would outlive the revocation. /staff/api/ is one employee's shifts,
+# colleagues, requests and sheets (PERF-11) — it carried no Cache-Control.
+_NO_STORE_PREFIXES = ("/api/", "/mobile/api/", "/admin", "/audit/r/", "/staff/api/")
 
 
 # ── request metrics ─────────────────────────────────────────────────────────
