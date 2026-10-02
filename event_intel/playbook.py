@@ -457,7 +457,7 @@ _CARRIED = {"event": "effect", "game_staffing": "staffing", "game_prep": "prep"}
 
 
 def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=False, db_path=store.DB_PATH,
-          carried=None, effect_said_today=False):
+          carried=None, effect_said_today=False, sees_items=None):
     """The brief line for the next followed game in [today, today+ALERT_DAYS]
     — {"key", "tone", "text", "claim_kind", "outside", "ask", "action"?,
     "event_id", "staffing"?, "rush"?} — or None. `sees_sales` /
@@ -519,7 +519,10 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
         # Phase 3: what games like it sold (a prep plan past the floor, the
         # last one as a fact below it) and when to reach guests.
         from event_intel import gameday
-        mix = gameday.item_mix(restaurant_id, e, db_path=db_path) if sees_sales else None
+        # The item mix's own rule (gameday.item_mix_visible, re-audit X-8);
+        # without one given, the sales view's.
+        sees_items = sees_sales if sees_items is None else sees_items
+        mix = gameday.item_mix(restaurant_id, e, db_path=db_path) if sees_items else None
         prep = gameday.prep_lines(restaurant_id, e, mix=mix, db_path=db_path) if mix else []
         if "prep" in said:
             pass
@@ -545,7 +548,7 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             import nav
             line["action"] = {"label": "Draft a game-day campaign",
                               "nav": nav.path("marketing", "campaigns",
-                                              goal=gameday.campaign_goal(restaurant_id, e, mix=mix if sees_sales
+                                              goal=gameday.campaign_goal(restaurant_id, e, mix=mix if sees_items
                                                                          else {}, db_path=db_path),
                                               send=(plan or {}).get("text_words"))}
         if prep:

@@ -1767,7 +1767,12 @@ def _do_game_week(u):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can see this.")
     from event_intel import gameday
-    return {"ok": True, "game": gameday.week_note(_rid(u))}, 200
+    game = gameday.week_note(_rid(u))
+    # The item mix behind the line is the one rule every surface uses
+    # (gameday.item_mix_visible, re-audit X-8); the Food Cost view carries it.
+    if game and not gameday.item_mix_visible(user=u):
+        game = dict(game, items=[], text=None, order=None, basis=None)
+    return {"ok": True, "game": game}, 200
 
 
 def _do_schedule_forecast(u):
