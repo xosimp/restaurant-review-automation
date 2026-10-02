@@ -59,7 +59,7 @@
    "home_away": "away",
    "opponent": "Cleveland Guardians",
    "venue": "Progressive Field",
-   "broadcast": null,
+   "broadcast": "TBS",
    "status": "scheduled"
   },
   {
@@ -71,7 +71,7 @@
    "home_away": "away",
    "opponent": "Cleveland Guardians",
    "venue": "Progressive Field",
-   "broadcast": null,
+   "broadcast": "TBS",
    "status": "scheduled"
   },
   {
@@ -83,7 +83,7 @@
    "home_away": "home",
    "opponent": "Cleveland Guardians",
    "venue": "Rate Field",
-   "broadcast": null,
+   "broadcast": "TBS",
    "status": "scheduled"
   },
   {
@@ -95,7 +95,7 @@
    "home_away": "home",
    "opponent": "Cleveland Guardians",
    "venue": "Rate Field",
-   "broadcast": null,
+   "broadcast": "TBS",
    "status": "scheduled",
    "attributes": {
     "if_necessary": true
@@ -110,7 +110,7 @@
    "home_away": "away",
    "opponent": "Cleveland Guardians",
    "venue": "Progressive Field",
-   "broadcast": null,
+   "broadcast": "TBS",
    "status": "scheduled",
    "attributes": {
     "if_necessary": true

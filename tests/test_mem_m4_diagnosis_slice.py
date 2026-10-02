@@ -170,8 +170,9 @@ def test_the_review_diagnosis_prompt_carries_the_slice_and_may_cite_its_shifts(m
     p = seen["p"]
     assert "WHAT CHANGED ON THOSE SHIFTS — Friday dinner" in p and "WHAT WAS ALREADY TRIED" in p
     # "guests", "worked" and "nightly" joined the modules a diagnosis may
-    # cite (re-audit 9/29/26, CROSSMODULE-9/18).
-    assert "labor|food_cost|waste|marketing|guests|games|shifts|worked|nightly" in p
+    # cite (re-audit 9/29/26, CROSSMODULE-9/18) — offered only when their
+    # line is on the page (event re-audit 10/1/26, P4-12): here, the slice's.
+    assert '"module": "shifts' in p and "games" not in p and "Game nights" not in p
     assert out and [e["module"] for e in out[0]["operational_evidence"]] == ["shifts"]
 
 

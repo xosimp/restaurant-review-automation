@@ -15,4 +15,13 @@ reads.
 The first season is the 2026 Chicago Bears; a new team or festival is one
 JSON file in event_intel/seasons or one upsert, never a code change.
 """
-from event_intel.store import init_event_intel  # noqa: F401  (models.init_db calls it)
+from event_intel import store as _store
+
+
+def init_event_intel(db_path=_store.DB_PATH):
+    """models.init_db calls it at boot: the catalog's tables and bundled
+    seasons (store), then the materialised peer table (peers, re-audit
+    10/1/26 P4-05). Never on a request path."""
+    _store.init_event_intel(db_path)
+    from event_intel.peers import init_peers
+    init_peers(db_path)

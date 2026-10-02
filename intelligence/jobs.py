@@ -742,6 +742,16 @@ def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_
     except Exception as e:
         print(f"[intelligence] DNA norms unavailable: {e}")
         _dna, norms = None, None
+    # Each restaurant's own game medians (event_intel.peers, re-audit 10/1/26
+    # P4-05) are written beside its feature row by the same bounded pass and
+    # cursor: a request then reads one materialised row per member, never
+    # another restaurant's nights. Who may teach is read once per pass.
+    try:
+        from event_intel import peers as _peers
+        peer_real, peer_since = real_restaurant_ids(db_path=db_path), learning_since_by_id(db_path=db_path)
+    except Exception as e:
+        print(f"[intelligence] game peer medians unavailable: {e}")
+        _peers, peer_real, peer_since = None, None, None
 
     def one(r):
         try:
@@ -755,6 +765,15 @@ def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_
                 try:
                     import ops
                     ops.capture(e, job="intelligence_dna", context=f"restaurant_id={r.id}")
+                except Exception:
+                    pass
+        if _peers is not None:
+            try:
+                _peers.store_member_effects(r.id, db_path=db_path, real=peer_real, since=peer_since)
+            except Exception as e:  # nor do the game medians
+                try:
+                    import ops
+                    ops.capture(e, job="event_peers", context=f"restaurant_id={r.id}")
                 except Exception:
                     pass
         return r.id, None

@@ -230,6 +230,10 @@ def _measured_bears_fan(db, i):
         c.commit()
     finally:
         c.close()
+    # Its own medians, materialised as the nightly features pass does
+    # (re-audit P4-05): a request reads only event_peer_effects.
+    from event_intel import peers
+    peers.store_member_effects(rid, db_path=db)
     return rid
 
 
