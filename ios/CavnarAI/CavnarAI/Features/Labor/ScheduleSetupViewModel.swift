@@ -260,6 +260,46 @@ struct DemandSignal: Codable, Identifiable, Equatable {
     var kindLabel: String { kind == "reservations" ? "Reservations" : kind == "post" ? "Post" : "Event" }
 }
 
+/// A catalog game this restaurant removed from its calendar (swiped off
+/// the events list), with who removed it — the server keeps it off every
+/// forecast, brief and report until someone puts it back (re-audit X-4,
+/// 10/1/26). `text` and `removedOn` arrive already worded (M/D/YY).
+struct RemovedGame: Decodable, Identifiable, Equatable {
+    let eventId: Int
+    let name: String?
+    let text: String
+    let removedOn: String?
+    let removedBy: String?
+    let byAdmin: Bool
+    var id: Int { eventId }
+
+    enum CodingKeys: String, CodingKey {
+        case name, text
+        case eventId = "event_id"
+        case removedOn = "removed_on"
+        case removedBy = "removed_by"
+        case byAdmin = "by_admin"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        text = (try? c.decodeIfPresent(String.self, forKey: .text)) ?? ""
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        removedOn = try? c.decodeIfPresent(String.self, forKey: .removedOn)
+        removedBy = try? c.decodeIfPresent(String.self, forKey: .removedBy)
+        byAdmin = (try? c.decodeIfPresent(Bool.self, forKey: .byAdmin)) ?? false
+    }
+
+    /// "Removed 10/1/26 by Will" — what the row says under the game.
+    var removedLine: String {
+        var parts = ["Removed"]
+        if let on = removedOn, !on.isEmpty { parts.append(on) }
+        if let by = removedBy, !by.isEmpty { parts.append("by \(by)") }
+        return parts.joined(separator: " ")
+    }
+}
+
 // MARK: - Shift requests
 
 /// A shift somebody has asked to give up (`pending`) or that nobody has
@@ -1478,12 +1518,55 @@ final class ScheduleSetupViewModel {
             let _: OKResponse = try await client.send(
                 "/mobile/api/labor/demand-signals/\(id)", method: .delete, hapticOnError: false)
             Haptic.selection()
+            // A removed catalog game joins the Put back list.
+            if previous.first(where: { $0.id == id })?.source == "events" { await loadRemovedGames() }
         } catch let error as APIClient.APIError {
             signals = previous
             signalError = error.message
         } catch {
             signals = previous
             signalError = "Couldn't remove that."
+        }
+    }
+
+    // MARK: Removed games
+
+    /// Catalog games removed from this calendar, each with Put back.
+    var removedGames: [RemovedGame] = []
+    var restoringGameId: Int?
+
+    private struct RemovedGamesResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let removed: [RemovedGame]?
+    }
+
+    func loadRemovedGames() async {
+        do {
+            let r: RemovedGamesResponse = try await client.send(
+                "/mobile/api/labor/event-dismissals", hapticOnError: false)
+            guard r.ok else { return }
+            removedGames = r.removed ?? []
+        } catch {
+            // A secondary list: an older server or a login without labor
+            // simply shows none.
+        }
+    }
+
+    func restoreGame(eventId: Int) async {
+        restoringGameId = eventId
+        defer { restoringGameId = nil }
+        do {
+            let r: RemovedGamesResponse = try await client.send(
+                "/mobile/api/labor/event-dismissals/\(eventId)/restore", method: .post)
+            guard r.ok else { signalError = r.error ?? "Couldn't put that back."; return }
+            removedGames = r.removed ?? removedGames.filter { $0.eventId != eventId }
+            Haptic.success()
+            await loadSignals()
+        } catch let error as APIClient.APIError {
+            signalError = error.message
+        } catch {
+            signalError = "Couldn't put that back."
         }
     }
 

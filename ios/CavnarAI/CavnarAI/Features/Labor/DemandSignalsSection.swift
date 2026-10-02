@@ -24,6 +24,7 @@ struct DemandSignalsSection: View {
                 onExpand?()
                 Task {
                     await viewModel.loadSignals()
+                    await viewModel.loadRemovedGames()
                     // The feed's status line comes with the rules.
                     if viewModel.reservationFeed == nil { await viewModel.loadRules() }
                 }
@@ -112,6 +113,8 @@ struct DemandSignalsSection: View {
                     .frame(height: CavnarFittedList.height(ids: viewModel.signals.map(\.id),
                                                            measured: signalRowHeights, verticalInsets: 12))
                 }
+
+                if !viewModel.removedGames.isEmpty { removedGamesCard }
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -154,6 +157,39 @@ struct DemandSignalsSection: View {
             }
             Spacer()
         }
+    }
+
+    /// GAMES YOU REMOVED — catalog games swiped off this list stay off
+    /// every forecast, brief and report until put back here.
+    private var removedGamesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("GAMES YOU REMOVED")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.4)
+                .foregroundStyle(Color.cavnarEmber2)
+            ForEach(viewModel.removedGames) { game in
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HomeMixedText.make(game.text, size: 14, weight: 600, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HomeMixedText.make(game.removedLine, size: 12.5, color: .cavnarInk3)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.restoreGame(eventId: game.eventId) }
+                    } label: {
+                        Text(viewModel.restoringGameId == game.eventId ? "Putting back…" : "Put back")
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .fixedSize()
+                    .disabled(viewModel.restoringGameId != nil)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarPaper3.opacity(0.35)))
     }
 
     /// WHAT YOUR NIGHTS HAVE TAUGHT — each recurring effect's sentence

@@ -1910,7 +1910,7 @@ def _removed_games(rid):
     out = []
     for e in _evs.dismissals(rid)[:50]:
         out.append({"event_id": e["id"], "series_id": e["series_id"], "name": e.get("series_name"),
-                    "text": _ev.describe(e), "date": e.get("event_date"),
+                    "text": _ev.describe(e, tz=tz), "date": e.get("event_date"),
                     "removed_on": mdy(local_iso(e.get("dismissed_at"), tz)) if e.get("dismissed_at") else "",
                     "removed_by": e.get("dismissed_by"), "by_admin": e.get("dismissed_source") == "admin"})
     return out
