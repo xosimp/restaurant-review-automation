@@ -193,6 +193,46 @@ CREATE TABLE IF NOT EXISTS staff_signups (
     verified_at     TEXT
 );
 
+-- Forgot-PIN by text (employee audit H10): the same shape as staff_signups —
+-- a code texted to a phone, a short-lived token once it is typed back — but
+-- bound to the one membership the phone was found on, so the token can only
+-- ever set THAT membership's PIN. Keyed by phone: one live reset per number.
+CREATE TABLE IF NOT EXISTS staff_pin_resets (
+    phone           TEXT    PRIMARY KEY,
+    restaurant_id   INTEGER NOT NULL,
+    membership_id   INTEGER NOT NULL,
+    code_hash       TEXT    NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    sends           INTEGER NOT NULL DEFAULT 1,
+    token_hash      TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_sent_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    verified_at     TEXT
+);
+
+-- Every verification text the staff surface sends (signup and forgot-PIN),
+-- for the platform-wide hourly ceiling (employee audit C11 / SEC-07): the
+-- per-phone and per-address limits do nothing against a script rotating
+-- both. Only the kind and the time are kept — never the number — and rows
+-- older than a day are deleted as new ones are written.
+CREATE TABLE IF NOT EXISTS staff_otp_sends (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind            TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_otp_sends_created
+    ON staff_otp_sends(created_at);
+
+-- Wrong "current PIN" entries on the signed-in Change PIN screen. Their own
+-- counter (employee audit M4 / SEC-16): sharing membership_pin_attempts let
+-- the next person at a shared tablet lock the session's owner out of sign-in.
+CREATE TABLE IF NOT EXISTS pin_change_attempts (
+    membership_id   INTEGER PRIMARY KEY,
+    failed_count    INTEGER NOT NULL DEFAULT 0,
+    last_failed_at  TEXT,
+    locked_until    TEXT
+);
+
 -- One-shot tokens that make a captured PIN sign-in POST unreplayable.
 --
 -- The body is {membership_id, pin} and nothing else varied between requests,
@@ -527,6 +567,14 @@ def init_auth(db_path: str = DB_PATH):
         # login, so one tap holds on every device and location, and a later
         # policy change (a new date) is shown again.
         "ALTER TABLE users ADD COLUMN policy_notice_dismissed TEXT",
+        # Employee audit C9 / LG-05: how a membership ENDED, when it was not
+        # an ordinary deactivation. An owner's unlink (the name was claimed
+        # by the wrong person) and the employee's own account deletion looked
+        # exactly like a roster deactivation, so putting the name back on the
+        # roster restored the impostor's login with its old PIN. The roster
+        # switch never reactivates a row carrying either stamp.
+        "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
+        "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
     ]:
         try:
             import sqlite3 as _sql
@@ -576,6 +624,8 @@ def init_auth(db_path: str = DB_PATH):
         # silently missing index is exactly the kind of thing that is only
         # discovered under load, so it must be visible at boot.
         print(f"[auth] index creation failed: {exc}")
+
+    ensure_active_name_index(db_path=db_path)
 
     # The 2FA code and pending secret used to live in plaintext on the
     # restaurants row (SEC-20/SEC-39). Nothing reads those columns any more
@@ -764,6 +814,142 @@ def sweep_orphan_pin_attempts(db_path: str = DB_PATH) -> int:
 
 
 # ── Memberships (Identity → Tenant → Role) ────────────────────────────────
+#
+# One active employee login per name per restaurant (employee audit C9 /
+# LG-13 / SEC-05). Every staff route scopes its data by the membership's
+# employee_name — shifts, availability, time off, shift requests, task
+# sheets — so two active employee memberships sharing a name are one person
+# to the data layer: each read and withdrew the other's requests. The rule is
+# held twice: in code, by staff_settings.name_key (case and every run of
+# whitespace folded), at every write that can produce an active employee row
+# (upsert, rename, reactivate, claim); and in the database by a partial
+# unique index on the trimmed, lower-cased name, which is what closes the
+# race between two claims of one name. Console memberships (owner, manager)
+# are outside it: a manager may also hold a PIN identity under their own name.
+
+class NameTakenError(ValueError):
+    """Another active employee login already has this name here."""
+
+
+def _name_key(name) -> str:
+    from staff_settings import name_key
+    return name_key(name)
+
+
+def _active_name_holder(conn, restaurant_id: int, name, exclude_id: int = None):
+    """The active employee membership at this restaurant holding `name`
+    (folded by staff_settings.name_key), other than `exclude_id`, or None."""
+    key = _name_key(name)
+    if not key:
+        return None
+    for r in conn.execute(
+            "SELECT id, employee_name FROM memberships WHERE restaurant_id=? AND is_active=1 "
+            "AND role='employee' AND employee_name IS NOT NULL", (restaurant_id,)).fetchall():
+        if r["id"] != exclude_id and _name_key(r["employee_name"]) == key:
+            return dict(r)
+    return None
+
+
+def _name_taken_message(name) -> str:
+    return (f"{' '.join(str(name or '').split())} already has an active staff login here. "
+            "Two logins can't share a name — add something that tells them apart.")
+
+
+ACTIVE_NAME_INDEX = "uq_memberships_active_employee_name"
+
+
+def ensure_active_name_index(db_path: str = DB_PATH) -> bool:
+    """Boot only (init_auth): the partial unique index behind the one-name
+    rule. A database that already holds two active employee logins under
+    one name cannot take the index; that is reported (ops.capture, with the
+    names) rather than repaired, because which of the two is the real person
+    is an owner's call — the code-level checks still hold every new write."""
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {ACTIVE_NAME_INDEX} ON memberships"
+                "(restaurant_id, lower(trim(employee_name))) "
+                "WHERE is_active=1 AND role='employee' AND employee_name IS NOT NULL")
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as exc:
+        dupes = ""
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                dupes = "; ".join(f"rid={r[0]} {r[1]!r} x{r[2]}" for r in conn.execute(
+                    "SELECT restaurant_id, lower(trim(employee_name)), COUNT(*) FROM memberships "
+                    "WHERE is_active=1 AND role='employee' AND employee_name IS NOT NULL "
+                    "GROUP BY 1, 2 HAVING COUNT(*) > 1").fetchall())
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        print(f"[auth] one-name index not created ({exc}): {dupes}")
+        try:
+            import ops as _ops_ix
+            _ops_ix.capture(exc, job="memberships_name_index", context=f"duplicates: {dupes}"[:500])
+        except Exception:
+            pass
+        return False
+
+
+def _expire_share_links(conn, restaurant_id: int, name) -> int:
+    """End this name's emailed schedule links (/s/<token>) at this
+    restaurant. A deactivated, unlinked or deleted login kept reading — and
+    writing availability through — links that live 60 days (LG-18 / SEC-09);
+    only the roster switch used to expire them."""
+    key = _name_key(name)
+    if not key:
+        return 0
+    n = 0
+    try:
+        for r in conn.execute("SELECT id, employee_name FROM schedule_shares WHERE restaurant_id=? "
+                              "AND (expires_at IS NULL OR expires_at > datetime('now'))",
+                              (restaurant_id,)).fetchall():
+            if _name_key(r["employee_name"]) == key:
+                conn.execute("UPDATE schedule_shares SET expires_at=datetime('now') WHERE id=?", (r["id"],))
+                n += 1
+    except sqlite3.OperationalError:
+        return 0            # a database without schedule_shares (an auth-only fixture)
+    return n
+
+
+def _expire_person_links(restaurant_id: int, name, db_path: str = DB_PATH):
+    """After a login ends: staff_insights.expire_links_for (the links wave's
+    one rule — /s/ links AND the person's calendar feed), looked up at call
+    time so a build without it keeps just the /s/ expiry above. Never raises."""
+    if not _name_key(name):
+        return
+    try:
+        import staff_insights as _si
+        fn = getattr(_si, "expire_links_for", None)
+    except Exception:
+        fn = None
+    if fn is None:
+        return
+    try:
+        try:
+            fn(restaurant_id, name, db_path=db_path)
+        except TypeError:
+            fn(restaurant_id, name)
+    except Exception as exc:
+        print(f"[auth] expire_links_for failed rid={restaurant_id}: {exc}")
+
+
+def expire_share_links(restaurant_id: int, name, db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    try:
+        n = _expire_share_links(conn, restaurant_id, name)
+        conn.commit()
+    finally:
+        conn.close()
+    _expire_person_links(restaurant_id, name, db_path=db_path)
+    return n
+
 
 def get_membership(user_id: int, restaurant_id: int,
                    db_path: str = DB_PATH) -> Optional[dict]:
@@ -822,18 +1008,32 @@ def upsert_membership(user_id: int, restaurant_id: int, role: str,
         raise ValueError(f"unknown role: {role!r}")
     conn = get_conn(db_path)
     try:
-        conn.execute("""
-            INSERT INTO memberships (user_id, restaurant_id, role, employee_name, job_role, updated_at)
-            VALUES (?,?,?,?,?,datetime('now'))
-            ON CONFLICT(user_id, restaurant_id) DO UPDATE SET
-                role=excluded.role,
-                employee_name=COALESCE(excluded.employee_name, memberships.employee_name),
-                job_role=COALESCE(excluded.job_role, memberships.job_role),
-                is_active=1,
-                updated_at=datetime('now')
-        """, (user_id, restaurant_id, role, (employee_name or "").strip() or None,
-              (job_role or "").strip() or None))
-        conn.commit()
+        if role == "employee":
+            # The row this upsert lands on becomes an ACTIVE employee login
+            # with this name (or keeps its own) — held to the one-name rule.
+            mine = conn.execute("SELECT id, employee_name FROM memberships WHERE user_id=? AND restaurant_id=?",
+                                (user_id, restaurant_id)).fetchone()
+            name_after = (employee_name or "").strip() or (mine["employee_name"] if mine else None)
+            if name_after and _active_name_holder(conn, restaurant_id, name_after,
+                                                  exclude_id=mine["id"] if mine else None):
+                raise NameTakenError(_name_taken_message(name_after))
+        try:
+            conn.execute("""
+                INSERT INTO memberships (user_id, restaurant_id, role, employee_name, job_role, updated_at)
+                VALUES (?,?,?,?,?,datetime('now'))
+                ON CONFLICT(user_id, restaurant_id) DO UPDATE SET
+                    role=excluded.role,
+                    employee_name=COALESCE(excluded.employee_name, memberships.employee_name),
+                    job_role=COALESCE(excluded.job_role, memberships.job_role),
+                    is_active=1,
+                    updated_at=datetime('now')
+            """, (user_id, restaurant_id, role, (employee_name or "").strip() or None,
+                  (job_role or "").strip() or None))
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            if ACTIVE_NAME_INDEX in str(exc):
+                raise NameTakenError(_name_taken_message(employee_name)) from exc
+            raise
         row = conn.execute(
             "SELECT * FROM memberships WHERE user_id=? AND restaurant_id=?",
             (user_id, restaurant_id)).fetchone()
@@ -885,21 +1085,48 @@ def update_membership_details(membership_id: int, restaurant_id: int,
     if not sets:
         return get_membership_by_id(membership_id, restaurant_id, db_path=db_path)
 
+    if is_active:
+        # An owner's explicit re-hire is a decision about THIS row, so it
+        # clears how the row ended; the roster's bulk switch never gets here
+        # for an unlinked or deleted row (staff_settings._sync_portal_access).
+        sets += ["unlinked_at=NULL", "deleted_at=NULL"]
     sets.append("updated_at=datetime('now')")
     conn = get_conn(db_path)
     try:
-        cur = conn.execute(
-            f"UPDATE memberships SET {', '.join(sets)} WHERE id=? AND restaurant_id=?",
-            tuple(args) + (membership_id, restaurant_id))
-        conn.commit()
+        current = conn.execute("SELECT * FROM memberships WHERE id=? AND restaurant_id=?",
+                               (membership_id, restaurant_id)).fetchone()
+        if not current:
+            return None
+        # The row as it will be after this write: held to the one-name rule
+        # when it is (or stays) an active employee login (C9 / SEC-05).
+        after_active = bool(current["is_active"]) if is_active is None else bool(is_active)
+        after_role = role if role is not None else current["role"]
+        after_name = (employee_name or "").strip() if employee_name is not None else current["employee_name"]
+        if after_active and after_role == "employee" and after_name and \
+                _active_name_holder(conn, restaurant_id, after_name, exclude_id=membership_id):
+            raise NameTakenError(_name_taken_message(after_name))
+        try:
+            cur = conn.execute(
+                f"UPDATE memberships SET {', '.join(sets)} WHERE id=? AND restaurant_id=?",
+                tuple(args) + (membership_id, restaurant_id))
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            if ACTIVE_NAME_INDEX in str(exc):
+                raise NameTakenError(_name_taken_message(after_name)) from exc
+            raise
         if not cur.rowcount:
             return None
+        if is_active is False and current["is_active"]:
+            _expire_share_links(conn, restaurant_id, current["employee_name"])
+            conn.commit()
     finally:
         conn.close()
     # A demotion or a deactivation has to end the access it already granted,
     # not wait for a session to expire — same stance as set_membership_active.
     if is_active is False or role is not None:
         _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+    if is_active is False and current["is_active"]:
+        _expire_person_links(restaurant_id, current["employee_name"], db_path=db_path)
     return get_membership_by_id(membership_id, restaurant_id, db_path=db_path)
 
 
@@ -920,15 +1147,34 @@ def get_membership_by_id(membership_id: int, restaurant_id: int,
 def set_membership_active(membership_id: int, restaurant_id: int, active: bool,
                           db_path: str = DB_PATH) -> bool:
     """Activate/deactivate one membership. Scoped by restaurant_id so an
-    owner can never toggle a membership belonging to another tenant."""
+    owner can never toggle a membership belonging to another tenant.
+
+    Turning one on is held to the one-name rule (NameTakenError); turning one
+    off also ends its emailed schedule links (LG-18 / SEC-09), which only the
+    roster switch used to do."""
     conn = get_conn(db_path)
     try:
-        cur = conn.execute(
-            "UPDATE memberships SET is_active=?, updated_at=datetime('now') "
-            "WHERE id=? AND restaurant_id=?",
-            (1 if active else 0, membership_id, restaurant_id))
-        conn.commit()
+        current = conn.execute("SELECT * FROM memberships WHERE id=? AND restaurant_id=?",
+                               (membership_id, restaurant_id)).fetchone()
+        if not current:
+            return False
+        if active and current["role"] == "employee" and current["employee_name"] and \
+                _active_name_holder(conn, restaurant_id, current["employee_name"], exclude_id=membership_id):
+            raise NameTakenError(_name_taken_message(current["employee_name"]))
+        try:
+            cur = conn.execute(
+                "UPDATE memberships SET is_active=?, updated_at=datetime('now') "
+                "WHERE id=? AND restaurant_id=?",
+                (1 if active else 0, membership_id, restaurant_id))
+            conn.commit()
+        except sqlite3.IntegrityError as exc:
+            if ACTIVE_NAME_INDEX in str(exc):
+                raise NameTakenError(_name_taken_message(current["employee_name"])) from exc
+            raise
         changed = cur.rowcount > 0
+        if changed and not active:
+            _expire_share_links(conn, restaurant_id, current["employee_name"])
+            conn.commit()
     finally:
         conn.close()
     if changed and not active:
@@ -936,6 +1182,7 @@ def set_membership_active(membership_id: int, restaurant_id: int, active: bool,
         # wait up to 14 hours for them to expire. Same stance as
         # revoke_team_member, which kills sessions rather than trusting TTL.
         _end_staff_sessions_for_membership(membership_id, restaurant_id, db_path=db_path)
+        _expire_person_links(restaurant_id, current["employee_name"], db_path=db_path)
     return changed
 
 
@@ -1080,8 +1327,36 @@ def _burn_pin_cycles(candidate: str):
         pass
 
 
+# The 4-digit PINs people choose most (employee audit M4 / SEC-03). A sprayer
+# with the join code gets ~35 guesses per employee per day before the
+# escalating lockout stops them; spent on this list, that is most of the
+# real-world PINs a roster holds. Repeats (1111), straight runs (1234, 9876)
+# and a repeated pair (1212, 6969) are refused by shape below, years (19xx,
+# 20xx) by the year rule; what is listed here is the rest of the published
+# most-common lists: doubled and mirrored digits, keypad lines and shapes,
+# and the "meaning" numbers (1004, 0420, 5683 "LOVE").
+COMMON_PINS = frozenset("""
+1100 1122 1133 1144 1155 1221 1331 1001 1002 1003 1004 1005 1007 1008
+1009 1011 1020 1023 1101 1110 1112 1113 1121 1211 1223 1225 1230 1231 1233 1235
+1236 1240 1324 1342 1357 1369 1379 1397 1470 1478 1590 2112 2211 2233 2244 2255
+2258 2468 2552 2580 3214 3311 3344 3366 3456 3690 3699 4114 4200 4400 4411 4420
+4567 5150 5200 5500 5511 5544 5566 5683 6655 6699 6789 6996 7000 7007 7410 7531
+7700 7711 7744 7788 7890 8000 8008 8520 8800 8811 8888 9630 9669 9696 9700 9800
+9900 9911 0007 0011 0012 0013 0069 0088 0099 0110 0123 0420 0786 0852 0911 1999
+""".split())
+
+
+def _year_like(pin: str) -> bool:
+    """1900-2099: a birth year or a graduation year is the first thing an
+    acquaintance tries, and the most common PIN family after repeats."""
+    return len(pin) == 4 and pin[:2] in ("19", "20")
+
+
 def validate_pin(pin: str) -> str:
-    """Normalize and refuse PINs that aren't worth the name."""
+    """Normalize and refuse PINs that aren't worth the name.
+
+    The one PIN policy — an owner's new PIN, a self-signup's, a Change PIN
+    and a forgot-PIN reset all pass through here."""
     pin = (pin or "").strip()
     if not pin.isdigit():
         raise PinError("A PIN must be digits only.")
@@ -1089,13 +1364,17 @@ def validate_pin(pin: str) -> str:
         raise PinError(f"A PIN must be {PIN_MIN_LENGTH}–{PIN_MAX_LENGTH} digits.")
     if len(set(pin)) == 1:
         raise PinError("That PIN is too easy to guess — don't repeat one digit.")
-    # Straight runs up or down (1234, 4321, 9876). Everything else — including
-    # dates and doubles like 1122 — is allowed; over-filtering a 4-digit space
-    # shrinks it faster than it helps, and the lockout is the real control.
+    # Straight runs up or down (1234, 4321, 9876).
     digits = [int(c) for c in pin]
     deltas = {b - a for a, b in zip(digits, digits[1:])}
     if deltas in ({1}, {-1}):
         raise PinError("That PIN is too easy to guess — avoid sequences.")
+    if len(pin) == 4 and pin[:2] == pin[2:]:
+        raise PinError("That PIN is too easy to guess — don't repeat a pair of digits.")
+    if _year_like(pin):
+        raise PinError("That PIN is too easy to guess — avoid years like 1990 or 2024.")
+    if pin in COMMON_PINS:
+        raise PinError("That PIN is one of the most common — pick one people wouldn't guess.")
     return pin
 
 
@@ -1122,8 +1401,8 @@ def set_membership_pin(membership_id: int, restaurant_id: int, pin: str,
         conn.commit()
         changed = cur.rowcount > 0
         if changed:
-            conn.execute("DELETE FROM membership_pin_attempts WHERE membership_id=?",
-                         (membership_id,))
+            for table in _PIN_COUNTERS.values():
+                conn.execute(f"DELETE FROM {table} WHERE membership_id=?", (membership_id,))
             conn.commit()
     finally:
         conn.close()
@@ -1151,66 +1430,155 @@ def clear_membership_pin(membership_id: int, restaurant_id: int,
     return changed
 
 
-def pin_lockout_state(membership_id: int, db_path: str = DB_PATH) -> dict:
+# Two counters, one shape. "signin" is the PIN pad's per-membership lockout;
+# "change" is the signed-in Change PIN screen's own (employee audit M4 /
+# SEC-16 / LG-26): a wrong "current PIN" there used to spend the sign-in
+# budget, so the next person at a shared tablet could lock its owner out.
+_PIN_COUNTERS = {"signin": "membership_pin_attempts", "change": "pin_change_attempts"}
+CHANGE_PIN_MAX_ATTEMPTS = 3
+CHANGE_PIN_LOCKOUT_MINUTES = 15
+
+
+def _counter_table(counter: str) -> str:
+    try:
+        return _PIN_COUNTERS[counter]
+    except KeyError:
+        raise ValueError(f"unknown PIN counter: {counter!r}")
+
+
+def _counter_limit(counter: str) -> int:
+    return CHANGE_PIN_MAX_ATTEMPTS if counter == "change" else PIN_MAX_ATTEMPTS
+
+
+def _seconds_left(locked_until) -> int:
+    if not locked_until:
+        return 0
+    try:
+        until = datetime.fromisoformat(str(locked_until))
+        return max(0, int((until - datetime.utcnow()).total_seconds()))
+    except Exception:
+        return 0
+
+
+def pin_lockout_state(membership_id: int, db_path: str = DB_PATH, counter: str = "signin") -> dict:
     """{locked, failed_count, seconds_remaining} for one membership."""
+    table = _counter_table(counter)
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT failed_count, locked_until FROM membership_pin_attempts "
+            f"SELECT failed_count, locked_until FROM {table} "
             "WHERE membership_id=?", (membership_id,)).fetchone()
     finally:
         conn.close()
     if not row:
         return {"locked": False, "failed_count": 0, "seconds_remaining": 0}
-    remaining = 0
-    if row["locked_until"]:
-        try:
-            until = datetime.fromisoformat(str(row["locked_until"]))
-            remaining = max(0, int((until - datetime.utcnow()).total_seconds()))
-        except Exception:
-            remaining = 0
+    remaining = _seconds_left(row["locked_until"])
     return {"locked": remaining > 0, "failed_count": row["failed_count"] or 0,
             "seconds_remaining": remaining}
 
 
-def _record_pin_failure(membership_id: int, db_path: str = DB_PATH) -> dict:
-    """Count one miss and lock the membership out once it hits the ceiling."""
+def _apply_pin_lock(conn, membership_id: int, counter: str) -> bool:
+    """Lock this counter now, unless it already is. True when this call set
+    the lock — so exactly one of several racing failures reports, logs and
+    alerts it, and a failure landing after the lock no longer escalates it a
+    second time from a reset count (LG-24)."""
     from datetime import timedelta as _td
+    table = _counter_table(counter)
+    row = conn.execute(f"SELECT locked_until FROM {table} WHERE membership_id=?",
+                       (membership_id,)).fetchone()
+    if row and _seconds_left(row["locked_until"]) > 0:
+        return False
+    if counter == "change":
+        until = (datetime.utcnow() + _td(minutes=CHANGE_PIN_LOCKOUT_MINUTES)).isoformat()
+        conn.execute(f"UPDATE {table} SET locked_until=?, failed_count=0 WHERE membership_id=?",
+                     (until, membership_id))
+        return True
+    prior = 0
+    try:
+        prev = conn.execute(
+            "SELECT lockout_count FROM membership_pin_attempts WHERE membership_id=? "
+            "AND last_locked_at >= datetime('now', '-1 day')", (membership_id,)).fetchone()
+        prior = (prev["lockout_count"] or 0) if prev else 0
+    except Exception:
+        prior = 0      # a database without the SEC-19 columns: flat lockouts, as before
+    minutes = min(PIN_LOCKOUT_MINUTES * (2 ** prior), PIN_LOCKOUT_MAX_MINUTES)
+    until = (datetime.utcnow() + _td(minutes=minutes)).isoformat()
+    try:
+        conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0, "
+                     "lockout_count=?, last_locked_at=datetime('now') WHERE membership_id=?",
+                     (until, prior + 1, membership_id))
+    except Exception:
+        conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
+                     "WHERE membership_id=?", (until, membership_id))
+    return True
+
+
+def _reserve_pin_attempt(membership_id: int, db_path: str = DB_PATH, counter: str = "signin") -> dict:
+    """Count this attempt BEFORE the PIN is checked (employee audit M4 /
+    LG-24). The check used to read "not locked", spend ~57 ms on the KDF and
+    only then record the miss, so four parallel guesses all passed the check
+    and each lockout cycle allowed about eight guesses instead of five.
+
+    One write transaction: refused while locked; otherwise the counter goes
+    up first, and an attempt that finds the budget already spent by attempts
+    still in flight is refused without being verified (and locks the
+    counter). A correct PIN clears the count afterwards.
+
+    {"allowed", "count", "locked_now", "seconds_remaining"}."""
+    table = _counter_table(counter)
+    limit = _counter_limit(counter)
     conn = get_conn(db_path)
     try:
-        conn.execute("""
-            INSERT INTO membership_pin_attempts (membership_id, failed_count, last_failed_at)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(f"SELECT failed_count, locked_until FROM {table} WHERE membership_id=?",
+                           (membership_id,)).fetchone()
+        left = _seconds_left(row["locked_until"]) if row else 0
+        if left > 0:
+            conn.rollback()
+            return {"allowed": False, "count": 0, "locked_now": False, "seconds_remaining": left}
+        conn.execute(f"""
+            INSERT INTO {table} (membership_id, failed_count, last_failed_at)
             VALUES (?, 1, datetime('now'))
             ON CONFLICT(membership_id) DO UPDATE SET
-                failed_count = membership_pin_attempts.failed_count + 1,
+                failed_count = {table}.failed_count + 1,
                 last_failed_at = datetime('now')
         """, (membership_id,))
+        count = conn.execute(f"SELECT failed_count FROM {table} WHERE membership_id=?",
+                             (membership_id,)).fetchone()["failed_count"]
+        locked_now = _apply_pin_lock(conn, membership_id, counter) if count > limit else False
         conn.commit()
-        row = conn.execute("SELECT failed_count FROM membership_pin_attempts "
-                           "WHERE membership_id=?", (membership_id,)).fetchone()
-        count = row["failed_count"] if row else 1
-        if count >= PIN_MAX_ATTEMPTS:
-            prior = 0
-            try:
-                prev = conn.execute(
-                    "SELECT lockout_count FROM membership_pin_attempts WHERE membership_id=? "
-                    "AND last_locked_at >= datetime('now', '-1 day')", (membership_id,)).fetchone()
-                prior = (prev["lockout_count"] or 0) if prev else 0
-            except Exception:
-                prior = 0      # a database without the SEC-19 columns: flat lockouts, as before
-            minutes = min(PIN_LOCKOUT_MINUTES * (2 ** prior), PIN_LOCKOUT_MAX_MINUTES)
-            until = (datetime.utcnow() + _td(minutes=minutes)).isoformat()
-            try:
-                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0, "
-                             "lockout_count=?, last_locked_at=datetime('now') WHERE membership_id=?",
-                             (until, prior + 1, membership_id))
-            except Exception:
-                conn.execute("UPDATE membership_pin_attempts SET locked_until=?, failed_count=0 "
-                             "WHERE membership_id=?", (until, membership_id))
-            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
-    return pin_lockout_state(membership_id, db_path=db_path)
+    if count > limit:
+        state = pin_lockout_state(membership_id, db_path=db_path, counter=counter)
+        return {"allowed": False, "count": count, "locked_now": locked_now,
+                "seconds_remaining": state["seconds_remaining"]}
+    return {"allowed": True, "count": count, "locked_now": False, "seconds_remaining": 0}
+
+
+def _settle_pin_failure(membership_id: int, count: int, db_path: str = DB_PATH,
+                        counter: str = "signin") -> dict:
+    """A reserved attempt turned out wrong. It is already counted; lock the
+    counter if this attempt was the one that reached the limit.
+    {"locked", "locked_now", "seconds_remaining"}."""
+    locked_now = False
+    if count >= _counter_limit(counter):
+        conn = get_conn(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            locked_now = _apply_pin_lock(conn, membership_id, counter)
+            conn.commit()
+        finally:
+            conn.close()
+    state = pin_lockout_state(membership_id, db_path=db_path, counter=counter)
+    return {"locked": state["locked"], "locked_now": locked_now,
+            "seconds_remaining": state["seconds_remaining"]}
 
 
 def log_pin_event(membership_id: int, restaurant_id: int, event: str,
@@ -1282,16 +1650,19 @@ def get_pin_security_events(restaurant_id: int, limit: int = 100,
         return []
 
 
-def _clear_pin_failures(membership_id: int, db_path: str = DB_PATH):
+def _clear_pin_failures(membership_id: int, db_path: str = DB_PATH, counter: str = "signin"):
     conn = get_conn(db_path)
-    conn.execute("DELETE FROM membership_pin_attempts WHERE membership_id=?", (membership_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(f"DELETE FROM {_counter_table(counter)} WHERE membership_id=?", (membership_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def unlock_membership_pin(membership_id: int, restaurant_id: int,
                           db_path: str = DB_PATH) -> bool:
-    """Owner-initiated unlock, scoped to the acting restaurant."""
+    """Owner-initiated unlock, scoped to the acting restaurant. Lifts both
+    counters: the PIN pad's and the Change PIN screen's."""
     conn = get_conn(db_path)
     try:
         owned = conn.execute("SELECT 1 FROM memberships WHERE id=? AND restaurant_id=?",
@@ -1300,12 +1671,19 @@ def unlock_membership_pin(membership_id: int, restaurant_id: int,
         conn.close()
     if not owned:
         return False
-    _clear_pin_failures(membership_id, db_path=db_path)
+    for counter in _PIN_COUNTERS:
+        _clear_pin_failures(membership_id, db_path=db_path, counter=counter)
     return True
 
 
+def _locked_message(seconds_remaining: int) -> str:
+    mins = max(1, int(seconds_remaining or 0) // 60)
+    return f"Too many tries. Ask a manager to unlock, or wait {mins} min."
+
+
 def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
-                          ip_address: str = None, db_path: str = DB_PATH) -> dict:
+                          ip_address: str = None, db_path: str = DB_PATH,
+                          counter: str = "signin") -> dict:
     """Check a PIN. {ok} on success, {ok: False, error, locked} otherwise.
 
     restaurant_id is passed in from the portal token, never from the client,
@@ -1316,6 +1694,11 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     Distinguishing "no PIN set" from "wrong PIN" would let anyone with the
     portal link enumerate which staff have access — and so would answering in
     0.35 ms instead of 57 ms, which is what the early returns used to do.
+
+    The attempt is counted before the PIN is checked (_reserve_pin_attempt),
+    so parallel guesses cannot all slip under the lockout (LG-24).
+    `counter="change"` is the signed-in Change PIN screen: its own budget,
+    no sign-in events, no owner alerts (SEC-16).
     """
     generic = {"ok": False, "error": "That PIN didn't match.", "locked": False}
     conn = get_conn(db_path)
@@ -1332,44 +1715,43 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
         _burn_pin_cycles(pin)
         return generic
 
-    state = pin_lockout_state(membership_id, db_path=db_path)
-    if state["locked"]:
-        mins = max(1, state["seconds_remaining"] // 60)
-        return {"ok": False, "locked": True,
-                "error": f"Too many tries. Ask a manager to unlock, or wait {mins} min."}
+    reserved = _reserve_pin_attempt(membership_id, db_path=db_path, counter=counter)
+    if not reserved["allowed"]:
+        if reserved["locked_now"] and counter == "signin":
+            _pin_locked(membership_id, restaurant_id, ip_address, db_path)
+        return {"ok": False, "locked": True, "error": _locked_message(reserved["seconds_remaining"])}
 
-    if not row["pin_hash"]:
+    candidate = (pin or "").strip()
+    if row["pin_hash"]:
+        version, raw_hash = _decode_pin_hash(row["pin_hash"])
+        matched = check_password_hash(raw_hash, _peppered(candidate, version=version))
+    else:
         # No PIN issued yet. Still counted, so the lockout also throttles
         # probing at memberships that cannot log in at all — and still pays
         # the KDF, so it is not distinguishable from a wrong PIN by timing.
         _burn_pin_cycles(pin)
-        after_nopin = _record_pin_failure(membership_id, db_path=db_path)
-        log_pin_event(membership_id, restaurant_id, "pin_failed",
-                      ip_address=ip_address, db_path=db_path)
-        if after_nopin["locked"]:
-            log_pin_event(membership_id, restaurant_id, "pin_locked",
+        version, matched = None, False
+
+    if not matched:
+        settled = _settle_pin_failure(membership_id, reserved["count"], db_path=db_path, counter=counter)
+        if counter == "signin":
+            log_pin_event(membership_id, restaurant_id, "pin_failed",
                           ip_address=ip_address, db_path=db_path)
+            if settled["locked_now"]:
+                _pin_locked(membership_id, restaurant_id, ip_address, db_path)
+            _check_pin_spray(restaurant_id, ip_address, db_path)
+        if settled["locked"]:
+            return {"ok": False, "locked": True, "error": _locked_message(settled["seconds_remaining"])}
         return generic
 
-    candidate = (pin or "").strip()
-    version, raw_hash = _decode_pin_hash(row["pin_hash"])
-    if not check_password_hash(raw_hash, _peppered(candidate, version=version)):
-        after = _record_pin_failure(membership_id, db_path=db_path)
-        log_pin_event(membership_id, restaurant_id, "pin_failed",
-                      ip_address=ip_address, db_path=db_path)
-        if after["locked"]:
-            log_pin_event(membership_id, restaurant_id, "pin_locked",
-                          ip_address=ip_address, db_path=db_path)
-            mins = max(1, after["seconds_remaining"] // 60)
-            return {"ok": False, "locked": True,
-                    "error": f"Too many tries. Ask a manager to unlock, or wait {mins} min."}
-        return generic
-
-    _clear_pin_failures(membership_id, db_path=db_path)
+    _clear_pin_failures(membership_id, db_path=db_path, counter=counter)
     # Transparent upgrade: a hash written under an older pepper version is
     # rewritten under the current one the first time its owner signs in, so a
     # rotation drains on its own instead of needing every PIN reissued.
-    if version != _PIN_PEPPER_VERSION:
+    # Never with no pepper configured: that wrote "::pin" under the pepv1
+    # marker, which pin_pepper_health then counted as protected and which
+    # stopped verifying the day the pepper was set (SEC-10).
+    if version != _PIN_PEPPER_VERSION and _pin_pepper():
         try:
             conn_up = get_conn(db_path)
             try:
@@ -1387,6 +1769,165 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
             except Exception:
                 print(f"[pin_pepper_upgrade] failed for membership {membership_id}: {exc}")
     return {"ok": True}
+
+
+# ── Telling the owner (employee audit M4 / SEC-01 / SEC-03) ─────────────────
+#
+# A lockout, a spray across the roster, a self-signup claim and an account
+# deletion were each visible only by opening Account → Staff. They now reach
+# the logins who run the restaurant: a push to the owners' and managers'
+# phones — named explicitly, so an employee's phone registered at the same
+# restaurant never receives it — and an email to the owner when none of them
+# has the app. Like every other send a local backend could make with
+# production's keys, it is skipped off Railway (scheduler.scheduling_allowed).
+
+STAFF_ADMIN_ROLES = ("client", "owner", "manager")
+# One address failing this many PINs across at least this many people in
+# PIN_SPRAY_WINDOW_MINUTES is a spray, not a forgotten PIN.
+PIN_SPRAY_FAILURES = 10
+PIN_SPRAY_PEOPLE = 3
+PIN_SPRAY_WINDOW_MINUTES = 15
+PIN_SPRAY_ALERT_EVERY_MINUTES = 60
+
+
+def mask_phone_last4(phone) -> str:
+    """'…2233' — the only form a staff phone number takes in a log line or
+    an owner notice (SEC-14). sms_log keeps the same four."""
+    digits = "".join(c for c in str(phone or "") if c.isdigit())
+    return f"…{digits[-4:]}" if len(digits) >= 4 else "…"
+
+
+def staff_admin_user_ids(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """The owners' and managers' logins at this restaurant — the explicit
+    audience for a staff-account notice. Never an employee, never Cavnar AI's
+    own internal logins. push.console_user_ids (the notifications wave's one
+    rule for "the logins who run this restaurant") is used when present."""
+    try:
+        import push as _push_ids
+        console_ids = getattr(_push_ids, "console_user_ids", None)
+        if console_ids is not None:
+            try:
+                ids = console_ids(restaurant_id, db_path=db_path)
+            except TypeError:
+                ids = console_ids(restaurant_id)
+            return sorted(int(i) for i in (ids or []))
+    except Exception as exc:
+        print(f"[staff_alert] console_user_ids unavailable rid={restaurant_id}: {exc}")
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT m.user_id FROM memberships m JOIN users u ON u.id = m.user_id "
+            f"WHERE m.restaurant_id=? AND m.is_active=1 AND u.is_active=1 "
+            f"AND m.role IN ({','.join('?' * len(STAFF_ADMIN_ROLES))}) "
+            "AND COALESCE(u.is_admin, 0)=0 AND COALESCE(u.role, '') != 'support'",
+            (restaurant_id,) + STAFF_ADMIN_ROLES).fetchall()
+    finally:
+        conn.close()
+    return sorted(int(r["user_id"]) for r in rows)
+
+
+def alert_staff_admins(restaurant_id: int, kind: str, title: str, body: str,
+                       db_path: str = DB_PATH) -> str:
+    """One staff-account notice to the people who run this restaurant.
+    Returns "push", "email", "skipped" (not on Railway) or "" (nobody could
+    be reached). Never raises."""
+    try:
+        import scheduler as _sched_alert
+        if not _sched_alert.scheduling_allowed():
+            print(f"[staff_alert] {kind} for rid={restaurant_id} not sent: sends are off on this backend")
+            return "skipped"
+    except Exception as exc:
+        print(f"[staff_alert] gate unavailable, not sending {kind}: {exc}")
+        return "skipped"
+    try:
+        ids = staff_admin_user_ids(restaurant_id, db_path=db_path)
+    except Exception as exc:
+        print(f"[staff_alert] audience failed rid={restaurant_id}: {exc}")
+        ids = []
+    if ids:
+        try:
+            import push as _push_alert
+            if _push_alert.fire_push(restaurant_id, "staff_signin", title, body[:220],
+                                     data={"alert_type": "staff_signin", "kind": kind},
+                                     db_path=db_path, user_ids=ids):
+                return "push"
+        except Exception as exc:
+            print(f"[staff_alert] push failed rid={restaurant_id} {kind}: {exc}")
+    try:
+        import html as _h
+        import emails as _emails_alert
+        from config import base_url as _base_url
+        from models import get_restaurant as _get_restaurant
+        r = _get_restaurant(restaurant_id, db_path)
+        to = ((getattr(r, "owner_email", "") or "") if r else "").strip()
+        if not to:
+            return ""
+        place = (getattr(r, "name", "") or "your restaurant") if r else "your restaurant"
+        html = _emails_alert.report_shell(
+            kicker=_h.escape(place), title=_h.escape(title), subtitle="",
+            sections=[_emails_alert.report_paragraph(_h.escape(body))],
+            cta_label="Open Account → Staff", cta_url=_base_url() + "/?tab=account")
+        res = _emails_alert.deliver(email_type="staff_account_notice", restaurant_id=restaurant_id, payload={
+            "from": _emails_alert.sender("client"), "to": [to],
+            "subject": f"{title} — {place}", "preheader": body[:120], "html": html})
+        return "email" if getattr(res, "ok", False) else ""
+    except Exception as exc:
+        print(f"[staff_alert] email failed rid={restaurant_id} {kind}: {exc}")
+        return ""
+
+
+def _membership_name(membership_id: int, restaurant_id: int, db_path: str = DB_PATH) -> str:
+    try:
+        row = get_membership_by_id(membership_id, restaurant_id, db_path=db_path)
+        return (row or {}).get("employee_name") or "An employee"
+    except Exception:
+        return "An employee"
+
+
+def _pin_locked(membership_id: int, restaurant_id: int, ip_address, db_path: str = DB_PATH):
+    """The lock this attempt set: the security event, then the owner."""
+    log_pin_event(membership_id, restaurant_id, "pin_locked", ip_address=ip_address, db_path=db_path)
+    name = _membership_name(membership_id, restaurant_id, db_path)
+    alert_staff_admins(restaurant_id, "pin_locked", "Staff PIN locked",
+                       f"{name}'s staff PIN locked after {PIN_MAX_ATTEMPTS} wrong tries. If it wasn't "
+                       "them, rotate the join code; to let them back in, unlock in Account → Staff.",
+                       db_path=db_path)
+
+
+def _check_pin_spray(restaurant_id: int, ip_address, db_path: str = DB_PATH) -> bool:
+    """One address failing PINs across several people — the spray the
+    per-membership lockout cannot see. Alerts the owner at most once an hour
+    per address. True when this call alerted."""
+    if not ip_address:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, COUNT(DISTINCT user_id) AS people FROM login_history "
+                "WHERE restaurant_id=? AND ip_address=? AND event='pin_failed' "
+                "AND created_at >= datetime('now', ?)",
+                (restaurant_id, ip_address, f"-{PIN_SPRAY_WINDOW_MINUTES} minutes")).fetchone()
+        finally:
+            conn.close()
+        if not row or row["n"] < PIN_SPRAY_FAILURES or row["people"] < PIN_SPRAY_PEOPLE:
+            return False
+        import ops as _ops_spray
+        if not _ops_spray.claim_cooldown(f"pin_spray:{restaurant_id}:{ip_address}",
+                                         PIN_SPRAY_ALERT_EVERY_MINUTES):
+            return False
+        alert_staff_admins(restaurant_id, "pin_spray", "Someone is guessing staff PINs",
+                           f"{row['n']} wrong PINs across {row['people']} people from one device in the last "
+                           f"{PIN_SPRAY_WINDOW_MINUTES} minutes. If that wasn't a shift change gone wrong, "
+                           "rotate the staff join code in Account → Staff.", db_path=db_path)
+        return True
+    except Exception as exc:
+        try:
+            import ops as _ops_spray_err
+            _ops_spray_err.capture(exc, job="pin_spray_check", context=f"rid={restaurant_id}")
+        except Exception:
+            print(f"[pin_spray] check failed rid={restaurant_id}: {exc}")
+        return False
 
 
 def _pending_key() -> bytes:
@@ -2419,56 +2960,85 @@ def _sms_configured() -> bool:
                ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
 
 
-def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) -> dict:
-    """Send a verification code to a phone. {ok, dev_code} or raises.
+# ── Verification texts: one gate for every code the staff surface sends ────
+#
+# Signup and forgot-PIN both text a 6-digit code from an unauthenticated
+# endpoint, so both pass through here (employee audit C11):
+#
+#   * Only the configured country codes (STAFF_OTP_COUNTRY_CODES, default
+#     "1"; the A2P 10DLC campaign is US-only anyway). Any "+<digits>" used to
+#     pass, which is the shape of SMS-pumping (toll) fraud (SEC-07 / LG-22).
+#   * A platform-wide ceiling per hour (STAFF_OTP_HOURLY_CAP, default 200),
+#     counted in staff_otp_sends — the per-phone and per-address limits do
+#     nothing against a script rotating both. Hitting it is reported once an
+#     hour through ops.capture.
+#   * The code is shown in the response ONLY with STAFF_SIGNUP_DEV_CODE=1 set
+#     explicitly, never when Twilio is configured and never on a deployment
+#     (SEC-08): "not on Railway" alone handed the code to anyone who found the
+#     local backend's ngrok URL, while production's Twilio keys still sent it.
+#   * A log line carries the last four digits, never the number (SEC-14).
 
-    dev_code is returned ONLY when Twilio is unconfigured and this is not a
-    deployed environment — otherwise local and test runs could never get past
-    step one, and a developer would be tempted to build a bypass that ships.
+STAFF_OTP_HOURLY_CAP_DEFAULT = 200
 
-    optin must be explicitly True. This is the server-side half of the A2P
-    10DLC consent requirement (Twilio rejected the first campaign submission
-    over exactly this: "the opt-in checkbox is missing or appears to be
-    pre-selected"). The web/iOS clients refuse to call this without a
-    genuinely unchecked-by-default box the person ticks themselves, but that
-    is a UI courtesy — a direct API call could skip it, and consent that can
-    be skipped is not consent a carrier will accept. Enforcing it here is
-    what makes it real.
-    """
-    phone = normalize_phone(phone)
-    if not phone:
-        raise SignupError("Enter a mobile number we can text.")
-    if not optin:
-        raise SignupError("Check the box to consent to the text before we can send it.")
 
-    code = f"{secrets.randbelow(1000000):06d}"
-    conn = get_conn(db_path)
+def otp_country_codes() -> tuple:
+    raw = os.environ.get("STAFF_OTP_COUNTRY_CODES", "") or "1"
+    codes = tuple(c.strip().lstrip("+") for c in raw.split(",")
+                  if c.strip().lstrip("+").isdigit())
+    return codes or ("1",)
+
+
+def otp_country_allowed(phone: str) -> bool:
+    """A normalized number ("+15550142233") in a country we text codes to."""
+    for cc in otp_country_codes():
+        if phone.startswith("+" + cc):
+            # North America is +1 and exactly ten digits after it.
+            return len(phone) == 12 if cc == "1" else True
+    return False
+
+
+def _otp_hourly_cap() -> int:
     try:
-        conn.execute("DELETE FROM staff_signups WHERE created_at < datetime('now', ?)",
-                     (f"-{SIGNUP_TOKEN_TTL_MINUTES} minutes",))
-        row = conn.execute(
-            "SELECT sends, last_sent_at FROM staff_signups WHERE phone=?", (phone,)).fetchone()
-        if row:
-            if (row["sends"] or 0) >= SIGNUP_MAX_SENDS:
-                raise SignupError("Too many codes sent to that number. Try again later.")
-            recent = conn.execute(
-                "SELECT 1 FROM staff_signups WHERE phone=? AND last_sent_at > datetime('now', ?)",
-                (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()
-            if recent:
-                raise SignupError("We just texted you — give it a moment.")
-            conn.execute(
-                "UPDATE staff_signups SET code_hash=?, attempts=0, sends=sends+1, "
-                "token_hash=NULL, verified_at=NULL, last_sent_at=datetime('now'), "
-                "created_at=datetime('now') WHERE phone=?",
-                (generate_password_hash(code), phone))
-        else:
-            conn.execute(
-                "INSERT INTO staff_signups (phone, code_hash) VALUES (?,?)",
-                (phone, generate_password_hash(code)))
-        conn.commit()
-    finally:
-        conn.close()
+        return max(0, int(os.environ.get("STAFF_OTP_HOURLY_CAP", "") or STAFF_OTP_HOURLY_CAP_DEFAULT))
+    except ValueError:
+        return STAFF_OTP_HOURLY_CAP_DEFAULT
 
+
+def _otp_cap_reserve(conn, kind: str) -> bool:
+    """Inside the caller's write transaction: take one send under the hourly
+    ceiling. False (nothing written) when the ceiling is reached."""
+    conn.execute("DELETE FROM staff_otp_sends WHERE created_at < datetime('now', '-1 day')")
+    n = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE created_at >= datetime('now', '-1 hour')"
+                     ).fetchone()[0]
+    if n >= _otp_hourly_cap():
+        try:
+            import ops as _ops_cap
+            if _ops_cap.claim_cooldown("staff_otp_cap", 60):
+                _ops_cap.capture(RuntimeError(f"staff verification texts hit the hourly cap ({n})"),
+                                 job="staff_otp_cap", context=f"kind={kind}")
+        except Exception:
+            print(f"[staff_otp] hourly cap reached ({n}); {kind} refused")
+        return False
+    conn.execute("INSERT INTO staff_otp_sends (kind) VALUES (?)", (kind,))
+    return True
+
+
+OTP_CAP_MESSAGE = "We can't send codes right now. Try again in a little while."
+
+
+def dev_code_allowed() -> bool:
+    """The local escape hatch, on purpose only: STAFF_SIGNUP_DEV_CODE=1, with
+    Twilio unconfigured, off any deployment."""
+    if (os.environ.get("STAFF_SIGNUP_DEV_CODE") or "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    if _sms_configured():
+        print("[staff_otp] STAFF_SIGNUP_DEV_CODE is ignored: Twilio is configured, so the code is texted")
+        return False
+    return not cookies_require_secure()
+
+
+def _send_otp_text(phone: str, code: str, kind: str) -> dict:
+    """Text the code. {"sms_sent"} plus "dev_code" when dev_code_allowed()."""
     queued = False
     try:
         from notify import send_sms
@@ -2484,19 +3054,72 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) 
                                  f"It expires in {SIGNUP_CODE_TTL_MINUTES} minutes. "
                                  f"Reply STOP to opt out.", use_case="otp")
     except Exception as exc:
-        print(f"[staff_signup] SMS send failed for {phone}: {exc}")
-
-    out = {"ok": True, "sms_sent": queued}
-    # The local escape hatch is keyed on the DEPLOYMENT, not on whether the
-    # send worked, because "it worked" is not something the send can tell us:
-    # Twilio answers 201 the moment it accepts a message for delivery, and the
-    # carrier can reject it seconds later (A2P 10DLC, unreachable handset, a
-    # landline). Keying the fallback on that 201 produced the worst outcome
-    # available — no text arrived AND no code was shown, because as far as the
-    # server knew it had been sent.
-    if not cookies_require_secure():
-        print(f"[staff_signup] DEV CODE for {phone}: {code}")
+        print(f"[staff_otp] {kind} SMS send failed for {mask_phone_last4(phone)}: {exc}")
+    out = {"sms_sent": bool(queued)}
+    if dev_code_allowed():
+        print(f"[staff_otp] DEV CODE ({kind}) for {mask_phone_last4(phone)}: {code}")
         out["dev_code"] = code
+    return out
+
+
+def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) -> dict:
+    """Send a verification code to a phone. {ok, sms_sent[, dev_code]} or
+    raises SignupError. The gates above apply (country, hourly ceiling, the
+    explicit dev-code flag).
+
+    optin must be explicitly True. This is the server-side half of the A2P
+    10DLC consent requirement (Twilio rejected the first campaign submission
+    over exactly this: "the opt-in checkbox is missing or appears to be
+    pre-selected"). The web/iOS clients refuse to call this without a
+    genuinely unchecked-by-default box the person ticks themselves, but that
+    is a UI courtesy — a direct API call could skip it, and consent that can
+    be skipped is not consent a carrier will accept. Enforcing it here is
+    what makes it real.
+    """
+    phone = normalize_phone(phone)
+    if not phone:
+        raise SignupError("Enter a mobile number we can text.")
+    if not optin:
+        raise SignupError("Check the box to consent to the text before we can send it.")
+    if not otp_country_allowed(phone):
+        raise SignupError("Enter a US mobile number — we can only text codes to US numbers.")
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    code_hash = generate_password_hash(code)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM staff_signups WHERE created_at < datetime('now', ?)",
+                     (f"-{SIGNUP_TOKEN_TTL_MINUTES} minutes",))
+        row = conn.execute(
+            "SELECT sends, last_sent_at FROM staff_signups WHERE phone=?", (phone,)).fetchone()
+        if row:
+            if (row["sends"] or 0) >= SIGNUP_MAX_SENDS:
+                raise SignupError("Too many codes sent to that number. Try again later.")
+            recent = conn.execute(
+                "SELECT 1 FROM staff_signups WHERE phone=? AND last_sent_at > datetime('now', ?)",
+                (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()
+            if recent:
+                raise SignupError("We just texted you — give it a moment.")
+        if not _otp_cap_reserve(conn, "signup"):
+            raise SignupError(OTP_CAP_MESSAGE)
+        if row:
+            conn.execute(
+                "UPDATE staff_signups SET code_hash=?, attempts=0, sends=sends+1, "
+                "token_hash=NULL, verified_at=NULL, last_sent_at=datetime('now'), "
+                "created_at=datetime('now') WHERE phone=?", (code_hash, phone))
+        else:
+            conn.execute("INSERT INTO staff_signups (phone, code_hash) VALUES (?,?)", (phone, code_hash))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    out = {"ok": True}
+    out.update(_send_otp_text(phone, code, "signup"))
+    if "dev_code" in out:
         out["sms_configured"] = _sms_configured()
     return out
 
@@ -2565,7 +3188,8 @@ def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
     The pool is the roster the owner already keeps for Operational Score plus
     whoever appears on the most recently published schedule — never invented,
     never a sample fixture. Anything already claimed is removed, so a name is
-    claimable exactly once.
+    claimable exactly once. Names compare by staff_settings.name_key, the one
+    rule for "the same person" (C9).
     """
     from staff_roster import roster_names_for_restaurant
     taken = set()
@@ -2575,12 +3199,12 @@ def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
                 "SELECT employee_name FROM memberships "
                 "WHERE restaurant_id=? AND employee_name IS NOT NULL AND is_active=1",
                 (restaurant_id,)).fetchall():
-            taken.add((r["employee_name"] or "").strip().lower())
+            taken.add(_name_key(r["employee_name"]))
     finally:
         conn.close()
     out, seen = [], set()
     for name, job in roster_names_for_restaurant(restaurant_id, db_path=db_path):
-        key = name.strip().lower()
+        key = _name_key(name)
         if not key or key in taken or key in seen:
             continue
         seen.add(key)
@@ -2591,23 +3215,58 @@ def claimable_names(restaurant_id: int, db_path: str = DB_PATH) -> list:
 def _unfinished_claim(restaurant_id, wanted, phone, db_path):
     """This phone's own claim of `wanted` that stopped before its PIN was set.
 
-    claim_staff_name is several commits (identity, membership, claim stamp,
-    PIN, token). A failure after the membership was written — a lock, a full
-    disk — left the name taken with no PIN, and the employee's retry was
-    refused as "not available", with no way back but the manager (DATA-58).
-    The same verified phone may finish it: the steps it repeats are
-    idempotent, and the signup token is only consumed once it is done."""
+    claim_staff_name used to be several commits (identity, membership, claim
+    stamp, PIN, token), and a failure after the membership was written left
+    the name taken with no PIN (DATA-58). The claim is one transaction now,
+    so this only finishes a row an older build left half-written."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT m.employee_name, m.job_role FROM memberships m JOIN users u ON u.id = m.user_id "
             "WHERE m.restaurant_id=? AND m.is_active=1 AND m.pin_hash IS NULL "
-            "AND LOWER(TRIM(m.employee_name))=LOWER(?) "
             "AND (m.claimed_by_phone=? OR u.phone=?)",
-            (restaurant_id, wanted, phone, phone)).fetchone()
+            (restaurant_id, phone, phone)).fetchall()
     finally:
         conn.close()
-    return {"name": row["employee_name"], "job_role": row["job_role"]} if row else None
+    for row in rows:
+        if _name_key(row["employee_name"]) == _name_key(wanted):
+            return {"name": row["employee_name"], "job_role": row["job_role"]}
+    return None
+
+
+class AlreadyMemberError(SignupError):
+    """This phone already has an active login at this restaurant: the way
+    back in is Forgot PIN, never a second claim (C9 / LG-14)."""
+
+    def __init__(self, message, employee_name=None):
+        super().__init__(message)
+        self.employee_name = employee_name
+
+
+def _write_claim(conn, user_id, restaurant_id, phone, name, job_role, pin_hash, signup_token):
+    """The claim's writes, inside the caller's BEGIN IMMEDIATE: the membership
+    (a new row, or this identity's own row here brought back), its claim
+    stamp and PIN, cleared counters, and the spent signup token. Returns the
+    membership id."""
+    mine = conn.execute("SELECT id FROM memberships WHERE user_id=? AND restaurant_id=?",
+                        (user_id, restaurant_id)).fetchone()
+    if mine:
+        conn.execute(
+            "UPDATE memberships SET role='employee', employee_name=?, job_role=COALESCE(?, job_role), "
+            "is_active=1, claimed_by_phone=?, claimed_at=datetime('now'), pin_hash=?, "
+            "pin_set_at=datetime('now'), unlinked_at=NULL, deleted_at=NULL, updated_at=datetime('now') "
+            "WHERE id=?", (name, job_role, phone, pin_hash, mine["id"]))
+        mid = mine["id"]
+    else:
+        mid = conn.execute(
+            "INSERT INTO memberships (user_id, restaurant_id, role, employee_name, job_role, "
+            "claimed_by_phone, claimed_at, pin_hash, pin_set_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,datetime('now'),?,datetime('now'),datetime('now'))",
+            (user_id, restaurant_id, "employee", name, job_role, phone, pin_hash)).lastrowid
+    for table in _PIN_COUNTERS.values():
+        conn.execute(f"DELETE FROM {table} WHERE membership_id=?", (mid,))
+    conn.execute("DELETE FROM staff_signups WHERE token_hash=?", (hash_session_token(signup_token),))
+    return mid
 
 
 def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
@@ -2619,6 +3278,15 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
     an identity (this employee works at another location, or came back) gets a
     SECOND MEMBERSHIP on the same identity rather than a duplicate account —
     which is the whole reason identity and membership are separate tables.
+
+    One person, one login here (employee audit C9):
+      * A phone that already has an active login at this restaurant is
+        refused (AlreadyMemberError) — re-running signup silently renamed
+        that login to whatever name was picked next (LG-14).
+      * The claim is one BEGIN IMMEDIATE transaction that re-checks the
+        name is free, so two people claiming one name at once cannot both
+        land (LG-13); the partial unique index is the backstop.
+      * A missing pepper is refused before anything is written (SEC-10).
 
     Raises SignupError with a message safe to show the employee.
     """
@@ -2632,40 +3300,69 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
         pin = validate_pin(pin)
     except PinError as pe:
         raise SignupError(str(pe))
+    if not _pin_pepper():
+        raise SignupError("Staff sign-in isn't set up on this server yet. Ask your manager.")
 
-    # The name must be on the roster AND unclaimed, re-checked here rather
-    # than trusted from the list the client was shown a moment ago.
-    available = {c["name"].strip().lower(): c for c in
-                 claimable_names(restaurant_id, db_path=db_path)}
-    match = available.get(wanted.lower()) or _unfinished_claim(restaurant_id, wanted, phone, db_path)
+    from staff_roster import roster_names_for_restaurant
+    key = _name_key(wanted)
+    match = next(({"name": n, "job_role": j} for n, j in roster_names_for_restaurant(restaurant_id, db_path=db_path)
+                  if _name_key(n) == key), None) or _unfinished_claim(restaurant_id, wanted, phone, db_path)
     if not match:
         raise SignupError("That name isn't available. Ask your manager.")
 
-    # A name an owner unlinked is claimable again — someone new really may be
-    # hired into it — but not by the phone it was taken away from.
+    existing = get_user_by_phone(phone, db_path=db_path)
+    # The KDF (~57 ms) runs before the write lock is taken, not inside it.
+    pin_hash = _encode_pin_hash(generate_password_hash(_peppered(pin)))
+
+    def _checks(conn, user_id):
+        if user_id:
+            own = conn.execute(
+                "SELECT employee_name, pin_hash FROM memberships WHERE user_id=? AND restaurant_id=? "
+                "AND is_active=1", (user_id, restaurant_id)).fetchone()
+            if own and not (own["pin_hash"] is None and _name_key(own["employee_name"]) == key):
+                raise AlreadyMemberError(
+                    f"This phone already has an account here as {own['employee_name']}. "
+                    "Use “Forgot PIN?” on the sign-in screen to set a new PIN.", own["employee_name"])
+        # A name an owner unlinked is claimable again — someone new really may
+        # be hired into it — but not by the phone it was taken away from. A
+        # login its own holder deleted does not block them coming back.
+        if conn.execute("SELECT 1 FROM memberships WHERE restaurant_id=? AND is_active=0 "
+                        "AND claimed_by_phone=? AND deleted_at IS NULL", (restaurant_id, phone)).fetchone():
+            raise SignupError("This phone can't be used here. Ask your manager.")
+        for r in conn.execute("SELECT user_id, employee_name, pin_hash FROM memberships WHERE restaurant_id=? "
+                              "AND is_active=1 AND employee_name IS NOT NULL", (restaurant_id,)).fetchall():
+            if _name_key(r["employee_name"]) == key and not (user_id and r["user_id"] == user_id):
+                raise SignupError("That name isn't available. Ask your manager.")
+
+    # Fail fast, before an identity is minted for a claim that cannot land.
     conn = get_conn(db_path)
     try:
-        blocked = conn.execute(
-            "SELECT 1 FROM memberships WHERE restaurant_id=? AND is_active=0 "
-            "AND claimed_by_phone=?", (restaurant_id, phone)).fetchone()
+        _checks(conn, existing["id"] if existing else None)
     finally:
         conn.close()
-    if blocked:
-        raise SignupError("This phone can't be used here. Ask your manager.")
 
-    existing = get_user_by_phone(phone, db_path=db_path)
     if existing:
         user_id = existing["id"]
     else:
         base = "".join(c for c in wanted.lower() if c.isalnum()) or "staff"
-        username, suffix = f"{base}.{restaurant_id}", 1
-        while get_user_by_username(username, db_path=db_path):
-            suffix += 1
-            username = f"{base}.{restaurant_id}.{suffix}"
+        username, suffix, user_id = f"{base}.{restaurant_id}", 1, None
         # A PIN identity must not also be a password login — that would be a
-        # second, weaker way into the same account.
-        user_id = create_user(restaurant_id, username, f"{username}@staff.invalid",
-                              secrets.token_urlsafe(32), db_path=db_path, generated=True)
+        # second, weaker way into the same account. Until the transaction
+        # below lands it has no membership, and an identity with none is inert.
+        # Two claims at once can pick the same free username; the loser takes
+        # the next suffix rather than failing.
+        while user_id is None:
+            while get_user_by_username(username, db_path=db_path):
+                suffix += 1
+                username = f"{base}.{restaurant_id}.{suffix}"
+            try:
+                user_id = create_user(restaurant_id, username, f"{username}@staff.invalid",
+                                      secrets.token_urlsafe(32), db_path=db_path, generated=True)
+            except sqlite3.IntegrityError:
+                if suffix > 50:
+                    raise
+                suffix += 1
+                username = f"{base}.{restaurant_id}.{suffix}"
         conn = get_conn(db_path)
         try:
             conn.execute("UPDATE users SET phone=? WHERE id=?", (phone, user_id))
@@ -2673,21 +3370,29 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
         finally:
             conn.close()
 
-    membership = upsert_membership(user_id, restaurant_id, "employee",
-                                   employee_name=match["name"],
-                                   job_role=match.get("job_role"), db_path=db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute(
-            "UPDATE memberships SET claimed_by_phone=?, claimed_at=datetime('now') WHERE id=?",
-            (phone, membership["id"]))
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT 1 FROM staff_signups WHERE token_hash=? AND verified_at IS NOT NULL",
+                            (hash_session_token(signup_token),)).fetchone():
+            raise SignupError("That signup expired. Start again.")      # spent by a racing claim
+        _checks(conn, user_id)
+        try:
+            mid = _write_claim(conn, user_id, restaurant_id, phone, match["name"],
+                               (match.get("job_role") or "").strip() or None, pin_hash, signup_token)
+        except sqlite3.IntegrityError as exc:
+            if ACTIVE_NAME_INDEX in str(exc):
+                raise SignupError("That name isn't available. Ask your manager.") from exc
+            raise
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
-    set_membership_pin(membership["id"], restaurant_id, pin, db_path=db_path)
-    _consume_signup_token(signup_token, db_path=db_path)
-    return {"user_id": user_id, "membership_id": membership["id"],
-            "employee_name": match["name"], "job_role": match.get("job_role")}
+    return {"user_id": user_id, "membership_id": mid,
+            "employee_name": match["name"], "job_role": match.get("job_role"),
+            "phone_last4": mask_phone_last4(phone)}
 
 
 def unlink_claimed_membership(membership_id: int, restaurant_id: int,
@@ -2697,7 +3402,19 @@ def unlink_claimed_membership(membership_id: int, restaurant_id: int,
     Deactivates the membership (which ends its sessions) so the name returns
     to the claimable pool for the person it belongs to, while claimed_by_phone
     stays on the row — that is what stops the same phone taking it again.
+    The unlink is RECORDED (unlinked_at): it used to look exactly like a
+    roster deactivation, so putting the name back on the roster restored the
+    impostor's login with its old PIN (C9 / LG-05).
     """
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE memberships SET unlinked_at=datetime('now') WHERE id=? AND restaurant_id=?",
+                           (membership_id, restaurant_id))
+        conn.commit()
+        if not cur.rowcount:
+            return False
+    finally:
+        conn.close()
     return set_membership_active(membership_id, restaurant_id, False, db_path=db_path)
 
 
@@ -2725,6 +3442,258 @@ def restaurant_for_staff_code(code: str, db_path: str = DB_PATH) -> Optional[int
     """
     return (restaurant_for_portal_token(code, db_path=db_path)
             or restaurant_for_join_code(code, db_path=db_path))
+
+
+# ── Forgot PIN, by text (employee audit H10) ──────────────────────────────
+#
+# Lockouts escalate to 24 hours and the only way back was a manager; the
+# obvious thing to try — signing up again — renamed the login (LG-14). Now:
+# a code to the phone on file, typed back for a short-lived reset token, then
+# a new PIN under the one PIN policy.
+#
+# "The phone on file" for a login, in order: the identity's own verified
+# phone (users.phone, from signup), the number it was claimed with, then the
+# number the owner typed for that name on the roster (staff_contacts) — the
+# owner-created logins have only that. A number matching more than one
+# active login here sends nothing: a reset must name exactly one person.
+#
+# The start step answers the same whatever the number: whether a phone has
+# an account at a restaurant is not something a stranger with the join code
+# may learn. It texts only when there is an account, so nothing is spent on
+# numbers that have none.
+
+PIN_RESET_TOKEN_TTL_MINUTES = 15
+
+
+def _membership_for_reset(restaurant_id: int, phone: str, db_path: str = DB_PATH):
+    """The one active employee login at this restaurant whose phone on file
+    is `phone`, or None (none, or more than one)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT m.id, m.employee_name, m.claimed_by_phone, u.phone AS user_phone "
+            "FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE m.restaurant_id=? AND m.is_active=1 AND u.is_active=1 AND m.role='employee'",
+            (restaurant_id,)).fetchall()
+        try:
+            contacts = conn.execute("SELECT employee_name, phone FROM staff_contacts "
+                                    "WHERE restaurant_id=? AND phone IS NOT NULL AND phone != ''",
+                                    (restaurant_id,)).fetchall()
+        except sqlite3.OperationalError:
+            contacts = []
+    finally:
+        conn.close()
+    by_identity = [r for r in rows if r["user_phone"] == phone or r["claimed_by_phone"] == phone]
+    if by_identity:
+        return dict(by_identity[0]) if len({r["id"] for r in by_identity}) == 1 else None
+    names = {_name_key(c["employee_name"]) for c in contacts if normalize_phone(c["phone"]) == phone}
+    found = [r for r in rows if _name_key(r["employee_name"]) in names]
+    return dict(found[0]) if len(found) == 1 else None
+
+
+def start_pin_reset(restaurant_id: int, phone: str, db_path: str = DB_PATH) -> dict:
+    """Text a reset code to this phone if it has a login here. Raises
+    SignupError only for input that is wrong whoever is asking (no number, a
+    country we do not text); otherwise always {"ok": True}."""
+    phone = normalize_phone(phone)
+    if not phone:
+        raise SignupError("Enter a mobile number we can text.")
+    if not otp_country_allowed(phone):
+        raise SignupError("Enter a US mobile number — we can only text codes to US numbers.")
+    out = {"ok": True}
+    member = _membership_for_reset(restaurant_id, phone, db_path=db_path)
+    if not member:
+        return out
+    code = f"{secrets.randbelow(1000000):06d}"
+    code_hash = generate_password_hash(code)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM staff_pin_resets WHERE created_at < datetime('now', ?)",
+                     (f"-{PIN_RESET_TOKEN_TTL_MINUTES} minutes",))
+        row = conn.execute("SELECT sends FROM staff_pin_resets WHERE phone=?", (phone,)).fetchone()
+        if row and ((row["sends"] or 0) >= SIGNUP_MAX_SENDS or conn.execute(
+                "SELECT 1 FROM staff_pin_resets WHERE phone=? AND last_sent_at > datetime('now', ?)",
+                (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()):
+            conn.rollback()
+            return out          # silently: the same answer as a number with no account
+        if not _otp_cap_reserve(conn, "pin_reset"):
+            conn.rollback()
+            return out
+        if row:
+            conn.execute("UPDATE staff_pin_resets SET restaurant_id=?, membership_id=?, code_hash=?, attempts=0, "
+                         "sends=sends+1, token_hash=NULL, verified_at=NULL, last_sent_at=datetime('now'), "
+                         "created_at=datetime('now') WHERE phone=?",
+                         (restaurant_id, member["id"], code_hash, phone))
+        else:
+            conn.execute("INSERT INTO staff_pin_resets (phone, restaurant_id, membership_id, code_hash) "
+                         "VALUES (?,?,?,?)", (phone, restaurant_id, member["id"], code_hash))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    sent = _send_otp_text(phone, code, "pin_reset")
+    if "dev_code" in sent:
+        out["dev_code"] = sent["dev_code"]
+    return out
+
+
+PIN_RESET_CODE_MISMATCH = "That code didn't match or has expired. Ask for a new one."
+
+
+def verify_pin_reset(phone: str, code: str, db_path: str = DB_PATH) -> dict:
+    """The texted code → {"reset_token", "employee_name", "restaurant_id"}.
+    Raises SignupError with one message for "wrong" and "no such reset", so
+    the answer does not tell an account apart from none."""
+    phone = normalize_phone(phone)
+    if not phone:
+        raise SignupError("Enter a mobile number we can text.")
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT r.code_hash, r.attempts, r.restaurant_id, r.membership_id, m.employee_name "
+            "FROM staff_pin_resets r JOIN memberships m ON m.id = r.membership_id "
+            "WHERE r.phone=? AND r.created_at > datetime('now', ?) AND m.is_active=1",
+            (phone, f"-{SIGNUP_CODE_TTL_MINUTES} minutes")).fetchone()
+        if not row or (row["attempts"] or 0) >= SIGNUP_MAX_ATTEMPTS:
+            conn.rollback()
+            raise SignupError(PIN_RESET_CODE_MISMATCH)
+        if not check_password_hash(row["code_hash"], (code or "").strip()):
+            conn.execute("UPDATE staff_pin_resets SET attempts=attempts+1 WHERE phone=?", (phone,))
+            conn.commit()
+            raise SignupError(PIN_RESET_CODE_MISMATCH)
+        token = secrets.token_urlsafe(24)
+        conn.execute("UPDATE staff_pin_resets SET token_hash=?, verified_at=datetime('now'), attempts=0 "
+                     "WHERE phone=?", (hash_session_token(token), phone))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"reset_token": token, "employee_name": row["employee_name"],
+            "restaurant_id": row["restaurant_id"], "membership_id": row["membership_id"]}
+
+
+def complete_pin_reset(reset_token: str, pin: str, ip_address: str = None,
+                       db_path: str = DB_PATH) -> dict:
+    """Set the new PIN the reset token is good for. Single use. Ends every
+    staff session that login had at that restaurant and lifts its lockout
+    (set_membership_pin). Returns {"user_id", "membership_id",
+    "restaurant_id", "employee_name"}; raises SignupError / PinError."""
+    if not reset_token:
+        raise SignupError("That reset expired. Start again.")
+    pin = validate_pin(pin)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT phone, restaurant_id, membership_id FROM staff_pin_resets WHERE token_hash=? "
+            "AND verified_at IS NOT NULL AND verified_at > datetime('now', ?)",
+            (hash_session_token(reset_token), f"-{PIN_RESET_TOKEN_TTL_MINUTES} minutes")).fetchone()
+        if not row:
+            conn.rollback()
+            raise SignupError("That reset expired. Start again.")
+        conn.execute("DELETE FROM staff_pin_resets WHERE phone=?", (row["phone"],))
+        conn.commit()
+    finally:
+        conn.close()
+    rid, mid = row["restaurant_id"], row["membership_id"]
+    member = get_membership_by_id(mid, rid, db_path=db_path)
+    if not member or not member.get("is_active") or member.get("role") != "employee":
+        raise SignupError("That login isn't active any more. Ask your manager.")
+    if not set_membership_pin(mid, rid, pin, db_path=db_path):
+        raise SignupError("That reset expired. Start again.")
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, "
+                         "device_type) VALUES (?,?,?,?,?,?)",
+                         (member["user_id"], rid, "pin_reset_by_text", ip_address or "", "", "staff_pin"))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"[pin_reset] history row not written for membership {mid}: {exc}")
+    return {"user_id": member["user_id"], "membership_id": mid, "restaurant_id": rid,
+            "employee_name": member.get("employee_name")}
+
+
+# ── An employee's own account (employee audit C10 / M12) ───────────────────
+
+def delete_own_staff_account(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """An employee deletes the login they hold at this restaurant (App Store
+    5.1.1(v): an account created in the app can be deleted in the app).
+
+    The membership ends — stamped deleted_at, so the roster switch never
+    restores it — with its PIN, its texts consent and the phone it was claimed
+    with cleared, every staff session it had here ended and its emailed
+    schedule links expired. When the identity has no other active login
+    anywhere, the identity itself is deactivated and its phone cleared, so
+    the number is free to sign up again from scratch. The restaurant's own
+    records about the person (shifts, the roster, contacts the owner typed)
+    are the restaurant's and are not touched here.
+
+    Returns {"ok", "employee_name", "phone_last4", "identity_closed"}."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        m = conn.execute("SELECT m.*, u.phone AS user_phone FROM memberships m JOIN users u ON u.id = m.user_id "
+                         "WHERE m.user_id=? AND m.restaurant_id=? AND m.is_active=1 AND m.role='employee'",
+                         (user_id, restaurant_id)).fetchone()
+        if not m:
+            conn.rollback()
+            return {"ok": False}
+        phone = m["claimed_by_phone"] or m["user_phone"] or ""
+        conn.execute("UPDATE memberships SET is_active=0, deleted_at=datetime('now'), pin_hash=NULL, "
+                     "pin_set_at=NULL, schedule_texts_at=NULL, claimed_by_phone=NULL, "
+                     "updated_at=datetime('now') WHERE id=?", (m["id"],))
+        for table in _PIN_COUNTERS.values():
+            conn.execute(f"DELETE FROM {table} WHERE membership_id=?", (m["id"],))
+        _expire_share_links(conn, restaurant_id, m["employee_name"])
+        others = conn.execute("SELECT 1 FROM memberships WHERE user_id=? AND is_active=1 AND id!=?",
+                              (user_id, m["id"])).fetchone()
+        closed = not others
+        if closed:
+            conn.execute("UPDATE users SET is_active=0, phone=NULL WHERE id=?", (user_id,))
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        conn.execute("INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, "
+                     "device_type) VALUES (?,?,?,?,?,?)",
+                     (user_id, restaurant_id, "account_deleted", "", "", "staff_pin"))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _end_staff_sessions_for_membership(m["id"], restaurant_id, db_path=db_path)
+    _expire_person_links(restaurant_id, m["employee_name"], db_path=db_path)
+    if closed:
+        unregister_staff_push(user_id, None)        # no login left anywhere: every phone
+    return {"ok": True, "membership_id": m["id"], "employee_name": m["employee_name"],
+            "phone_last4": mask_phone_last4(phone) if phone else "", "identity_closed": closed}
+
+
+def staff_locations_for_user(user_id: int, db_path: str = DB_PATH) -> list:
+    """Every restaurant where this identity holds an active employee login —
+    the multi-location switcher. Each carries that restaurant's portal token
+    and join code, which is what its PIN pad is opened with."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT m.id, m.restaurant_id, m.employee_name, r.name AS restaurant "
+            "FROM memberships m JOIN restaurants r ON r.id = m.restaurant_id "
+            "WHERE m.user_id=? AND m.is_active=1 AND m.role='employee' ORDER BY r.name COLLATE NOCASE",
+            (user_id,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        out.append({"restaurant_id": r["restaurant_id"], "restaurant": r["restaurant"] or "",
+                    "membership_id": r["id"], "employee_name": r["employee_name"],
+                    "portal_token": get_or_create_staff_portal_token(r["restaurant_id"], db_path=db_path),
+                    "join_code": get_join_code(r["restaurant_id"], db_path=db_path)})
+    return out
 
 
 def staff_login_required(f):
@@ -2760,21 +3729,44 @@ def staff_login_required(f):
     return decorated
 
 
+def unregister_staff_push(user_id: int, restaurant_id: int = None, apns_token: str = None):
+    """A phone whose staff session ended stops getting this person's staff
+    pushes — push.unregister_staff_devices, from the notifications wave
+    (looked up at call time, so a build without it simply skips). Called
+    wherever staff sessions end: a PIN set (owner reset, Change PIN, forgot
+    PIN), a deactivation, an unlink, a deleted account, and sign-out (with
+    that phone's own token). Never raises."""
+    try:
+        import push as _push_unreg
+        fn = getattr(_push_unreg, "unregister_staff_devices", None)
+        if fn is not None:
+            fn(user_id, restaurant_id=restaurant_id, apns_token=apns_token)
+    except Exception as exc:
+        print(f"[staff_push] unregister failed for user {user_id}: {exc}")
+
+
 def _end_staff_sessions_for_membership(membership_id: int, restaurant_id: int,
                                        db_path: str = DB_PATH):
     """Drop every staff session belonging to this membership's identity at
     this restaurant. Console sessions are left alone — a manager who also has
     a PIN should not be signed out of the dashboard because their PIN
-    changed."""
+    changed.
+
+    Only at THIS restaurant (employee audit SEC-12 / LG-28): a PIN reset at
+    Uptown used to end the same person's shift session at Downtown. A
+    session from before staff_restaurant_id existed names no restaurant and
+    is ended too — the safe side for a row that cannot say where it acts."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT user_id FROM memberships WHERE id=? AND restaurant_id=?",
                            (membership_id, restaurant_id)).fetchone()
         if row:
             conn.execute(
-                "DELETE FROM sessions WHERE user_id=? AND device_type='staff_pin'",
-                (row["user_id"],))
+                "DELETE FROM sessions WHERE user_id=? AND device_type='staff_pin' "
+                "AND (staff_restaurant_id=? OR staff_restaurant_id IS NULL)",
+                (row["user_id"], restaurant_id))
             conn.commit()
+            unregister_staff_push(row["user_id"], restaurant_id)
     except Exception as exc:
         # This revoke is a security control: if it fails, a deactivated
         # employee or a rotated PIN leaves a live session behind for up to a
@@ -2854,16 +3846,23 @@ def create_user(restaurant_id: int, username: str, email: str,
     # (DATA-56).
     if not role:
         role = "employee" if email.lower().strip().endswith("@staff.invalid") else "client"
-    cur = conn.execute("""
-        INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at,
-                           password_strength, role)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (restaurant_id, username.lower().strip(), email.lower().strip(),
-          generate_password_hash(password), int(is_admin), now, password_strength(password), role))
-    conn.commit()
-    uid = cur.lastrowid
-    conn.close()
-    return uid
+    # Closed on every path: a duplicate username used to raise out of here
+    # with the connection still open mid-INSERT, holding the write lock for
+    # every other writer until the busy timeout ran out.
+    try:
+        cur = conn.execute("""
+            INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at,
+                               password_strength, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (restaurant_id, username.lower().strip(), email.lower().strip(),
+              generate_password_hash(password), int(is_admin), now, password_strength(password), role))
+        conn.commit()
+        return cur.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def clear_user_two_factor(user_id: int, db_path: str = DB_PATH) -> None:
     """An internal login's own second factor off: the flag and method, its

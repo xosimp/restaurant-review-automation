@@ -33,7 +33,10 @@ def _restaurant(db_path, name="Simple EJ's"):
     return create_restaurant(Restaurant(name=name, owner_email="o@x.test"), db_path=db_path)
 
 
-def _employee(db_path, rid, username="jordan", name="Jordan P.", pin="8317"):
+def _employee(db_path, rid, username="jordan", name=None, pin="8317"):
+    # Two people, two names: one restaurant holds one active login per name
+    # (employee audit C9), so a second helper call names its own person.
+    name = name or f"{username.title()} P."
     uid = create_user(rid, username, f"{username}@x.test", "unused-password", db_path=db_path)
     m = upsert_membership(uid, rid, "employee", employee_name=name, db_path=db_path)
     if pin:
@@ -54,10 +57,14 @@ def test_weak_or_malformed_pins_are_refused(bad):
         validate_pin(bad)
 
 
-def test_doubles_and_dates_are_still_allowed():
-    """Over-filtering a 10,000-wide space costs more than it buys — the
-    lockout is the real control, so only the truly trivial shapes go."""
-    for ok in ("1122", "0708", "2580"):
+def test_ordinary_pins_and_day_month_dates_are_still_allowed():
+    """The denylist is the published most-common PINs and years (employee
+    audit M4 / SEC-03: a sprayer's ~35 daily guesses per person, spent on
+    that list, found most real PINs). Everything else stays allowed — a
+    day-and-month like 0708 included — because the lockout is still the
+    main control. 1122 and 2580 were allowed here before; they are on the
+    list now (test_empfix_b1 holds the list)."""
+    for ok in ("0708", "8317", "4092", "7412"):
         assert validate_pin(ok) == ok
 
 

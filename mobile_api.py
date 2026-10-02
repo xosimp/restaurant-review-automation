@@ -6407,6 +6407,12 @@ def mobile_list_staff(current_user):
             "claimed_by_phone": m.get("claimed_by_phone"),
             "claimed_at": m.get("claimed_at"),
             "self_signup": bool(m.get("claimed_by_phone")),
+            # How an inactive login ended, when it was not a plain
+            # deactivation: the owner unlinked it, or its holder deleted it
+            # (C9 / C10). Neither comes back with the roster switch.
+            "unlinked_at": m.get("unlinked_at"),
+            "deleted_at": m.get("deleted_at"),
+            "ended": ("unlinked" if m.get("unlinked_at") else "deleted" if m.get("deleted_at") else None),
         })
     # Names nobody has claimed yet, so an owner can see at a glance who on
     # their roster still has no account — the question they will actually ask.
@@ -6466,8 +6472,13 @@ def mobile_update_staff(current_user, membership_id):
     if not fields:
         return jsonify(ok=False, error="Nothing to change."), 400
 
+    from auth import NameTakenError
     try:
         updated = update_membership_details(membership_id, rid, **fields)
+    except NameTakenError as ne:
+        # A rename or re-hire onto a name another active login holds would
+        # make two logins one person to every staff route (C9 / SEC-05).
+        return jsonify(ok=False, error=str(ne), name_taken=True), 409
     except ValueError as ve:
         return jsonify(ok=False, error=str(ve)), 400
     if not updated:
@@ -6540,8 +6551,15 @@ def mobile_create_staff(current_user):
     # job_role is the JOB title ("Bartender"), which decides the task
     # checklist this person sees. Set here so it is a fact an owner stated
     # rather than something inferred from shift data later.
-    membership = upsert_membership(user_id, rid, "employee", employee_name=name,
-                                   job_role=(data.get("job_role") or "").strip() or None)
+    from auth import NameTakenError
+    try:
+        membership = upsert_membership(user_id, rid, "employee", employee_name=name,
+                                       job_role=(data.get("job_role") or "").strip() or None)
+    except NameTakenError as ne:
+        # The same name spelled with different spacing ("Ana  M." / "Ana M."):
+        # the check above folds case and ends, the one-name rule every run of
+        # whitespace too. The identity just made has no membership, so it is inert.
+        return jsonify(ok=False, error=str(ne), name_taken=True), 409
     set_membership_pin(membership["id"], rid, pin)
     _log_account_event(rid, "staff_account_created", current_user, detail=name)
     return jsonify(ok=True, membership_id=membership["id"], user_id=user_id, name=name,

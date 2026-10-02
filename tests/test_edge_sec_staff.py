@@ -48,6 +48,8 @@ def _redirect(db_path, monkeypatch):
         monkeypatch.setattr(mod, "get_conn", redirect)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(auth, "DB_PATH", db_path)
+    # Signup's code comes back only on purpose (employee audit C11 / SEC-08).
+    monkeypatch.setenv("STAFF_SIGNUP_DEV_CODE", "1")
     init_auth(db_path=db_path)
 
 

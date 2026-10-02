@@ -31,6 +31,9 @@ def _redirect(db_path, monkeypatch):
         monkeypatch.setattr(mod, "get_conn", redirect)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(auth, "DB_PATH", db_path)
+    # The code comes back in the response only on purpose (employee audit
+    # C11 / SEC-08): these tests walk signup without a phone.
+    monkeypatch.setenv("STAFF_SIGNUP_DEV_CODE", "1")
     init_auth(db_path=db_path)
 
 
@@ -282,31 +285,24 @@ def test_the_dev_code_never_appears_on_a_deployment(client, db_path, monkeypatch
     assert "dev_code" not in body
 
 
-def test_the_dev_code_appears_locally_even_when_twilio_is_configured(client, db_path, monkeypatch):
-    """The fallback keys on the DEPLOYMENT, not on whether the send worked.
-
-    Twilio answers 201 the moment it accepts a message, and a carrier can
-    reject it seconds later — so "sent" is not a fact the send can report.
-    Keying the fallback on that 201 produced the worst outcome available: no
-    text arrived AND no code was shown.
-    """
+def test_the_dev_code_is_refused_when_twilio_is_configured(client, db_path, monkeypatch):
+    """Employee audit C11 / SEC-08 reverses the old rule ("the fallback keys
+    on the deployment"): a local backend holds production's Twilio keys and
+    is reached over a public ngrok URL, so handing back the code there let
+    anyone verify any phone without receiving the text. With Twilio
+    configured the code is texted and never returned, flag or not."""
     for var in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "CAVNAR_FORCE_SECURE_COOKIES"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACfake")
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", "faketoken")
     monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15550000000")
     import notify
-    # Queued, exactly as Twilio reports a message it has merely accepted.
     monkeypatch.setattr(notify, "send_sms", lambda *a, **k: True)
 
     body = client.post("/staff/api/signup/start",
                        json={"phone": "5550142233", "optin": True}).get_json()
     assert body["sms_sent"] is True
-    assert body.get("dev_code"), "no code shown even though nothing was delivered"
-    # And it is a code that actually works.
-    assert client.post("/staff/api/signup/verify",
-                       json={"phone": "5550142233",
-                             "code": body["dev_code"]}).get_json()["ok"] is True
+    assert "dev_code" not in body
 
 
 def test_the_configured_check_reads_the_names_notify_actually_uses(monkeypatch):

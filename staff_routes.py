@@ -15,10 +15,15 @@ time-off and messaging can be added without touching authentication again.
 from flask import (Blueprint, jsonify, make_response, redirect, render_template,
                    request, url_for)
 
-from auth import STAFF_SESSION_HOURS, SignupError, claim_staff_name, claimable_names, consume_portal_nonce, cookies_require_secure, create_staff_session, delete_session, get_join_code, get_membership, get_memberships_for_restaurant, issue_portal_nonce, mark_portal_attempt_ok, phone_for_signup_token, portal_attempts_exceeded, record_portal_attempt, restaurant_for_join_code, restaurant_for_staff_code, set_membership_pin, staff_login_required, start_staff_signup, validate_pin, verify_membership_pin, verify_staff_signup, PinError
+from auth import STAFF_SESSION_HOURS, AlreadyMemberError, NameTakenError, SignupError, claim_staff_name, claimable_names, consume_portal_nonce, cookies_require_secure, create_staff_session, delete_session, get_join_code, get_membership, get_memberships_for_restaurant, issue_portal_nonce, mark_portal_attempt_ok, phone_for_signup_token, portal_attempts_exceeded, record_portal_attempt, restaurant_for_join_code, restaurant_for_staff_code, set_membership_pin, staff_login_required, start_staff_signup, validate_pin, verify_membership_pin, verify_staff_signup, PinError
 from models import get_restaurant
+from security import json_object_guard
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/staff")
+# A body of [1] or "x" reached data.get(...) and answered 500 on the
+# unauthenticated sign-in and signup routes (SEC-11); every other JSON
+# blueprint already had this.
+json_object_guard(staff_bp)
 
 # The employee's own figures — hours and tips, stats, recognition, the
 # post-shift pulse and the calendar feed (staff_me_routes, employee audit B6)
@@ -79,6 +84,18 @@ def _notify_owner_of_signin(rid, user_id, ip):
                                     membership.get("employee_name") or "", ip)
     except Exception as exc:
         print(f"[StaffSignIn] alert failed: {exc}")
+
+
+def staff_session_token():
+    """The staff session this request carries, read in the order
+    auth.staff_login_required reads it: the staff_session cookie, then an
+    app's Bearer token."""
+    token = request.cookies.get("staff_session")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    return token or None
 
 
 def _staff_context(current_user):
@@ -212,6 +229,11 @@ def portal_authenticate(token):
     throttled = _throttled(ip)
     if throttled:
         return throttled
+    # Counted before the code is looked up (employee audit C11 / LG-17): an
+    # invalid code used to answer 404 against a valid one's 400 without
+    # spending anything, an uncounted oracle for live join codes. It is
+    # marked ok only by a sign-in that works.
+    attempt = record_portal_attempt(ip)
     rid = restaurant_for_staff_code(token)
     if not rid:
         return jsonify(ok=False, error="That staff link isn't valid any more."), 404
@@ -222,7 +244,6 @@ def portal_authenticate(token):
     except (TypeError, ValueError):
         return jsonify(ok=False, error="Pick your name first."), 400
 
-    attempt = record_portal_attempt(ip)
     # Spend the one-shot nonce BEFORE the PIN is checked, so a captured
     # request body cannot be replayed even if the PIN it carries is correct.
     # A stale one is a distinct, non-sensitive failure: the client refetches
@@ -338,13 +359,25 @@ def signup_claimable(code):
     Requires a verified signup token: the roster is a list of real people's
     names, and there is no reason to hand it to someone who has not at least
     proved they hold a phone.
+
+    Throttled like every other public portal route (C11 / SEC-06 / LG-32):
+    one verified token used to test join codes without limit, each hit
+    returning that restaurant's unclaimed names. The token travels in the
+    X-Signup-Token header (SEC-14: a query string reaches proxy and edge
+    logs); ?signup_token= is still read for the app build that sends it.
     """
-    token = (request.args.get("signup_token") or "").strip()
+    ip = _client_ip()
+    throttled = _throttled(ip)
+    if throttled:
+        return throttled
+    attempt = record_portal_attempt(ip)
+    token = (request.headers.get("X-Signup-Token") or request.args.get("signup_token") or "").strip()
     if not phone_for_signup_token(token):
         return jsonify(ok=False, error="Verify your phone first.", signup_expired=True), 401
     rid = restaurant_for_join_code(code)
     if not rid:
         return jsonify(ok=False, error="We don't recognise that code."), 404
+    mark_portal_attempt_ok(attempt)
     names = claimable_names(rid)
     restaurant = get_restaurant(rid)
     return jsonify(ok=True, restaurant=(restaurant.name if restaurant else ""),
@@ -367,9 +400,15 @@ def signup_claim():
         return jsonify(ok=False, error="We don't recognise that code."), 404
     try:
         claimed = claim_staff_name(
-            (data.get("signup_token") or "").strip(), rid,
+            (data.get("signup_token") or request.headers.get("X-Signup-Token") or "").strip(), rid,
             data.get("employee_name") or "", data.get("pin") or "")
-    except SignupError as se:
+    except AlreadyMemberError as ae:
+        # The way back in is Forgot PIN, not a second login (C9 / LG-14).
+        return jsonify(ok=False, error=str(ae), has_account=True,
+                       employee_name=ae.employee_name), 409
+    except (SignupError, PinError, NameTakenError) as se:
+        # PinError: a server with no pepper used to 500 here after the
+        # membership was written (SEC-10); the claim now refuses first.
         return jsonify(ok=False, error=str(se)), 400
 
     session_token = create_staff_session(
@@ -383,7 +422,12 @@ def signup_claim():
     resp.set_cookie("staff_session", session_token, httponly=True, samesite="Lax",
                     max_age=STAFF_SESSION_HOURS * 3600,
                     secure=cookies_require_secure())
-    _notify_owner_of_signin(rid, claimed["user_id"], ip)
+    # Every claim reaches the owner, whatever the sign-in toggle says (M4 /
+    # SEC-01): anyone holding the join code can claim an unclaimed name, and
+    # a number they don't recognise next to a name they do is the signal to
+    # unlink. Only the last four digits travel.
+    import staff_account_routes
+    staff_account_routes.notify_owner_of_claim(rid, claimed)
     return resp
 
 
@@ -430,13 +474,18 @@ def api_me(current_user):
     rid, name = _staff_context(current_user)
     restaurant = get_restaurant(rid)
     membership = get_membership(current_user["id"], rid) or {}
-    return jsonify(ok=True, employee={
+    employee = {
         "name": name,
         "role": current_user.get("role"),
         "restaurant": restaurant.name if restaurant else "",
         "has_pin": bool(membership.get("pin_hash")),
         "pin_set_at": membership.get("pin_set_at"),
-    })
+    }
+    # The Me tab (employee audit M12 / C10): the phone on file (masked), the
+    # email, how notices reach this person, and their other locations.
+    import staff_account_routes
+    employee.update(staff_account_routes.me_details(current_user, rid, name, membership))
+    return jsonify(ok=True, employee=employee)
 
 
 @staff_bp.route("/api/preshift")
@@ -1197,15 +1246,31 @@ def api_task_photo_file(token, current_user):
 @staff_login_required
 def api_change_pin(current_user):
     """Change your own PIN. Requires the current one — a shared device left
-    signed in must not let the next person lock out its owner."""
+    signed in must not let the next person lock out its owner.
+
+    Wrong guesses here count on their own counter (employee audit M4 /
+    SEC-16 / LG-26): they used to spend the sign-in lockout, so five wrong
+    "current PIN"s from the next person at the tablet locked its owner out of
+    sign-in for up to a day, and a real lock was reported as "didn't match".
+    The third miss signs this session out instead; the person signs in again
+    with their PIN, which this screen never locks."""
     rid, _name = _staff_context(current_user)
     membership = get_membership(current_user["id"], rid)
     if not membership:
         return jsonify(ok=False, error="This isn't a staff account."), 403
     data = request.get_json(silent=True) or {}
-    current = verify_membership_pin(membership["id"], rid, data.get("current_pin") or "")
+    current = verify_membership_pin(membership["id"], rid, data.get("current_pin") or "", counter="change")
     if not current["ok"]:
-        return jsonify(ok=False, error="Your current PIN didn't match."), 401
+        if current.get("locked"):
+            token = staff_session_token()
+            if token:
+                try:
+                    delete_session(token)
+                except Exception:
+                    pass
+            return jsonify(ok=False, locked=True, signed_out=True,
+                           error="Too many wrong PINs — you've been signed out. Sign in again to change it."), 401
+        return jsonify(ok=False, locked=False, error="Your current PIN didn't match."), 401
     try:
         new_pin = validate_pin(data.get("new_pin") or "")
     except PinError as pe:
@@ -1293,3 +1358,9 @@ import staff_device_routes  # noqa: E402,F401
 # here, so staff_bp never reaches an app without them (a blueprint takes
 # no new routes once registered).
 import staff_comms_routes  # noqa: E402,F401
+
+# The account routes (logout, forgot PIN, delete my account, email, switch
+# location) live in their own module and register on staff_bp. Imported here,
+# at the bottom, so whoever registers staff_bp — the app or a test — gets them
+# before the blueprint is registered (Flask refuses a route added after).
+import staff_account_routes  # noqa: E402,F401
