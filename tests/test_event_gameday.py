@@ -113,7 +113,7 @@ def test_the_campaign_goal_names_the_game_and_what_sells_never_an_offer(db):
     _world(db, r.id)
     _mix_world(db, r.id)
     goal = gameday.campaign_goal(r.id, _saints(db), db_path=db)
-    assert goal == ("Bring guests in to watch Bears vs New Orleans Saints on Sunday 11/22 (12pm, FOX) — feature Wings "
+    assert goal == ("Bring guests in to watch Bears vs New Orleans Saints on Sunday 11/22/26 (12pm, FOX) — feature Wings "
                     "and 4th Quarter Shot, what game nights sell here")
     assert "$" not in goal and "%" not in goal and "off" not in goal.split()
 

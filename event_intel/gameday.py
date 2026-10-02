@@ -2,10 +2,14 @@
 event_intel.gameday — marketing, prep, ordering, the season's money and the
 heads-up before a big game (Event Intelligence phase 3, 10/1/26).
 
-  item_mix(rid, e)      what past games of the same side, kickoff and
-                        season class sold, item by item (pos_ticket_lines),
-                        against a usual same weekday: the items that rose by
-                        ITEM_MIN_EXTRA units and ITEM_MIN_RATIO times usual
+  item_mix(rid, e)      what past games of the same kind (engine.game_class
+                        and kickoff class) sold, item by item
+                        (pos_ticket_lines), against a usual same weekday: the
+                        items that rose by ITEM_MIN_EXTRA units and
+                        ITEM_MIN_RATIO times usual. Confounded nights are left
+                        out while clean ones suffice (store.clean_first);
+                        when they can't, it says so and plans nothing
+  item_mix_visible(…)   who may read it — one rule for every surface
   prep_lines(rid, e)    "Prep for about 54 Wings" — only when SEGMENT_MIN_N
                         such games were measured and the item rose on every
                         one; sized by what those games sold, never scaled by
@@ -14,13 +18,14 @@ heads-up before a big game (Event Intelligence phase 3, 10/1/26).
                         the extra of each ingredient games like it used, in
                         its own unit — the game-week ordering bump, under the
                         same floor as prep
-  send_plan(e, r)       when to text and email guests about a game: three
-                        hours before kickoff inside the legal 8am–9pm texting
-                        window, the email the day before. A starting rule,
-                        said as one — nothing here has measured send times
+  send_plan(e, tz)      when to text and email guests about a game: three
+                        hours before kickoff (on the restaurant's clock)
+                        inside the legal 8am–9pm texting window, the email
+                        the day before. A starting rule, said as one —
+                        nothing here has measured send times
   campaign_goal(rid, e) the Campaign Studio goal a game starts from, naming
-                        the items game nights sell here (never a price or an
-                        offer the owner didn't make)
+                        the items game nights sell here past the plan floor
+                        (never a price or an offer the owner didn't make)
   season_value(rid, s)  what the season's games brought at this restaurant:
                         each measured night's net over its usual same weekday,
                         summed, beside how many games went unmeasured. It is
@@ -31,13 +36,13 @@ heads-up before a big game (Event Intelligence phase 3, 10/1/26).
   run_event_push()      the daily heads-up the afternoon before a big game:
                         one push per game, only when games like it were
                         measured BIG_LIFT above usual (or, with one measured,
-                        the last one ran BIG_LAST_LIFT above), to the logins
-                        who read labor
+                        the last clean one of its kind ran BIG_LAST_LIFT
+                        above), to the logins who read labor
 
 Nothing here calls a model, sends to a guest, or raises into its caller.
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from event_intel import engine, playbook, store
 
@@ -68,18 +73,37 @@ def _weekday_of(dates):
 
 # ── item mix ────────────────────────────────────────────────────────────────
 
-def _items_on(restaurant_id, iso, db_path):
-    """{item: units} sold on one business date; {} with no lines on file."""
+def _same_kind(e, g) -> bool:
+    """Games a plan for `e` may rest on: the same engine.game_class (side,
+    preseason, the home ground or another — re-audit SD-02, A1 handoff 6)
+    and the same kickoff class (prime time or not)."""
+    return (engine.game_class(g) == engine.game_class(e)
+            and bool(g.get("is_primetime")) == bool(e.get("is_primetime")))
+
+
+def _items_by_date(restaurant_id, dates, db_path) -> dict:
+    """{date: {item: units}} sold on each business date, in ONE query for
+    a whole item_mix (re-audit X-2: a usual night was read once per game it
+    served, each over its own connection). A date with no lines is absent."""
+    dates = sorted({str(d)[:10] for d in dates if d})
+    if not dates:
+        return {}
+    marks = ",".join("?" for _ in dates)
     conn = store.get_conn(db_path)
     try:
-        rows = conn.execute("SELECT item_name, SUM(qty) AS u FROM pos_ticket_lines WHERE restaurant_id=? AND "
-                            "business_date=? AND kind='sale' AND item_kind='dish' AND COALESCE(voided,0)=0 "
-                            "AND item_name IS NOT NULL GROUP BY item_name", (restaurant_id, iso)).fetchall()
+        rows = conn.execute(f"SELECT business_date, item_name, SUM(qty) AS u FROM pos_ticket_lines WHERE "
+                            f"restaurant_id=? AND business_date IN ({marks}) AND kind='sale' AND item_kind='dish' "
+                            f"AND COALESCE(voided,0)=0 AND item_name IS NOT NULL GROUP BY business_date, item_name",
+                            [restaurant_id] + dates).fetchall()
     except Exception:
         return {}
     finally:
         conn.close()
-    return {r["item_name"]: float(r["u"] or 0) for r in rows if (r["u"] or 0) > 0}
+    out = {}
+    for r in rows:
+        if (r["u"] or 0) > 0:
+            out.setdefault(r["business_date"], {})[r["item_name"]] = float(r["u"])
+    return out
 
 
 def _kind_one(e) -> str:
@@ -90,42 +114,56 @@ def _kind_one(e) -> str:
 
 def item_mix(restaurant_id, e, db_path=store.DB_PATH):
     """{"games": [{"date", "describe"}], "n", "usual_n", "weekday", "items":
-    [{"item", "game", "usual", "extra", "every_game", "per_game"}], "text",
-    "basis"} or None with no game of the same class with item lines on
-    file and USUAL_MIN usual nights of its own.
+    [{"item", "game", "usual", "extra", "every_game", "per_game"}],
+    "confounded", "mixed", "text", "basis"} or None with no game of the
+    same kind (_same_kind) with item lines on file and USUAL_MIN usual
+    nights of its own.
 
     Each game is set against ITS OWN usual same weekday (audit 10/1/26, the
     same fix as playbook.staffing): an item's extra is the median of the
     per-game extras, and it counts when that clears ITEM_MIN_EXTRA units and
-    ITEM_MIN_RATIO times usual; `every_game` when each game cleared both."""
+    ITEM_MIN_RATIO times usual; `every_game` when each game cleared both.
+
+    The clean-nights rule (store.clean_first, effect_for's): a night that
+    had something else on is left out while clean nights reach
+    SEGMENT_MIN_N; when they can't, every night counts, `confounded` is
+    True, the text says so, and nothing is planned on it (_planned,
+    re-audit P3-01). Reads are bounded by engine.past_games and made once
+    per call: the game nights' lines in one query, the usual nights' in
+    one more (re-audit X-2)."""
     try:
-        games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path) if playbook._same_class(e, g["event"])]
-        nights, usual_n = [], 0
+        tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+        games = [g for g in engine.past_games(restaurant_id, e, db_path=db_path) if _same_kind(e, g["event"])]
+        sold = _items_by_date(restaurant_id, [g["event"]["event_date"] for g in games], db_path)
+        games = [g for g in games if sold.get(g["event"]["event_date"])]
+        usual = {g["event"]["event_date"]: playbook.usual_nights(restaurant_id, g["event"]["event_date"],
+                                                                  db_path=db_path) for g in games}
+        sold.update(_items_by_date(restaurant_id, {d for v in usual.values() for d in v} - set(sold), db_path))
+        nights = []
         for g in games:
             iso = g["event"]["event_date"]
-            items = _items_on(restaurant_id, iso, db_path)
-            if not items:
-                continue
-            own = [u for u in (_items_on(restaurant_id, d, db_path)
-                               for d in playbook.usual_nights(restaurant_id, iso, db_path=db_path)) if u]
+            own = [sold[d] for d in usual[iso] if sold.get(d)]
             if len(own) < playbook.USUAL_MIN:
                 continue
+            items = sold[iso]
             names = set(items) | {k for u in own for k in u}
-            nights.append({"date": iso, "describe": engine.describe(g["event"]), "items": items,
+            nights.append({"date": iso, "describe": engine.describe(g["event"], tz=tz), "items": items,
+                           "usual_n": len(own), "outcome": g["outcome"],
                            "usual": {k: engine._median([u.get(k, 0.0) for u in own]) for k in names}})
-            usual_n += len(own)
+        nights, confounded = store.clean_first(nights, engine.SEGMENT_MIN_N)
         if not nights:
             return None
+        mixed = sum(1 for x in nights if store.confounded(x["outcome"]))
         out = []
         for name in {k for n in nights for k in n["items"]}:
             per = [n["items"].get(name, 0.0) for n in nights]
             own_usual = [n["usual"].get(name, 0.0) for n in nights]
             extras = [p - u for p, u in zip(per, own_usual)]
-            game, usual, extra = engine._median(per), engine._median(own_usual), engine._median(extras)
-            if extra < ITEM_MIN_EXTRA or game < ITEM_MIN_RATIO * usual:
+            game, usual_u, extra = engine._median(per), engine._median(own_usual), engine._median(extras)
+            if extra < ITEM_MIN_EXTRA or game < ITEM_MIN_RATIO * usual_u:
                 continue
             every = all(p - u >= ITEM_MIN_EXTRA and p >= ITEM_MIN_RATIO * u for p, u in zip(per, own_usual))
-            out.append({"item": name, "game": game, "usual": usual, "extra": extra, "every_game": every,
+            out.append({"item": name, "game": game, "usual": usual_u, "extra": extra, "every_game": every,
                         "per_game": per})
         out.sort(key=lambda x: (-x["extra"], x["item"]))
         out = out[:ITEMS_SHOWN]
@@ -133,27 +171,67 @@ def item_mix(restaurant_id, e, db_path=store.DB_PATH):
         weekday = _weekday_of([x["date"] for x in nights])
         usual_word = f"a usual {weekday}" if weekday else "their usual weekday"
         said = ", ".join(f"{_num(x['game'])} {x['item']} (usual {_num(round(x['usual']))})" for x in out[:3])
+        also = ""
+        if confounded:
+            also = (", though that night had something else on too" if n == 1 else
+                    f", though {mixed} of those {n} nights had something else on too")
         if not out:
             text = None
         elif n == 1:
-            text = f"Your last {_kind_one(e)} sold {said} — against {usual_word}."
+            text = f"Your last {_kind_one(e)} sold {said} — against {usual_word}{also}."
         else:
-            text = f"Your last {n} {engine.kind_words(e)} sold a median {said} — against {usual_word}."
+            text = f"Your last {n} {engine.kind_words(e)} sold a median {said} — against {usual_word}{also}."
         return {"games": [{"date": x["date"], "describe": x["describe"]} for x in nights], "n": n,
-                "usual_n": usual_n, "weekday": weekday, "items": out, "text": text,
+                "usual_n": sum(x["usual_n"] for x in nights), "weekday": weekday, "items": out,
+                "confounded": confounded, "mixed": mixed, "text": text,
                 "basis": (f"items sold on {n} {engine.kind_words(e) if n != 1 else _kind_one(e)} (checks on file), "
                           f"each against the ordinary same weekdays before it; an item counts when it rose "
-                          f"{ITEM_MIN_EXTRA}+ units and {ITEM_MIN_RATIO:g}× usual")}
+                          f"{ITEM_MIN_EXTRA}+ units and {ITEM_MIN_RATIO:g}× usual"
+                          + ("; some of those nights had something else on, so no plan rests on them" if confounded
+                             else "; a night that had something else on is left out while clean ones suffice"))}
     except Exception as ex:
         log.warning("event_intel.gameday item_mix failed rid=%s: %s", restaurant_id, ex)
         return None
 
 
 def _planned(mix):
-    """The items a plan may rest on: SEGMENT_MIN_N games, risen on every one."""
-    if not mix or mix["n"] < engine.SEGMENT_MIN_N:
+    """The items a plan may rest on: SEGMENT_MIN_N games — never a mix that
+    had to count a night with something else on — risen on every one."""
+    if not mix or mix.get("confounded") or mix.get("n", 0) < engine.SEGMENT_MIN_N:
         return []
-    return [x for x in mix["items"] if x["every_game"]]
+    return [x for x in mix.get("items") or [] if x["every_game"]]
+
+
+def unplanned_words(mix, verb="prep"):
+    """Why a mix that says something carries no plan, said after its text:
+    one game, nights that had something else on, or items that didn't rise
+    on every game. None when it carries a plan or says nothing. For Food
+    Cost's game week ("order") and the report's day after ("prep")."""
+    if not mix or not mix.get("text") or _planned(mix):
+        return None
+    if mix.get("n") == 1:
+        return f"One game — not yet a pattern to {verb} on."
+    if mix.get("confounded"):
+        return f"Not yet a pattern to {verb} on."
+    return f"Not on every game — not yet a pattern to {verb} on."
+
+
+def item_mix_visible(user=None, denied=None) -> bool:
+    """Who may read a game's item mix (units sold on game nights against
+    usual, and the prep sized from them) — the ONE rule for the brief's game
+    alert, Ask's read_events, Food Cost's game week and the report's day
+    after (re-audit X-8): a login with the Labor view (the brief's sales
+    figures) or the Food Cost view (the menu). It carries no dollars.
+    `denied` is a viewer's denied module keys (Ask and the brief: "labor",
+    "inventory"; the report's withheld blocks: "labor", "food"); `user` a
+    login dict. Neither: an internal caller, which may."""
+    if denied is not None:
+        d = set(denied)
+        return not ("labor" in d and d & {"inventory", "food"})
+    if user is None or user.get("is_admin"):
+        return True
+    from permissions import FOOD_COST_VIEW, LABOR_VIEW, has_permission
+    return bool(has_permission(user, LABOR_VIEW) or has_permission(user, FOOD_COST_VIEW))
 
 
 def prep_lines(restaurant_id, e, mix=None, db_path=store.DB_PATH) -> list:
@@ -184,11 +262,21 @@ def order_bump(restaurant_id, e, mix=None, db_path=store.DB_PATH):
     try:
         by_ing = {}
         for x in planned:
+            # ONE recipe per item name: the newest ACTIVE menu item of that
+            # name that has one. Two rows can share a name (an inactive
+            # "Wings" kept beside its replacement, a manual row beside a
+            # POS-discovered one, RPOWER's cleaned names) and the old join
+            # added the extra once per row (re-audit P3-03).
+            one = conn.execute(
+                "SELECT m.id FROM menu_items m WHERE m.restaurant_id=? AND lower(trim(m.name))=lower(trim(?)) "
+                "AND COALESCE(m.is_active,1)=1 AND EXISTS (SELECT 1 FROM recipe_ingredients ri "
+                "WHERE ri.menu_item_id=m.id) ORDER BY m.id DESC LIMIT 1", (restaurant_id, x["item"])).fetchone()
+            if not one:
+                continue
             rows = conn.execute(
-                "SELECT i.name, i.unit, ri.qty_per_unit FROM menu_items m JOIN recipe_ingredients ri "
-                "ON ri.menu_item_id=m.id JOIN ingredients i ON i.id=ri.ingredient_id AND i.restaurant_id=m.restaurant_id "
-                "WHERE m.restaurant_id=? AND lower(trim(m.name))=lower(trim(?)) AND COALESCE(i.is_active,1)=1",
-                (restaurant_id, x["item"])).fetchall()
+                "SELECT i.name, i.unit, ri.qty_per_unit FROM recipe_ingredients ri JOIN ingredients i "
+                "ON i.id=ri.ingredient_id AND i.restaurant_id=? WHERE ri.menu_item_id=? AND COALESCE(i.is_active,1)=1",
+                (restaurant_id, one["id"])).fetchall()
             for r in rows:
                 try:
                     q = float(r["qty_per_unit"] or 0) * x["extra"]
@@ -225,15 +313,20 @@ def _clock_dt(dt):
     return engine._clock(dt.strftime("%H:%M"))
 
 
-def send_plan(e):
-    """{"text_at" (ISO local), "text_words", "email_by" (ISO date),
-    "email_words", "basis"} for a dated game with a kickoff, else None."""
+def send_plan(e, tz=None):
+    """{"text_at" (ISO, the restaurant's clock), "text_words", "email_by"
+    (ISO date), "email_words", "basis"} for a dated game with a kickoff, else
+    None. `tz` is the restaurant's clock (a Restaurant or an IANA name):
+    the kickoff is moved onto it first (engine.local_kickoff, re-audit
+    P2-04) — a 12:00 Central game is 1pm in South Bend, and the texting
+    window is the guests' own clock. Without it, the catalog's."""
     try:
         import guest_marketing as gm
-        if not e.get("event_date") or not e.get("kickoff_local"):
+        lk = engine.local_kickoff(e, tz)
+        if not lk or not lk[1]:
             return None
-        day = _d(e["event_date"])
-        kick = datetime.combine(day, datetime.strptime(str(e["kickoff_local"])[:5], "%H:%M").time())
+        day = lk[0]
+        kick = datetime.combine(day, datetime.strptime(lk[1], "%H:%M").time())
         at = kick - timedelta(hours=TEXT_LEAD_HOURS)
         earliest = datetime.combine(day, datetime.min.time()).replace(hour=gm.GUEST_SMS_EARLIEST_HOUR)
         latest = datetime.combine(day, datetime.min.time()).replace(hour=gm.GUEST_SMS_LATEST_HOUR) - timedelta(hours=1)
@@ -263,47 +356,62 @@ def send_plan(e):
 
 
 def campaign_goal(restaurant_id, e, mix=None, db_path=store.DB_PATH) -> str:
-    """"Bring guests in to watch Bears vs New York Jets on Sunday 10/4
+    """"Bring guests in to watch Bears vs New York Jets on Sunday 10/4/26
     (12pm, FOX) — feature Wings and Salt Caramel Tini, what game nights sell
-    here". Never a price, a discount or an offer: the owner adds those."""
+    here". Never a price, a discount or an offer: the owner adds those.
+
+    The date is M/D/YY and the day and start are the restaurant's clock
+    (re-audit P3-11, X-9, P2-04). "What game nights sell here" is said only
+    of the items a plan may rest on (_planned); one clean game's items are
+    "what your last game sold"; anything else names no item (P3-12)."""
+    from time_utils import mdy
+    tz = engine.restaurant_clock(restaurant_id, db_path=db_path) if restaurant_id else None
     short = e.get("short_name") or e.get("series_name") or ""
     who = (f"{short} {'vs' if e.get('home_away') == 'home' else 'at'} {e['opponent']}" if e.get("opponent")
-           else engine.describe(e, with_date=False))
-    when = ""
-    if e.get("event_date"):
-        day = _d(e["event_date"])
-        when = f" on {day.strftime('%A')} {day.month}/{day.day}"
-    extras = [x for x in (engine._clock(e.get("kickoff_local")), e.get("broadcast")) if x]
+           else engine.describe(e, with_date=False, tz=tz))
+    lk = engine.local_kickoff(e, tz)
+    when = f" on {lk[0].strftime('%A')} {mdy(lk[0])}" if lk else ""
+    extras = [x for x in (engine._clock(lk[1] if lk else e.get("kickoff_local")), e.get("broadcast")) if x]
     goal = f"Bring guests in to watch {who}{when}" + (f" ({', '.join(extras)})" if extras else "")
     try:
         mix = mix if mix is not None else item_mix(restaurant_id, e, db_path=db_path)
     except Exception:
         mix = None
-    top = [x["item"] for x in (mix or {}).get("items") or []][:2]
-    if top:
-        goal += f" — feature {' and '.join(top)}, what game nights sell here"
+    planned = [x["item"] for x in _planned(mix)][:2]
+    if planned:
+        goal += f" — feature {' and '.join(planned)}, what game nights sell here"
+    elif mix and mix.get("n") == 1 and not mix.get("confounded") and mix.get("items"):
+        goal += f" — feature {' and '.join(x['item'] for x in mix['items'][:2])}, what your last game sold"
     return goal[:200]
 
 
 # ── the season's money ──────────────────────────────────────────────────────
 
 def season_value(restaurant_id, series_id, today=None, season=None, db_path=store.DB_PATH):
-    """{"played", "measured", "incremental", "games": [{"describe", "net",
-    "usual", "extra"}], "text", "basis"} for the series' games played before
-    `today` (this season when given), or None with none played."""
+    """{"played", "measured", "incremental", "waiting", "games": [{"describe",
+    "net", "usual", "extra"}], "text", "basis"} for the series' games played
+    before `today` (the restaurant's own date by default; this season when
+    given), or None with none played.
+
+    "Played" is store.played — never a cancelled or postponed game, nor an
+    if-necessary game with no result yet (re-audit P3-05, P4-04): those are
+    counted apart as `waiting`, neither played nor unmeasured."""
     try:
         rows = store.events_for([series_id], None, None, db_path=db_path)
-        today = _d(today) if today else date.today()
-        played = [x for x in rows if x["event_date"] < today.isoformat()
-                  and x.get("status") not in ("cancelled", "postponed")]
+        tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+        today = _d(today) if today else store.local_today(tz)
+        played = [x for x in rows if store.played(x, today=today)]
+        waiting = [x for x in rows if store.unresolved(x, today=today)]
         # This season unless one is named (audit 10/1/26: "so far" summed
         # every season in the catalog once a second one was loaded).
         if season is None and played:
             season = played[-1].get("season")
         if season is not None:
             played = [x for x in played if x.get("season") == season]
+            waiting = [x for x in waiting if x.get("season") == season]
         if not played:
             return None
+        n_wait = len({x["event_date"] for x in waiting})
         word = played[0].get("short_name") or played[0].get("series_name") or "Event"
         outs = engine._outcomes(restaurant_id, [x["event_date"] for x in played], db_path, series_word=word)
         games, mixed, seen = [], 0, set()
@@ -313,22 +421,24 @@ def season_value(restaurant_id, series_id, today=None, season=None, db_path=stor
                 continue                      # a doubleheader is one night
             seen.add(x["event_date"])
             if o and o.get("net") is not None and o.get("baseline") is not None:
-                if int(o.get("confounded") or 0):
+                if store.confounded(o):
                     mixed += 1                # Christmas, a party: not the game's money alone
                     continue
-                games.append({"describe": engine.describe(x), "date": x["event_date"], "net": float(o["net"]),
+                games.append({"describe": engine.describe(x, tz=tz), "date": x["event_date"], "net": float(o["net"]),
                               "usual": float(o["baseline"]), "extra": round(float(o["net"]) - float(o["baseline"]), 2)})
         total = round(sum(g["extra"] for g in games), 2)
         unmeasured = len(seen) - len(games) - mixed
+        wait = (f"; {n_wait} if-necessary game{'s' if n_wait != 1 else ''} not counted until a result is in"
+                if n_wait else "")
         if games:
             text = (f"{word} games so far: {len(seen)} played, {len(games)} measured here — "
                     f"{'+' if total >= 0 else '−'}${abs(total):,.0f} over a usual same weekday"
                     + (f"; {unmeasured} without a usual night to measure against" if unmeasured else "")
-                    + (f"; {mixed} left out with something else on that night" if mixed else "") + ".")
+                    + (f"; {mixed} left out with something else on that night" if mixed else "") + wait + ".")
         else:
-            text = f"{word} games so far: {len(seen)} played, none measured here yet."
+            text = f"{word} games so far: {len(seen)} played, none measured here yet{wait}."
         return {"played": len(seen), "measured": len(games), "incremental": total if games else None,
-                "season": season, "mixed": mixed,
+                "season": season, "mixed": mixed, "waiting": n_wait,
                 "games": games, "text": text,
                 "basis": ("each game night's net against the median of ordinary same weekdays in the 8 weeks before "
                           "(event memory) — what the games brought, before and after, not something Cavnar AI did")}
@@ -358,20 +468,20 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
         e = rows[0]
         mix = item_mix(restaurant_id, e, db_path=db_path)
         bump = order_bump(restaurant_id, e, mix=mix, db_path=db_path)
+        why = unplanned_words(mix, "order")
         if bump:
             text = bump["text"]
-        elif mix and mix.get("text") and mix["n"] == 1:
-            text = mix["text"] + " One game — not yet a pattern to order on."
+        elif why:
+            text = mix["text"] + " " + why
         elif mix and mix.get("text") and _planned(mix):
             text = mix["text"] + " No recipe links those items to ingredients yet, so nothing is sized for the order."
-        elif mix and mix.get("text"):
-            text = mix["text"] + " Not on every game — not yet a pattern to order on."
         elif mix:
             what = _kind_one(e) if mix["n"] == 1 else f"{mix['n']} {engine.kind_words(e)}"
             text = f"Your last {what} sold no item well above a usual night — order for a usual week."
         else:
             text = "No game like it measured here yet — order for a usual week."
-        return {"event_id": e["id"], "describe": engine.describe(e), "text": text, "order": bump,
+        tz = engine.restaurant_clock(restaurant_id, db_path=db_path)
+        return {"event_id": e["id"], "describe": engine.describe(e, tz=tz), "text": text, "order": bump,
                 "items": (mix or {}).get("items") or [], "basis": (bump or mix or {}).get("basis")}
     except Exception as ex:
         log.warning("event_intel.gameday week_note failed rid=%s: %s", restaurant_id, ex)
@@ -380,19 +490,30 @@ def week_note(restaurant_id, today=None, db_path=store.DB_PATH):
 
 # ── the heads-up the afternoon before a big game ───────────────────────────
 
-def big_game(restaurant_id, e, db_path=store.DB_PATH):
+def big_game(restaurant_id, e, db_path=store.DB_PATH, tz=None):
     """(True, words) when games like this one ran big here, measured; else
-    (False, None). Words name the measurement, never a guess."""
+    (False, None). Words name the measurement, never a guess; `tz` the
+    restaurant's clock for the date said.
+
+    effect_for never crosses engine.game_class (A1), so a preseason game is
+    never judged on regular-season nights (re-audit P3-02). With fewer than
+    SEGMENT_MIN_N measured, the last game of the same kind (_same_kind:
+    game_class and prime time) decides alone — and never a night that had
+    something else on too (store.confounded, re-audit P3-06): one holiday
+    night is not a reason to push."""
     eff = engine.effect_for(restaurant_id, e, db_path=db_path)
     if eff and eff.get("median_lift_pct") is not None:
         if float(eff["median_lift_pct"]) >= BIG_LIFT:
             return True, eff["basis"][0].upper() + eff["basis"][1:] + "."
         return False, None
-    last = engine.last_like(restaurant_id, e, db_path=db_path)
-    if (last and last.get("lift_pct") is not None and float(last["lift_pct"]) >= BIG_LAST_LIFT
-            and playbook._same_class(e, last["event"])):
-        return True, (f"Your last one like it, {engine.describe(last['event'], with_date=True)}, ran "
-                      f"{float(last['lift_pct']):+.0f}% against a usual "
+    last = next((g for g in engine.past_games(restaurant_id, e, db_path=db_path) if _same_kind(e, g["event"])),
+                None)
+    if not last or store.confounded(last["outcome"]):
+        return False, None
+    lift = last["outcome"].get("lift_pct")
+    if lift is not None and float(lift) >= BIG_LAST_LIFT:
+        return True, (f"Your last one like it, {engine.describe(last['event'], with_date=True, tz=tz)}, ran "
+                      f"{float(lift):+.0f}% against a usual "
                       f"{_d(last['event']['event_date']).strftime('%A')} — one night.")
     return False, None
 
@@ -424,23 +545,37 @@ def tomorrows_games(restaurant, today, db_path=store.DB_PATH) -> list:
             and engine.headline(restaurant.id, e, db_path=db_path)]
 
 
+def ask_for(e, tz=None) -> str:
+    """The question a game's push opens Ask on, and its bell row too
+    (client_api's notifications, re-audit P3-09): about THIS game, on the
+    restaurant's clock — never "tomorrow's game" relative to when it is
+    tapped."""
+    return f"How should we get ready for {engine.describe(e, tz=tz)}?"
+
+
 def push_for(restaurant, today, db_path=store.DB_PATH, events=None):
     """[(event, title, body)] for tomorrow's big games at this restaurant
-    (every one, not just the first). Pure read."""
+    (every one, not just the first). Pure read. Dates and times are the
+    restaurant's clock (engine.local_kickoff, re-audit P2-04)."""
     out = []
     for e in (events if events is not None else tomorrows_games(restaurant, today, db_path=db_path)):
-        big, words = big_game(restaurant.id, e, db_path=db_path)
+        big, words = big_game(restaurant.id, e, db_path=db_path, tz=restaurant)
         if not big:
             continue
         body = [words]
         st = playbook.staffing(restaurant.id, e, db_path=db_path)
         if st and st.get("recommend"):
             body.append(st["text"].split(". On your last")[0] + ".")
-        # When to text guests only where Marketing is on (the brief's rule).
-        plan = send_plan(e) if getattr(restaurant, "module_marketing", 0) else None
+        # When to text guests only where Marketing is on (the brief's rule),
+        # said as the starting rule it is, and never a time already gone —
+        # an early kickoff's "the evening before" is often before the push
+        # (re-audit P3-07; the brief's own playbook._past test).
+        plan = send_plan(e, tz=restaurant) if getattr(restaurant, "module_marketing", 0) else None
+        if plan and playbook._past(restaurant.id, plan["text_at"]):
+            plan = None
         if plan:
-            body.append(f"Guest text: {plan['text_words']}.")
-        title = f"Tomorrow: {engine.describe(e, with_date=False)}"
+            body.append(f"Guest text, as a starting rule: {plan['text_words']}.")
+        title = f"Tomorrow: {engine.describe(e, with_date=False, tz=restaurant)}"
         out.append((e, title[:120], " ".join(body)[:400]))
     return out
 
@@ -449,9 +584,13 @@ def run_event_push(db_path=None, restaurants=None) -> dict:
     """The afternoon before a big game, one push per game per restaurant
     (claimed on the game and its date), to the logins who read labor and have
     a phone that takes it. Push only, P3 — it never sounds through a Focus
-    mode. Returns the standard slot counts: `attempted` a restaurant with an
-    unclaimed game tomorrow, `skipped` one with nobody to push to or over its
-    briefing budget."""
+    mode, and inside the location's quiet hours it arrives silently (the
+    `quiet` flag strategy_jobs._reach sets, re-audit P3-10). The briefing
+    budget is checked before EACH push: two big games on one day are two
+    briefings (re-audit P3-08). Returns the standard slot counts:
+    `attempted` a restaurant with an unclaimed game tomorrow, `skipped` one
+    with nobody to push to or a game held by its briefing budget."""
+    import models
     import ops
     import push
     import strategy_jobs as sj
@@ -482,20 +621,28 @@ def run_event_push(db_path=None, restaurants=None) -> dict:
                 continue
             audience = sj.deliverable_audience(r.id, _labor_logins(r.id, db), db)
             import notify
-            if not audience or not notify.briefing_allowed(r.id, PUSH_TYPE, db):
+            if not audience:
                 skipped += 1
                 continue
             import nav
             for e, title, body in got:
+                # Before EACH push: the one before it counted (an event_ahead
+                # row is a budgeted briefing). Held, it stays unclaimed.
+                if not notify.briefing_allowed(r.id, PUSH_TYPE, db):
+                    skipped += 1
+                    break
                 if not ops.claim_period(_claim_key(r.id), _claim_period(e)):
                     continue
                 alert_id = notify.record_notification(r.id, PUSH_TYPE, db_path=db, ref_kind="catalog_event",
                                                       ref_id=e["id"])
-                push.fire_push(r.id, PUSH_TYPE, title, body,
-                               data={"nav": nav.path("ask", q=f"How should we get ready for {engine.describe(e)}?"),
-                                     "alert_id": alert_id, "surface": "alert_push", "answerable": False,
-                                     "event_id": e["id"]},
-                               db_path=db, user_ids=audience)
+                data = {"nav": nav.path("ask", q=ask_for(e, tz=r)), "alert_id": alert_id, "surface": "alert_push",
+                        "answerable": False, "event_id": e["id"]}
+                try:
+                    if models.is_in_quiet_hours(r.id, db_path=db):
+                        data["quiet"] = True
+                except Exception as qe:
+                    log.warning("event_intel.gameday quiet-hours check failed rid=%s: %s", r.id, qe)
+                push.fire_push(r.id, PUSH_TYPE, title, body, data=data, db_path=db, user_ids=audience)
                 sent += 1
         except Exception as ex:
             st["failed"] += 1

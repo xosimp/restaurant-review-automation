@@ -321,7 +321,9 @@ def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH,
     carried_line = any(l.get("key") == "today" and l.get("source") == "dsr" for l in lines)
     effect_said = any(l.get("key") == "today" and l.get("source") != "dsr" and "measured" in str(l.get("text") or "")
                       for l in lines)
+    from event_intel import gameday
     return playbook.alert(restaurant_id, today, sees_sales=sees, sees_labor=sees, marketing=marketing,
+                          sees_items=gameday.item_mix_visible(denied=denied),
                           db_path=db_path, carried=shown[:4] if carried_line else None,
                           effect_said_today=effect_said)
 

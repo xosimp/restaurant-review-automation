@@ -638,6 +638,30 @@ def alt_venue(e) -> bool:
     return (e or {}).get("home_away") == "home" and bool(attributes_of(e or {}).get("alt_venue"))
 
 
+def confounded(outcome) -> bool:
+    """Whether a measured night (an event_outcomes row) carried something
+    else too — a game on New Year's Eve, a private party: event_memory's
+    `confounded` mark. The one test every reader of a game's night uses."""
+    try:
+        return bool(int((outcome or {}).get("confounded") or 0))
+    except (TypeError, ValueError):
+        return False
+
+
+def clean_first(rows, floor, outcome=lambda r: r["outcome"]):
+    """(rows to use, mixed?) — the clean-nights rule (engine.effect_for's,
+    gameday.item_mix's, re-audit P3-01): a confounded night is left out
+    while the clean ones reach `floor`; when they can't, every row is used
+    and `mixed` says some of them had something else on, so the caller says
+    so (and plans nothing on them). `outcome(row)` is the row's measured
+    night."""
+    rows = list(rows or [])
+    clean = [r for r in rows if not confounded(outcome(r))]
+    if len(clean) >= floor:
+        return clean, False
+    return rows, len(clean) < len(rows)
+
+
 def unresolved_refs(refs, today=None, db_path=DB_PATH) -> set:
     """The demand_signals refs ("event:<id>") whose catalog game is
     `unresolved` — for a reader holding only a night's flags (event_memory's

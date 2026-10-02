@@ -83,7 +83,10 @@ _ALERT_ASK = {
     "monthly_review": "How did last month go?",
     "outcome_achieved": "Which of my tracked changes just came through?",
     "milestone": "What milestone did we just reach?",
-    "event_ahead": "How should we get ready for tomorrow's game?",
+    # A row that names its game opens Ask on THAT game (client_api's
+    # _notification_nav, gameday.ask_for); this is only for one that can't
+    # — never "tomorrow's game", which moved with the day it was tapped.
+    "event_ahead": "How should we get ready for our next game?",
 }
 _URGENT_REVIEW_ALERTS = {"1star", "2star", "health", "neg_spike", "negative_trend", "rating_threshold"}
 

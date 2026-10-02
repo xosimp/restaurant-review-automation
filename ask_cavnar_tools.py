@@ -2038,17 +2038,22 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     from event_intel import engine, store
     from time_utils import mdy
     today = _local_today_of(restaurant_id)
+    # Every date and kickoff said on the restaurant's clock (re-audit P2-04).
+    tz = engine.restaurant_clock(restaurant_id)
     out = {"following": [{"name": f["name"], "category": f["category"], "source": f["source"]}
                          for f in store.follows(restaurant_id)]}
     if not out["following"]:
         out["note"] = "This restaurant follows no team or event yet."
         return out
     ahead, _planned = [], [0]
+    # engine.upcoming never lists a cancelled, postponed or removed game
+    # (re-audit P1-04 / P2-05); what it lists says its status.
     for u in engine.upcoming(restaurant_id, days=_days(days, 21, 120), today=today):
         e = u["event"]
-        item = {"what": u["describe"], "date": e["event_date"], "day": mdy(e["event_date"]),
+        lk = engine.local_kickoff(e, tz) or (None, None)
+        item = {"what": u["describe"], "date": e["event_date"], "day": mdy(lk[0] or e["event_date"]),
                 "home_away": e.get("home_away"), "prime_time": bool(e.get("is_primetime")),
-                "kickoff": e.get("kickoff_local"), "season_type": e.get("season_type")}
+                "kickoff": lk[1], "season_type": e.get("season_type"), "status": u.get("status")}
         # A frequent series' game this restaurant hasn't measured to matter
         # (a Blackhawks or Bulls night) is context: on the calendar, never
         # the night to plan around (engine.headline, phase 4).
@@ -2066,7 +2071,7 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
             pe = _peers.peer_effect(restaurant_id, e)
             if pe:
                 item["other_restaurants"] = pe["text"]
-        last = engine.last_like(restaurant_id, e)
+        last = engine.last_like(restaurant_id, e, tz=tz)
         if last:
             item["last_like_it"] = {"what": last["describe"], "net": last["net"],
                                     "usual_same_weekday": last["baseline"], "lift_pct": last["lift_pct"],
@@ -2104,21 +2109,25 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
                 bump = gameday.order_bump(restaurant_id, e, mix=mix)
                 if bump:
                     item["order_more"] = {"said": bump["text"], "lines": bump["lines"], "basis": bump["basis"]}
-            plan = gameday.send_plan(e)
+            plan = gameday.send_plan(e, tz=tz)
             if plan:
                 item["reach_guests"] = {"text": plan["text_words"], "email": plan["email_words"],
                                         "basis": plan["basis"]}
         ahead.append(item)
     out["upcoming"] = ahead
     recent = []
+    # Played games only (store.played: never a cancelled or postponed game,
+    # nor an if-necessary game with no result) and never one this
+    # restaurant removed from its list (re-audit P1-04, P3-05, P4-04).
+    gone = store.dismissed(restaurant_id)
     for f in store.follows(restaurant_id):
         rows = [x for x in store.events_for([f["series_id"]], None, today.isoformat())
-                if x["event_date"] < today.isoformat()][-max(1, min(int(past or 4), 12)):]
+                if store.played(x, today=today) and x["id"] not in gone][-max(1, min(int(past or 4), 12)):]
         outs = engine._outcomes(restaurant_id, [x["event_date"] for x in rows], None,
                                 series_word=f.get("short_name"))
         for x in reversed(rows):
             o = outs.get(x["event_date"]) or {}
-            recent.append({"what": engine.describe(x), "result": x.get("result"),
+            recent.append({"what": engine.describe(x, tz=tz), "result": x.get("result"),
                            "net": o.get("net"), "usual_same_weekday": o.get("baseline"),
                            "lift_pct": o.get("lift_pct"), "covers": o.get("covers"),
                            "measured": bool(o)})
@@ -2135,14 +2144,18 @@ def _read_events(restaurant_id, days=21, past=4, _viewer=None):
     if gr:
         out["reviews_on_game_nights"] = {k: gr[k] for k in ("games", "game_reviews", "game_pct", "other_reviews",
                                                             "other_pct", "lean", "text", "basis")}
-    # What this login may read (audit 10/1/26): the dollars, staffing and the
-    # item mix follow the Labor view as the brief's do, the ordering bump the
-    # Food Cost view, the guest-text timing Marketing.
+    # What this login may read (audit 10/1/26): the dollars and staffing
+    # follow the Labor view as the brief's do, the item mix the one rule
+    # every surface uses (gameday.item_mix_visible: Labor or Food Cost,
+    # re-audit X-8), the ordering bump the Food Cost view, the guest-text
+    # timing Marketing.
     denied = _denied(_viewer)
+    if not gameday.item_mix_visible(denied=denied):
+        for item in ahead:
+            item.pop("items_sold", None)
     if "labor" in denied:
         for item in ahead:
-            for k in ("last_like_it", "staffing", "rush", "items_sold", "order_more", "measured_here",
-                      "other_restaurants"):
+            for k in ("last_like_it", "staffing", "rush", "measured_here", "other_restaurants"):
                 item.pop(k, None)
         for r in recent:
             for k in ("net", "usual_same_weekday", "lift_pct", "covers"):

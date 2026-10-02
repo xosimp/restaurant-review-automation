@@ -8568,7 +8568,6 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
     critical_low or an issue row stayed "needs you" forever."""
     try:
         import push as _push
-        import nav as _nav
         from models import NOTIFICATION_WINDOW
         limit = int(limit or NOTIFICATION_WINDOW)
         locs = _notification_locations(restaurant_id, viewer, scope)
@@ -8641,7 +8640,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
                 "module": module,
                 # Where the row opens (nav.py): the review, the held
                 # schedule, Ask on the brief's question — not the module top.
-                "nav": _nav.for_notification(r["alert_type"], review_id=r["review_id"]),
+                "nav": _notification_nav(r),
                 "priority": priority,
                 "urgent": urgent,
                 "snippet": snippet or None,
@@ -8677,6 +8676,26 @@ _ISSUE_WHERE = {"review": "Reviews · a guest review", "stock": "Food Cost · ru
                 "checklist": "Operations · a checklist", "plan": "Operations · the weekly plan",
                 "loss": "Operations · comps and voids", "task_missed": "Labor · a missed task",
                 "task_sheet": "Labor · a task sheet", "task_pattern": "Labor · task sheets"}
+
+
+def _notification_nav(r):
+    """Where one bell row opens (nav.for_notification). A big-game heads-up
+    (`event_ahead`, ref catalog_event) opens Ask on THAT game, the question
+    its push carried (gameday.ask_for, on the location's clock) — the type
+    alone asked about "tomorrow's game" relative to the day it was tapped
+    (re-audit P3-09). A game no longer in the catalog falls back to the
+    type's own question."""
+    import nav as _nav
+    try:
+        if r["alert_type"] == "event_ahead" and r["ref_kind"] == "catalog_event" and r["ref_id"] is not None:
+            from event_intel import engine as _eng, gameday as _gd, store as _evs
+            e = _evs.event_by_id(int(r["ref_id"]))
+            if e:
+                return _nav.for_notification(r["alert_type"], ask_prompt=_gd.ask_for(
+                    e, tz=_eng.restaurant_clock(int(r["restaurant_id"]))))
+    except Exception as ex:
+        print(f"[notifications] event nav failed for alert {r['id']}: {ex}")
+    return _nav.for_notification(r["alert_type"], review_id=r["review_id"])
 
 
 def _issue_where(r, refs):
