@@ -3871,7 +3871,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             # between two dates ("Fridays until 12/15") counts when this
             # week's day falls inside them (employee audit M5).
             _unavail = [d for d in week_days if d in _av_blocked(av, week_dates)]
-            _avail = [d for d in week_days if d not in _unavail] if _unavail else _jav.loads(av.get("available_days") or "[]")
+            # The stored available days, less any blocked this week: a day
+            # blocked only between two dates is never listed as available.
+            _avail = [d for d in (_jav.loads(av.get("available_days") or "[]") or []) if d not in _unavail]
             _anote = " ".join(str(av.get("notes") or "").split())[:200]
             parts = []
             if _avail:
