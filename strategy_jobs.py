@@ -2014,7 +2014,19 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                 except Exception as me:
                     ops.capture(me, job="coverage_check", context=f"restaurant_id={r.id} dsr marker")
             import staff_settings as _ss
+            import staff_comms
             for m in (gaps.get("missing") or []):
+                # They said they're running late (staff app, COM-05): no
+                # "hasn't clocked in" until their start + ETA + the grace;
+                # after that the issue opens and says what they told us.
+                hold = None
+                try:
+                    hold = staff_comms.late_hold(r.id, m["employee"], m.get("shift_start"), local,
+                                                 restaurant=r, db_path=db_path)
+                except Exception as he:
+                    ops.capture(he, job="coverage_check", context=f"restaurant_id={r.id} running-late hold")
+                if hold and hold["holding"]:
+                    continue
                 fits_text, fits = "", []
                 try:
                     import labor_replacements
@@ -2034,7 +2046,8 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     r.id, "coverage",
                     f"{m['employee']} hasn't clocked in",
                     detail=f"Scheduled {m['shift_start']} as {m['role']} — "
-                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS." + fits_text,
+                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS."
+                           + staff_comms.hold_sentence(hold) + fits_text,
                     severity="high",
                     source_key=f"coverage:{local.date().isoformat()}:{_ss.name_key(m['employee'])}",
                     meta=meta, db_path=db_path)

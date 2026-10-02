@@ -3978,6 +3978,10 @@ def init_db(db_path: str = DB_PATH):
     init_shift_facts(db_path)
     from attendance import init_attendance
     init_attendance(db_path)
+    # Running late, announcements and the staff ↔ manager threads
+    # (staff_comms, employee audit fix B5).
+    from staff_comms import init_staff_comms
+    init_staff_comms(db_path)
     import people as _people_boot
     _people_boot.init_people(db_path)
     # The phantom people a "Name · attribute" rating subject made (10/1/26).
