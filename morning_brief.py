@@ -263,12 +263,18 @@ def _dsr_yesterday_line(night):
 BRIEF_MEMORY_LINES = 2
 
 
-def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
+def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH, denied=frozenset(), game=None):
     """Brief lines from memory_context's "brief" block: a constraint the owner
     set that is dated today ("Your note for today: …"), and the measured
     effect of what is listed for today when the today line carries none
     ("Remembered: …"). At most BRIEF_MEMORY_LINES; [] when memory has
-    nothing dated today."""
+    nothing dated today.
+
+    A measured effect is the forecast's figure, so it follows the forecast's
+    gate (the Labor view, `denied`), as the game alert's does; and a game
+    the brief's game line (`game`, playbook.alert) speaks for is said there
+    once, with its own figure — never twice with two numbers (event
+    re-audit P2-06)."""
     import memory_context
     block = memory_context.memory_context(restaurant_id, "brief", viewer=viewer,
                                           now=datetime.combine(today, datetime.min.time()), db_path=db_path)
@@ -295,8 +301,11 @@ def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
                         "ask": "What should I keep in mind today?"})
             break
     has_effects = any(l.get("key") == "today" and "measured" in (l.get("text") or "") for l in lines)
-    if not has_effects:
+    the_game = f"event:{game['event_id']}" if game and game.get("event_id") is not None else None
+    if not has_effects and "labor" not in (denied or ()):
         for ln in (block.sections or {}).get("events") or []:
+            if the_game and ln.get("ref") == the_game:
+                continue
             if _is_today(ln.get("date")) and ln.get("text"):
                 # The measured half rides on the line's trusted suffix
                 # (memory_context "measured", PROMPTS-3), not in its words.
@@ -771,16 +780,16 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # today, in their words, and a measured event effect the today line did
     # not already carry. Deterministic — the brief shows memory, it asks no
     # model.
-    for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path) or []):
-        lines.append(ml)
-
     # ── the next game ── (Event Intelligence phase 2, 10/1/26) a followed
     # game within three days: the game, what games like it did here
     # (measured, else the last one as a fact), staffing by role and the rush
     # around kickoff where measured, and a game-day campaign to start. The
     # dollars and the staffing follow the forecast's own gate (the Labor
-    # view); the game itself and the campaign do not.
+    # view); the game itself and the campaign do not. Read before the memory
+    # lines, shown after them: a game it speaks for is said once (P2-06).
     game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path, carry)
+    for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path, denied, game) or []):
+        lines.append(ml)
     if game:
         lines.append(game)
 
@@ -1297,6 +1306,11 @@ _NOT_MEASURED = {"forecast": "a projection", "opportunity": "an estimate", "comp
 _FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost projection",
                  "money": "the dollar opportunity", "fix_first": "the one thing",
                  "dsr_action": "last night's report's priority", "event_ahead": "the game's staffing plan"}
+# A line whose claim depends on what it says (playbook.alert, event re-audit
+# P2-08): the game line is "inferred" only when it says a staffing plan, and
+# "computed" when it says other restaurants' game nights — named as that.
+_FOOTER_NAMES_BY_KIND = {("event_ahead", "computed"): "other restaurants' game nights",
+                         ("event_ahead", "inferred"): "the game's staffing plan"}
 
 
 def footer_source(lines, data_as_of=None, stale=None) -> str:
@@ -1312,7 +1326,8 @@ def footer_source(lines, data_as_of=None, stale=None) -> str:
     for l in lines:
         kind = l.get("claim_kind") or ("forecast" if l.get("forecast") else "measured")
         if kind in _NOT_MEASURED:
-            name = _FOOTER_NAMES.get(str(l.get("key") or "").split(":", 1)[0], "one line")
+            prefix = str(l.get("key") or "").split(":", 1)[0]
+            name = _FOOTER_NAMES_BY_KIND.get((prefix, kind)) or _FOOTER_NAMES.get(prefix, "one line")
             bit = f"{name} ({_NOT_MEASURED[kind]})"
             if bit not in exceptions:
                 exceptions.append(bit)

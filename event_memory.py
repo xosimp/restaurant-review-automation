@@ -695,8 +695,11 @@ def quiet_game(restaurant_id, label, regular_games, season_type=None, db_path=No
 
 
 def _catalog_info(refs, db_path=None) -> dict:
-    """{ref: {"regular", "season_type", "series_id", "venue", "home_away"}}
-    for catalog refs ("event:<id>"). Never raises."""
+    """{ref: {"regular", "season_type", "series_id", "venue", "home_away",
+    "alt_venue"}} for catalog refs ("event:<id>"). A home game's `venue` is
+    where it is played — its own venue, else its series' home venue (as
+    engine.label_for names it); an alt-venue game (store.alt_venue: the
+    Fire at SeatGeek Stadium) keeps its own. Never raises."""
     ids = []
     for ref in refs:
         try:
@@ -710,16 +713,25 @@ def _catalog_info(refs, db_path=None) -> dict:
         try:
             marks = ",".join("?" for _ in ids)
             rows = conn.execute(
-                f"SELECT e.id, e.series_id, e.season_type, e.venue, e.home_away, "
+                f"SELECT e.id, e.series_id, e.season_type, e.venue, e.home_away, e.attributes_json, "
+                f"s.home_venue AS series_home_venue, "
                 f"(SELECT COUNT(*) FROM catalog_events o WHERE o.series_id=e.series_id AND o.season=e.season "
-                f"AND o.season_type='regular') AS n FROM catalog_events e WHERE e.id IN ({marks})", ids).fetchall()
+                f"AND o.season_type='regular') AS n FROM catalog_events e LEFT JOIN event_series s "
+                f"ON s.id=e.series_id WHERE e.id IN ({marks})", ids).fetchall()
         finally:
             conn.close()
     except Exception:
         return {}
-    return {f"event:{r['id']}": {"regular": int(r["n"] or 0), "season_type": r["season_type"],
-                                 "series_id": r["series_id"], "venue": (r["venue"] or "").strip().lower(),
-                                 "home_away": r["home_away"]} for r in rows}
+    from event_intel import store as _catalog
+    out = {}
+    for r in rows:
+        r = dict(r)
+        alt = _catalog.alt_venue(r)
+        venue = r.get("venue") or ("" if alt or r.get("home_away") != "home" else r.get("series_home_venue"))
+        out[f"event:{r['id']}"] = {"regular": int(r["n"] or 0), "season_type": r["season_type"],
+                                   "series_id": r["series_id"], "venue": (venue or "").strip().lower(),
+                                   "home_away": r["home_away"], "alt_venue": alt}
+    return out
 
 
 def _catalog_refs(flags) -> set:
@@ -754,9 +766,11 @@ def ordinary_nights(restaurant_id, flags_by_day, db_path=None, tonight=None) -> 
     """The ISO dates in `flags_by_day` ({iso: flags}, flags_for) that count
     as ordinary for a baseline: nothing flagged but quiet games — and, when
     `tonight` (the measured night's flags) carries a catalog game, none of
-    its kin: a game of the same series on the same side (its own label), or
-    a home game at its venue (a Bulls home night is never measured against
-    other United Center nights). The series' other side stays in: a quiet
+    its kin: a game of the same series on the same side and ground (its own
+    label), or a home game at the venue it is played at (a Bulls home night
+    is never measured against other United Center nights; the Fire's
+    SeatGeek Stadium night against SeatGeek nights, not Soldier Field's).
+    The series' other side stays in: a quiet
     Bulls road night is an ordinary night for a Bulls home game and the
     reverse, so home and road are measured apart, each on enough ordinary
     nights (event re-audit P4-06). Never raises."""
@@ -765,13 +779,17 @@ def ordinary_nights(restaurant_id, flags_by_day, db_path=None, tonight=None) -> 
         refs |= _catalog_refs(fl)
     info = _catalog_info(refs, db_path=db_path) if refs else {}
     mine = [info[f["ref"]] for f in (tonight or []) if f.get("ref") in info]
-    sides = {(m["series_id"], m["home_away"] == "home") for m in mine}
+    # A game's own label is its series and side — and its ground: an
+    # alt-venue home game ("Fire home game · SeatGeek Stadium") is its own
+    # label, kin to home games at the ground it is played on, never to the
+    # series' home ground's nights (event re-audit, A1 handoff 8).
+    own = lambda i: (i["series_id"], i["home_away"] == "home", bool(i.get("alt_venue")))
+    sides = {own(m) for m in mine}
     venues = {m["venue"] for m in mine if m["home_away"] == "home" and m["venue"]}
 
     def _kin(f):
         i = info.get(f.get("ref"))
-        return bool(i) and ((i["series_id"], i["home_away"] == "home") in sides
-                            or (i["home_away"] == "home" and i["venue"] in venues))
+        return bool(i) and (own(i) in sides or (i["home_away"] == "home" and i["venue"] in venues))
 
     out = set()
     for d, fl in flags_by_day.items():
@@ -891,6 +909,23 @@ def record_night(restaurant_id, day, db_path=None) -> dict:
             conn.close()
         if not flags and not before:
             return {"recorded": 0, "reason": "nothing flagged on the night"}
+        # An if-necessary game past its date with no result in may or may not
+        # have been played, and the night's one lift can't be split from it:
+        # the whole night is left unmeasured — its rows go, its flag stays,
+        # so ordinary_nights keeps it out of every baseline — until a result
+        # or a cancellation is entered (store.unresolved; event re-audit
+        # P4-03, completing engine.sync_restaurant's half).
+        from event_intel import store as _catalog
+        if _catalog.unresolved_refs(_catalog_refs(flags), db_path=db_path):
+            conn = get_conn(db_path)
+            try:
+                conn.execute("DELETE FROM event_outcomes WHERE restaurant_id=? AND business_date=?",
+                             (restaurant_id, iso))
+                conn.commit()
+            finally:
+                conn.close()
+            refresh_effects(restaurant_id, before, db_path=db_path)
+            return {"recorded": 0, "reason": "an if-necessary game with no result yet", "labels": []}
         m = measure_night(restaurant_id, day, db_path=db_path, flags=fl) if flags else {"reason": "no flags"}
         conn = get_conn(db_path)
         try:
@@ -1456,6 +1491,10 @@ def memory_lines(req):
                                      f"time{'s' if e['n'] != 1 else ''}, last {mdy(e['last'])}{_record_words(e)}; "
                                      f"before and after, not proof){floor}."),
                         "date": d, "source": "system", "subject": f"event:{e['label']}",
+                        # the catalog game it is about ("event:<id>"), so a
+                        # surface that speaks for that game says it once
+                        # (morning_brief, event re-audit P2-06)
+                        "ref": f.get("ref"),
                         "weight": 2.0 + min(e["n"], 10) / 10.0, "trusted": False})
     if getattr(req, "surface", "") in ("ask", "schedule", "weekly_plan", "marketing"):
         try:
