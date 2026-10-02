@@ -176,6 +176,21 @@ def test_a_property_that_has_not_let_us_in_says_how_to_fix_it(rid, sa, monkeypat
     assert models.get_restaurant(rid).web_analytics_error == out["error"]
 
 
+def test_an_api_switched_off_on_our_side_never_tells_the_owner_to_add_the_address(sa, monkeypatch):
+    """Google answers 403 for a disabled API too; that one is ours to fix."""
+    import requests
+
+    def post(url, json=None, data=None, headers=None, timeout=None):
+        if url == wa.TOKEN_URL:
+            return Resp(200, {"access_token": "tok", "expires_in": 3600})
+        return Resp(403, {"error": {"status": "PERMISSION_DENIED", "details": [
+            {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "SERVICE_DISABLED"}]}})
+    monkeypatch.setattr(requests, "post", post)
+    out = wa.verify("412345678", "sc-domain:ejs.com")
+    assert out["ga4"]["code"] == out["gsc"]["code"] == "api_disabled"
+    assert "cavnar-analytics@" not in out["ga4"]["error"] and "Nothing for you to change" in out["ga4"]["error"]
+
+
 # ── what the numbers say ────────────────────────────────────────────────────
 
 def _seed(rid, metric, values_by_day, source="ga4"):

@@ -226,8 +226,16 @@ def _post(url, body, what):
         data = {}
     if resp.status_code == 200:
         return data
-    status = ((data.get("error") or {}).get("status") or "") if isinstance(data, dict) else ""
+    err = (data.get("error") or {}) if isinstance(data, dict) else {}
+    status = (err.get("status") or "") if isinstance(err, dict) else ""
+    reasons = {d.get("reason") for d in (err.get("details") or []) if isinstance(d, dict)} if isinstance(err, dict) else set()
     email = service_email() or "Cavnar AI's analytics address"
+    if "SERVICE_DISABLED" in reasons:
+        # Our Google Cloud project has this API switched off: nothing the
+        # owner adds fixes it, so never tell them to add the address.
+        log.warning("web_analytics %s API disabled in the Cloud project", what)
+        raise WebAnalyticsError(f"Cavnar AI's {what} reading is switched off on our side. Nothing for you to "
+                                "change; we've been told.", "api_disabled")
     if resp.status_code in (401, 403) or status == "PERMISSION_DENIED":
         where = ("Google Analytics → Admin → Property access management, as a Viewer" if what == "Google Analytics"
                  else "Search Console → Settings → Users and permissions, as a Restricted user")
