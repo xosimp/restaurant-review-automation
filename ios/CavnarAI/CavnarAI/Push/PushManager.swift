@@ -24,6 +24,23 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     }
     private var heldTap: Tap?
 
+    /// The staff tier, set by RootView. While it holds a session, this
+    /// phone's APNs token is filed under the staff login through
+    /// /staff/api/device-tokens with the STAFF bearer — never the owner
+    /// route, which refuses a PIN session (C4) — and staff notice taps open
+    /// the staff app (StaffDeepLinkCenter), not the owner router.
+    weak var staffSession: StaffSessionStore?
+
+    /// Whether a tap on a staff notice belongs to the staff app: a staff
+    /// session is open, or this phone has no owner session at all (a staff
+    /// phone whose session ended — the link waits for the next sign-in).
+    /// A manager's console phone that also gets a staff notice routes it in
+    /// the owner app, which degrades it to Labor (DeepLinkRouter).
+    private func routesToStaffApp() -> Bool {
+        if staffSession?.isAuthenticated == true { return true }
+        return Keychain.get(Keychain.Key.sessionToken) == nil
+    }
+
     /// Everything a tap routes on — only Sendable values, read out of the
     /// payload before crossing to the main actor.
     struct Tap: Sendable {
@@ -438,6 +455,23 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// A no-op once the token has been accepted.
     func flushPendingToken() async {
         guard let pending = pendingToken else { return }
+        // A staff session files the token under the staff login, with the
+        // staff bearer (C4). The owner route would refuse it, and an owner
+        // token on the same phone must not claim a staff phone's pushes.
+        if let staff = staffSession, staff.isAuthenticated {
+            do {
+                try await staff.registerDevice(apnsToken: pending.token, environment: pending.environment)
+                registeredToken = pending.token
+                pendingToken = nil
+            } catch {
+                // Stays queued for the next sign-in or foreground.
+            }
+            return
+        }
+        // No owner session on this phone (a staff phone between shifts):
+        // the owner route would only answer "session expired". The token
+        // waits for whichever sign-in comes next.
+        guard Keychain.get(Keychain.Key.sessionToken) != nil else { return }
         do {
             let _: APIClient.EmptyResponse = try await APIClient.shared.send(
                 "/mobile/api/device-tokens", method: .post,
@@ -483,6 +517,41 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private var currentEnvironment: String { Self.apnsEnvironment }
+
+    // MARK: - Staff (C4)
+
+    /// After every staff sign-in, and on a launch into a live staff session.
+    /// Ending a staff session on the server removes this phone's staff push
+    /// row (a PIN change or reset, a switch, a sign-out), so the token is
+    /// filed again every time. Never shows the system prompt by itself: the
+    /// staff app asks first, in one line (StaffNotificationAskCard), and
+    /// "Turn on" calls `promptNow`. Returns where permission stands.
+    @discardableResult
+    func staffDidSignIn() async -> UNAuthorizationStatus {
+        installAsNotificationDelegate()
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        authorizationDenied = status == .denied
+        authorizationUndetermined = status == .notDetermined
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            if pendingToken == nil, let registeredToken {
+                pendingToken = (registeredToken, currentEnvironment)
+            }
+            UIApplication.shared.registerForRemoteNotifications()
+            await flushPendingToken()
+        default:
+            break
+        }
+        return status
+    }
+
+    /// A staff sign-out has removed this phone's row on the server: the
+    /// token waits for the next sign-in (staff or owner) to file it again.
+    func staffDeviceReleased() {
+        guard let token = registeredToken else { return }
+        pendingToken = (token, currentEnvironment)
+        registeredToken = nil
+    }
 
     /// Show the banner even while the app is open — an owner mid-task
     /// should still see "1★ review received" rather than it silently
@@ -543,6 +612,20 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar) {
             await Self.perform(action, userInfo: userInfo, restaurantId: restaurantId)
             return
+        }
+        // A staff notice (push.STAFF_ALERT_TYPES, module "staff") opens the
+        // staff app on its tab and item — `tab` + id, or `nav`
+        // "staff/<tab>[/<id>]" (C4). Held by StaffDeepLinkCenter until the
+        // portal is on screen, so a tap that launches a signed-out staff
+        // phone opens it right after the PIN.
+        if StaffDeepLink.isStaffNotice(alertType: alertType, module: module),
+           let staffLink = StaffDeepLink.from(cavnar: cavnar, alertType: alertType) {
+            let handled = await MainActor.run { () -> Bool in
+                guard self.routesToStaffApp() else { return false }
+                StaffDeepLinkCenter.shared.post(staffLink)
+                return true
+            }
+            if handled { return }
         }
         // Every other button (Reply, Edit, Review, Ask about this) and the
         // tap itself open the notification's own place; "Ask about this"

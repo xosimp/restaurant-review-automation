@@ -193,6 +193,10 @@ final class DeepLinkRouter {
                 pendingAskAutoSend = askAutoSend
                 pendingAskPrompt = question
             }
+        case "staff":
+            // A staff app address (staff/<tab>[/<id>]) reaching the owner
+            // app: Labor, not Home (see route).
+            openLabor()
         case "account", "recs":
             pendingTab = .account
             pendingModuleKey = nil
@@ -212,6 +216,14 @@ final class DeepLinkRouter {
             pendingModuleKey = target.key
             pendingTab = .modules
         }
+    }
+
+    /// Labor's own screen, nothing focused inside it.
+    private func openLabor() {
+        pendingReviewID = nil
+        pendingModuleRoute = nil
+        pendingModuleKey = "labor"
+        pendingTab = .modules
     }
 
     /// What the Modules tab opens next: the focused route when one was set,
@@ -239,6 +251,14 @@ final class DeepLinkRouter {
         // interfere with actually opening the thing.
         if !alertType.isEmpty {
             Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey, surface: surface) }
+        }
+        // A staff notice on a console phone (a manager who is also on the
+        // schedule gets their own shift notices, module "staff"): the owner
+        // app has no staff tabs, so it opens Labor, where that schedule and
+        // those requests live (fix_B2: "degrade it to Labor or Home").
+        if StaffDeepLink.isStaffNotice(alertType: alertType, module: module) {
+            openLabor()
+            return
         }
         // The server's own address for it (push.nav_for / the notification
         // row's `nav`): the review, the pending send, the request — not the
@@ -395,7 +415,10 @@ final class DeepLinkRouter {
     static func webModule(for alertType: String) -> String {
         switch alertType {
         case "labor_over", "schedule_drafted", "coverage", "schedule_publish_pending",
-             "schedule_publish_held", "shift_request", "labor_reminder":
+             "schedule_publish_held", "shift_request", "labor_reminder",
+             // An employee wrote to the manager on duty (B5 / fix_B2): the
+             // Team inbox under Labor, `labor/inbox[/<thread_id>]`.
+             "employee_message":
             return "labor"
         case "food_waste", "critical_low", "price_spike", "order_send_pending",
              "order_send_held", "order_send_voided":

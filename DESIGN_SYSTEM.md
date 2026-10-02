@@ -346,7 +346,7 @@ label)` swaps in the orb, disables the button and returns a restore function.
 
 | iOS style | Web twin | Look |
 |---|---|---|
-| `CavnarPrimaryButtonStyle(isDisabled:)` | `cbtn-primary` | Ember fill, ember + ember2 edges, soft ember glow |
+| `CavnarPrimaryButtonStyle(isDisabled:)` | `cbtn-primary` | Ember fill, ember + ember2 edges, soft ember glow. Dims at 40% when `isDisabled` OR the button is `.disabled(...)` (it reads `@Environment(\.isEnabled)`, 10/2/26) - a disabled primary never looks tappable |
 | `CavnarSecondaryButtonStyle(isDisabled:)` | `cbtn-secondary` | **Quiet**: white 5% surface, 1pt ink hairline at 16%, ink text. It was ember text on an ember fill with an ember gradient border — two embers per screen wherever a primary sat beside it; neutral since the parity pass (9/25/26) |
 | `CavnarSoftButtonStyle(isDisabled:)` | `cbtn-soft` | Ember text on an 18% ember fill, no border — gentle emphasis, sparingly |
 | `.buttonStyle(.plain)` + ember2 text | `cbtn-text` | A row or an inline action that is really a link |
@@ -1240,6 +1240,7 @@ remembered on that device; Account → Security can always add one.
 | Weekly grid | `DSRWeekGrid` — see §8 |
 | Haptics | `Haptic` (`DesignSystem/Haptics.swift`) — intent-named (`light` / `medium` / `heavy`, `selection`, `success` / `warning` / `error`), retained generators; a button style uses `.sensoryFeedback` instead. Web has none |
 | Passcode entry | `CavnarPasscodePad` — six ember dots over a glass keypad; each digit lands with one thin ripple, a wrong code turns the row red and shakes it once. Used by `LockedView` (unlock) and `AppPasscodeSheet` (set / change / remove) |
+| Staff PIN entry | `StaffPinField` (`Features/Staff/StaffLoginView.swift`) - the staff app's 4-8 digit PIN, the same control at sign-in, signup, Forgot PIN, Change PIN and the location switch: `StaffPinDots` (at least four, one more per digit past four; an empty dot is a 1.5pt ink3 ring, a filled one ember; a wrong PIN turns them red and shakes the row once, colour only under Reduce Motion; VoiceOver reads "PIN, 3 digits entered") over `StaffPinPad` (58pt keys, Clear and a labelled Delete). Never submitted by the pad: a primary Sign in / Next. A new PIN is typed twice ("Type it again"; a mismatch shakes and says "Those didn't match - try again."). A button busy state is `StaffBusyLabel`: the label stays and the 3pt ember pulse runs under it |
 | Split button | `CavnarSplitButton` — see §5 |
 | Tone pill and bar | `TonePill(text:tone:)` — a capsule in a `CavnarTone` (good / bad / warning / neutral = ink, never ember); `StatProgressBar(progress:tone:)` — a 6pt value-against-target bar in the same tone. Web: `.hb-chip` + tone, `.hb-goal .bar` |
 | Hero cards | `cavnarGlassCard(tint:)`, `cavnarGlossyCard()` — see §9 *Cards (iOS)* |

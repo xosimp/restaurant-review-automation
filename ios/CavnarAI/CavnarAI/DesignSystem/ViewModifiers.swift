@@ -131,9 +131,16 @@ extension View {
 
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
+    /// `.disabled(...)` on the button reaches the style through the
+    /// environment. The style used to dim only through its own `isDisabled`
+    /// argument, so a primary disabled with `.disabled(...)` alone kept its
+    /// full ember and read as tappable while it did nothing (employee audit
+    /// UX-04). Read here once, every call site is right.
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let isDisabled = self.isDisabled || !isEnabled
+        return configuration.label
             .font(.cavnarBody(16, weight: 600))
             // Was .frame(maxWidth: .infinity) — every primary button
             // stretched to fill its container regardless of how short its

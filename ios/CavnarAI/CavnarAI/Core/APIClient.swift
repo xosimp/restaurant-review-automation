@@ -98,7 +98,12 @@ actor APIClient {
     /// reads a sentence, not "The operation couldn't be completed.
     /// (CavnarAI.APIClient.SessionExpiredError error 1.)" (CLIENT-50).
     struct SessionExpiredError: Error, LocalizedError {
-        var errorDescription: String? { "Your session expired — please sign in again." }
+        /// The server's own sentence when it sent one — the staff tier's
+        /// "Your shift session ended — sign in again." or Change PIN's "Too
+        /// many wrong PINs — you've been signed out." — shown on the sign-in
+        /// screen the person lands on.
+        var message: String? = nil
+        var errorDescription: String? { message ?? "Your session expired — please sign in again." }
     }
 
     private let baseURL: URL
@@ -611,48 +616,113 @@ actor APIClient {
         return request
     }
 
-    /// A call made before any session exists — the staff portal's roster and
-    /// PIN sign-in. Never attaches the stored owner token.
+    /// A call made before any session exists — the staff portal's roster,
+    /// PIN sign-in, signup and forgot-PIN. Never attaches the stored owner
+    /// token, and never reads a refusal as an ended session: there is no
+    /// session. A refusal is an `APIError` carrying the status and the raw
+    /// body, so a caller whose route says more than `{ok, error}` on a
+    /// failure (sign-in's fresh `login_nonce`, the claim's `has_account`)
+    /// decodes it with `decodeBody`. `headers` carries values that must not
+    /// ride in a URL (the signup token, `X-Signup-Token`).
     func sendUnauthenticated<Response: Decodable>(
         _ path: String,
         method: HTTPMethod = .get,
-        body: (any Encodable)? = nil
+        body: (any Encodable)? = nil,
+        headers: [String: String] = [:]
     ) async throws -> Response {
-        let request = try buildRequest(path: path, method: method.rawValue,
+        var request = try buildRequest(path: path, method: method.rawValue,
                                        body: body, query: [:], omitAuth: true)
-        return try await perform(request, path: path, mayRetry: method == .get)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        return try await perform(request, path: path, mayRetry: method == .get,
+                                 authenticated: false, expiresOn401: false)
     }
 
     /// A call carrying an explicitly supplied bearer — the staff tier's
-    /// authenticated reads and writes.
+    /// authenticated reads and writes (and a few owner background calls that
+    /// run before SessionStore exists).
+    ///
+    /// On `/staff/api`, any 401 is an ended session (`SessionExpiredError`),
+    /// with or without the server's `session_expired` flag: the staff
+    /// routes answer 401 only from the session gate. The one route that uses
+    /// 401 for a wrong credential instead — Change PIN's "Your current PIN
+    /// didn't match." — passes `wrongCredential401: true` and reads the
+    /// refusal itself (employee audit C2).
     func sendWithBearer<Response: Decodable>(
         _ path: String,
         method: HTTPMethod = .get,
         body: (any Encodable)? = nil,
         query: [String: String] = [:],
-        bearer: String
+        headers: [String: String] = [:],
+        bearer: String,
+        wrongCredential401: Bool = false
     ) async throws -> Response {
-        let request = try buildRequest(path: path, method: method.rawValue,
+        var request = try buildRequest(path: path, method: method.rawValue,
                                        body: body, query: query, bearerOverride: bearer)
-        return try await perform(request, path: path, mayRetry: method == .get)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        return try await perform(request, path: path, mayRetry: method == .get, authenticated: true,
+                                 expiresOn401: Self.staff401EndsSession(path) && !wrongCredential401)
+    }
+
+    /// Whether a path is one of the staff tier's authenticated routes.
+    nonisolated static func isStaffAPI(_ path: String) -> Bool {
+        path.hasPrefix("/staff/api/") || path == "/staff/api"
+    }
+
+    /// The staff routes whose 401 is a wrong credential, not an ended
+    /// session: Change PIN (staff_routes.api_change_pin, "Your current PIN
+    /// didn't match."). Its locked answer carries `signed_out: true`, which
+    /// the caller reads.
+    nonisolated static let staffWrongCredential401Paths: Set<String> = ["/staff/api/pin"]
+
+    /// Whether a 401 on this path means the staff session has ended.
+    nonisolated static func staff401EndsSession(_ path: String) -> Bool {
+        isStaffAPI(path) && !staffWrongCredential401Paths.contains(path)
+    }
+
+    /// How a 401/403 on the staff transport reads: an ended session (the
+    /// caller signs the staff store out) or the server's refusal of this
+    /// one request. Pure, so the rule is unit-tested without a network.
+    ///
+    /// - `session_expired: true` is always an ended session.
+    /// - A 401 on a route whose 401 means "no session" (`expiresOn401`) is
+    ///   an ended session too, whatever its body says.
+    /// - A refusal with a sentence is that sentence.
+    /// - An authenticated call refused with no sentence at all has lost
+    ///   its session; an unauthenticated one has simply been refused.
+    enum AuthRefusal: Equatable {
+        case sessionEnded(message: String?)
+        case refused(message: String)
+    }
+
+    nonisolated static func classifyAuthRefusal(status: Int, body: Data, authenticated: Bool,
+                                                expiresOn401: Bool) -> AuthRefusal? {
+        guard status == 401 || status == 403 else { return nil }
+        let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: body)
+        if envelope?.sessionExpired == true { return .sessionEnded(message: envelope?.error) }
+        if status == 401, expiresOn401 { return .sessionEnded(message: envelope?.error) }
+        if let message = envelope?.error, !message.isEmpty { return .refused(message: message) }
+        if authenticated { return .sessionEnded(message: nil) }
+        return .refused(message: status == 401 ? "That didn't match. Try again." : "That isn't allowed.")
     }
 
     /// Shared transport + decode for the two helpers above. Deliberately does
     /// NOT run the owner tier's session-expired handler: a staff token going
     /// stale must sign out the staff store, not the owner one.
     private func perform<Response: Decodable>(
-        _ request: URLRequest, path: String, mayRetry: Bool
+        _ request: URLRequest, path: String, mayRetry: Bool, authenticated: Bool, expiresOn401: Bool
     ) async throws -> Response {
         let (data, response) = try await Self.perform(request, on: session, mayRetry: mayRetry)
         guard let http = response as? HTTPURLResponse else {
             throw APIError(kind: .server, message: "The server sent something unreadable.")
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
-               let message = decoded.error {
-                throw APIError(kind: .server, message: message, status: http.statusCode, body: data)
-            }
-            throw SessionExpiredError()
+        switch Self.classifyAuthRefusal(status: http.statusCode, body: data,
+                                        authenticated: authenticated, expiresOn401: expiresOn401) {
+        case .sessionEnded(let message)?:
+            throw SessionExpiredError(message: message)
+        case .refused(let message)?:
+            throw APIError(kind: .server, message: message, status: http.statusCode, body: data)
+        case nil:
+            break
         }
         guard (200..<300).contains(http.statusCode) else {
             if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
