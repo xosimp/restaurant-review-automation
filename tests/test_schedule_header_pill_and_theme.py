@@ -129,7 +129,9 @@ def test_chip_stat_numbers_dont_inherit_the_page_wide_26px_stat_n_size():
 
 def test_overstaffed_understaffed_overtime_tables_have_no_tiny_text():
     s = _src()
-    start = s.index("<!-- Two col: overstaffed table + overtime alerts -->")
+    # The staffing review (overstaffed, run lean, overtime) — moved into the
+    # Studio's panel on 10/1/26; it opens where its board is set.
+    start = s.index("{% set _sb = labor.staffing_board if labor.is_live else None %}")
     end = s.index("/lb-panel-schedule", start)
     _no_tiny_sizes(s[start:end], label="the overstaffed/understaffed/overtime block")
 
