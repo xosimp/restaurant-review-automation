@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Staff schedule texts — Cavnar AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --ink: #0e0c0a; --ink2: #3a3530; --ink3: #7a736a;
+      --ember: #c84b2f; --paper: #f7f4ef; --paper2: #ede9e2; --paper3: #e0dbd0;
+      --green: #2d6a4f; --green-bg: #eaf4ee; --red: #c0392b; --red-bg: #fdf0ef;
+    }
+    body { background: var(--paper); color: var(--ink); font-family: 'DM Sans', sans-serif; font-size: 15px; line-height: 1.75; }
+    header { background: var(--ink); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; }
+    .logo { font-family: 'DM Serif Display', serif; font-size: 22px; color: white; text-decoration: none; }
+    .logo span { color: var(--ember); font-style: italic; }
+    header nav a { color: #a09890; text-decoration: none; font-size: 13px; margin-left: 24px; }
+    .hero { background: var(--ink); padding: 48px 40px 40px; border-bottom: 3px solid var(--ember); }
+    .hero-inner { max-width: 640px; margin: 0 auto; }
+    .pill { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ember); border: 1px solid #3a2820; padding: 4px 12px; border-radius: 20px; margin-bottom: 18px; }
+    .hero h1 { font-family: 'DM Serif Display', serif; font-size: 32px; color: white; margin-bottom: 10px; }
+    .hero p { color: #b5aca4; font-size: 15px; max-width: 560px; }
+    main { max-width: 640px; margin: 0 auto; padding: 48px 40px 80px; }
+    h2 { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 12px; color: var(--ink); }
+    p { color: var(--ink2); margin-bottom: 16px; }
+    .meta { font-size: 13px; color: var(--ink3); margin-bottom: 32px; }
+    .meta strong { color: var(--ink2); }
+
+    /* ── The real, live, testable opt-in form ── */
+    .card { border: 1.5px solid var(--paper3); border-radius: 14px; padding: 28px 26px; margin: 24px 0 32px; background: white; box-shadow: 0 8px 24px rgba(14,12,10,.08); }
+    .field-label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink3); margin-bottom: 7px; }
+    .field { margin-bottom: 18px; }
+    .field input[type=text], .field input[type=email], .field input[type=tel] {
+      width: 100%; font-family: inherit; font-size: 15px; color: var(--ink); background: var(--paper);
+      border: 1.5px solid var(--paper3); border-radius: 8px; padding: 11px 13px; outline: none;
+    }
+    .field input:focus { border-color: var(--ember); }
+    .field .hint { font-size: 12px; color: var(--ink3); margin-top: 5px; }
+    .consent-row { display: flex; align-items: flex-start; gap: 11px; background: rgba(200,75,47,.05); border: 1px solid rgba(200,75,47,.22); border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; }
+    .consent-row input[type=checkbox] { width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0; accent-color: var(--ember); cursor: pointer; }
+    .consent-row label { font-size: 13px; color: var(--ink); line-height: 1.65; cursor: pointer; }
+    .consent-row a { color: var(--ember); }
+    button[type=submit] {
+      font-family: inherit; font-size: 14px; font-weight: 600; color: white; background: var(--ember);
+      border: none; border-radius: 8px; padding: 12px 22px; cursor: pointer;
+    }
+    button[type=submit]:hover { background: #b23f26; }
+    .banner { border-radius: 8px; padding: 12px 16px; font-size: 13.5px; margin-bottom: 18px; }
+    .banner.err { background: var(--red-bg); color: var(--red); border: 1px solid rgba(192,57,43,.25); }
+    .banner.ok { background: var(--green-bg); color: var(--green); border: 1px solid rgba(45,106,79,.25); }
+    .confirm { text-align: center; padding: 20px 10px; }
+    .confirm .check { width: 46px; height: 46px; border-radius: 50%; background: var(--green-bg); color: var(--green); display: flex; align-items: center; justify-content: center; font-size: 24px; margin: 0 auto 14px; }
+    .confirm h3 { font-family: 'DM Serif Display', serif; font-size: 19px; margin-bottom: 8px; }
+    .confirm p { max-width: 420px; margin: 0 auto 6px; font-size: 13.5px; }
+
+    /* Only one of these three sits in the card at a time, chosen server-
+       side by whether the POST validated — a real state, not a decorative
+       toggle, so a reviewer testing this by hand sees the actual outcome
+       of the actual submit rather than a canned animation. */
+    [data-state="form"]   .confirm   { display: none; }
+    [data-state="error"]  .confirm   { display: none; }
+    [data-state="submitted"] .optin-form { display: none; }
+
+    .caption { font-size: 12px; color: var(--ink3); font-style: italic; margin: -20px 0 32px; }
+    footer { border-top: 1px solid var(--paper3); padding: 24px 40px; text-align: center; font-size: 12px; color: var(--ink3); }
+    footer a { color: var(--ember); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="https://cavnar.ai" class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></a>
+    <nav>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="pill">A2P 10DLC Compliance</div>
+      <h1>Staff schedule texts</h1>
+      <p>How a restaurant employee chooses to get texts about their own schedule — the same step they complete inside the Cavnar AI staff app (Me → Schedule texts), reproduced here as a live, unauthenticated form for carrier and campaign review. Texts are an optional extra: this form saves with or without them.</p>
+    </div>
+  </div>
+
+  <main>
+    <div class="meta">
+      <strong>Product:</strong> Cavnar AI staff app, for employees of restaurants that use Cavnar AI (dashboard.cavnar.ai/staff)<br>
+      <strong>Who this is for:</strong> A restaurant employee, opting their own mobile number into texts about their own shifts and their own requests<br>
+      <strong>Where the same flow lives in-app:</strong> Staff app → Me → Schedule texts. The employee signs in with their own PIN; the switch is off by default and they turn it on themselves. This page mirrors it so reviewers without an employee login can complete it directly.<br>
+      <strong>Schedule texts are optional.</strong> Nothing requires them: the schedule and every request update also reach the employee in the staff app and by email, and the app works the same with texts off. Consent to texts is never a condition of using the app, of employment, or of any purchase, and a manager cannot turn it on for anyone.
+    </div>
+
+    <div class="card">
+      <div id="optin-card" data-state="{{FORM_STATE}}">
+        <div class="banner err" style="display:{{ERROR_DISPLAY}}">{{ERROR_TEXT}}</div>
+
+        <form class="optin-form" method="POST" action="/staff-sms-optin-preview">
+          <input type="hidden" name="csrf_token" value="{{CSRF_TOKEN}}">
+          <div class="field">
+            <label class="field-label" for="optin-name">Your name (optional)</label>
+            <input type="text" id="optin-name" name="name" autocomplete="name" placeholder="Jane Doe">
+          </div>
+          <div class="field">
+            <label class="field-label" for="optin-phone">Mobile phone number (optional, only for schedule texts)</label>
+            <input type="tel" id="optin-phone" name="phone" autocomplete="tel" placeholder="(555) 555-5555">
+            <div class="hint">In the app this is the number you verified when you signed up. Leave blank if you don't want texts.</div>
+          </div>
+          <div class="consent-row">
+            <input type="checkbox" id="optin-consent" name="consent">
+            <label for="optin-consent">Optional: {{CONSENT_TEXT}} Texts come from Cavnar&nbsp;AI on behalf of your restaurant, only to the number above. See our <a href="/privacy#sms">Privacy Policy</a> and <a href="/terms#sms">Terms of Service</a>. Consent is not a condition of using the app, of your job, or of any purchase.</label>
+          </div>
+          <button type="submit">Save</button>
+        </form>
+
+        <div class="confirm">
+          <div class="check">✓</div>
+          <h3>{{CONFIRM_TITLE}}</h3>
+          <p>{{CONFIRM_TEXT}}</p>
+          <p>No text message is sent from this preview page: the messaging service this opt-in is being registered for is itself pending carrier approval, and a number typed here is never stored. Once approved, the identical switch inside the staff app is what enrolls a real employee.</p>
+        </div>
+      </div>
+    </div>
+    <p class="caption">Nothing here is required and nothing is pre-checked. The form saves with the box unchecked and the phone field empty: the schedule then reaches the employee in the app and by email only, and no text is ever sent. Texts go only to a number given here with the box checked.</p>
+
+    <h2>Message program details</h2>
+    <p>
+      <strong>Sender:</strong> Cavnar AI LLC &middot;
+      <strong>Program:</strong> Cavnar AI Schedule Texts &middot;
+      <strong>Use case:</strong> Low-volume operational texts to restaurant employees who opted in with their own number &middot;
+      <strong>Message types:</strong> their week's schedule posted or changed; updates on shift swaps, open shifts and time-off requests &middot;
+      <strong>Frequency:</strong> Varies with the schedule, usually 1–4 messages per week per recipient &middot;
+      <strong>Optional:</strong> everything also arrives in the staff app and by email &middot;
+      <strong>Opt-out:</strong> Reply STOP at any time, or turn the switch off in the app &middot;
+      <strong>Help:</strong> Reply HELP or email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>
+    </p>
+    <h2>Example messages</h2>
+    <p>&ldquo;Simple EJ&rsquo;s: your schedule for the week of 10/5/26 &ndash; 10/11/26 is posted (4 shifts). https://dashboard.cavnar.ai/s/k3P9xQ Reply STOP to stop these texts.&rdquo;</p>
+    <p>&ldquo;Simple EJ&rsquo;s: Your manager approved your request to drop Sat 10/10/26 5pm&ndash;11pm. You&rsquo;re still on it until someone picks it up &mdash; we&rsquo;ll tell you when they do. https://dashboard.cavnar.ai/staff Reply STOP to stop these texts.&rdquo;</p>
+  </main>
+
+  <footer>
+    Cavnar AI &middot; <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> &middot; <a href="/privacy">Privacy</a> &middot; <a href="/terms">Terms</a>
+  </footer>
+</body>
+</html>

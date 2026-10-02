@@ -180,7 +180,7 @@ struct StaffMeView: View {
         switch prefs {
         case .loaded(let p) where p.smsAvailable:
             AccountSwitchRow(label: "Schedule texts",
-                             detail: p.consentText ?? "Text me about my schedule and my requests. Msg & data rates may apply. Reply STOP to stop.",
+                             detail: p.consentText ?? "Text me about my schedule and my requests: a posted or changed week, swaps, open shifts and time off. Msg frequency varies, usually 1–4 a week. Msg & data rates may apply. Reply HELP for help, STOP to stop.",
                              isOn: Binding(get: { textsOn }, set: { on in
                                  textsOn = on
                                  Task { await saveTexts(on, version: p.consentVersion ?? 2) }

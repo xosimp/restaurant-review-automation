@@ -2659,6 +2659,45 @@ def sms_optin_preview_page():
     real text from us. It validates, then shows an honest confirmation
     state saying exactly that, rather than implying an SMS went out.
     """
+    return _optin_preview_response(
+        "sms_optin_preview.html",
+        texts_confirm=("You're opted in to text alerts",
+                       "Saved. Your consent was recorded exactly as the checkbox describes — message types, frequency, "
+                       "rates, and STOP/HELP instructions. Alerts also arrive by email and in the app."),
+        no_texts_confirm=("Preferences saved — no text messages",
+                          "Saved without text alerts. Alerts will arrive by email and in the app only, and no text "
+                          "message will be sent. You can add text alerts at any time by checking the box."),
+        consent_error="To get text alerts, enter your mobile number — or uncheck the box to save without texts.")
+
+
+@admin_bp.route("/staff-sms-optin-preview", methods=["GET", "POST"])
+def staff_sms_optin_preview_page():
+    """The staff schedule-texts campaign's public opt-in, for the A2P
+    reviewer: the real switch sits in the staff app (Me → Schedule texts)
+    behind an employee's PIN, which no reviewer has. Built on what got the
+    owner campaign approved (/sms-optin-preview above): a live form, a real
+    phone field, a real unchecked box that is never required, and the
+    consent label carrying every disclosure — and that label IS
+    people.STAFF_SMS_CONSENT_TEXT, the sentence the app shows, so the two
+    cannot drift. Like the owner page it never enrolls or texts anyone."""
+    import html as _html
+    import people
+    return _optin_preview_response(
+        "staff_sms_optin_preview.html",
+        texts_confirm=("You're opted in to schedule texts",
+                       "Saved. Your consent was recorded exactly as the switch describes — what is texted, "
+                       "frequency, rates, and STOP/HELP. Everything also arrives in the app and by email."),
+        no_texts_confirm=("Saved — no text messages",
+                          "Saved without schedule texts. Your schedule and requests reach you in the app and by "
+                          "email only, and no text message will be sent. You can turn texts on at any time."),
+        consent_error="To get schedule texts, enter your mobile number — or leave the box unchecked to save without texts.",
+        extra={"{{CONSENT_TEXT}}": _html.escape(people.STAFF_SMS_CONSENT_TEXT)})
+
+
+def _optin_preview_response(template, texts_confirm, no_texts_confirm, consent_error, extra=None):
+    """One public A2P opt-in form (owner alerts, staff schedule texts): CSRF
+    double-submit, nothing required, a number asked for only with the box
+    checked, and an honest confirmation that nothing was sent."""
     from flask import Response
     import os as _os
     import re as _re
@@ -2685,7 +2724,7 @@ def sms_optin_preview_page():
             consent = request.form.get("consent") == "on"
             digits = _re.sub(r"\D", "", phone)
             if consent and len(digits) < 10:
-                error = "To get text alerts, enter your mobile number — or uncheck the box to save without texts."
+                error = consent_error
             elif phone and len(digits) < 10:
                 error = "That mobile number looks incomplete — fix it or clear the field."
             else:
@@ -2693,25 +2732,20 @@ def sms_optin_preview_page():
                 texts = consent
 
     try:
-        html_path = _os.path.join(_os.path.dirname(__file__), "sms_optin_preview.html")
+        html_path = _os.path.join(_os.path.dirname(__file__), template)
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:
         return Response("<h1>SMS Opt-In Flow</h1><p>Contact will@cavnar.ai</p>", mimetype="text/html")
 
     csrf_token = request.cookies.get(_CSRF_COOKIE) or _secrets_csrf.token_urlsafe(32)
+    for k, v in (extra or {}).items():
+        html = html.replace(k, v)
     html = html.replace("{{CSRF_TOKEN}}", csrf_token)
     html = html.replace("{{FORM_STATE}}", "submitted" if submitted else ("error" if error else "form"))
     html = html.replace("{{ERROR_TEXT}}", error or "")
     html = html.replace("{{ERROR_DISPLAY}}", "block" if error else "none")
-    if submitted and texts:
-        title, body = ("You're opted in to text alerts",
-                       "Saved. Your consent was recorded exactly as the checkbox describes — message types, frequency, "
-                       "rates, and STOP/HELP instructions. Alerts also arrive by email and in the app.")
-    else:
-        title, body = ("Preferences saved — no text messages",
-                       "Saved without text alerts. Alerts will arrive by email and in the app only, and no text "
-                       "message will be sent. You can add text alerts at any time by checking the box.")
+    title, body = texts_confirm if (submitted and texts) else no_texts_confirm
     html = html.replace("{{CONFIRM_TITLE}}", title if submitted else "").replace("{{CONFIRM_TEXT}}", body if submitted else "")
 
     resp = Response(html, mimetype="text/html")

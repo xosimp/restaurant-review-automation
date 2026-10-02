@@ -47,7 +47,9 @@ restaurant 5; restaurant 4 is Will's demo copy.
     in `people.STAFF_SMS_CONSENT_TEXT` ("Text me about my schedule and my
     requests: a posted or changed week, swaps, open shifts and time off…" —
     schedule and request notices), then set
-    `TWILIO_STAFF_MESSAGING_SERVICE_SID`. Until then `sms_available` is
+    `TWILIO_STAFF_MESSAGING_SERVICE_SID`. The reviewer's live opt-in is
+    `/staff-sms-optin-preview` (10/2/26; the consent now names frequency and
+    HELP). Until then `sms_available` is
     false, the staff app hides its texts switch and staff are reached by the
     app and email only.
   - `CAVNAR_POSTAL_ADDRESS` (a PO box for email footers) is unset.

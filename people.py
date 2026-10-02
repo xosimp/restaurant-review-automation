@@ -492,9 +492,16 @@ def _staff_data(alert_type, nav=None, data=None) -> dict:
 # (GET /staff/api/preferences → schedule_texts_consent). The app sends
 # consent_version=preferences.STAFF_SMS_CONSENT_VERSION with the switch, and
 # only that wording covers request notices. Register the staff A2P campaign
-# with this same sentence (H14 — an ops task).
+# with this same sentence (H14 — an ops task); /staff-sms-optin-preview shows
+# it verbatim to the carrier reviewer. It carries every disclosure a reviewer
+# checks for in the consent itself (what is texted, frequency, rates,
+# STOP/HELP — the owner campaign's 30896 rejection was a missing frequency).
+# The frequency and HELP were added 10/2/26, before the switch was ever
+# shown (sms_available is false until the campaign is registered), so the
+# scope a version-2 consent covers is unchanged.
 STAFF_SMS_CONSENT_TEXT = ("Text me about my schedule and my requests: a posted or changed week, swaps, "
-                          "open shifts and time off. Msg & data rates may apply. Reply STOP to stop.")
+                          "open shifts and time off. Msg frequency varies, usually 1–4 a week. "
+                          "Msg & data rates may apply. Reply HELP for help, STOP to stop.")
 
 
 def staff_sms_ready() -> bool:
