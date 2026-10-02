@@ -113,7 +113,9 @@ def recipients(restaurant_id, db_path=None):
             "WHERE u.role='owner' AND COALESCE(u.is_active,1)=1 AND b.location_group IS NOT NULL "
             "AND b.location_group=r.location_group AND b.owner_email=r.owner_email AND b.id != r.id "
             "ORDER BY u.id", (restaurant_id,)).fetchall()]
-        out, seen = [], set()
+        # A login its owner left off the nightly report (auth.set_nightly_report_pref).
+        from auth import nightly_report_off
+        out, seen = [], set(nightly_report_off(conn, restaurant_id))
         for u in rows:
             if u["id"] in seen or u["is_admin"] or normalize_role(u["role"]) not in CONSOLE_ROLES:
                 continue

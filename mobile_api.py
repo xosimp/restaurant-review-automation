@@ -6288,6 +6288,7 @@ def mobile_get_team(current_user):
         m["access"] = sorted(a.get("grants") or ())
         m["access_grantable"] = a.get("role") in GRANTABLE_ROLES
         m["morning_brief"] = bool(a.get("morning_brief"))
+        m["nightly_report"] = bool(a.get("nightly_report", True))
     from auth import TEAM_ROLES
     for m in members:
         # On a person, an owner login reads "Owner" — "Co-owner" is the name
@@ -6732,6 +6733,12 @@ def mobile_set_team_access(current_user, user_id):
             set_morning_brief_pref(rid, user_id, bool(data.get("morning_brief")))
             _log_account_event(rid, "team_brief_changed", current_user,
                                detail=f"{user_id}:{'on' if data.get('morning_brief') else 'off'}")
+        if "nightly_report" in data:
+            # Left off the nightly sales report (auth.set_nightly_report_pref, 10/2/26).
+            from auth import set_nightly_report_pref
+            set_nightly_report_pref(rid, user_id, bool(data.get("nightly_report")))
+            _log_account_event(rid, "team_report_changed", current_user,
+                               detail=f"{user_id}:{'on' if data.get('nightly_report') else 'off'}")
     except TeamAccessError as e:
         return jsonify(ok=False, error=e.message), 400
     # What this person sees changes now; don't serve them a cached Home.

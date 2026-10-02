@@ -94,7 +94,7 @@ _K = {
     "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json", "person_rates_json"),
     "setting": ("name", "owner_email", "owner_name", "owner_phone", "mailing_address", "location_group",
                 "location_name", "timezone", "week_start_day", "fiscal_period_scheme", "fiscal_week_start_dow",
-                "fiscal_year_start", "fiscal_years_json", "dsr_gross_basis", "data_retention_months",
+                "fiscal_year_start", "fiscal_years_json", "dsr_gross_basis", "dsr_late_night_hour", "data_retention_months",
                 "inventory_frequency", "delivery_days", "inventory_notes", "menu_notes", "menu_url",
                 "pos_system", "external_scheduling_tool", "reservation_provider", "custom_competitors",
                 "google_place_id", "yelp_business_id", "exclude_from_learning", "learning_override", "is_demo"),

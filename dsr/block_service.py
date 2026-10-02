@@ -68,10 +68,35 @@ def _employee_names(ctx, provider):
         return {}
 
 
+# A check opened before this local hour on the business date's next morning
+# is the same night run late (a 12:40am close-out), never breakfast.
+LATE_NIGHT_ENDS = 5
+LATE_NIGHT = "Late night"
+
+
+def late_night_daypart(late_hour):
+    """The daypart of one check: "Late night" when it was opened at or after
+    the restaurant's late-night hour, or after midnight (before
+    LATE_NIGHT_ENDS); else the meal period the POS tagged. None for the hour
+    keeps the POS's tags (Erik, 10/2/26: "after 10pm is late night and
+    should be tracked separately")."""
+    def of(t):
+        tag = t.get("mealtime") or "Other"
+        if late_hour is None:
+            return tag
+        stamp = str(t.get("opened_at") or "")
+        try:
+            hour = int(stamp[11:13])
+        except ValueError:
+            return tag
+        return LATE_NIGHT if (hour >= int(late_hour) or hour < LATE_NIGHT_ENDS) else tag
+    return of
+
+
 def _split(tickets, key, total):
     out = {}
     for t in tickets:
-        name = t.get(key) or "Other"
+        name = (key(t) if callable(key) else t.get(key)) or "Other"
         g = out.setdefault(name, {"name": name, "net": 0.0, "guests": 0, "checks": 0})
         g["net"] += float(t.get("net_sales") or 0)
         g["guests"] += int(t.get("guest_count") or 0)
@@ -214,7 +239,8 @@ def collect(ctx):
     total = round(sum(float(t.get("net_sales") or 0) for t in tickets), 2)
     guests = sum(int(t.get("guest_count") or 0) for t in tickets)
     drinks = sum(int(t.get("bev_count") or 0) for t in tickets)
-    dayparts = _split(tickets, "mealtime", total)
+    late_hour = getattr(ctx.restaurant, "dsr_late_night_hour", None) if getattr(ctx, "restaurant", None) else None
+    dayparts = _split(tickets, late_night_daypart(late_hour), total)
     rooms = _split(tickets, "profit_center", total)
     servers, below, floor = _servers(tickets, punches, station_fn)
     sales_m = ((ctx.blocks.get("sales") or {}).get("metrics") or {})
@@ -233,7 +259,9 @@ def collect(ctx):
         metrics[f"room:{r['name']}"] = r["net"]
     detail = {
         "dayparts": dayparts, "rooms": rooms,
-        "dayparts_basis": "the meal period the POS tagged on each check",
+        "dayparts_basis": ("the meal period the POS tagged on each check" if late_hour is None else
+                           f"the meal period the POS tagged on each check; checks opened from "
+                           f"{int(late_hour) - 12}pm (or after midnight) are late night"),
         "rooms_basis": "the profit centre the POS tagged on each check",
         "servers": servers, "servers_below_floor": below, "servers_min_checks": NIGHT_MIN_CHECKS,
         "servers_basis": (f"people who carried at least {NIGHT_MIN_CHECKS} checks; spend per guest is net over "

@@ -259,11 +259,14 @@ CREATE TABLE IF NOT EXISTS permission_grants (
 );
 
 -- Per-login, per-location delivery choices. morning_brief NULL means the
--- role default (owners and managers receive it).
+-- role default (owners and managers receive it); nightly_report NULL means
+-- the nightly Daily Sales Report goes to them as dsr.deliver's rule says,
+-- 0 leaves this login off it (10/2/26: a marketer with a Manager login).
 CREATE TABLE IF NOT EXISTS login_prefs (
     user_id         INTEGER NOT NULL REFERENCES users(id),
     restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
     morning_brief   INTEGER,
+    nightly_report  INTEGER,
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, restaurant_id)
 );
@@ -555,6 +558,8 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE sessions ADD COLUMN reauth_at TEXT",
         "ALTER TABLE sessions ADD COLUMN acting_admin_id INTEGER",
         "ALTER TABLE sessions ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0",
+        # A login left off the nightly report (set_nightly_report_pref, 10/2/26).
+        "ALTER TABLE login_prefs ADD COLUMN nightly_report INTEGER",
         # An internal login's (admin, support) own second factor. It used to
         # be the flag on whatever restaurant the admin happened to be homed
         # on — a client's, if the seed attached him to one — and nothing at
@@ -4654,15 +4659,17 @@ def get_team_access(restaurant_id, db_path: str = DB_PATH) -> dict:
                              (restaurant_id,)).fetchall()
         grants = conn.execute("SELECT user_id, permission FROM permission_grants WHERE restaurant_id=?",
                               (restaurant_id,)).fetchall()
-        prefs = {r["user_id"]: r["morning_brief"] for r in conn.execute(
-            "SELECT user_id, morning_brief FROM login_prefs WHERE restaurant_id=?", (restaurant_id,))}
+        rows = conn.execute("SELECT * FROM login_prefs WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        prefs = {r["user_id"]: r["morning_brief"] for r in rows}
+        reports = {r["user_id"]: (r["nightly_report"] if "nightly_report" in r.keys() else None) for r in rows}
     finally:
         conn.close()
     out = {}
     for u in users:
         out[u["id"]] = {"grants": set(), "role": normalize_role(u["role"]),
                         "morning_brief": morning_brief_default(u["role"])
-                        if prefs.get(u["id"]) is None else bool(prefs[u["id"]])}
+                        if prefs.get(u["id"]) is None else bool(prefs[u["id"]]),
+                        "nightly_report": reports.get(u["id"]) != 0}
     for g in grants:
         if g["user_id"] in out and out[g["user_id"]]["role"] in GRANTABLE_ROLES:
             out[g["user_id"]]["grants"].add(g["permission"])
@@ -4702,7 +4709,7 @@ def set_grant(restaurant_id, user_id, permission, enabled, granted_by=None, db_p
         conn.close()
 
 
-def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PATH):
+def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PATH, column: str = "morning_brief"):
     """Whether this login gets THIS location's morning brief. A login is on
     the location's team when it is based there, holds an active membership
     there, or is the group's owner (based at another location of the same
@@ -4710,7 +4717,10 @@ def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PA
     adds a group owner to every sibling's brief, and the setter used to
     refuse them ("that login isn't on this restaurant's team"), so a
     three-location owner could not turn off two of their three briefs
-    (memory audit 9/29/26, owner_layers)."""
+    (memory audit 9/29/26, owner_layers). `column` is the login_prefs
+    choice: morning_brief, or nightly_report (set_nightly_report_pref)."""
+    if column not in ("morning_brief", "nightly_report"):
+        raise ValueError(column)
     conn = get_conn(db_path)
     try:
         u = conn.execute("SELECT role, restaurant_id FROM users WHERE id=? AND is_active=1",
@@ -4731,13 +4741,30 @@ def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PA
         from permissions import CONSOLE_ROLES, normalize_role
         if normalize_role(u["role"]) not in CONSOLE_ROLES:
             raise TeamAccessError("staff logins use the staff portal's pre-shift briefing instead")
-        conn.execute("INSERT INTO login_prefs (user_id, restaurant_id, morning_brief, updated_at) "
+        conn.execute(f"INSERT INTO login_prefs (user_id, restaurant_id, {column}, updated_at) "
                      "VALUES (?,?,?,datetime('now')) ON CONFLICT(user_id, restaurant_id) DO UPDATE SET "
-                     "morning_brief=excluded.morning_brief, updated_at=excluded.updated_at",
+                     f"{column}=excluded.{column}, updated_at=excluded.updated_at",
                      (user_id, restaurant_id, 1 if enabled else 0))
         conn.commit()
     finally:
         conn.close()
+
+
+def set_nightly_report_pref(restaurant_id, user_id, enabled, db_path: str = DB_PATH):
+    """Whether this login gets THIS location's nightly Daily Sales Report
+    (dsr.deliver.recipients). On by default for every owner and manager;
+    off leaves them off it - a marketer with a Manager login (owner,
+    10/2/26) has no use for the night's sales. Same team rule as the brief."""
+    return set_morning_brief_pref(restaurant_id, user_id, enabled, db_path=db_path, column="nightly_report")
+
+
+def nightly_report_off(conn, restaurant_id) -> set:
+    """The login ids left off this location's nightly report."""
+    try:
+        return {r[0] for r in conn.execute("SELECT user_id FROM login_prefs WHERE restaurant_id=? "
+                                           "AND nightly_report=0", (restaurant_id,)).fetchall()}
+    except Exception:
+        return set()
 
 
 _last_touch_failure = [0.0]

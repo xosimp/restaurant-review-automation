@@ -32372,6 +32372,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           var bits=[];
           for(var i=0;i<opts.length;i++){bits.push(sw(opts[i].label,(m.access||[]).indexOf(opts[i].key)>=0,'setTeamAccess('+m.id+',\''+opts[i].key+'\',this)',ACCESS_HELP[opts[i].key]));}
           bits.push(sw('Morning brief',m.morning_brief,'setTeamBrief('+m.id+',this)'));
+          // The nightly sales report (10/2/26): on for every manager unless the
+          // owner leaves someone off it - a marketer has no use for it.
+          bits.push(sw('Nightly report',m.nightly_report!==false,'setTeamReport('+m.id+',this)','The Daily Sales Report email after each night'));
           row+='<div style="display:flex;flex-wrap:wrap;gap:10px 22px;padding:2px 0 12px">'+bits.join('')+'</div>';
         }
         return row;
@@ -32396,6 +32399,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
   window.setTeamBrief=function(id,box){
     jsend('/api/account/team/'+id+'/access',{morning_brief:box.checked},function(d){if(d.ok)toast(box.checked?'They’ll get the morning brief':'Morning brief off for them','success');else{box.checked=!box.checked;toast(d.error||'Could not update','error');}});
+  };
+  window.setTeamReport=function(id,box){
+    jsend('/api/account/team/'+id+'/access',{nightly_report:box.checked},function(d){if(d.ok)toast(box.checked?'They\u2019ll get the nightly report':'Nightly report off for them','success');else{box.checked=!box.checked;toast(d.error||'Could not update','error');}});
   };
   window.revokeTeam=function(id,btn){if(!confirm('Remove this teammate’s access? They’ll be signed out everywhere.'))return;var done=busy(btn,'…');jsend('/api/account/team/'+id+'/revoke',{},function(d){done();if(d.ok){toast('Access removed','success');loadTeam();}else toast(d.error||'Could not remove','error');});};
   // ── Staff accounts (employee PIN portal) ──

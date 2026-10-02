@@ -5219,6 +5219,7 @@ def _dsr_settings_payload(r):
             "dsr_notify": bool(getattr(r, "dsr_notify", 0)),
             "dsr_gross_basis": getattr(r, "dsr_gross_basis", None) or "items",
             "dsr_deadline_hour": 4 if hour is None else int(hour),
+            "dsr_late_night_hour": getattr(r, "dsr_late_night_hour", None),
             "calendar_label": fiscal.label(r, closeout.business_date_for(r))}
 
 
@@ -5249,7 +5250,8 @@ def _do_dsr_settings_set(u):
     "544" | the period lengths, comma-separated), fiscal_years (the years that
     differ, [{start, lengths}], or [] / null to clear), dsr_enabled, dsr_notify
     (email + push the finished report), dsr_gross_basis ("items" | "all"),
-    dsr_deadline_hour (0–11, local). Every column is in update_restaurant's
+    dsr_deadline_hour (0–11, local), dsr_late_night_hour (18–23, or null for
+    the POS's own meal periods). Every column is in update_restaurant's
     whitelist. A value of the wrong type is a 400 with the reason, never a
     500."""
     import json
@@ -5323,6 +5325,20 @@ def _do_dsr_settings_set(u):
         if not 0 <= h <= 11:
             return {"ok": False, "error": "Pick an hour between midnight and 11am."}, 400
         fields["dsr_deadline_hour"] = h
+    if "dsr_late_night_hour" in body:
+        # Checks opened from this hour on are "Late night" (dsr.block_service);
+        # null keeps the POS's own Lunch/Dinner tags.
+        raw = body.get("dsr_late_night_hour")
+        if raw is None or raw == "":
+            fields["dsr_late_night_hour"] = None
+        else:
+            try:
+                h = -1 if isinstance(raw, bool) else int(raw)
+            except (TypeError, ValueError):
+                h = -1
+            if not 18 <= h <= 23:
+                return {"ok": False, "error": "Late night starts between 6pm and 11pm."}, 400
+            fields["dsr_late_night_hour"] = h
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
     # Periods are whole weeks: a year start that isn't the week's first day
