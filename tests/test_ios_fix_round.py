@@ -206,9 +206,11 @@ def test_small_fixes_hold():
     scan = _read(APP, "Features", "FoodCost", "InvoiceScanSheet.swift")
     assert not re.search(r"\.onAppear \{\s*guard startWithCamera", scan)
     staff = _read(APP, "Features", "Staff", "StaffRequestsViews.swift")
-    post = staff.split("private func post(", 1)[1].split("\n    }\n", 1)[0]
+    # The success haptic only for a success; picking up a shift is confirmed
+    # first (employee audit I3 renamed post → act, the claim confirm a case).
+    post = staff.split("private func act(", 1)[1].split("\n    }\n", 1)[0]
     assert "if r.ok {\n                Haptic.success()" in post
-    assert "claiming = shift" in staff
+    assert "confirming = .claim(shift)" in staff
 
 
 def test_the_report_reads_as_the_web_does():
