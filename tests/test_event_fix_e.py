@@ -41,6 +41,10 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    # The fixture's nights (BEARS_NIGHTS) run to 10/4/26 and its game is
+    # 10/22/26: the clock sits between them, so every night is past
+    # (engine.past_games counts played games before today) on any real date.
+    monkeypatch.setattr(store, "local_today", lambda tz=None: date(2026, 10, 21))
     import weather
     monkeypatch.setattr(weather, "forecast_for_day", lambda *a, **k: None)
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
