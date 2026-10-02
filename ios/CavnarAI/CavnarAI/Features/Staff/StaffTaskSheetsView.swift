@@ -16,9 +16,11 @@ import UIKit
 /// and ticks and readings wait to send (PERF-09); a photo is taken with the
 /// camera first and shrunk on the phone before it goes (UX-24, PERF-06).
 ///
-/// The section reads /tasks itself (StaffTasksStore). `response` is the
-/// container's read, used only as a first paint; `reload` is kept for the
-/// container's call and not needed.
+/// The section keeps its own state (StaffTasksStore) and reads /tasks
+/// itself when it has to. `response` is the container's read
+/// (StaffPortalStore.tasks): taken as fresh, and a newer one (the
+/// container's pull to refresh) replaces what is shown. `reload` is kept for
+/// the container's call; the section doesn't need it.
 struct StaffTaskSheetsSection: View {
     @Environment(StaffSessionStore.self) private var staff
     private let seed: StaffTasksResponse?
@@ -63,6 +65,10 @@ struct StaffTaskSheetsSection: View {
             store.attach(staff)
             if let seed { store.seed(seed) }
             await store.refreshIfNeeded()
+        }
+        // The container's pull to refresh hands in a newer read.
+        .onChange(of: seed?.sheets) { _, _ in
+            if let seed { store.seed(seed) }
         }
         .cavnarPostedOverlay(store.posted) { store.posted = nil }
         .confirmationDialog(untick.map { "Mark \u{201C}\($0.line.label)\u{201D} not done?" } ?? "",

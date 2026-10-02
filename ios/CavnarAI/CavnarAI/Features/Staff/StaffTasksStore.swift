@@ -93,6 +93,8 @@ final class StaffTasksStore {
     func reset() {
         payload = nil
         asOf = nil
+        seededWithoutNote = false
+        lastSeed = nil
         showingCached = false
         loadError = nil
         overlays = [:]
@@ -107,17 +109,48 @@ final class StaffTasksStore {
         owner = ""
     }
 
-    /// The portal's own read, as a first paint before this screen's lands.
+    /// The container's own /tasks read (StaffPortalStore.tasks). It counts
+    /// as a fresh read — so the screen doesn't read again within the minute
+    /// — except that it can't carry `last_night_note`, so a manager with an
+    /// opening sheet still gets this screen's read (refreshIfNeeded).
+    /// A newer container read (its pull to refresh) replaces what is shown;
+    /// the note already read is kept.
     func seed(_ response: StaffTasksResponse) {
-        guard payload == nil else { return }
-        payload = StaffTasksPayload(seed: response)
+        let seeded = StaffTasksPayload(seed: response)
+        // The same container read handed in again (the tab coming back into
+        // view) is older than what this screen has since ticked: ignored.
+        guard seeded != lastSeed else { return }
+        lastSeed = seeded
+        if let current = payload, !showingCached,
+           current.sheets == seeded.sheets, current.floor == seeded.floor,
+           current.signoffs == seeded.signoffs { return }
+        var next = seeded
+        next.lastNightNote = payload?.lastNightNote
+        next.taskDate = payload?.taskDate
+        payload = next
         asOf = Date()
+        showingCached = false
+        loadError = nil
+        seededWithoutNote = payload?.lastNightNote == nil
+        if let token = staff?.token {
+            StaffReadCache.save(next, path: StaffTasksAPI.tasksPath, token: token)
+        }
+    }
+
+    /// The payload on screen came from the container, which can't carry
+    /// last night's note.
+    private var seededWithoutNote = false
+    private var lastSeed: StaffTasksPayload?
+
+    private var needsNote: Bool {
+        guard seededWithoutNote, let p = payload else { return false }
+        return p.manager && p.sheets.contains { $0.shiftKind == "opening" }
     }
 
     /// A read when the screen comes back into view, unless the last one is
     /// under a minute old — a tab switch is not a reason to read again.
     func refreshIfNeeded(maxAge: TimeInterval = 60) async {
-        if payload != nil, !showingCached, let asOf, Date().timeIntervalSince(asOf) < maxAge {
+        if payload != nil, !showingCached, !needsNote, let asOf, Date().timeIntervalSince(asOf) < maxAge {
             await syncQueueOverlays()
             return
         }
@@ -146,6 +179,7 @@ final class StaffTasksStore {
             asOf = Date()
             showingCached = false
             loadError = nil
+            seededWithoutNote = false
             StaffReadCache.save(fresh, path: StaffTasksAPI.tasksPath, token: token)
             await syncQueueOverlays()
         } catch is APIClient.SessionExpiredError {

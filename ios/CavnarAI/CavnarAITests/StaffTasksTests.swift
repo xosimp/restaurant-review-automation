@@ -296,6 +296,35 @@ final class StaffTasksTests: XCTestCase {
         XCTAssertEqual(StaffOfflineQueue.fingerprint(token: nil), "")
     }
 
+    // MARK: The container's read (I2's StaffPortalStore.tasks)
+
+    @MainActor
+    func testTheContainersReadPaintsOnceAndANewerOneReplacesIt() throws {
+        let store = StaffTasksStore()
+        store.attach(StaffSessionStore(storedToken: "seed-test-token"))
+        defer { StaffReadCache.clear() }
+        let first = try JSONDecoder().decode(StaffTasksResponse.self, from: Data("""
+            {"ok": true, "role": "Cook", "sheets": [\(Self.sheetJSON)], "manager": false}
+            """.utf8))
+        store.seed(first)
+        XCTAssertEqual(store.sheets.first?.done, 1)
+        XCTAssertFalse(store.showingCached)
+
+        // A newer container read (its pull to refresh) replaces it.
+        let newer = Self.sheetJSON.replacingOccurrences(of: #""done": 1, "total": 2"#, with: #""done": 2, "total": 2"#)
+        let second = try JSONDecoder().decode(StaffTasksResponse.self, from: Data("""
+            {"ok": true, "role": "Cook", "sheets": [\(newer)], "manager": false}
+            """.utf8))
+        store.seed(second)
+        XCTAssertEqual(store.sheets.first?.done, 2)
+
+        // The same read handed in again (the tab back in view) changes
+        // nothing — it would otherwise undo ticks made since.
+        let before = store.payload
+        store.seed(second)
+        XCTAssertEqual(store.payload, before)
+    }
+
     // MARK: The phone's copy
 
     @MainActor
