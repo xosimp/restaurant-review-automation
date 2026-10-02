@@ -137,7 +137,7 @@ def test_a_competitor_check_keeps_the_market_history():
     import inspect
     import competitor
     src = inspect.getsource(competitor.run_competitor_analysis)
-    assert "event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed)" in src
+    assert "event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)" in src
     assert "_closures_among_dropped(restaurant_id, competitors, _closed_custom)" in src
 
 

@@ -12457,6 +12457,12 @@ ACCOUNT_EVENT_TYPES = (
     # A group owner made this location's settings every location's
     # (preferences.apply_to_all_locations, memory audit 9/29/26).
     "preferences_applied",
+    # The schedule's event inputs (strategy_routes, Event Intelligence): a
+    # calendar followed or not, a catalog game removed or put back, a date
+    # on the events card added or removed — an admin in view-as named as
+    # the admin (re-audit 2 RX-01: they were logged and never shown).
+    "event_follow_set", "event_game_removed", "event_game_restored",
+    "demand_signals_saved", "demand_signal_deleted",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -12506,6 +12512,14 @@ ACCOUNT_EVENT_LABELS = {
     "send_delay_changed": "Send delay changed",
     "pos_sync_failing": "POS sync failing",
     "review_fetch_gap": "Google reviews missed by the sampled fetch",
+    # `detail` says which calendar and which way ("Chicago Bears no longer followed").
+    "event_follow_set": "Game calendar changed",
+    # `detail` carries the game and its date (M/D/YY), kickoff on the restaurant's clock.
+    "event_game_removed": "Game removed from the calendar",
+    "event_game_restored": "Removed game put back",
+    # `detail` carries how many dates, or the date removed ("Rehearsal dinner on 10/20/26").
+    "demand_signals_saved": "Events or reservations added",
+    "demand_signal_deleted": "Event or reservation date removed",
 }
 
 

@@ -1704,9 +1704,12 @@ def _do_demand_signals_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see this.")
     import demand_signals as _ds
-    from datetime import date, timedelta
-    start = (request.args.get("start") or date.today().isoformat())[:10]
-    end = (request.args.get("end") or (date.today() + timedelta(days=60)).isoformat())[:10]
+    from datetime import timedelta
+    # The restaurant's today, never the server's: from 7pm Central the UTC
+    # date is tomorrow, and tonight's game left the list (re-audit 2 RX-07).
+    today = _local_today(u)
+    start = (request.args.get("start") or today.isoformat())[:10]
+    end = (request.args.get("end") or (today + timedelta(days=60)).isoformat())[:10]
     rid = _rid(u)
     signals = _ds.upcoming(rid, start, end)
     # What the nights taught here (event_memory, memory audit 9/29/26):
@@ -1736,28 +1739,87 @@ def _event_follows(rid):
 
 def _do_event_follow_set(u, series_id):
     """Follow or stop following one calendar (event_intel, phase 2): the
-    owner's choice stands over auto-follow, and this restaurant's copy of
-    the games is re-synced at once."""
+    owner's choice stands over auto-follow. The choice is committed and
+    recorded in Account activity here; this restaurant's copy of the games
+    is re-synced on the bounded admin pool (_event_resync_later), never in
+    the request — a re-sync re-records up to engine.RECORD_MAX past nights
+    (event re-audit 2 RX-03 / R1-07), and a re-sync that fails must not
+    answer an error for a change that took effect (R2-09)."""
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
     b = _body()
     if not isinstance(b.get("active"), bool):
         return {"ok": False, "error": "Send active: true or false."}, 400
-    from event_intel import engine as _ev
-    from models import get_restaurant
+    from event_intel import store as _evs
     from client_api import log_account_event
     from permissions import acting_via
-    r = get_restaurant(_rid(u))
+    rid = _rid(u)
+    series = next((s for s in _evs.all_series() if s["id"] == int(series_id)), None)
+    if not series:
+        return {"ok": False, "error": "That calendar isn't in the catalog."}, 404
+    on = b["active"]
     # An admin or support login acting through view-as is not the owner
     # choosing (event re-audit X-5): its follow row says "admin".
+    _evs.set_follow(rid, series["id"], on, source="admin" if acting_via(u) else "owner")     # committed here
+    log_account_event(rid, "event_follow_set", current_user=u,
+                      detail=f"{series.get('name') or 'A calendar'} {'followed' if on else 'no longer followed'}",
+                      extra={"series_id": series["id"], "active": on})
+    queued = _event_resync_later(rid, "follow")
+    if on:
+        message = ("Following — its games are on your calendar in a moment" if queued else
+                   "Following — its games reach your calendar with the 5am event sync")
+    else:
+        message = ("Stopped following — its games leave your calendar in a moment" if queued else
+                   "Stopped following — its games leave your calendar with the 5am event sync")
+    return {"ok": True, "follows": _event_follows(rid), "refreshing": queued, "message": message}, 200
+
+
+# The re-sync after an owner's follow switch or Put back: on ops' bounded
+# admin pool (ops.run_admin_task — the pool the owner's own POS "Sync now"
+# uses), one pending job per restaurant (a second press joins it), recorded
+# as an `event_sync_one` job run. Whatever it misses, the 5am event_sync
+# picks up: it syncs every in-service restaurant.
+EVENT_RESYNC_PASSES = 3
+
+
+def _event_resync_one(restaurant_id):
+    """Re-sync one restaurant's copy of its followed games
+    (engine.sync_restaurant), again while its follows or removals changed
+    under the pass — a press that joined a running job is not lost — at
+    most EVENT_RESYNC_PASSES times. Standard counts."""
+    from event_intel import engine as _ev, store as _evs
+    from models import get_restaurant
+
+    def _state():
+        return (sorted(f["series_id"] for f in _evs.follows(restaurant_id)), sorted(_evs.dismissed(restaurant_id)))
+    r = get_restaurant(restaurant_id)
+    if r is None:
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False}
+    got, settled = {}, False
+    for _ in range(EVENT_RESYNC_PASSES):
+        seen = _state()
+        got = _ev.sync_restaurant(r)
+        if _state() == seen:
+            settled = True
+            break
+    return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": not settled,
+            "added": got.get("added", 0), "removed": got.get("removed", 0),
+            "nights_recorded": got.get("nights_recorded", 0), "nights_queued": got.get("nights_queued", 0)}
+
+
+def _event_resync_later(restaurant_id, why):
+    """Hand this restaurant's event re-sync to the admin pool. True when it
+    was queued (or joined one pending); False when it could not be — the
+    change is committed either way, and the 5am event_sync brings the copy
+    in line."""
+    import ops
     try:
-        got = _ev.set_owner_follow(r, series_id, b["active"], source="admin" if acting_via(u) else "owner")
-    except LookupError:
-        return {"ok": False, "error": "That calendar isn't in the catalog."}, 404
-    log_account_event(_rid(u), "event_follow_set", current_user=u,
-                      detail=f"series {series_id} {'followed' if b['active'] else 'unfollowed'}")
-    return {"ok": True, "follows": _ev.follow_choices(r), "added": got.get("added", 0),
-            "removed": got.get("removed", 0)}, 200
+        job_id, _joined = ops.run_admin_task("event_sync_one", restaurant_id, "event_sync_one", _event_resync_one,
+                                             restaurant_id, context=f"restaurant_id={restaurant_id} {why}")
+        return bool(job_id)
+    except Exception as e:
+        ops.capture(e, job="event_sync_one", context=f"restaurant_id={restaurant_id} {why}")
+        return False
 
 
 def _do_game_week(u):
@@ -1929,9 +1991,13 @@ def _do_event_dismissals_get(u):
 
 
 def _do_event_dismissal_restore(u, event_id):
-    """Put one removed catalog game back: the removal is lifted and this
-    restaurant's copy of the games re-synced at once. Per game on purpose —
-    a re-follow leaves removals alone (store.undismiss's note)."""
+    """Put one removed catalog game back: the removal is lifted and recorded
+    in Account activity here, and this restaurant's copy of the games is
+    re-synced on the admin pool (_event_resync_later — never in the
+    request: event re-audit 2 RX-03). Per game on purpose — a re-follow
+    leaves removals alone (store.undismiss's note). Once the removal is
+    lifted nothing after it answers an error (R2-09): a retry would find
+    the game not removed and say so."""
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change the schedule's inputs.")
     from client_api import log_account_event
@@ -1939,14 +2005,24 @@ def _do_event_dismissal_restore(u, event_id):
     from models import get_restaurant
     rid = _rid(u)
     e = _evs.event_by_id(event_id)
-    if not e or not _evs.undismiss(rid, event_id):
+    if not e or not _evs.undismiss(rid, event_id):                    # committed here
         return {"ok": False, "error": "That game isn't removed here."}, 404
     r = get_restaurant(rid)
-    if r:
-        _ev.sync_restaurant(r)
-    log_account_event(rid, "event_game_restored", current_user=u, detail=_ev.describe(e)[:200],
+    # The kickoff on the restaurant's clock, as the Put back list says it.
+    try:
+        what = _ev.describe(e, tz=getattr(r, "timezone", None) if r else None)
+    except Exception:
+        what = e.get("series_name") or "A game"
+    log_account_event(rid, "event_game_restored", current_user=u, detail=f"{what} — back on the calendar"[:200],
                       extra={"event_id": int(event_id)})
-    return {"ok": True, "removed": _removed_games(rid)}, 200
+    queued = _event_resync_later(rid, "put back")
+    try:
+        removed = _removed_games(rid)
+    except Exception:
+        removed = []
+    return {"ok": True, "removed": removed, "refreshing": queued,
+            "message": ("Put back — the game is on your calendar in a moment" if queued else
+                        "Put back — the game returns to your calendar with the 5am event sync")}, 200
 
 
 def _cross_training_defaults(restaurant_id) -> dict:

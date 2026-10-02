@@ -764,7 +764,11 @@ def fetch_location_rating(restaurant_id: int, access_token: str, location_id: st
             # kept (memory audit 9/29/26, public_history).
             try:
                 import event_memory
-                event_memory.record_own_rating(restaurant_id, float(rating), count, source="business_profile")
+                from time_utils import restaurant_now_by_id
+                # The week on the restaurant's clock, never the server's
+                # UTC date (event re-audit 2 RX-06).
+                event_memory.record_own_rating(restaurant_id, float(rating), count, source="business_profile",
+                                               at=restaurant_now_by_id(restaurant_id, naive=True))
             except Exception as _oe:
                 print(f"[GMB] rating history not kept for {restaurant_id}: {_oe}")
             print(f"[GMB] GBP rating for restaurant {restaurant_id}: {rating} ({count} reviews)")

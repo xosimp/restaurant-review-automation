@@ -86,6 +86,8 @@ struct DemandSignalsSection: View {
 
                 if !viewModel.nightLessons.isEmpty { nightsTaughtCard }
 
+                if !viewModel.eventFollows.isEmpty { followsCard }
+
                 if viewModel.isLoadingSignals && viewModel.signals.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
                 } else if viewModel.signals.isEmpty {
@@ -159,6 +161,52 @@ struct DemandSignalsSection: View {
         }
     }
 
+    /// CALENDARS FOLLOWED FOR YOU — the web's `.ev-follows` list: one row a
+    /// calendar (name, miles away, next game or "Not followed", the season
+    /// so far) with its switch on the right, "Stop following" / "Follow".
+    /// A button, not a native Toggle: it saves over the network
+    /// (DESIGN_SYSTEM → forms, iOS).
+    private var followsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CALENDARS FOLLOWED FOR YOU")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.4)
+                .foregroundStyle(Color.cavnarEmber2)
+            ForEach(viewModel.eventFollows) { follow in
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(follow.name)
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(follow.following ? Color.cavnarInk : Color.cavnarInk3)
+                        if !follow.line.isEmpty {
+                            HomeMixedText.make(follow.line, size: 12.5, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if follow.following, let season = follow.seasonText, !season.isEmpty {
+                            HomeMixedText.make(season, size: 12.5, weight: 500, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.setFollow(seriesId: follow.seriesId, active: !follow.following) }
+                    } label: {
+                        Text(viewModel.followBusyId == follow.seriesId
+                             ? (follow.following ? "Stopping…" : "Following…")
+                             : (follow.following ? "Stop following" : "Follow"))
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .fixedSize()
+                    .disabled(viewModel.followBusyId != nil)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarPaper3.opacity(0.35)))
+    }
+
     /// GAMES YOU REMOVED — catalog games swiped off this list stay off
     /// every forecast, brief and report until put back here.
     private var removedGamesCard: some View {
@@ -226,7 +274,11 @@ struct DemandSignalsSection: View {
         if let lift = signal.liftPct, lift != 0 {
             parts.append("\(lift > 0 ? "+" : "")\(Int(lift.rounded()))% lift")
         }
-        if let source = signal.source, !source.isEmpty, source != "manual" { parts.append("from \(source)") }
+        // A catalog game is worded as the web words it, never the raw
+        // source key "events" (re-audit 2 RX-10); a feed says which.
+        if let source = signal.source, !source.isEmpty, source != "manual" {
+            parts.append(source == "events" ? "from a calendar you follow" : "via \(source)")
+        }
         return parts.joined(separator: " · ")
     }
 }

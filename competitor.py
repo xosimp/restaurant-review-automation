@@ -485,8 +485,12 @@ def _remember_own_listing(google_place_id, types, price_level, rating=None, rati
         # kept (memory audit 9/29/26, public_history).
         if isinstance(rating, (int, float)) and rating > 0:
             import event_memory
+            from time_utils import restaurant_now_by_id
             for rid in ids:
-                event_memory.record_own_rating(rid, rating, rating_count, source="places")
+                # The week on the restaurant's clock, never the server's UTC
+                # date (a Sunday-evening reading was next week's: RX-06).
+                event_memory.record_own_rating(rid, rating, rating_count, source="places",
+                                               at=restaurant_now_by_id(rid, naive=True))
     except Exception as e:
         print(f"[competitor] own listing not kept for {google_place_id}: {e}")
 
@@ -1762,10 +1766,12 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # The market's history, kept forever (memory audit 9/29/26,
         # public_history): the snapshots are pruned at a year, so openings,
         # closures and rating moves are kept as events, with a monthly
-        # rating series. Never raises.
+        # rating series. Never raises. Dated on the restaurant's clock, as
+        # the read above is — the server's UTC date is tomorrow from 7pm
+        # Central (event re-audit 2 RX-06).
         try:
             import event_memory
-            event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed)
+            event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)
         except Exception as _me:
             print(f"[Competitor] market history not kept: {_me}")
         print(f"[Competitor] Analysis complete for {restaurant.name}")

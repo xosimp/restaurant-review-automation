@@ -341,6 +341,10 @@ def test_a_doubleheader_gets_two_labels(db, monkeypatch):
 
 def test_the_daily_job_runs_every_restaurant_in_service(db, monkeypatch):
     monkeypatch.setattr(event_memory, "record_night", lambda *a, **k: {"recorded": 0})
+    # The job runs on each restaurant's today and each game's own: pinned,
+    # never the real calendar (re-audit 2 RX-08).
+    monkeypatch.setattr(engine, "_today", lambda r=None: date(2026, 10, 1))
+    monkeypatch.setattr(store, "local_today", lambda tz=None: date(2026, 10, 1))
     r = _restaurant(db)
     import scheduler
     monkeypatch.setattr(scheduler, "resumable_sweep", lambda key, ids, fn, secs, workers=1, job=None:
