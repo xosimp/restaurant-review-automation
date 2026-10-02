@@ -798,14 +798,29 @@ def _legacy_tasks(view):
     return out
 
 
+# An app that reads only `sheets` sends this header with 2 or more, and the
+# flat `tasks` list (every line a second time, PERF-10) is left out. An app
+# that sends nothing is an older one and still gets it — the list stays
+# until those versions are gone (CLAUDE.md, deletion rule).
+TASKS_API_HEADER = "X-Staff-Tasks-Version"
+
+
+def _wants_legacy_tasks():
+    try:
+        return int(str(request.headers.get(TASKS_API_HEADER) or "0").strip()) < 2
+    except ValueError:
+        return True
+
+
 @staff_bp.route("/api/tasks")
 @staff_login_required
 def api_tasks(current_user):
     """This employee's sheets for today (task_sheets.staff_view): the ones
     the published schedule puts them on, or an unassigned sheet on their job
-    code, with due times and proof. A manager also gets the floor and may
-    sign a shift off. `role` and `tasks` keep the old flat shape for apps
-    that predate sheets."""
+    code, with due times and proof. A manager also gets the floor, may sign a
+    shift off, and — opening — last night's sign-off note. `role` and `tasks`
+    keep the old flat shape for apps that predate sheets (`tasks` only when
+    the app does not send X-Staff-Tasks-Version: 2)."""
     rid, name = _staff_context(current_user)
     membership = get_membership(current_user["id"], rid) or {}
     roles = _job_roles(rid, membership, name)
@@ -816,10 +831,15 @@ def api_tasks(current_user):
         import ops
         ops.capture(e, job="staff_task_sheets", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Could not load your sheets."), 500
-    return jsonify(ok=True, role=(roles[0] if roles else None), tasks=_legacy_tasks(view), **view)
+    payload = dict(ok=True, role=(roles[0] if roles else None), **view)
+    if _wants_legacy_tasks():
+        payload["tasks"] = _legacy_tasks(view)
+    return jsonify(payload)
 
 
-def _tick(current_user, data, media_id=None):
+def _tick(current_user, data, photo=None):
+    """Tick one line and answer with the sheet as it now stands, so the app
+    replaces that sheet instead of reading every sheet again (PERF-08)."""
     rid, name = _staff_context(current_user)
     # The day is the server's (the business day the sheet was issued for);
     # an older app still sends task_date, and one outside today ± 1 is
@@ -843,12 +863,28 @@ def _tick(current_user, data, media_id=None):
             return jsonify(ok=False, error="That task isn't on your list."), 403
         assignment_id = hit["id"]
     try:
-        out = ts.complete_line(rid, int(assignment_id), line_id, done=bool(data.get("done", True)),
+        assignment_id = int(assignment_id)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="assignment_id required"), 400
+    done = data.get("done", True)
+    done = done if isinstance(done, bool) else str(done).strip().lower() not in ("0", "false", "no", "none", "")
+    try:
+        out = ts.complete_line(rid, assignment_id, line_id, done=done,
                                employee_name=name, job_roles=roles, user_id=current_user.get("id"),
-                               value=data.get("value"), media_id=media_id)
+                               value=data.get("value"), photo=photo)
+    except ts.NotYourSheet as e:
+        return jsonify(ok=False, error=str(e)), 403
     except ts.TaskSheetError as e:
         return jsonify(ok=False, error=str(e)), 403 if "isn't yours" in str(e) else 400
-    return jsonify(ok=True, **out), 200
+    try:
+        sheet = ts.assignment_view(rid, assignment_id)
+    except Exception as e:
+        # The tick is saved; the app falls back to reading /tasks.
+        import ops
+        ops.capture(e, job="staff_task_tick_view", context=f"restaurant_id={rid}")
+        sheet = None
+    return jsonify(ok=True, late=out["late"], flagged=out["flagged"], alert=out.get("alert"),
+                   sheet=sheet, task_date=(sheet or {}).get("task_date")), 200
 
 
 @staff_bp.route("/api/tasks/complete", methods=["POST"])
@@ -856,35 +892,42 @@ def _tick(current_user, data, media_id=None):
 def api_complete_task(current_user):
     """Tick or un-tick one line of this employee's own sheet today:
     {assignment_id, line_id, done, value?}. A number line needs the reading,
-    a note line the note; a photo line goes through /api/tasks/photo."""
+    a note line the note; a photo line goes through /api/tasks/photo.
+    Answers {ok, late, flagged, alert, sheet, task_date}: `sheet` is the
+    ticked sheet as it now stands, `alert` is set when a critical reading is
+    out of range ("Tell your manager now")."""
     return _tick(current_user, request.get_json(silent=True) or {})
 
 
 @staff_bp.route("/api/tasks/photo", methods=["POST"])
 @staff_login_required
 def api_task_photo(current_user):
-    """Tick a photo line with its photo: multipart (file, assignment_id,
-    line_id), or JSON with image_b64 (the iPhone app)."""
-    rid, _name = _staff_context(current_user)
-    import task_sheets as ts
-    if request.files.get("file"):
-        f = request.files["file"]
+    """Tick a line with its photo: multipart/form-data (the image in `file`
+    or `photo`, plus assignment_id and line_id as form fields), or JSON with
+    image_b64 and mime (the iPhone app today). The photo is stored only
+    after the sheet and line are known to be this person's, with the tick
+    (task_sheets.complete_line); JPEG, PNG or WebP, at most 3.5 MB, re-encoded
+    to 1280 px, and at most PHOTO_UPLOADS_PER_HOUR per login."""
+    if request.files.get("file") or request.files.get("photo"):
+        f = request.files.get("file") or request.files.get("photo")
         raw, mime, data = f.read(), f.mimetype or "", request.form.to_dict()
     else:
         import base64
         data = request.get_json(silent=True) or {}
+        text = str(data.get("image_b64") or "")
+        if text.startswith("data:") and "," in text:
+            head, text = text.split(",", 1)
+            data.setdefault("mime", head[5:].split(";")[0])
         try:
-            raw = base64.b64decode(str(data.get("image_b64") or ""), validate=False)
+            raw = base64.b64decode(text, validate=False)
         except Exception:
             raw = b""
         mime = str(data.get("mime") or "image/jpeg")
-    try:
-        media_id = ts.store_photo(rid, raw, mime)
-    except ts.TaskSheetError as e:
-        return jsonify(ok=False, error=str(e)), 400
+    if not raw:
+        return jsonify(ok=False, error="Add a photo to tick this off."), 400
     data = dict(data)
     data["done"] = True
-    return _tick(current_user, data, media_id=media_id)
+    return _tick(current_user, data, photo=(raw, mime))
 
 
 @staff_bp.route("/api/tasks/signoff", methods=["POST"])
@@ -908,7 +951,8 @@ def api_task_signoff(current_user):
 @staff_bp.route("/api/tasks/photo/<token>")
 @staff_login_required
 def api_task_photo_file(token, current_user):
-    """A proof photo on this restaurant's sheets, for a signed-in employee."""
+    """A proof photo on this restaurant's sheets, for a signed-in employee.
+    Never stored by a browser, a WebView or a proxy (PERF-11)."""
     import io
     import task_sheets as ts
     from flask import send_file
@@ -917,7 +961,7 @@ def api_task_photo_file(token, current_user):
     if not found:
         return jsonify(ok=False, error="Not found"), 404
     resp = send_file(io.BytesIO(found[0]), mimetype=found[1] or "image/jpeg")
-    resp.headers["Cache-Control"] = "private, max-age=86400"
+    resp.headers["Cache-Control"] = "private, no-store"
     return resp
 
 
