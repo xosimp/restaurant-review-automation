@@ -1121,6 +1121,13 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
         ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
         ("reviews", "response_action",  "TEXT"),
+        # A reply made outside Cavnar AI (on Google by hand, by someone
+        # else): response_action 'replied_elsewhere', the reply's own text
+        # and time when Google gave them, and who said so ('google' read
+        # it; 'owner' marked it) - mark_replied_elsewhere, 10/2/26.
+        ("reviews", "external_reply",        "TEXT"),
+        ("reviews", "external_reply_at",     "TEXT"),
+        ("reviews", "external_reply_source", "TEXT"),
         # Edited-review tracking — see save_reviews.
         ("reviews", "source_updated_at", "TEXT"),
         ("reviews", "edited_at",         "TEXT"),
@@ -5922,6 +5929,110 @@ def mark_posted(review_id: int, db_path: str = DB_PATH):
     conn.close()
 
 
+# A reply made outside Cavnar AI (owner, 10/2/26: Danny answered the urgent
+# reviews on Google by hand and the app still asked Erik to reply). It is
+# answered - posted, out of every reply queue and reminder - but it is not
+# Cavnar AI's draft going out: response_action 'replied_elsewhere' keeps it
+# out of every draft-learning read (voice examples, edit signals, auto-
+# approve trust) and out of value_delivered's replies_posted.
+REPLIED_ELSEWHERE = "replied_elsewhere"
+_REPLIED_ELSEWHERE_FROM = ("pending", "drafted", "skipped")
+
+
+def mark_replied_elsewhere(review_id: int, restaurant_id: int, *, source: str = "owner",
+                           reply_text: str = None, replied_at: str = None, db_path: str = DB_PATH) -> bool:
+    """Mark one review answered outside Cavnar AI. True when it changed.
+
+    Only a review still waiting (pending, drafted, skipped): an approved or
+    posted one is Cavnar AI's own reply and keeps its record. `source` is
+    'google' (read from the Business Profile on a fetch) or 'owner' (the
+    Replied-on-Google button); `replied_at` is the reply's own time when
+    known, else now. Compare-and-set, so a mark racing an approve never
+    lands on the approved row."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE reviews SET response_status='posted', response_action=?, "
+            "posted_at=COALESCE(?, datetime('now')), external_reply=?, external_reply_at=?, "
+            "external_reply_source=? WHERE id=? AND restaurant_id=? AND deleted_at IS NULL "
+            f"AND COALESCE(response_status, 'pending') IN ({','.join('?' * len(_REPLIED_ELSEWHERE_FROM))})",
+            (REPLIED_ELSEWHERE, replied_at, (reply_text or None), replied_at, source, review_id,
+             restaurant_id, *_REPLIED_ELSEWHERE_FROM))
+        conn.commit()
+        return bool(cur.rowcount)
+    finally:
+        conn.close()
+
+
+def undo_replied_elsewhere(review_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Put a review marked answered elsewhere back in the queue (drafted).
+    Only that mark: a reply Cavnar AI posted is taken down by retract."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE reviews SET response_status='drafted', response_action=NULL, posted_at=NULL, "
+            "external_reply=NULL, external_reply_at=NULL, external_reply_source=NULL "
+            "WHERE id=? AND restaurant_id=? AND response_status='posted' AND response_action=?",
+            (review_id, restaurant_id, REPLIED_ELSEWHERE))
+        conn.commit()
+        return bool(cur.rowcount)
+    finally:
+        conn.close()
+
+
+def apply_google_replies(restaurant_id: int, replies: dict, db_path: str = DB_PATH) -> int:
+    """The replies a Business Profile fetch saw ({review_name: {"comment",
+    "update_time"}}), applied: a review still waiting that already has a
+    reply on Google was answered there. One Cavnar AI approved but has not
+    seen posted is now live - posted, keeping its own record. Returns how
+    many changed."""
+    if not replies:
+        return 0
+    names = [n for n in replies if n]
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT id, review_name, response_status FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+            f"AND review_name IN ({','.join('?' * len(names))})", (restaurant_id, *names)).fetchall()
+    finally:
+        conn.close()
+    changed = 0
+    for r in rows:
+        rep_ = replies.get(r["review_name"]) or {}
+        when = _google_reply_time(rep_.get("update_time"), restaurant_id)
+        status = r["response_status"] or "pending"
+        if status in _REPLIED_ELSEWHERE_FROM:
+            changed += mark_replied_elsewhere(r["id"], restaurant_id, source="google",
+                                              reply_text=(rep_.get("comment") or "")[:4000] or None,
+                                              replied_at=when, db_path=db_path)
+        elif status == "approved":
+            conn = get_conn(db_path)
+            try:
+                cur = conn.execute("UPDATE reviews SET response_status='posted', posted_at=COALESCE(?, datetime('now')) "
+                                   "WHERE id=? AND restaurant_id=? AND response_status='approved'",
+                                   (when, r["id"], restaurant_id))
+                conn.commit()
+                changed += cur.rowcount
+            finally:
+                conn.close()
+    return changed
+
+
+def _google_reply_time(stamp, restaurant_id):
+    """Google's reply updateTime (RFC 3339, UTC) as SQLite's UTC text, the
+    form posted_at holds (datetime('now')). None when unreadable."""
+    if not stamp:
+        return None
+    try:
+        from datetime import datetime, timezone
+        t = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return t.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
 def revert_to_drafted(review_id: int, restaurant_id: int, db_path: str = DB_PATH):
     """Puts a review back in the actionable 'drafted' queue — undoes a skip,
     undoes a not-yet-posted approval, or completes a retract (once the live
@@ -9454,7 +9565,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
                 FROM reviews
                 WHERE restaurant_id=? AND deleted_at IS NULL
                   AND response_status IN ('approved','posted')
-                  AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
+                  AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved', 'replied_elsewhere')
                   AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
                   AND {reply_voice_sql(conn)}{tier_sql}
                 ORDER BY id DESC LIMIT ?
@@ -9539,7 +9650,7 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
             "SELECT rating, edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
             "AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved', 'replied_elsewhere') "
             f"AND {reply_voice_sql(conn)}{band_sql} "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
@@ -9629,7 +9740,7 @@ def get_reply_rejection_signals(restaurant_id: int, rating=None, days: int = REJ
             for r in conn.execute(
                     f"SELECT rating, draft_response FROM reviews WHERE restaurant_id=? AND rating IN ({marks}) "
                     "AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-                    "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+                    "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved', 'replied_elsewhere') "
                     f"AND {reply_voice_sql(conn)} AND COALESCE(approved_at, fetched_at) >= datetime('now', ?) "
                     "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
                 out["approved"].append(reply_edits.draft_signals(r["draft_response"], r["rating"]))
@@ -12280,10 +12391,14 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         # doesn't have to infer it from response_status alone and offer a
         # button that always 400s (see client_api._do_retract's gate:
         # posted AND google AND a real review_name from our own auto-post).
+        # Answered outside Cavnar AI (mark_replied_elsewhere): the card says
+        # so and offers Undo; Retract never deletes someone else's reply.
+        d["replied_elsewhere"] = (d.get("response_action") or "") == REPLIED_ELSEWHERE
         d["can_retract"] = bool(
             d.get("response_status") == "posted"
             and d.get("platform") == "google"
             and d.get("review_name")
+            and not d["replied_elsewhere"]
         )
         # The operational read of this review. `summary` was generated on
         # every single review, stored, and then rendered by nothing on either
@@ -13716,7 +13831,7 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
             "SUM(CASE WHEN COALESCE(draft_edited, 0) = 1 OR COALESCE(regenerate_count, 0) > 0 "
             "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved', 'replied_elsewhere') "
             f"AND {reply_voice_sql(conn, trust=True)} "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()

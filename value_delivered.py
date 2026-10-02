@@ -799,8 +799,12 @@ def ledger(restaurant_id, db_path=None):
             "started": started,
             "replies_drafted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                                    "AND draft_response IS NOT NULL", restaurant_id) + purged["drafted"],
+            # A reply someone made outside Cavnar AI is answered, but it is
+            # not work Cavnar AI did (models.REPLIED_ELSEWHERE, 10/2/26).
             "replies_posted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                  "AND response_status='posted'", restaurant_id) + purged["posted"],
+                                  "AND response_status='posted' "
+                                  "AND COALESCE(response_action, '') != 'replied_elsewhere'", restaurant_id)
+                              + purged["posted"],
             "reviews_watched": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL",
                                    restaurant_id) + purged["reviews"],
             "schedules_built": one("SELECT COUNT(DISTINCT week_start) FROM schedule_history "

@@ -658,6 +658,13 @@ def _do_undo(rid, restaurant_id):
     conn.close()
     if not row:
         return {"ok": False, "error": "Review not found"}, 404
+    if row["response_status"] == "posted":
+        # A review marked answered outside Cavnar AI goes back to the queue
+        # (models.undo_replied_elsewhere); a reply Cavnar AI posted is
+        # retracted instead.
+        from models import undo_replied_elsewhere
+        if undo_replied_elsewhere(rid, restaurant_id):
+            return {"ok": True, "response_status": "drafted"}, 200
     if row["response_status"] not in ("skipped", "approved"):
         return {"ok": False, "error": "Only a skipped review, or an approved review that hasn't posted, can be undone this way."}, 400
     from models import revert_to_drafted, log_event
@@ -677,7 +684,7 @@ def _do_retract(rid, restaurant_id):
     public until this ran."""
     conn = get_conn()
     row = conn.execute(
-        "SELECT platform, response_status, review_name FROM reviews WHERE id=? AND restaurant_id=?",
+        "SELECT platform, response_status, review_name, response_action FROM reviews WHERE id=? AND restaurant_id=?",
         (rid, restaurant_id)
     ).fetchone()
     conn.close()
@@ -685,6 +692,11 @@ def _do_retract(rid, restaurant_id):
         return {"ok": False, "error": "Review not found"}, 404
     if row["response_status"] != "posted":
         return {"ok": False, "error": "This review hasn't been posted, so there's nothing to retract."}, 400
+    if (row["response_action"] or "") == "replied_elsewhere":
+        # Never delete a reply someone else wrote: this one was answered
+        # outside Cavnar AI. Undo takes the mark off instead.
+        return {"ok": False, "error": "That reply was made outside Cavnar AI, so it isn't ours to take down. "
+                                      "Use Undo to put the review back in your queue."}, 409
     if row["platform"] != "google" or not row["review_name"]:
         return {"ok": False, "error": "Retracting is only supported for auto-posted Google replies."}, 400
 
@@ -786,6 +798,52 @@ def _do_delete_review(rid, restaurant_id):
     )
     conn.commit(); conn.close()
     return {"ok": True}, 200
+
+
+def _do_replied_elsewhere(rid, current_user):
+    """The Replied-on-Google button (owner, 10/2/26): a review answered
+    outside Cavnar AI - on Google by hand, by someone else - is marked
+    answered, so it leaves the reply queue, the urgent list and the
+    reminders. Nothing is posted. Undo is /undo (_do_undo). Web and phone
+    share this body."""
+    restaurant_id = current_user["restaurant_id"]
+    from models import mark_replied_elsewhere, log_event
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT platform, response_status FROM reviews WHERE id=? AND restaurant_id=? "
+                           "AND deleted_at IS NULL", (rid, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "Review not found"}, 404
+    if not mark_replied_elsewhere(rid, restaurant_id, source="owner"):
+        status = row["response_status"] or ""
+        if status == "posted":
+            return {"ok": True, "already": True, "response_status": "posted"}, 200
+        return {"ok": False, "response_status": status,
+                "error": "That reply is approved in Cavnar AI. Undo the approval first if it was answered "
+                         "somewhere else."}, 409
+    # The alert that asked for a reply was acted on, as with Mark as posted.
+    try:
+        import rec_ledger as _rl_re
+        _rl_re.implemented(restaurant_id, _rl_re.rec_key("review", rid), "reviews",
+                           user_id=current_user.get("id"), role=current_user.get("role"),
+                           source_ref=f"replied_elsewhere:{rid}",
+                           meta={"module": "reviews", "via": "replied_elsewhere"})
+    except Exception as _rle:
+        print(f"[replied-elsewhere] implementation not recorded for review {rid}: {_rle}")
+    try:
+        log_event(restaurant_id, "review_replied_elsewhere", {"review_id": rid, "platform": row["platform"]})
+    except Exception:
+        pass
+    return {"ok": True, "response_status": "posted", "response_action": "replied_elsewhere"}, 200
+
+
+@client_bp.route("/api/reviews/<int:rid>/replied-elsewhere", methods=["POST"])
+@login_required
+def replied_elsewhere(rid, current_user):
+    payload, status = _do_replied_elsewhere(rid, current_user)
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/reviews/<int:rid>/delete", methods=["POST"])

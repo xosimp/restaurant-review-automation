@@ -525,6 +525,21 @@ struct ReviewDetailView: View {
     private var actionButtons: some View {
         Group {
             switch viewModel.currentStatus {
+            case "posted" where viewModel.isAnsweredElsewhere:
+                // Answered outside Cavnar AI (10/2/26): someone replied on
+                // Google by hand. Undo puts it back in the queue; Retract
+                // never touches a reply that isn't ours.
+                completedBanner(
+                    "Answered on \(viewModel.review.platformDisplayName)", icon: "checkmark.circle.fill",
+                    color: .cavnarGreen, background: .cavnarGreenBg,
+                    undoLabel: "Undo"
+                ) {
+                    Task {
+                        if await viewModel.undo() {
+                            onCompleted(viewModel.currentStatus)
+                        }
+                    }
+                }
             case "posted":
                 // Blue for live-on-the-platform, green for approved —
                 // matching the web, which had them the other way round here.
@@ -655,6 +670,7 @@ struct ReviewDetailView: View {
     }
 
     private var activeButtons: some View {
+        VStack(spacing: 8) {
         HStack(spacing: 12) {
             Button {
                 Task { await viewModel.skip() }
@@ -683,6 +699,17 @@ struct ReviewDetailView: View {
                 isDisabled: viewModel.isSubmitting || viewModel.editedDraft.isEmpty
             ))
             .disabled(viewModel.isSubmitting || viewModel.editedDraft.isEmpty)
+        }
+        // Someone already answered it on Google by hand (10/2/26): out of
+        // the queue and the reminders, nothing posted.
+        Button {
+            Task { await viewModel.markRepliedElsewhere() }
+        } label: {
+            Text("Replied on \(viewModel.review.platformDisplayName)")
+                .font(.cavnarBody(14.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+        }
+        .disabled(viewModel.isSubmitting)
         }
     }
 }

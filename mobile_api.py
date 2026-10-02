@@ -1692,6 +1692,14 @@ def mobile_undo_review(review_id, current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/reviews/<int:review_id>/replied-elsewhere", methods=["POST"])
+@mobile_login_required
+def mobile_replied_elsewhere(review_id, current_user):
+    """Twin of /api/reviews/<id>/replied-elsewhere: answered outside Cavnar AI."""
+    payload, status = _capi._do_replied_elsewhere(review_id, current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/reviews/<int:review_id>/retract", methods=["POST"])
 @mobile_login_required
 def mobile_retract_review(review_id, current_user):

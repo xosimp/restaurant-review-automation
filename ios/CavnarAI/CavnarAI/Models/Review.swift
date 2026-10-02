@@ -31,6 +31,11 @@ struct Review: Codable, Identifiable, Hashable {
     let originalRating: Int?
     /// Server-computed: posted AND google AND a real review_name.
     @LenientBool var canRetractFlag: Bool?
+    /// Answered outside Cavnar AI (models.mark_replied_elsewhere, 10/2/26):
+    /// someone replied on Google by hand. The reply's own text when Google
+    /// gave it.
+    @LenientBool var repliedElsewhereFlag: Bool?
+    let externalReply: String?
     /// False while the review is still waiting on Claude's analysis — its
     /// sentiment, categories and urgency are all absent, and showing it as
     /// "neutral" claimed a reading nobody made.
@@ -89,6 +94,8 @@ struct Review: Codable, Identifiable, Hashable {
         case specificComplaint = "specific_complaint"
         case severityLabel = "severity_label"
         case canRetractFlag = "can_retract"
+        case repliedElsewhereFlag = "replied_elsewhere"
+        case externalReply = "external_reply"
         case reviewDate = "review_date"
         case draftResponse = "draft_response"
         case responseStatus = "response_status"
@@ -120,6 +127,7 @@ struct Review: Codable, Identifiable, Hashable {
     /// including Yelp ones, and including imported reviews that were never
     /// posted by us — and every one of those 400s.
     var canRetract: Bool { canRetractFlag ?? false }
+    var repliedElsewhere: Bool { repliedElsewhereFlag ?? false }
     var isPosted: Bool { responseStatus == "posted" }
     var isApproved: Bool { responseStatus == "approved" }
     /// "Urgent" as the owner sees it, the server's rule (models.is_urgent_review):
@@ -210,21 +218,27 @@ struct Review: Codable, Identifiable, Hashable {
             draftResponse: draft, responseStatus: status, categories: categories,
             draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
             editedAt: editedAt, originalRating: originalRating,
-            canRetractFlag: canRetractFlag, processed: processed,
+            canRetractFlag: canRetractFlag, repliedElsewhereFlag: repliedElsewhereFlag,
+            externalReply: externalReply, processed: processed,
             summary: summary, specificComplaint: specificComplaint,
             severity: severity, severityLabel: severityLabel, entities: entities
         )
     }
 
+    /// "posted-elsewhere" (ReviewDetailViewModel.markRepliedElsewhere): posted
+    /// because someone answered outside Cavnar AI - never retractable here.
     func withStatus(_ newStatus: String) -> Review {
-        let retractable = (newStatus == "posted" && platform == "google") ? true : canRetractFlag
+        let elsewhere = newStatus == "posted-elsewhere"
+        let status = elsewhere ? "posted" : newStatus
+        let retractable = elsewhere ? false : ((status == "posted" && platform == "google") ? true : canRetractFlag)
         return Review(
             id: id, platform: platform, author: author, rating: rating, text: text,
             reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
-            draftResponse: draftResponse, responseStatus: newStatus, categories: categories,
+            draftResponse: draftResponse, responseStatus: status, categories: categories,
             draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
             editedAt: editedAt, originalRating: originalRating,
-            canRetractFlag: retractable, processed: processed,
+            canRetractFlag: retractable, repliedElsewhereFlag: elsewhere ? true : repliedElsewhereFlag,
+            externalReply: externalReply, processed: processed,
             summary: summary, specificComplaint: specificComplaint,
             severity: severity, severityLabel: severityLabel, entities: entities
         )

@@ -954,10 +954,13 @@ def _between(a, b):
     return SRC[i:SRC.index(b, i)]
 
 
-def test_the_feed_leads_marketing_above_the_sub_tabs():
-    panel = _between('id="panel-marketing"', 'id="mkt-tab-content-btn"')
+def test_the_feed_leads_marketing_under_the_header():
+    # The sub-tabs moved to the top of the page in the Studio's step bar
+    # (owner, 10/2/26); the feed still sits under the header, above Content.
+    panel = _between('id="panel-marketing"', '<div id="mkt-tab-content" role="tabpanel"')
     assert '<section class="mkt-opps" id="mkt-opps" data-nav="marketing/opportunities"' in panel
-    assert panel.index('id="mkt-opps"') > panel.index('class="hb-top"')
+    assert panel.index('id="mkt-tab-content-btn"') < panel.index('class="hb-top"') < panel.index('id="mkt-opps"')
+    assert '<nav class="ss-steps mkt-steps" role="tablist" aria-label="Marketing sections">' in panel
 
 
 def test_cards_reuse_home_anatomy_one_primary_answer_controls_and_a_named_draft_button():

@@ -44,7 +44,20 @@
         <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm rv2-fixtags" data-retag="{{ r.id }}" data-rt-cats="{{ (r.categories or [])|join(',') }}" data-rt-sent="{{ r.sentiment or '' }}" data-rt-sev="{{ r.severity or '' }}" data-rt-dishes="{{ _rt_dishes|join(', ') }}">Fix tags</button>
         <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm rv2-ask" data-ask-review="{{ r.id }}">Ask about this →</button>
       </div>
-      {% if r.draft_response %}
+      {% if r.replied_elsewhere %}
+      {# Answered outside Cavnar AI (models.mark_replied_elsewhere, 10/2/26):
+         someone replied on Google by hand. Their reply when Google gave it,
+         never Cavnar AI's unused draft; Undo puts it back in the queue. #}
+      <div class="draft-box rv2-elsewhere" id="draft-box-{{ r.id }}">
+        <div class="draft-lbl">Replied on {{ r.platform|title }}</div>
+        {% if r.external_reply %}<div class="draft-txt" id="draft-txt-{{ r.id }}">{{ r.external_reply|e }}</div>{% endif %}
+        <div class="draft-actions" id="draft-actions-{{ r.id }}">
+          <span class="rv2-status ok">✓ Answered outside Cavnar AI</span>
+          <span class="rv2-elsewhere-n">{% if r.external_reply_source == 'google' %}Read from Google{% else %}Marked by your team{% endif %}{% if r.external_reply_at or r.posted_at %} · {{ (r.external_reply_at or r.posted_at)|format_date }}{% endif %}</span>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="undoElsewhereR({{ r.id }},this)">Undo</button>
+        </div>
+      </div>
+      {% elif r.draft_response %}
       <div class="draft-box" id="draft-box-{{ r.id }}">
         <div class="draft-lbl">Cavnar AI's reply</div>
         {# Click-to-edit (friction #7): a drafted or skipped reply opens its
@@ -96,10 +109,12 @@
             <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
           {% else %}
             <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
           {% endif %}
 
         </div>
@@ -121,6 +136,7 @@
           <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
           <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
           <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>

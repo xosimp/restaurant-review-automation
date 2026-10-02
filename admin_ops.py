@@ -5190,7 +5190,7 @@ def learning_holdouts(days=90, restaurant_id=None) -> dict:
     try:
         reviews = _rows_dict(conn, "SELECT id, restaurant_id, edit_category FROM reviews WHERE edit_category IS NOT NULL "
                                    "AND response_status IN ('approved','posted') AND COALESCE(response_action, '') NOT IN "
-                                   "('auto_approved','bulk_approved','support_approved') AND approved_at >= ? "
+                                   "('auto_approved','bulk_approved','support_approved','replied_elsewhere') AND approved_at >= ? "
                                    + rid_sql, (since, *rid_args), optional=True) or []
         orders = _rows_dict(conn, "SELECT items_json, draft_items_json FROM purchase_orders WHERE draft_items_json IS NOT "
                                   "NULL AND COALESCE(source, 'owner')='owner' AND COALESCE(authority, '') != 'admin' "

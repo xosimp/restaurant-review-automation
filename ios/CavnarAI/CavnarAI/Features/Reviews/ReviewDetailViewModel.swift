@@ -439,6 +439,7 @@ final class ReviewDetailViewModel {
             if response.ok {
                 Haptic.light()
                 currentStatus = "drafted"
+                markedElsewhere = false
                 return true
             } else {
                 errorMessage = response.error ?? "Couldn't undo — try again."
@@ -449,6 +450,47 @@ final class ReviewDetailViewModel {
             return false
         } catch {
             errorMessage = "Couldn't undo — try again."
+            return false
+        }
+    }
+
+    /// Answered outside Cavnar AI — someone replied on Google by hand
+    /// (10/2/26). Twin of the web's "Replied on Google": out of the queue,
+    /// the urgent count and the reminders; nothing is posted. Undo is the
+    /// ordinary undo(), which the server reverses for this mark.
+    var markedElsewhere = false
+    /// Posted because someone answered outside Cavnar AI, not because a
+    /// draft of ours went out: Undo, never Retract.
+    var isAnsweredElsewhere: Bool {
+        currentStatus == "posted" && (markedElsewhere || review.repliedElsewhere)
+    }
+
+    @discardableResult
+    func markRepliedElsewhere() async -> Bool {
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/reviews/\(review.id)/replied-elsewhere", method: .post
+            )
+            if response.ok {
+                Haptic.light()
+                markedElsewhere = true
+                // Not "posted": that plays the reply-posted moment, and the
+                // list reads this as answered elsewhere (Review.withStatus).
+                finalStatus = "posted-elsewhere"
+                currentStatus = "posted"
+                didComplete = true
+                return true
+            }
+            errorMessage = response.error ?? "Couldn't mark that one — try again."
+            return false
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return false
+        } catch {
+            errorMessage = "Couldn't mark that one — try again."
             return false
         }
     }

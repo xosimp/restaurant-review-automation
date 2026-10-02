@@ -9366,6 +9366,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 #panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
 #panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
 .rv2-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
+/* Answered outside Cavnar AI (10/2/26): the reply someone made on Google. */
+.rv2-elsewhere-n{font-size:12.5px;color:var(--ink3)}
 .rv2-status.live{background:var(--blue-bg);color:var(--blue)}.rv2-status.ok{background:var(--green-bg);color:var(--hb-good)}.rv2-status.bad{background:var(--red-bg);color:var(--hb-bad)}
 .rv2-empty{padding:40px 0;text-align:center;color:var(--ink3);font-size:13px}
 .rv2-empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px;font-weight:600}
@@ -9953,6 +9955,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-steps button.done i{background:var(--hb-good);color:var(--paper)}
 .ss-steps button[disabled]{opacity:.4;cursor:default}
 .ss-steps .ss-steps-h{margin-left:6px;box-shadow:inset 1px 0 0 var(--hb-line2);border-radius:0 999px 999px 0}
+/* Marketing's sub-tabs wear the same bar at the top of the page (10/2/26). */
+.mkt-steps-row{display:flex;justify-content:flex-start;margin:0 0 26px}
+.mkt-steps{max-width:100%;overflow-x:auto;scrollbar-width:none}
+.mkt-steps::-webkit-scrollbar{display:none}
+.mkt-steps button{white-space:nowrap}
 .ss-top-r{display:flex;align-items:center;justify-content:flex-end;gap:12px;white-space:nowrap;min-width:0}
 .ss-week{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink2)}
 .ss-saved{font-size:12.5px;color:var(--ink3)}
@@ -13044,6 +13051,21 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
+  {# Marketing's sub-tabs lead the page (owner, 10/2/26: "move this tab row
+     ... to the top of the page and have it look the same visually as the one
+     at the top of the Schedule tab"): the Studio's step bar (.ss-steps), one
+     recessed pill, the open tab lifted. A tablist (AUX-11): each sub-tab says
+     which panel it controls and whether it is the selected one;
+     switchMktTab moves .on and aria-selected. #}
+  <div class="mkt-steps-row">
+    <nav class="ss-steps mkt-steps" role="tablist" aria-label="Marketing sections">
+      <button type="button" role="tab" aria-selected="true" aria-controls="mkt-tab-content" id="mkt-tab-content-btn" onclick="switchMktTab('content')" class="on">Content</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-campaigns" id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')">Campaigns</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-queue" id="mkt-tab-queue-btn" onclick="switchMktTab('queue')">Scheduled</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-analytics" id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')">Analytics</button>
+    </nav>
+  </div>
+
   {# The three-second layer (density round #10): the shared header - the
      status in words, three measured chips (posts in the window, reach
      against the window before, the next scheduled post) and the line from
@@ -13076,18 +13098,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="hb-recs mkt-opps-list" id="mkt-opps-list"></div>
     <div class="mkt-opps-foot" id="mkt-opps-foot"></div>
   </section>
-
-  <!-- Marketing sub-tabs (segmented pill, under the header) -->
-  {# A tablist (AUX-11): each sub-tab says which panel it controls and
-     whether it is the selected one; switchMktTab keeps aria-selected true. #}
-  <div style="display:flex;justify-content:flex-start;margin:22px 0 18px">
-    <div role="tablist" aria-label="Marketing sections" style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button type="button" role="tab" aria-selected="true" aria-controls="mkt-tab-content" id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
-      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-campaigns" id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Campaigns</button>
-      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-queue" id="mkt-tab-queue-btn" onclick="switchMktTab('queue')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Scheduled</button>
-      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-analytics" id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
-    </div>
-  </div>
 
   <div id="mkt-tab-content" role="tabpanel" aria-labelledby="mkt-tab-content-btn">
 
@@ -17088,10 +17098,8 @@ window.switchMktTab = function(tab) {
     if (panel) panel.style.display = (key === tab) ? '' : 'none';
     var btn = document.getElementById(buttons[key]);
     if (btn) {
-      btn.classList.toggle('rv-tab-active', key === tab);
+      btn.classList.toggle('on', key === tab);
       btn.setAttribute('aria-selected', key === tab ? 'true' : 'false');
-      btn.style.background = (key === tab) ? '' : 'transparent';
-      btn.style.color = (key === tab) ? '' : 'var(--ink3)';
     }
   }
   if (tab === 'analytics' && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
@@ -19172,6 +19180,38 @@ function editApprovedR(id){
   }).catch(function(){settle();toast('Network error \u2014 check your connection','error');});
 }
 
+// Answered outside Cavnar AI (10/2/26): Danny replied on Google by hand and
+// the app kept asking Erik to reply. Marks it answered - out of the queue,
+// the urgent count and the reminders - and posts nothing; Undo puts it back.
+// The card is re-read from the server so it shows exactly what was stored.
+function rvReloadCard(id){
+  return fetch('/api/reviews/page?review_id='+encodeURIComponent(id),{credentials:'same-origin'}).then(apiJson).then(function(d){
+    var have=document.getElementById('rc-'+id);
+    if(!d||!d.ok||!d.count||!have)return;
+    var cards=_rvCardsFrom(d.html);
+    if(cards.length)have.parentNode.replaceChild(cards[0],have);
+  });
+}
+function repliedElsewhereR(id,btn){
+  if(_revInflight['else'+id])return;
+  _revInflight['else'+id]=1;
+  var done=cbtnBusy(btn,'Saving\u2026');
+  fetch('/api/reviews/'+id+'/replied-elsewhere',{method:'POST',credentials:'same-origin'}).then(apiJson).then(function(d){
+    delete _revInflight['else'+id];done();
+    if(!d.ok){toast(d.error||'Couldn\u2019t mark that one \u2014 try again','error');return;}
+    rvReloadCard(id);updateReviewStats();
+    toast('Marked answered \u2014 Cavnar AI won\u2019t ask for a reply to this one');
+  }).catch(function(){delete _revInflight['else'+id];done();toast('Couldn\u2019t reach Cavnar AI \u2014 try again','error');});
+}
+function undoElsewhereR(id,btn){
+  var done=cbtnBusy(btn,'Undoing\u2026');
+  fetch('/undo/'+id,{method:'POST',credentials:'same-origin'}).then(apiJson).then(function(d){
+    done();
+    if(!d.ok){toast(d.error||'Couldn\u2019t undo that \u2014 try again','error');return;}
+    rvReloadCard(id);updateReviewStats();
+    toast('Back in your queue');
+  }).catch(function(){done();toast('Couldn\u2019t reach Cavnar AI \u2014 try again','error');});
+}
 function skipR(id){
   if(_revInflight['skip'+id])return;
   _revInflight['skip'+id]=1;

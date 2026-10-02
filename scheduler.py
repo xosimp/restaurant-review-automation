@@ -609,6 +609,18 @@ def run_daily_fetch(restaurant_ids=None):
                 if downgraded:
                     log.info(f"{len(downgraded)} review(s) edited down for {restaurant.name}")
 
+            # Replies made on Google outside Cavnar AI (by hand, by someone
+            # else): a review still waiting that Google shows answered leaves
+            # the queue, before any draft is written for it (10/2/26).
+            if gbp_listing and getattr(gbp_listing[1], "replies", None):
+                try:
+                    from models import apply_google_replies
+                    _n_rep = apply_google_replies(rid, gbp_listing[1].replies)
+                    if _n_rep:
+                        log.info(f"{_n_rep} review(s) already answered on Google for {restaurant.name}")
+                except Exception as _rpe:
+                    _ops.capture(_rpe, job="review_fetch", context=f"google replies rid={rid}")
+
             # A complete Business Profile listing is the whole truth about
             # this location: a stored review it no longer contains is one
             # Google removed (a fake review taken down, a guest who deleted

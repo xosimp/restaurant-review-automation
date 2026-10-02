@@ -367,8 +367,13 @@ class GbpReviews(list):
     """The reviews one fetch returned, plus `complete`: True only when the
     fetch walked the listing from its first page to its last, so a stored
     review this listing does not contain is one Google no longer lists
-    (MOD-REV-14). An incremental fetch that stopped early is not complete."""
+    (MOD-REV-14). An incremental fetch that stopped early is not complete.
+
+    `replies`: {review name: {"comment", "update_time"}} for every review
+    in the listing that has an owner reply on Google, whoever wrote it
+    (models.apply_google_replies, 10/2/26)."""
     complete = False
+    replies = None
 
 
 def _known_review_names(restaurant_id, names):
@@ -480,7 +485,10 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
             parent = f"{account_id}/{location_id}"
 
     def _page(token):
-        params = {"pageSize": GMB_REVIEW_PAGE_SIZE}
+        # Newest update first, stated rather than assumed: a reply bumps a
+        # review's updateTime, so a review answered on Google since the last
+        # fetch is on page 1, which every fetch reads (apply_google_replies).
+        params = {"pageSize": GMB_REVIEW_PAGE_SIZE, "orderBy": "updateTime desc"}
         if token:
             params["pageToken"] = token
         resp = requests.get(
@@ -524,7 +532,12 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         _backfill_token(restaurant_id, location_id, None)
     try:
         reviews = []
+        replies = {}
         for r in raw:
+            # The owner's reply, if Google has one - made in Cavnar AI or not.
+            _rep = r.get("reviewReply") or {}
+            if r.get("name") and (_rep.get("comment") or "").strip():
+                replies[r["name"]] = {"comment": _rep.get("comment") or "", "update_time": _rep.get("updateTime") or ""}
             star_map = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
             raw_star = r.get("starRating")
             rating = star_map.get(raw_star)
@@ -560,6 +573,7 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
             ))
         out = GbpReviews(reviews)
         out.complete = complete
+        out.replies = replies
         return out
     except Exception as e:
         # Parsing failures only — the HTTP call above is deliberately left
