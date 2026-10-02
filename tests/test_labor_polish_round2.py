@@ -61,7 +61,7 @@ def test_the_setup_rows_are_one_quiet_team_and_rules_disclosure():
     Availability lives inside Roster & settings instead of its own row.
     The whole row is still the click target."""
     s = _src()
-    team = s[s.index('<details class="hb-results lb2-team" id="lb2-team">'):]
+    team = s[s.index('<details class="hb-results lb2-team" id="lb2-team" open>'):]
     team = team[:team.index("</details>")]
     # Daily Tasks left this list for its own Task sheets section (9/30/26).
     for marker, cls, fn in (('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),):

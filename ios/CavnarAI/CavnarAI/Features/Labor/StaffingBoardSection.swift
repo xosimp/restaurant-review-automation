@@ -4,7 +4,7 @@ import SwiftUI
 // objects (web-vs-iOS parity audit, 9/25/26):
 //
 //   labor.money_went      "Where the money went" — every priced item, ranked
-//   labor.staffing_board  "Every day and person" — an executive strip, then
+//   labor.staffing_board  "Staffing review" — an executive strip, then
 //                         the overstaffed / strong-days-run-lean / overtime
 //                         lanes of decision cards
 //
@@ -335,7 +335,7 @@ enum StaffingLane: String, CaseIterable {
 
 // MARK: - The board
 
-/// "Every day and person" — collapsed like the web's `<details>`; open, the
+/// "Staffing review" — collapsed like the web's `<details>`; open, the
 /// executive strip and one lane per kind. Six cards show per lane, the rest
 /// behind Show all.
 struct StaffingBoardSection: View {
@@ -357,7 +357,7 @@ struct StaffingBoardSection: View {
     }
 
     var body: some View {
-        CavnarDropdown(title: "Every day and person", subtitle: subtitle,
+        CavnarDropdown(title: "Staffing review", subtitle: subtitle,
                        badge: board.map { $0.overstaffed.count + $0.lean.count + $0.overtime.count },
                        tone: .neutral, isExpanded: $isExpanded, onExpand: onExpand) {
             if let board, isLive {

@@ -179,7 +179,7 @@ html{background:var(--bg-base);min-height:100%}
 
 
 
-[data-theme="dark"] #panel-labor [style*="color:#7a4f00"]{color:var(--amber)!important}
+[data-theme="dark"] :is(#panel-labor,#studio) [style*="color:#7a4f00"]{color:var(--amber)!important}
 /* Number input spinners — color-scheme makes browser render arrows light-on-dark */
 [data-theme="dark"] input[type="number"]{color-scheme:dark}
 /* Reduce order pill — light green bg unreadable in dark mode */
@@ -2324,6 +2324,10 @@ function cavNavSection(p) {
   /* A section on one of Marketing's own tabs (Campaigns) opens that tab. */
   var mt = sec.closest ? sec.closest('[id^="mkt-tab-"]') : null;
   if (mt && window.switchMktTab) window.switchMktTab(mt.id.replace('mkt-tab-', ''));
+  /* A section in one of the Studio's stages (Team & rules, 10/2/26) opens
+     the Studio there; the address stays the one cavNav writes. */
+  var ss = sec.closest ? sec.closest('#studio .ss-stage') : null;
+  if (ss && window.studioOpen) studioOpen({stage: ss.getAttribute('data-stage'), fromPop: true});
   if (sec.tagName === 'DETAILS') sec.open = true;
   var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
   while (d) { d.open = true; d = d.parentNode && d.parentNode.closest ? d.parentNode.closest('details') : null; }
@@ -6959,16 +6963,18 @@ svg:hover .hb-xh{opacity:1}
 .ev-week-l span{padding:5px 10px;border-radius:999px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
 .ev-week-l b{color:var(--ink)}
 .ev-week-b{margin-top:8px;font-size:12px;color:var(--ink3);line-height:1.45}
-.ev-follow-s{display:block;margin-top:2px;font-size:12.5px;color:var(--ink2)}
+/* Events & reservations read at body size (owner, 10/2/26: "ALL of this
+   subtext needs to be bigger"): the follow rows and the dates table. */
+.ev-follow-t .ev-follow-s{display:block;margin-top:2px;font-size:14.5px;color:var(--ink2)}
 #cp-send-hint{margin:10px 4px 0;font-size:13px;color:var(--ink3);line-height:1.45}
 #cp-send-hint b{color:var(--ink2);font-weight:600}
 .ev-follows{margin:0 0 18px;display:flex;flex-direction:column;gap:8px}
-.ev-follows-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
+.ev-follows-h{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
 .ev-follow{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--hb-line2,var(--paper3));background:var(--surface)}
 .ev-follow.off{opacity:.7}
 .ev-follow-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.ev-follow-t b{font-size:14px;color:var(--ink)}
-.ev-follow-t span{font-size:13px;color:var(--ink3);line-height:1.45}
+.ev-follow-t b{font-size:16px;color:var(--ink)}
+.ev-follow-t span{font-size:15px;color:var(--ink3);line-height:1.5}
 .dr-game{margin-top:22px}
 .dr-game-h{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2);margin:0 0 12px}
 .dr-game-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
@@ -10177,7 +10183,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-sd-alt{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .ss-sd-alt .cbtn{justify-content:space-between}
 /* Publish */
-.ss-pub,.ss-hist{max-width:980px;margin:0 auto;padding:56px 24px 90px}
+.ss-pub,.ss-hist,.ss-side{max-width:980px;margin:0 auto;padding:56px 24px 90px}
+/* Team & rules and the Staffing review in the Studio (10/2/26): the stage
+   heading names them, so their disclosure line is hidden and they stay open. */
+.ss-side>details>summary{display:none}
+.ss-side>details{margin-top:22px;border-top:none}
 .ss-pub-sub{font-size:16px;color:var(--ink3);margin:0 0 26px;max-width:62ch}
 .ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 .ss-pub-card{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:20px 22px;box-shadow:var(--elev-card);min-width:0}
@@ -10579,12 +10589,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    branded"): every form control here is one height, one radius, one type
    size, and a select is the branded one (chevron, no native chrome), so
    labels and boxes line up across a row. */
-#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select,#panel-labor .lb2-form .cbtn,
-#panel-labor .ts-form .ac-input,#panel-labor .ts-form .ac-select,
-#panel-labor .rul-grid .ac-input,#panel-labor .rul-grid .ac-select{height:44px;min-height:44px;box-sizing:border-box;padding-top:0;padding-bottom:0;font-size:15px;border-radius:10px;margin:0}
-#panel-labor .lb2-form .ac-input,#panel-labor .lb2-form .ac-select{padding-left:13px}
-#panel-labor .lb2-form .ac-field>label,#panel-labor .ts-form .ac-field>label{font-size:13.5px;font-weight:600;color:var(--ink2);line-height:1.2}
-#panel-labor .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
+:is(#panel-labor,#ss-team) .lb2-form .ac-input,:is(#panel-labor,#ss-team) .lb2-form .ac-select,:is(#panel-labor,#ss-team) .lb2-form .cbtn,
+:is(#panel-labor,#ss-team) .ts-form .ac-input,:is(#panel-labor,#ss-team) .ts-form .ac-select,
+:is(#panel-labor,#ss-team) .rul-grid .ac-input,:is(#panel-labor,#ss-team) .rul-grid .ac-select{height:44px;min-height:44px;box-sizing:border-box;padding-top:0;padding-bottom:0;font-size:15px;border-radius:10px;margin:0}
+:is(#panel-labor,#ss-team) .lb2-form .ac-input,:is(#panel-labor,#ss-team) .lb2-form .ac-select{padding-left:13px}
+:is(#panel-labor,#ss-team) .lb2-form .ac-field>label,:is(#panel-labor,#ss-team) .ts-form .ac-field>label{font-size:13.5px;font-weight:600;color:var(--ink2);line-height:1.2}
+:is(#panel-labor,#ss-team) .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 /* The availability days: a row of toggles at the field height. */
 .lb2-days{display:flex;gap:6px;flex-wrap:wrap}
 .lb2-days label{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:44px;box-sizing:border-box;padding:0 12px;border:1px solid var(--ac-line,var(--hb-line));border-radius:10px;font-size:14.5px;font-weight:600;color:var(--ink2);cursor:pointer;user-select:none;-webkit-user-select:none;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
@@ -10610,7 +10620,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .rul-add[hidden]{display:none}
 .rul-add .ac-select{width:auto;padding:5px 8px;font-size:13px}
 /* Events & reservations */
-.dsg-tbl .kd{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.dsg-tbl{font-size:15px}
+.dsg-tbl th{font-size:11.5px}
+.dsg-tbl .dsg-src{font-size:13.5px;color:var(--ink3)}
+.dsg-tbl .kd{font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .dsg-tbl .kd.event{color:var(--ember)}
 .dsg-tbl .lift{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--hb-good)}
 .dsg-tbl .lift.neg{color:var(--hb-bad)}
@@ -10851,11 +10864,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Salaries beside hourly labor: a second-tier figure, never the headline. */
 .lb2-bn.lb2-sal .hb-num{font-size:24px;color:var(--ink2)}.lb2-bn.lb2-sal .pct{font-size:16px;color:var(--ink2)}.lb2-bn.lb2-sal .lb2-vs .hb-num{font-size:15px}
 #panel-labor .two-col{margin-top:30px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
-/* No rule above the Every day and person disclosure (owner, 9/26/26). */
+/* No rule above the Staffing review disclosure (owner, 9/26/26). */
 #lb2-money-all{border-top:none}
-/* Details and Every day and person sit closer to the card above (9/26/26). */
+/* Details and the Staffing review sit closer to the card above (9/26/26). */
 #lb2-details,#lb2-money-all{margin-top:14px}
-/* Inside the Every day and person disclosure the summary's own rule is the
+/* Inside the Staffing review disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
 @media (max-width:680px){.lb2-hero svg{height:140px}.lb2-money{grid-template-columns:1fr 1fr}}
@@ -10955,7 +10968,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   </section>
 
   {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
-     below in Every day and person (#lb2-money-all), and the Staffing board
+     in the Studio's Staffing review (#lb2-money-all), and the Staffing board
      carries the same days. #}
 
   <div id="lb-panel-schedule">
@@ -11153,6 +11166,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-go="schedule"><i>3</i>Schedule</button>
         <button type="button" role="tab" data-ss-go="publish"><i>4</i>Publish</button>
         <button type="button" role="tab" data-ss-go="history" class="ss-steps-h">History</button>
+        <button type="button" role="tab" data-ss-go="team">Team</button>
+        <button type="button" role="tab" data-ss-go="staffing">Staffing</button>
       </nav>
       <div class="ss-top-r">
         <span class="ss-week" id="ss-week"></span>
@@ -11531,17 +11546,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
-    </div>
-  </div>
-  {# Team & rules and History sat inside the old schedule card; they keep a
-     wrapper of their own at the column width, closed where that card was. #}
-  <div class="lb2-sched-rest">
+    {# Team & rules and the Staffing review left Labor for the Studio (owner,
+       10/2/26: "they dont belong on labor anymore"). Same markup and ids, so
+       every opener, deep link and loader still finds them; each is its own
+       stage, open, its disclosure line hidden under the stage's heading. #}
+    <section class="ss-stage" data-stage="team" aria-label="Team and rules">
+      <div class="ss-side" id="ss-team">
+        <div class="ss-kick">Team &amp; rules</div>
+        <h1>Your team, and the rules every draft keeps</h1>
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
-  <details class="hb-results lb2-team" id="lb2-team">
+  <details class="hb-results lb2-team" id="lb2-team" open>
     <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says, task sheets</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
@@ -11819,14 +11837,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
 
   </details>
+      </div>
+    </section>
 
-    {# Schedules you've built moved into the Studio's History (owner, 9/26/26):
-       one list, with Open, the CSV and Delete. loadScheduleHistory and its
-       row helpers find no list here and do nothing. #}
-  </div>
-
-  <!-- Two col: overstaffed table + overtime alerts -->
-  {# Every day and person behind "Where the money went", in the standard
+    <section class="ss-stage" data-stage="staffing" aria-label="Staffing review">
+      <div class="ss-side" id="ss-staffing">
+        <div class="ss-kick">Staffing review</div>
+        <h1>Overstaffed days, strong days run lean, and overtime</h1>
+  {# Staffing review (was "Every day and person", renamed and moved into
+     the Studio, owner 10/2/26) behind "Where the money went", in the standard
      list shape - an hb-card of hb-rows with a status dot - instead of the
      dark slabs (density round #9, #44). Collapsed: the top of it already
      sits under Waiting on you. Dollars above target and overtime premiums
@@ -11843,8 +11862,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {%- if c and c.pct is not none -%}<span class="sb-ring" style="--p:{{ c.pct }}" title="The same pattern on {{ c.hits }} of {{ c.of }} of these weekdays in the window" aria-label="Consistency {{ c.pct }}%"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/><circle class="fg" cx="18" cy="18" r="15.5" pathLength="100"/></svg><b class="hb-num">{{ c.pct }}%</b><small>consistent</small></span>
   {%- else -%}<span class="sb-ring none" title="First time in this window - not enough of these weekdays to call it a pattern"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/></svg><b>—</b><small>first seen</small></span>{%- endif -%}
   {%- endmacro %}
-  <details class="hb-results lb2-money-all" id="lb2-money-all">
-    <summary><span class="hb-kicker">Every day and person</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
+  <details class="hb-results lb2-money-all" id="lb2-money-all" open>
+    <summary><span class="hb-kicker">Staffing review</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
   {% if _sb %}
   <div class="sb">
     <div class="sb-sum">
@@ -11898,6 +11917,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
   {% endif %}
   </details>
+      </div>
+    </section>
+
+    </div>
+  </div>
+
   <script>
   /* Today (#48): the waiting count joins the server's sentence once
      Waiting on you has loaded (waitRender calls this with its count). */
@@ -21388,6 +21413,7 @@ function _sqRecAnswer(el, action, text, code, note, picker) {
     }).catch(function () { done(); if (picker) picker.unlock(); toast('Could not record that', 'error'); });
 }
 function openIntelPanel() {
+  ssOpenTeam();
   var tm = document.getElementById('lb2-team'); if (tm) tm.open = true;
   var p = document.getElementById('intel-panel');
   if (p && p.style.display === 'none' && window.toggleIntelPanel) toggleIntelPanel();
@@ -24173,9 +24199,11 @@ document.addEventListener('change', function (ev) {
   if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it', function () { _ssFcKey = null; }); }
   else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these', function () { ssLoadNoteRules(true); });
 });
+// Team & rules lives in the Studio's Team stage (10/2/26): every opener
+// goes there - from Labor, a brief or a deep link - instead of Labor.
+function ssOpenTeam() { return !!(window.studioOpen && studioOpen({stage: 'team'})); }
 function swOpenTeam(which) {
-  // The roster and rules editors live in Labor: leave the Studio for them.
-  if (window.studioClose && window._ssOpen) studioClose();
+  ssOpenTeam();
   var det = document.getElementById('lb2-team'); if (det && !det.open) det.open = true;
   var p = document.getElementById(which + '-panel');
   if (p && p.style.display === 'none') { if (which === 'roster' && window.toggleRosterPanel) toggleRosterPanel(); else if (which === 'rules' && window.toggleRulesPanel) toggleRulesPanel(); else if (which === 'notes' && window.toggleNotesPanel) toggleNotesPanel(); }
@@ -24212,7 +24240,7 @@ function swOpenTeam(which) {
 // DESIGN_SYSTEM.md -> Schedule Studio.
 var _ssOpen = false, _ssStage = 'setup', _ssFromDash = false, _ssGenerating = false, _ssReview = null;
 var _swSel = null, _swSelRow = null, _swDrag = null, _swLeftLoaded = false;
-var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history'];
+var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team', 'staffing'];
 function _ssHost() { var st = document.getElementById('studio'); return st && !st.hidden ? st : null; }
 function _ssHasDraft() {
   var p = document.getElementById('schedule-preview-panel');
@@ -24368,6 +24396,7 @@ function studioGo(stage) {
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
+  else if (stage === 'team' || stage === 'staffing') { var dt = document.getElementById(stage === 'team' ? 'lb2-team' : 'lb2-money-all'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
 }
 function ssTopbar() {
@@ -24629,7 +24658,7 @@ function studioOnResult(data, fromGeneration) {
     return;
   }
   ssTopbar();
-  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build')) studioGo('schedule');
+  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team' || _ssStage === 'staffing')) studioGo('schedule');
   ssRescoreOnOpen();
 }
 // A stored week's score was measured against the staffing history and
@@ -33539,7 +33568,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div style="overflow-x:auto"><table class="hb-tbl dsg-tbl" style="margin-top:0"><thead><tr><th>Date</th><th>What</th><th class="r">Covers</th><th class="r">Lift</th><th></th></tr></thead><tbody>';
       for(i=0;i<list.length;i++){var sg=list[i];var lift=sg.lift_pct==null?null:+sg.lift_pct;
         h+='<tr style="cursor:default"><td><span class="hb-num">'+esc(mdy(sg.date))+'</span> <span style="color:var(--ink3)">'+esc(_dayShort(sg.date))+'</span></td>'
-          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span style="font-size:11px;color:var(--ink3)">'+(sg.source==='events'?'from a calendar you follow':'via '+esc(sg.source))+'</span>':'')
+          +'<td><span class="kd '+esc(sg.kind)+'">'+esc(sg.kind==='reservations'?'reservations':sg.kind==='post'?'post':'event')+'</span>'+(sg.label?' '+esc(sg.label):'')+(sg.source&&sg.source!=='manual'?' <span class="dsg-src">'+(sg.source==='events'?'from a calendar you follow':'via '+esc(sg.source))+'</span>':'')
             // Its label's own record here (M5 measured), before and after.
             +(sg.measured&&window.memMeasuredLine?'<span class="mem-ln">'+memNum(memMeasuredLine(sg.measured))+'</span>':'')+'</td>'
           +'<td class="r">'+(sg.covers==null?'<span class="dim">—</span>':'<span class="hb-num">'+esc(sg.covers)+'</span>')+'</td>'
@@ -34778,7 +34807,7 @@ window.cavPalette = cavPalette;
   }
   function waitFocus(key) {
     var box = $id('lb2-wait'), row = box ? box.querySelector('[data-wait-key="' + key + '"]') : null;
-    if (!box || box.hidden) { if (window.toggleRequestsPanel) { var tm = $id('lb2-team'); if (tm) tm.open = true; var rp = $id('requests-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
+    if (!box || box.hidden) { if (window.toggleRequestsPanel) { ssOpenTeam(); var tm = $id('lb2-team'); if (tm) tm.open = true; var rp = $id('requests-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
     (row || box).scrollIntoView({behavior: 'smooth', block: 'center'});
     if (row) { row.style.background = 'var(--hb-tint2)'; setTimeout(function () { row.style.background = ''; }, 2200); }
   }
@@ -35251,8 +35280,6 @@ window.cavPalette = cavPalette;
     cavNavRegister('person', function (p) {
       if (!p.rest[0]) return false;
       cavNavOpenModule('labor');
-      var tm = $id('lb2-team'); if (tm) tm.open = true;
-      var s = document.querySelector('[data-nav="labor/team"]'); if (s) s.scrollIntoView({behavior: 'smooth', block: 'start'});
       openPersonSheet(p.rest[0]);
       return true;
     });
@@ -35340,7 +35367,7 @@ window.cavPalette = cavPalette;
 .mem-teach .ln:before{content:'';flex:none;width:7px;height:7px;margin-top:8px;border-radius:50%;background:var(--ember2);box-shadow:0 0 8px var(--ember2)}
 .mem-teach .ln.dim{color:var(--ink3)}
 .mem-teach .ln.dim:before{background:var(--ink3);box-shadow:none}
-.dsg-tbl .mem-ln{max-width:420px}
+.dsg-tbl .mem-ln{max-width:460px;font-size:14.5px}
 /* Intel: your rating over time and the market's history */
 .mem-rating{margin-top:22px;padding:18px 20px 12px;border-radius:14px;background:var(--surface);box-shadow:var(--elev-card);border:1px solid var(--hb-line)}
 .mem-rating .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -35774,6 +35801,7 @@ function memRetagBody(was, now) {
     if (open) window.memLoadNotes();
   };
   function openNotes() {
+    ssOpenTeam();
     var tm = $id('lb2-team'); if (tm) tm.open = true;
     var p = $id('notes-panel'); if (p && p.style.display === 'none') window.toggleNotesPanel();
     var row = document.querySelector('[data-nav="labor/notes"]'); if (row) row.scrollIntoView({behavior: 'smooth', block: 'start'});

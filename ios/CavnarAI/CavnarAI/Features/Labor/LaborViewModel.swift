@@ -1706,7 +1706,7 @@ final class LaborViewModel {
     // carries the week, the quality score and what still needs the owner;
     // a fresh generation opens it (see pollSchedule).
     var scheduleResultExpanded = false
-    /// "Every day and person" — the staffing board (closed, as the web's
+    /// "Staffing review" — the staffing board (closed, as the web's
     /// details; a labor/overtime link opens it).
     var staffingBoardExpanded = false
     var availabilityExpanded = false
