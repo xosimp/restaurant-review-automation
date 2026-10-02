@@ -57,3 +57,69 @@ def test_home_lists_alerts_by_the_same_audience_rule_as_the_bell_and_the_push():
     src = inspect.getsource(home_brief)
     assert "sees_alert(current_user, alert_type)" in src
     assert "_NOTIFICATION_MODULE.get(alert_type" not in src
+
+
+# ── event re-audit 2: the merge's follow-ups between W1–W5 ─────────────────
+
+def test_peers_give_no_figure_for_a_playoff_or_special_game(monkeypatch):
+    from event_intel import peers
+    # Refused before any peer row is read (peer_effect swallows errors, so
+    # record the read rather than raise).
+    reads = []
+    monkeypatch.setattr(peers, "_memoised", lambda *a, **k: reads.append(a) or None)
+    for st in ("postseason", "special"):
+        assert peers.peer_effect(1, {"home_away": "home", "series_id": 1, "season_type": st,
+                                     "attributes": {}}) is None, st
+    assert reads == []
+
+
+def test_the_brief_reads_guest_text_by_the_one_rule_and_the_one_send_time():
+    import morning_brief
+    from event_intel import playbook
+    assert "gameday.guest_text_visible(restaurant, denied=denied)" in inspect.getsource(morning_brief._game_line)
+    src = inspect.getsource(playbook.alert)
+    assert "gameday.plan_ahead(" in src and "gameday.send_plan(" not in src
+
+
+def test_a_label_whose_effect_applies_is_said_by_that_one_figure(monkeypatch):
+    lab = {"segment": "Bears home games", "n": 4, "median_lift_pct": 30.0, "applies": True}
+    monkeypatch.setattr(engine, "_judged_by_its_label", lambda *a, **k: False)
+    monkeypatch.setattr(engine, "_label_effect", lambda *a, **k: lab)
+    monkeypatch.setattr(engine, "past_games", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no segments")))
+    assert engine.effect_for(1, {"series_id": 1, "home_away": "home"}) is lab
+    monkeypatch.setattr(engine, "_label_effect", lambda *a, **k: dict(lab, applies=False))
+    monkeypatch.setattr(engine, "past_games", lambda *a, **k: [])
+    assert engine.effect_for(1, {"series_id": 1, "home_away": "home"}) is None   # segments, none yet
+
+
+def test_upcoming_dates_default_to_the_restaurants_own_today(monkeypatch):
+    from datetime import datetime
+    import demand_signals
+    import time_utils
+    seen = {}
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id", lambda rid, naive=False: datetime(2026, 10, 2, 0, 30))
+
+    class C:
+        def execute(self, sql, args):
+            seen["args"] = args
+            return self
+
+        def fetchall(self):
+            return []
+
+        def close(self):
+            pass
+    monkeypatch.setattr(demand_signals, "get_conn", lambda *a, **k: C())
+    demand_signals.upcoming(5)
+    assert seen["args"] == (5, "2026-10-02", "2026-12-01")
+
+
+def test_stamps_job_history_and_the_events_card_follow_the_merge():
+    import admin_routes
+    import event_memory
+    src = inspect.getsource(event_memory)
+    assert src.count("when = at or _restaurant_now(restaurant_id)") == 2
+    assert '"event_sync_one"' in inspect.getsource(admin_routes) and '"event_catalog_resync"' in inspect.getsource(admin_routes)
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "templates" / "dashboard.html").read_text()
+    assert "function _evReload(d){loadSignals();if(d&&d.refreshing)setTimeout(loadSignals,2500);}" in html

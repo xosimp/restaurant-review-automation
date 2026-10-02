@@ -1950,6 +1950,12 @@ def _iso_week(d):
     return f"{y}-W{w:02d}"
 
 
+def _restaurant_now(restaurant_id):
+    """The restaurant's local now (naive), for a stamp a caller didn't give."""
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True)
+
+
 def record_own_rating(restaurant_id, rating, review_count=None, source=None, at=None, db_path=None):
     """Keep this week's reading of the restaurant's OWN public Google rating
     (own_rating_history, one row per ISO week, the latest reading of the
@@ -1960,7 +1966,9 @@ def record_own_rating(restaurant_id, rating, review_count=None, source=None, at=
     try:
         if rating is None or float(rating) <= 0:
             return
-        when = at or datetime.now()
+        # The restaurant's own day, never the server's (UTC on Railway — an
+        # evening refresh was stamped tomorrow; event re-audit 2, RX-06).
+        when = at or _restaurant_now(restaurant_id)
         day = when.date() if isinstance(when, datetime) else _as_date(when)
         conn = get_conn(db_path)
         try:
@@ -2013,7 +2021,9 @@ def record_market_snapshot(restaurant_id, competitors, at=None, db_path=None, cl
     March" was gone a year later. Returns the events written. Never raises."""
     written = []
     try:
-        when = at or datetime.now()
+        # The restaurant's own day, never the server's (UTC on Railway — an
+        # evening refresh was stamped tomorrow; event re-audit 2, RX-06).
+        when = at or _restaurant_now(restaurant_id)
         day = (when.date() if isinstance(when, datetime) else _as_date(when)).isoformat()
         month = day[:7]
         now_set = {c.get("place_id"): c for c in competitors or [] if c.get("place_id")}

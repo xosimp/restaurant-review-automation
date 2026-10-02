@@ -33584,14 +33584,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var done=busy(btn,'Putting back…');
     jsend('/api/labor/event-dismissals/'+id+'/restore',{},function(d){
       done();if(!d.ok){toast(d.error||'Could not put that game back','error');return;}
-      window._evRemoved=d.removed||[];toast('Put back — the game is on your calendar again','success');loadSignals();
+      window._evRemoved=d.removed||[];toast(d.message||'Put back — the game is on your calendar again','success');_evReload(d);
     });
   };
+  // The calendar re-syncs in the background (event re-audit 2, RX-03): show
+  // the list now, and once more after a moment while it is still catching up.
+  function _evReload(d){loadSignals();if(d&&d.refreshing)setTimeout(loadSignals,2500);}
   window.evFollowSet=function(id,on,btn){
     var done=busy(btn,on?'Following\u2026':'Stopping\u2026');
     jsend('/api/labor/event-follows/'+id,{active:on},function(d){
       done();if(!d.ok){toast(d.error||'Could not change that calendar','error');return;}
-      window._evFollows=d.follows||[];toast(on?'Following \u2014 its games are on your calendar':'Stopped following \u2014 its games are off your calendar','success');loadSignals();
+      window._evFollows=d.follows||[];toast(d.message||(on?'Following \u2014 its games are on your calendar':'Stopped following \u2014 its games are off your calendar'),'success');_evReload(d);
     });
   };
   function _dayShort(iso){if(!iso||!/^\d{4}-\d{2}-\d{2}/.test(iso))return '';var d=new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10));return isNaN(d)?'':['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];}

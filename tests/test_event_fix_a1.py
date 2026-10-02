@@ -369,8 +369,12 @@ def test_past_games_reads_a_bounded_number_of_the_newest_games_per_class(db, mon
     nxt = _event(db, sid, "2026-10-03")
     got = engine.past_games(r.id, nxt, db_path=db)
     assert [g["event"]["event_date"] for g in got] == ["2026-08-30", "2026-08-29", "2026-08-22", "2026-08-15"]
-    eff = engine.effect_for(r.id, nxt, db_path=db)
-    assert eff["n"] == 3 and eff["median_lift_pct"] == 50.0                 # the newest three home nights
+    # The segments read the newest three home nights (exact: no label path)…
+    eff = engine.effect_for(r.id, nxt, db_path=db, exact=True)
+    assert eff["n"] == 3 and eff["median_lift_pct"] == 50.0
+    # …while a label whose measured effect applies is said by that one
+    # figure, the forecast's own (event re-audit 2, R2-02).
+    assert engine.effect_for(r.id, nxt, db_path=db) == engine._label_effect(r.id, nxt, db)
     monkeypatch.setattr(engine, "PAST_GAMES_PER_CLASS", 99)
     assert "2023-09-02" not in [g["event"]["event_date"] for g in engine.past_games(r.id, nxt, db_path=db)]
 

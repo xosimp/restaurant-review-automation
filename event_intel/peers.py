@@ -203,7 +203,13 @@ def peer_effect(restaurant_id, e, db_path=store.DB_PATH):
         # Stadium" (re-audit 2 R4-02). No peer figure for it.
         if store.alt_venue(e):
             return None
-        pre = e.get("season_type") == "preseason"
+        # Peers' figures are materialised for the regular season and the
+        # preseason only: a playoff or special (cup) game would be worded as
+        # its own class over the regular season's median (re-audit 2, W1's
+        # season-class labels). No peer figure for it.
+        if engine.season_class(e) not in ("regular", "preseason"):
+            return None
+        pre = engine.season_class(e) == "preseason"
         orgs, real, since = _memoised(("ctx", dbp), lambda: (privacy.org_map(db_path=dbp),
                                                              real_restaurant_ids(db_path=db_path),
                                                              learning_since_by_id(db_path=db_path)))

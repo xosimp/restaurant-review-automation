@@ -6359,7 +6359,8 @@ def admin_api_job_runs(job, current_user):
     counts (result_json), the run-now request it came from, and whether it
     was manual."""
     import jobs_registry
-    if job not in jobs_registry.JOBS and job not in ("review_fetch_one", "pos_sync_one"):
+    if job not in jobs_registry.JOBS and job not in ("review_fetch_one", "pos_sync_one", "event_sync_one",
+                                                     "event_catalog_resync"):
         return jsonify(ok=False, error="Unknown job"), 404
     limit = max(1, min(200, request.args.get("limit", 50, type=int)))
     conn = get_conn()

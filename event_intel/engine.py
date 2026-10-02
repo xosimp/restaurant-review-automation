@@ -620,7 +620,7 @@ def _past_games(restaurant_id, e, db_path):
 
 def same_kind(e, g) -> bool:
     """Games a plan for `e` may rest on — staffing, the rush and the item
-    mix alike: the same game_class (side, preseason or not, the home ground
+    mix alike: the same game_class (side, season class, the home ground
     or another — re-audit SD-02) and the same kickoff class (prime time or
     not). The one test playbook and gameday both use."""
     return game_class(g) == game_class(e) and bool(g.get("is_primetime")) == bool(e.get("is_primetime"))
@@ -685,8 +685,18 @@ def effect_for(restaurant_id, e, db_path=store.DB_PATH, exact=False, keep=None):
     it here (_label_effect) — never a segment median that can sit on
     the other side of EFFECT_FLOOR_PCT. `exact` (a cross-restaurant figure,
     event_intel.peers) and `keep` always read the segments."""
-    if not exact and keep is None and _judged_by_its_label(e, db_path):
-        return _label_effect(restaurant_id, e, db_path)
+    if not exact and keep is None:
+        if _judged_by_its_label(e, db_path):
+            return _label_effect(restaurant_id, e, db_path)
+        # Once the label's measured effect applies, the forecast moves the
+        # night by it (event_memory.effects_for_day) — so that is the one
+        # figure said about the game too, never a narrower segment's beside
+        # it (event re-audit 2, R2-02: "+30%" planned, "+15%" said). Before it
+        # applies the forecast plans nothing and the segments say what the
+        # nights were.
+        lab = _label_effect(restaurant_id, e, db_path)
+        if lab and lab.get("applies"):
+            return lab
     games = past_games(restaurant_id, e, db_path=db_path)
     if keep is not None:
         games = [g for g in games if keep(g["event"]["event_date"])]
@@ -868,8 +878,10 @@ def follow_choices(restaurant, today=None, db_path=store.DB_PATH) -> list:
 
 def set_owner_follow(restaurant, series_id, active, source="owner", db_path=store.DB_PATH) -> dict:
     """An owner's (or admin's) follow choice, then this restaurant's copy of
-    the games re-synced at once — the games appear, or leave the schedule's
-    inputs, without waiting for the 5am job. Raises LookupError for a
+    the games re-synced in the same call. The web and mobile follow routes
+    no longer use it: they save the choice and hand the re-sync to the
+    bounded pool (strategy_routes, event_sync_one — event re-audit 2,
+    RX-03), so a request never re-records nights. Raises LookupError for a
     series that isn't in the catalog."""
     if not any(s["id"] == int(series_id) for s in store.all_series(db_path=db_path)):
         raise LookupError("No such calendar.")

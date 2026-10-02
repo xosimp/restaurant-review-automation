@@ -179,7 +179,7 @@ def test_the_effect_is_measured_here_most_specific_first(db, monkeypatch):
     r = _restaurant(db)
     engine.ensure_follows(r, db_path=db)
     engine.sync_restaurant(r, today=date(2026, 10, 1), db_path=db)
-    _outcome(db, r.id, "2026-08-15", 10.0)                     # home, day
+    _outcome(db, r.id, "2026-08-15", 10.0, label="bears preseason soldier field")  # home, preseason
     _outcome(db, r.id, "2026-09-20", 20.0)                     # home, day
     _outcome(db, r.id, "2026-09-28", 93.0)                     # home, prime time (MNF)
     _outcome(db, r.id, "2026-09-13", 5.0, label="bears road")  # road

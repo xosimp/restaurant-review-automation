@@ -730,9 +730,10 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             parts.append("Prep for " + "; ".join(p["text"] for p in prep[:3]) + ".")
         elif mix and mix.get("text") and mix["n"] == 1:
             parts.append(mix["text"])
-        plan = gameday.send_plan(e, tz=tz) if marketing else None
-        if plan and _past(restaurant_id, plan["text_at"]):
-            plan = None      # an early kickoff's "the evening before" is already gone on game day
+        # The one reader of a send time (gameday.plan_ahead): nothing
+        # already gone at the restaurant — an early kickoff's "the evening
+        # before" is gone on game day (re-audit 2, R3-02).
+        plan = gameday.plan_ahead(restaurant_id, e, tz=tz) if marketing else None
         if plan:
             parts.append(f"Text your guests {plan['text_words']} (a starting rule, not yet measured here).")
         line = {"key": f"event_ahead:{e['id']}", "event_id": e["id"], "source": "events",

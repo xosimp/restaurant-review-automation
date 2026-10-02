@@ -327,7 +327,9 @@ def _game_line(restaurant, restaurant_id, today, denied, lines, db_path=DB_PATH)
     THIS game's (re-audit 2 R2-05)."""
     from event_intel import gameday, playbook
     sees = "labor" not in denied
-    marketing = bool(getattr(restaurant, "module_marketing", 0)) and "marketing" not in denied
+    # Guest-text timing follows the one rule the push and Ask use
+    # (gameday.guest_text_visible: the Marketing module AND the view).
+    marketing = gameday.guest_text_visible(restaurant, denied=denied)
     today_lines = [l for l in lines if l.get("key") == "today"]
     shown = next((l.get("_items") or [] for l in today_lines if l.get("source") == "dsr"), None)
     said = {lab for l in today_lines for lab in l.get("_said") or ()}

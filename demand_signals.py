@@ -325,8 +325,13 @@ def delete(restaurant_id, signal_id, db_path=DB_PATH, by=None, source="owner"):
 
 
 def upcoming(restaurant_id, start=None, end=None, db_path=DB_PATH) -> list:
-    start = _d(start) if start else date.today().isoformat()
-    end = _d(end) if end else (date.today() + timedelta(days=60)).isoformat()
+    if not (start and end):
+        # The restaurant's own today, never the server's (UTC on Railway:
+        # after 7pm Central tonight's rows fell off — event re-audit 2, RX-07).
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id).date()
+    start = _d(start) if start else today.isoformat()
+    end = _d(end) if end else (today + timedelta(days=60)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM demand_signals WHERE restaurant_id=? AND date BETWEEN ? AND ? "
