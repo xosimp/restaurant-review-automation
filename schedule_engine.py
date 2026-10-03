@@ -5366,16 +5366,35 @@ def _gate_free(c, rows, d) -> list:
 
 
 def _gate_someone_free(v, rows, c) -> bool:
-    """Whether somebody free that day could put breach `v` right: a manager
-    for a stretch with none, the role's people for a floor or a row a person
-    can't legally work, the role's closers for the close."""
+    """Whether somebody free that day could legally put breach `v` right: a
+    manager who could take the unmanaged stretch, somebody holding the role
+    who could take the row a person can't legally work (Constraints.can_add —
+    the shift, their week swept with it), the role's people for a floor,
+    its closers for the close. The repair loop already tried; a rewrite is
+    worth a model call only when such a person exists."""
     d = v["date"]
     free = _gate_free(c, rows, d)
     if not free:
         return False
     kind = v.get("kind")
+
+    def takes(n, row, others):
+        try:
+            return bool(c.can_add(dict(row, employee=n), others)[0])
+        except Exception:
+            return False
     if kind == "no_manager":
-        return any(c.manages(n, d) for n in free)
+        managers = [n for n in free if c.manages(n, d)]
+        gs, ge = v.get("gap_start"), v.get("gap_end")
+        if gs is None or ge is None:
+            return bool(managers)
+        role = next((r for k, r in (c.managers or {}).items()), "Manager") or "Manager"
+        stretch = {"date": d, "day": _weekday_name(d), "role": role, "notes": "",
+                   "shift_start": _rules._fmt_minutes(int(gs) % (24 * 60)),
+                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60)),
+                   "scheduled_hours": str(round((int(ge) - int(gs)) / 60.0, 2))}
+        return any(takes(n, dict(stretch, role=(c.managers or {}).get(str(n).strip().lower()) or role), rows)
+                   for n in managers)
     if kind in ("keyholder_until_close", "nobody_at_close"):
         fam = v.get("close_role") or ""
         closers = (getattr(c, "closers_by_role", None) or {}).get(fam)
@@ -5383,6 +5402,11 @@ def _gate_someone_free(v, rows, c) -> bool:
             keys = {(getattr(c, "key", None) or (lambda x: str(x).strip().lower()))(n) for n in free}
             return bool(keys & set(closers))
         return True
+    idx = v.get("index")
+    if not v.get("day_level") and isinstance(idx, int) and 0 <= idx < len(rows):
+        row = rows[idx]
+        others = rows[:idx] + rows[idx + 1:]
+        return any(_gate_holds(c, n, row.get("role") or "", d) and takes(n, row, others) for n in free)
     role = v.get("role") or v.get("floor_role") or ""
     if not role:
         return True

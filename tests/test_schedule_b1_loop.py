@@ -516,6 +516,11 @@ def test_the_gate_rewrites_a_day_a_free_manager_could_cover():
     gate = se._quality_gate(result)
     assert gate and gate["dates"] == [FRI] and "manager" in gate["triggers"][FRI]
     assert any("no manager on" in f for f in gate["focus"])
+    # Free but unable to take the stretch legally (a 4h weekly maximum
+    # against a 6h gap): the loop already knew, so no rewrite is spent on it.
+    c.hours_limits = {"max": (0, 4)}
+    assert se._quality_gate(result) is None
+    c.hours_limits = {}
     # Nobody who manages can work Friday: a rewrite cannot fix it.
     c.blocked_dates = {"max": {FRI: "on approved time off"}}
     assert se._quality_gate(dict(result, rule_violations=sr.violations(rows, c))) is None
