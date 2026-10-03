@@ -800,6 +800,12 @@ class Constraints:
     # and the schedule rules it could not read, which the review names.
     owner_rules: list = field(default_factory=list)
     owner_rules_unchecked: list = field(default_factory=list)
+    # An owner-only rule the code could not read (D-38): never put on the
+    # shared review; for a surface only the account holders read.
+    owner_rules_unchecked_private: list = field(default_factory=list)
+    # The pairings the owner's rules state (parse_pair_rule):
+    # [{"kind": "avoid"|"prefer", "a", "b", "text", "private"}].
+    owner_pairs: list = field(default_factory=list)
     rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
     tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
     # ── schedule audit 10/3/26: the facts the fix round added ──────────
@@ -946,12 +952,14 @@ class Constraints:
         from shift_quality import role_family
         return role_family(role, self.role_families)
 
-    def fillable(self, name: str, date_str: str) -> tuple:
+    def fillable(self, name: str, date_str: str, daypart: str = None) -> tuple:
         """(ok, reason): whether a pass may CHOOSE `name` to fill a gap on
         `date_str` — over and above can_add, which asks whether the row is
         legal. Somebody who has not worked in weeks (dormant) or whose own
         note about that day nobody has confirmed (note_caution) is never
-        picked by code; the owner can still write them in."""
+        picked by code; the owner can still write them in. A note that
+        names only a lunch or a dinner ("no nights") leaves the other one
+        to a fill that says which `daypart` it is filling."""
         key = self.key(name)
         if key in self.dormant:
             from time_utils import mdy
@@ -960,7 +968,9 @@ class Constraints:
         if caution:
             day = _weekday_of(date_str)
             if date_str in (caution.get("dates") or ()) or (day and day in (caution.get("days") or ())):
-                return False, f"their note: {str(caution.get('text') or '')[:80]}"
+                parts = caution.get("parts") or set()
+                if not (parts and daypart in ("morning", "night") and daypart not in parts):
+                    return False, f"their note: {str(caution.get('text') or '')[:80]}"
         return True, ""
 
     def can_add(self, row: dict, rows=(), line: float = None, overtime: bool = True) -> tuple:
@@ -1209,6 +1219,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         except (TypeError, ValueError):
             continue
 
+    _note_parts = []                      # (key, name, text, noted, expires): every note, for D-34
     # weekday availability + free-text notes. A weekday blocked for good is
     # a weekday rule; one blocked only between two dates ("Fridays until
     # 12/15", day_bounds — employee audit M5) blocks the dates of this week
@@ -1234,6 +1245,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                     c.blocked_dates.setdefault(key, {}).setdefault(d, LABELS["unavailable_day"])
             if (a.get("notes") or "").strip():
                 c.notes[key] = (c.notes.get(key, "") + " " + a["notes"].strip()).strip()
+                _note_parts.append((key, a.get("employee_name"), a["notes"].strip(),
+                                    str(a.get("updated_at") or "")[:10] or None, None))
     except Exception as exc:
         _input_problem(c, "availability", exc)
     try:
@@ -1243,8 +1256,22 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             key = _file_under(c, "scheduling notes", n.get("employee_name"))
             if key and n.get("notes"):
                 c.notes[key] = (c.notes.get(key, "") + " " + n["notes"]).strip()
+                for part in (n.get("parts") or [{"text": n["notes"]}]):
+                    if part.get("ended") or not str(part.get("text") or "").strip():
+                        continue
+                    _note_parts.append((key, n.get("employee_name"), str(part["text"]).strip(),
+                                        part.get("noted"), part.get("expires")))
     except Exception as exc:
         _input_problem(c, "staff notes", exc)
+    # Every note nobody has confirmed as a hold, read by the hold reader
+    # (schedule audit 10/3/26 D-34): the days it names are kept clear by the
+    # fill passes (Constraints.fillable) — "Ana can't close Fridays" was
+    # told to the model and nothing stopped a backstop from putting her on
+    # a Friday close. c.notes stays the model's text.
+    try:
+        _note_cautions(c, restaurant_id, _note_parts, db_path)
+    except Exception as exc:
+        _input_problem(c, "scheduling notes", exc)
 
     # time off: approved blocks, pending is a warning
     if c.week_dates:
@@ -1356,6 +1383,42 @@ def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:
     return key
 
 
+def _note_cautions(c: "Constraints", restaurant_id, note_parts, db_path=None):
+    """c.note_caution from every note part not confirmed as a hold
+    (person_note_holds.caution): {key: {"days", "dates", "parts", "text"}}.
+    Two notes on one person keep the fills off both; a lunch-or-dinner
+    allowance (parts) stands only when every note on that person names the
+    same one — otherwise the whole day is kept clear."""
+    if not note_parts:
+        return
+    import person_note_holds as _pnh
+    try:
+        from models import _restaurant_today
+        today = _restaurant_today(restaurant_id)
+    except Exception:
+        today = None
+    held = set()
+    for h in _pnh.holds(restaurant_id, db_path=db_path, include_ended=True):
+        held.add((c.key(h["employee_name"]), _pnh._key(h["part_text"])))
+    for key, name, text, noted, expires in note_parts:
+        if (key, _pnh._key(text)) in held:
+            continue                      # confirmed: a hard hold (apply_holds), not a caution
+        got = _pnh.caution(text, noted=noted, expires=expires, week_dates=c.week_dates, today=today)
+        if not got:
+            continue
+        cur = c.note_caution.get(key)
+        if cur is None:
+            c.note_caution[key] = {"days": set(got["days"]), "dates": set(got["dates"]),
+                                   "parts": set(got.get("parts") or ()), "text": text}
+            continue
+        same = cur.get("parts") and cur["parts"] == set(got.get("parts") or ())
+        cur["days"] |= set(got["days"])
+        cur["dates"] |= set(got["dates"])
+        cur["parts"] = cur["parts"] if same else set()
+        if text.lower() not in str(cur.get("text") or "").lower():
+            cur["text"] = (str(cur.get("text") or "") + "; " + text).strip("; ")
+
+
 def _salaried_keys(c: "Constraints", restaurant, db_path=None) -> set:
     """The keys of the salaried people (models.salaried_staff) through
     people's identity (D-7): each entry's own spelling, and the roster key
@@ -1457,8 +1520,17 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss):
 #   * a staffing rule it cannot read is named in the review, so the owner
 #     checks the draft against it — never silently dropped.
 #
-# Only a rule the whole team may read (audience "team", as the schedule
-# prompt reads memory): an owner-only line never surfaces in a shared review.
+# Every account holder's rule constrains the draft — an owner-only one too
+# (schedule audit 10/3/26 D-38: "never schedule Ana with Ben", kept private,
+# reached neither the prompt nor the checks). An owner-only rule's WORDS
+# never surface where the team reads: its floor reads like any floor, its
+# check names no text, an unreadable one is kept off the shared review
+# (owner_rules_unchecked_private), and a private pairing is scored and
+# solved against but never printed (pairs_with_rules' "private").
+#
+# A rule about two people — "never schedule Ana with Ben", "keep Ana and Ben
+# apart", "always pair Ana with Ben" — is a pairing (parse_pair_rule), the
+# same "avoid"/"prefer" the owner's staff_pairs hold (owner_pairs).
 
 _RULE_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 # ("day", "am" and "pm" are not here: "every day" is not lunch, and "I am"
@@ -1542,14 +1614,19 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
     week."""
     import owner_memory
     import memory_context
-    facts = owner_memory.facts_for(restaurant_id, viewer=memory_context.team_viewer("schedule"),
-                                   surface="schedule", kinds=list(owner_memory.RULE_KINDS),
-                                   db_path=None if db_path == DB_PATH else db_path)
-    roles = set()
+    db = None if db_path == DB_PATH else db_path
+    facts = owner_memory.facts_for(restaurant_id, viewer=None, surface="schedule",
+                                   kinds=list(owner_memory.RULE_KINDS), db_path=db)
+    # Which of them the whole team may read; the rest are owner-only (D-38).
+    team = {(f.get("id"), f.get("from_location")) for f in owner_memory.facts_for(
+        restaurant_id, viewer=memory_context.team_viewer("schedule"), surface="schedule",
+        kinds=list(owner_memory.RULE_KINDS), db_path=db)}
+    roles, names = set(), []
     try:
         import staff_settings as _ss
-        roles |= {str(e.get("role") or "").strip() for e in _ss.roster(restaurant_id, db_path=db_path)
-                  if e.get("role")}
+        _everyone = _ss.roster(restaurant_id, db_path=db_path)
+        roles |= {str(e.get("role") or "").strip() for e in _everyone if e.get("role")}
+        names = [e["name"] for e in _everyone]
     except Exception:
         pass
     roles |= {str(r).strip() for r in (c.role_floors or {})}
@@ -1557,11 +1634,24 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
     for f in facts:
         if not owner_memory.is_owner_rule(f):
             continue
+        private = (f.get("id"), f.get("from_location")) not in team
+        text = " ".join(str(f.get("fact") or "").split())
+        pair = parse_pair_rule(text, names, aliases=c.aliases, display=c.display)
+        if pair is not None:
+            if pair.get("days"):
+                # A pairing on some days only: the pairings have no day, so
+                # it is named for the owner to check rather than held all
+                # week or not at all.
+                (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
+            else:
+                c.owner_pairs.append(dict(pair, private=private))
+            continue
         rule = parse_owner_rule(f.get("fact"), roles)
         if rule is None:
             if _is_staffing_rule(f):
-                c.owner_rules_unchecked.append(" ".join(str(f.get("fact") or "").split()))
+                (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
             continue
+        rule["private"] = private
         c.owner_rules.append(rule)
         if not rule["daypart"]:
             continue
@@ -1572,7 +1662,99 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
         for day in rule["days"] or DAYS:
             if floor_for(c.role_floors, key, day, rule["daypart"]) < rule["min"]:
                 spec.setdefault("days", {}).setdefault(day, {})[rule["daypart"]] = rule["min"]
-                c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
+                if private:
+                    # Held like any floor; its words are the owner's alone.
+                    c.rule_floor_sources.pop((key.strip().lower(), day, rule["daypart"]), None)
+                else:
+                    c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
+
+
+def parse_pair_rule(text: str, names, aliases=None, display=None) -> dict:
+    """{"kind": "avoid"|"prefer", "a", "b", "days", "text"} for a rule about
+    two people on the roster ("never schedule Ana with Ben", "keep Ana and
+    Ben apart", "Ana and Ben shouldn't be on together", "always pair Ana
+    with Ben"), or None. Each person is named by a roster spelling, a
+    spelling people's identity knows for them (`aliases`/`display`, from
+    Constraints), or a first name only one person on the roster has. Two
+    people named and a word that puts them on together (with, together,
+    alongside, apart, separate, away from, same shift) are needed — "Ana and
+    Ben never work Sundays" is about Sundays, not a pairing."""
+    import re as _re
+    orig = " " + " ".join(str(text or "").replace("’", "'").split()) + " "
+    low = orig.lower()
+    if not low.strip():
+        return None
+    if len(low) != len(orig):
+        orig = low                                   # a character whose case changes its length
+    spell = {}                                       # spelling -> roster display name
+    firsts = {}
+    for n in names or []:
+        n = " ".join(str(n or "").split())
+        if not n:
+            continue
+        spell[n.lower()] = n
+        first = n.split()[0].lower().strip(".,")
+        if len(first) >= 2:
+            firsts.setdefault(first, set()).add(n)
+    for k, rk in (aliases or {}).items():
+        who = (display or {}).get(rk)
+        if who and len(k) >= 3:
+            spell.setdefault(k, who)
+    first_only = set()
+    for f, ns in firsts.items():
+        if len(ns) == 1 and f not in spell:
+            spell[f] = next(iter(ns))
+            first_only.add(f)
+    found = []                                       # (start, end, display)
+    for sp in sorted(spell, key=len, reverse=True):
+        for m in _re.finditer(r"(?<![a-z])" + _re.escape(sp) + r"(?![a-z])", low):
+            if any(not (m.end() <= s0 or m.start() >= e0) for s0, e0, _n in found):
+                continue
+            if sp in first_only and not orig[m.start()].isupper():
+                continue                             # "will", "may": a word, not Will or May
+            found.append((m.start(), m.end(), spell[sp]))
+    people_ = []
+    for _s0, _e0, who in sorted(found):
+        if who not in people_:
+            people_.append(who)
+    if len(people_) != 2:
+        return None
+    marked = low
+    for s0, e0, who in sorted(found, reverse=True):
+        marked = marked[:s0] + (" persona " if who == people_[0] else " personb ") + marked[e0:]
+    together = _re.search(r"\b(with|together|alongside|apart|separate|separated|away from|same shift|on at once|"
+                          r"split up)\b", marked)
+    if not together:
+        return None
+    neg = _re.search(r"\b(never|don'?t|do not|not|no|shouldn'?t|should not|can'?t|cannot|won'?t|apart|separate|"
+                     r"separated|away from|split up|avoid)\b", marked)
+    pos = _re.search(r"\b(always|pair|together|best with|works? well|keep)\b", marked)
+    if neg:
+        kind = "avoid"
+    elif pos:
+        kind = "prefer"
+    else:
+        return None
+    return {"kind": kind, "a": people_[0], "b": people_[1], "days": _rule_days(marked),
+            "text": " ".join(str(text).split())}
+
+
+def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
+    """The owner's pairings (staff_settings.pair_sets: {"prefer", "avoid"}
+    of frozensets of lowercase names) with the pairings their rules state
+    (c.owner_pairs, D-38) added, and "private": the ones stated in an
+    owner-only rule — scored and solved against, never printed where the
+    team reads (the prompt's PAIRINGS block, the scorer's sentences)."""
+    out = {"prefer": set((pairs or {}).get("prefer") or ()), "avoid": set((pairs or {}).get("avoid") or ()),
+           "private": set((pairs or {}).get("private") or ())}
+    for p in (getattr(c, "owner_pairs", None) or []) if c is not None else []:
+        pair = frozenset((p["a"].lower(), p["b"].lower()))
+        out.setdefault(p["kind"], set()).add(pair)
+        if p.get("private"):
+            out["private"].add(pair)
+    if not out["private"]:
+        out.pop("private")
+    return out
 
 
 def _pending_in_window(restaurant_id, start, end, db_path):
@@ -2070,8 +2252,10 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
             on = {(r.get("employee") or "").strip().lower() for _i, r in mine}
             if len(on) < rule["min"]:
                 i0, r0 = (mine or items)[0]
-                out.append(_v("owner_rule", i0, r0,
-                              f"{len(on)} {rule['role']} on {day} — your rule: \u201c{rule['text'][:120]}\u201d",
+                # An owner-only rule's words stay the owner's (D-38).
+                said = ("below a staffing rule you set" if rule.get("private")
+                        else f"your rule: \u201c{rule['text'][:120]}\u201d")
+                out.append(_v("owner_rule", i0, r0, f"{len(on)} {rule['role']} on {day} — {said}",
                               floor_role=role_low, severity=rule["min"] - len(on)))
         ends = [(end_minutes(r), i, r) for i, r in items]
         ends = [(e, i, r) for e, i, r in ends if e is not None]

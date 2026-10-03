@@ -1799,14 +1799,23 @@ def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     if not clashes and not matches and not splits:
         return None
     score = max(0, SCORE_MAX - 45 * len(clashes) - PAIR_SPLIT_COST * len(splits))
+    # A pairing from an owner-only rule counts and is never named: the
+    # review is shared with the team (schedule audit 10/3/26 D-38).
+    private = (ctx.pairs or {}).get("private") or set()
     res = DimensionResult(key="pairings", label="Pairings", score=score,
                           weight=DEFAULT_WEIGHTS["pairings"],
-                          facts={"clashes": [sorted(on[x] for x in p) for p in clashes],
-                                 "matches": [sorted(on[x] for x in p) for p in matches],
-                                 "splits": [sorted(x for x in p) for p in splits]})
+                          facts={"clashes": [sorted(on[x] for x in p) for p in clashes if p not in private],
+                                 "matches": [sorted(on[x] for x in p) for p in matches if p not in private],
+                                 "splits": [sorted(x for x in p) for p in splits if p not in private],
+                                 "private": sum(1 for p in clashes + matches + splits if p in private)})
     for p in clashes[:2]:
+        if p in private:
+            res.weaknesses.append("Two people one of your owner-only rules keeps apart are on together.")
+            continue
         a, b = sorted(on[x] for x in p)
         res.weaknesses.append(f"{a} and {b} are on together, and you asked to keep them apart.")
+    matches = [p for p in matches if p not in private]
+    splits = [p for p in splits if p not in private]
     for p in matches[:2]:
         a, b = sorted(on[x] for x in p)
         res.strengths.append(f"{a} and {b} are on together, as you prefer.")

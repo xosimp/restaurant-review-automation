@@ -423,6 +423,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     except Exception as _sfx:
         _soft_fail('pairs', _sfx, restaurant_id)
         pairs = {}
+    # The pairings the owner's rules state ("never schedule Ana with Ben",
+    # D-38) beside the ones kept on the Team page; an owner-only one is
+    # scored and solved against, never printed.
+    pairs = _rules.pairs_with_rules(pairs, constraints)
     reliability = {}
     try:
         reliability = _staff.reliability(restaurant_id)
@@ -1081,14 +1085,19 @@ def _pairs_block(pairs: dict, roster_pairs: list) -> str:
     if not pairs or not (pairs.get("prefer") or pairs.get("avoid")):
         return ""
     names = {n.lower(): n for n, _r in (roster_pairs or [])}
+    # A pairing from an owner-only rule is never printed (D-38): the model's
+    # row notes reach staff.
+    private = pairs.get("private") or set()
     def _show(p):
         a, b = sorted(names.get(x, x.title()) for x in p)
         return f"{a} and {b}"
     lines = []
-    for p in sorted(pairs.get("avoid") or set(), key=sorted):
+    for p in sorted((pairs.get("avoid") or set()) - private, key=sorted):
         lines.append(f"  keep apart: {_show(p)}")
-    for p in sorted(pairs.get("prefer") or set(), key=sorted):
+    for p in sorted((pairs.get("prefer") or set()) - private, key=sorted):
         lines.append(f"  work well together: {_show(p)}")
+    if not lines:
+        return ""
     return "\n\nPAIRINGS (the owner's own notes on who works with whom):\n" + "\n".join(lines)
 
 
@@ -2407,7 +2416,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["constraints"] = c
             out["roster"] = sorted(e["name"] for e in roster_rows)
             out["roster_roles"] = c.roster_roles
-            out["pairs"] = _staff.pair_sets(restaurant_id)
+            out["pairs"] = _rules.pairs_with_rules(_staff.pair_sets(restaurant_id), c)
             out["reliability"] = _staff.reliability(restaurant_id)
             out["demand_by_date"] = _signals.by_date(restaurant_id, dates)
             try:
