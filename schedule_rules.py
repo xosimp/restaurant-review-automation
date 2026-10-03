@@ -3581,7 +3581,8 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             if not legal(new, others, strict)[0]:
                 continue
             run, hours = _fatigue_rank(c, others, low, d, row_hours(new))
-            out.append((run, 0, hours, 0 if c.is_salaried(mgrs[low]) else 1, mgrs[low], "extend", j, new))
+            out.append((low not in c.managers, run, 0, hours, 0 if c.is_salaried(mgrs[low]) else 1, mgrs[low],
+                        "extend", j, new))
         # 2. a second leg for a manager already on; 3. a manager off that day comes in
         for low, nm in mgrs.items():
             mine = [_span(x) for _j, x in day_rows if _low(x.get("employee")) == low]
@@ -3601,12 +3602,15 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                 continue
             kind = "leg" if mine else "add"
             run, hours = _fatigue_rank(c, rep.rows, low, d, row_hours(new))
-            out.append((run, 1 if mine else 2, hours, 0 if c.is_salaried(nm) else 1, nm, kind, None, new))
-        # Least tired first (days in a row), then the least disruption — a
-        # shift run on, then a second leg, then a new shift — then the fewest
-        # hours this payroll week. Being salaried only breaks a tie (their
-        # hours cost nothing more); it never puts them first (E-17).
-        out.sort(key=lambda t: t[:5])
+            out.append((low not in c.managers, run, 1 if mine else 2, hours, 0 if c.is_salaried(nm) else 1, nm,
+                        kind, None, new))
+        # A manager before somebody only standing in as one (an acting
+        # manager covers a date no manager can, E-13); then least tired
+        # first (days in a row), the least disruption — a shift run on, then
+        # a second leg, then a new shift — and the fewest hours this payroll
+        # week. Being salaried only breaks a tie (their hours cost nothing
+        # more); it never puts them first (E-17).
+        out.sort(key=lambda t: t[:6])
         return out
 
     def why_not(d, gs, ge):

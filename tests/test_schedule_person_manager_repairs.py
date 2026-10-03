@@ -473,6 +473,14 @@ def test_an_acting_manager_covers_the_week_the_only_manager_is_away():
     assert left and any(r["employee"] == "Max" and "time off" in r["why"] for r in left[0]["reasons"])
 
 
+def test_an_acting_manager_only_covers_what_no_manager_can():
+    c = _c(roster_names=["Max", "Kay", "Ann"], active={"max", "kay", "ann"}, managers={"max": "Manager"},
+           acting_managers={"kay": {WEEK[2]}})
+    rows = [_row(i, "Max", "10:00am", "6:00pm", "Manager") for i in (0, 1)] + [_row(2, "Ann", "11:00am", "9:00pm")]
+    out = sr.cover_manager_gaps(rows, c)
+    assert [x["employee"] for x in out["added"]] == ["Max"], "Max can, so Kay is not asked"
+
+
 def test_with_no_manager_an_acting_managers_dates_are_still_held_to_the_rule():
     c = _c(roster_names=["Kay", "Ann"], active={"kay", "ann"}, managers={}, acting_managers={"kay": {WEEK[2]}})
     rows = [_row(2, "Ann", "11:00am", "9:00pm"), _row(3, "Ann", "11:00am", "9:00pm")]
