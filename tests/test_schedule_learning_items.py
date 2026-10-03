@@ -474,8 +474,15 @@ def test_no_category_no_sales_or_own_history_borrows_nothing(db):
     rid3 = _restaurant(db, name="Old Pizza", **_CONFIRMED)
     _sales(db, rid3, 14, amount=8000.0)
     _history(db, rid3, "2026-09-07", published=True)
-    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db)
+    # A family its own history gives a usual crew keeps it: nothing borrowed.
+    own = {("Saturday", "night"): {"Server": 3}}
+    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db, own_typical=own)
     assert out["available"] is False and out["own_history"] is True
+    # A published week with nobody in it is history, but no usual crew for
+    # servers: that family is borrowed, labelled — it used to be all or
+    # nothing per restaurant (schedule audit 10/3/26 L-2).
+    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db)
+    assert out["available"] and out["own_history"] is True and out["families"] == ["server"]
 
 
 def test_borrowed_figures_fill_only_gaps_and_say_so_in_the_requirements():

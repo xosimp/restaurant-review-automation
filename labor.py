@@ -702,7 +702,26 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
     result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
     result['salaried_hours_left_out'] = round(salaried_hours, 1)
-    result['blended_rate'] = blended
+    # The blended rate is what an hour here actually costs, priced by the
+    # same chain as the labor cost (POS pay, the owner's person and role
+    # rates, what the role's people make) — never the role-rates-and-flat
+    # blend, which put Simple EJ's cooks at the $26 default in the hours
+    # budget while their punches paid $21-24 (schedule audit 10/3/26 D-2).
+    # `rate_basis` says how much of it rests on a wage nobody entered (E-24).
+    try:
+        from models import get_restaurant as _gr_rate
+        _r_rate = _gr_rate(restaurant_id)
+        _flat = float(getattr(_r_rate, "hourly_rate", 0) or 0) if _r_rate else 0.0
+        _owner_flat = _flat > 0 and (abs(_flat - DEFAULT_HOURLY_RATE) > 1e-9
+                                     or getattr(_r_rate, "hourly_rate_source", None) == "set")
+    except Exception:
+        _owner_flat = False
+    rate_basis = labor_rate_basis(shifts, role_rates, blended, person_rates=_person_rates,
+                                  fallback_assumed=not _owner_flat)
+    measured = rate_basis.get("rate") or blended
+    result['rate_basis'] = rate_basis
+    result['blended_rate'] = measured
+    blended = measured
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
     # Where the labor COST comes from (thresholds.labor_cost_basis): on the
     # assumed wage the board and Where the money went withhold the dollars
@@ -1073,32 +1092,159 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: di
     are the same role, and an exact match meant every per-role wage they
     had configured was silently ignored in favour of the flat default.
     """
+    return _shift_rate_source(shift, role_rates, fallback, person_rates, role_typical)[0]
+
+
+# Where an hour's wage came from (_shift_rate_source): the POS's pay on the
+# punch, the person's own rate (the owner's for them, or their pay on their
+# other punches), the owner's rate for the role, what the role's people
+# make, or the flat fallback nothing on file backs.
+RATE_SOURCES = ("punch", "person", "role_rate", "role_typical", "fallback")
+
+
+def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
+                       role_typical: dict = None) -> tuple:
+    """(rate, source) for one shift — _shift_rate's one chain, saying which
+    link priced the hour (RATE_SOURCES), so the budget's divisor can say how
+    much of it rests on a wage nobody entered (schedule audit 10/3/26 D-2,
+    E-24)."""
     # What the POS's payroll pays this person (rpower.normalise_entries'
     # pay_rate) is what the hour cost - it beats any rate set for the role.
     # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
     # $21-24 and servers at $9 on every punch (9/28/26).
     paid = _punch_pay(shift)
     if paid:
-        return paid
+        return paid, "punch"
     # This person's own rate: the owner's for them (models.person_rates),
     # else their pay on their other punches (rate_book) - a host's $0 PM
     # punch costs what her AM punches pay.
     if person_rates:
         own = person_rates.get(_name_key(shift.get("employee")))
         if own:
-            return own
+            return own, "person"
+    role_rates = role_rates or {}
     default = role_rates.get("_default", fallback)
     raw = shift.get("role", "") or ""
-    if raw in role_rates:
-        return role_rates[raw]
+    if raw in role_rates and raw != "_default":
+        return role_rates[raw], "role_rate"
     key = raw.strip().lower()
     for name, rate in role_rates.items():
         if name != "_default" and (name or "").strip().lower() == key:
-            return rate
+            return rate, "role_rate"
     # Nobody's rate and no rate set for the role: what the role's people make.
     if role_typical and role_typical.get(key):
-        return role_typical[key]
-    return default
+        return role_typical[key], "role_typical"
+    return default, "fallback"
+
+
+# The share of the costed hours priced at a wage nobody entered (the flat
+# $26 fallback) past which the hours budget says so beside itself, and the
+# share past which it is too unsure to cut shifts to (schedule audit
+# 10/3/26 E-24). Under the first, the assumed hours move the budget by
+# under ~3%; past the second the budget is mostly a guess.
+ASSUMED_RATE_CAVEAT_SHARE = 0.05
+ASSUMED_RATE_TRIM_SHARE = 0.25
+
+
+def labor_rate_basis(shifts: list, role_rates: dict, fallback: float, person_rates: dict = None,
+                     fallback_assumed: bool = True) -> dict:
+    """What an hour of this restaurant's hourly labor costs, measured from
+    the same chain that prices its punches (_shift_rate_source): the POS's
+    own pay, the owner's rate for a person or a role, what the role's
+    people make — and only then the flat fallback.
+
+    The hours budget used to be divided by models.compute_blended_rate,
+    which reads the owner's role rates and the flat rate only. At Simple
+    EJ's role_rates_json holds the tipped roles alone ($9-15), so cooks and
+    dishwashers fell to the $26 default in the budget while the same week's
+    cost estimate priced them at their punches' $21-24: the budget and the
+    draft's price used two different wages (schedule audit 10/3/26 D-2).
+    This is costed straight-time labor ÷ its hours — no overtime premium
+    and no salaries (the caller's shifts are the hourly ones).
+
+    `fallback_assumed`: whether the fallback is Cavnar AI's assumed wage
+    (the owner set no flat rate of their own) — then hours priced by it
+    are `assumed_hours`, and the budget says so (E-24).
+
+    {"rate", "hours", "by_source": {source: hours}, "by_role": {role:
+    {"rate", "hours", "source", "assumed"}}, "assumed_hours",
+    "assumed_share", "assumed_rate", "assumed_roles", "basis"} — basis is
+    "measured" (nothing assumed), "partly_assumed" or "assumed" (past half).
+    {"rate": None, ...} when no shift carries hours."""
+    role_rates = role_rates if role_rates else {"_default": fallback}
+    people, typical = rate_book(shifts or [], person_rates)
+    default = role_rates.get("_default", fallback)
+    total_h = total_c = 0.0
+    by_source = {}
+    roles = {}
+    for s in shifts or ():
+        h = _shift_hours(s)
+        if not h or h != h or h <= 0 or h == float("inf"):
+            continue
+        rate, src = _shift_rate_source(s, role_rates, fallback, people, typical)
+        try:
+            rate = float(rate)
+        except (TypeError, ValueError):
+            continue
+        total_h += h
+        total_c += h * rate
+        by_source[src] = by_source.get(src, 0.0) + h
+        role = (s.get("role") or "").strip() or "Unassigned"
+        e = roles.setdefault(role, {"hours": 0.0, "cost": 0.0, "sources": {}})
+        e["hours"] += h
+        e["cost"] += h * rate
+        e["sources"][src] = e["sources"].get(src, 0.0) + h
+    out = {"rate": None, "hours": round(total_h, 1), "by_source": {k: round(v, 1) for k, v in by_source.items()},
+           "by_role": {}, "assumed_hours": 0.0, "assumed_share": 0.0,
+           "assumed_rate": round(float(default or 0), 2), "assumed_roles": [], "basis": "measured"}
+    if total_h <= 0:
+        return out
+    out["rate"] = round(total_c / total_h, 2)
+    assumed = by_source.get("fallback", 0.0) if fallback_assumed else 0.0
+    out["assumed_hours"] = round(assumed, 1)
+    out["assumed_share"] = round(assumed / total_h, 3)
+    for role, e in sorted(roles.items(), key=lambda kv: -kv[1]["hours"]):
+        main = max(e["sources"].items(), key=lambda kv: kv[1])[0]
+        fb = e["sources"].get("fallback", 0.0)
+        out["by_role"][role] = {"rate": round(e["cost"] / e["hours"], 2), "hours": round(e["hours"], 1),
+                                "source": main, "assumed": bool(fallback_assumed and fb >= e["hours"] / 2.0)}
+    out["assumed_roles"] = [r for r, v in out["by_role"].items() if v["assumed"]]
+    if out["assumed_share"] > 0.5:
+        out["basis"] = "assumed"
+    elif out["assumed_share"] > 0:
+        out["basis"] = "partly_assumed"
+    return out
+
+
+RATE_SOURCE_WORDS = {"punch": "POS pay", "person": "their own rate", "role_rate": "your rate for the role",
+                     "role_typical": "what the role's people make", "fallback": "assumed"}
+
+
+def rate_caveat(rate_basis: dict) -> dict:
+    """{"caveat", "trim_ok", "assumed_share"} for an hours budget divided by
+    `rate_basis` (labor_rate_basis): a sentence once at least
+    ASSUMED_RATE_CAVEAT_SHARE of the hours rest on the assumed wage, and
+    trim_ok False past ASSUMED_RATE_TRIM_SHARE — a ceiling that is mostly a
+    guessed wage is not one to cut real shifts to (schedule audit 10/3/26
+    E-24). The words name the roles with no pay on file, never a person."""
+    rb = rate_basis or {}
+    share = float(rb.get("assumed_share") or 0)
+    out = {"caveat": None, "trim_ok": True, "assumed_share": round(share, 3)}
+    if not rb.get("rate") or share < ASSUMED_RATE_CAVEAT_SHARE:
+        return out
+    rate = float(rb.get("assumed_rate") or DEFAULT_HOURLY_RATE)
+    roles = list(rb.get("assumed_roles") or [])[:4]
+    who = (" (" + ", ".join(roles) + ")") if roles else ""
+    if share > 0.5:
+        out["caveat"] = (f"Budget assumes ${rate:g}/hr — set pay rates: {int(round(share * 100))}% of the hours"
+                         f"{who} have no pay rate on file, so the hours budget is an estimate.")
+    else:
+        out["caveat"] = (f"Budget assumes ${rate:g}/hr for {int(round(share * 100))}% of the hours{who} — set pay "
+                         f"rates for those roles and the budget is measured.")
+    if share > ASSUMED_RATE_TRIM_SHARE:
+        out["trim_ok"] = False
+        out["caveat"] += " Shifts are not cut to it until then."
+    return out
 
 
 def _shift_hours(shift: dict) -> float:
@@ -3117,7 +3263,7 @@ def _role_family(role, families=None) -> str:
     return role_family(role, families)
 
 
-def historical_patterns(shifts: list) -> dict:
+def historical_patterns(shifts: list, published_rows: list = None, salaried=None, close_times: dict = None) -> dict:
     """What this restaurant's own history says about how it staffs.
 
     Two signals the Shift Quality Engine needs and that only the shift data
@@ -3128,64 +3274,175 @@ def historical_patterns(shifts: list) -> dict:
     live-rescore path a manager hits after moving a shift needs the same
     numbers. Two hand-rolled versions of this is how the score on screen
     starts disagreeing with the score in the schedule.
+
+    salaried — salaried people (models.salaried_name_key): their punches
+        never count toward the usual crew. Managers barely punch (Erik 1,
+        Jim 0 at Simple EJ's), so their few punches made "Manager FOH"
+        typical near zero or random by weekday, while the budget already
+        left the same punches out (schedule audit 10/3/26 D-4).
+    published_rows — rows of the restaurant's published weeks (the
+        manager's final word). For the people who never punch — the
+        salaried, and anyone with no punch in the history — their published
+        shifts are the record of when they work, and a role's usual crew is
+        the larger of what the punches and what the published weeks show
+        (L-1): a salaried manager's role had no usual headcount at all,
+        which is how a first week drafted zero managers.
+    close_times — {weekday: close}: on a weekday closing past 11pm, the
+        people on the floor from 10pm to close are its late segment's usual
+        crew (`late_headcount`, D-32). Without a close on file a date's own
+        latest shift past 11pm stands for its close.
     """
     from collections import defaultdict as _dd
-    by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
-    dates_by_day = _dd(set)
-    roles_by_employee = _dd(set)
+    from shift_quality import late_window, late_minutes
+    sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
 
+    def _key(name):
+        return " ".join(str(name or "").lower().split())
+
+    roles_by_employee = _dd(set)
+    punch_rows = []
+    punched = set()
     from schedule_rules import is_training_role as _is_training
     from shift_quality import role_family as _family
     for s in shifts or []:
-        date = (s.get("date") or "").strip()
-        role = (s.get("role") or "").strip()
         name = (s.get("employee") or "").strip()
+        role = (s.get("role") or "").strip()
         # A training job code ("Training") is not a role with a headcount of
         # its own: history asked every draft for "Training 1" (schedule audit
         # 10/3/26 D-16).
         if _is_training(role):
             continue
         if name and role:
+            # Who can flex is a capability, read from every punch.
             roles_by_employee[name].add(role)
-        if not date:
+        if _key(name) in sal:
             continue
-        try:
-            day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-        except (ValueError, TypeError):
-            day = (s.get("day") or "").strip()
-        if not day:
-            continue
-        dates_by_day[day].add(date)
-        if name and role:
-            # Every daypart the shift was on the floor for, by the same rule
-            # the Shift Quality Engine counts a draft with
-            # (shift_quality.present_dayparts). Counted by start time alone,
-            # a restaurant that runs 11:30am-7pm servers had its dinner
-            # requirement set too low here and its draft's dinner read short
-            # there — the requirement and the measurement must agree.
-            for part in _present_dayparts(s):
-                by_role_date[day][part][role][date].add(name)
+        punch_rows.append(s)
+        if name:
+            punched.add(_key(name))
+    # A published week's rows count only for the people with no punch of
+    # their own — everyone else's hours are already in the punches.
+    pub_rows = [r for r in published_rows or []
+                if (r.get("employee") or "").strip() and not _is_training((r.get("role") or "").strip())
+                and (_key(r.get("employee")) in sal or _key(r.get("employee")) not in punched)]
 
-    typical = {}
-    for day, parts in by_role_date.items():
-        # The most recent TYPICAL_WEEKS of this weekday, the newest counting
-        # most: a year of history averaged flat staffed next week like last
-        # winter, and a roster that grew in the spring read as short.
-        dates = sorted(dates_by_day[day])[-TYPICAL_WEEKS:]
-        weight = {d: i + 1 for i, d in enumerate(dates)}
-        total_w = float(sum(weight.values())) or 1.0
-        for part in ("morning", "night"):
+    def _count(rows):
+        by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
+        dates_by_day = _dd(set)
+        late_by = _dd(lambda: _dd(lambda: _dd(set)))
+        latest = {}
+        for s in rows:
+            date_ = (s.get("date") or "").strip()[:10]
+            e = _late_end(s)
+            if date_ and e is not None:
+                latest[date_] = max(latest.get(date_, 0), e)
+        late_dates = {}                       # day -> {date: window}
+        for s in rows:
+            date_ = (s.get("date") or "").strip()[:10]
+            role = (s.get("role") or "").strip()
+            name = (s.get("employee") or "").strip()
+            if not date_:
+                continue
+            try:
+                day = datetime.strptime(date_, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                day = (s.get("day") or "").strip()
+            if not day:
+                continue
+            dates_by_day[day].add(date_)
+            if name and role:
+                # Every daypart the shift was on the floor for, by the same rule
+                # the Shift Quality Engine counts a draft with
+                # (shift_quality.present_dayparts). Counted by start time alone,
+                # a restaurant that runs 11:30am-7pm servers had its dinner
+                # requirement set too low here and its draft's dinner read short
+                # there — the requirement and the measurement must agree.
+                for part in _present_dayparts(s):
+                    by_role_date[day][part][role][date_].add(name)
+                close_m = _close_m((close_times or {}).get(day))
+                window = late_window(close_m if close_m is not None else latest.get(date_))
+                if window:
+                    late_dates.setdefault(day, {})[date_] = window
+                    if late_minutes(s, window) > 0:
+                        late_by[day][role][date_].add((name, s.get("shift_start"), s.get("shift_end")))
+        return by_role_date, dates_by_day, late_by, late_dates
+
+    def _typical(by_role_date, dates_by_day):
+        typical = {}
+        for day, parts in by_role_date.items():
+            # The most recent TYPICAL_WEEKS of this weekday, the newest counting
+            # most: a year of history averaged flat staffed next week like last
+            # winter, and a roster that grew in the spring read as short.
+            dates = sorted(dates_by_day[day])[-TYPICAL_WEEKS:]
+            weight = {d: i + 1 for i, d in enumerate(dates)}
+            total_w = float(sum(weight.values())) or 1.0
+            for part in ("morning", "night"):
+                counts = {}
+                for role, per_date in parts.get(part, {}).items():
+                    # Averaged over every date this weekday ran, not only the
+                    # dates this role appeared — otherwise an occasional role
+                    # reads as a permanent one.
+                    n = int(math.floor(
+                        sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+                    if n:
+                        counts[role] = n
+                if counts:
+                    typical[(day, part)] = counts
+        return typical
+
+    def _held(spans, window):
+        # The people a role holds ACROSS the late window: the median of its
+        # count at each half hour from 10pm to close — a bartender leaving
+        # at 11 is not the 2am close's crew.
+        counts = []
+        for t in range(window[0], window[1], 30):
+            on = 0
+            for _n, st, en in spans:
+                a, b = _clock_minutes(st), _clock_minutes(en)
+                if a is None or b is None:
+                    continue
+                if b <= a:
+                    b += 24 * 60
+                if a <= t < b:
+                    on += 1
+            counts.append(on)
+        counts.sort()
+        return counts[len(counts) // 2] if counts else 0
+
+    def _late(late_by, late_dates):
+        out = {}
+        for day, per_role in late_by.items():
+            windows = late_dates.get(day) or {}
+            dates = sorted(windows)[-TYPICAL_WEEKS:]
+            weight = {d: i + 1 for i, d in enumerate(dates)}
+            total_w = float(sum(weight.values())) or 1.0
             counts = {}
-            for role, per_date in parts.get(part, {}).items():
-                # Averaged over every date this weekday ran, not only the
-                # dates this role appeared — otherwise an occasional role
-                # reads as a permanent one.
-                n = int(math.floor(
-                    sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+            for role, per_date in per_role.items():
+                n = int(math.floor(sum(_held(per_date.get(d, ()), windows[d]) * weight[d] for d in dates)
+                                   / total_w + 0.5))
                 if n:
                     counts[role] = n
             if counts:
-                typical[(day, part)] = counts
+                out[day] = counts
+        return out
+
+    p_by, p_dates, p_late, p_late_dates = _count(punch_rows)
+    typical = _typical(p_by, p_dates)
+    late = _late(p_late, p_late_dates)
+    published_typical = {}
+    if pub_rows:
+        b_by, b_dates, b_late, b_late_dates = _count(pub_rows)
+        published_typical = _typical(b_by, b_dates)
+        for key, roles in published_typical.items():
+            slot = typical.setdefault(key, {})
+            for role, n in roles.items():
+                match = next((r for r in slot if r.strip().lower() == role.strip().lower()), role)
+                slot[match] = max(int(slot.get(match, 0) or 0), int(n))
+        for day, roles in _late(b_late, b_late_dates).items():
+            slot = late.setdefault(day, {})
+            for role, n in roles.items():
+                match = next((r for r in slot if r.strip().lower() == role.strip().lower()), role)
+                slot[match] = max(int(slot.get(match, 0) or 0), int(n))
 
     return {
         "typical_headcount": typical,
@@ -3193,7 +3450,95 @@ def historical_patterns(shifts: list) -> dict:
         # who works "Server AM" and "Server PM" is not cross-trained (D-13).
         "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items()
                           if len({_family(x) for x in r}) > 1},
+        # From 10pm to close on a weekday that closes past 11pm (D-32).
+        "late_headcount": late,
+        # Where the published weeks set a role's usual crew (L-1), for the
+        # review to say: {(weekday, daypart): {role: people}}.
+        "published_headcount": published_typical,
     }
+
+
+def _close_m(value):
+    """A close time as minutes past its own day's midnight (a small-hours
+    close past 24h), or None."""
+    m = _clock_minutes(value)
+    if m is None:
+        return None
+    return m + 24 * 60 if m < 5 * 60 else m
+
+
+def _late_end(row):
+    """A row's end on its own date's clock (an end at or before the start
+    crosses midnight), or None."""
+    s, e = _clock_minutes(row.get("shift_start")), _clock_minutes(row.get("shift_end"))
+    if e is None:
+        return None
+    if s is not None and e <= s:
+        e += 24 * 60
+    return e
+
+
+def _clock_minutes(value):
+    raw = str(value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(raw, fmt)
+            return t.hour * 60 + t.minute
+        except ValueError:
+            continue
+    return None
+
+
+def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL_WEEKS) -> list:
+    """The rows of the restaurant's published weeks — each week's latest
+    published version — starting in the `weeks` weeks before `before` (an
+    ISO date; default the restaurant's today). [] when none, or on any
+    failure (the baseline then reads the punches alone)."""
+    try:
+        import canonical_facts as _cf
+        from models import get_schedule_history_detail
+        from schedule_versions import rows_from_csv
+        if before is None:
+            from time_utils import restaurant_now_by_id
+            before = restaurant_now_by_id(restaurant_id).date().isoformat()
+        b = date.fromisoformat(str(before)[:10])
+        since = (b - timedelta(weeks=int(weeks))).isoformat()
+        rows = []
+        for w in _cf.published_weeks(restaurant_id, since):
+            if w["week_start"] >= b.isoformat():
+                continue
+            detail = get_schedule_history_detail(w["history_id"], restaurant_id) or {}
+            rows.extend(rows_from_csv(detail.get("schedule_csv") or ""))
+        return rows
+    except Exception as e:
+        print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
+        return []
+
+
+def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_times: dict = None) -> dict:
+    """historical_patterns as the schedule reads it — the ONE baseline the
+    draft's requirements, the score and the live rescore share: the punches
+    less the salaried (D-4), the published weeks for the people who never
+    punch (L-1), the late segment by the restaurant's close times (D-32),
+    and the manager's settled headcount adjustments on top
+    (apply_learned_headcount)."""
+    if shifts is None:
+        shifts = load_shifts_for_restaurant(restaurant_id) or []
+    salaried = set()
+    try:
+        from models import get_restaurant, salaried_staff, salaried_name_key, get_close_times
+        r = get_restaurant(restaurant_id)
+        salaried = {salaried_name_key(s["name"]) for s in salaried_staff(r)}
+        if close_times is None:
+            close_times = get_close_times(restaurant_id)
+    except Exception as e:
+        print(f"[labor] baseline settings unreadable for {restaurant_id}: {e}")
+    patterns = historical_patterns(shifts, published_rows=published_rows_for_baseline(restaurant_id, before),
+                                   salaried=salaried, close_times=close_times or {})
+    patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
+    return patterns
 
 
 def _quality_rules_block() -> str:
@@ -3306,15 +3651,37 @@ SCHED_FINDINGS_HEADER = ("CAVNAR AI QUESTIONS (not the owner's words — questio
 
 def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourly_rate: float,
                     yoy_context: list = None, projected_revenue_override: float = None,
-                    monthly_revenue_target: float = 0.0) -> dict:
+                    monthly_revenue_target: float = 0.0, salaried: dict = None, closed_dates=(),
+                    date_demand: dict = None, rate_basis: dict = None, show_salary: bool = True) -> dict:
     """The week's money and hours before anything is drafted: the projected
     sales, the PAR hours budget they buy at the labor target, its dollars,
     and the hours each day's forecast calls for. One implementation for the
     draft (generate_optimized_schedule) and the Studio's Forecast tab
     (schedule_engine.forecast_preview), so the tab shows the numbers the
-    draft is then given. `week_dates` are the seven ISO dates from Monday."""
+    draft is then given. `week_dates` are the seven ISO dates from Monday.
+
+    salaried — models.salaried_week_share for this week ({cost, people,
+        trading_days}): the target judges labor WITH salaries (9/30/26), so
+        the hourly crew gets the target's dollars less the salaried staff's
+        share of the week. Sized against the whole target, the hourly crew
+        was handed all 35% and the salaries landed on top: Simple EJ's ran
+        41-45% all-in while "under budget" (schedule audit 10/3/26 D-1).
+    closed_dates — dates the restaurant does not trade: no hours target,
+        and their usual sales leave the week's projection.
+    date_demand — schedule_economics.date_demand: each date's projected
+        sales against its weekday's typical, with the reasons. Each day's
+        target is its weekday's usual hours moved by that date's demand,
+        then scaled to the budget — a measured +40% holiday takes its extra
+        hours on its own date, not spread across seven (D-24).
+    rate_basis — labor.labor_rate_basis behind `hourly_rate`: how much of
+        the wage the hours are bought at is assumed (E-24, rate_caveat).
+    show_salary — False for a reader who may not see salaries
+        (models.viewer_sees_salaries): the basis then names the deduction
+        without its dollars."""
     week_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     analysis = analysis or {}
+    closed = {str(d)[:10] for d in (closed_dates or ())}
+    demand = date_demand or {}
     # Compute PAR hours budget — the revenue target takes priority, then YoY sum, then recent.
     # The target is stored monthly; ÷ 52/12 is exactly the weekly figure an
     # owner who plans by the week typed (models.monthly_from_weekly).
@@ -3330,13 +3697,16 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
         projected_revenue = round(monthly_revenue_target / _WPM, 0)  # monthly → weekly (one month definition)
         revenue_basis = "monthly"
     elif yoy_context:
-        yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
+        # Last year's sales moved by this year's trend (models.
+        # get_yoy_schedule_context's yoy_sales_adjusted, D-29): a business
+        # running 15% up was budgeted at last year's level.
+        yoy_sales = [r.get("yoy_sales_adjusted") or r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
         # Only a WHOLE prior-year week projects a week: four days of last
         # year's sales summed as if they were seven understated the budget
         # (re-audit B3#19). A partial week falls through to the recent
         # period below.
         if yoy_sales and len(yoy_sales) == len(yoy_context):
-            projected_revenue = sum(yoy_sales)
+            projected_revenue = round(sum(float(v) for v in yoy_sales), 0)
             revenue_basis = "last_year"
     if not projected_revenue:
         # Scale the synced period up to a week by CALENDAR days covered, not
@@ -3353,16 +3723,69 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
             revenue_basis = "recent" if projected_revenue else None
         elif _period:
             projected_revenue = 0.0
-    hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
-    labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
+    # A date the restaurant is closed (Christmas) takes no sales: its share
+    # of the week's projection — its own projected sales against the week's
+    # — leaves the figure. A weekday it never trades has no typical sales,
+    # so a projection that never counted it loses nothing.
+    closed_share = 0.0
+    if projected_revenue and closed:
+        # A closed date weighs what a typical night of its weekday sells —
+        # the night the projection counted it as; an open date its own
+        # projected sales.
+        weights = {d: float((demand.get(d) or {}).get("typical_sales" if d in closed else "projected_sales") or 0)
+                   for d in week_dates}
+        whole = sum(weights.values())
+        if whole > 0:
+            closed_share = sum(v for d, v in weights.items() if d in closed) / whole
+            projected_revenue = round(projected_revenue * (1 - closed_share), 0)
+    projected_revenue = round(float(projected_revenue or 0), 2) if projected_revenue else 0.0
 
-    # Compute per-day hour targets scaled from YoY totals to hit PAR.
-    # _daily_target_map (date -> target hours) is the structured form of
-    # the same numbers, returned below for the deterministic top-up pass
-    # in client_api.py — the AI only ever sees the text block, but the
-    # top-up needs real per-day numbers to know which days to add to.
+    # The all-in target's dollars, less the salaried staff's share of the
+    # week: what is left for the hourly crew (D-1).
+    target_dollars = round(projected_revenue * (labor_target / 100), 0) if projected_revenue else 0.0
+    sal = salaried if (salaried and float(salaried.get("cost") or 0) > 0) else None
+    hourly_dollars = float(target_dollars)
+    if sal:
+        hourly_dollars = max(0.0, float(target_dollars) - float(sal["cost"]))
+    hours_budget = round(hourly_dollars / hourly_rate, 1) if (hourly_rate and projected_revenue) else 0
+    labor_budget_dollars = round(hourly_dollars, 0) if projected_revenue else 0.0
+
+    rate_note = rate_caveat(rate_basis)
+    basis = {"kind": "all_in_less_salaries" if sal else "all_in", "target_pct": labor_target,
+             "rate": round(float(hourly_rate or 0), 2), "rate_basis": (rate_basis or {}).get("basis"),
+             "assumed_share": rate_note["assumed_share"], "caveat": rate_note["caveat"],
+             "trim_ok": bool(rate_note["trim_ok"] and hours_budget > 0),
+             "closed_dates": sorted(d for d in closed if d in set(week_dates or ())),
+             "closed_share": round(closed_share, 3)}
+    if sal:
+        basis.update({"salaried_people": int(sal.get("people") or 0), "trading_days": int(sal.get("trading_days") or 0)})
+        if show_salary:
+            basis["salaried_week_cost"] = round(float(sal["cost"]), 0)
+            basis["target_dollars"] = target_dollars
+        if projected_revenue and hourly_dollars <= 0:
+            basis["salaries_exceed_target"] = True
+    if not projected_revenue:
+        basis["text"] = None
+    elif sal and hourly_dollars <= 0:
+        basis["text"] = (f"Your {labor_target:g}% labor target counts salaries, and the salaried staff's pay for the "
+                         f"week alone reaches it — no hourly hours fit under the target.")
+    elif sal:
+        basis["text"] = (f"Your {labor_target:g}% labor target counts salaries: the hourly budget is the target's "
+                         f"dollars less the {sal.get('people')} salaried "
+                         f"{'person' if int(sal.get('people') or 0) == 1 else 'people'}'s pay for the week's "
+                         f"{sal.get('trading_days')} trading days.")
+    else:
+        basis["text"] = f"Nobody is salaried, so the hourly budget is the whole {labor_target:g}% labor target."
+
+    # Per-day targets: each OPEN date's share of the budget, from its
+    # weekday's usual hours here, moved by that date's own demand (D-24).
+    # _daily_target_map (date -> target hours) is the structured form of the
+    # same numbers, for the deterministic passes and the scorer — the model
+    # only ever sees the text block.
     _daily_targets = ""
     _daily_target_map: dict = {}
+    _daily_reasons: dict = {}
+    _target_basis = None
     # A scale factor of budget/covered-hours hands the WHOLE week's budget
     # to whichever days happen to carry history. With two of seven days
     # covered, those two days were each told to absorb roughly triple their
@@ -3370,68 +3793,77 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     # otherwise the covered days keep their own historical hours as targets
     # and the block says the week is only partly covered.
     _MIN_DAYS_COVERED_TO_SCALE = 5
-    if yoy_context:
-        _yoy_days = [r for r in yoy_context if float(r.get("yoy_hours") or 0) > 0]
-        _yoy_total = sum(float(r.get("yoy_hours") or 0) for r in _yoy_days)
-        if _yoy_total > 0:
-            _covered = len(_yoy_days)
-            _scale = (hours_budget / _yoy_total) if _covered >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
-            _day_lines = []
-            for _r in _yoy_days:
-                _target_h = round(float(_r["yoy_hours"]) * _scale, 1)
-                _day_lines.append(f"    {_r['next_week_dow']} {_r['next_week_date']}: {_target_h}h")
-                _daily_target_map[_r['next_week_date']] = _target_h
-            if _day_lines:
-                _hdr = ("\n  Per-day targets (YoY scaled to PAR):\n" if _covered >= _MIN_DAYS_COVERED_TO_SCALE else
-                        f"\n  Per-day targets — last year's own hours, NOT scaled to the weekly budget. Only "
-                        f"{_covered} of 7 days have prior-year data, so spreading the whole week's budget across "
-                        f"them would over-staff those days badly. Staff the uncovered days from TYPICAL HEADCOUNT "
-                        f"and do not try to hit the weekly hours total from these days alone:\n")
-                _daily_targets = _hdr + "\n".join(_day_lines)
-
-    # Fallback for a restaurant with no real YoY history yet (same-day-
-    # last-year data needs a full year on the platform — Gia Mia's 2-week
-    # seed history never has it, and this fallback was consistently
-    # missing every time this was tested live this session). Without it, a
-    # large PAR gap got a single abstract "hit 1314h somehow" instruction
-    # with no per-day breakdown at all — far easier to under-shoot than 7
-    # concrete numbers. Scales actual historical hours-by-weekday (same
-    # technique as the YoY branch above, just sourced from by_day instead
-    # of a prior year) up to the PAR total.
-    if not _daily_targets:
-        # Averaged per weekday occurrence, not summed. A period that
-        # happens to contain four Mondays and three Fridays weighted Monday
-        # a third heavier than it should have been purely because of where
-        # the period boundaries fell.
-        _hist_sum: dict = {}
-        _hist_n: dict = {}
-        for _date, _d in (analysis.get("by_day") or {}).items():
+    # This year's own hours by weekday first — averaged per weekday
+    # occurrence, not summed (a period with four Mondays and three Fridays
+    # weighted Monday a third heavier). Last year's same days are the shape
+    # only when this year covers too little of the week: they are secondary
+    # to this year's pattern and the week's projection (D-29).
+    _hist_sum: dict = {}
+    _hist_n: dict = {}
+    for _date, _d in (analysis.get("by_day") or {}).items():
+        try:
+            _dow = datetime.strptime(_date, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        _hist_sum[_dow] = _hist_sum.get(_dow, 0.0) + float(_d.get("actual") or 0)
+        _hist_n[_dow] = _hist_n.get(_dow, 0) + 1
+    _hist_by_dow = {k: (_hist_sum[k] / _hist_n[k]) for k in _hist_sum if _hist_n.get(k)}
+    base = {}
+    for _wd, _wdate in zip(week_days, week_dates):
+        if _wdate in closed:
+            continue
+        if _hist_by_dow.get(_wd, 0.0) > 0:
+            base[_wdate] = _hist_by_dow[_wd]
+    if len(base) >= _MIN_DAYS_COVERED_TO_SCALE:
+        _target_basis = "recent"
+    else:
+        _yoy = {r.get("next_week_date"): float(r.get("yoy_hours") or 0) for r in (yoy_context or [])
+                if float(r.get("yoy_hours") or 0) > 0 and r.get("next_week_date") not in closed}
+        if len(_yoy) > len(base):
+            base, _target_basis = _yoy, "last_year"
+        elif base:
+            _target_basis = "recent"
+    if base:
+        # The same bounded factor the requirements table scales the usual
+        # crew by (schedule_requirements.demand_factor), so a day's hours and
+        # its people move together.
+        from schedule_requirements import demand_factor as _demand_factor
+        weights = {}
+        for d, h in base.items():
+            _ratio = (demand.get(d) or {}).get("ratio")
+            f = _demand_factor(_ratio) if _ratio else 1.0
+            weights[d] = h * f
+            why = list((demand.get(d) or {}).get("reasons") or [])
+            if abs(f - 1.0) >= 0.005 and why:
+                _daily_reasons[d] = why
+        _scaled = len(base) >= _MIN_DAYS_COVERED_TO_SCALE and hours_budget > 0
+        total_w = sum(weights.values())
+        _scale = (hours_budget / total_w) if (_scaled and total_w > 0) else 1.0
+        _day_lines = []
+        for _wdate in sorted(weights):
             try:
-                _dow = datetime.strptime(_date, "%Y-%m-%d").strftime("%A")
+                _wd = datetime.strptime(_wdate, "%Y-%m-%d").strftime("%A")
             except (ValueError, TypeError):
-                continue
-            _hist_sum[_dow] = _hist_sum.get(_dow, 0.0) + float(_d.get("actual") or 0)
-            _hist_n[_dow] = _hist_n.get(_dow, 0) + 1
-        _hist_by_dow = {k: (_hist_sum[k] / _hist_n[k]) for k in _hist_sum if _hist_n.get(k)}
-        _hist_total = sum(_hist_by_dow.values())
-        _covered2 = sum(1 for v in _hist_by_dow.values() if v > 0)
-        if _hist_total > 0:
-            _scale2 = (hours_budget / _hist_total) if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else 1.0
-            _day_lines2 = []
-            for _wd, _wdate in zip(week_days, week_dates):
-                _h = _hist_by_dow.get(_wd, 0.0)
-                if _h:
-                    _target_h2 = round(_h * _scale2, 1)
-                    _day_lines2.append(f"    {_wd} {_wdate}: {_target_h2}h")
-                    _daily_target_map[_wdate] = _target_h2
-            if _day_lines2:
-                _hdr2 = ("\n  Per-day targets (this restaurant's own average hours for each weekday, scaled to "
-                         "the weekly budget — no YoY data available):\n"
-                         if _covered2 >= _MIN_DAYS_COVERED_TO_SCALE else
-                         f"\n  Per-day targets — this restaurant's own average hours per weekday, NOT scaled to "
-                         f"the weekly budget. Only {_covered2} of 7 weekdays appear in the synced history, so "
-                         f"scaling would pile the whole week onto them:\n")
-                _daily_targets = _hdr2 + "\n".join(_day_lines2)
+                _wd = ""
+            _t = round(weights[_wdate] * _scale, 1)
+            _daily_target_map[_wdate] = _t
+            line = f"    {_wd} {_wdate}: {_t}h"
+            if _daily_reasons.get(_wdate):
+                line += " (" + "; ".join(_daily_reasons[_wdate]) + ")"
+            _day_lines.append(line)
+        _src = ("this restaurant's own average hours for each weekday" if _target_basis == "recent"
+                else "last year's hours on the same days (this year's history covers too little of the week)")
+        if _scaled:
+            _hdr = (f"\n  Per-day targets ({_src}, each moved by that date's own demand where it differs from a "
+                    f"typical one, then scaled to the weekly budget):\n")
+        else:
+            _hdr = (f"\n  Per-day targets — {_src}, NOT scaled to the weekly budget. Only {len(base)} of the week's "
+                    f"days have history, so spreading the whole budget across them would over-staff them badly. "
+                    f"Staff the other days from TYPICAL HEADCOUNT and do not try to hit the weekly hours total "
+                    f"from these days alone:\n")
+        _daily_targets = _hdr + "\n".join(_day_lines)
+    if closed and _daily_targets:
+        _daily_targets += "\n    Closed: " + ", ".join(sorted(d for d in closed if d in set(week_dates or ()))) + " — no hours."
 
     return {"projected_revenue": projected_revenue, "hours_budget": hours_budget,
             "labor_budget_dollars": labor_budget_dollars, "daily_target_hours": _daily_target_map,
@@ -3439,7 +3871,16 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
             # Which source set the week's sales: "override" (the caller's —
             # the owner's budget or the day-by-day projection), "monthly",
             # "last_year", "recent", or None when nothing could.
-            "revenue_basis": revenue_basis}
+            "revenue_basis": revenue_basis,
+            # What the budget is: the all-in target less the salaried share
+            # (or the whole target with nobody salaried), the wage it is
+            # bought at and how much of that wage is assumed (D-1, D-2, E-24).
+            "budget_basis": basis,
+            # Where each day's target came from: "recent" (this year's own
+            # hours by weekday), "last_year", or None; and why a date's share
+            # moved off its weekday's (D-24).
+            "daily_target_basis": _target_basis,
+            "daily_target_reasons": _daily_reasons}
 
 
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
@@ -3489,7 +3930,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  open_times: dict = None,
                                  close_times: dict = None,
                                  pinned_rows: list = None,
-                                 manager_plan: dict = None) -> dict:
+                                 manager_plan: dict = None,
+                                 salaried_week: dict = None,
+                                 date_demand: dict = None,
+                                 staffing_patterns: dict = None,
+                                 splh_hold: dict = None,
+                                 requirement_adjustments: list = None,
+                                 labor_standards: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -3531,6 +3978,23 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     manager_plan  — the plan they came from: each date's manager window, the
                     stretches nobody can legally cover and the managers to
                     name in PRIORITIES 1a.
+    salaried_week — models.salaried_week_share: the hourly budget is the
+                    all-in target less it (schedule audit 10/3/26 D-1).
+    date_demand   — schedule_economics.date_demand: each date's projected
+                    sales against a typical one, with the reasons; it moves
+                    the day targets (D-24) and scales SHIFT REQUIREMENTS
+                    (D-23/P-19).
+    staffing_patterns — staffing_baseline's typical headcount (punches less
+                    the salaried, published weeks for the people who never
+                    punch, the late window — L-1, D-4, D-32); computed here
+                    from `shifts` when not given.
+    splh_hold     — schedule_economics.splh_hold: per weekday and daypart,
+                    how far the usual crew must come in to meet the
+                    sales-per-labor-hour target (P-19).
+    requirement_adjustments — [{date, daypart, role, delta, reason, firm}]
+                    folded into SHIFT REQUIREMENTS with their reasons (PR-7).
+    labor_standards — labor_standards.for_requirements: the owner's own
+                    guests-per-server-hour style standards (D-25).
     """
     # Every argument, exactly as called — the CSV fallback below re-calls
     # with these. It used to re-list them by hand and dropped week_start, the
@@ -3638,9 +4102,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     import math as _math
     from collections import defaultdict as _dd
     from datetime import datetime as _dt2
-    _patterns = historical_patterns(shifts)
-    if restaurant_id:
-        _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
+    # The staffing baseline: the engine's (staffing_baseline — punches less
+    # the salaried, published weeks for the people who never punch, the late
+    # window; L-1, D-4, D-32) when it hands one over, else this history's.
+    if staffing_patterns:
+        _patterns = {k: (dict(v) if isinstance(v, dict) else v) for k, v in staffing_patterns.items()}
+    else:
+        _patterns = historical_patterns(shifts)
+        if restaurant_id:
+            _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
     _typical = _patterns.get("typical_headcount") or {}
     # A shift whose start time could not be read belongs to neither
     # daypart. Reported separately rather than folded into one of them, so
@@ -3648,7 +4118,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # people. historical_patterns leaves these out, so they are counted here.
     _unknown = _dd(lambda: _dd(lambda: _dd(set)))
     _dow_date_sets = _dd(set)
+    # The salaried never count toward a usual crew here either (D-4).
+    _sal_keys = set()
+    if restaurant_id:
+        try:
+            from models import get_restaurant as _gr_sk, salaried_staff as _ss_sk, salaried_name_key as _snk
+            _sal_keys = {_snk(x["name"]) for x in _ss_sk(_gr_sk(restaurant_id))}
+        except Exception:
+            _sal_keys = set()
     for s in shifts:
+        if _sal_keys and " ".join(str(s.get("employee") or "").lower().split()) in _sal_keys:
+            continue
         _date = (s.get("date") or "").strip()
         _dn = ""
         try:
@@ -3745,7 +4225,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build year-over-year context block (the key intelligence)
     yoy_block = ""
     if yoy_context:
+        from time_utils import mdy as _mdy_yoy
         yoy_lines = []
+        _trend = next((r.get("yoy_trend") for r in yoy_context if r.get("yoy_trend")), None) or {}
         for row in yoy_context:
             dow_name = row.get("next_week_dow", "")
             nw_date  = row.get("next_week_date", "")
@@ -3753,25 +4235,43 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 # Last year's sales may come from an imported DSR workbook,
                 # which carries no labor or hours (models.
                 # get_yoy_schedule_context, memory audit 9/29/26): only what
-                # is on file is said, never "None% labor".
-                bits = [f"${row['yoy_sales']:,.0f} sales"]
+                # is on file is said, never "None% labor". Moved by this
+                # year's trend when one is measured (D-29).
+                _adj = row.get("yoy_sales_adjusted")
+                if _trend.get("applied") and _adj and abs(float(_adj) - float(row["yoy_sales"])) >= 1:
+                    bits = [f"${float(_adj):,.0f} sales at this year's pace (${row['yoy_sales']:,.0f} last year)"]
+                else:
+                    bits = [f"${row['yoy_sales']:,.0f} sales"]
                 if row.get("yoy_labor_pct") is not None:
                     bits.append(f"{row['yoy_labor_pct']}% labor")
                 if row.get("yoy_hours"):
                     bits.append(f"{row['yoy_hours']}h total hours")
                 src = {"import": " (your imported DSR workbook)", "dsr": " (that night's report)"}.get(
                     row.get("yoy_source"), "")
-                line = f"  {dow_name} {nw_date}: last year same day → " + ", ".join(bits) + src
-                # Flag if this day is a holiday match
-                if row.get("is_holiday"):
-                    line += f" ← USE THIS (matched to {row['holiday_name']} last year)"
+                # Which night last year it is, said as it is (E-8, D-28): a
+                # holiday reads last year's same holiday whatever weekday it
+                # fell on; otherwise the same weekday, or the same weekday a
+                # week off when that one has no figure.
+                _ly = f"{row.get('yoy_dow') or ''} {_mdy_yoy(row.get('yoy_date'))}".strip()
+                if row.get("holiday_matched"):
+                    which = f"last year's {row.get('holiday_name')} ({_ly})"
+                elif row.get("yoy_substituted"):
+                    which = f"last year's same weekday a week off ({_ly}; the exact one has no figure)"
+                else:
+                    which = f"last year same day ({_ly})"
+                line = f"  {dow_name} {nw_date}: {which} → " + ", ".join(bits) + src
+                if row.get("is_holiday") and not row.get("holiday_matched"):
+                    line += (f" — {row.get('holiday_name')} this year, but last year's {row.get('holiday_name')} "
+                             f"has no figure on file: this is an ordinary night, not the holiday")
                 yoy_lines.append(line)
             else:
                 yoy_lines.append(f"  {dow_name} {nw_date}: no historical data for this day last year")
         if yoy_lines:
-            yoy_block = ("\n\nYear-over-year same-day data (the primary demand projection — "
-                         "prefer this over recent averages; it controls for holidays and seasonality):\n"
-                         + "\n".join(yoy_lines))
+            yoy_block = ("\n\nYear-over-year data (context, secondary to the week's projection and the per-day "
+                         "targets, which already carry each date's measured demand"
+                         + (f"; last year's sales are moved by this year's trend — {_trend['basis']}"
+                            if _trend.get("applied") and _trend.get("basis") else "")
+                         + "):\n" + "\n".join(yoy_lines))
 
     # Build upcoming events block
     events_block = ""
@@ -3800,18 +4300,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if _w_all_stale:
         weather_forecast = []
     if weather_forecast:
-        _weather_block = ("\n\nWeather forecast for next week — a MODEST nudge on top of TYPICAL "
-                          "HEADCOUNT and the per-day targets above, never a replacement for them. Heavy "
-                          "rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
-                          "seating; mild/clear days, especially on weekends, typically mean higher patio "
-                          "traffic. But a day can still turn out busy despite a bad forecast (or slow "
-                          "despite a good one) — actual demand routinely doesn't match the forecast, so "
-                          "weather alone should shift staffing by at most a person or two on any given "
-                          "day, never restructure it. This especially applies to a day that's ALREADY "
-                          "historically slow (e.g. a typical quiet Tuesday): its historical pattern "
-                          "already reflects ordinary weather variance for that day, so bad weather on top "
-                          "of it is not a reason to cut further below the historical baseline or the "
-                          "minimum staffing floors below — those floors hold regardless of forecast.\n"
+        # Context, not a lever (schedule audit 10/3/26 D-30): where this
+        # restaurant's rain effect is MEASURED, a rainy date's requirements
+        # and target already carry it (schedule_economics.date_demand) and
+        # the dated facts say so; an unmeasured effect moves nothing — it
+        # used to invite "a person or two" on a guess, on top of numbers.
+        _weather_block = ("\n\nWeather forecast for next week — context only. Where this restaurant's own "
+                          "nights have measured what rain does to its sales, a rainy date's SHIFT REQUIREMENTS "
+                          "and day target already carry that measured effect (the dated facts name it); "
+                          "do not adjust staffing for the weather beyond that. A day can still turn out busy "
+                          "despite a bad forecast, and the floors hold regardless of forecast. Use it to place "
+                          "patio roles and to word the summary.\n"
                           + "\n".join(_w_lines))
     else:
         # Said, not silently omitted (NS4 M8): with no block the note wrote
@@ -3864,16 +4363,36 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     # PAR, its dollars and each day's hours: one implementation, shared with
     # the Studio's Forecast tab (week_hours_plan).
+    # The hourly budget is the all-in target less the salaried staff's share
+    # of the week (D-1), bought at the measured wage (D-2), each day's share
+    # moved by that date's own demand (D-24) — and the salaries' dollars
+    # never reach the prompt (they are the owner's; the note is not).
+    _rate_basis = (analysis or {}).get("rate_basis") or None
     _plan = week_hours_plan(analysis, week_dates, labor_target, hourly_rate, yoy_context=yoy_context,
                             projected_revenue_override=projected_revenue_override,
-                            monthly_revenue_target=monthly_revenue_target)
+                            monthly_revenue_target=monthly_revenue_target, salaried=salaried_week,
+                            closed_dates=closed_dates or (), date_demand=date_demand, rate_basis=_rate_basis,
+                            show_salary=False)
     projected_revenue, hours_budget = _plan["projected_revenue"], _plan["hours_budget"]
     labor_budget_dollars = _plan["labor_budget_dollars"]
     _daily_target_map, _daily_targets = _plan["daily_target_hours"], _plan["daily_targets_text"]
+    _budget_basis = _plan.get("budget_basis") or {}
 
-    # Build role rates block
+    # Build role rates block — every role's wage as measured here (the
+    # POS's pay on its punches, the owner's rates, what its people make),
+    # not only the roles the owner typed a rate for: Simple EJ's prompt
+    # showed its tipped roles at $9-15 and nothing true for the kitchen
+    # (schedule audit 10/3/26 D-2). A role priced at the assumed wage says so.
     role_rates_block = ""
-    if role_rates:
+    _by_role = (_rate_basis or {}).get("by_role") or {}
+    if _by_role:
+        rate_lines = [f"  {role}: ${float(v['rate']):.2f}/hr ("
+                      + ("assumed — no pay rate on file" if v.get("assumed") else RATE_SOURCE_WORDS.get(v.get("source"), "measured"))
+                      + ")" for role, v in sorted(_by_role.items(), key=lambda kv: (kv[0] or "").lower())]
+        role_rates_block = ("\n\nPer-role hourly rates (what each role is paid here — use for cost-aware scheduling "
+                            "decisions):\n" + "\n".join(rate_lines)
+                            + f"\n  Blended rate: ${hourly_rate:.2f}/hr (every hourly hour, weighted by its wage)")
+    elif role_rates:
         rate_lines = [f"  {role}: ${rate:.2f}/hr" for role, rate in sorted(role_rates.items(), key=lambda x: x[0] or "") if role and role != "_default"]
         if rate_lines:
             role_rates_block = (f"\n\nPer-role hourly rates (use for cost-aware scheduling decisions):\n"
@@ -4095,7 +4614,24 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         "Staff from TYPICAL HEADCOUNT and the minimum floors; do not invent a total to aim at."
     )
 
-    if not hours_budget:
+    # Which budget this is, said in the block (D-1): the all-in target less
+    # the salaried staff's share, or the whole target with nobody salaried.
+    # The rate line says when the wage behind it is assumed (E-24).
+    if _budget_basis.get("kind") == "all_in_less_salaries":
+        _target_line = (f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% counting salaries "
+                        f"→ after the salaried staff's pay for the week, ${labor_budget_dollars:,.0f} is the hourly budget\n")
+    else:
+        _target_line = (f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = "
+                        f"${labor_budget_dollars:,.0f} (nobody is salaried, so the hourly crew has the whole target)\n")
+    _rate_line = (f"  Blended rate: ${hourly_rate}/hr"
+                  + (" (measured from what each hour is paid here)" if not _budget_basis.get("caveat")
+                     else f" — {_budget_basis['caveat']}")
+                  + f" → {hours_budget}h is the MAXIMUM for the week\n")
+    if not hours_budget and _budget_basis.get("salaries_exceed_target"):
+        par_block = (f"\n\nPAR HOURS CEILING — none: the {labor_target}% labor target counts salaries, and the "
+                     "salaried staff's pay for this week already reaches it, so no hourly hours fit under the target. "
+                     "Staff from SHIFT REQUIREMENTS and the owner's floors only — add nothing beyond them." + _daily_targets)
+    elif not hours_budget:
         # No defensible revenue projection — too little history, and no
         # revenue target on file. Stating the ceiling anyway printed
         # "0.0h is the MAXIMUM for the week", which reads as an instruction
@@ -4107,8 +4643,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                      "aim at." + _daily_targets)
     else:
         par_block = (f"\n\nPAR HOURS CEILING — schedule is verified against actual column totals:\n"
-                     f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
-                     f"  Blended rate: ${hourly_rate}/hr → {hours_budget}h is the MAXIMUM for the week\n"
+                     + _target_line + _rate_line +
                      f"  This is a ceiling, not a quota (priority 4). Coming in under it is a good outcome when "
                      f"every shift meets its SHIFT REQUIREMENTS, and needs no correction, no explanation and no "
                      f"compensating headcount. NEVER add people, extend shifts or invent coverage beyond what those "
@@ -4152,8 +4687,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if borrowed_headcount:
         from intelligence.staffing import merge_into_typical
         _req_typical, _borrowed_marks = merge_into_typical(_patterns.get("typical_headcount") or {}, borrowed_headcount)
-    _requirements_block = _req.requirements_block(_req.shift_requirements(
-        _gen_dates,
+    _req_inputs = dict(
         typical_headcount=_req_typical,
         borrowed=_borrowed_marks or None,
         role_floors=role_floors,
@@ -4164,7 +4698,6 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         leader_rules=leader_rules,
         leadership_known=bool(_scores or leader_flags),
         role_minimums=_role_minimums_dict(role_minimums_json),
-        roles=_can_work,
         skip_dates=closed_dates or (),
         # Half-hour needs across service from the measured sales curve, and
         # the section cap held over every requirement — the same shapes the
@@ -4174,7 +4707,20 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         close_times=close_times or None,
         section_cap=section_count or 0,
         cap_roles=section_cap_roles or None,
-    ))
+        # Each date's measured demand and the sales-per-labor-hour hold move
+        # the usual crew, the asks fold in with their reasons, and a late
+        # night carries its own row (D-23, P-19, PR-7, D-32, D-25).
+        date_demand=date_demand or None,
+        splh_hold=splh_hold or None,
+        adjustments=requirement_adjustments or None,
+        late_headcount=_patterns.get("late_headcount") or None,
+        standard_needs=(labor_standards or {}).get("needs") or None,
+    )
+    _requirements_block = _req.requirements_block(_req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs))
+    # The whole week's numbers, every role, from the same call with the same
+    # inputs: what the coverage score judges the draft against and what the
+    # fill passes fill to (P-19) — never a second reading of "typical".
+    _week_requirements = _req.shift_requirements(week_dates, roles=None, **_req_inputs)
     # The managers' shifts are planned in code before this call (schedule
     # audit 10/3/26 PR-1, P-8, D-4, PR-32): the table's numbers come from
     # punches, where managers rarely appear (Erik 1, Jim 0), so a manager
@@ -4265,11 +4811,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     except Exception:
         _sched_now = datetime.now(ZoneInfo('America/Chicago'))
     _sched_window_line = labor_window_line(analysis, _sched_now)[0]
+    # The window's labor % is the hourly crew's alone (the analysis leaves
+    # the salaried out); beside the all-in target it read as under target
+    # at a restaurant running 41-45% with salaries (D-1).
+    _labor_vs_target = (f"hourly staff only (target: {labor_target}%, which counts the salaried staff too — "
+                        f"the hours budget below is what that leaves for hourly labor)"
+                        if _budget_basis.get("kind") == "all_in_less_salaries" else f"(target: {labor_target}%)")
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}{_manager_block}
 
 CONTEXT:
 {_sched_window_line}
-- Overall labor over that window: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
+- Overall labor over that window: {analysis["overall_labor_pct"]}% {_labor_vs_target}
 - Blended hourly rate: ${hourly_rate}/hr
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
@@ -4291,8 +4843,7 @@ Rows for a non-routine addition — a food runner, a second/extra staff member a
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
-- The YoY same-day data, when available, is what the per-day hour targets were built from; headcount per shift comes from the SHIFT REQUIREMENTS table
-- For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
+- The per-day hour targets come from this restaurant's own hours by weekday, moved by each date's measured demand (a holiday's or an event's lift included); last year's same-day figures are context, not a second target. Headcount per shift comes from the SHIFT REQUIREMENTS table, which already carries each date's demand — do not add a lift on top of it
 {_ceiling_line}{_hours_rule}
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
@@ -4522,6 +5073,18 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "labor_target": labor_target,
         "daily_target_hours": _daily_target_map,
         "revenue_basis": _plan.get("revenue_basis"),
+        # Which budget the hours are (D-1), the wage they were bought at and
+        # how much of it is assumed (D-2, E-24: `caveat`, `trim_ok`), and
+        # why a day's target moved off its weekday's (D-24).
+        "budget_basis": _plan.get("budget_basis"),
+        "daily_target_basis": _plan.get("daily_target_basis"),
+        "daily_target_reasons": _plan.get("daily_target_reasons") or {},
+        # SHIFT REQUIREMENTS for the whole week, every role, as rows with
+        # their reasons, and as {"date|daypart": {role: people}} — the firm
+        # numbers (soft asks out) the score judges coverage against (D-23,
+        # P-19). "date|late" carries the late segment (D-32).
+        "requirements": _week_requirements,
+        "requirements_by_date": {f"{d}|{p}": v for (d, p), v in _req.requirements_map(_week_requirements).items()},
         # The staff list the prompt was actually built from, so the caller
         # can check the model's rows against it rather than trusting that
         # "use real employee names from the staff list" was obeyed.
@@ -4608,7 +5171,7 @@ def calculate_monthly_gap(analysis: dict) -> dict:
 
 # ── Sales-based demand forecast ────────────────────────────────────────────────
 
-def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = None) -> dict:
+def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = None, today=None) -> dict:
     """Per-weekday sales expectation from this restaurant's own recent history.
 
     The scheduler already knew what a typical WEEK looks like in headcount
@@ -4627,22 +5190,34 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     presenting a number built on two data points.
     """
     from models import get_conn as _gc
+    from canonical_facts import FINAL_SQL as _FINAL
+    # The window ends at the restaurant's own today: SQLite's date('now') is
+    # UTC, a day ahead every evening (schedule audit 10/3/26 D-33). Final
+    # nights only, as every other reader of the daily history.
+    if today is None:
+        try:
+            import demand as _dm
+            today = _dm.local_today(restaurant_id)
+        except Exception:
+            today = date.today()
+    since = (today - timedelta(days=int(weeks) * 7)).isoformat()
     try:
         conn = _gc(db_path) if db_path else _gc()
     except Exception:
         return {"ok": False, "reason": "no database"}
 
     try:
-        rows = conn.execute("""
-            SELECT day_of_week, sales FROM labor_daily_history
+        rows = conn.execute(f"""
+            SELECT date, day_of_week, sales FROM labor_daily_history
             WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0
-              AND date >= date('now', ?)
+              AND date >= ? AND date <= ? AND {_FINAL}
             ORDER BY date DESC
-        """, (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        """, (restaurant_id, since, today.isoformat())).fetchall()
     except Exception:
         return {"ok": False, "reason": "no history table"}
     finally:
         conn.close()
+    data_through = str(rows[0]["date"])[:10] if rows else None
 
     by_day = {}
     for r in rows:
@@ -4655,7 +5230,7 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     usable = {d: v for d, v in by_day.items() if len(v) >= 2}
     if len(usable) < 3:
         return {"ok": False, "reason": "not enough sales history yet",
-                "days_with_data": len(usable)}
+                "days_with_data": len(usable), "data_through": data_through}
 
     def _median(values):
         s = sorted(values)
@@ -4683,6 +5258,7 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     return {
         "ok": True,
         "weeks": int(weeks),
+        "data_through": data_through,
         "overall_median": round(overall, 2),
         "days": days,
         "busiest": ranked[0]["day"],
@@ -4711,11 +5287,11 @@ def format_demand_block(forecast: dict) -> str:
     return ("\n\nEXPECTED DEMAND BY DAY — this restaurant's own median sales per weekday over the "
             f"last {forecast['weeks']} weeks, so the schedule can put people where the money "
             f"actually is. {forecast['busiest']} is the busiest day and {forecast['quietest']} the "
-            "quietest. Weight staffing toward the higher-demand days and trim the quiet ones, but "
-            "treat this the same way as the weather block: it adjusts the TYPICAL HEADCOUNT "
-            "starting point by a person or two per day, it does not replace it, and it never "
-            "overrides the minimum staffing floors or a day's own coverage requirements. Median, "
-            "not average, so a one-off private event or a storm-closed day hasn't skewed it.\n"
+            "quietest. Context only: each weekday's usual crew already follows its own sales, and "
+            "each date's measured difference from its weekday is already in SHIFT REQUIREMENTS. This "
+            "block does not replace it, never overrides the minimum staffing floors, and is no reason to "
+            "adjust headcount again (schedule audit 10/3/26 D-23). Median, not average, so a one-off "
+            "private event or a storm-closed day hasn't skewed it.\n"
             + "\n".join(lines))
 
 

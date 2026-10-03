@@ -373,6 +373,9 @@ class Restaurant:
     # salary (labor.salaried_summary), never by the hour: their punches leave hourly labor.
     salaried_staff_json: Optional[str]   = None
     person_rates_json: Optional[str]     = None   # {"Kailey Gordon": 16.5} an hourly rate for one person (person_rates)
+    # The owner's own labor standards (schedule audit 10/3/26 D-25): {family:
+    # {"all"|"morning"|"night": work per hour}} — labor_standards.overrides.
+    labor_standards_json: Optional[str]  = None
     kitchen_stations_json: Optional[str] = None   # kitchen_stations.normalise: roles, stations, needs, skills (9/30/26)
     # The owner gave the admin full control (9/30/26): until this UTC time an
     # admin's view-as changes count as the owner's (permissions.counts_as_owner).
@@ -1237,6 +1240,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_rates_json", "TEXT"),
         ("restaurants", "salaried_staff_json", "TEXT"),
         ("restaurants", "person_rates_json", "TEXT"),
+        ("restaurants", "labor_standards_json", "TEXT"),
         ("restaurants", "kitchen_stations_json", "TEXT"),
         ("restaurants", "admin_control_until", "TEXT"),
         ("restaurants", "admin_control_note", "TEXT"),
@@ -4713,7 +4717,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -5365,6 +5369,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
         salaried_staff_json=row["salaried_staff_json"] if "salaried_staff_json" in row.keys() else None,
         person_rates_json=row["person_rates_json"] if "person_rates_json" in row.keys() else None,
+        labor_standards_json=row["labor_standards_json"] if "labor_standards_json" in row.keys() else None,
         kitchen_stations_json=row["kitchen_stations_json"] if "kitchen_stations_json" in row.keys() else None,
         admin_control_until=row["admin_control_until"] if "admin_control_until" in row.keys() else None,
         admin_control_note=row["admin_control_note"] if "admin_control_note" in row.keys() else None,
@@ -11033,9 +11038,13 @@ def salaried_staff(restaurant) -> list:
     return out
 
 
-def open_days_per_week(restaurant) -> int:
-    """The weekdays the restaurant trades, from its open/close times (7
-    when none are set)."""
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def trading_weekdays(restaurant) -> set:
+    """{"Monday", ...} — the weekdays the restaurant trades, from its
+    open/close times; all seven when none are set. open_days_per_week is
+    its size."""
     import json as _json
     days = set()
     for field in ("open_times_json", "close_times_json"):
@@ -11045,8 +11054,45 @@ def open_days_per_week(restaurant) -> int:
             d = {}
         if isinstance(d, dict):
             days |= {str(k).strip().lower() for k, v in d.items() if str(v or "").strip()}
-    n = len(days & {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
-    return n or 7
+    got = {w for w in _WEEKDAY_NAMES if w.lower() in days}
+    return got or set(_WEEKDAY_NAMES)
+
+
+def open_days_per_week(restaurant) -> int:
+    """The weekdays the restaurant trades, from its open/close times (7
+    when none are set)."""
+    return len(trading_weekdays(restaurant))
+
+
+def salaried_week_share(restaurant, week_dates, closed_dates=()) -> dict:
+    """{"cost", "people", "trading_days", "per_day"} — the salaried staff's
+    share of one drafted week: salaried_day_share on each of its trading
+    days (a weekday the restaurant trades, not a closed date), the same
+    basis the all-in labor % the target judges is built on. None with
+    nobody salaried.
+
+    The schedule's hourly hours budget is the all-in target less this
+    (schedule audit 10/3/26 D-1): sized against the whole 35% with the
+    salaries landing on top, Simple EJ's ran 41-45% all-in while "under
+    budget". Salaries are the owner's alone — a caller that serves a
+    non-owner shows the hourly budget without this figure."""
+    from datetime import datetime as _dt
+    share = salaried_day_share(restaurant)
+    if not share:
+        return None
+    trades = trading_weekdays(restaurant)
+    closed = {str(d)[:10] for d in (closed_dates or ())}
+    days = 0
+    for d in week_dates or ():
+        iso = str(d)[:10]
+        try:
+            wd = _dt.strptime(iso, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        if iso not in closed and wd in trades:
+            days += 1
+    return {"cost": round(float(share) * days, 2), "people": len(salaried_staff(restaurant)),
+            "trading_days": days, "per_day": round(float(share), 2)}
 
 
 def viewer_sees_salaries() -> bool:
@@ -11226,78 +11272,193 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     conn.close()
 
 
+# Year-over-year context (schedule audit 10/3/26 D-28, D-29, E-8).
+YOY_TREND_WEEKS = 8
+YOY_TREND_MIN_NIGHTS = 20                 # paired nights before last year is moved by this year's trend
+YOY_TREND_BOUNDS = (0.6, 1.6)             # a trend past these is read as a data break, held to them
+
+
+def _yoy_trend_dates(restaurant_id, today=None, weeks: int = YOY_TREND_WEEKS):
+    """(this year's trailing nights, the same nights a year back) — the two
+    windows yoy_trend compares, as ISO dates."""
+    from datetime import date as _date, timedelta as _td
+    # Callers pass the restaurant's own date; without it the server's date
+    # stands in — a day either way does not move an eight-week ratio, and
+    # the year-over-year read stays one query per store.
+    today = today or _date.today()
+    now = [(today - _td(days=i)).isoformat() for i in range(1, int(weeks) * 7 + 1)]
+    return now, [(_date.fromisoformat(d) - _td(days=364)).isoformat() for d in now]
+
+
+def yoy_trend(restaurant_id, today=None, weeks: int = YOY_TREND_WEEKS, db_path: str = DB_PATH,
+              series: dict = None) -> dict:
+    """{"ratio", "nights", "applied", "clamped", "basis"} — how this year is
+    running against last: the trailing `weeks` weeks' sales against the
+    same nights a year earlier (364 days back — the same weekdays), over
+    the nights BOTH years have a figure, each year on one basis
+    (canonical_facts.sales_history / one_basis). Last year's figures were
+    handed to the draft unadjusted, so a business 15% up was staffed to
+    last year's level (D-29). Not applied under YOY_TREND_MIN_NIGHTS paired
+    nights (ratio 1.0, `applied` False); held inside YOY_TREND_BOUNDS."""
+    from datetime import date as _date, timedelta as _td
+    import canonical_facts as _cf
+    now_dates, then_dates = _yoy_trend_dates(restaurant_id, today, weeks)
+    out = {"ratio": 1.0, "nights": 0, "applied": False, "clamped": False, "basis": None}
+    try:
+        if series is None:
+            series = _cf.net_series(restaurant_id, db_path=db_path, dates=now_dates + then_dates, pos=_cf.POS_ALL)
+        this = _cf.one_basis({d: series[d] for d in now_dates if d in series})
+        last = _cf.one_basis({d: series[d] for d in then_dates if d in series})
+    except Exception:
+        return out
+    now_sum = then_sum = 0.0
+    n = 0
+    for d, x in this.items():
+        ly = (_date.fromisoformat(d) - _td(days=364)).isoformat()
+        y = last.get(ly)
+        if not y or not x.get("net") or not y.get("net") or x["net"] <= 0 or y["net"] <= 0:
+            continue
+        now_sum += float(x["net"])
+        then_sum += float(y["net"])
+        n += 1
+    out["nights"] = n
+    if n < YOY_TREND_MIN_NIGHTS or then_sum <= 0:
+        out["basis"] = (f"only {n} night{'s' if n != 1 else ''} in the last {weeks} weeks have a figure both this "
+                        f"year and last (needs {YOY_TREND_MIN_NIGHTS}), so last year is not moved by a trend")
+        return out
+    raw = now_sum / then_sum
+    ratio = min(max(raw, YOY_TREND_BOUNDS[0]), YOY_TREND_BOUNDS[1])
+    pct = int(round((raw - 1) * 100))
+    out.update(ratio=round(ratio, 3), applied=True, clamped=ratio != raw,
+               basis=(f"the last {weeks} weeks ran {abs(pct)}% {'above' if pct >= 0 else 'below'} the same "
+                      f"{n} nights last year" + (", held to the trend's bounds" if ratio != raw else "")))
+    return out
+
+
 def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
-                              db_path: str = DB_PATH) -> list:
+                              db_path: str = DB_PATH, today=None) -> list:
     """
-    For each date in next_week_dates, find the same calendar day last year
-    (52 weeks back = same weekday). Returns a list of dicts with YoY data.
+    For each date in next_week_dates, the night last year it is read
+    against, and that night's figures:
+
+      holiday             a date that is a dining holiday reads last year's
+                          SAME holiday night — Christmas Eve 12/24/26 reads
+                          12/24/25 (a Wednesday), Thanksgiving reads last
+                          Thanksgiving — whatever weekday it fell on. The
+                          52-week alignment read Christmas Eve against last
+                          Christmas Day and New Year's Eve against New Year's
+                          Day, under a label saying "matched to" the holiday
+                          (schedule audit 10/3/26 E-8).
+      same_weekday        else 52 weeks back: the same weekday;
+      same_weekday_shift  else the same weekday a week either side, marked
+                          `yoy_substituted` — never another weekday: the
+                          ±3-day fallback read a Saturday from last year's
+                          Wednesday (D-28). A same-weekday night that was
+                          last year's holiday (July 4th, 2025, a Friday) is
+                          skipped for a date that is no holiday this year.
 
     Last year's SALES come from the one last-year reader
     (canonical_facts.sales_history — the night's report, then the owner's
     imported DSR workbook, then the POS sync's final day; memory audit
-    9/29/26, imported_year) and `yoy_source` names which: a client who
-    imported a year of workbooks but has 60 days of POS history had no
-    year-over-year context at all. Labor %, labor cost and hours come only
-    from the synced day (the import carries none) and are None when absent.
+    9/29/26, imported_year) and `yoy_source` names which. Labor %, labor
+    cost and hours come only from the synced day (the import carries none)
+    and are None when absent. `yoy_sales_adjusted` is last year's sales
+    moved by this year's trend (yoy_trend, D-29), and `yoy_trend` says by
+    how much; the draft reads it as secondary to the week's projection.
     """
     from datetime import datetime as _dt, timedelta as _td
     import canonical_facts as _cf
+    from schedule_economics import holiday_names, last_years_holiday_night, _APPROXIMATE
     conn = get_conn(db_path)
 
-    # Every candidate date across every requested date, fetched once.
-    #
-    # This was a query per offset per date — seven dates by a seven-day window
-    # is 49 round trips to answer one question about one restaurant's history
-    # (audit #17). The window and the tie-break below are unchanged; only the
-    # number of queries is.
+    def _names(day):
+        return [n for n in (holiday_names(day.year).get(day.isoformat()) or [])]
+
+    # Every candidate night across every requested date, fetched once —
+    # this was a query per offset per date (audit #17).
+    plans = {}
     wanted = set()
     for date_str in next_week_dates:
         try:
-            yoy_dt = _dt.strptime(date_str, "%Y-%m-%d") - _td(weeks=52)
+            dt = _dt.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             continue
-        for offset in range(-3, 4):
-            wanted.add((yoy_dt + _td(days=offset)).strftime("%Y-%m-%d"))
+        names = _names(dt)
+        cands = []
+        for n in names:
+            if n in _APPROXIMATE:
+                continue                    # the Super Bowl's date is the calendar's guess
+            ly = last_years_holiday_night(n, dt)
+            if ly:
+                cands.append((ly, "holiday", n))
+        base = dt - _td(weeks=52)
+        for d, kind in ((base, "same_weekday"), (base + _td(days=7), "same_weekday_shift"),
+                        (base - _td(days=7), "same_weekday_shift")):
+            # last year's holiday night is no ordinary weekday for a date
+            # that is not that holiday this year
+            ly_names = [n for n in _names(d) if n not in _APPROXIMATE]
+            if ly_names and not set(ly_names) & set(names):
+                continue
+            cands.append((d.isoformat(), kind, None))
+        plans[date_str] = (dt, names, cands)
+        wanted |= {c[0] for c in cands}
 
     by_date = {}
     canon = {}
-    if wanted:
-        marks = ",".join("?" * len(wanted))
-        for row in conn.execute(
-            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
-            f"AND {_cf.FINAL_SQL}",
-            (restaurant_id, *sorted(wanted))
-        ).fetchall():
-            by_date[row["date"]] = dict(row)
-        canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted), pos=_cf.POS_ALL)
+    # The trend's two windows ride on the same one read of each store.
+    now_dates, then_dates = _yoy_trend_dates(restaurant_id, today)
+    try:
+        if wanted:
+            marks = ",".join("?" * len(wanted))
+            for row in conn.execute(
+                f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+                f"AND {_cf.FINAL_SQL}",
+                (restaurant_id, *sorted(wanted))
+            ).fetchall():
+                by_date[row["date"]] = dict(row)
+            canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted | set(now_dates) | set(then_dates)),
+                                   pos=_cf.POS_ALL)
+    finally:
+        conn.close()
+    try:
+        trend = yoy_trend(restaurant_id, today=today, db_path=db_path, series=canon)
+    except Exception:
+        trend = {"ratio": 1.0, "nights": 0, "applied": False, "clamped": False, "basis": None}
 
     rows_out = []
     for date_str in next_week_dates:
-        try:
-            dt = _dt.strptime(date_str, "%Y-%m-%d")
-            yoy_dt = dt - _td(weeks=52)
-            order = [(yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4)]
-            # Prefer exact 52-week match, fall back to closest with data —
-            # walked in offset order, so the earliest date with data wins a
-            # tie, as before.
-            exact = yoy_dt.strftime("%Y-%m-%d")
-            pick = exact if exact in canon else next((d for d in order if d in canon), None)
-            sales = canon.get(pick) if pick else None
-            labor = by_date.get(pick) if pick else None
-            rows_out.append({
-                "next_week_date": date_str,
-                "next_week_dow": dt.strftime("%A"),
-                "yoy_date": pick,
-                "yoy_sales": sales["net"] if sales else None,
-                "yoy_source": sales["source"] if sales else None,
-                "yoy_basis": sales["basis"] if sales else None,
-                "yoy_labor_pct": labor["labor_pct"] if labor else None,
-                "yoy_labor_cost": labor["labor_cost"] if labor else None,
-                "yoy_hours": labor["total_hours"] if labor else None,
-            })
-        except Exception:
+        plan = plans.get(date_str)
+        if not plan:
             rows_out.append({"next_week_date": date_str, "yoy_date": None})
-    conn.close()
+            continue
+        dt, names, cands = plan
+        pick = next(((d, kind, n) for d, kind, n in cands if d in canon), None)
+        d, kind, matched = pick if pick else (None, None, None)
+        sales = canon.get(d) if d else None
+        labor = by_date.get(d) if d else None
+        adjusted = None
+        if sales and sales.get("net"):
+            adjusted = round(float(sales["net"]) * (trend["ratio"] if trend.get("applied") else 1.0), 2)
+        rows_out.append({
+            "next_week_date": date_str,
+            "next_week_dow": dt.strftime("%A"),
+            "yoy_date": d,
+            "yoy_dow": _dt.strptime(d, "%Y-%m-%d").strftime("%A") if d else None,
+            "yoy_match": kind,
+            "yoy_substituted": kind == "same_weekday_shift",
+            "is_holiday": bool([n for n in names if n not in _APPROXIMATE]),
+            "holiday_name": next((n for n in names if n not in _APPROXIMATE), None),
+            "holiday_names": names,
+            "holiday_matched": kind == "holiday",
+            "yoy_sales": sales["net"] if sales else None,
+            "yoy_sales_adjusted": adjusted,
+            "yoy_source": sales["source"] if sales else None,
+            "yoy_basis": sales["basis"] if sales else None,
+            "yoy_labor_pct": labor["labor_pct"] if labor else None,
+            "yoy_labor_cost": labor["labor_cost"] if labor else None,
+            "yoy_hours": labor["total_hours"] if labor else None,
+            "yoy_trend": trend,
+        })
     return rows_out
 
 

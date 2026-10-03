@@ -11,6 +11,27 @@ No provider is live. Each one below says what it needs (an API key or an
 OAuth grant the platform has not been issued) and refuses cleanly until
 then; the settings screen shows the same sentence. When a provider goes
 live, only its `fetch` changes.
+
+What works without any partnership (schedule audit 10/3/26 D-31): every
+one of these systems exports its bookings as a report, and that file
+imports as it is under Events & reservations (demand_signals.
+parse_reservation_export — one row per booking, summed per date, cancelled
+and no-show bookings left out), source "report". The schedule reads those
+rows exactly as it would a live feed's.
+
+What a live provider still needs, precisely:
+  1. Cavnar AI admitted to the provider's partner program, and the
+     credentials it issues (a partner API key, or OAuth client id/secret)
+     stored as a platform secret — none of the three is self-serve.
+  2. The restaurant's own id at the provider (its restaurant / venue /
+     business id) and its consent for Cavnar AI to read its bookings
+     (restaurants.reservation_api_key holds what the provider's flow
+     returns).
+  3. `fetch(restaurant, start, end)` written against the provider's
+     documented reservations endpoint: [{date, covers}] for the range,
+     cancelled and no-show bookings out, every request with a timeout
+     (scripts/check_timeouts.py), paging to the end (a truncated page fails
+     the sync rather than storing part of a night), the raw response kept.
 """
 from datetime import date, timedelta
 
@@ -21,16 +42,25 @@ class NotConfigured(RuntimeError):
     pass
 
 
+_IMPORT_INSTEAD = ("Until then, export your reservations report from {p} and import the file under Events & "
+                   "reservations — each booked night counts the same as a live feed.")
+
+
 def _tock(restaurant, start, end):
-    raise NotConfigured("Tock exports covers by date from the Tock dashboard; the API needs a partner key Cavnar AI does not hold yet. Paste the export into Events & reservations for now.")
+    raise NotConfigured("A live Tock feed needs Cavnar AI admitted to Tock's partner program (the partner key "
+                        "Tock issues for its API) and your Tock business id authorized for it. "
+                        + _IMPORT_INSTEAD.format(p="Tock"))
 
 
 def _opentable(restaurant, start, end):
-    raise NotConfigured("OpenTable's cover data needs a Connect partner grant; until then paste the reservation report into Events & reservations.")
+    raise NotConfigured("A live OpenTable feed needs Cavnar AI approved as an OpenTable partner (the client "
+                        "credentials OpenTable issues) and your OpenTable restaurant id authorized for it. "
+                        + _IMPORT_INSTEAD.format(p="OpenTable"))
 
 
 def _resy(restaurant, start, end):
-    raise NotConfigured("Resy's API is partner-only; paste the reservation report into Events & reservations for now.")
+    raise NotConfigured("A live Resy feed needs a Resy partner key (Resy issues these to approved partners only) "
+                        "and your Resy venue id authorized for Cavnar AI. " + _IMPORT_INSTEAD.format(p="Resy"))
 
 
 PROVIDERS = {
@@ -48,7 +78,10 @@ def status(restaurant) -> dict:
     """What the settings screen and the schedule panel say about the feed."""
     code = (getattr(restaurant, "reservation_provider", None) or "").strip().lower()
     if not code:
-        return {"provider": None, "configured": False, "live": False, "message": "No reservation system connected — paste covers into Events & reservations."}
+        return {"provider": None, "configured": False, "live": False,
+                "message": "No reservation system connected — import your reservation system's booking export "
+                           "(or type the covers) under Events & reservations.",
+                "import": True}
     p = PROVIDERS.get(code)
     if not p:
         return {"provider": code, "configured": False, "live": False, "message": f"{code} is not a reservation system this build knows."}

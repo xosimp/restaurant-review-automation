@@ -28,7 +28,19 @@ say so. Nothing calls a model.
 """
 from datetime import date, datetime, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports): a
+    bound copy kept whichever function was there at import, so a test that
+    redirected models.get_conn never reached this module's reads. The
+    module's own DB_PATH default means "whatever models uses now"."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
 # Final days only (canonical_facts, memory audit 9/29/26): a half-night the
 # POS had not closed is never a week's sales or a day's labor %.
 from canonical_facts import FINAL_SQL
@@ -217,14 +229,16 @@ def budgeted_week_revenue(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
     return {"value": round(total, 0), "source": src, "nights": len(per_night)}
 
 
-def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
-    """{weekday: median daily sales} over the last `weeks` weeks."""
+def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH, today=None) -> dict:
+    """{weekday: median daily sales} over the last `weeks` weeks before the
+    restaurant's own today (never the server's UTC date — D-33)."""
+    today = _today_for(restaurant_id, today)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT day_of_week, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL "
-            f"AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
-            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+            f"AND sales > 0 AND date >= ? AND date < ? AND {FINAL_SQL}",
+            (restaurant_id, (today - timedelta(weeks=int(weeks))).isoformat(), today.isoformat())).fetchall()
     except Exception:
         return {}
     finally:
@@ -332,77 +346,409 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
             "estimator": "median_weeks"}
 
 
+# ── what each date of the week asks for ───────────────────────────────────
+#
+# The week's demand used to change a shift's LABEL and nothing else: the
+# requirements table copied past headcount, the day targets spread a
+# measured +40% holiday across all seven days, and the weather reached only
+# the prompt (schedule audit 10/3/26 D-23, P-19, D-24, D-30). One number per
+# date now — how far it sits from a typical night of its weekday — from, in
+# order: the owner's own budget for the night (the DSR); else what the
+# owner and the record say about the date (demand_signals.by_date: an
+# owner's lift, booked covers, an event's measured lift, last year's
+# holiday night — already the strongest of them, never a sum); else the
+# forecast's measured effects (event_memory: the 1st of the month, a
+# campaign night). Then the weather, only where it is measured: a fresh
+# forecast of rain on a near-term date, at this restaurant's own measured
+# rain effect — never an assumed one. Different kinds multiply (rain on a
+# holiday still dampens it); the same kind never adds.
+
+RAIN_FORECAST_PCT = 60           # the precipitation chance that makes a date rainy (the trim's own line)
+
+
+def _rain_effect(restaurant_id, db_path=DB_PATH):
+    """event_memory.measured_effect for rain when it is past the sample
+    floor and moves sales past EFFECT_FLOOR_PCT, else None."""
+    try:
+        import event_memory as _em
+        e = _em.measured_effect(restaurant_id, _em.RAIN_LABEL, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        return None
+    try:
+        from event_memory import EFFECT_FLOOR_PCT
+    except Exception:
+        EFFECT_FLOOR_PCT = 5
+    if not e or not e.get("applies") or abs(float(e.get("median_lift_pct") or 0)) < EFFECT_FLOOR_PCT:
+        return None
+    return e
+
+
+def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather: list = None, closed_dates=(),
+                db_path=DB_PATH, today=None) -> dict:
+    """{date: {"typical_sales", "projected_sales", "ratio", "pct", "reasons",
+    "labels", "sources", "closed"}} — each date's demand against a typical
+    night of its weekday (the 8-week median the typical headcount was
+    staffed for), by the order in the note above. `reasons` are the
+    owner-facing words for why it moved; `labels` the ones to name on the
+    date where the dated facts do not already (the budget, a measured
+    forecast effect, the rain). A closed date is `closed` with no sales.
+    Never raises; a date nothing moves is ratio 1.0."""
+    from time_utils import mdy
+    dates = [str(d)[:10] for d in (week_dates or []) if d]
+    closed = {str(d)[:10] for d in (closed_dates or ())}
+    signals = signals_by_date or {}
+    try:
+        typical = _weekday_medians(restaurant_id, weeks=8, db_path=db_path, today=today)
+    except Exception:
+        typical = {}
+    try:
+        from dsr import store as _dsr_store
+        budgets = _dsr_store.budgets_for(restaurant_id, min(dates), max(dates), db_path=db_path) if dates else {}
+    except Exception:
+        budgets = {}
+    rain = None
+    wet = {}
+    for w in weather or []:
+        try:
+            if not w.get("stale") and int(w.get("precip_pct") or 0) >= RAIN_FORECAST_PCT:
+                wet[str(w.get("date"))[:10]] = int(w.get("precip_pct") or 0)
+        except (TypeError, ValueError):
+            continue
+    if wet:
+        rain = _rain_effect(restaurant_id, db_path=db_path)
+    out = {}
+    for d in dates:
+        try:
+            day = date.fromisoformat(d)
+        except ValueError:
+            continue
+        wd = day.strftime("%A")
+        base = typical.get(wd)
+        entry = {"typical_sales": round(base, 0) if base else None, "projected_sales": None, "ratio": 1.0,
+                 "pct": 0, "reasons": [], "labels": [], "sources": [], "closed": d in closed}
+        out[d] = entry
+        if d in closed:
+            entry.update(projected_sales=0.0, ratio=0.0, pct=None)
+            continue
+        occasion = 1.0
+        b = budgets.get(d) or {}
+        bv = b.get("net") if b.get("net") not in (None, "") else b.get("gross")
+        try:
+            bv = float(bv) if bv not in (None, "") else None
+        except (TypeError, ValueError):
+            bv = None
+        sig = signals.get(d) or {}
+        if bv and bv > 0 and base:
+            occasion = bv / base
+            entry["sources"].append("budget")
+            entry["reasons"].append(f"your budget for the night, ${bv:,.0f} against a typical {wd}'s ${base:,.0f}")
+            entry["labels"].append(f"Your budget for the night (${bv:,.0f})")
+        elif sig.get("lift_pct") is not None:
+            occasion = 1.0 + float(sig["lift_pct"]) / 100.0
+            entry["sources"].append("signals")
+            what = "; ".join(str(x) for x in (sig.get("labels") or []) if x) or "a dated fact"
+            entry["reasons"].append(f"{what}: {int(sig['lift_pct']):+d}%")
+        else:
+            try:
+                import demand as _demand
+                fc = _demand.forecast_day(restaurant_id, day, db_path=db_path, calibrate=False)
+            except Exception:
+                fc = {}
+            if fc.get("available") and fc.get("effect_pct"):
+                occasion = 1.0 + float(fc["effect_pct"]) / 100.0
+                names = [e.get("display") or e.get("label") for e in (fc.get("effects") or []) if e]
+                entry["sources"].append("measured_effects")
+                entry["reasons"].append(f"{', '.join(n for n in names if n) or 'a measured effect'}: "
+                                        f"{float(fc['effect_pct']):+.0f}% measured here")
+                entry["labels"].append(", ".join(n for n in names if n) + f" ({float(fc['effect_pct']):+.0f}% measured here)")
+        weather_f = 1.0
+        if d in wet and rain:
+            weather_f = 1.0 + float(rain["median_lift_pct"]) / 100.0
+            entry["sources"].append("weather")
+            entry["reasons"].append(f"rain forecast ({wet[d]}%): rain nights here ran "
+                                    f"{abs(float(rain['median_lift_pct'])):.0f}% "
+                                    f"{'below' if rain['median_lift_pct'] < 0 else 'above'} a typical one "
+                                    f"(measured {rain['n']} times, last {mdy(rain['last'])})")
+            entry["labels"].append(f"Rain forecast ({wet[d]}%)")
+        ratio = max(0.0, occasion * weather_f)
+        entry["ratio"] = round(ratio, 3)
+        entry["pct"] = int(round((ratio - 1.0) * 100))
+        if base:
+            entry["projected_sales"] = round((bv * weather_f) if ("budget" in entry["sources"]) else base * ratio, 0)
+    return out
+
+
+# ── the measured sales curve: tickets, captures, nightly reports ──────────
+#
+# The hourly demand curve and every daypart split were read from the live
+# intraday captures alone (three same-weekday days needed), while the POS's
+# ticket archive (pos_tickets: every ticket's open time and net, 90 days
+# back) sat unread — Simple EJ's, RPOWER-live since 9/28/26, had no curve
+# and a 40/60 split assumed for weeks (schedule audit 10/3/26 D-26, L-25).
+# One reader now: per business date, the archive's tickets by the hour they
+# opened; for a date the archive does not hold, the intraday captures; then
+# the nightly report's own hourly split. One source per date — never two
+# added together. An hour after midnight that belongs to the night before
+# is 24+ (1:30am → hour 25), as the captures already file it.
+
+CURVE_WEEKS = 8
+CURVE_MIN_DAYS = 3               # same-weekday measured days before a curve or a split is stated
+MORNING_SPLIT_HOUR = 15          # shift_quality.DAYPART_CUTOVER: sales before 3pm are lunch's
+LATE_START_HOUR = 22             # shift_quality.LATE_WINDOW_START: from 10pm is the late segment (D-32)
+
+
+def _today_for(restaurant_id, today=None):
+    """The restaurant's own calendar date (demand.local_today) — never the
+    server's UTC date: after 7pm Central it was already tomorrow (D-33)."""
+    if today is not None:
+        return today
+    try:
+        import demand
+        return demand.local_today(restaurant_id)
+    except Exception:
+        return date.today()
+
+
+def _ticket_days(conn, restaurant_id, start, end) -> dict:
+    """{business date: {hour: net}} from the ticket archive, by the hour each
+    ticket opened on its business day's clock. Cancelled tickets are out."""
+    out = {}
+    try:
+        # Summed by the hour in SQL: a busy restaurant's eight weeks are tens
+        # of thousands of tickets, read on every live rescore.
+        rows = conn.execute(
+            "SELECT business_date, substr(replace(opened_at, ' ', 'T'), 1, 13) AS hk, SUM(net_sales) AS net "
+            "FROM pos_tickets WHERE restaurant_id=? AND business_date>=? AND business_date<? "
+            "AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL GROUP BY business_date, hk",
+            (restaurant_id, start, end)).fetchall()
+    except Exception:
+        return {}
+    for r in rows:
+        bd = str(r["business_date"])[:10]
+        try:
+            opened = datetime.strptime(str(r["hk"] or ""), "%Y-%m-%dT%H")
+            hour = opened.hour + 24 * max(0, (opened.date() - date.fromisoformat(bd)).days)
+            net = float(r["net"] or 0)
+        except (TypeError, ValueError):
+            continue
+        day = out.setdefault(bd, {})
+        day[hour] = day.get(hour, 0.0) + net
+    return out
+
+
+def _intraday_days(conn, restaurant_id, start, end) -> dict:
+    """{business date: {hour: net}} from the cumulative intraday captures:
+    each hour's own sales are the step from the reading before it."""
+    try:
+        rows = conn.execute(
+            "SELECT business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
+            "AND business_date>=? AND business_date<? ORDER BY business_date, captured_hour",
+            (restaurant_id, start, end)).fetchall()
+    except Exception:
+        return {}
+    caps = {}
+    for r in rows:
+        caps.setdefault(str(r["business_date"])[:10], []).append((int(r["captured_hour"]), float(r["net_sales"] or 0)))
+    out = {}
+    for bd, pts in caps.items():
+        pts.sort()
+        prev, steps = 0.0, {}
+        for h, cum in pts:
+            steps[h] = max(0.0, cum - prev)
+            prev = cum
+        out[bd] = steps
+    return out
+
+
+def _dsr_days(conn, restaurant_id, start, end) -> dict:
+    """{business date: {hour: net}} from each finished nightly report's
+    hourly split (blocks.sales.detail.hourly), the latest version of each
+    night. An hour before the business day starts belongs to the night."""
+    import json as _json
+    from time_utils import BUSINESS_DAY_START_HOUR
+    try:
+        rows = conn.execute(
+            "SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? AND business_date>=? "
+            "AND business_date<? AND status IN ('final','provisional') ORDER BY business_date, version",
+            (restaurant_id, start, end)).fetchall()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:                              # later versions overwrite earlier ones
+        try:
+            blk = ((_json.loads(r["facts_json"] or "{}") or {}).get("blocks") or {}).get("sales") or {}
+        except (TypeError, ValueError):
+            continue
+        if blk.get("status") != "ready":
+            continue
+        day = {}
+        for h in ((blk.get("detail") or {}).get("hourly") or []):
+            try:
+                hour, net = int(h.get("hour")), float(h.get("net") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if hour < BUSINESS_DAY_START_HOUR:
+                hour += 24
+            day[hour] = day.get(hour, 0.0) + net
+        if day:
+            out[str(r["business_date"])[:10]] = day
+    return out
+
+
+def _median(vals):
+    s = sorted(vals)
+    if not s:
+        return None
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def measured_sales_curve(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PATH, today=None) -> dict:
+    """{weekday: {"hours": {hour: share of the day's sales}, "days", "sources":
+    {tickets, intraday, dsr}, "morning_share", "late_share"}} over the
+    `weeks` weeks before the restaurant's today, from the measured nights
+    only (see the note above). Each hour's share and each split is the
+    median across that weekday's days; a weekday with fewer than
+    CURVE_MIN_DAYS measured days is still returned with its `days`, and
+    every caller holds it to the floor. {} when nothing is measured."""
+    today = _today_for(restaurant_id, today)
+    start = (today - timedelta(weeks=int(weeks))).isoformat()
+    end = today.isoformat()
+    conn = get_conn(db_path)
+    try:
+        sources = (("tickets", _ticket_days(conn, restaurant_id, start, end)),
+                   ("intraday", _intraday_days(conn, restaurant_id, start, end)),
+                   ("dsr", _dsr_days(conn, restaurant_id, start, end)))
+    finally:
+        conn.close()
+    days = {}
+    for name, by_date in sources:
+        for bd, hours in by_date.items():
+            if bd in days:
+                continue
+            positive = {h: v for h, v in hours.items() if v > 0}
+            total = sum(positive.values())
+            if total <= 0:
+                continue
+            days[bd] = (name, {h: v / total for h, v in positive.items()})
+    per_wd = {}
+    for bd, (name, shares) in days.items():
+        try:
+            wd = date.fromisoformat(bd).strftime("%A")
+        except ValueError:
+            continue
+        per_wd.setdefault(wd, []).append((name, shares))
+    out = {}
+    for wd, entries in per_wd.items():
+        hours = sorted({h for _n, s in entries for h in s})
+        n = len(entries)
+        out[wd] = {
+            "hours": {h: round(sorted(s.get(h, 0.0) for _n, s in entries)[n // 2], 4) for h in hours},
+            "days": n,
+            "sources": {k: sum(1 for nm, _s in entries if nm == k) for k in ("tickets", "intraday", "dsr")},
+            "morning_share": round(_median([sum(v for h, v in s.items() if h < MORNING_SPLIT_HOUR)
+                                            for _n, s in entries]), 4),
+            "late_share": round(_median([sum(v for h, v in s.items() if h >= LATE_START_HOUR)
+                                         for _n, s in entries]), 4),
+        }
+    return out
+
+
+def hourly_profile(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PATH, today=None) -> dict:
+    """{weekday: {hour: share}} for the weekdays measured on at least
+    CURVE_MIN_DAYS days — the curve the requirements, the scorer and the
+    stagger read (schedule_engine._hourly_profile)."""
+    return {wd: v["hours"] for wd, v in measured_sales_curve(restaurant_id, weeks, db_path, today).items()
+            if v["days"] >= CURVE_MIN_DAYS and v["hours"]}
+
+
 # ── sales per labor hour by daypart ───────────────────────────────────────
 
-def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
-    """{weekday: {"morning": {sales, hours, splh}, "night": {...}}}.
+# A weekday's late segment (from 10pm, D-32) is stated only past this share
+# of its measured sales: a stray 10:30pm ticket is not a late service.
+LATE_MIN_SHARE = 0.03
 
-    Daily sales and hours come from labor_daily_history; the split of each
-    day's sales into dayparts comes from the intraday captures' share of
-    the day before 3pm (when at least three same-weekday days were
-    captured, else 40/60); the split of hours comes from the shift history
-    for that weekday. A weekday with no sales or no hours is absent —
-    never 0."""
+
+def _late_minutes(row) -> float:
+    """Minutes a shift is on the floor from 10pm (LATE_START_HOUR) to its
+    end, on its own date's clock (an end at or before the start crosses
+    midnight)."""
+    s, e = _minutes(row.get("shift_start", "")), _minutes(row.get("shift_end", ""))
+    if s is None or e is None:
+        return 0.0
+    if e <= s:
+        e += 24 * 60
+    return float(max(0, e - max(s, LATE_START_HOUR * 60)))
+
+
+def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict = None, today=None) -> dict:
+    """{weekday: {"morning": {sales, hours, splh, sales_split}, "night": {...},
+    "late": {...}}}; a weekday whose sales split was never measured is {}.
+
+    Daily sales and hours come from labor_daily_history (hourly labor — the
+    salaried are left out of it). The split of each day's sales into
+    dayparts is MEASURED: the share before 3pm (and, for the late segment,
+    from 10pm) from measured_sales_curve — the ticket archive, the intraday
+    captures, the nightly report's hourly split — on at least
+    CURVE_MIN_DAYS days of that weekday. A weekday never measured has no
+    daypart figures: it used to be split 40/60 by assumption, and the
+    assumption became the objective the prompt, the scorer's splh targets
+    and the trim all read (schedule audit 10/3/26 L-25). The split of hours
+    comes from the same `weeks` weeks of hourly shifts (the salaried out,
+    as the daily hours leave them), each row filed under the daypart it is
+    mostly on the floor for — it read the whole shift history. The late
+    segment's hours are each shift's minutes from 10pm (D-32). A weekday
+    with no sales or no hours is absent — never 0."""
     from models import _cached_shifts
+    today = _today_for(restaurant_id, today)
+    since = (today - timedelta(weeks=int(weeks))).isoformat()
     conn = get_conn(db_path)
     try:
         days = conn.execute(
             "SELECT date, day_of_week, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? "
-            f"AND sales IS NOT NULL AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
-            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
-        intra = conn.execute(
-            "SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
-            "AND business_date >= date('now', ?) ORDER BY business_date, captured_hour",
-            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+            f"AND sales IS NOT NULL AND sales > 0 AND date >= ? AND date < ? AND {FINAL_SQL}",
+            (restaurant_id, since, today.isoformat())).fetchall()
     except Exception:
         return {}
     finally:
         conn.close()
-    # morning share of the day's sales from cumulative intraday captures
-    share = {}
-    by_day = {}
-    for r in intra:
-        by_day.setdefault((r["weekday"], r["business_date"]), []).append((int(r["captured_hour"]), float(r["net_sales"] or 0)))
-    tmp = {}
-    for (wd, _bd), caps in by_day.items():
-        caps.sort()
-        total = caps[-1][1]
-        if total <= 0:
-            continue
-        at3 = max((s for h, s in caps if h <= 15), default=None)
-        if at3 is None:
-            continue
-        tmp.setdefault(wd, []).append(min(1.0, at3 / total))
-    for wd, vals in tmp.items():
-        if len(vals) >= 3:
-            vals.sort()
-            share[wd] = vals[len(vals) // 2]
-    # hours split by daypart from the shift history, per weekday
+    if curve is None:
+        try:
+            curve = measured_sales_curve(restaurant_id, weeks=weeks, db_path=db_path, today=today)
+        except Exception as e:
+            print(f"[splh] sales curve unreadable for {restaurant_id}: {e}")
+            curve = {}
+    measured = {wd: v for wd, v in (curve or {}).items() if int(v.get("days") or 0) >= CURVE_MIN_DAYS}
+    # hours split by daypart from the window's hourly shifts, per weekday
     hrs = {}
     try:
-        for sh in _cached_shifts(restaurant_id):
-            wd = (sh.get("day") or "").strip().capitalize()
-            if not wd:
-                try:
-                    wd = datetime.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A")
-                except ValueError:
-                    continue
+        from labor import _without_salaried
+        shifts, _sal_h = _without_salaried(restaurant_id, list(_cached_shifts(restaurant_id) or []))
+        from shift_quality import present_dayparts
+        for sh in shifts:
+            d = str(sh.get("date") or "")[:10]
+            if not d or d < since or d >= today.isoformat():
+                continue
+            try:
+                wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+            except ValueError:
+                continue
             # Filed under the daypart the row is mostly on the floor for
             # (shift_quality.present_dayparts), as the scorer's `splh`
             # dimension files a draft's hours — a 2pm-11pm cook is dinner.
-            from shift_quality import present_dayparts
             part = present_dayparts(sh)[0]
             if part == "unknown":
                 continue
             h = 0.0
             try:
-                h = float(sh.get("scheduled_hours") or sh.get("hours") or 0)
+                h = float(sh.get("actual_hours") or sh.get("scheduled_hours") or sh.get("hours") or 0)
             except (TypeError, ValueError):
                 pass
-            e = hrs.setdefault(wd, {"morning": 0.0, "night": 0.0})
+            e = hrs.setdefault(wd, {"morning": 0.0, "night": 0.0, "late": 0.0})
             e[part] += h
-    except Exception:
-        pass
+            e["late"] += min(h, _late_minutes(sh) / 60.0)
+    except Exception as e:
+        print(f"[splh] shift hours unreadable for {restaurant_id}: {e}")
     out = {}
     sales_by_wd = {}
     for r in days:
@@ -416,26 +762,28 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
     for wd, e in sales_by_wd.items():
         if e["n"] < 2 or e["sales"] <= 0:
             continue
-        m_share = share.get(wd, 0.4)
-        hsplit = hrs.get(wd)
-        if hsplit and (hsplit["morning"] + hsplit["night"]) > 0:
-            h_m = hsplit["morning"] / (hsplit["morning"] + hsplit["night"])
-        else:
-            h_m = 0.4
         total_hours = e["hours"] if e["hours"] > 0 else None
         if not total_hours:
             continue
+        cv = measured.get(wd)
+        hsplit = hrs.get(wd)
+        if not cv or not hsplit or (hsplit["morning"] + hsplit["night"]) <= 0:
+            out[wd] = {}           # sales and hours, but no measured split: no daypart figures
+            continue
+        whole_h = hsplit["morning"] + hsplit["night"]
+        m_share = float(cv.get("morning_share") or 0.0)
+        parts = [("morning", m_share, hsplit["morning"] / whole_h), ("night", 1 - m_share, hsplit["night"] / whole_h)]
+        late_share = float(cv.get("late_share") or 0.0)
+        if late_share >= LATE_MIN_SHARE and hsplit["late"] > 0:
+            parts.append(("late", late_share, hsplit["late"] / whole_h))
         day = {}
-        for part, s_share, h_share in (("morning", m_share, h_m), ("night", 1 - m_share, 1 - h_m)):
+        for part, s_share, h_share in parts:
             s = e["sales"] / e["n"] * s_share
             h = total_hours / e["n"] * h_share
-            if h > 0:
+            if h > 0 and s > 0:
                 day[part] = {"sales": round(s, 0), "hours": round(h, 1), "splh": round(s / h, 0),
-                             # whether the day's sales were split by measured
-                             # intraday readings or the 40/60 default
-                             "sales_split": "measured" if wd in share else "assumed"}
-        if day:
-            out[wd] = day
+                             "sales_split": "measured"}
+        out[wd] = day
     return out
 
 
@@ -469,29 +817,63 @@ def splh_block(splh: dict) -> str:
 # sales record: no target, and the dimension withdraws.
 
 SPLH_MIN_WEEKDAYS = 3            # weekdays with a measured SPLH before a target is set
+# The target is never raised past this multiple of the restaurant's own
+# record in one step: a salaried share that leaves an hourly target of a
+# few points would otherwise ask for triple the productivity it ever ran.
+SPLH_SCALE_MAX = 2.0
+SPLH_PARTS = ("morning", "night", "late")
 
 
 def _dp_label(part):
-    return "lunch" if part == "morning" else "dinner"
+    return {"morning": "lunch", "night": "dinner", "late": "late night"}.get(part, part)
 
 
-def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, weeks: int = 8, db_path=DB_PATH) -> dict:
+def _hourly_target_pct(restaurant_id, target_pct, days_with_sales, sales_total, db_path=DB_PATH):
+    """(hourly target %, salaried?) — the labor target the HOURLY record is
+    judged against: the owner's target counts salaries (9/30/26), and
+    labor_daily_history is hourly, so the salaried staff's share of the
+    window's sales comes off the target first (schedule audit 10/3/26 D-1:
+    the same all-in-against-hourly mix-up as the hours budget). (target,
+    False) with nobody salaried."""
+    try:
+        from models import get_restaurant, salaried_day_share
+        share = float(salaried_day_share(get_restaurant(restaurant_id) if db_path == DB_PATH
+                                         else get_restaurant(restaurant_id, db_path)) or 0)
+    except Exception:
+        share = 0.0
+    if share <= 0 or not sales_total or not days_with_sales:
+        return float(target_pct), False
+    return float(target_pct) - share * days_with_sales / float(sales_total) * 100.0, True
+
+
+def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, weeks: int = 8, db_path=DB_PATH,
+                   today=None) -> dict:
     """{available, by_day: {weekday: {daypart: target}}, targets: {daypart:
     {target, history, source}} (the week's figure per daypart, for display),
-    daypart_sales: {weekday: {daypart: sales}}, labor_target_pct,
-    history_labor_pct, scale, basis, split_assumed} or {available: False,
-    reason}.
+    daypart_sales: {weekday: {daypart: sales}}, hold: {weekday: {daypart:
+    history ÷ target}}, labor_target_pct, history_labor_pct, scale, basis,
+    split_unmeasured} or {available: False, reason}.
 
     Each weekday's daypart target is its own recent sales per labor hour.
     When the restaurant has been running over its labor % target, every
     target is raised by the same factor — history labor % ÷ target labor % —
     which is exactly the productivity the target needs at the wages it
     actually paid (labor % = wage × hours ÷ sales). Under target, history
-    stands: the objective never asks for more hours than the record ran."""
-    splh = splh_by_daypart(restaurant_id, weeks=weeks, db_path=db_path) if splh is None else splh
+    stands: the objective never asks for more hours than the record ran.
+
+    The record is hourly (labor_daily_history) and the owner's target counts
+    salaries, so the comparison is against the target less the salaried
+    staff's share of the same window's sales (_hourly_target_pct, D-1) — the
+    whole target against the hourly record read Simple EJ's 28% hourly as
+    inside its 35% while it ran 41-45% with salaries. `hold` is how far the
+    usual crew must come in to meet the target on each daypart: the
+    requirements table holds the usual headcount to it (P-19)."""
+    today = _today_for(restaurant_id, today)
+    splh = splh_by_daypart(restaurant_id, weeks=weeks, db_path=db_path, today=today) if splh is None else splh
     if not splh:
         return {"available": False, "reason": "No daily sales and hours on file yet, so there is no sales-per-labor-hour target."}
-    tot = {"morning": [0.0, 0.0, 0], "night": [0.0, 0.0, 0]}
+    unmeasured = sorted(wd for wd, parts in splh.items() if not parts)
+    tot = {p: [0.0, 0.0, 0] for p in SPLH_PARTS}
     daypart_sales, hist_by_day = {}, {}
     for wd, parts in splh.items():
         for part, v in (parts or {}).items():
@@ -504,16 +886,21 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             hist_by_day.setdefault(wd, {})[part] = float(v["sales"]) / float(v["hours"])
     have = {p: t for p, t in tot.items() if t[2] >= SPLH_MIN_WEEKDAYS and t[1] > 0}
     if not have:
-        return {"available": False,
-                "reason": f"Sales per labor hour needs at least {SPLH_MIN_WEEKDAYS} weekdays of sales and hours per daypart."}
-    hist_pct = None
+        reason = f"Sales per labor hour needs at least {SPLH_MIN_WEEKDAYS} weekdays of sales and hours per daypart"
+        if unmeasured:
+            reason += (f", with lunch and dinner sales measured apart (the ticket archive, the intraday readings or the "
+                       f"nightly reports) — {len(unmeasured)} weekday{'s' if len(unmeasured) != 1 else ''} have none yet")
+        return {"available": False, "reason": reason + ".", "split_unmeasured": unmeasured}
+    hist_pct, days_n, sales_total = None, 0, 0.0
+    since = (today - timedelta(weeks=int(weeks))).isoformat()
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT SUM(labor_pct * sales) AS w, SUM(sales) AS s FROM labor_daily_history WHERE restaurant_id=? "
-                           f"AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?) AND {FINAL_SQL}",
-                           (restaurant_id, f"-{int(weeks) * 7} days")).fetchone()
+        row = conn.execute("SELECT SUM(labor_pct * sales) AS w, SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
+                           "WHERE restaurant_id=? AND sales > 0 AND labor_pct IS NOT NULL AND date >= ? AND date < ? "
+                           f"AND {FINAL_SQL}", (restaurant_id, since, today.isoformat())).fetchone()
         if row and row["s"]:
             hist_pct = float(row["w"]) / float(row["s"])
+            days_n, sales_total = int(row["n"] or 0), float(row["s"])
     except Exception as e:
         print(f"[splh] labor % history unavailable for {restaurant_id}: {e}")
     finally:
@@ -525,34 +912,47 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             labor_target_pct = labor_target_for(get_restaurant(restaurant_id))
         except Exception:
             labor_target_pct = None
-    scale = 1.0
-    if hist_pct and labor_target_pct and float(labor_target_pct) > 0 and hist_pct > float(labor_target_pct):
-        scale = hist_pct / float(labor_target_pct)
+    tgt = float(labor_target_pct) if labor_target_pct else None      # the owner's (all-in) target
+    hourly_target, with_salaries = (None, False)
+    if tgt:
+        hourly_target, with_salaries = _hourly_target_pct(restaurant_id, tgt, days_n, sales_total, db_path=db_path)
+    scale, capped = 1.0, False
+    if hist_pct and hourly_target is not None:
+        if hourly_target <= 0:
+            scale, capped = SPLH_SCALE_MAX, True
+        elif hist_pct > hourly_target:
+            scale = hist_pct / hourly_target
+            if scale > SPLH_SCALE_MAX:
+                scale, capped = SPLH_SCALE_MAX, True
     by_day = {wd: {p: round(v * scale, 0) for p, v in parts.items() if p in have} for wd, parts in hist_by_day.items()}
     by_day = {wd: parts for wd, parts in by_day.items() if parts}
+    hold = {wd: {p: round(1.0 / scale, 3) for p in parts} for wd, parts in by_day.items()} if scale > 1 else {}
     targets = {}
+    target_words = (f"your {float(tgt or 0):g}% labor target with the salaried staff's pay counted"
+                    if with_salaries else f"your {float(tgt or 0):g}% labor target")
     for part, (s, h, _n) in have.items():
         hist = s / h
         if scale > 1:
             src = (f"your own recent pace on each day's {_dp_label(part)}, raised {int(round((scale - 1) * 100))}% to meet "
-                   f"your {float(labor_target_pct):g}% labor target (you have run {hist_pct:.1f}%)")
-        elif hist_pct and labor_target_pct:
-            src = (f"your own recent pace on each day's {_dp_label(part)} — already inside your "
-                   f"{float(labor_target_pct):g}% labor target")
+                   f"{target_words} ({'your hourly labor has' if with_salaries else 'you have'} run {hist_pct:.1f}%"
+                   + ("; the raise is capped at double your own pace" if capped else "") + ")")
+        elif hist_pct and tgt:
+            src = f"your own recent pace on each day's {_dp_label(part)} — already inside {target_words}"
         else:
             src = f"your own recent pace on each day's {_dp_label(part)} over the last {weeks} weeks"
         targets[part] = {"target": round(hist * scale, 0), "history": round(hist, 0), "source": src}
     basis = "; ".join(f"{_dp_label(p).capitalize()} ${v['target']:,.0f} per labor hour across the week — {v['source']}"
-                      for p, v in sorted(targets.items()))
-    assumed = sorted({wd for wd, parts in splh.items() for v in (parts or {}).values()
-                      if (v or {}).get("sales_split") == "assumed"})
-    if assumed:
-        basis += (f". Lunch and dinner sales are split 40/60 on {len(assumed)} weekday{'s' if len(assumed) != 1 else ''} "
-                  "with no intraday sales readings yet")
-    return {"available": True, "by_day": by_day, "targets": targets, "daypart_sales": daypart_sales,
-            "labor_target_pct": float(labor_target_pct) if labor_target_pct else None,
+                      for p, v in sorted(targets.items(), key=lambda kv: SPLH_PARTS.index(kv[0])))
+    if unmeasured:
+        basis += (f". {len(unmeasured)} weekday{'s' if len(unmeasured) != 1 else ''} "
+                  f"({', '.join(wd[:3] for wd in unmeasured)}) have no measured lunch/dinner sales split yet, so "
+                  "they carry no daypart target")
+    return {"available": True, "by_day": by_day, "targets": targets, "daypart_sales": daypart_sales, "hold": hold,
+            "labor_target_pct": tgt,
             "history_labor_pct": round(hist_pct, 1) if hist_pct else None, "scale": round(scale, 3),
-            "basis": basis, "split_assumed": bool(assumed)}
+            "with_salaries": with_salaries, "basis": basis, "split_unmeasured": unmeasured,
+            # The split is never assumed any more (L-25); kept False for readers of the old field.
+            "split_assumed": False}
 
 
 def splh_target_for(objective: dict, weekday: str, part: str):
@@ -585,7 +985,7 @@ def splh_objective_block(objective: dict, dates: list, demand_by_date: dict = No
         except ValueError:
             continue
         bits = []
-        for part in ("morning", "night"):
+        for part in SPLH_PARTS:
             t = splh_target_for(objective, wd, part)
             s = _shift_sales(objective, wd, part, d, demand_by_date)
             if not t or not s:
@@ -651,15 +1051,33 @@ def splh_report(objective: dict, rows: list, demand_by_date: dict = None) -> dic
 
 # ── holidays: what they did here last time ────────────────────────────────
 
-def _holiday_dates(year: int) -> dict:
-    """{iso date: name} — the dining holidays marketing.get_upcoming_holidays
-    already knows, resolved to one year."""
+# A holiday the calendar only approximates (its date moves with a league's
+# calendar — demand.APPROXIMATE_HOLIDAYS) never takes a date's name from a
+# holiday that falls on its own date every year.
+_APPROXIMATE = ("Super Bowl Sunday",)
+
+
+def holiday_names(year: int) -> dict:
+    """{iso date: [names]} — every dining holiday on each date of `year`
+    (the ones marketing.get_upcoming_holidays already knows), the date's own
+    fixed holiday first, then the floating ones, then the approximate.
+
+    Two can fall on one night: Super Bowl Sunday on 2/14/27 is Valentine's
+    Day, and the one-name calendar let whichever was written last overwrite
+    the other (schedule audit 10/3/26 E-8)."""
     from datetime import date as _date
     fixed = {(1, 1): "New Year's Day", (2, 14): "Valentine's Day", (3, 17): "St. Patrick's Day",
              (5, 5): "Cinco de Mayo", (7, 4): "Fourth of July", (10, 31): "Halloween",
              (11, 11): "Veterans Day", (12, 24): "Christmas Eve", (12, 25): "Christmas Day",
              (12, 31): "New Year's Eve"}
-    out = {_date(year, m, d).isoformat(): n for (m, d), n in fixed.items()}
+    out = {}
+
+    def add(d, name):
+        names = out.setdefault(d.isoformat() if hasattr(d, "isoformat") else d, [])
+        if name not in names:
+            names.append(name)
+    for (m, d), n in fixed.items():
+        add(_date(year, m, d), n)
 
     def nth_weekday(month, weekday, n):
         first = _date(year, month, 1)
@@ -672,12 +1090,11 @@ def _holiday_dates(year: int) -> dict:
         while d.weekday() != weekday:
             d -= timedelta(days=1)
         return d
-    out[nth_weekday(5, 6, 2).isoformat()] = "Mother's Day"
-    out[nth_weekday(6, 6, 3).isoformat()] = "Father's Day"
-    out[nth_weekday(11, 3, 4).isoformat()] = "Thanksgiving"
-    out[last_weekday(5, 0).isoformat()] = "Memorial Day"
-    out[nth_weekday(9, 0, 1).isoformat()] = "Labor Day"
-    out[nth_weekday(2, 6, 2).isoformat()] = "Super Bowl Sunday"
+    add(nth_weekday(5, 6, 2), "Mother's Day")
+    add(nth_weekday(6, 6, 3), "Father's Day")
+    add(nth_weekday(11, 3, 4), "Thanksgiving")
+    add(last_weekday(5, 0), "Memorial Day")
+    add(nth_weekday(9, 0, 1), "Labor Day")
     # Easter (Anonymous Gregorian algorithm)
     a, b, c = year % 19, year // 100, year % 100
     d_, e = b // 4, b % 4
@@ -689,16 +1106,39 @@ def _holiday_dates(year: int) -> dict:
     m = (a + 11 * h + 22 * l) // 451
     month = (h + l - 7 * m + 114) // 31
     day = ((h + l - 7 * m + 114) % 31) + 1
-    out[_date(year, month, day).isoformat()] = "Easter"
+    add(_date(year, month, day), "Easter")
+    add(nth_weekday(2, 6, 2), "Super Bowl Sunday")
+    for names in out.values():
+        names.sort(key=lambda n: n in _APPROXIMATE)       # stable: fixed, floating, then approximate
     return out
 
 
+def _holiday_dates(year: int) -> dict:
+    """{iso date: name} — each date's first holiday (holiday_names): the
+    fixed-date one wherever two fall on one night."""
+    return {d: names[0] for d, names in holiday_names(year).items()}
+
+
+def last_years_holiday_night(name: str, day) -> str:
+    """The ISO date `name` fell on in the year before `day` — the night a
+    holiday this year is read against (Christmas Eve 12/24/26 reads
+    12/24/25, a Wednesday; Thanksgiving reads last Thanksgiving) — or None
+    when the calendar has no such holiday that year."""
+    d = day if hasattr(day, "year") else datetime.strptime(str(day)[:10], "%Y-%m-%d").date()
+    hits = [k for k, names in holiday_names(d.year - 1).items() if name in names]
+    return hits[0] if hits else None
+
+
 def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
-    """{date: {"name", "lift_pct", "based_on", "date", "source"}} for holidays
-    in the week, with the lift THIS restaurant saw on that holiday last year
-    against the median of the same weekday in the four weeks either side. A
-    holiday with no sales on file last year is listed with lift None — a
-    name the model can react to, never a number it did not measure.
+    """{date: {"name", "names", "lift_pct", "based_on", "date", "source",
+    "by_name"}} for holidays in the week, with the lift THIS restaurant saw
+    on that holiday last year against the median of the same weekday in the
+    four weeks either side. A holiday with no sales on file last year is
+    listed with lift None — a name the model can react to, never a number
+    it did not measure. A date carrying two holidays (Valentine's Day and
+    Super Bowl Sunday on 2/14/27) reads each one's own night last year;
+    `by_name` holds each, `lift_pct` the strongest measured — one number
+    for the date (E-8, PR-8), `name` the one it came from.
 
     Last year is read through the ONE last-year reader
     (canonical_facts.sales_history: the night's report, the owner's imported
@@ -713,42 +1153,47 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
     years = {int(d[:4]) for d in week_dates}
     names = {}
     for y in years:
-        names.update(_holiday_dates(y))
+        names.update(holiday_names(y))
     hits = {d: names[d] for d in week_dates if d in names}
     if not hits:
         return {}
+
+    def _one(d, name):
+        # the holiday's own date last year, whichever weekday it fell on
+        hol_date = last_years_holiday_night(name, d) or \
+            (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=364)).date().isoformat()
+        # `date`: the night last year's figure is read from, so a reader
+        # can name ITS weekday (re-audit OPP-2).
+        entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date, "source": None}
+        hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
+        series = _cf.sales_history(restaurant_id, (hd - timedelta(days=28)).isoformat(),
+                                   (hd + timedelta(days=28)).isoformat(), db_path=db_path)
+        night = series.get(hol_date)
+        if night and night["net"]:
+            same = {k: x for k, x in series.items() if k != hol_date and x.get("basis") == night.get("basis")
+                    and datetime.strptime(k, "%Y-%m-%d").date().weekday() == hd.weekday()}
+            vals = sorted(float(x["net"]) for x in same.values() if x["net"] and x["net"] > 0)
+            if len(vals) >= 3:
+                med = vals[len(vals) // 2]
+                if med > 0:
+                    entry["lift_pct"] = int(round((float(night["net"]) / med - 1) * 100))
+                    entry["source"] = night.get("source")
+                    entry["based_on"] = (f"{name} {hd.year}: ${float(night['net']):,.0f} against a typical "
+                                         f"{hd.strftime('%A')} of ${med:,.0f}")
+                    # The POS archive is the ordinary source; an imported
+                    # workbook or a nightly report is named.
+                    if night.get("source") in ("import", "dsr"):
+                        entry["based_on"] += f", from {_cf.SOURCE_LABELS[night['source']]}"
+        return entry
     out = {}
     try:
-        for d, name in hits.items():
-            last = (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=364)).date()   # same weekday last year
-            # the holiday's own date last year, whichever weekday it fell on
-            prior_dates = [k for k, n in _holiday_dates(last.year).items() if n == name]
-            hol_date = prior_dates[0] if prior_dates else last.isoformat()
-            # `date`: the night last year's figure is read from, so a reader
-            # can name ITS weekday (re-audit OPP-2).
-            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date, "source": None}
-            hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
-            series = _cf.sales_history(restaurant_id, (hd - timedelta(days=28)).isoformat(),
-                                       (hd + timedelta(days=28)).isoformat(), db_path=db_path)
-            night = series.get(hol_date)
-            if night and night["net"]:
-                same = {k: x for k, x in series.items() if k != hol_date and x.get("basis") == night.get("basis")
-                        and datetime.strptime(k, "%Y-%m-%d").date().weekday() == hd.weekday()}
-                vals = sorted(float(x["net"]) for x in same.values() if x["net"] and x["net"] > 0)
-                if len(vals) >= 3:
-                    med = vals[len(vals) // 2]
-                    if med > 0:
-                        entry["lift_pct"] = int(round((float(night["net"]) / med - 1) * 100))
-                        entry["source"] = night.get("source")
-                        entry["based_on"] = (f"{name} {hd.year}: ${float(night['net']):,.0f} against a typical "
-                                             f"{hd.strftime('%A')} of ${med:,.0f}")
-                        # The POS archive is the ordinary source; an imported
-                        # workbook or a nightly report is named.
-                        if night.get("source") in ("import", "dsr"):
-                            entry["based_on"] += f", from {_cf.SOURCE_LABELS[night['source']]}"
-            out[d] = entry
+        for d, day_names in hits.items():
+            by_name = {n: _one(d, n) for n in day_names}
+            measured = [e for e in by_name.values() if e["lift_pct"] is not None]
+            lead = max(measured, key=lambda e: e["lift_pct"]) if measured else by_name[day_names[0]]
+            out[d] = dict(lead, names=list(day_names), by_name=by_name)
     except Exception:
-        return {d: {"name": n, "lift_pct": None, "based_on": None} for d, n in hits.items()}
+        return {d: {"name": ns[0], "names": list(ns), "lift_pct": None, "based_on": None} for d, ns in hits.items()}
     return out
 
 
