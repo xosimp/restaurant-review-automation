@@ -412,45 +412,146 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
             "and how it went):\n" + "\n".join(lines))
 
 
-# ── fairness ledger ────────────────────────────────────────────────────────
+# ── the record the ledger and the rotation read ──────────────────────────────
+#
+# Both read PUBLISHED weeks only, so a restaurant that never published a
+# Cavnar AI week (Simple EJ's) drafted with no fairness or rotation memory,
+# while its POS punches already said who worked the weekends and who closed
+# (schedule audit 10/3/26 D-21). Each week of the window is its live
+# published schedule, else what the time clock kept for it (shift_facts) —
+# labelled "punches" wherever it is said — so published weeks take over one
+# by one as they exist.
 
-def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None) -> dict:
-    """{name: {"weekend": n, "closing": n, "holiday": n, "weeks": w}} from
-    published weeks — the rotation memory a seven-day window cannot hold."""
+def _closes(r, close_times) -> bool:
+    """Whether a shift closes its day: ending within 30 minutes of that
+    day's close, read across midnight (schedule_rules.end_minutes, and a
+    close in the small hours is the next morning — close_minutes). Raw
+    minutes made "2:00am" 120, so every shift ending after 1:30am — or any
+    shift on a midnight-close Thursday — counted as a close (D-20). With no
+    close time set, a shift ending at 10pm or later."""
+    from schedule_rules import parse_minutes, end_minutes, _OVERNIGHT_LATEST_BEFORE
+    end = end_minutes(r)
+    if end is None:
+        return False
+    try:
+        day = datetime.strptime(str(r.get("date") or "")[:10], "%Y-%m-%d").strftime("%A")
+    except ValueError:
+        day = ""
+    close = parse_minutes((close_times or {}).get(day, "")) if day else None
+    if close is None:
+        return end >= 22 * 60
+    if close < _OVERNIGHT_LATEST_BEFORE:
+        close += 24 * 60
+    return end >= close - 30
+
+
+def _punch_hours(r) -> str:
+    """A punch's hours as a schedule row's scheduled_hours: what was worked."""
+    for k in ("actual_hours", "scheduled_hours"):
+        v = r.get(k)
+        try:
+            if v not in (None, "") and float(v) > 0:
+                return str(float(v))
+        except (TypeError, ValueError):
+            continue
+    return ""
+
+
+def record_weeks(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None) -> list:
+    """[(week_start iso, rows, "published"|"punches")], newest first, at
+    most `weeks`: each of the last `weeks` weeks before this one as its live
+    published schedule, else its punches (shift_facts.person_rows — what was
+    worked, the hours being the punch's). Names are each person's one
+    spelling (people.canonical_names)."""
     from schedule_versions import rows_from_csv
-    from schedule_economics import _holiday_dates
     today = today or date.today()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                            "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
-                            (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
-        close_times = {}
-        try:
-            from models import get_close_times
-            close_times = get_close_times(restaurant_id, db_path) or {}
-        except Exception:
-            pass
+        published = _published_weeks(conn, restaurant_id, weeks, today)
     finally:
         conn.close()
-    if not rows:
+    out, covered = [], set()
+    for w in published:
+        ws = str(w["week_start"] or "")[:10]
+        out.append((ws, rows_from_csv(w["schedule_csv"]), "published"))
+        try:
+            d0, d1 = date.fromisoformat(ws), date.fromisoformat(str(w["week_end"] or ws)[:10])
+            covered |= {(d0 + timedelta(days=i)).isoformat() for i in range((d1 - d0).days + 1)}
+        except ValueError:
+            continue
+    monday = today - timedelta(days=today.weekday())
+    try:
+        import shift_facts
+        punches = shift_facts.person_rows(restaurant_id, since=(monday - timedelta(weeks=weeks)).isoformat(),
+                                          until=(monday - timedelta(days=1)).isoformat(),
+                                          db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[schedule_intel] punches unread for {restaurant_id}: {e!r}")
+        punches = []
+    by_week = {}
+    for r in punches:
+        d = str(r.get("date") or "")[:10]
+        if len(d) != 10 or d in covered or not (r.get("employee") or "").strip():
+            continue
+        try:
+            wk = (date.fromisoformat(d) - timedelta(days=date.fromisoformat(d).weekday())).isoformat()
+        except ValueError:
+            continue
+        by_week.setdefault(wk, []).append(dict(r, date=d, scheduled_hours=_punch_hours(r)))
+    out += [(wk, rs, "punches") for wk, rs in by_week.items()]
+    out.sort(key=lambda t: t[0], reverse=True)
+    out = out[:weeks]
+    names = sorted({(r.get("employee") or "").strip() for _ws, rs, _s in out for r in rs} - {""})
+    try:
+        import people
+        canon = people.canonical_names(restaurant_id, names, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        canon = {}
+    if canon:
+        out = [(ws, [dict(r, employee=canon.get((r.get("employee") or "").strip(), r.get("employee")))
+                     for r in rs], src) for ws, rs, src in out]
+    return out
+
+
+def _source_of(hist) -> str:
+    kinds = {src for _ws, _rs, src in hist}
+    return "published and punches" if kinds == {"published", "punches"} else (next(iter(kinds)) if kinds else "")
+
+
+# ── fairness ledger ────────────────────────────────────────────────────────
+
+def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None) -> dict:
+    """{name: {"weekend": n, "closing": n, "holiday": n, "shifts": n,
+    "weeks": w, "from_punches": p}} over the last `weeks` weeks of record
+    (record_weeks: published, else punches — D-21) — the rotation memory a
+    seven-day window cannot hold. `from_punches`: how many of those weeks
+    are the time clock's, said wherever the ledger is."""
+    from schedule_economics import _holiday_dates
+    today = today or date.today()
+    hist = record_weeks(restaurant_id, weeks=weeks, db_path=db_path, today=today)
+    if not hist:
         return {}
-    from schedule_rules import parse_minutes
+    close_times = {}
+    try:
+        from models import get_close_times
+        close_times = get_close_times(restaurant_id, db_path) or {}
+    except Exception:
+        pass
     # Both ends of every week: one starting Dec 28 holds New Year's Day of
     # the next year, which the week_start year alone never looked up (SCHED-33).
     holidays = {}
     years = set()
-    for r in rows:
-        for k in ("week_start", "week_end"):
-            try:
-                years.add(int((r[k] or "")[:4]))
-            except (TypeError, ValueError):
-                pass
+    for ws, _rs, _src in hist:
+        try:
+            d0 = date.fromisoformat(ws)
+            years |= {d0.year, (d0 + timedelta(days=6)).year}
+        except ValueError:
+            pass
     for y in years:
         holidays.update(_holiday_dates(y))
     ledger = {}
-    for w in rows:
-        for r in rows_from_csv(w["schedule_csv"]):
+    for _ws, rows_, _src in hist:
+        for r in rows_:
             n = r["employee"]
             e = ledger.setdefault(n, {"weekend": 0, "closing": 0, "holiday": 0, "shifts": 0})
             e["shifts"] += 1
@@ -465,14 +566,12 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
                 e["weekend"] += 1
             if r["date"] in holidays:
                 e["holiday"] += 1
-            close = parse_minutes(close_times.get(d.strftime("%A"), ""))
-            end = parse_minutes(r.get("shift_end", ""))
-            if close is not None and end is not None and end >= close - 30:
+            if _closes(r, close_times):
                 e["closing"] += 1
-            elif close is None and end is not None and end >= 22 * 60:
-                e["closing"] += 1
+    punched = sum(1 for _ws, _rs, src in hist if src == "punches")
     for e in ledger.values():
-        e["weeks"] = len(rows)
+        e["weeks"] = len(hist)
+        e["from_punches"] = punched
     return ledger
 
 
@@ -506,36 +605,33 @@ def _published_weeks(conn, restaurant_id, weeks, today):
 
 
 def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None, roster_roles: dict = None) -> dict:
-    """{weeks, roles: {role: {...queues}}, holiday, lines} — who is next for
-    a weekend off, a close and a holiday, per role, from the last `weeks`
-    published weeks. roster_roles ({name: role}) limits the plan to people
-    still on the roster and files them under their roster role; without it
-    each person's most-worked role is used. Empty when fewer than two
-    published weeks exist: a rotation needs a history to rotate from."""
-    from schedule_versions import rows_from_csv
+    """{weeks, roles: {role: {...queues}}, holiday, lines, from_punches,
+    source} — who is next for a weekend off, a close and a holiday, per
+    role, from the last `weeks` weeks of record: each week's published
+    schedule, else its punches (record_weeks, D-21 — `from_punches` says
+    how many). roster_roles ({name: role}) limits the plan to people still
+    on the roster and files them under their roster role; without it each
+    person's most-worked role is used. Empty when fewer than two weeks of
+    record exist: a rotation needs a history to rotate from."""
     from schedule_economics import _holiday_dates
-    from schedule_rules import parse_minutes
     today = today or date.today()
-    conn = get_conn(db_path)
+    # The weeks of record (published, else punches — D-21), newest first.
+    hist = record_weeks(restaurant_id, weeks=weeks, db_path=db_path, today=today)
+    close_times = {}
     try:
-        published = _published_weeks(conn, restaurant_id, weeks, today)
+        from models import get_close_times
+        close_times = get_close_times(restaurant_id, db_path) or {}
+    except Exception:
         close_times = {}
-        try:
-            from models import get_close_times
-            close_times = get_close_times(restaurant_id, db_path) or {}
-        except Exception:
-            close_times = {}
-    finally:
-        conn.close()
-    if len(published) < 2:
+    if len(hist) < 2:
         return {}
     years = set()
-    for w in published:
-        for k in ("week_start", "week_end"):
-            try:
-                years.add(int((w[k] or "")[:4]))
-            except (TypeError, ValueError):
-                pass
+    for ws, _rs, _src in hist:
+        try:
+            d0 = date.fromisoformat(ws)
+            years |= {d0.year, (d0 + timedelta(days=6)).year}
+        except ValueError:
+            pass
     years |= {today.year, today.year + 1}
     holidays = {}
     for y in years:
@@ -543,10 +639,9 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
     roster = {str(n).strip().lower(): (n, (r or "").strip()) for n, r in (roster_roles or {}).items() if n}
     people = {}       # lower name -> {display, roles{}, shifts, closes, nights, holidays, by_week{ws: weekend?}}
     week_keys = []
-    for w in published:
-        ws = w["week_start"] or ""
+    for ws, week_rows, _src in hist:
         week_keys.append(ws)
-        for r in rows_from_csv(w["schedule_csv"]):
+        for r in week_rows:
             low = r["employee"].strip().lower()
             if roster and low not in roster:
                 continue
@@ -565,10 +660,7 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
                 p["holidays"] += 1
             if _daypart(r) == "night":
                 p["nights"] += 1
-            close = parse_minutes(close_times.get(d.strftime("%A"), ""))
-            end = parse_minutes(r.get("shift_end", ""))
-            if (close is not None and end is not None and end >= close - 30) or \
-               (close is None and end is not None and end >= 22 * 60):
+            if _closes(r, close_times):
                 p["closes"] += 1
     by_role = {}
     for low, p in people.items():
@@ -646,7 +738,9 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
                              f"(worked the most holidays); first to work it: {_then(v['holiday_work_first'][:ROTATION_SHOW])}.")
     if not roles_out:
         return {}
-    return {"weeks": len(published), "roles": roles_out, "holiday": holiday, "lines": lines}
+    punched = sum(1 for _ws, _rs, src in hist if src == "punches")
+    return {"weeks": len(hist), "roles": roles_out, "holiday": holiday, "lines": lines,
+            "from_punches": punched, "source": _source_of(hist)}
 
 
 def _then(names: list) -> str:
@@ -687,8 +781,19 @@ def rotation_block(plan: dict) -> str:
                          f"{', '.join((h.get('work_first') or {}).get(role) or [])}.")
     if not lines:
         return ""
-    return ("\n\nROTATION PLAN (over the last " + str(plan.get("weeks")) + " published weeks — a preference ranked below the "
-            "hard rules and the shift requirements; the fairness score checks the week against it):\n" + "\n".join(lines))
+    return ("\n\nROTATION PLAN (over the last " + _weeks_words(plan.get("weeks"), plan.get("from_punches"))
+            + " — a preference ranked below the hard rules and the shift requirements; the fairness score checks the "
+              "week against it):\n" + "\n".join(lines))
+
+
+def _weeks_words(weeks, from_punches) -> str:
+    """"8 published weeks", "8 weeks (5 from punches — the time clock, not a
+    published schedule)" — where the record came from, said (D-21)."""
+    weeks, punched = int(weeks or 0), int(from_punches or 0)
+    if not punched:
+        return f"{weeks} published weeks"
+    return (f"{weeks} weeks ({'all' if punched >= weeks else punched} from punches — the time clock, "
+            "not a published schedule)")
 
 
 def ledger_block(ledger: dict) -> str:
@@ -697,11 +802,13 @@ def ledger_block(ledger: dict) -> str:
     active = {n: e for n, e in ledger.items() if e["shifts"] >= 3}
     if len(active) < 3:
         return ""
-    wk = next(iter(active.values()))["weeks"]
+    first = next(iter(active.values()))
+    wk = first["weeks"]
     top_w = sorted(active.items(), key=lambda kv: -kv[1]["weekend"])[:3]
     low_w = sorted(active.items(), key=lambda kv: kv[1]["weekend"])[:3]
     top_c = sorted(active.items(), key=lambda kv: -kv[1]["closing"])[:3]
-    lines = [f"  Most weekend shifts in the last {wk} published weeks: " + ", ".join(f"{n} ({e['weekend']})" for n, e in top_w),
+    lines = [f"  Most weekend shifts in the last {_weeks_words(wk, first.get('from_punches'))}: "
+             + ", ".join(f"{n} ({e['weekend']})" for n, e in top_w),
              "  Fewest: " + ", ".join(f"{n} ({e['weekend']})" for n, e in low_w),
              "  Most closes: " + ", ".join(f"{n} ({e['closing']})" for n, e in top_c)]
     hol = [(n, e["holiday"]) for n, e in active.items() if e["holiday"]]

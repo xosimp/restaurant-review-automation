@@ -734,7 +734,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # review panel and the publish gate.
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
     roster_rows = _staff.roster(restaurant_id)
-    roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows]
+    # Somebody with no shift in weeks is not offered to the model (schedule
+    # audit 10/3/26 E-3): the departed manager "Dana" was drafted onto a
+    # Wednesday close. They stay on the roster — a row the owner writes for
+    # them is legal — and the review names who was left off and since when.
+    _dormant = {e["name"]: constraints.dormant[constraints.key(e["name"])] for e in roster_rows
+                if constraints.key(e["name"]) in (constraints.dormant or {})}
+    roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows if e["name"] not in _dormant]
     if no_history and not roster_pairs:
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant, missing="team"))
     # Days nobody on the roster can legally work (E-20): everyone on approved
@@ -841,6 +847,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     from models import (get_operational_scores, get_role_strength_thresholds,
                         get_shift_leader_rules, get_shift_profiles)
     _op_scores = get_operational_scores(restaurant_id)
+    # A person's score for one role (D-12): the scorer and the solver read it
+    # for a shift in that role, their overall score otherwise.
+    try:
+        from models import get_role_scores as _grs
+        _role_scores = _grs(restaurant_id) or {}
+    except Exception as _sfx:
+        _soft_fail('role_scores', _sfx, restaurant_id)
+        _role_scores = {}
     _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
     _leader_rules = get_shift_leader_rules(restaurant_id)
 
@@ -896,6 +910,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('pairs', _sfx, restaurant_id)
         pairs = {}
+    # The pairings the owner's rules state ("never schedule Ana with Ben",
+    # D-38) beside the ones kept on the Team page; an owner-only one is
+    # scored and solved against, never printed.
+    pairs = _rules.pairs_with_rules(pairs, constraints)
     reliability = {}
     try:
         reliability = _staff.reliability(restaurant_id)
@@ -1053,6 +1071,30 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                           + _mem.text)
     except Exception as _sfx:
         _soft_fail('memory_context', _sfx, restaurant_id)
+    # One person, one key in the prompt too (schedule audit 10/3/26 D-8):
+    # availability, notes, ratings, tenure, closers, usual patterns,
+    # reliability and preferences kept under an alias or an old POS spelling
+    # are told to the model under the roster's spelling of the person —
+    # the model was handed "Mike Smith: NOT available Tuesday" beside a
+    # roster that says "Michael Smith".
+    try:
+        _disp = _identity_view(restaurant_id, [n for n, _r in roster_pairs], constraints)
+        _op_scores = _rekey(_op_scores, _disp, "first") if _op_scores else _op_scores
+        _role_scores = _rekey(_role_scores, _disp, "first") if _role_scores else _role_scores
+        for _pk, _how in (("tenure", "max"), ("leader_flags", "any"), ("prior_pattern", "first")):
+            if _people.get(_pk):
+                _people[_pk] = _rekey(_people[_pk], _disp, _how)
+        _people["experienced"] = sorted({_disp(n) or n for n in (_people.get("experienced") or [])})
+        reliability = _rekey(reliability, _disp, "first") if reliability else reliability
+        stated_prefs = _rekey(stated_prefs, _disp, "first") if stated_prefs else stated_prefs
+        learned_prefs = _rekey(learned_prefs, _disp, "first") if learned_prefs else learned_prefs
+        staff_availability = [dict(a, employee_name=_disp(a.get("employee_name")) or a.get("employee_name"))
+                              for a in (staff_availability or [])]
+        if staff_notes:
+            staff_notes = [dict(n, employee_name=_disp(n.get("employee_name")) or n.get("employee_name"))
+                           for n in staff_notes]
+    except Exception as _sfx:
+        _soft_fail('identity', _sfx, restaurant_id)
     # The managers' shifts, planned before the model writes anything
     # (schedule audit 10/3/26 PR-1, P-8, D-4, D-5, PR-32). Erik's first week
     # had no manager on any day: managers barely punch, so the history the
@@ -1220,6 +1262,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
+    result["role_scores"] = _role_scores
     # Which labor target the budget was built against — the owner's goal
     # ("your goal of 26% by 12/31/26") or the setting (memory audit 9/29/26,
     # owner_goals): both the revenue and the target name what applied.
@@ -1247,6 +1290,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     if roster_pairs:
         result["roster"] = sorted(n for n, _r in roster_pairs)
     result["roster_roles"] = {n: r for n, r in roster_pairs}
+    result["dormant"] = _dormant
+    # Each person's usual week (models.usual_pattern: days, dayparts, hours,
+    # starts — D-37), for the review's "regulars with no shift" line.
+    result["prior_pattern"] = _people.get("prior_pattern") or {}
     result["pairs"] = pairs
     result["reliability"] = reliability
     result["learned_patterns"] = learned
@@ -2382,14 +2429,19 @@ def _pairs_block(pairs: dict, roster_pairs: list) -> str:
     if not pairs or not (pairs.get("prefer") or pairs.get("avoid")):
         return ""
     names = {n.lower(): n for n, _r in (roster_pairs or [])}
+    # A pairing from an owner-only rule is never printed (D-38): the model's
+    # row notes reach staff.
+    private = pairs.get("private") or set()
     def _show(p):
         a, b = sorted(names.get(x, x.title()) for x in p)
         return f"{a} and {b}"
     lines = []
-    for p in sorted(pairs.get("avoid") or set(), key=sorted):
+    for p in sorted((pairs.get("avoid") or set()) - private, key=sorted):
         lines.append(f"  keep apart: {_show(p)}")
-    for p in sorted(pairs.get("prefer") or set(), key=sorted):
+    for p in sorted((pairs.get("prefer") or set()) - private, key=sorted):
         lines.append(f"  work well together: {_show(p)}")
+    if not lines:
+        return ""
     return "\n\nPAIRINGS (the owner's own notes on who works with whom):\n" + "\n".join(lines)
 
 
@@ -3977,6 +4029,12 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     import shift_quality as _sq
 
     scores = get_operational_scores(restaurant_id)
+    try:
+        from models import get_role_scores as _grs
+        role_scores = _grs(restaurant_id) or {}
+    except Exception as _rx:
+        print(f"[schedule] role scores unavailable for {restaurant_id}: {_rx!r}")
+        role_scores = {}
     thresholds = get_role_strength_thresholds(restaurant_id) if scores else {}
     # Leader rules whatever the ratings (P-18, D-10), as the generation reads them.
     leader_rules = get_shift_leader_rules(restaurant_id)
@@ -4016,6 +4074,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     out = {
         "elsewhere": {},
         "operational_scores": scores,
+        "role_scores": role_scores,
         "strength_thresholds": thresholds,
         "leader_rules": leader_rules,
         "shift_profiles": profiles,
@@ -4040,7 +4099,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["constraints"] = c
             out["roster"] = sorted(e["name"] for e in roster_rows)
             out["roster_roles"] = c.roster_roles
-            out["pairs"] = _staff.pair_sets(restaurant_id)
+            out["pairs"] = _rules.pairs_with_rules(_staff.pair_sets(restaurant_id), c)
             out["reliability"] = _staff.reliability(restaurant_id)
             out["demand_by_date"] = _signals.by_date(restaurant_id, dates)
             try:
@@ -4162,6 +4221,11 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
                 csv_text = (detail or {}).get("schedule_csv") or ""
                 if csv_text:
                     break
+        if not csv_text and before:
+            # Nothing published or drafted next to it: what the time clock
+            # kept for those days (shift_facts — schedule audit 10/3/26
+            # D-22), so a run that began last week still counts at the seam.
+            return _prior_week_from_punches(restaurant_id, before, days_back)
         if not csv_text:
             return {}
         out = {}
@@ -4190,6 +4254,35 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
         return out
     except Exception:
         return {}
+
+
+def _prior_week_from_punches(restaurant_id, before, days_back=7) -> dict:
+    """_prior_week_assignments from punches: {name: [{date, daypart, day,
+    demand, source: "punches"}]} for the `days_back` days before `before`."""
+    import shift_quality as _sq
+    import shift_facts as _sf
+    from datetime import datetime as _dt, timedelta as _tdp
+    try:
+        start = (_dt.strptime(before, "%Y-%m-%d") - _tdp(days=days_back)).strftime("%Y-%m-%d")
+        end = (_dt.strptime(before, "%Y-%m-%d") - _tdp(days=1)).strftime("%Y-%m-%d")
+        rows = _sf.person_rows(restaurant_id, since=start, until=end) or []
+    except Exception as _px:
+        print(f"[schedule] punches for the seam unavailable for {restaurant_id}: {_px!r}")
+        return {}
+    out = {}
+    for r in rows:
+        date, name = str(r.get("date") or "")[:10], (r.get("employee") or "").strip()
+        if not (date and name) or not (start <= date <= end):
+            continue
+        part = _sq.daypart_of(r.get("shift_start") or "")
+        bucket = out.setdefault(name, [])
+        if not any(e["date"] == date and e["daypart"] == part for e in bucket):
+            bucket.append({"date": date, "daypart": part, "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
+                           "demand": "normal", "source": "punches"})
+    for name, bucket in out.items():
+        bucket.sort(key=lambda e: e["date"])
+        out[name] = bucket[-days_back:]
+    return out
 
 
 # How many published weeks fatigue and fairness read back across (SQ-27) —
@@ -4411,6 +4504,8 @@ def _quality_signals(restaurant_id, result, **extra):
                         get_quality_weights)
     signals = {
         "scores": result.get("operational_scores") or {},
+        # A score for the role a shift is in, over the overall one (D-12).
+        "role_scores": result.get("role_scores") or {},
         "leader_rules": result.get("leader_rules") or [],
         "daily_target_hours": result.get("daily_target_hours") or {},
         "demand_by_day": result.get("demand_by_day") or {},
@@ -4465,6 +4560,7 @@ def _quality_signals(restaurant_id, result, **extra):
         # the repair loop: the section count over the front-of-house roles.
         signals["section_cap"] = int(getattr(c, "section_cap", 0) or 0)
         signals["cap_roles"] = sorted(getattr(c, "foh_roles", None) or {"server"})
+        signals["role_families"] = dict(getattr(c, "role_families", None) or {})
     # Inside a generation each read below is made once (frozen_read, P-36),
     # and one that fails is said (P-17) — it used to be a silent {}.
     try:
@@ -4516,7 +4612,7 @@ def _quality_signals(restaurant_id, result, **extra):
         _soft_fail("stated_preferences", _sx, restaurant_id)
         stated = {}
     _people_signals(restaurant_id, result, signals, stated)
-    _reconcile_to_roster(signals)
+    _reconcile_to_roster(signals, c, restaurant_id)
     # Leader rules against who on the roster can meet them (schedule audit
     # 10/3/26 SQ-17), after the ratings and closer flags are reconciled to
     # the roster: nobody able sets a rule aside (named in confidence, never
@@ -4542,6 +4638,10 @@ def _quality_signals(restaurant_id, result, **extra):
                                       for n in (frozen_read(("staff_notes", restaurant_id),
                                                             lambda: _gsn(restaurant_id)) or [])
                                       if n.get("employee_name")}
+            if signals["constraints"] and signals.get("roster"):
+                # Under the roster's spelling, like every other signal (D-8).
+                signals["constraints"] = _rekey(signals["constraints"],
+                                                _identity_view(restaurant_id, signals["roster"], c), "join")
         except Exception as _sx:
             _soft_fail("staff notes", _sx, restaurant_id)
             signals["constraints"] = {}
@@ -4610,8 +4710,9 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         # No week's constraints (a bare re-score): who is salaried still
         # comes from the restaurant, so their hours never read as hourly.
         try:
-            from models import salaried_staff, salaried_name_key
-            salaried = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+            from models import salaried_keys
+            # Every spelling of every salaried person (D-7, people's identity).
+            salaried = set(salaried_keys(get_restaurant(restaurant_id)))
         except Exception as _sx:
             _soft_fail("salaried staff", _sx, restaurant_id)
             salaried = set()
@@ -4732,18 +4833,122 @@ def _learning_signals(restaurant_id, result) -> dict:
     return out
 
 
-def _reconcile_to_roster(signals: dict) -> None:
-    """Ratings and closer flags for people who are not on the roster (seed
-    leftovers, staff who left) must not judge this week: fourteen such
-    ratings once put a fully staffed Saturday at 0 while the confidence
-    panel said nobody was rated. With a roster on file, only its names'
-    facts are scored; without one, everything stands. The weeks before
-    this one are read the same way (schedule audit 10/3/26 SQ-27): somebody
-    who has left is no longer a colleague a share is measured against."""
-    roster = {str(n).strip().lower() for n in (signals.get("roster") or []) if n}
+# The per-person signals the scorer and the solver read by name: each is
+# re-keyed to the roster's spelling of the person it means (D-8) — and how
+# two entries landing on one person combine.
+_PERSON_SIGNALS = {"scores": "first", "role_scores": "first", "leader_flags": "any", "tenure": "max",
+                   "cross_trained": "union",
+                   "prior_pattern": "first", "availability": "union", "preferences": "merge",
+                   "learned_preferences": "first",
+                   "reliability": "first", "prior_week_assignments": "concat", "elsewhere": "concat",
+                   "constraints": "join", "ledger": "first", "load_ledger": "weeks", "hours_limits": "first"}
+
+
+def _identity_view(restaurant_id, roster, c=None):
+    """name -> the roster's spelling of the one person it means (people's
+    identity, the same keys the Constraints file every fact under), or None
+    for a name nobody on the roster goes by."""
+    if c is not None and getattr(c, "display", None):
+        return lambda n: c.display.get(c.key(n))
+    names = [n for n in (roster or []) if n]
+    folded = {" ".join(str(n).split()).lower(): n for n in names}
+    key_of = {}
+    try:
+        import people as _people_id
+        key_of = (_people_id.identity_index(restaurant_id, names) or {}).get("key_of") or {}
+    except Exception as _ix:
+        print(f"[schedule] identity unavailable for {restaurant_id}: {_ix!r}")
+
+    def _display(n):
+        k = " ".join(str(n or "").split()).lower()
+        k = key_of.get(k, key_of.get(k.casefold(), k))
+        return folded.get(k)
+    return _display
+
+
+def _rekey(d: dict, display, how: str) -> dict:
+    """`d` ({name: value}) with every name a roster person goes by filed
+    under the roster's spelling; two entries on one person combined by
+    `how` (the roster's own spelling first). Names nobody on the roster
+    goes by keep their key."""
+    out, own = {}, set()
+    for n in sorted(d, key=lambda x: str(x)):
+        v = d[n]
+        who = display(n) or n
+        exact = str(n).strip() == str(who).strip()
+        if who not in out:
+            out[who] = v
+        elif how == "max":
+            try:
+                out[who] = max(out[who], v)
+            except TypeError:
+                pass
+        elif how == "any":
+            out[who] = bool(out[who]) or bool(v)
+        elif how == "union":
+            out[who] = set(out[who] or ()) | set(v or ())
+        elif how == "concat":
+            out[who] = list(out[who] or []) + [x for x in (v or []) if x not in (out[who] or [])]
+        elif how == "join":
+            out[who] = "; ".join(x for x in (str(out[who] or "").strip(), str(v or "").strip()) if x)
+        elif how == "merge" and isinstance(out[who], dict) and isinstance(v, dict):
+            # Both halves kept (a stated preference under one spelling, the
+            # learned slots under another); the roster's spelling wins a tie.
+            out[who] = {**out[who], **v} if (exact and who not in own) else {**v, **out[who]}
+        elif how == "weeks":
+            out[who] = _merge_load_weeks(out[who], v)
+        elif exact and who not in own:
+            out[who] = v                   # "first": the roster's own spelling wins
+        if exact:
+            own.add(who)
+    return out
+
+
+def _merge_load_weeks(a, b) -> list:
+    """Two spellings' load_ledger weeks as one person's (D-8): a week both
+    carry is summed (hours, slots; the role of the larger share), oldest
+    week first."""
+    by = {}
+    for e in list(a or []) + list(b or []):
+        if not isinstance(e, dict):
+            continue
+        w = e.get("week")
+        if w not in by:
+            by[w] = dict(e, slots=list(e.get("slots") or []))
+            continue
+        x = by[w]
+        hx, he = float(x.get("hours") or 0), float(e.get("hours") or 0)
+        by[w] = dict(x, hours=round(hx + he, 2), slots=list(x.get("slots") or []) + list(e.get("slots") or []),
+                     role=x.get("role") if hx >= he else e.get("role"))
+    return [by[w] for w in sorted(by, key=lambda k: str(k or ""))]
+
+
+def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
+    """Every per-person signal is filed under the roster's spelling of the
+    person it means (people's identity, schedule audit 10/3/26 D-8): a
+    rating kept under "Mike" scores the roster's "Michael", tenure and the
+    usual pattern under an old POS spelling count, a note under a nickname
+    reaches the swap search. Then ratings and closer flags for people who
+    are not on the roster (seed leftovers, staff who left) must not judge
+    this week: fourteen such ratings once put a fully staffed Saturday at 0
+    while the confidence panel said nobody was rated. With a roster on
+    file, only its names' facts are scored; without one, everything
+    stands."""
+    roster_names = [n for n in (signals.get("roster") or []) if n]
+    roster = {str(n).strip().lower() for n in roster_names}
     if not roster:
         return
-    for key in ("scores", "leader_flags", "ledger", "load_ledger"):
+    display = _identity_view(restaurant_id, roster_names, c)
+    for key, how in _PERSON_SIGNALS.items():
+        d = signals.get(key)
+        if isinstance(d, dict) and d:
+            signals[key] = _rekey(d, display, how)
+    if signals.get("experienced"):
+        signals["experienced"] = {display(n) or n for n in signals["experienced"]}
+    # The weeks before this one are read the same way (schedule audit
+    # 10/3/26 SQ-27): somebody who has left is no longer a colleague a
+    # share is measured against.
+    for key in ("scores", "leader_flags", "role_scores", "ledger", "load_ledger"):
         d = signals.get(key) or {}
         if isinstance(d, dict):
             signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
@@ -6419,6 +6624,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["review"]["lines"].append(
                     f"Your rule \u201c{_txt[:120]}\u201d isn't one Cavnar AI can check automatically — check this "
                     f"draft against it")
+            # A fact filed under a name nobody on the roster goes by — time
+            # off, availability, a note, a station skill, a salaried entry —
+            # applies to nobody (schedule audit 10/3/26 D-8): named here,
+            # with a similar roster name to check when there is one.
+            _unm = list(getattr(_constraints, "unmatched", None) or [])
+            result["review"]["unmatched_names"] = _unm
+            if _unm:
+                result["review"]["lines"].append(
+                    f"{len(_unm)} fact{'s' if len(_unm) != 1 else ''} on file name{'' if len(_unm) != 1 else 's'} "
+                    f"nobody on the roster, so {'they apply' if len(_unm) != 1 else 'it applies'} to nobody: "
+                    + "; ".join(u["detail"] for u in _unm[:3]) + ("…" if len(_unm) > 3 else ""))
             # The manager plan, said (schedule audit 10/3/26 D-5, PR-1): why
             # a stretch has no manager, the owner's question when the
             # managers' days are unknown, a standing shift that could not be
@@ -6457,13 +6673,42 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
             _not = [n for n in (result.get("roster") or []) if n and n.strip().lower() not in _on]
             result["not_scheduled"] = _not
+            _gone = result.get("dormant") or {}
+            if _gone:
+                from time_utils import mdy as _mdy_gone
+                _gl = sorted(_gone.items(), key=lambda kv: kv[1], reverse=True)
+                result["review"]["lines"].append(
+                    f"Left off this draft — no shift in {_staff.DORMANT_WEEKS}+ weeks: "
+                    + ", ".join(f"{n} (last {_mdy_gone(d)})" for n, d in _gl[:6]) + ("…" if len(_gl) > 6 else "")
+                    + ". Deactivate anyone who has left, or mark them still here on the Team page.")
+            # A regular left with no shift at all (D-37): their usual week,
+            # said beside the name — "Ana (usually ~32h)".
+            _pp = result.get("prior_pattern") or {}
+            _wk = list(getattr(_constraints, "week_dates", None) or [])
+
+            def _away_all_week(n):
+                _b = (getattr(_constraints, "blocked_dates", None) or {}).get(_constraints.key(n)
+                                                                               if hasattr(_constraints, "key")
+                                                                               else n.lower()) or {}
+                return bool(_wk) and all(d in _b for d in _wk)
+            _reg = [(n, (_pp.get(n) or {}).get("avg_hours")) for n in _not
+                    if float((_pp.get(n) or {}).get("avg_hours") or 0) >= 16 and not _away_all_week(n)]
+            result["regulars_not_scheduled"] = [{"name": n, "usual_hours": h} for n, h in _reg]
+            if _reg:
+                result["review"]["lines"].append(
+                    f"{len(_reg)} regular{'s' if len(_reg) != 1 else ''} with no shift this week: "
+                    + ", ".join(f"{n} (usually ~{float(h):g}h)" for n, h in _reg[:6]) + ("…" if len(_reg) > 6 else ""))
             if _not:
                 _full = [n for n in _not if (_constraints.employment.get(n.lower()) == "full")]
                 result["review"]["lines"].append(
                     f"{len(_not)} on the roster have no shift this week: " + ", ".join(_not[:8]) + ("…" if len(_not) > 8 else "")
                     + (f" — {len(_full)} of them full-time" if _full else ""))
             _roster_low = {n.strip().lower() for n in (result.get("roster") or [])}
-            _off = sorted(n for n in (result.get("operational_scores") or {}) if n.strip().lower() not in _roster_low) if _roster_low else []
+            # A rating under another spelling of a roster person is theirs
+            # (people's identity, D-8) — not a rating that judges nobody.
+            _known = (lambda n: _constraints.key(n) in _constraints.display) if getattr(_constraints, "display", None) \
+                else (lambda n: n.strip().lower() in _roster_low)
+            _off = sorted(n for n in (result.get("operational_scores") or {}) if not _known(n)) if _roster_low else []
             result["ratings_off_roster"] = _off
             # The section cap against what this restaurant's own history
             # runs: every requirement is held to the cap, and where the
@@ -7332,19 +7577,21 @@ def _rules_for_swaps(c) -> dict:
     base = {}
     for name, per in (c.base_hours or {}).items():
         base[name] = sum(h for b, h in per.items() if b in buckets)
+    blocked, dayparts, windows = _parts_for_swaps(c)
     # Each person's weekly maximum as the rules compute it (max_hours: their
     # own maximum above the ceiling allows them the hours, P-12), and for a
     # salaried person the weekly cap code holds them to (salaried_limit,
-    # E-17) — one answer for the sweep and every swap.
+    # E-17) — one answer for the sweep and every swap, filed under the
+    # person's one key (D-8).
     names = set(c.roster_names or []) | set(c.hours_limits or {}) | set(c.salaried or ())
     caps = {}
     for n in names:
         try:
-            caps[str(n).strip().lower()] = float(c.salaried_limit(n) if c.is_salaried(n) else c.max_hours(n))
+            caps[c.key(n)] = float(c.salaried_limit(n) if c.is_salaried(n) else c.max_hours(n))
         except (TypeError, ValueError):
             continue
     return {
-        "blocked_dates": c.blocked_dates, "daypart_avail": c.daypart_avail, "caps": caps,
+        "blocked_dates": blocked, "daypart_avail": dayparts, "caps": caps,
         "hours_limits": c.hours_limits, "base_hours": base, "base_rows": c.base_rows,
         "weekly_ceiling": c.compliance.get("weekly_hours_ceiling"),
         "min_rest_hours": c.compliance.get("min_rest_hours"),
@@ -7356,9 +7603,57 @@ def _rules_for_swaps(c) -> dict:
         "minor_max_daily_hours": c.compliance.get("minor_max_daily_hours"),
         "certifications": {k: sorted(v) for k, v in (c.certifications or {}).items()},
         "role_requirements": {k: sorted(v) for k, v in (c.role_requirements or {}).items()},
-        "time_windows": dict(c.time_windows or {}),
+        "time_windows": windows,
         "pending_off": {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()},
     }
+
+
+def _parts_for_swaps(c):
+    """(blocked_dates, daypart_avail, time_windows) with every part of a
+    day off (Constraints.blocked_parts, schedule audit 10/3/26 D-39) folded
+    into the per-weekday maps the swap index reads: a lunch or dinner off
+    is that weekday's other daypart, "until 4pm" its earliest start, "from
+    6pm" its latest end — on a weekday the week holds once. Anything else
+    (a stretch in the middle, a weekday twice) blocks the whole date: a
+    suggestion kept off a workable evening is a missed suggestion, never a
+    broken rule."""
+    blocked = {k: dict(v) for k, v in (c.blocked_dates or {}).items()}
+    dayparts = {k: dict(v) for k, v in (c.daypart_avail or {}).items()}
+    windows = {k: dict(v) for k, v in (c.time_windows or {}).items()}
+    parts = getattr(c, "blocked_parts", None) or {}
+    if not parts:
+        return blocked, dayparts, windows
+    from datetime import datetime as _dt
+    count = {}
+    for d in c.week_dates or []:
+        try:
+            wd = _dt.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (TypeError, ValueError):
+            continue
+        count[wd] = count.get(wd, 0) + 1
+    for key, by_date in parts.items():
+        for d, plist in by_date.items():
+            try:
+                wd = _dt.strptime(d, "%Y-%m-%d").strftime("%A")
+            except (TypeError, ValueError):
+                continue
+            once = count.get(wd) == 1
+            for p in plist:
+                lo, hi = (windows.get(key) or {}).get(wd) or (None, None)
+                if p.get("daypart") and once:
+                    keep = "night" if p["daypart"] == "morning" else "morning"
+                    cur = (dayparts.get(key) or {}).get(wd)
+                    dayparts.setdefault(key, {})[wd] = "off" if cur in (p["daypart"], "off") else keep
+                elif once and p.get("from") is None and p.get("until") is not None and p["until"] < 24 * 60 \
+                        and (hi is None or p["until"] < hi):
+                    windows.setdefault(key, {})[wd] = (max(lo or 0, p["until"]), hi)
+                elif once and p.get("until") is None and p.get("from") is not None \
+                        and (lo is None or lo < p["from"]) \
+                        and (hi is None or (hi >= 6 * 60 and (lo is None or hi > lo))):
+                    windows.setdefault(key, {})[wd] = (lo, p["from"] if hi is None else min(hi, p["from"]))
+                else:
+                    blocked.setdefault(key, {})[d] = p.get("reason") or _rules.LABELS["approved_time_off"]
+    return blocked, dayparts, windows
 
 
 def _safe_hourly_profile(restaurant_id) -> dict:

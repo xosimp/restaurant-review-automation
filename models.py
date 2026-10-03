@@ -1161,6 +1161,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # {"Friday": {"from": null, "until": "2026-12-15"}} — a blocked
         # weekday that holds only between two dates (employee audit M5).
         ("staff_availability", "day_bounds", "TEXT"),
+        # Part of a day off (schedule audit 10/3/26 D-39): "off until 4pm"
+        # (end_time), "off from 6pm" (start_time), both for a stretch in the
+        # middle, or a daypart ("morning" = lunch, "night" = dinner). None of
+        # them: the whole day, as before.
+        ("staff_time_off", "start_time", "TEXT"),
+        ("staff_time_off", "end_time", "TEXT"),
+        ("staff_time_off", "daypart", "TEXT"),
         ("restaurants", "role_cross_training_json", "TEXT"),
         # Role families, the roles with chosen closers and the salaried
         # weekly cap (schedule audit 10/3/26 F1: D-13, D-9, E-12).
@@ -7515,6 +7522,38 @@ CAPABILITY_ATTRIBUTES = {
 SCORE_LABELS = {1: "Very weak", 2: "Below average", 3: "Average",
                 4: "Strong", 5: "Excellent"}
 
+# An Operational Score for one role (schedule audit 10/3/26 D-12): a 5 as
+# Server counted the same on Bar. Kept as its own attribute, "role:<family>"
+# (shift_quality.role_family — "Server AM" and "Server PM" are one "server"),
+# beside the overall score it falls back to. No schema change: one row per
+# person per role, with the same provenance as every rating.
+ROLE_SCORE_PREFIX = "role:"
+# A rating older than this asks the owner "still right?" (D-12: a rating
+# from a year ago never faded). It keeps counting until they answer — an
+# owner's judgement is never dropped silently.
+RERATE_AFTER_DAYS = 90
+
+
+def role_score_attribute(role) -> str:
+    """"role:server" for "Server AM" — the attribute a per-role score is
+    kept under; "" for no role."""
+    from shift_quality import role_family
+    fam = role_family(str(role or "").strip())
+    return (ROLE_SCORE_PREFIX + fam) if fam else ""
+
+
+def capability_spec(attribute) -> dict:
+    """CAPABILITY_ATTRIBUTES' entry for `attribute`; a per-role score
+    ("role:<family>") is a score like "overall"."""
+    if attribute in CAPABILITY_ATTRIBUTES:
+        return CAPABILITY_ATTRIBUTES[attribute]
+    a = str(attribute or "")
+    if a.startswith(ROLE_SCORE_PREFIX) and a[len(ROLE_SCORE_PREFIX):].strip():
+        role = a[len(ROLE_SCORE_PREFIX):].strip()
+        return {"label": f"Operational Score as {role.title()}", "kind": "score", "v1": True,
+                "help": CAPABILITY_ATTRIBUTES["overall"]["help"], "role": role}
+    return None
+
 
 def init_staff_capabilities(db_path: str = DB_PATH):
     conn = get_conn(db_path)
@@ -7583,7 +7622,10 @@ def set_capability(restaurant_id: int, employee_name: str, attribute: str = "ove
     _write_attribution) is stored with it: updated_by_user_id, authority
     and via (PEOPLE-15).
     """
-    spec = CAPABILITY_ATTRIBUTES.get(attribute)
+    if str(attribute or "").startswith(ROLE_SCORE_PREFIX):
+        # One spelling per role family: "role:Server AM" is "role:server".
+        attribute = role_score_attribute(str(attribute)[len(ROLE_SCORE_PREFIX):]) or attribute
+    spec = capability_spec(attribute)
     if not spec:
         raise CapabilityError(f"{attribute!r} is not a capability this system knows about")
     name = (employee_name or "").strip()
@@ -7759,6 +7801,46 @@ def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             and c.get("overall", {}).get("authority") != "admin"}
 
 
+def get_role_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: {role family: 1-5}} — the per-role Operational Scores
+    (D-12), counted by the same rule as get_operational_scores (an admin's
+    rating waits for the owner). The scorer and the solver read a person's
+    score for the role a shift is in from here, else their overall score."""
+    out = {}
+    for n, attrs in get_capabilities(restaurant_id, db_path=db_path).items():
+        for a, c in (attrs or {}).items():
+            if not str(a).startswith(ROLE_SCORE_PREFIX) or c.get("score") is None or c.get("authority") == "admin":
+                continue
+            out.setdefault(n, {})[str(a)[len(ROLE_SCORE_PREFIX):]] = c["score"]
+    return out
+
+
+def rating_ages(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
+    """{employee_name: {"rated_on", "rated_label", "days", "due", "due_text"}}
+    for everyone with a counted rating (overall or a role's), by their
+    newest one: `due` once it is RERATE_AFTER_DAYS old — the team page asks
+    "Rated 6/1/26 — still right?" (schedule audit 10/3/26 D-12)."""
+    from datetime import date as _d
+    from time_utils import mdy
+    today = today or _restaurant_today(restaurant_id)
+    out = {}
+    for n, attrs in get_capabilities(restaurant_id, db_path=db_path).items():
+        stamps = [str(c.get("updated_at") or "")[:10] for a, c in (attrs or {}).items()
+                  if (a == "overall" or str(a).startswith(ROLE_SCORE_PREFIX)) and c.get("score") is not None
+                  and c.get("authority") != "admin" and c.get("updated_at")]
+        if not stamps:
+            continue
+        newest = max(stamps)
+        try:
+            days = (today - _d.fromisoformat(newest)).days
+        except ValueError:
+            continue
+        due = days >= RERATE_AFTER_DAYS
+        out[n] = {"rated_on": newest, "rated_label": mdy(newest), "days": days, "due": due,
+                  "due_text": f"Rated {mdy(newest)} — still right?" if due else None}
+    return out
+
+
 def adopt_admin_ratings(restaurant_id: int, user: dict, db_path: str = DB_PATH) -> int:
     """An account holder counts, as their own, the ratings an admin entered
     (through view-as or support) — usually with the owner beside them. Only
@@ -7805,7 +7887,15 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     except Exception:
         admin_keys = set()
     admin_set = [n for n in names if " ".join(str(n).split()).casefold() in admin_keys]
+    # Ratings old enough to ask about (D-12): still counted, still asked.
+    try:
+        ages = {" ".join(str(k).split()).casefold(): v for k, v in rating_ages(restaurant_id, db_path=db_path).items()}
+    except Exception:
+        ages = {}
+    due = [n for n in names if (ages.get(" ".join(str(n).split()).casefold()) or {}).get("due")]
     return {
+        "due_for_rerate": len(due),
+        "due_for_rerate_names": due[:20],
         "rated": len(rated),
         "admin_set": len(admin_set),
         "total": len(names),
@@ -8126,6 +8216,19 @@ def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
     finally:
         conn.close()
     return [{"name": r["employee_name"], "role": r["role"]} for r in rows]
+
+
+def manual_team_added(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{name: when they were hand-added} — someone added (back) after their
+    last shift is not dormant (staff_settings.dormant_people, schedule audit
+    10/3/26 E-3)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT employee_name, created_at FROM manual_team_members WHERE restaurant_id=?",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return {r["employee_name"]: r["created_at"] for r in rows}
 
 
 def get_role_strength_thresholds(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -9173,6 +9276,12 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 # cook who moved to nights in June "usually" on mornings in September.
 USUAL_WEEKS = 12
 USUAL_MIN_WEEKS = 2
+# Their usual hours and start times (schedule audit 10/3/26 D-37): the
+# average over the weeks they worked in the last USUAL_HOURS_WEEKS full
+# weeks, said once it rests on USUAL_HOURS_MIN_WEEKS of them — "a 32h-a-week
+# regular can be cut to 12h with no signal".
+USUAL_HOURS_WEEKS = 8
+USUAL_HOURS_MIN_WEEKS = 2
 
 
 def _restaurant_today(restaurant_id):
@@ -9184,16 +9293,45 @@ def _restaurant_today(restaurant_id):
         return _date_rt.today()
 
 
+def _shift_hours_of(sh) -> float:
+    """The hours a shift row stands for: what was worked when the source
+    knows it (a punch's actual), else the scheduled hours, else its span."""
+    for k in ("actual_hours", "scheduled_hours"):
+        try:
+            v = sh.get(k)
+            if v not in (None, ""):
+                v = float(v)
+                if v > 0:
+                    return v
+        except (TypeError, ValueError):
+            continue
+    from schedule_rules import parse_minutes
+    s, e = parse_minutes(sh.get("shift_start") or ""), parse_minutes(sh.get("shift_end") or "")
+    if s is None or e is None:
+        return 0.0
+    return round(((e - s) % (24 * 60)) / 60.0, 2)
+
+
 def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int = USUAL_MIN_WEEKS) -> dict:
-    """{name: {"days": [...], "dayparts": [...], "weeks": n}} from shift rows
-    ({employee, date, shift_start}). Only the `weeks` weeks before `today`
-    are read (a person with no shift in them has no usual pattern), and a
-    weekday or daypart is "usual" when it recurs in `min_weeks` distinct
-    weeks of that window — or in the only week there is, for someone new."""
+    """{name: {"days": [...], "dayparts": [...], "weeks": n, "avg_hours",
+    "hours_weeks", "starts"}} from shift rows ({employee, date, shift_start,
+    hours}). Only the `weeks` weeks before `today` are read (a person with no
+    shift in them has no usual pattern), and a weekday or daypart is "usual"
+    when it recurs in `min_weeks` distinct weeks of that window — or in the
+    only week there is, for someone new.
+
+    Their usual hours and start times too (schedule audit 10/3/26 D-37):
+    `avg_hours` the average a week over the full weeks they worked in the
+    last USUAL_HOURS_WEEKS (the week in progress left out), with
+    `hours_weeks` how many that is — None below USUAL_HOURS_MIN_WEEKS;
+    `starts` {daypart: their usual start ("4:30pm"), the median to the
+    quarter hour} over the same weeks."""
     from datetime import date as _date_up, datetime as _dt_up, timedelta as _td_up
     from shift_quality import daypart_of
     today = today or _date_up.today()
     since = (today - _td_up(weeks=weeks)).isoformat()
+    this_week = (today - _td_up(days=today.weekday())).isoformat()
+    hours_since = (_date_up.fromisoformat(this_week) - _td_up(weeks=USUAL_HOURS_WEEKS)).isoformat()
     tally = {}
     for sh in shifts or []:
         name = (sh.get("employee") or "").strip()
@@ -9209,74 +9347,115 @@ def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int =
             if not sh.get("day"):
                 continue
             wd, wk = sh["day"], "?"
-        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}})
+        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}, "hours": {}, "starts": {}})
         t["weeks"].add(wk)
         t["days"].setdefault(wd, set()).add(wk)
         part = daypart_of(sh.get("shift_start", ""))
         if part != "unknown":
             t["dayparts"].setdefault(part, set()).add(wk)
+        if wk != "?" and hours_since <= day < this_week:
+            t["hours"][wk] = t["hours"].get(wk, 0.0) + _shift_hours_of(sh)
+            if part != "unknown":
+                from schedule_rules import parse_minutes as _pm_up
+                m = _pm_up(sh.get("shift_start") or "")
+                if m is not None:
+                    t["starts"].setdefault(part, []).append(m)
     out = {}
     for n, t in tally.items():
         need = min(min_weeks, len(t["weeks"]))
+        worked = [h for h in t["hours"].values() if h > 0]
+        avg = round(sum(worked) / len(worked), 1) if len(worked) >= USUAL_HOURS_MIN_WEEKS else None
+        starts = {}
+        for part, ms in t["starts"].items():
+            ms = sorted(ms)
+            mid = ms[len(ms) // 2]
+            q = int(round(mid / 15.0) * 15) % (24 * 60)
+            h12 = (q // 60) % 12 or 12
+            starts[part] = f"{h12}:{q % 60:02d}{'am' if q < 12 * 60 else 'pm'}"
         out[n] = {"days": sorted(d for d, w in t["days"].items() if len(w) >= need),
                   "dayparts": sorted(p for p, w in t["dayparts"].items() if len(w) >= need),
-                  "weeks": len(t["weeks"])}
+                  "weeks": len(t["weeks"]), "avg_hours": avg, "hours_weeks": len(worked),
+                  "starts": starts}
     return out
 
 
 def sibling_location_shifts(restaurant_id: int, dates: list,
                             db_path: str = DB_PATH) -> dict:
-    """{employee_name: [{date, location}]} from the OTHER sites in this group.
+    """{employee_name: [{date, location, shift_start, shift_end}]} from the
+    OTHER sites of this one's organisation.
 
-    Employees are keyed by name per restaurant, which is correct isolation
-    and means a person working two sites of the same group has two unrelated
-    records — and nothing anywhere notices when both sites schedule them on
-    the same night. Scores are deliberately NOT merged: two locations may
-    rate the same person differently and both be right. Only the collision
-    is reported, because only the collision is a fact rather than a judgement.
+    Employees are kept per restaurant, which is correct isolation and means
+    a person working two sites of the same group has two records — matched
+    here through people's identity at both sites (a sibling's "Mike Smith"
+    is this site's "Michael Smith" when either site knows the spelling for
+    him; schedule audit 10/3/26 E-26), and keyed by this site's spelling.
+    Scores are deliberately NOT merged: two locations may rate the same
+    person differently and both be right. Only the collision is reported,
+    and with its times, so a lunch there and a dinner here are not one
+    (D-40).
 
-    Scoped to restaurants sharing this one's location_group AND owner_email,
-    which is how the rest of the codebase defines that tenancy boundary.
-    """
+    The organisation is schedule_rules.org_sibling_ids — its
+    organization_id, else the group under its owner (E-26: the owner-email
+    match alone kept locations onboarded under their GMs' emails apart). Every live
+    published week at a sibling touching `dates` counts (only the newest
+    used to, so a sibling's next week hid this one); a draft there is not a
+    commitment (the same rule schedule_rules._published_tail keeps)."""
     if not dates:
         return {}
+    try:
+        import schedule_rules
+        ids = schedule_rules.org_sibling_ids(restaurant_id, db_path=db_path)
+    except Exception:
+        ids = []
+    if not ids:
+        return {}
+    wanted = set(dates)
+    lo, hi = min(wanted), max(wanted)
     conn = get_conn(db_path)
     try:
-        me = conn.execute("SELECT location_group, owner_email, location_name "
-                          "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        group = ((me["location_group"] if me else "") or "").strip()
-        if not group:
-            return {}
-        siblings = conn.execute(
-            "SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
-            "WHERE location_group=? AND owner_email=? AND id<>?",
-            (group, me["owner_email"], restaurant_id)).fetchall()
-        if not siblings:
-            return {}
-        out = {}
-        wanted = set(dates)
-        for sib in siblings:
-            # Only a PUBLISHED week at the sibling counts — a draft there is
-            # not a commitment (the same rule schedule_rules._published_tail keeps).
-            _ensure_history_columns(conn)
-            row = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                "ORDER BY id DESC LIMIT 1", (sib["id"],)).fetchone()
-            for line in ((row["schedule_csv"] if row else "") or "").split("\n")[1:]:
-                parts = [p.strip() for p in line.split(",", 7)]
-                if len(parts) < 3:
-                    continue
-                date, name = parts[0], parts[2]
-                if date in wanted and name:
-                    entries = out.setdefault(name, [])
-                    if not any(e["date"] == date and e["location"] == sib["label"]
-                               for e in entries):
-                        entries.append({"date": date, "location": sib["label"]})
-        return out
+        _ensure_history_columns(conn)
+        found = []
+        for sid in ids:
+            meta = conn.execute("SELECT COALESCE(location_name, name) AS label FROM restaurants WHERE id=?",
+                                (sid,)).fetchone()
+            if not meta:
+                continue
+            for row in conn.execute(
+                    "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+                    "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ?", (sid, lo, hi)).fetchall():
+                from schedule_versions import rows_from_csv
+                for r in rows_from_csv(row["schedule_csv"] or ""):
+                    if r.get("date") in wanted and (r.get("employee") or "").strip():
+                        found.append((sid, meta["label"], r))
     except Exception:
         return {}
     finally:
         conn.close()
+    out = {}
+    by_site = {}
+    for sid, _label, r in found:
+        by_site.setdefault(sid, set()).add(r["employee"].strip())
+    here = {}
+    try:
+        import people
+        db = None if db_path == DB_PATH else db_path
+        for sid, names in by_site.items():
+            spelled = people.spellings(sid, sorted(names), db_path=db)
+            for n in names:
+                means = people.who_is(restaurant_id, sorted(spelled.get(n) or {n}), db_path=db)
+                mine = {v for v in means.values() if v}
+                here[(sid, n)] = next(iter(mine)) if len(mine) == 1 else n
+    except Exception:
+        here = {}
+    for sid, label, r in found:
+        n = r["employee"].strip()
+        who = here.get((sid, n), n)
+        entries = out.setdefault(who, [])
+        entry = {"date": r["date"], "location": label, "shift_start": r.get("shift_start") or "",
+                 "shift_end": r.get("shift_end") or ""}
+        if entry not in entries:
+            entries.append(entry)
+    return out
 
 
 def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH, week_dates=None) -> dict:
@@ -11033,6 +11212,18 @@ def person_rates(restaurant) -> dict:
         key = salaried_name_key(name)
         if key and PERSON_RATE_BOUNDS[0] <= rate <= PERSON_RATE_BOUNDS[1]:
             out[key] = round(rate, 2)
+    # Every spelling of the person a rate is for (people's identity —
+    # schedule audit 10/3/26 D-8): a rate typed "Mike" prices the punches
+    # the POS files under "Michael". A spelling with a rate of its own keeps it.
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if out and rid is not None:
+        try:
+            import people
+            for name, spelled in people.spellings(rid, list(out)).items():
+                for k in spelled:
+                    out.setdefault(salaried_name_key(k), out[name])
+        except Exception:
+            pass
     return out
 
 
@@ -11058,7 +11249,83 @@ def salaried_staff(restaurant) -> list:
         except (AttributeError, TypeError, ValueError):
             continue
         if name and 0 < annual <= SALARY_MAX:
-            out.append({"name": name, "annual": round(annual, 2)})
+            entry = {"name": name, "annual": round(annual, 2)}
+            # The person the entry was linked to when it was saved (people,
+            # schedule audit 10/3/26 D-7) — the name follows them on a rename.
+            try:
+                if row.get("person_id") is not None:
+                    entry["person_id"] = int(row["person_id"])
+            except (TypeError, ValueError):
+                pass
+            out.append(entry)
+    return out
+
+
+def salaried_keys(restaurant, db_path=None) -> set:
+    """Every spelling (salaried_name_key) that is one of the salaried people
+    — the entry's own name and, through people's identity, every spelling
+    of the person it means or was linked to (schedule audit 10/3/26 D-7).
+    "Gabriel Huerta" salaried and punching as "Gabe Huerta" was held to
+    overtime, spent from the hourly budget and judged for no-shows. Every
+    matcher of punches to salaried people reads this."""
+    staff = salaried_staff(restaurant)
+    keys = {salaried_name_key(x["name"]) for x in staff}
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if not staff or rid is None:
+        return keys
+    try:
+        import people
+        db = None if db_path in (None, DB_PATH) else db_path
+        for spelled in people.spellings(rid, [x["name"] for x in staff], db_path=db).values():
+            keys |= {salaried_name_key(k) for k in spelled}
+        ids = [x["person_id"] for x in staff if x.get("person_id") is not None]
+        if ids:
+            keys |= {salaried_name_key(k) for k in people.spellings_of_ids(rid, ids, db_path=db)}
+    except Exception:
+        pass
+    return keys
+
+
+def salaried_matches(restaurant, roster_names=None, db_path=None) -> list:
+    """[{name, annual, matched, suggestion, warning}] — each salaried entry
+    and the roster person it is (people's identity), for the settings card
+    (schedule audit 10/3/26 D-7): a salaried name that matches nobody on the
+    roster can't be placed by the schedule, and their punches under another
+    spelling would be costed by the hour — the owner is told, with a
+    similar roster name to check when there is one. Never guessed."""
+    staff = salaried_staff(restaurant)
+    if not staff:
+        return []
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if roster_names is None:
+        try:
+            import staff_settings as _ss
+            roster_names = [e["name"] for e in _ss.roster(rid, include_inactive=True)] if rid else []
+        except Exception:
+            roster_names = []
+    folded = {" ".join(str(n).split()).lower(): n for n in roster_names or [] if n}
+    try:
+        import people
+        spelled = people.spellings(rid, [x["name"] for x in staff],
+                                   db_path=None if db_path in (None, DB_PATH) else db_path) if rid else {}
+    except Exception:
+        spelled = {}
+    out = []
+    for x in staff:
+        keys = (spelled.get(x["name"]) or set()) | {" ".join(x["name"].split()).lower()}
+        matched = next((folded[k] for k in sorted(keys) if k in folded), None)
+        entry = dict(x, matched=matched, suggestion=None, warning=None)
+        if not matched:
+            try:
+                import people
+                maybe = people.similar_on_roster(x["name"], list(folded.values()))
+            except Exception:
+                maybe = []
+            entry["suggestion"] = maybe[0] if maybe else None
+            entry["warning"] = (f"{x['name']} matches nobody on your roster, so the schedule can't place them "
+                                "and a punch under another spelling is paid by the hour"
+                                + (f" — is it {maybe[0]}?" if maybe else " — check the spelling against your POS."))
+        out.append(entry)
     return out
 
 
