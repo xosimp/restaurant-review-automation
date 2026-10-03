@@ -772,9 +772,10 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
     A role is its family ("Server AM" starts with "Server"). A move is
     legal only when it leaves no shift further under its requirement
     (`requirements`, the SHIFT REQUIREMENTS rows with their half-hour ramp)
-    and, with `constraints`, makes no rule breach about the day new or
-    worse — a manager's later start opening a stretch with no manager on, a
-    floor short at the open (schedule audit 10/3/26 E-1). A row the owner
+    and, with `constraints`, makes no rule breach new or worse — a manager's
+    later start opening a stretch with no manager on, a floor short at the
+    open, a person taken under their minimum hours (schedule audit 10/3/26
+    E-1). A row the owner
     kept ("_pinned") is never moved, nor is any row on a day outside
     `only_dates` (a partial redo; P-10)."""
     if not hourly_profile:
@@ -838,7 +839,7 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
                         index, date, c):
                     return None
                 if c is not None and _se.change_regressions(rows, trial, c, date, [r.get("employee")],
-                                                            upto=_se._rules.TIER_COVERAGE, hard_only=False):
+                                                            upto=_se._rules.TIER_MIN_HOURS, hard_only=False):
                     return None
                 return trial
             steps = [st for st in range(off, 0, -STAGGER_STEP_MIN)]

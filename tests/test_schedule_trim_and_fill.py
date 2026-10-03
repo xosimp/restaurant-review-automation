@@ -682,3 +682,13 @@ def test_the_cap_trim_prefers_a_cut_that_keeps_the_requirement():
                                              requirements=reqs)
     assert n == 1 and any(r["employee"] == "Bea" and r["shift_end"] == "11:00pm" for r in out)
     assert se._peak_server_overlap(out)[0] == 4
+
+
+def test_a_stagger_never_takes_anyone_under_their_minimum_hours():
+    c = _c(hours_limits={"b": (5.0, None), "c": (4.5, None)}, roster_names=["A", "B", "C"], active={"a", "b", "c"})
+    rows = [_row(SAT, n, "Server", "5:00pm", "10:00pm") for n in ("A", "B", "C")]
+    curve = {"Saturday": {17: 0.1, 18: 0.2, 19: 0.4, 20: 0.3}}
+    out, changes = econ.stagger_same_starts([dict(r) for r in rows], curve, constraints=c)
+    moved = {ch["employee"]: ch["to"] for ch in changes}
+    assert "B" not in moved, "B's five hours are their minimum"
+    assert moved.get("C") == "5:30pm", "C may give up half an hour, not an hour"
