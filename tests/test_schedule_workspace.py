@@ -292,3 +292,18 @@ def test_a_stacked_second_shift_is_reachable_and_the_busiest_day_reads_orange():
     s = _src()
     assert "top = cc.bottom + 8;" in s and "tip.getAttribute('data-for') !== String(c.getAttribute('data-swg-chip'))" in s
     assert ".swg-d.hot b,.swg-d.hot .dh,.swg-d.hot .dh .hb-num{color:var(--ember)}" in s
+
+
+def test_the_studio_review_reads_short_and_its_actions_are_primary_buttons_under_their_lines():
+    """Owner, 10/2/26: Apply fixes and Improve with Cavnar AI are the brand's
+    primary buttons with their line above; the shifts under their bar are one
+    line each ("25 / 70"), not sentences; a suggestion's confidence is a pill;
+    Fill it sits apart from ✓ / ✕; the two folds' headings sit on the panel's
+    edge."""
+    s = _src()
+    assert '<span class="sr-note">Clears the rule breaks: a legal teammate on each shift that breaks one.</span><button type="button" class="cbtn cbtn-primary"' in s
+    assert 'data-sr-improve="1" onclick="improveScheduleWithCavnar(this)"' in s
+    assert "' came in at ' + b.score" not in s and '<div class="sq-k">Below the bar</div>' in s
+    assert "module: 'schedule', pill: true})" in s
+    assert ".sq-rec .acts{display:inline-flex;align-items:center;gap:10px;" in s
+    assert ".ss .sw-right .sq-all,.ss .sw-right #sq-why-btn{margin-left:0!important;" in s

@@ -10152,7 +10152,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss .sw-right .sq-wi{font-size:15px;gap:8px;align-items:center}
 .ss .sw-right .sq-wi select,.ss .sw-right .sq-wi .cbtn{height:38px;box-sizing:border-box;font-size:14.5px}
 .ss .sw-right .sq-wi .res{font-size:14.5px;line-height:1.55}
-.ss .sw-right .sq-all{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);padding:6px 0!important;margin-top:8px}
+.ss .sw-right .sq-all,.ss .sw-right #sq-why-btn{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);padding:6px 0!important;margin-top:8px}
+/* Both folds' headings sit on the panel's own left edge, with the cards
+   above and the text below (owner, 10/2/26): .cbtn-inline's -5px margin and
+   the border pulled one left of it and pushed the other right. */
+.ss .sw-right .sq-all,.ss .sw-right #sq-why-btn{margin-left:0!important;margin-right:0!important;border-left-width:0;border-right-width:0;height:auto}
 /* Warnings: the chips are the filter. */
 .sr-chip[data-rv-filter]{cursor:pointer;font:inherit;font-size:12.5px;font-weight:700}
 .sr-chip[data-rv-filter]:not(.on){opacity:.55}
@@ -10720,9 +10724,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .sched-conflict .ln{color:var(--ink2);padding:2px 0}
 .sched-conflict .sr-actions{margin-top:8px}
 /* Recommendation ✓ / ✕ */
-.sq-rec{display:flex;gap:8px;align-items:flex-start;margin-bottom:5px}
+.sq-warn{padding:14px 16px;border-radius:12px;background:var(--hb-tint2)}
+.sq-warn .sq-k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin:0 0 8px}
+.sq-warn .sq-k~.sq-k{margin-top:14px}
+.sq-below{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--hb-line2);font-size:14px;color:var(--ink2)}
+.sq-below:last-of-type{border-bottom:0}
+.sq-below .sc{color:var(--ink3);font-size:13px;white-space:nowrap}
+.sq-below .sc b{color:var(--amber);font-size:15px}
+.sq-rec{display:flex;gap:12px;align-items:center;padding:6px 0;margin:0}
+.sq-rec .tx .cf-pill{margin-left:4px;vertical-align:1px}
 .sq-rec .tx{flex:1;font-size:14px;line-height:1.6;color:var(--ink2)}
-.sq-rec .acts{display:inline-flex;gap:2px;flex:none;opacity:.7}
+.sq-rec .acts{display:inline-flex;align-items:center;gap:10px;flex:none;opacity:.8}
 .sq-rec:hover .acts{opacity:1}
 .sq-rec.done .tx{color:var(--ink3);text-decoration:line-through}
 .sq-rec .st{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);flex:none;margin-top:3px}
@@ -21689,36 +21701,32 @@ function renderQualityDimensions(dimensions, weekDims) {
 function renderQualityWarnings(quality) {
   var el = document.getElementById('sq-warnings');
   if (!el) return;
-  var lines = [], i;
+  var i;
   var below = quality.below_profile || [];
-  for (i = 0; i < below.length; i++) {
-    var b = below[i];
-    lines.push(_qTitle(b) + ' came in at ' + b.score + ', under the ' + b.min_quality
-               + ' this ' + (b.label || 'shift').toLowerCase() + ' expects.');
-  }
   // recommendation_items carries each sentence with its kind, key and K1
   // confidence; an older server sends only the sentences.
   var recs = (quality.recommendation_items && quality.recommendation_items.length) ? quality.recommendation_items : (quality.recommendations || []);
   var hidden = quality.suppressed_recommendation_kinds || [];
-  if (!lines.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
-  var html = '<div style="padding:12px 14px;border-radius:10px;background:rgba(242,153,74,.07)">';
-  for (i = 0; i < Math.min(lines.length, 5); i++) {
-    html += '<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">'
-      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:6px"></span>'
-      + '<span style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6">'
-      + _escHtml(lines[i]) + '</span></div>';
+  if (!below.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
+  // Two short lists, not a paragraph of sentences (owner, 10/2/26: "WAY too
+  // wordy and jumbled together"): the shifts under their bar as one line
+  // each, score against the bar; then what to do, each with a confidence
+  // pill whose tap has the reason, and its buttons spaced apart.
+  var html = '<div class="sq-warn">';
+  if (below.length) {
+    html += '<div class="sq-k">Below the bar</div>';
+    for (i = 0; i < Math.min(below.length, 5); i++) {
+      var b = below[i];
+      html += '<div class="sq-below"><span class="nm">' + _escHtml(_qTitle(b)) + '</span>'
+        + '<span class="sc"><b class="hb-num">' + _escHtml(String(b.score)) + '</b> / <span class="hb-num">' + _escHtml(String(b.min_quality)) + '</span></span></div>';
+    }
   }
-  // Each recommendation gets ✓ (did it) / ✕ (not for us). The ledger
-  // behind that decides which kinds keep being shown.
-  // A recommendation is a sentence, or (K1) an object carrying its text
-  // and its confidence - the line then says how sure, like every other
-  // surface, on this panel's dark ground.
+  if (recs.length) html += '<div class="sq-k">Suggestions</div>';
   for (i = 0; i < Math.min(recs.length, 5); i++) {
     var recObj = recs[i], recConf = (recObj && typeof recObj === 'object') ? (recObj.confidence_detail || recObj.confidence) : null;
     var rec = (recObj && typeof recObj === 'object') ? String(recObj.text || recObj.title || '') : String(recObj || ''), st = _recState[rec];
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
-      + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
-      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', cls: 'on-dark'}) : '') + '</span>'
+      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? ' ' + cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', pill: true}) : '') + '</span>'
       + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'passed') + '</span>'
             : '<span class="acts">' + (/^Fill the gap on /.test(rec) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-rec-fill="' + _escAttr(rec) + '">Fill it</button>' : '') + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
               + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Pass" aria-label="Pass" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
@@ -25139,7 +25147,7 @@ function ssRenderSummary() {
 function ssOptimize(btn) {
   if (typeof improveScheduleWithCavnar !== 'function') return;
   studioGo('schedule'); ssRightTab('fix');
-  var b = document.querySelector('#sw-fix .sr-actions .cbtn-soft:last-of-type') || btn;
+  var b = document.querySelector('#sw-fix [data-sr-improve]') || btn;
   improveScheduleWithCavnar(b);
 }
 // ── Publish ────────────────────────────────────────────────────────────
@@ -33345,8 +33353,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Apply fixes clears hard rules; Improve with Cavnar runs the Shift
     // Quality repair loop over the rows on screen. Both only propose.
     if((window._schedRows||[]).length){
-      hf+='<div class="sr-actions">'+(hard?'<div class="sr-opt"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button><span class="sr-note">Clears the rule breaks: a legal teammate on each shift that breaks one.</span></div>':'')
-        +'<div class="sr-opt"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button><span class="sr-note">Raises the score: legal swaps and adds, each one listed.</span></div>'
+      // Each option's line sits above its button, and both are the brand's
+      // primary button (owner, 10/2/26).
+      hf+='<div class="sr-actions">'+(hard?'<div class="sr-opt"><span class="sr-note">Clears the rule breaks: a legal teammate on each shift that breaks one.</span><button type="button" class="cbtn cbtn-primary" onclick="applyScheduleFixes(this)">Apply fixes</button></div>':'')
+        +'<div class="sr-opt"><span class="sr-note">Raises the score: legal swaps and adds, each one listed.</span><button type="button" class="cbtn cbtn-primary" data-sr-improve="1" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button></div>'
         +'<span class="sr-note">Neither is kept until you save.</span></div>';
     }
     // Redrawn only when it changed, and the table below held where it was
