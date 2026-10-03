@@ -592,6 +592,12 @@ def test_closes_that_run_late_are_learned_and_the_draft_ends_them_when_they_real
     assert out["rows"][0]["shift_end"] == "10:45pm" and float(out["rows"][0]["scheduled_hours"]) == 6.75
     assert out["rows"][1]["shift_end"] == "9:00pm" and not out["rows"][0]["notes"]       # the close only, no note
     assert sm.misses(out["rows"], sig) == []
+    # A close already drafted until they really finish is left alone; one
+    # drafted a little later than usual gets only what it lacks.
+    late = [dict(draft[0], shift_end="11:00pm", scheduled_hours="7"), draft[1]]
+    assert sm.pad_overruns(late, sig)["padded"] == []
+    nearly = sm.pad_overruns([dict(draft[0], shift_end="10:30pm", scheduled_hours="6.5"), draft[1]], sig)
+    assert nearly["rows"][0]["shift_end"] == "10:45pm" and nearly["padded"][0]["minutes"] == 15
     # A fixed row, or a day not being drafted, is never padded.
     pinned = [dict(draft[0], _pinned="manager_plan"), draft[1]]
     assert sm.pad_overruns(pinned, sig)["rows"][0]["shift_end"] == "10:00pm"

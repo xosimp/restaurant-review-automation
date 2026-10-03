@@ -1182,7 +1182,7 @@ def _learn_overtime(ctx) -> list:
         overrun = sum(runs) / len(e["overrun"]) if e["overrun"] else 0.0
         head = min(OT_HEADROOM_MAX, math.ceil(max(over, overrun) * 2) / 2.0)
         text = (f"{name} has run into overtime in {e['hits']} of their last {e['opps']} payroll weeks near "
-                f"full time — about {over:.1f}h past 40 each time; keep about {head:g}h of room under the "
+                f"full time — about {over:.1f}h past {LINE:g} each time; keep about {head:g}h of room under the "
                 f"line for them.")
         out.append(_memory(ctx, f"ot_risk|{_person_token(ctx, name)}", "ot_risk", e, person=name,
                            value={"headroom_hours": head, "over_hours": round(over, 2),
@@ -1383,7 +1383,7 @@ def _learn_pairs(ctx) -> list:
         shown = [names.get(k) or k.title() for k in g]
         together = ", ".join(shown[:-1]) + " and " + shown[-1]
         if kind_ == "prefer":
-                text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
+            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
                     f"labor hour and the Shift Quality as it ran at or above the usual for that night, no coverage "
                     f"issue, no poor review) against {_pct(base)} of this restaurant's shifts — a team worth keeping "
                     f"together.")
@@ -1722,6 +1722,16 @@ def consolidate(restaurant_id, db_path=None, today=None, patterns=None, only=Non
 
 # ── what binds the week's passes (L-3) ─────────────────────────────────────
 
+def _families(restaurant_id, db_path=None) -> dict:
+    """The restaurant's role families map (schedule_rules.role_families)."""
+    try:
+        import models
+        import schedule_rules
+        return schedule_rules.role_families(models.get_restaurant(restaurant_id, db_path or models.DB_PATH)) or {}
+    except Exception:
+        return {}
+
+
 def _learns(restaurant_id, db_path=None) -> bool:
     try:
         import models
@@ -1774,6 +1784,8 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None)
       leader_swap            {names}: one of them on that role's slot
       opener                 {start, end, role}: the person is the role's
                              first one in that weekday, around `start`
+      closer                 {start, end, role}: the person is the last of
+                             the role out that weekday, around `end`
       pair                   {with, kind: prefer, rate, baseline, shared}:
                              the person with `with` on the same shifts
       ot_risk                {headroom_hours, over_hours, overrun_hours}:
@@ -1785,10 +1797,10 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None)
     rows = _rows(restaurant_id, ("active",), db_path, kinds=SIGNAL_KINDS + ("retime_end",))
     weekdays = {_weekday(d) for d in (week_dates or []) if _weekday(d)}
     roster = {_nk(n) for n in roster_names} if roster_names else None
+    families = _families(restaurant_id, db_path)
     retimed_ends = set()
     for r in _rows(restaurant_id, ("active", "candidate"), db_path, kinds=("retime_end",)):
-        from shift_quality import role_family
-        retimed_ends.add((role_family(r.get("role")), r.get("day"), r.get("daypart")))
+        retimed_ends.add((_fam(r.get("role"), families), r.get("day"), r.get("daypart")))
     out = []
     for r in rows:
         if r["enforcement"] not in ("soft", "hard") or r["kind"] not in SIGNAL_KINDS:
@@ -1802,8 +1814,11 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None)
             continue
         if r["kind"] == "end_overrun" and (r.get("role"), r.get("day"), r.get("daypart")) in retimed_ends:
             continue
+        # The role as its family ("Server PM" is a server), one vocabulary
+        # for every pass; a role change's exact role is in its value.
+        role = _fam(r.get("role"), families) if r.get("role") else None
         out.append({"kind": r["kind"], "key": r["memory_key"], "person": r.get("person"), "day": r.get("day"),
-                    "daypart": r.get("daypart"), "role": r.get("role"), "value": value,
+                    "daypart": r.get("daypart"), "role": role, "value": value,
                     "confidence": float(r["confidence"]) if r.get("confidence") is not None else None,
                     "enforcement": r["enforcement"], "source": r.get("source")})
     return out
@@ -1956,15 +1971,18 @@ def slot_cost(person, date_str, daypart, role, learned, families=None) -> float:
 
 def pad_overruns(rows, learned, c=None, editable=None) -> dict:
     """The closes of a role that measurably run past their scheduled end
-    (an active end_overrun memory), ended `minutes` later — where the person
-    can legally take the longer shift (Constraints.can_add, their overtime
-    line included: a pad never creates overtime), the row is not pinned and
-    its day is being drafted, and the owner set no end time for that role
-    and night (Constraints.role_times — their rule stands). A close is the
-    last of its role family out that day. Returns {rows, padded:[{index,
-    employee, date, from, to, minutes, reason}], left:[{index, employee,
-    date, reason}]} — the reasons go to the review, never into a row's note
-    (staff read the notes)."""
+    (an active end_overrun memory), ended when they really end — at the
+    memory's `padded_end` (the usual scheduled close plus the typical
+    overrun, rounded to END_PAD_STEP; the close's own end plus `minutes`
+    when the memory has no usual close): a close already drafted that late
+    is left alone. Only where the person can legally take the longer shift
+    (Constraints.can_add, their overtime line included: a pad never creates
+    overtime), the row is not pinned and its day is being drafted, and the
+    owner set no end time for that role and night (Constraints.role_times —
+    their rule stands). A close is the last of its role family out that day.
+    Returns {rows, padded:[{index, employee, date, from, to, minutes,
+    reason}], left:[{index, employee, date, reason}]} — the reasons go to the
+    review, never into a row's note (staff read the notes)."""
     out = [dict(r) for r in rows or []]
     padded, left = [], []
     fams = getattr(c, "role_families", None) if c is not None else None
@@ -2006,8 +2024,17 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                     hours = float(r.get("scheduled_hours") or 0)
                 except (TypeError, ValueError):
                     hours = 0.0
-                trial = dict(r, shift_end=_clock(end + pad, like=r.get("shift_end")),
-                             scheduled_hours=f"{hours + pad / 60.0:g}")
+                want = _minutes(v.get("padded_end"))
+                if want is not None:
+                    # The usual close, read on the same side of midnight as this one.
+                    want += 1440 if (want < 12 * 60 and end >= 12 * 60) else 0
+                    step = want - end
+                else:
+                    step = pad
+                if step <= 0:
+                    continue                       # already drafted until they really finish
+                trial = dict(r, shift_end=_clock(end + step, like=r.get("shift_end")),
+                             scheduled_hours=f"{hours + step / 60.0:g}")
                 if c is not None:
                     ok, why = c.can_add(trial, [x for j, x in enumerate(out) if j != i], overtime=True)
                     if not ok:
@@ -2015,7 +2042,7 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                         continue
                 out[i] = trial
                 padded.append({"index": i, "employee": r.get("employee"), "date": d, "from": r.get("shift_end"),
-                               "to": trial["shift_end"], "minutes": pad,
+                               "to": trial["shift_end"], "minutes": step,
                                "reason": (f"{v.get('role') or fam} closes on {day}s have run about "
                                           f"{v.get('typical_over') or pad} minutes past the scheduled end "
                                           f"({v.get('over')} of {v.get('closes')} closes)")})
