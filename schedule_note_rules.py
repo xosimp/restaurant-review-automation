@@ -213,12 +213,26 @@ def _normalise(text, roles=()):
 
 def _match_roles(low, roles):
     """(role, choices, the words that named it): an exact role name first
-    (longest), else the roles whose last word the sentence names ("cooks" →
-    Line Cook and Prep Cook: two choices, the owner picks)."""
+    (longest), else a role family the job codes share ("servers" where the
+    codes are "Server AM" and "Server PM" — schedule audit 10/3/26 D-14: it
+    named no role, so "keep two servers at dinner" was never a rule; the
+    floor is held on the code for that half of the day), else the roles
+    whose last word the sentence names ("cooks" → Line Cook and Prep Cook:
+    two choices, the owner picks)."""
     clean = sorted({str(r).strip() for r in roles or () if str(r or "").strip()}, key=len, reverse=True)
     for r in clean:
         if re.search(r"\b" + re.escape(r.lower()) + r"(?:s|es)?\b", low):
             return r, [r], r.lower()
+    from shift_quality import role_family
+    from schedule_rules import _family_name
+    families = {}
+    for r in clean:
+        families.setdefault(role_family(r), []).append(r)
+    for fam in sorted((f for f, codes in families.items() if f and (len(codes) > 1 or codes[0].lower() != f)),
+                      key=len, reverse=True):
+        if re.search(r"\b" + re.escape(fam) + r"(?:s|es)?\b", low):
+            name = _family_name(fam, families[fam])
+            return name, [name], fam
     words = {_singular(w) for w in re.findall(r"[a-z]+", low)}
     hits = [r for r in clean if _singular(r.lower().split()[-1]) in words]
     if not hits:
@@ -439,6 +453,13 @@ def _key(text):
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
 
+def _held(role, held) -> bool:
+    """Whether somebody on the roster holds `role` — the job code itself, or
+    a code of the same role family ("Server" for "Server PM", D-14)."""
+    from shift_quality import role_family
+    return str(role or "").lower() in held or role_family(role) in {role_family(x) for x in held}
+
+
 def roster_roles(restaurant_id, db_path=DB_PATH) -> set:
     """Lower-cased roles somebody on the roster holds now. None when the
     roster can't be read (nothing is called stale then)."""
@@ -521,7 +542,7 @@ def note_rules(restaurant_id, week_start=None, include_past=False, db_path=DB_PA
     held = roster_roles(restaurant_id, db_path=db_path)
     if held is not None:
         for r in rows:
-            if r["role"].lower() not in held:
+            if not _held(r["role"], held):
                 r["stale"] = f"Not held: nobody on the roster is a {r['role']} now."
     if week_start:
         mon = _monday(week_start).isoformat()
@@ -542,6 +563,14 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
     """Store one confirmed rule. Raises ValueError with the owner's words."""
     roles = restaurant_roles(restaurant_id, db_path=db_path)
     match = next((r for r in roles if r.lower() == str(role or "").strip().lower()), None)
+    if not match and str(role or "").strip():
+        # A role family the job codes share ("Server" for Server AM / PM —
+        # D-14): held on the code for each half of the day.
+        from shift_quality import role_family
+        from schedule_rules import _family_name
+        fam = role_family(role)
+        codes = [r for r in roles if role_family(r) == fam]
+        match = _family_name(fam, codes) if codes else None
     if not match:
         raise ValueError("Pick one of your roles for this rule.")
     try:
@@ -667,7 +696,7 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
         for r in note_rules(restaurant_id, week_start=c.week_dates[0], db_path=db_path):
             if r["scope"] == "week" and mondays != {r.get("week_start")}:
                 continue
-            if r["role"].lower() not in roles:
+            if not _held(r["role"], roles):
                 c.owner_rules_unchecked.append(
                     f"{r.get('source_text') or r['words']} — nobody on the roster is a {r['role']} now")
                 continue

@@ -277,19 +277,22 @@ def _percentile(values, pct=FLOOR_PERCENTILE) -> int:
 
 
 def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) -> dict:
-    """{"floors": {job code: {"morning", "night", "days"}}} — a "never
-    below" per role and daypart pre-filled from history: the 25th
-    percentile of how many of the role were on for that half of the day on
+    """{"floors": {role: {"morning", "night", "days"}}} — a "never below"
+    per role family and daypart, pre-filled from history: the 25th
+    percentile of how many of the role (any of its job codes — a Server AM
+    on at dinner is a server at dinner) were on for that half of the day on
     the dates the restaurant traded it, over the last `weeks` weeks (a day
     the role was missing counts as 0), and a weekday's own figure where it
     differs. Training codes and manager roles (the manager rule covers
-    them) are left out. A suggestion only: the owner confirms what is saved
-    (the rules route's role_floors) — nothing is set from here."""
+    them) are left out. A floor saved on a role is held on the job code
+    that works each half of the day (build_constraints). A suggestion only:
+    the owner confirms what is saved (the rules route's role_floors) —
+    nothing is set from here."""
     from shift_quality import present_dayparts
     c = _constraints(restaurant_id, c=c)
-    on = {}            # (date, part, role) -> people
+    on = {}            # (date, part, family) -> people
     traded = {"morning": set(), "night": set()}
-    names = {}
+    fams = set()
     for r in _history(restaurant_id, weeks, today):
         role = " ".join(str(r.get("role") or "").split())
         d = str(r.get("date") or "")[:10]
@@ -302,24 +305,26 @@ def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) ->
             traded[part].add(d)
             if _sr.is_training_role(role) or _sr.manager_role_kind(role) in ("owner", "manager", "lead"):
                 continue
-            names.setdefault(role.lower(), role)
-            on.setdefault((d, part, role.lower()), set()).add(who)
+            fam = c.family(role)
+            c.role_names.setdefault(role.lower(), role)
+            fams.add(fam)
+            on.setdefault((d, part, fam), set()).add(who)
     floors = {}
-    for low, role in sorted(names.items()):
+    for fam in sorted(fams):
         spec = {"morning": 0, "night": 0, "days": {}}
         for part in ("morning", "night"):
             dates = sorted(traded[part])
-            base = _percentile([len(on.get((d, part, low), ())) for d in dates])
+            base = _percentile([len(on.get((d, part, fam), ())) for d in dates])
             spec[part] = base
             for wd in _sr.DAYS:
                 mine = [d for d in dates if _days([d])[0] == wd]
                 if len(mine) < FLOOR_MIN_DATES:
                     continue
-                v = _percentile([len(on.get((d, part, low), ())) for d in mine])
+                v = _percentile([len(on.get((d, part, fam), ())) for d in mine])
                 if v != base:
                     spec["days"].setdefault(wd, {})[part] = v
         if spec["morning"] or spec["night"] or any(v for ds in spec["days"].values() for v in ds.values()):
-            floors[role] = spec
+            floors[_sr._family_label(c, fam)] = spec
     try:
         from models import get_restaurant
         current = _sr.role_floors(get_restaurant(restaurant_id))

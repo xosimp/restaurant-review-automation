@@ -245,6 +245,8 @@ def test_a_saved_staffing_rule_is_read_back():
 def test_floors_are_suggested_from_the_25th_percentile_and_never_saved():
     rid = _rid()
     _team(rid, [("S1", "Server PM"), ("S2", "Server PM"), ("S3", "Server PM"), ("M", "Manager FOH")])
+    out = setup.suggest_role_floors(rid, today=date(2026, 9, 20))
+    assert out["floors"] == {} and sr.role_floors(models.get_restaurant(rid)) == {}, "no history, nothing suggested"
     for i in range(8):
         d = (date(2026, 9, 1) + timedelta(days=i)).isoformat()
         on = ["S1", "S2"] + (["S3"] if i % 2 else [])
@@ -253,8 +255,10 @@ def test_floors_are_suggested_from_the_25th_percentile_and_never_saved():
         _punch(rid, "M", "Manager FOH", d)
         _punch(rid, "T", "Training", d)
     out = setup.suggest_role_floors(rid, today=date(2026, 9, 20))
-    assert out["floors"] == {"Server PM": {"morning": 0, "night": 2, "days": {}}}
-    assert sr.role_floors(models.get_restaurant(rid)) == {}, "a suggestion is never saved"
+    assert out["floors"] == {"Server": {"morning": 0, "night": 2, "days": {}}}, "per role, any of its job codes"
+    models.update_restaurant(rid, {"role_floors_json": json.dumps(out["floors"])})
+    c = sr.build_constraints(rid, WEEK, DAYS)
+    assert sr.floor_for(c.role_floors, "Server PM", "Friday", "night") == 2, "held on the code that works dinner"
     body, status = _call(strategy_routes._do_floor_suggestions, _u(OWNER, rid))
     assert status == 200 and "floors" in body
 

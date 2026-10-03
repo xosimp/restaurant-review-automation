@@ -558,6 +558,14 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
             pass
         import schedule_note_rules
         schedule_note_rules.apply_note_rules(c, restaurant.id, db_path=db_path)
+        # A floor named by a role family is held on the job code for each
+        # half of the day, as build_constraints holds it (D-13, D-14).
+        import staff_settings as _ss
+        for e in _ss.roster(restaurant.id, db_path=db_path):
+            if (e.get("role") or "").strip():
+                c.role_names.setdefault(e["role"].strip().lower(), " ".join(e["role"].split()))
+        c.role_families = role_families(restaurant)
+        _floors_on_job_codes(c)
         return c.role_floors
     except Exception:
         return base

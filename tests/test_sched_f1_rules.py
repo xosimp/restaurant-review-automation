@@ -358,6 +358,22 @@ def test_a_rule_naming_servers_is_checked_on_the_server_pm_job_code():
     assert "coverage_floor" in kinds and "owner_rule" not in kinds, "a Bartender AM is a bartender"
 
 
+def test_a_studio_note_naming_servers_is_a_floor_on_the_dinner_code():
+    import schedule_note_rules as snr
+    rid = _rid()
+    for n, role in (("A", "Server AM"), ("B", "Server PM"), ("C", "Barback PM")):
+        models.add_manual_team_member(rid, n, role=role)
+    item = snr.read_sentence("Keep two servers at dinner", snr.restaurant_roles(rid))
+    assert item["kind"] == "rule" and item["rule"]["role"] == "Server" and item["rule"]["dayparts"] == ["night"]
+    assert snr.read_sentence("Always 2 barbacks on Friday night", snr.restaurant_roles(rid))["rule"]["role"] == "Barback"
+    snr.add_rule(rid, "Server", 2, ["night"], source_text="Keep two servers at dinner")
+    c = _c(rid)
+    assert sr.floor_for(c.role_floors, "Server PM", "Friday", "night") == 2
+    assert not c.owner_rules_unchecked and not [r for r in snr.note_rules(rid) if r.get("stale")]
+    assert sr.floor_for(sr.effective_role_floors(models.get_restaurant(rid), WEEK[0]), "Server PM", "Friday",
+                        "night") == 2, "the cut surfaces read the same floor"
+
+
 # ── D-15: held roles ──────────────────────────────────────────────────────
 
 def test_held_roles_reach_the_rules_and_a_role_nobody_holds_is_flagged():
