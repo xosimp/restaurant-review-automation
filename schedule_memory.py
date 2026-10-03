@@ -200,7 +200,8 @@ def wilson_lower(hits, n, z=1.645) -> float:
 
 
 def _nk(name) -> str:
-    return " ".join(str(name or "").lower().split())
+    """staff_settings.name_key: one person however the name was typed."""
+    return " ".join(str(name or "").split()).casefold()
 
 
 def _weekday(iso) -> str:
@@ -442,6 +443,25 @@ def observations(restaurant_id, kinds=None, since=None, db_path=None, counted_on
         d["value"] = _loads(d.pop("value_json", None)) or {}
         out.append(d)
     return out
+
+
+def latest(restaurant_id, kind, db_path=None):
+    """The newest observation of `kind` ({..., value, created_at}), or None."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT * FROM schedule_observations WHERE restaurant_id=? AND kind=? "
+                         "ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT 1",
+                         (restaurant_id, kind)).fetchone()
+    except Exception as e:
+        log.warning("schedule_memory: %s unreadable for %s: %s", kind, restaurant_id, e)
+        return None
+    finally:
+        conn.close()
+    if r is None:
+        return None
+    d = dict(r)
+    d["value"] = _loads(d.pop("value_json", None)) or {}
+    return d
 
 
 # ── what the learners read, once per restaurant per run ───────────────────
@@ -1563,6 +1583,11 @@ def consolidate(restaurant_id, db_path=None, today=None, patterns=None, only=Non
         done |= set(kinds)
         stats["learners"][name] = len(got)
     stats.update(_write(ctx, produced, done))
+    if not only:
+        try:
+            stats["ratings_waiting"] = len(_note_ratings(ctx))
+        except Exception as e:
+            _capture(e, "measured ratings", restaurant_id)
     try:
         conn = get_conn(db_path)
         try:
@@ -2415,3 +2440,28 @@ def confirm_suggested_rating(restaurant_id, name, score=None, user=None, db_path
     except Exception as e:
         _capture(e, "rating change record", restaurant_id)
     return {"ok": True, "name": s["name"], "score": final, "suggested": s["suggested"]}
+
+
+def _note_ratings(ctx) -> list:
+    """The servers whose measured suggestion differs from their counted
+    rating (or who have none), kept once a night for the action queue
+    (`ratings_suggested`) — the tickets are read here, never on a page load."""
+    sug = suggested_ratings(ctx.rid, db_path=ctx.db, today=ctx.today)
+    names = [x["name"] for x in sug.get("servers") or [] if x.get("differs")]
+    observe(ctx.rid, "ratings_suggested", value={"names": names, "window": sug.get("window")}, origin="system",
+            phase="as_run", authority="system", source="pos_tickets", db_path=ctx.db, fact_key="ratings_suggested")
+    return names
+
+
+def ratings_waiting(restaurant_id, db_path=None) -> list:
+    """The names last night's read found waiting on the owner's confirmation,
+    less anyone the owner has rated since."""
+    import models
+    row = latest(restaurant_id, "ratings_suggested", db_path=db_path)
+    names = list(((row or {}).get("value") or {}).get("names") or [])
+    if not names:
+        return []
+    at = str(row.get("updated_at") or row.get("created_at") or "")
+    caps = models.get_capabilities(restaurant_id, attribute="overall", **({"db_path": db_path} if db_path else {}))
+    since = {_nk(n) for n, c in caps.items() if str((c.get("overall") or {}).get("updated_at") or "") >= at}
+    return [n for n in names if _nk(n) not in since]

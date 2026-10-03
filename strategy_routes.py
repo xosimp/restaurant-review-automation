@@ -3544,6 +3544,87 @@ def _do_learned_patterns_adopt(u):
     return {"ok": True, "adopted": n}, 200
 
 
+def _do_schedule_memory(u):
+    """What the restaurant's scheduling has learned, as one memory (schedule
+    audit 10/3/26 L-29): every fact with its class, how sure (a computed %,
+    "—" below the sample floor), on what evidence, when a hand last
+    confirmed it, its status (learning, applied, a rule, being re-tested,
+    retired, asleep) and what holds it — schedule_memory.memory_view. Sales
+    figures per server are never here (measured ratings are the owner's own
+    route)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_memory as _smem
+    from permissions import answer_authority
+    view = _smem.memory_view(_rid(u), include_retired=str(request.args.get("retired") or "1") != "0")
+    return {"ok": True, **view, "can_answer": _may_draft(u) and answer_authority(u) != "admin",
+            "can_make_rules": _principal(u) and answer_authority(u) != "admin"}, 200
+
+
+def _do_schedule_memory_answer(u):
+    """{key, action: keep | let_go | rule} — the owner's say over one learned
+    fact (schedule_memory.owner_answer): keep it (applied while its evidence
+    holds), let it go, or make it a rule. A rule the draft must keep — a
+    pair, a standing shift, a role's end time, a role floor or start — is
+    the account holder's (a person's own pattern stays any drafter's, as
+    before); through view-as nothing changes."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change what the draft learns.")
+    import schedule_memory as _smem
+    b = _body()
+    key = str(b.get("key") or "").strip()
+    action = str(b.get("action") or "").strip().lower()
+    if not key or action not in ("keep", "let_go", "rule"):
+        return {"ok": False, "error": "Send the fact's key and keep, let_go or rule."}, 400
+    kind = key.split(":", 1)[1].split("|", 1)[0] if key.startswith("pattern:") else key.split("|", 1)[0]
+    if action == "rule" and kind not in ("moved_off", "moved_on") and not _principal(u):
+        return _forbidden("Only the account owner can turn something learned into a rule the draft must keep.")
+    try:
+        out = _smem.owner_answer(_rid(u), key, action, user=u)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return out, 200
+
+
+def _do_ratings_suggested(u):
+    """Measured server performance offered as a rating (schedule audit
+    10/3/26 L-23, D-27): what each server sells a guest against the house at
+    the same mealtimes, past a sample floor, as a suggested 1-5 score beside
+    their current one. Personnel figures — the account holder's alone."""
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the account owner can see measured performance.")
+    import schedule_memory as _smem
+    return {"ok": True, **_smem.suggested_ratings(_rid(u))}, 200
+
+
+def _do_ratings_suggested_confirm(u):
+    """{name, score?} — the account holder confirms a measured suggestion
+    (or sets their own score): from then on it is their Operational Score.
+    Refused through view-as."""
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the account owner can confirm a measured rating.")
+    import schedule_memory as _smem
+    b = _body()
+    name = str(b.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "Send the person's name."}, 400
+    score = b.get("score")
+    if score not in (None, ""):
+        try:
+            score = int(score)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "A score is 1 to 5."}, 400
+        if not 1 <= score <= 5:
+            return {"ok": False, "error": "A score is 1 to 5."}, 400
+    try:
+        out = _smem.confirm_suggested_rating(_rid(u), name, score=score, user=u)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return out, 200
+
+
 def _do_schedule_adopt_admin_saves(u):
     """{history_id?} — the account holder counts the schedule edits an admin
     made through view-as or support (and the one-tap answers given with
@@ -6456,6 +6537,10 @@ _ROUTES = [
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),
+    ("/labor/schedule-memory", ["GET"], _do_schedule_memory, "schedule_memory"),
+    ("/labor/schedule-memory", ["POST"], _do_schedule_memory_answer, "schedule_memory_answer"),
+    ("/labor/ratings/suggested", ["GET"], _do_ratings_suggested, "ratings_suggested"),
+    ("/labor/ratings/suggested", ["POST"], _do_ratings_suggested_confirm, "ratings_suggested_confirm"),
     ("/labor/schedule/adopt-admin-saves", ["POST"], _do_schedule_adopt_admin_saves, "schedule_adopt_admin_saves"),
     ("/labor/schedule/edit-why", ["POST"], _do_schedule_edit_why, "schedule_edit_why"),
     ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),
