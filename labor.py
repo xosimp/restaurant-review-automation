@@ -3714,8 +3714,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                             "STAFFING REQUIREMENT listed below. The PAR HOURS CEILING "
                             "below is NOT a reason to go over — it only ever removes hours, never adds them. "
                             "If you do scale up for an event or a spike, do it proportionally across roles "
-                            "(not by piling extra hours onto one role) and name the event or the spike in your "
-                            "summary. Don't invent a reason that isn't true; staying within these numbers is "
+                            "(not by piling extra hours onto one role) and name the event or the spike in a "
+                            "summary bullet when it is one of the week's biggest decisions. Don't invent a reason "
+                            "that isn't true; staying within these numbers is "
                             "the normal, correct outcome:\n"
                             + "\n".join(_hc_lines))
 

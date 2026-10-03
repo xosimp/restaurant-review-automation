@@ -383,6 +383,14 @@ def test_the_prompt_no_longer_asks_the_summary_to_carry_what_the_week_misses(mon
     block = staffing_signals.soft_block([{"day": "Friday", "date": WEEK[4], "daypart": "night", "role": "Server",
                                           "text": "+1 Server — complaints about waits", "source": "reviews"}])
     assert "in the summary" not in block and "shown which" in block
+    # What is left asks for a bullet only when it is one of the week's
+    # biggest decisions — no block claims a slot of the three for itself.
+    import inspect
+    import demand_signals as ds
+    dated = ds.prompt_block({WEEK[4]: {"labels": ["Bears home game"], "lift_pct": 20}}, WEEK)
+    assert "biggest decisions" in dated and "and say so in the summary" not in dated
+    assert "the week's biggest" in inspect.getsource(staffing_signals.last_nights_block)
+    assert "name the event or the spike in your summary" not in prompt
 
 
 def _c(**kw):

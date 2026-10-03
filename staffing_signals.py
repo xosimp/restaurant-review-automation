@@ -504,7 +504,8 @@ def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> st
         return ""
     head = ("\n\nWHAT THE LAST NIGHTS SHOWED (the nightly reports of the last four weeks, per weekday — what "
             "actually happened on these nights; a repeated no-show, late arrival or overtime on a weekday is a "
-            "reason to staff that day differently, and say so in the summary):\n")
+            "reason to staff that day differently — say so in the summary when it is one of the week's biggest "
+            "decisions):\n")
     return head + "\n".join(lines)
 
 

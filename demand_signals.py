@@ -610,5 +610,6 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
     return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "
             "texts or posts they sent to fill a night — "
             "a stronger signal than the weekday averages above for the date it names; scale that day's "
-            "headcount by roughly the lift stated, proportionally across roles, and say so in the summary):\n"
+            "headcount by roughly the lift stated, proportionally across roles — say so in the summary when it is "
+            "one of the week's biggest decisions):\n"
             + "\n".join(lines))
