@@ -50,6 +50,9 @@ _CAL_HASH_PREFIX = "sha256:"
 OUTCOME_LABELS = {
     "on_time": "On time", "late": "Late", "no_show": "No-show", "called_out": "Called out",
     "left_early": "Left early", "short": "Left early", "covered": "Covered", "worked": "Worked",
+    # A drop your manager approved that nobody picked up (schedule audit
+    # 10/3/26 E-5) — not a miss.
+    "excused": "Drop approved",
 }
 CERT_LABELS = {
     "alcohol": "Alcohol service", "food_handler": "Food handler", "manager": "Manager",

@@ -1732,6 +1732,37 @@ def _fmt_minutes(m):
 UNRELIABLE_RATE = 0.2
 
 
+def _late_at_the_edges(ctx: ShiftContext) -> list:
+    """[(name, role, "opens" | "closes", late_rate)] — people on this shift
+    with a lateness risk (their reliability's `late_risk`: late to at least
+    staff_settings.LATE_RISK_RATE of their clocked shifts, said only once
+    staff_settings.LATE_MIN_SHIFTS of them exist) who are the only one of
+    their role at its first start, or its last finish, that date (schedule
+    audit 10/3/26 D-44)."""
+    risky = {str(n).strip().lower(): r for n, r in (ctx.reliability or {}).items() if (r or {}).get("late_risk")}
+    if not risky:
+        return []
+    mine = {(r.get("employee") or "").strip().lower() for r in ctx.rows if not ctx._is_flagged(r)}
+    by_role = {}
+    for r in (ctx.day_rows or ctx.rows):
+        if not (r.get("employee") or "").strip() or ctx._is_flagged(r):
+            continue
+        s, e = _span(r)
+        if s is not None:
+            by_role.setdefault((r.get("role") or "").strip().lower(), []).append((s, e, r))
+    out = []
+    for role, spans in by_role.items():
+        first, last = min(s for s, _e, _r in spans), max(e for _s, e, _r in spans)
+        for edge, who in (("opens", [r for s, _e, r in spans if s == first]),
+                          ("closes", [r for _s, e, r in spans if e == last])):
+            if len(who) != 1:
+                continue                    # somebody else of the role is there at that minute
+            n = (who[0].get("employee") or "").strip()
+            if n.lower() in mine and n.lower() in risky:
+                out.append((n, who[0].get("role") or role, edge, float(risky[n.lower()].get("late_rate") or 0)))
+    return out
+
+
 def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
     """Is a station resting on somebody who does not reliably turn up?
 
@@ -1756,16 +1787,27 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
             at_risk.append(n)
             if len(names) == 1 or busy:
                 exposed.append((n, role, rate, len(names)))
-    score = _pct(len(known) - len(exposed), len(known))
+    # Lateness at the edges of a role's day (schedule audit 10/3/26 D-44):
+    # reliability read no-shows only, so chronic lateness never weighed on
+    # who opens or closes. Somebody with a lateness risk alone at their
+    # role's first start or last finish counts against the shift too.
+    late = _late_at_the_edges(ctx)
+    late_only = {n.lower() for n, *_ in late} - {n.lower() for n, *_ in exposed}
+    score = _pct(len(known) - len(exposed) - len(late_only), len(known))
     res = DimensionResult(key="reliability", label="Reliability", score=score,
                           weight=DEFAULT_WEIGHTS["reliability"],
                           facts={"at_risk": at_risk, "exposed": [{"name": n, "role": r, "no_show_rate": rt}
                                                                   for n, r, rt, _ in exposed],
+                                 "late_exposed": [{"name": n, "role": r, "edge": edge, "late_rate": rt}
+                                                  for n, r, edge, rt in late],
                                  "checked": len(known)})
     for n, role, rate, count in exposed[:2]:
         why = "alone on " + role.lower() if count == 1 else "on a busy shift"
         res.weaknesses.append(f"{n} has missed {int(round(rate * 100))}% of scheduled shifts and is {why}.")
-    if not exposed:
+    for n, role, edge, rate in late[:2]:
+        res.weaknesses.append(f"{n} is late to {int(round(rate * 100))}% of their clocked shifts and is the only "
+                              f"{role_words(role)} {'opening' if edge == 'opens' else 'closing'}.")
+    if not exposed and not late:
         res.strengths.append("No station rests on somebody with an attendance problem.")
     unknown = [n for n in ctx.people if n not in ctx.reliability]
     if unknown:

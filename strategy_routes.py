@@ -5480,10 +5480,16 @@ def _do_publish_check(u):
         conn.close()
     if not row:
         return {"ok": False, "error": "Not found"}, 404
+    review = {}
     try:
-        items = publish_review(rid, row["id"])["blockers"]
-    except Exception:
-        items = []
+        review = publish_review(rid, row["id"])
+        items = review["blockers"]
+    except Exception as e:
+        # A gate that could not run is never "nothing to read": it was read
+        # as no blockers (schedule audit 10/3/26 P-16).
+        import ops as _ops_pc
+        _ops_pc.capture(e, job="publish_check", context=f"restaurant_id={rid} schedule_id={row['id']}")
+        items = [{"key": "check_failed", "text": "The publish check couldn't run just now — try again before sending"}]
     blockers = [b["text"] for b in items]
     names = employees_in_schedule(row["schedule_csv"] or "")
     unsent = None
@@ -5502,6 +5508,9 @@ def _do_publish_check(u):
     return {"ok": True, "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
             "published_at": row["published_at"], "blockers": blockers,
             "blocker_keys": [b["key"] for b in items], "blocker_items": items, "reach": summary,
+            # What is worth a look but never holds the send (SQ-29: the
+            # quality verdict), and the week's hours split by pay (E-7).
+            "notes": review.get("notes") or [], "hours": review.get("hours"),
             "unsent_changes": unsent,
             "texts_available": people.staff_sms_ready(),
             "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200

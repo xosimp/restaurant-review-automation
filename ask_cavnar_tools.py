@@ -183,7 +183,7 @@ def _read_schedule(restaurant_id):
         from models import _ensure_history_columns
         _ensure_history_columns(conn)
         row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_budget, "
+            "SELECT id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, hours_budget, "
             "schedule_csv, quality_json, edited_at FROM schedule_history "
             "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
             (restaurant_id,)).fetchone()
@@ -197,6 +197,10 @@ def _read_schedule(restaurant_id):
         "week_start": row["week_start"],
         "week_end": row["week_end"],
         "hours_scheduled": row["hours_scheduled"],
+        # The budget is an HOURLY budget: hours_hourly is what it is spent on,
+        # hours_salaried never is (schedule audit 10/3/26 E-7, P-6).
+        "hours_hourly": row["hours_hourly"],
+        "hours_salaried": row["hours_salaried"],
         "hours_budget": row["hours_budget"],
         "edited_by_manager": bool(row["edited_at"]),
         "employees": employees_in_schedule(row["schedule_csv"] or ""),
@@ -1157,6 +1161,7 @@ def _read_schedule_history(restaurant_id, limit=8):
         "schedules": [
             {"schedule_id": r.get("id"), "week_start": r.get("week_start"),
              "week_end": r.get("week_end"), "hours_scheduled": r.get("hours_scheduled"),
+             "hours_hourly": r.get("hours_hourly"), "hours_salaried": r.get("hours_salaried"),
              "hours_budget": r.get("hours_budget"), "created_at": r.get("created_at")}
             for r in rows[:_MAX_ROWS]
         ],
@@ -4822,8 +4827,13 @@ def proposal_details(name, args, restaurant_id) -> dict:
             from time_utils import mdy_range
             details.append({"label": "Week", "value": mdy_range(row.get("week_start"), row.get("week_end"))})
             if row.get("hours_scheduled") is not None:
+                # The budget is hourly: the hourly hours are held against it,
+                # the salaried ones said beside it (schedule audit 10/3/26 E-7).
+                from models import history_hourly as _hh_card
+                _hourly, _sal = _hh_card(row), float(row.get("hours_salaried") or 0)
                 details.append({"label": "Hours", "value": f"{float(row['hours_scheduled']):g} scheduled"
-                                + (f" against {float(row['hours_budget']):g} budgeted"
+                                + (f" — {_hourly:g} hourly against {float(row['hours_budget']):g} budgeted"
+                                   + (f", {_sal:g} salaried" if _sal else "")
                                    if row.get("hours_budget") else "")})
             # The gate, as it stands now: a week with blockers is refused on
             # confirm (the card never carries an acknowledgement), so say why

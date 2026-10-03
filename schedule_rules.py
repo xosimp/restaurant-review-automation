@@ -2125,6 +2125,17 @@ def hourly_hours(rows: list, c: "Constraints" = None, salaried=None) -> float:
     return round(sum(row_hours(r) for r in (rows or []) if not paid_same(r.get("employee"))), 2)
 
 
+def hours_split(rows: list, c: "Constraints" = None, salaried=None) -> dict:
+    """{"hourly", "salaried", "total"} hours of `rows`: the hourly part is
+    hourly_hours (the one hourly-hours sum), the salaried part the rest.
+    What schedule_history keeps (hours_hourly / hours_salaried) and what
+    the publish gate holds against the hourly budget (schedule audit
+    10/3/26 E-7, P-6)."""
+    total = sum(row_hours(r) for r in (rows or []))
+    hourly = hourly_hours(rows, c=c, salaried=salaried)
+    return {"hourly": round(hourly, 1), "salaried": round(max(0.0, total - hourly), 1), "total": round(total, 1)}
+
+
 def _v(kind, index, row, detail, **extra):
     """One breach. `extra` carries what identifies it beyond the person and
     date (breach_id) and how bad it is (`severity`: hours over, people

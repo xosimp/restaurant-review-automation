@@ -595,49 +595,186 @@ def recency_weight(day, today, half_life=RELIABILITY_HALF_LIFE_DAYS) -> float:
     return 0.5 ** (age / float(half_life))
 
 
-def weighted_attendance(events, today=None, min_shifts=6) -> dict:
-    """{name: {...}} from [(name, iso_date, outcome)] where outcome is
-    "worked", "no_show", "short" (and, from attendance_events, "late",
-    "called_out", "left_early", "covered") — the reliability every reader
-    shares. `shifts` / `no_shows` are the raw counts inside the window (what
-    is said: "missed 2 of 9"); `no_show_rate` is the recency-weighted rate
-    smoothed toward the restaurant's own weighted base rate (smoothed_rate);
-    a missed shift is a no-show or a call-out."""
+# ── the one attendance reader ──────────────────────────────────────────────
+#
+# Reliability, attendance by weekday, standby days and the schedule prompt's
+# no-show block all read attendance through here (schedule audit 10/3/26
+# L-17): one window (RELIABILITY_WINDOW_DAYS), one decay (recency_weight's
+# RELIABILITY_HALF_LIFE_DAYS), one smoothing toward this restaurant's own
+# base rate. Reliability used a 90-day half-life over 360 days, standby and
+# by-weekday an unweighted 360 days, the prompt an unweighted 26 weeks — so
+# the review, the prompt and the scorer disagreed about the same person and
+# day.
+#
+# Three rates, because they answer three questions:
+#   no_show_rate   reliability — who to rely on. A miss weighs by what it
+#                  cost the manager: an unannounced no-show 1, a call-out
+#                  less the more notice it gave (L-18: a sick call with a
+#                  day's notice counted the same as walking out on a shift).
+#   absence_rate   standby planning — the chance a body is missing, so a
+#                  call-out counts in full whatever its notice; call_out_rate
+#                  is its call-out part, kept separately (L-18).
+#   late_rate      lateness (D-44), read only on shifts whose arrival was
+#                  clocked, and only once LATE_MIN_SHIFTS of them exist.
+#
+# A shift somebody else took, or one a manager let them off (an approved
+# drop — attendance.NOT_OWED, E-5), was not theirs to work or miss: never
+# counted.
+
+# A call-out's weight against a no-show's 1, by the notice it gave: at least
+# a day's notice lets the manager cover it before service, two hours lets
+# them make calls; less, or unknown (a closer's "who didn't make it"), is
+# nearly a no-show.
+CALL_OUT_WEIGHTS = ((24 * 60, 0.25), (2 * 60, 0.5))
+CALL_OUT_WEIGHT_SHORT = 0.75
+# Clocked shifts needed before a late rate is said (the reliability floor's
+# own six), and the share late at which somebody is a lateness risk for the
+# shift that opens a role's day or the one that closes it (D-44).
+LATE_MIN_SHIFTS = 6
+LATE_RISK_RATE = 0.25
+_NOT_OWED = ("covered", "excused")
+
+
+def miss_weight(outcome, notice_minutes=None) -> float:
+    """What one shift's outcome counts as a miss against reliability: a
+    no-show 1, a call-out by its notice (CALL_OUT_WEIGHTS), anything else
+    0."""
+    if outcome == "no_show":
+        return 1.0
+    if outcome != "called_out":
+        return 0.0
+    try:
+        notice = None if notice_minutes is None else float(notice_minutes)
+    except (TypeError, ValueError):
+        notice = None
+    if notice is not None:
+        for at_least, weight in CALL_OUT_WEIGHTS:
+            if notice >= at_least:
+                return weight
+    return CALL_OUT_WEIGHT_SHORT
+
+
+def _event(e):
+    """(name, iso_date, outcome, notice_minutes, timed) from an event as
+    attendance.reliability_events gives it — (name, date, outcome), or with
+    a 4th {"notice_minutes", "timed"} — or a dict of the same keys. Without
+    the detail, a recorded on-time/late/left-early outcome reads as timed."""
+    if isinstance(e, dict):
+        name, day, outcome = e.get("name") or e.get("employee"), e.get("date"), e.get("outcome")
+        extra = e
+    else:
+        name, day, outcome = e[0], e[1], e[2]
+        extra = e[3] if len(e) > 3 and isinstance(e[3], dict) else None
+    timed = (extra or {}).get("timed")
+    if timed is None:
+        timed = outcome in ("on_time", "late", "left_early")
+    return name, day, outcome, (extra or {}).get("notice_minutes"), bool(timed)
+
+
+def _blank_tally() -> dict:
+    return {"shifts": 0, "no_show": 0, "called_out": 0, "short": 0, "late": 0, "timed": 0,
+            "w": 0.0, "w_miss": 0.0, "w_absent": 0.0, "w_callout": 0.0, "w_timed": 0.0, "w_late": 0.0,
+            "last_miss": None, "first": None, "last": None}
+
+
+def _add(t, day, outcome, notice, timed, w):
+    t["shifts"] += 1
+    t["w"] += w
+    mw = miss_weight(outcome, notice)
+    if outcome in ("no_show", "called_out"):
+        t["no_show"] += 1
+        t["w_miss"] += w * mw
+        t["w_absent"] += w
+        t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
+        if outcome == "called_out":
+            t["called_out"] += 1
+            t["w_callout"] += w
+    elif outcome in ("short", "left_early"):
+        t["short"] += 1
+    if timed:
+        t["timed"] += 1
+        t["w_timed"] += w
+        if outcome == "late":
+            t["late"] += 1
+            t["w_late"] += w
+    elif outcome == "late":
+        t["late"] += 1                     # said, but not a clocked reading
+    t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
+    t["last"] = max(t["last"] or "", str(day)[:10])
+
+
+def attendance_tally(events, today=None) -> dict:
+    """The recency-weighted tally every attendance reader starts from:
+    {name: {..counts and weights.., "days": {weekday: {...}}}}, inside
+    RELIABILITY_WINDOW_DAYS of `today`, shifts not owed left out."""
     from datetime import date as _date
-    from shift_quality import UNRELIABLE_RATE
     today = today or _date.today()
     tally = {}
-    for name, day, outcome in events or ():
+    for e in events or ():
+        name, day, outcome, notice, timed = _event(e)
         n = " ".join(str(name or "").split())
         w = recency_weight(day, today)
-        if not n or w <= 0:
+        if not n or w <= 0 or outcome in _NOT_OWED:
             continue
-        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0, "late": 0, "w": 0.0, "w_miss": 0.0,
-                                 "last_miss": None, "first": None, "last": None})
-        miss = outcome in ("no_show", "called_out")
-        t["shifts"] += 1
-        t["w"] += w
-        if miss:
-            t["no_show"] += 1
-            t["w_miss"] += w
-            t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
-        elif outcome in ("short", "left_early"):
-            t["short"] += 1
-        elif outcome == "late":
-            t["late"] += 1
-        t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
-        t["last"] = max(t["last"] or "", str(day)[:10])
-    weights = sum(t["w"] for t in tally.values())
-    base = (sum(t["w_miss"] for t in tally.values()) / weights) if weights else 0.0
+        t = tally.setdefault(n, dict(_blank_tally(), days={}))
+        _add(t, day, outcome, notice, timed, w)
+        try:
+            wd = _date.fromisoformat(str(day)[:10]).strftime("%A")
+        except (TypeError, ValueError):
+            wd = None
+        if wd:
+            _add(t["days"].setdefault(wd, _blank_tally()), day, outcome, notice, timed, w)
+    return tally
+
+
+def attendance_bases(tally) -> dict:
+    """This restaurant's own weighted base rates — the point every person's
+    rate is smoothed toward: {"miss", "absence", "call_out", "late"}."""
+    w = sum(t["w"] for t in (tally or {}).values())
+    wt = sum(t["w_timed"] for t in (tally or {}).values())
+    return {"miss": (sum(t["w_miss"] for t in tally.values()) / w) if w else 0.0,
+            "absence": (sum(t["w_absent"] for t in tally.values()) / w) if w else 0.0,
+            "call_out": (sum(t["w_callout"] for t in tally.values()) / w) if w else 0.0,
+            "late": (sum(t["w_late"] for t in tally.values()) / wt) if wt else 0.0}
+
+
+def _rates(t, base) -> dict:
+    late = (smoothed_rate(t["w_late"], t["w_timed"], base["late"]) if t["timed"] >= LATE_MIN_SHIFTS else None)
+    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"]),
+            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"]),
+            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"]),
+            "late_rate": late}
+
+
+def weighted_attendance(events, today=None, min_shifts=6) -> dict:
+    """{name: {...}} from attendance events (attendance.reliability_events,
+    plain or with detail) — the reliability every reader shares. `shifts` /
+    `no_shows` (no-shows and call-outs) / `called_out` / `late` are the raw
+    counts inside the window (what is said: "missed 2 of 9"); every rate is
+    recency-weighted and smoothed toward the restaurant's own base
+    (smoothed_rate): `no_show_rate` with each call-out weighed by its notice
+    (miss_weight), `absence_rate` / `call_out_rate` counting every absence in
+    full, `late_rate` over clocked shifts (None below LATE_MIN_SHIFTS) and
+    `late_risk` once it is at LATE_RISK_RATE."""
+    from shift_quality import UNRELIABLE_RATE
+    from datetime import date as _date
+    today = today or _date.today()
+    tally = attendance_tally(events, today=today)
+    base = attendance_bases(tally)
     out = {}
     for n, t in tally.items():
         if t["shifts"] < min_shifts:
             continue
-        rate = smoothed_rate(t["w_miss"], t["w"], base)
-        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "late": t["late"],
+        rates = _rates(t, base)
+        rate = rates["no_show_rate"]
+        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "called_out": t["called_out"], "late": t["late"],
                   "no_show_rate": rate,
                   "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
-                  "base_rate": round(base, 3), "no_show_threshold": UNRELIABLE_RATE,
+                  "absence_rate": rates["absence_rate"], "call_out_rate": rates["call_out_rate"],
+                  "late_rate": rates["late_rate"], "late_shifts": t["timed"],
+                  "late_risk": rates["late_rate"] is not None and rates["late_rate"] >= LATE_RISK_RATE,
+                  "late_threshold": LATE_RISK_RATE,
+                  "base_rate": round(base["miss"], 3), "no_show_threshold": UNRELIABLE_RATE,
                   "unreliable": rate >= UNRELIABLE_RATE,
                   "short_rate": round(t["short"] / t["shifts"], 2),
                   "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
@@ -645,10 +782,79 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
     return out
 
 
+def weekday_attendance(events, today=None, min_shifts=4) -> dict:
+    """{name: {weekday: {"shifts", "no_shows", "no_show_rate",
+    "absence_rate", "call_out_rate"}}} — the same weighted tally as
+    reliability, per weekday, for weekdays with at least `min_shifts`
+    watched shifts. Rates here are recency-weighted shares of that
+    weekday's shifts (no smoothing: the floor stands in for it)."""
+    from datetime import date as _date
+    tally = attendance_tally(events, today=today or _date.today())
+    out = {}
+    for n, t in tally.items():
+        for wd in DAYS:
+            e = t["days"].get(wd)
+            if not e or e["shifts"] < min_shifts or not e["w"]:
+                continue
+            out.setdefault(n, {})[wd] = {"shifts": e["shifts"], "no_shows": e["no_show"],
+                                         "no_show_rate": round(e["w_miss"] / e["w"], 2),
+                                         "absence_rate": round(e["w_absent"] / e["w"], 2),
+                                         "call_out_rate": round(e["w_callout"] / e["w"], 2)}
+    return out
+
+
+def weekday_absence(events, today=None) -> dict:
+    """The restaurant's own absence per weekday, for the schedule prompt's
+    no-show risk block: {weekday: {"shifts", "misses", "rate"}} — `shifts`
+    and `misses` the raw counts, `rate` the recency-weighted share of
+    watched shifts somebody missed (a call-out counts in full: either way
+    the shift was short a person)."""
+    from datetime import date as _date
+    tally = attendance_tally(events, today=today or _date.today())
+    out = {}
+    for t in tally.values():
+        for wd, e in t["days"].items():
+            d = out.setdefault(wd, {"shifts": 0, "misses": 0, "w": 0.0, "w_absent": 0.0})
+            d["shifts"] += e["shifts"]
+            d["misses"] += e["no_show"]
+            d["w"] += e["w"]
+            d["w_absent"] += e["w_absent"]
+    return {wd: {"shifts": d["shifts"], "misses": d["misses"],
+                 "rate": round(d["w_absent"] / d["w"], 3) if d["w"] else 0.0} for wd, d in out.items()}
+
+
+def attendance_record(restaurant_id, today=None, db_path=DB_PATH) -> dict:
+    """{"tally", "base", "today"} — the weighted per-person, per-weekday
+    tally (attendance_tally) and this restaurant's base rates, from one read
+    of attendance_events: what standby planning ranks people by."""
+    today = today or _today(restaurant_id)
+    tally = attendance_tally(attendance_events(restaurant_id, today=today, db_path=db_path), today=today)
+    return {"tally": tally, "base": attendance_bases(tally), "today": today}
+
+
+def local_today(restaurant_id):
+    """The restaurant's own local date — the `today` every attendance
+    weight is measured from."""
+    return _today(restaurant_id)
+
+
+def attendance_events(restaurant_id, today=None, db_path=DB_PATH) -> list:
+    """Every watched shift inside the one window (RELIABILITY_WINDOW_DAYS of
+    the restaurant's own `today`), with each call-out's notice and whether
+    it was clocked — attendance.reliability_events(detail=True). The read
+    every attendance reader shares (L-17)."""
+    import attendance
+    from datetime import timedelta as _td_ev
+    today = today or _today(restaurant_id)
+    return attendance.reliability_events(restaurant_id, since=(today - _td_ev(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
+                                         db_path=None if db_path == DB_PATH else db_path, detail=True)
+
+
 def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dict:
-    """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n}}
-    for everyone with enough watched shifts to say anything — weighted by
-    recency (weighted_attendance).
+    """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n,
+    "late_rate", "absence_rate", "call_out_rate", ...}} for everyone with
+    enough watched shifts to say anything — the one weighted reader
+    (attendance_events → weighted_attendance).
 
     A scheduled shift with actual_hours of zero is a no-show; one worked
     at least an hour and a half short of schedule is a short shift. Only
@@ -662,11 +868,8 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     # source with a real schedule. A POS row whose "scheduled" hours were its
     # actual hours copied (RPOWER, Square, Clover, Toast without a schedule)
     # can never show a no-show, and reading it made everyone "reliable".
-    import attendance
     today = today or _today(restaurant_id)
-    from datetime import timedelta as _td_rel
-    events = attendance.reliability_events(restaurant_id, since=(today - _td_rel(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
-                                           db_path=None if db_path == DB_PATH else db_path)
+    events = attendance_events(restaurant_id, today=today, db_path=db_path)
     # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
     # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
     # misses in six shifts read as a flat 33%, and the engine then treated

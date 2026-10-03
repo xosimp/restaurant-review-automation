@@ -2513,8 +2513,11 @@ _RETENTION_READERS = {
                     ("schedule_intel.mentoring", "schedule_intel.MENTOR_WINDOW_DAYS", None),
                     ("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                     ("shift_facts.tenure", None, "person_quarters")),
+    # One weighted reader for every attendance consumer (schedule audit
+    # 10/3/26 L-17): reliability, by-weekday, standby and the prompt's
+    # no-show block all read staff_settings.attendance_events.
     "attendance_events": (("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
-                          ("schedule_learning._attendance_tally", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("staff_settings.attendance_events", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                           ("attendance.summary_lines", 84, None)),
     "person_signals": (("people.cover_record", 180, None),
                        ("people.get_person", "people.PERSON_MENTION_DAYS", None),

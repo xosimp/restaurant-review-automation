@@ -1131,40 +1131,21 @@ def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs
 
 # ── attendance by weekday ─────────────────────────────────────────────────
 
-def _attendance_tally(restaurant_id) -> dict:
-    """{name: {"all": [shifts, no_shows], weekday: [shifts, no_shows]}} from
-    the shifts somebody WATCHED — the same events staff_settings.reliability
-    reads (attendance.reliability_events; memory audit 9/29/26): recorded
-    outcomes, and shifts from a source with a real schedule. A no-show or a
-    call-out is a miss. A person nobody watched is absent (unknown)."""
-    import attendance
-    from datetime import date as _date_at, timedelta as _td_at
-    from staff_settings import RELIABILITY_WINDOW_DAYS
-    since = (_date_at.today() - _td_at(days=RELIABILITY_WINDOW_DAYS)).isoformat()
-    tally = {}
-    for n, day, outcome in attendance.reliability_events(restaurant_id, since=since):
-        wd = _weekday(day)
-        if not n or not wd:
-            continue
-        t = tally.setdefault(n, {"all": [0, 0]})
-        miss = 1 if outcome in attendance.MISSES else 0
-        for k in ("all", wd):
-            e = t.setdefault(k, [0, 0])
-            e[0] += 1
-            e[1] += miss
-    return tally
-
-
 def attendance_by_weekday(restaurant_id, min_shifts=ATTENDANCE_MIN_WEEKDAY_SHIFTS, db_path=DB_PATH) -> dict:
-    """{name: {weekday: {"shifts": n, "no_shows": k, "no_show_rate": r}}} —
-    only weekdays with at least `min_shifts` clocked shifts for that person."""
-    out = {}
-    for n, t in _attendance_tally(restaurant_id).items():
-        for wd in WEEKDAYS:
-            e = t.get(wd)
-            if e and e[0] >= min_shifts:
-                out.setdefault(n, {})[wd] = {"shifts": e[0], "no_shows": e[1], "no_show_rate": round(e[1] / e[0], 2)}
-    return out
+    """{name: {weekday: {"shifts": n, "no_shows": k, "no_show_rate": r,
+    "absence_rate", "call_out_rate"}}} — only weekdays with at least
+    `min_shifts` watched shifts for that person.
+
+    The one weighted attendance reader (staff_settings.weekday_attendance
+    over attendance_events): the same window, recency weighting and
+    notice-weighted call-outs as reliability (schedule audit 10/3/26 L-17,
+    L-18) — this read an unweighted 360 days of its own, so the review and
+    the scorer disagreed about the same person and day."""
+    import staff_settings
+    today = staff_settings.local_today(restaurant_id)
+    return staff_settings.weekday_attendance(staff_settings.attendance_events(restaurant_id, today=today,
+                                                                              db_path=db_path),
+                                             today=today, min_shifts=min_shifts)
 
 
 def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
@@ -1190,15 +1171,22 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     rows = _week_rows(restaurant_id, week_dates, db_path) if rows is None else rows
     if not rows:
         return []
-    tally = {k.strip().lower(): v for k, v in _attendance_tally(restaurant_id).items()}
+    # The one weighted attendance reader (staff_settings.attendance_record —
+    # schedule audit 10/3/26 L-17): the window and recency weighting
+    # reliability uses. Standby plans for a body missing, so it reads the
+    # ABSENCE rate — a call-out counts in full whatever its notice, kept
+    # apart from reliability's notice-weighted miss rate (L-18).
+    import staff_settings
+    rec = staff_settings.attendance_record(restaurant_id, db_path=db_path)
+    tally = {k.strip().lower(): v for k, v in rec["tally"].items()}
     # Calibration (fix I9, CA1 L16): every person's rate is smoothed toward
     # this restaurant's own base rate (staff_settings.smoothed_rate), and a
     # person with no clocked record counts AT that base rate rather than
     # being left out — leaving them out biased the chance low exactly when
     # the least was known. The combination assumes one person's no-show says
     # nothing about another's, and the payload says so.
-    from staff_settings import no_show_base_rate, smoothed_rate
-    base = no_show_base_rate(tally)
+    from staff_settings import smoothed_rate
+    base = rec["base"]["absence"]
     wanted = set(week_dates or [])
     by_date = {}
     for r in rows:
@@ -1213,11 +1201,11 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
         assumed = []
         for low, name in people.items():
             t = tally.get(low) or {}
-            day_e, all_e = t.get(wd), t.get("all")
-            if day_e and day_e[0] >= ATTENDANCE_MIN_WEEKDAY_SHIFTS:
-                risks.append((name, smoothed_rate(day_e[1], day_e[0], base), f"{wd}s"))
-            elif all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS:
-                risks.append((name, smoothed_rate(all_e[1], all_e[0], base), "overall"))
+            day_e = (t.get("days") or {}).get(wd)
+            if day_e and day_e["shifts"] >= ATTENDANCE_MIN_WEEKDAY_SHIFTS:
+                risks.append((name, smoothed_rate(day_e["w_absent"], day_e["w"], base), f"{wd}s"))
+            elif t and t["shifts"] >= ATTENDANCE_MIN_OVERALL_SHIFTS:
+                risks.append((name, smoothed_rate(t["w_absent"], t["w"], base), "overall"))
             else:
                 unknown += 1
                 assumed.append((name, round(base, 2), "no record — this restaurant's overall rate"))
@@ -1240,11 +1228,11 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     out.sort(key=lambda x: (-x["chance_of_a_no_show"], x["date"]))
     out = out[:limit]
     for day in out:
-        day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path)
+        day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path, base=base)
     return out
 
 
-def _standby_person(restaurant_id, day, rows, tally, db_path):
+def _standby_person(restaurant_id, day, rows, tally, db_path, base=0.0):
     """Who to put on call: somebody off that day in the role of the person
     most likely to miss, free and not on time off (labor_replacements'
     own checks), the most reliable first — a known low no-show rate before
@@ -1265,14 +1253,12 @@ def _standby_person(restaurant_id, day, rows, tally, db_path):
     if not fits:
         return None
 
-    from staff_settings import no_show_base_rate, smoothed_rate
-    _base = no_show_base_rate(tally)
+    from staff_settings import smoothed_rate
 
     def _rate(name):
         t = tally.get(name.strip().lower()) or {}
-        all_e = t.get("all")
-        return (smoothed_rate(all_e[1], all_e[0], _base)
-                if all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS else None)
+        return (smoothed_rate(t["w_absent"], t["w"], base)
+                if t and t.get("shifts", 0) >= ATTENDANCE_MIN_OVERALL_SHIFTS else None)
 
     ranked = sorted(fits, key=lambda f: (_rate(f["name"]) is None, _rate(f["name"]) or 0, -(f.get("score") or 0),
                                          f["name"]))

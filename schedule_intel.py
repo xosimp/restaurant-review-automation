@@ -838,17 +838,28 @@ def could_hold(mentored: dict) -> dict:
 #   1. the Labor module is on;
 #   2. issue routing names a manager (issues.get_routing has "manager");
 #   3. the connected POS has a live clock-in feed (its provider module
-#      exposes fetch_clock_ins_today — Toast does; RPOWER, month-at-a-time,
-#      does not);
-#   4. the restaurant was open and the POS was read during service THAT DAY.
+#      exposes fetch_clock_ins_today — Toast and RPOWER both do: RPOWER's
+#      above-store data is fed while the store trades, and
+#      rpower.fetch_clock_ins_today reads the business day's punches; this
+#      used to say RPOWER could not be watched, which sent anyone asking
+#      why Simple EJ's nights were unwatched the wrong way — schedule audit
+#      10/3/26 L-32);
+#   4. the check actually read the clock-ins during THAT night's service.
 #
-# 1-3 are read from the current configuration. 4 is per date: a pos_intraday
-# reading exists for it (run_intraday_capture takes one each open hour from
-# the same live POS, on the same open-hours rule as the coverage check).
-# Without all four, "8 of 8 shared dayparts ran without an issue", an
-# accepted recommendation "improved", and auto-publish's "ran clean" weeks
-# were all true of every restaurant by default (re-audit A-19) — so those
-# reads are withheld for any date nobody was watching.
+# 1-3 are read from the current configuration. 4 is per date: the check
+# marks each business date it read the clock-ins for (dsr_coverage_runs,
+# written only when a published week covered the night and the POS
+# answered). Before that mark existed (COVERAGE_RUNS_SINCE) the evidence was
+# a pos_intraday sales reading that day — which also counted a night with no
+# published week to check against, or one whose clock-in read failed while
+# sales still came through (an RPOWER pull refused for unmatched punches),
+# as watched. So at an RPOWER restaurant the real gates are the manager
+# routing (2), a published week covering the night, and the clock-in read
+# itself. Without all four, "8 of 8 shared dayparts ran without an issue",
+# an accepted recommendation "improved", and auto-publish's "ran clean"
+# weeks were all true of every restaurant by default (re-audit A-19) — so
+# those reads are withheld for any date nobody was watching.
+COVERAGE_RUNS_SINCE = "2026-09-25"
 
 def coverage_watch_missing(restaurant_id, db_path=DB_PATH) -> list:
     """What stops run_coverage_check from watching this restaurant's nights,
@@ -879,16 +890,25 @@ def coverage_check_possible(restaurant_id, db_path=DB_PATH) -> bool:
 
 def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
     """ISO dates in [start, end] on which a clean night means something:
-    coverage_check_possible, and a live POS reading taken that day (4)."""
+    coverage_check_possible, and the check really read that night's
+    clock-ins (4: dsr_coverage_runs) — or, for a night before that mark was
+    kept (COVERAGE_RUNS_SINCE), a live POS reading taken that day."""
     if not coverage_check_possible(restaurant_id, db_path):
         return set()
+    s, e = str(start)[:10], str(end)[:10]
+    out = set()
     conn = get_conn(db_path)
     try:
-        return {r["business_date"] for r in conn.execute(
-            "SELECT DISTINCT business_date FROM pos_intraday WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
-            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
-    except Exception as e:
-        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {e}")
+        out |= {str(r["business_date"])[:10] for r in conn.execute(
+            "SELECT business_date FROM dsr_coverage_runs WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
+            (restaurant_id, s, e)).fetchall()}
+        if s < COVERAGE_RUNS_SINCE:
+            out |= {r["business_date"] for r in conn.execute(
+                "SELECT DISTINCT business_date FROM pos_intraday WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
+                "AND business_date < ?", (restaurant_id, s, e, COVERAGE_RUNS_SINCE)).fetchall()}
+        return out
+    except Exception as ex:
+        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {ex}")
         return set()
     finally:
         conn.close()

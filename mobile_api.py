@@ -918,19 +918,23 @@ def _home_weekly_receipts(rid, active_keys, inv):
                                  "text": "approved in your voice"})
     if "labor" in active_keys:
         sched = _home_query(f"""
-            SELECT week_start, hours_scheduled, hours_budget FROM schedule_history
+            SELECT week_start, hours_scheduled, hours_hourly, hours_budget FROM schedule_history
             WHERE restaurant_id=? AND julianday(generated_at) >= julianday({week_start})
             ORDER BY id DESC LIMIT 1
         """, (rid,))
         if sched:
-            hs = float(sched["hours_scheduled"] or 0)
+            # The budget is hourly: held against the hourly hours, never the
+            # salaried ones (schedule audit 10/3/26 E-7); "hrs scheduled"
+            # stays the whole week.
+            from models import history_hourly as _hh_rc
+            hs = float(_hh_rc(sched) or 0)
             hb = float(sched["hours_budget"] or 0)
             if hb and hs and hs < hb:
                 receipts.append({"module": "labor", "emphasis": "Next week's schedule",
                                  "text": f"built {int(round(hb - hs))} hrs under budget"})
-            elif hs:
+            elif float(sched["hours_scheduled"] or 0):
                 receipts.append({"module": "labor", "emphasis": "Next week's schedule",
-                                 "text": f"built — {int(round(hs))} hrs scheduled"})
+                                 "text": f"built — {int(round(float(sched['hours_scheduled'])))} hrs scheduled"})
     if "inventory" in active_keys:
         top = ((inv or {}).get("waste_items") or [None])[0]
         try:

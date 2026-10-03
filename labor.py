@@ -3514,15 +3514,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # source with a real schedule. It read "scheduled > 0 and actual 0" off
     # the shifts file, which at a POS restaurant (scheduled copied from
     # actual) could never find one — and before that, a missing actual_hours
-    # column read as a 100% no-show rate on every day.
-    _noshows = {}
-    _dow_shift_counts = {}
+    # column read as a 100% no-show rate on every day. Read through the one
+    # weighted attendance reader (staff_settings.attendance_events /
+    # weekday_absence — schedule audit 10/3/26 L-17): it was an unweighted 26
+    # weeks of its own while reliability and standby read other windows. A
+    # standby is about a body missing, so a call-out counts in full (L-18).
+    import staff_settings as _ss_ns
     _events = []
     if restaurant_id:
         try:
-            import attendance as _att
-            _since = (date.today() - timedelta(weeks=26)).isoformat()
-            _events = _att.reliability_events(restaurant_id, since=_since)
+            _events = _ss_ns.attendance_events(restaurant_id)
         except Exception as _ae:
             print(f"[schedule] attendance unavailable for {restaurant_id}: {_ae}")
             _events = []
@@ -3534,24 +3535,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             if _sched > 0:
                 _events.append((s.get("employee"), s.get("date", ""),
                                 "no_show" if float(s.get("actual_hours") or 0) == 0 else "worked"))
-    for _who, _date, _outcome in _events:
-        try:
-            from datetime import datetime as _dt3
-            _dn = _dt3.strptime(str(_date)[:10], "%Y-%m-%d").strftime("%A")
-        except Exception:
-            continue
-        _dow_shift_counts[_dn] = _dow_shift_counts.get(_dn, 0) + 1
-        if _outcome in ("no_show", "called_out"):
-            _noshows[_dn] = _noshows.get(_dn, 0) + 1
+    _today_ns = _ss_ns.local_today(restaurant_id) if restaurant_id else date.today()
+
     _noshows_block = ""
     _high_risk_days = []
-    for _dn, _cnt in _noshows.items():
-        _total = _dow_shift_counts.get(_dn, 1)
-        if _total < 10:
+    for _dn, _d in sorted(_ss_ns.weekday_absence(_events, today=_today_ns).items(),
+                          key=lambda kv: _ss_ns.DAYS.index(kv[0]) if kv[0] in _ss_ns.DAYS else 7):
+        _total = _d["shifts"]
+        if _total < 10 or not _d["misses"]:
             continue                  # a rate from a handful of watched shifts is not a risk
-        _rate = round(_cnt / _total * 100)
+        _rate = round(_d["rate"] * 100)
         if _rate >= 10:
-            _high_risk_days.append(f"{_dn} ({_rate}% of {_total} watched shifts missed)")
+            _high_risk_days.append(f"{_dn} ({_rate}% of {_total} watched shifts missed, recent ones counting most)")
     if _high_risk_days:
         _noshows_block = (f"\n\nNO-SHOW RISK (from shifts somebody watched): {', '.join(_high_risk_days)}. "
                           f"On these days, say in the summary that a standby should be on call — do not add "

@@ -367,18 +367,26 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
     expected_version: the version the edit was made against; a newer one
     raises StaleVersion and nothing is written. hours_scheduled follows the
     rows, so a budget blocker judged at generation time cannot outlive the
-    edit that fixed it (SCHED-17). Returns the new version number."""
+    edit that fixed it (SCHED-17) — and so does its split by pay,
+    hours_hourly / hours_salaried (schedule audit 10/3/26 E-7, P-6).
+    Returns the new version number."""
     if expected_version is not None:
         latest = latest_version(conn, history_id)
         if latest and int(expected_version) != latest:
             raise StaleVersion(latest)
     hours = round(sum(_hours(r) for r in rows_from_csv(schedule_csv)), 1)
+    try:
+        split = _models_mod.history_hours(restaurant_id, schedule_csv)
+    except Exception as e:
+        # Unknown, never a guess: a reader falls back to the all-in figure.
+        print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
+        split = {"hourly": None, "salaried": None}
     old = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
                        (history_id, restaurant_id)).fetchone()
     cur = conn.execute(
         "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
-        "edited_at=datetime('now'), edited_by=? WHERE id=? AND restaurant_id=?",
-        (schedule_csv, json.dumps(quality) if quality else None, hours,
+        "hours_hourly=?, hours_salaried=?, edited_at=datetime('now'), edited_by=? WHERE id=? AND restaurant_id=?",
+        (schedule_csv, json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
          (saved_by or "").strip()[:120] or None, history_id, restaurant_id))
     if cur.rowcount != 1:
         raise LookupError("that schedule is gone")
@@ -433,6 +441,26 @@ def _person_shifts(rows, key) -> list:
     return sorted((r.get("date", ""), r.get("shift_start", ""), r.get("shift_end", ""),
                    (r.get("role") or "").strip().lower())
                   for r in rows if " ".join((r.get("employee") or "").split()).casefold() == key)
+
+
+def shift_changes(before_rows, after_rows) -> dict:
+    """{"people": [names], "dates": [iso dates]} whose shifts differ between
+    two versions of a week — unsent_changes' own per-person comparison, for
+    two weeks given as rows: a regenerated draft against the published week
+    it would replace (schedule audit 10/3/26 E-22 — its changed dates are
+    what the notice-window warning is about)."""
+    names = {}
+    for r in list(before_rows or []) + list(after_rows or []):
+        n = " ".join((r.get("employee") or "").split())
+        if n:
+            names.setdefault(n.casefold(), n)
+    people, dates = [], set()
+    for k, n in sorted(names.items()):
+        was, now = _person_shifts(before_rows or [], k), _person_shifts(after_rows or [], k)
+        if was != now:
+            people.append(n)
+            dates |= {s[0] for s in set(was) ^ set(now) if s[0]}
+    return {"people": people, "dates": sorted(dates)}
 
 
 def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):

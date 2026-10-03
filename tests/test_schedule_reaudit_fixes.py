@@ -191,10 +191,12 @@ def test_the_over_budget_blocker_is_said_once(db_path, rid, monkeypatch):
     monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: models.get_conn(db_path))
     conn = get_conn(db_path)
     models._ensure_history_columns(conn)
+    # The gate judges the week's own hourly hours as they stand (schedule
+    # audit 10/3/26 E-7), so the week really is over: 6h against 5h.
     conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target, "
                  "schedule_csv, summary_json, review_json) VALUES (?,?,?,?,?,?,?,'[]',?)",
-                 (rid, WEEK[0], WEEK[6], 1457, 1314, 30, HEADER + f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6.0,\n",
-                  '{"hard": 0, "lines": ["⚠ 1,457h scheduled against a 1,314h budget — 143h over the ceiling"]}'))
+                 (rid, WEEK[0], WEEK[6], 6, 5, 30, HEADER + f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6.0,\n",
+                  '{"hard": 0, "lines": ["⚠ 6h scheduled against a 5h budget — 1h over the ceiling"]}'))
     conn.commit()
     hid = conn.execute("SELECT MAX(id) FROM schedule_history").fetchone()[0]
     conn.close()

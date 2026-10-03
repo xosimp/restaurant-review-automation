@@ -1178,6 +1178,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # When a superseded draft's detail was thinned to its headline
         # (ops._thin_drafts; memory audit 9/29/26, "draft_thinning").
         ("schedule_history", "detail_thinned_at", "TEXT"),
+        # The week's hours split by pay: hourly hours are what the hourly
+        # budget is spent from, salaried hours never are (schedule audit
+        # 10/3/26 E-7, P-6). hours_scheduled stays the all-in total.
+        ("schedule_history", "hours_hourly", "REAL"),
+        ("schedule_history", "hours_salaried", "REAL"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -4363,6 +4368,12 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
+    # after the column list above has added hours_hourly / hours_salaried.
+    try:
+        backfill_history_hours(db_path=db_path)
+    except Exception as e:
+        print(f"[schedule history] hours backfill skipped: {e}")
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
@@ -10463,17 +10474,100 @@ def backfill_labor_periods(db_path: str = DB_PATH, max_seconds: float = 20.0) ->
     return done
 
 
+def history_hours(restaurant_id: int, schedule_csv: str, restaurant=None, db_path: str = DB_PATH) -> dict:
+    """{"hourly", "salaried", "total"} hours of a stored week — its rows
+    through schedule_rules.hours_split (the one hourly-hours sum, schedule
+    audit 10/3/26 P-6), with the restaurant's salaried people
+    (salaried_staff) as the ones the hourly budget never pays. The deliberate
+    upward import: the split is the scheduler's rule, kept in one place."""
+    import csv as _csv_hh
+    import io as _io_hh
+    import schedule_rules as _sr_hh
+    rows = [r for r in _csv_hh.DictReader(_io_hh.StringIO(schedule_csv or "")) if (r.get("employee") or "").strip()]
+    if restaurant is None:
+        restaurant = get_restaurant(restaurant_id, db_path)
+    return _sr_hh.hours_split(rows, salaried=[s["name"] for s in salaried_staff(restaurant)])
+
+
+def history_hourly(row) -> float:
+    """The hourly hours of a schedule_history row as a reader compares them
+    to its hourly budget: hours_hourly, or — for a row from before it was
+    kept and not yet backfilled — the all-in hours_scheduled. None when
+    neither is known."""
+    for key in ("hours_hourly", "hours_scheduled"):
+        try:
+            value = row[key]
+        except (KeyError, IndexError, TypeError):
+            value = None
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def backfill_history_hours(db_path: str = DB_PATH, max_seconds: float = 10.0) -> int:
+    """At boot: hours_hourly / hours_salaried for weeks saved before they
+    were kept (schedule audit 10/3/26 E-7), from each week's own rows and the
+    restaurant's salaried people now. Idempotent and bounded by
+    `max_seconds`; whatever it did not reach, the next boot does."""
+    import time as _time_hh
+    conn = get_conn(db_path)
+    try:
+        todo = [(r[0], r[1], r[2]) for r in conn.execute(
+            "SELECT id, restaurant_id, schedule_csv FROM schedule_history WHERE hours_hourly IS NULL "
+            "AND schedule_csv IS NOT NULL AND schedule_csv != '' ORDER BY id DESC").fetchall()]
+    finally:
+        conn.close()
+    stop = _time_hh.monotonic() + float(max_seconds)
+    restaurants, done = {}, 0
+    for hid, rid, text in todo:
+        if _time_hh.monotonic() > stop:
+            break
+        try:
+            if rid not in restaurants:
+                restaurants[rid] = get_restaurant(rid, db_path)
+            split = history_hours(rid, text, restaurant=restaurants[rid], db_path=db_path)
+        except Exception as e:
+            print(f"[schedule history] hours split skipped for week {hid}: {e}")
+            continue
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE schedule_history SET hours_hourly=?, hours_salaried=? WHERE id=? "
+                         "AND hours_hourly IS NULL", (split["hourly"], split["salaried"], hid))
+            conn.commit()
+        finally:
+            conn.close()
+        done += 1
+    return done
+
+
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
-                           what_if: dict = None, db_path: str = DB_PATH) -> int:
+                           what_if: dict = None, db_path: str = DB_PATH,
+                           hours_hourly: float = None, hours_salaried: float = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
     regardless of any iOS view-state bug, rather than depending on getting
     every layer of client caching right. Returns the new row's id.
+
+    `hours_hourly` / `hours_salaried` are the week's hours split by pay
+    (schedule audit 10/3/26 E-7, P-6) — the generation passes the split it
+    priced with; without them they are worked out from the rows here
+    (history_hours), so no row is saved without them.
     """
     import json as _json_sh
+    if hours_hourly is None or hours_salaried is None:
+        try:
+            split = history_hours(restaurant_id, schedule_csv, db_path=db_path)
+            hours_hourly = split["hourly"] if hours_hourly is None else hours_hourly
+            hours_salaried = split["salaried"] if hours_salaried is None else hours_salaried
+        except Exception as e:
+            import ops as _ops_hh
+            _ops_hh.capture(e, job="schedule_history_hours", context=f"restaurant_id={restaurant_id}")
     conn = get_conn(db_path)
     # The Shift Quality verdict used to live only in the async job result,
     # which is deleted the first time it is polled — so the headline number
@@ -10485,13 +10579,14 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         INSERT INTO schedule_history
             (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
              labor_target, schedule_csv, summary_json, quality_json,
-             quality_score, quality_band, quality_confidence, what_if_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             quality_score, quality_band, quality_confidence, what_if_json,
+             hours_hourly, hours_salaried)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
           schedule_csv, _json_sh.dumps(summary or []),
           _json_sh.dumps(quality) if quality else None,
           q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
-          _json_sh.dumps(what_if) if what_if else None))
+          _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried))
     conn.commit()
     new_id = cur.lastrowid
     # Drafts of the same week that were never sent are superseded by this
@@ -10529,7 +10624,7 @@ def _ensure_history_columns(conn):
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
-                       ("detail_thinned_at", "TEXT")):
+                       ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -10580,7 +10675,7 @@ _HISTORY_BAND_LEAD = {"excellent": "Excellent week", "good": "Solid week",
                       "fair": "A few soft spots", "weak": "Needs attention"}
 
 
-def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_at) -> tuple:
+def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_at, hours_hourly=None) -> tuple:
     """One honest line for a Schedule History row.
 
     Built only from what the Shift Quality Engine (shift_quality.evaluate_
@@ -10591,8 +10686,15 @@ def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_a
     one is used verbatim rather than re-summarized into something new that
     could drift from what it actually found. Returns (line, tone) where
     tone is 'good' | 'warn' | 'info' for the row's status dot.
+
+    The budget is an hourly budget, so it is held against the HOURLY hours
+    (`hours_hourly`): salaried hours are never spent from it, and counting
+    them called a week "over budget" by about the salaried hours (schedule
+    audit 10/3/26 E-7). A row without the split uses the all-in figure.
     """
     q = quality or {}
+    if hours_hourly is not None:
+        hours_scheduled = hours_hourly
     if not q.get("checked"):
         # No quality read on this week (engine failed, or the row predates
         # this feature) — hours are the one thing always known.
@@ -10647,7 +10749,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         _ensure_history_columns(conn)
         rows = conn.execute("""
             SELECT id, generated_at, week_start, week_end, hours_scheduled,
-                   hours_budget, labor_target,
+                   hours_hourly, hours_salaried, hours_budget, labor_target,
                    quality_json, quality_score, quality_band, quality_confidence,
                    edited_at, edited_by, published_at, published_by, superseded_by, republished_at
             FROM schedule_history WHERE restaurant_id=?
@@ -10672,7 +10774,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
             d["quality_band"] = (q or {}).get("band")
         d["confidence"] = d.pop("quality_confidence", None) or ((q or {}).get("confidence") or {}).get("level")
         d["summary_line"], d["summary_tone"] = _history_summary_line(
-            q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"))
+            q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"), hours_hourly=d.get("hours_hourly"))
         out.append(d)
     return out
 

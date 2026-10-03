@@ -247,7 +247,10 @@ def test_ask_ana_to_cover_texts_her_consented_number_and_records_the_yes(db_path
     rid = _coverage_world(db_path, monkeypatch, lambda: [])
     strategy_jobs.run_coverage_check(db_path=db_path)
     cov = issues.list_issues(rid, db_path=db_path)[0]
-    assert cov["meta"]["covers"] == [{"name": "Ana", "score": 4.0}]
+    # Each suggestion names the gap it is for (schedule audit 10/3/26 E-31:
+    # one issue can hold several gaps).
+    assert [{k: c[k] for k in ("name", "score", "for", "shift_start", "kind")} for c in cov["meta"]["covers"]] == \
+        [{"name": "Ana", "score": 4.0, "for": "Dana K", "shift_start": "11:00am", "kind": "off"}]
     conn = get_conn(db_path)
     conn.execute("INSERT INTO staff_contacts (restaurant_id, employee_name, phone) VALUES (?, 'Ana', '(555) 555-0142')",
                  (rid,))
