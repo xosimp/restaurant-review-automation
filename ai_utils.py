@@ -958,6 +958,28 @@ def default_thinking(model, kwargs=None):
     return None
 
 
+# The effort a call on a model whose thinking cannot be turned off gets when
+# its caller names neither thinking nor an effort: the nearest thing to the
+# "off" every other call site was written for. Claude Opus 5.5 thinks at
+# medium effort by default and its thinking shares max_tokens, so a call
+# site written for 500-1,600 tokens and moved to it by a *_MODEL override
+# could spend the whole budget thinking and answer nothing (schedule audit
+# 10/3/26 PR-29). A call that wants more says so (the schedule: high).
+ALWAYS_THINKING_DEFAULT_EFFORT = "low"
+
+
+def default_effort(model, kwargs=None):
+    """The output_config.effort a call gets when its caller set none: low on
+    a model whose thinking is always on (when the caller named no thinking
+    either), else None — the model's own default."""
+    kw = kwargs or {}
+    if "thinking" in kw or _effort_of(kw):
+        return None
+    if (model or "").lower().startswith(_THINKING_ALWAYS_ON_PREFIXES):
+        return ALWAYS_THINKING_DEFAULT_EFFORT
+    return None
+
+
 def model_for(purpose: str) -> str:
     """The model a call site uses: its env override if set, else its default."""
     env, default = MODELS[purpose]
@@ -1378,6 +1400,9 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
         log_blocked(restaurant_id, action, model, "data_not_ready",
                     detail=str(readiness.get("reason") or readiness.get("decision"))[:200], **attribution)
         raise DataNotReady(readiness)
+    _effort = default_effort(kwargs.get("model"), kwargs)
+    if _effort:
+        kwargs["output_config"] = dict(kwargs.get("output_config") or {}, effort=_effort)
     if "thinking" not in kwargs:
         _thinking = default_thinking(kwargs.get("model"), kwargs)
         if _thinking is not None:
@@ -1578,11 +1603,13 @@ def _status_for(outcome):
 
 
 def outcome_of(message):
-    """'ok', 'refused' or 'truncated' from a returned message's stop_reason."""
+    """'ok', 'refused' or 'truncated' from a returned message's stop_reason.
+    Running into the model's context window cuts an answer short exactly as
+    max_tokens does (schedule audit 10/3/26 PR-30) — it read as 'ok'."""
     stop = getattr(message, "stop_reason", None)
     if stop == "refusal":
         return "refused"
-    if stop == "max_tokens":
+    if stop in ("max_tokens", "model_context_window_exceeded"):
         return "truncated"
     return "ok"
 
@@ -1676,6 +1703,10 @@ _MODEL_PRICING = {
     "claude-sonnet-5": (2.00, 10.00),
     # invoices.py reads prices off photos with the most capable model.
     "claude-opus-5": (5.00, 25.00),
+    # The week's schedule (schedule audit 10/3/26), and the budget tier its
+    # evaluation runs against (scripts/schedule_model_eval.py).
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     # Perplexity sonar, per million tokens. Audit #7 found this vendor was
     # entirely outside the ledger and the budget — the $10/day and
     # $1,500/month ceilings bound Claude only, while AI visibility could fire
@@ -2615,6 +2646,23 @@ AI_TRACE_DAYS = int(os.getenv("AI_TRACE_DAYS", "30"))
 AI_TRACE_KEEP_PER_ACTION = int(os.getenv("AI_TRACE_KEEP_PER_ACTION", "10"))
 AI_TRACE_PROMPT_CHARS = int(os.getenv("AI_TRACE_PROMPT_CHARS", "40000"))
 AI_TRACE_OUTPUT_CHARS = int(os.getenv("AI_TRACE_OUTPUT_CHARS", "12000"))
+# Actions whose trace keeps more than the default: the week's schedule — a
+# 60-person restaurant's prompt is 55-70k characters and its answer tens of
+# thousands, so the 40k/12k caps cut every real week (schedule audit
+# 10/3/26 PR-31). Still only the newest AI_TRACE_KEEP_PER_ACTION per
+# restaurant keep their text; every schedule call's full input is also kept
+# for replay in schedule_model_calls (schedule_output.record_call).
+AI_TRACE_ACTION_CHARS = {
+    "labor_schedule": (int(os.getenv("AI_TRACE_SCHEDULE_PROMPT_CHARS", "400000")),
+                       int(os.getenv("AI_TRACE_SCHEDULE_OUTPUT_CHARS", "300000"))),
+}
+
+
+def _trace_caps(action):
+    """(prompt chars, output chars) an action's trace keeps."""
+    return AI_TRACE_ACTION_CHARS.get(action or "", (AI_TRACE_PROMPT_CHARS, AI_TRACE_OUTPUT_CHARS))
+
+
 # The ai_calls rows themselves (hashes, ids, stop reason) — as long as the
 # ledger rows they belong to.
 AI_CALLS_RETAIN_DAYS = int(os.getenv("AI_CALLS_RETAIN_DAYS", "120"))
@@ -2777,6 +2825,7 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
         names = guest_names_in(prompt)
         usage = getattr(message, "usage", None)
         att = attribution or {}
+        prompt_cap, output_cap = _trace_caps(action)
         row = (call_id, restaurant_id, action or "unspecified", "anthropic", kwargs.get("model"),
                att.get("trigger"), att.get("actor_user_id"), att.get("correlation_id"), caller,
                template_hash, _sha(prompt),
@@ -2785,8 +2834,8 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
                _sha(output) if output else None,
                getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None),
                latency_ms, attempts, usage_id,
-               zlib.compress(redact_pii(prompt[:AI_TRACE_PROMPT_CHARS], names).encode("utf-8", "replace")),
-               zlib.compress(redact_pii(output[:AI_TRACE_OUTPUT_CHARS], names).encode("utf-8", "replace"))
+               zlib.compress(redact_pii(prompt[:prompt_cap], names).encode("utf-8", "replace")),
+               zlib.compress(redact_pii(output[:output_cap], names).encode("utf-8", "replace"))
                if output else None)
         conn = _conn()
         try:

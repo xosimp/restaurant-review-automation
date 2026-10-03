@@ -454,10 +454,19 @@ def test_the_rules_block_states_the_rule_at_its_rank():
 def _model(monkeypatch, shifts):
     captured = {}
 
+    # The answer in the output contract's shape (schedule_output: rows
+    # grouped by date, times as start/end, a fixed note — C2, PR-12/13).
+    days = {}
+    for sh in shifts:
+        days.setdefault(sh["date"], []).append({"employee": sh["employee"], "role": sh["role"],
+                                                "start": sh["shift_start"], "end": sh["shift_end"],
+                                                "note": sh.get("notes") or ""})
+    answer = {"days": [{"date": d, "shifts": rows} for d, rows in sorted(days.items())], "summary": ["ok"]}
+
     def fake(client, **kwargs):
         captured.update(kwargs)
         return types.SimpleNamespace(
-            content=[types.SimpleNamespace(type="text", text=json.dumps({"shifts": shifts, "summary": ["ok"]}))],
+            content=[types.SimpleNamespace(type="text", text=json.dumps(answer))],
             stop_reason="end_turn")
     monkeypatch.setattr(labor, "create_with_retry", fake)
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
@@ -539,8 +548,16 @@ def test_the_csv_fallback_keeps_the_plan(monkeypatch):
 
     def fake(client, **kwargs):
         calls.append(kwargs)
-        if len(calls) == 1:
-            raise RuntimeError("output_config.format is not supported")
+        # the API refusing structured output altogether: the schema with its
+        # enums, then the shape alone, then the CSV contract (C2, PR-28)
+        if (kwargs.get("output_config") or {}).get("format"):
+            import anthropic
+            import httpx
+            req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                "output_config.format is not supported", response=httpx.Response(400, request=req),
+                body={"type": "error", "error": {"type": "invalid_request_error",
+                                                 "message": "output_config.format is not supported"}})
         return types.SimpleNamespace(content=[types.SimpleNamespace(
             type="text", text=HEADER + "\n2026-10-05,Monday,Ana,Server,4:00pm,10:00pm,6,\n---SUMMARY---\n- ok")],
             stop_reason="end_turn")
@@ -551,7 +568,7 @@ def test_the_csv_fallback_keeps_the_plan(monkeypatch):
         _ANALYSIS, _history(), restaurant_name="EJ", hourly_rate=20.0, labor_target=30.0, week_start="2026-10-05",
         roster=[(n, (MANAGERS.get(n.lower()) or "Server")) for n in ROSTER], pinned_rows=plan["rows"],
         manager_plan=plan)
-    assert len(calls) == 2 and "MANAGER COVERAGE — ALREADY SCHEDULED" in calls[1]["messages"][0]["content"]
+    assert len(calls) == 3 and "MANAGER COVERAGE — ALREADY SCHEDULED" in calls[-1]["messages"][0]["content"]
     assert sum(1 for ln in out["schedule_csv"].split("\n") if sk.is_plan_line(ln)) == len(plan["rows"])
 
 
@@ -561,10 +578,11 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
 
     def fake(client, **kwargs):
         prompts.append(kwargs["messages"][0]["content"])
-        shifts = [{"date": d, "day": sk._weekday(d), "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
-                   "shift_end": "10:00pm", "scheduled_hours": 6, "notes": ""} for d in WEEK]
+        # the output contract's shape: rows grouped by date (C2, PR-12/13)
+        days = [{"date": d, "shifts": [{"employee": "Ana", "role": "Server", "start": "4:00pm", "end": "10:00pm",
+                                        "note": ""}]} for d in WEEK]
         return types.SimpleNamespace(content=[types.SimpleNamespace(
-            type="text", text=json.dumps({"shifts": shifts, "summary": ["ok"]}))], stop_reason="end_turn")
+            type="text", text=json.dumps({"days": days, "summary": ["ok"]}))], stop_reason="end_turn")
     monkeypatch.setattr(labor, "create_with_retry", fake)
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")

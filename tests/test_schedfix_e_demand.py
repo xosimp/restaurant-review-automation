@@ -502,10 +502,12 @@ def test_the_draft_is_built_on_the_net_budget_the_scaled_week_and_the_late_night
         import re as _re
         captured.update(kwargs)
         dates = _re.findall(r"- (\d{4}-\d{2}-\d{2}): ", kwargs["messages"][0]["content"])
-        body = "\n".join(f"{d},X,Ana,Server,5:00pm,11:00pm,6,x" for d in dates)
-        return _t.SimpleNamespace(content=[_t.SimpleNamespace(
-            text="date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + body
-                 + "\n---SUMMARY---\n- ok")], stop_reason="end_turn")
+        # the output contract's JSON (schedule_output, C2): a structured
+        # answer is never read as CSV
+        answer = {"days": [{"date": d, "shifts": [{"employee": "Ana", "role": "Server", "start": "5:00pm",
+                                                   "end": "11:00pm", "note": ""}]} for d in dates],
+                  "summary": ["ok"]}
+        return _t.SimpleNamespace(content=[_t.SimpleNamespace(text=json.dumps(answer))], stop_reason="end_turn")
     monkeypatch.setattr(_labor, "create_with_retry", fake)
     monkeypatch.setattr(_labor, "extract_text", lambda m: m.content[0].text)
     monkeypatch.setattr(_labor, "get_client", lambda *a, **k: None)

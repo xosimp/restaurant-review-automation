@@ -956,7 +956,7 @@ _models_listen.on_restaurant_change(invalidate_context)
 _ACTION_MODULE = {"send_supplier_order": "food", "publish_schedule": "labor", "generate_schedule": "labor",
                   "send_guest_campaign": "marketing", "publish_instagram_post": "marketing",
                   "publish_facebook_post": "marketing", "refresh_competitors": "intel",
-                  "add_closed_date": "ops", "set_staff_unavailable": "labor"}
+                  "add_closed_date": "ops", "set_staff_unavailable": "labor", "set_staff_hours": "labor"}
 
 
 def proposal_key(proposal_id) -> str:
@@ -1840,6 +1840,7 @@ _TOOL_LABELS = {
     "create_issue": "Getting that issue ready to assign",
     "add_closed_date": "Getting that closure ready",
     "set_staff_unavailable": "Getting that availability change ready",
+    "set_staff_hours": "Getting that hours limit ready",
     "read_recent_reads": "Reading what Cavnar AI told you",
     "read_upcoming": "Checking what's coming up",
     "read_target_history": "Checking which targets applied",

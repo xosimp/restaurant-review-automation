@@ -740,5 +740,5 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
             "texts or posts they sent to fill a night — "
             "a stronger signal than the weekday averages above for the date it names. Each date's figure is "
             "ALREADY in its SHIFT REQUIREMENTS numbers and its day target (schedule audit 10/3/26 D-23) — do "
-            "not scale that day again; say in the summary which dates moved and why):\n"
+            "not scale that day again; say so in the summary when it is one of the week's biggest decisions):\n"
             + "\n".join(lines))

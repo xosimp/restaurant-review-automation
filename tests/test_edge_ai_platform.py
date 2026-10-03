@@ -183,14 +183,21 @@ def test_an_open_breaker_refuses_without_calling_the_provider():
 @pytest.mark.parametrize("purpose", sorted(ai_utils.MODELS))
 def test_every_default_model_is_sent_a_thinking_config_it_accepts(purpose, monkeypatch):
     """The current defaults (Haiku 4.5, Sonnet 5, Opus 5 at default effort)
-    all accept thinking disabled — pin it so a default change is noticed."""
+    all accept thinking disabled; the week's schedule runs on Opus 5.5,
+    whose thinking cannot be turned off (schedule audit 10/3/26 PR-6): it is
+    sent no thinking setting and, called without an effort, the lowest
+    (PR-29) — pin it so a default change is noticed."""
     env, default = ai_utils.MODELS[purpose]
     monkeypatch.delenv(env, raising=False)
     model = ai_utils.model_for(purpose)
     client = _Client()
     ai_utils.create_with_retry(client, model=model, max_tokens=10)
-    assert model in (ai_utils.HAIKU, ai_utils.SONNET, ai_utils.OPUS)
-    assert client.calls[0]["thinking"] == {"type": "disabled"}
+    assert model in (ai_utils.HAIKU, ai_utils.SONNET, ai_utils.OPUS, ai_utils.OPUS_55)
+    if model == ai_utils.OPUS_55:
+        assert "thinking" not in client.calls[0]
+        assert client.calls[0]["output_config"]["effort"] == ai_utils.ALWAYS_THINKING_DEFAULT_EFFORT
+    else:
+        assert client.calls[0]["thinking"] == {"type": "disabled"}
 
 
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5"])
