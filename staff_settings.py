@@ -28,7 +28,31 @@ class StaffSettingsError(ValueError):
 
 # ── settings ───────────────────────────────────────────────────────────────
 
-CERTIFICATIONS = ("alcohol", "food_handler", "manager", "keyholder", "trainer", "allergen", "first_aid")
+CERTIFICATIONS = ("alcohol", "food_handler", "manager", "keyholder", "trainer", "allergen", "first_aid",
+                  "food_protection_manager")
+# How each certificate reads to the owner. "manager" used to read as plain
+# "Manager" beside "Food handler", so a line cook holding a Certified Food
+# Protection Manager card (required on site in Chicago) was given it — and
+# the certificate makes its holder a manager the every-minute rule counts
+# (schedule audit 10/3/26 E-15). It means a floor manager, somebody who can
+# run the shift; the food-safety card is its own certificate and never
+# makes anybody a manager. The stored keys stay what they were.
+CERTIFICATION_LABELS = {
+    "alcohol": "Alcohol", "food_handler": "Food handler", "manager": "Floor manager (can run the shift)",
+    "keyholder": "Keyholder", "trainer": "Trainer", "allergen": "Allergen", "first_aid": "First aid",
+    "food_protection_manager": "Food protection manager (food safety)",
+}
+# The certificate that makes its holder a floor manager (schedule_rules
+# build_constraints); FOOD_SAFETY_CERT never does.
+FLOOR_MANAGER_CERT = "manager"
+FOOD_SAFETY_CERT = "food_protection_manager"
+
+# Caps on the per-person lists below, so a client loop cannot store
+# thousands of entries on one person.
+MAX_STANDING_SHIFTS = 21
+MAX_ACTING_RANGES = 20
+MAX_CLOSES_FOR = 6
+STANDING_SHIFT_MAX_HOURS = 16
 
 
 def _json_field(r, key, default):
@@ -66,9 +90,34 @@ def _row(r):
         # Which minor rule table applies (schedule_rules.MINOR_BANDS); None
         # for an adult, or a minor whose age band was never set.
         "minor_age_band": (r["minor_age_band"] if "minor_age_band" in keys else None) or None,
+        # Who runs the floor (schedule audit 10/3/26 P-7, E-14): True or
+        # False as the owner set it; None is automatic (their role, a held
+        # role or a manager role worked in the last eight weeks, or the
+        # floor manager certificate — schedule_rules.manager_basis).
+        "floor_manager": (None if "floor_manager" not in keys or r["floor_manager"] is None
+                          else bool(r["floor_manager"])),
+        # An Owner-role person paid by the hour: held to the overtime line
+        # like anyone hourly. Unset, an Owner role is salaried-style (E-12).
+        "paid_hourly": bool(r["paid_hourly"]) if "paid_hourly" in keys and r["paid_hourly"] is not None else False,
+        # Dates they stand in as the manager on duty (E-13): [{from, until, note}].
+        "acting_manager": _json_list(r, "acting_manager", keys),
+        # The days and hours they always work (D-5): [{day, start, end, role}].
+        "standing_shifts": _json_list(r, "standing_shifts", keys),
+        # In training (D-16): {target_role, trainer, from, until} or None.
+        "trainee": (_json_field(r, "trainee", None) if "trainee" in keys else None) or None,
+        # The roles they close for when marked to close (D-9); empty is
+        # their own role.
+        "closes_for": [x for x in _json_list(r, "closes_for", keys) if isinstance(x, str)],
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
+
+
+def _json_list(r, key, keys) -> list:
+    if key not in keys:
+        return []
+    v = _json_field(r, key, [])
+    return list(v) if isinstance(v, list) else []
 
 
 def name_key(name) -> str:
@@ -181,15 +230,169 @@ def _flag(v) -> bool:
     return bool(v)
 
 
+# ── the owner's per-person scheduling facts (schedule audit 10/3/26 F1) ────
+#
+# Who runs the floor, who stands in as the manager on given dates, the days
+# and hours someone always works, who is in training and for what, which
+# roles a closer closes for. Each is validated here, stored on the
+# person's staff_settings row, recorded in the change history like every
+# other roster field, and read into the rules by
+# schedule_rules.build_constraints.
+
+AUTO = "auto"           # floor_manager: back to automatic
+
+
+def _clean_floor_manager(v):
+    """1, 0, or AUTO (clear: automatic) for what a client sent."""
+    if isinstance(v, bool):
+        return 1 if v else 0
+    s = str(v).strip().lower()
+    if s in ("", "auto", "automatic", "default", "null", "none"):
+        return AUTO
+    if s in ("1", "true", "yes", "on"):
+        return 1
+    if s in ("0", "false", "no", "off"):
+        return 0
+    raise StaffSettingsError("floor manager is yes, no or automatic")
+
+
+def _clean_date(raw, what) -> str:
+    """An ISO date from ISO or M/D/YY input; raises when it is not a date."""
+    from models import _iso_or_none
+    iso = _iso_or_none(raw)
+    if not iso:
+        raise StaffSettingsError(f"{what}: '{raw}' isn't a date — use M/D/YY")
+    return iso
+
+
+def _clean_acting(raw) -> list:
+    """[{from, until, note}] — the date ranges somebody stands in as the
+    manager on duty, sorted, each at most a year long."""
+    from datetime import date as _d
+    if not isinstance(raw, list):
+        raise StaffSettingsError("acting manager dates are a list of {from, until}")
+    if len(raw) > MAX_ACTING_RANGES:
+        raise StaffSettingsError(f"at most {MAX_ACTING_RANGES} acting-manager date ranges")
+    out = []
+    for e in raw:
+        if not isinstance(e, dict):
+            raise StaffSettingsError("acting manager dates are a list of {from, until}")
+        f = _clean_date(e.get("from"), "acting manager from")
+        u = _clean_date(e.get("until") or e.get("from"), "acting manager until")
+        if f > u:
+            raise StaffSettingsError("acting manager: the end date is before the start date")
+        if (_d.fromisoformat(u) - _d.fromisoformat(f)).days > 366:
+            raise StaffSettingsError("acting manager: a date range is at most a year")
+        entry = {"from": f, "until": u}
+        note = " ".join(str(e.get("note") or "").split())[:120]
+        if note:
+            entry["note"] = note
+        if entry not in out:
+            out.append(entry)
+    return sorted(out, key=lambda x: (x["from"], x["until"]))
+
+
+def _clean_standing(raw) -> list:
+    """[{day, start, end, role}] — the shifts somebody always works, one
+    weekday each (D-5: the owners' and managers' real floor days). Times in
+    the house form ("10:00am"); an end at or before the start crosses
+    midnight; two on the same day may not overlap."""
+    from schedule_rules import parse_minutes, _fmt_minutes
+    if not isinstance(raw, list):
+        raise StaffSettingsError("standing shifts are a list of {day, start, end}")
+    if len(raw) > MAX_STANDING_SHIFTS:
+        raise StaffSettingsError(f"at most {MAX_STANDING_SHIFTS} standing shifts")
+    out, spans = [], {}
+    for e in raw:
+        if not isinstance(e, dict):
+            raise StaffSettingsError("standing shifts are a list of {day, start, end}")
+        day = str(e.get("day") or "").strip().capitalize()
+        if day not in DAYS:
+            raise StaffSettingsError(f"'{e.get('day')}' is not a weekday")
+        s, t = parse_minutes(str(e.get("start") or "")), parse_minutes(str(e.get("end") or ""))
+        if s is None or t is None:
+            raise StaffSettingsError(f"{day}: give the start and end as times, like 10:00am and 6:00pm")
+        end = t if t > s else t + 24 * 60
+        if not 60 <= end - s <= STANDING_SHIFT_MAX_HOURS * 60:
+            raise StaffSettingsError(f"{day}: a standing shift runs 1 to {STANDING_SHIFT_MAX_HOURS} hours")
+        for os_, oe in spans.get(day, ()):
+            if s < oe and os_ < end:
+                raise StaffSettingsError(f"{day}: two standing shifts overlap")
+        spans.setdefault(day, []).append((s, end))
+        role = " ".join(str(e.get("role") or "").split())[:60]
+        entry = {"day": day, "start": _fmt_minutes(s), "end": _fmt_minutes(t), "role": role or None}
+        # Optional dates it holds between ("Tuesdays until 12/15/26").
+        f = _clean_date(e.get("from"), f"{day} from") if e.get("from") else None
+        u = _clean_date(e.get("until"), f"{day} until") if e.get("until") else None
+        if f and u and f > u:
+            raise StaffSettingsError(f"{day}: the standing shift ends before it starts")
+        if f:
+            entry["from"] = f
+        if u:
+            entry["until"] = u
+        out.append(entry)
+    return sorted(out, key=lambda x: (DAYS.index(x["day"]), parse_minutes(x["start"]) or 0))
+
+
+def _clean_trainee(raw, today=None):
+    """{target_role, trainer, from, until} or None (not in training). The
+    role they are learning and the date training ends are required: a
+    trainee with no end stayed one for good, and the headcount never came
+    back (D-16)."""
+    if raw in (None, False, "", {}, []):
+        return None
+    if not isinstance(raw, dict):
+        raise StaffSettingsError("training is {target_role, trainer, until}")
+    role = " ".join(str(raw.get("target_role") or raw.get("role") or "").split())[:60]
+    if not role:
+        raise StaffSettingsError("training: name the role they're learning")
+    until = _clean_date(raw.get("until"), "training ends")
+    if today is not None and until < today.isoformat():
+        raise StaffSettingsError("training: that end date has passed")
+    out = {"target_role": role, "until": until}
+    if raw.get("from"):
+        f = _clean_date(raw.get("from"), "training starts")
+        if f > until:
+            raise StaffSettingsError("training: the end date is before the start date")
+        out["from"] = f
+    trainer = " ".join(str(raw.get("trainer") or "").split())[:120]
+    if trainer:
+        out["trainer"] = trainer
+    return out
+
+
+def _clean_closes_for(raw) -> list:
+    """The roles a closer closes for ("Bartender", "Server"); empty means
+    their own role (D-9)."""
+    if not isinstance(raw, list):
+        raise StaffSettingsError("closes for is a list of roles")
+    out = []
+    for x in raw:
+        r = " ".join(str(x or "").split())[:60]
+        if r and r.casefold() not in {o.casefold() for o in out}:
+            out.append(r)
+    if len(out) > MAX_CLOSES_FOR:
+        raise StaffSettingsError(f"a closer closes for at most {MAX_CLOSES_FOR} roles")
+    return out
+
+
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
-           experienced=None, minor_age_band=None, db_path=DB_PATH) -> dict:
+           experienced=None, minor_age_band=None, floor_manager=None, paid_hourly=None,
+           acting_manager=None, standing_shifts=None, trainee=None, closes_for=None,
+           db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed.
 
     `minor_age_band` is "14-15", "16-17" or "" (clear). Setting a band marks
-    the person a minor; switching is_minor off clears the band (NS5 H4)."""
+    the person a minor; switching is_minor off clears the band (NS5 H4).
+
+    The owner's scheduling facts (schedule audit 10/3/26 F1): `floor_manager`
+    True / False / "auto"; `paid_hourly` (an Owner role held to overtime);
+    `acting_manager` [{from, until, note}]; `standing_shifts` [{day, start,
+    end, role}]; `trainee` {target_role, trainer, from, until} or {} to end
+    it; `closes_for` [role]. Each replaces what is stored."""
     if employee_name is not None and not isinstance(employee_name, str):
         raise StaffSettingsError("an employee name is required")
     name = (employee_name or "").strip()[:120]
@@ -245,6 +448,16 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             raise StaffSettingsError("desired hours must be a number")
         if desired_hours < 0 or desired_hours > 80:
             raise StaffSettingsError("desired hours must be between 0 and 80")
+    if floor_manager is not None:
+        floor_manager = _clean_floor_manager(floor_manager)
+    if acting_manager is not None:
+        acting_manager = _clean_acting(acting_manager)
+    if standing_shifts is not None:
+        standing_shifts = _clean_standing(standing_shifts)
+    if trainee is not None:
+        trainee = _clean_trainee(trainee, today=_today(restaurant_id)) or ""
+    if closes_for is not None:
+        closes_for = _clean_closes_for(closes_for)
     conn = get_conn(db_path)
     try:
         # The row this person already has, whatever case it was saved in:
@@ -258,7 +471,9 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
                                          "max_hours": None, "daypart_availability": {}, "is_minor": False,
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
-                                         "desired_hours": None, "experienced": False, "minor_age_band": None}
+                                         "desired_hours": None, "experienced": False, "minor_age_band": None,
+                                         "floor_manager": None, "paid_hourly": False, "acting_manager": [],
+                                         "standing_shifts": [], "trainee": None, "closes_for": []}
         if time_windows is not None:
             time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
@@ -274,6 +489,13 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
             "experienced": int(_flag(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
             "minor_age_band": (minor_age_band or None) if minor_age_band is not None else current.get("minor_age_band"),
+            "floor_manager": ((None if floor_manager == AUTO else floor_manager) if floor_manager is not None
+                              else (None if current.get("floor_manager") is None else int(current["floor_manager"]))),
+            "paid_hourly": int(_flag(paid_hourly)) if paid_hourly is not None else int(bool(current.get("paid_hourly"))),
+            "acting_manager": acting_manager if acting_manager is not None else current.get("acting_manager") or [],
+            "standing_shifts": standing_shifts if standing_shifts is not None else current.get("standing_shifts") or [],
+            "trainee": (trainee or None) if trainee is not None else current.get("trainee"),
+            "closes_for": closes_for if closes_for is not None else current.get("closes_for") or [],
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -285,19 +507,25 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "max_hours": max_hours, "daypart_availability": daypart_availability, "is_minor": is_minor,
                  "time_windows": time_windows, "certifications": certifications,
                  "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours,
-                 "experienced": experienced, "minor_age_band": minor_age_band}
+                 "experienced": experienced, "minor_age_band": minor_age_band,
+                 "floor_manager": floor_manager, "paid_hourly": paid_hourly, "acting_manager": acting_manager,
+                 "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
-                            preferred_dayparts, desired_hours, experienced, minor_age_band, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            preferred_dayparts, desired_hours, experienced, minor_age_band, floor_manager,
+                            paid_hourly, acting_manager, standing_shifts, trainee, closes_for, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
                       json.dumps(new["preferred_dayparts"]), new["desired_hours"], new["experienced"],
-                      new["minor_age_band"], (updated_by or "").strip()[:120] or None))
+                      new["minor_age_band"], new["floor_manager"], new["paid_hourly"],
+                      json.dumps(new["acting_manager"]), json.dumps(new["standing_shifts"]),
+                      json.dumps(new["trainee"]) if new["trainee"] else None, json.dumps(new["closes_for"]),
+                      (updated_by or "").strip()[:120] or None))
         if time_windows is not None and time_windows != (current.get("time_windows") or {}):
             # The staff app edits these windows on its availability screen
             # and saves against that row's version (save_own_availability).
@@ -318,7 +546,10 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
 _ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum hours", "max_hours": "maximum hours",
                   "daypart_availability": "availability", "is_minor": "minor", "time_windows": "time windows",
                   "certifications": "certifications", "preferred_dayparts": "preferred dayparts",
-                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band"}
+                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band",
+                  "floor_manager": "floor manager", "paid_hourly": "paid hourly",
+                  "acting_manager": "acting manager dates", "standing_shifts": "standing shifts",
+                  "trainee": "training", "closes_for": "closes for"}
 
 
 def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):
@@ -341,8 +572,12 @@ def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PAT
                     change_log.record(restaurant_id, "roster", "left" if was else "added", was, now, subject=name,
                                       db_path=db)
                 continue
-            if field in ("is_minor", "experienced"):
+            if field in ("is_minor", "experienced", "paid_hourly"):
                 before, after = bool(before), bool(after)
+            if field == "floor_manager":
+                words = {None: "automatic", True: "yes", False: "no"}
+                before = words[None if before is None else bool(before)]
+                after = words[None if after is None else bool(after)]
             change_log.record(restaurant_id, "roster", _ROSTER_FIELDS.get(field, field), before, after, subject=name,
                               db_path=db)
     except Exception as e:
@@ -489,6 +724,42 @@ def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
         out |= {r["role"].strip().lower() for r in _people.held_roles(restaurant_id, name) if r["role"].strip()}
     except Exception:
         pass
+    return out
+
+
+def worked_roles(restaurant_id, db_path=DB_PATH) -> dict:
+    """{name_key: {role: the last date they worked it}} — every role each
+    person has worked here, from the per-shift history (shift_facts) or,
+    for a restaurant whose history predates it, the stored shifts file. The
+    roster keeps only the most recent role; who a manager is, which roles
+    somebody holds and whether a row's role is theirs read every role
+    (schedule audit 10/3/26 E-14, D-15). Empty when nothing can be read."""
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        has = conn.execute("SELECT 1 FROM shift_facts WHERE restaurant_id=? LIMIT 1", (restaurant_id,)).fetchone()
+        rows = conn.execute(
+            "SELECT employee_key, role, MAX(business_date) AS last FROM shift_facts WHERE restaurant_id=? "
+            "AND role IS NOT NULL AND TRIM(role)<>'' GROUP BY employee_key, role", (restaurant_id,)).fetchall() if has else []
+    except Exception:
+        has, rows = None, []
+    finally:
+        conn.close()
+    if has:
+        for r in rows:
+            role = " ".join(str(r["role"] or "").split())
+            per = out.setdefault(r["employee_key"], {})
+            per[role] = max(per.get(role, ""), str(r["last"] or "")[:10])
+        return out
+    try:
+        from models import _cached_shifts
+        for sh in _cached_shifts(restaurant_id) or []:
+            n, role = name_key(sh.get("employee")), " ".join(str(sh.get("role") or "").split())
+            if n and role:
+                per = out.setdefault(n, {})
+                per[role] = max(per.get(role, ""), str(sh.get("date") or "")[:10])
+    except Exception:
+        return {}
     return out
 
 

@@ -398,14 +398,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception:
         prior_schedule_summary = None
 
-    # Operational Score, its targets, and any shift leader rules. All three
-    # are dormant when nobody has been rated, so an existing restaurant
-    # schedules exactly as it did before this feature existed.
+    # Operational Score, its targets, and any shift leader rules. The score
+    # targets judge nobody until somebody is rated. The leader rules load
+    # whatever the ratings: a closing rule needs no score at all, and an
+    # owner's rule was dropped from the prompt and the score in silence
+    # whenever nobody (or only support, through view-as) had rated anyone
+    # (schedule audit 10/3/26 P-18, D-10). Whether they can judge anybody
+    # is said on the generate screen (leader_rules_status).
     from models import (get_operational_scores, get_role_strength_thresholds,
                         get_shift_leader_rules, get_shift_profiles)
     _op_scores = get_operational_scores(restaurant_id)
     _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
-    _leader_rules = get_shift_leader_rules(restaurant_id) if _op_scores else []
+    _leader_rules = get_shift_leader_rules(restaurant_id)
 
     # Shift profiles — what each shift is actually judged on. Demand levels
     # come from its OWN sales rather than from an assumption that every
@@ -742,6 +746,15 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     result["prior_published_rows"] = prior_published_rows
     result["weather_forecast"] = weather_forecast or []
     result["pending_time_off"] = {n: sorted(d) for n, d in constraints.pending_off.items()}
+    # Whether the leader rules judge anybody, and ratings entered through
+    # support waiting on the owner (D-10) — for the generate screen.
+    try:
+        import schedule_setup as _setup
+        result["leader_rules_status"] = _setup.leader_rules_status(
+            restaurant_id, [n for n, _r in roster_pairs], rules=_leader_rules)
+    except Exception as _lsx:
+        _soft_fail('leader_rules_status', _lsx, restaurant_id)
+        result["leader_rules_status"] = None
     return result
 
 
@@ -1426,7 +1439,10 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
     if close_minutes < _rules._OVERNIGHT_LATEST_BEFORE:
         close_minutes += 24 * 60
     role = (row.get("role") or "").strip()
-    ceiling = close_minutes + role_buffers.get(role, 0)
+    # By role family: "Bartender": 30 holds for a "Bartender PM" row, which
+    # was clamped at close while the stays-after-close rule wanted it on
+    # (schedule audit 10/3/26 D-13, D-43).
+    ceiling = close_minutes + int(_rules.role_minutes(role_buffers, role) or 0)
 
     start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
     end_minutes = _parse_time_to_minutes(row.get("shift_end", ""))
@@ -2851,7 +2867,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
 
     scores = get_operational_scores(restaurant_id)
     thresholds = get_role_strength_thresholds(restaurant_id) if scores else {}
-    leader_rules = get_shift_leader_rules(restaurant_id) if scores else []
+    # Leader rules whatever the ratings (P-18, D-10), as the generation reads them.
+    leader_rules = get_shift_leader_rules(restaurant_id)
     stored = get_shift_profiles(restaurant_id)
 
     demand_by_day = {}
@@ -4530,6 +4547,20 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             for _x in ((result.get("min_hours") or {}).get("left") or [])[:4]:
                 result["review"]["lines"].append(
                     f"{_x['employee']} is {_x['short_by']:g}h under the {_x['min']:g}h minimum you set — {_x['reason']}")
+            # The setup the week was drafted against, for the owner to
+            # confirm (schedule audit 10/3/26 F1): who counts as the
+            # manager, who stands in, the closers, trading days with no
+            # close, leader rules that judge nobody, each staffing rule as
+            # it is checked, who is training, who is salaried-style.
+            try:
+                _setup_r = __import__("schedule_setup").setup_review(
+                    _constraints, leader_status=result.get("leader_rules_status"),
+                    # the manager plan already asks the managers' days (D-5)
+                    omit=("standing_missing",))
+                result["review"]["setup"] = _setup_r["items"]
+                result["review"]["lines"].extend(_setup_r["lines"])
+            except Exception as _stx:
+                print(f"[schedule] setup review failed: {_stx}")
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}

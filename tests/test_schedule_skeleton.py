@@ -442,7 +442,10 @@ def test_the_rules_block_states_the_rule_at_its_rank():
     line = next(ln for ln in block.splitlines() if "NON-NEGOTIABLE" in ln)
     assert "above every other rule" not in line
     assert "PRIORITIES 1a" in line and "gives way only to a manager's own availability, time off" in line
-    assert "Standing in as the manager, on those dates only: Ana on 2026-10-07" in line
+    # the acting manager is named once, on its own line, with the date as the
+    # owner reads it (schedule_rules._acting_prompt_lines, F1)
+    assert "Somebody standing in as the manager counts on their dates" in line
+    assert "Standing in as the manager (counts as the manager on the floor those days only): Ana on Wed 10/7/26" in block
     assert "MANAGER COVERAGE" not in line
     planned = sr.prompt_block(c, manager_plan=sk.plan_manager_coverage(c, WEEK))
     assert "MANAGER COVERAGE, at the top, is fixed" in planned

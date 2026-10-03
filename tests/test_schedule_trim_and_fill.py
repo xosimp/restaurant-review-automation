@@ -73,7 +73,9 @@ def no_avail(monkeypatch):
 def test_the_budget_trim_never_takes_the_nights_only_closer():
     """The audit's t4: the later starter on Friday is the only closer — the
     trim's "latest starter first" took her and the night had no closer."""
-    c = _c(keyholders={"kay"}, close_times={"Friday": "2:00am"}, roster_names=["Jo", "Kay"], active={"jo", "kay"})
+    # closers are per role since 10/3/26 (D-9): Kay closes the bar
+    c = _c(keyholders={"kay"}, closers_by_role={"bartender": {"kay"}}, close_times={"Friday": "2:00am"},
+           roster_names=["Jo", "Kay"], active={"jo", "kay"})
     rows = [_row(FRI, "Jo", "Bartender", "4:00pm", "11:00pm"), _row(FRI, "Kay", "Bartender", "6:00pm", "2:00am"),
             _row(THU, "Jo", "Bartender", "4:00pm", "11:00pm"), _row(THU, "Kay", "Bartender", "6:00pm", "2:00am")]
     assert not _kinds(rows, c, "keyholder_until_close")
@@ -432,8 +434,8 @@ def test_a_replacement_that_opens_a_second_manager_gap_is_refused(monkeypatch):
 
 def test_a_staffing_gap_the_week_already_had_is_not_the_newcomers(monkeypatch):
     monkeypatch.setattr(models, "get_unavailability_map", lambda *a, **k: {})
-    c = _c(keyholders={"kay"}, close_times={"Wednesday": "11:00pm"}, roster_names=["Ann", "Bob", "Kay"],
-           active={"ann", "bob", "kay"})
+    c = _c(keyholders={"kay"}, closers_by_role={"server": {"kay"}}, close_times={"Wednesday": "11:00pm"},
+           roster_names=["Ann", "Bob", "Kay"], active={"ann", "bob", "kay"})
     rows = [_row(WED, "Ann", "Server", "4:00pm", "10:00pm"), _row(THU, "Kay", "Server", "4:00pm", "11:00pm")]
     assert _kinds(rows, c, "keyholder_until_close"), "Wednesday already has nobody who can close"
     ok, why = se.replacement_is_legal(1, rows, 0, "Bob", constraints=c)
@@ -519,8 +521,8 @@ def test_the_cap_trim_stops_at_a_floor_and_names_the_conflict():
 
 
 def test_the_cap_trim_never_takes_the_closer():
-    c = _c(keyholders={"kay"}, close_times={"Saturday": "11:00pm"}, roster_names=["Ann", "Bob", "Kay"],
-           active={"ann", "bob", "kay"})
+    c = _c(keyholders={"kay"}, closers_by_role={"server": {"kay"}}, close_times={"Saturday": "11:00pm"},
+           roster_names=["Ann", "Bob", "Kay"], active={"ann", "bob", "kay"})
     rows = [_row(SAT, "Ann", "Server", "4:00pm", "10:00pm"), _row(SAT, "Bob", "Server", "5:00pm", "11:00pm"),
             _row(SAT, "Kay", "Server", "6:00pm", "11:00pm")]
     out, n, dates = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=2, constraints=c)
