@@ -733,4 +733,6 @@ def test_the_scorer_reads_the_generations_own_rotation_and_targets(monkeypatch):
     assert sig["splh_targets"]["Saturday"] == {"morning": 100.0, "night": 60.0}
     assert sig["daypart_sales"]["Saturday"]["night"] == 3000.0
     empty = se._learning_signals(9, {"rotation_plan": {}, "splh_objective": {"available": False}})
-    assert empty == {"rotation": {}, "splh_targets": {}, "daypart_sales": {}}
+    # (schedule audit 10/3/26: the scheduling memory and the published weeks
+    # before this one ride along too — empty here, with no week to read.)
+    assert empty == {"rotation": {}, "splh_targets": {}, "daypart_sales": {}, "learned": [], "load_ledger": {}}

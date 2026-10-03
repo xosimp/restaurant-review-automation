@@ -2506,17 +2506,25 @@ def _do_calibration_apply(u):
     import schedule_learning as _sl
     from models import update_restaurant, get_quality_weights, record_capability_change
     cal = _sl.calibrate_weights(_rid(u))
-    if not cal.get("ready") or not cal.get("suggested_weights"):
+    if not cal.get("ready") or not (cal.get("suggested_weights") or cal.get("suggested_profiles")):
         return {"ok": False, "error": cal.get("reason") or "There is no suggestion to apply yet."}, 400
     before = get_quality_weights(_rid(u)) or {}
     after = dict(before)
-    after.update({k: float(v) for k, v in cal["suggested_weights"].items()})
+    after.update({k: float(v) for k, v in (cal.get("suggested_weights") or {}).items()})
     update_restaurant(_rid(u), {"quality_weights_json": _j.dumps(after)})
     record_capability_change(_rid(u), "quality_weights_applied", subject="weights", before=_j.dumps(before),
                              after=_j.dumps(after), changed_by=_who(u))
+    # The floors and bars it read per shift profile go in the same tap
+    # (schedule audit 10/3/26 SQ-22): weights alone could never lift a
+    # shift a floor caps. Recorded with what stood before.
+    applied = _sl.apply_profile_calibration(_rid(u), cal, updated_by=_who(u))
+    if applied.get("profiles"):
+        record_capability_change(_rid(u), "quality_profiles_applied", subject="profiles",
+                                 before=_j.dumps(applied.get("before") or {}),
+                                 after=_j.dumps(applied["profiles"]), changed_by=_who(u))
     import rec_ledger as _rl
     _rl.record(_rid(u), "calibration:weights", "accepted", surface="labor", user_id=u.get("id"), role=u.get("role"))
-    return {"ok": True, "weights": after}, 200
+    return {"ok": True, "weights": after, "profiles": applied.get("profiles") or {}}, 200
 
 
 # The metric a module's recommendation is measured against when the owner

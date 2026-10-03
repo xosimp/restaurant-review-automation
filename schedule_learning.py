@@ -49,11 +49,28 @@ _PRETTY = {"morning": "lunch/day", "night": "dinner/night"}
 
 CALIBRATION_MIN_WEEKS = 8
 CALIBRATION_MIN_SHIFTS = 40
-CALIBRATION_MIN_PAIRS = 20        # per dimension per outcome, before a correlation is reported
+# More shifts per dimension (schedule audit 10/3/26 SQ-22): sixteen
+# dimensions were fitted together on as few as forty shifts. A dimension now
+# needs CALIBRATION_MIN_PAIRS shifts with the outcome before it is read at
+# all, and the joint fit carries at most one dimension per
+# CALIBRATION_SAMPLES_PER_DIMENSION shifts — the best-observed first; the
+# rest wait, and say so.
+CALIBRATION_MIN_PAIRS = 30        # per dimension per outcome, before a correlation is reported
+CALIBRATION_SAMPLES_PER_DIMENSION = 10
 CALIBRATION_MIN_EVIDENCE = 0.1    # |mean fitted effect| below this suggests no change
 CALIBRATION_MAX_NUDGE = 0.30      # the fitted weight never strays more than 30% from its default
 CALIBRATION_MAX_STEP = 0.10       # one Apply moves a weight at most 10% of its default
 CALIBRATION_RIDGE = 0.1           # ridge penalty, as a share of the shifts fitted (standardized)
+# Floors and bars, per shift profile (SQ-22): weights cannot lift a shift a
+# floor caps, so calibration also reads, for each profile with enough of
+# its own shifts on record, where its critical floors and its quality bar
+# sit against what those shifts did — the line under which shifts measurably
+# went worse — and suggests a bounded step toward it.
+CALIBRATION_MIN_PROFILE_SHIFTS = 30   # a profile's own shifts with an outcome, before its floors and bar are read
+CALIBRATION_MIN_SIDE = 10             # shifts on each side of a candidate line
+CALIBRATION_THRESHOLD_EVIDENCE = 0.5  # the outcome gap (in standard deviations) a line must show
+CALIBRATION_THRESHOLD_STEP = 5        # one Apply moves a floor or a bar at most this many points
+CALIBRATION_THRESHOLD_RANGE = 20      # lines are looked for within this many points of where it is now
 
 ATTENDANCE_MIN_WEEKDAY_SHIFTS = 4
 ATTENDANCE_MIN_OVERALL_SHIFTS = 6     # staff_settings.reliability's floor
@@ -897,15 +914,19 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     fit. A dimension a shift did not score is held at its mean there, so it
     neither helps nor hurts that shift. Joint rather than one correlation
     per dimension: coverage and the half-hour sweep move together, and
-    fitted one at a time each took the credit for the other."""
-    rows = [(dims, oc[outcome]) for dims, oc, _h in samples if oc.get(outcome) is not None]
+    fitted one at a time each took the credit for the other.
+
+    At most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts is
+    fitted (SQ-22), the best-observed first; the ones that did not fit are
+    returned as `crowded`."""
+    rows = [(s[0], s[1][outcome]) for s in samples if s[1].get(outcome) is not None]
     if len(rows) < min_pairs:
-        return {}, {}, len(rows)
+        return {}, {}, len(rows), []
     ys = [y for _d, y in rows]
     my = sum(ys) / len(ys)
     sy = math.sqrt(sum((y - my) ** 2 for y in ys) / len(ys))
     if sy <= 1e-9:
-        return {}, {}, len(rows)
+        return {}, {}, len(rows), []
     stats, seen = {}, {}
     for k in keys:
         vals = [d[k] for d, _y in rows if k in d]
@@ -916,9 +937,11 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
         sd = math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals))
         if sd > 1e-9:
             stats[k] = (mu, sd)
-    used = sorted(stats)
+    room = max(0, len(rows) // CALIBRATION_SAMPLES_PER_DIMENSION)
+    ranked = sorted(stats, key=lambda k: (-seen[k], k))
+    used, crowded = sorted(ranked[:room]), sorted(ranked[room:])
     if not used:
-        return {}, seen, len(rows)
+        return {}, seen, len(rows), crowded
     xs = [[((d[k] - stats[k][0]) / stats[k][1]) if k in d else 0.0 for k in used] for d, _y in rows]
     yz = [(y - my) / sy for y in ys]
     n, p = len(xs), len(used)
@@ -928,10 +951,10 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     xty = [sum(xs[r][i] * yz[r] for r in range(n)) for i in range(p)]
     beta = _solve(xtx, xty)
     if beta is None:
-        return {}, seen, len(rows)
+        return {}, seen, len(rows), crowded
     # Scaled so a lone dimension's coefficient is its correlation, which is
     # what CALIBRATION_MIN_EVIDENCE was written against.
-    return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows)
+    return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows), crowded
 
 
 # The outcomes a shift is judged by afterwards: +1 = a higher value is
@@ -944,9 +967,12 @@ CALIBRATION_OUTCOMES = {
 
 
 def _calibration_samples(restaurant_id, db_path):
-    """[(dims, outcomes, history_id)] — one per recorded shift outcome that
-    has a stored score, plus the dates Cavnar was watching (None when the
-    restaurant cannot be watched at all)."""
+    """[(dims, outcomes, history_id, meta)] — one per recorded shift outcome
+    that has a stored score, plus the dates Cavnar was watching (None when
+    the restaurant cannot be watched at all). meta: the shift's profile key
+    and label, its score, the bar it was held to and each dimension's floor
+    on it (when the stored score kept them) — what the floors and bars are
+    read against (SQ-22)."""
     conn = get_conn(db_path)
     try:
         # The review rating a shift is judged on is only the reviews that
@@ -970,7 +996,7 @@ def _calibration_samples(restaurant_id, db_path):
                 hist[h["id"]] = h
     finally:
         conn.close()
-    dims_by = {}
+    dims_by, meta_by = {}, {}
     for hid, h in hist.items():
         try:
             q = json.loads(h["quality_json"] or "null") or {}
@@ -979,8 +1005,14 @@ def _calibration_samples(restaurant_id, db_path):
         for s in q.get("shifts") or []:
             if not s.get("scored"):
                 continue
-            dims_by[(hid, s.get("date"), s.get("daypart"))] = {
+            key = (hid, s.get("date"), s.get("daypart"))
+            dims_by[key] = {
                 d["key"]: float(d["score"]) for d in s.get("dimensions") or [] if d.get("key") and d.get("score") is not None}
+            prof = s.get("profile") or {}
+            meta_by[key] = {"profile": prof.get("key"), "label": prof.get("label"),
+                            "score": s.get("score"), "bar": prof.get("min_quality"),
+                            "floors": {d["key"]: d["floor"] for d in s.get("dimensions") or []
+                                       if d.get("key") and d.get("floor") is not None}}
     # A coverage or no-show issue can only have been opened on a night the
     # coverage check was watching (schedule_intel.watched_dates). A quiet
     # night nobody watched is not a clean one, so the issues outcome counts
@@ -1005,7 +1037,8 @@ def _calibration_samples(restaurant_id, db_path):
             labor = float(o["labor_pct"]) - float(target)
         samples.append((dims, {"issues": float(o["issues"] or 0) if o["date"] in watched else None,
                                "review_rating": float(o["review_rating"]) if o["review_rating"] is not None else None,
-                               "labor_vs_target": labor}, o["history_id"]))
+                               "labor_vs_target": labor}, o["history_id"],
+                        meta_by.get((o["history_id"], o["date"], o["daypart"])) or {}))
     return samples, watched
 
 
@@ -1034,7 +1067,14 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
         score — the next suggestion takes the next step if the record
         still says so;
       * every dimension says which outcome drove its change, and how many
-        shifts that rests on. Deterministic."""
+        shifts that rests on. Deterministic.
+
+    Floors and bars too (schedule audit 10/3/26 SQ-22): weights cannot lift
+    a shift a critical floor caps, so each shift profile with
+    CALIBRATION_MIN_PROFILE_SHIFTS of its own shifts on record also has its
+    quality bar and each critical floor read against what those shifts did
+    (`profiles`, `suggested_profiles`; _profile_calibration). Apply writes
+    them (apply_profile_calibration)."""
     from shift_quality import DEFAULT_WEIGHTS
     samples, watched = _calibration_samples(restaurant_id, db_path)
     n_weeks = len({s[2] for s in samples})
@@ -1056,13 +1096,13 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     keys = list(DEFAULT_WEIGHTS)
     fits = {}
     for outcome in CALIBRATION_OUTCOMES:
-        coef, seen, used = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
-        fits[outcome] = {"coef": coef, "seen": seen, "shifts": used}
+        coef, seen, used, crowded = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
+        fits[outcome] = {"coef": coef, "seen": seen, "shifts": used, "crowded": crowded}
     report, suggested = {}, {}
     for key, default in DEFAULT_WEIGHTS.items():
         corr, pairs_n, coefs, contrib = {}, {}, {}, {}
         for outcome, (sign, _label, _good, _bad) in CALIBRATION_OUTCOMES.items():
-            pairs = [(dims[key], oc[outcome]) for dims, oc, _h in samples if key in dims and oc[outcome] is not None]
+            pairs = [(dims[key], oc[outcome]) for dims, oc, *_rest in samples if key in dims and oc[outcome] is not None]
             pairs_n[outcome] = len(pairs)
             r = _pearson(pairs) if len(pairs) >= CALIBRATION_MIN_PAIRS else None
             corr[outcome] = round(r, 3) if r is not None else None
@@ -1087,6 +1127,11 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                 driver = {"outcome": o, "label": CALIBRATION_OUTCOMES[o][1], "effect": round(same_way[o], 3),
                           "shifts": pairs_n[o]}
         explanation = _calibration_explanation(key, now, weight, target_nudge, ev, driver, contrib, pairs_n)
+        if not contrib and any(key in f["crowded"] for f in fits.values()):
+            fitted = max((len(f["coef"]) for f in fits.values()), default=0)
+            explanation = (f"{key.replace('_', ' ').capitalize()} was left out of this fit: the record carries "
+                           f"{fitted} dimension{'s' if fitted != 1 else ''} at {CALIBRATION_SAMPLES_PER_DIMENSION} "
+                           "shifts each, and the better-observed ones were read first.")
         report[key] = {"default": default, "current": round(now, 1), "suggested": weight,
                        "nudge_pct": int(round((weight / default - 1) * 100)) if default else 0,
                        "step_pct": int(round((weight - now) / default * 100)) if default else 0,
@@ -1101,13 +1146,201 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                     key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
     watch_note = ("" if base["watched_shifts"] else
                   " Coverage and no-show issues are not counted: none of these shifts fell on a night Cavnar AI was watching.")
+    profiles, suggested_profiles = _profile_calibration(samples, _profile_settings(restaurant_id, db_path))
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
-            "moving": moving,
-            "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"])} for o, f in fits.items()},
+            "moving": moving, "profiles": profiles, "suggested_profiles": suggested_profiles,
+            "moving_profiles": sorted(suggested_profiles),
+            "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"]), "left_out": f["crowded"]}
+                    for o, f in fits.items()},
             "limits": {"max_step_pct": int(CALIBRATION_MAX_STEP * 100), "max_total_pct": int(CALIBRATION_MAX_NUDGE * 100),
-                       "min_pairs": CALIBRATION_MIN_PAIRS, "min_evidence": CALIBRATION_MIN_EVIDENCE},
-            "note": ("Suggestions only — the engine keeps its current weights until someone applies them. One apply moves "
-                     f"a weight at most {int(CALIBRATION_MAX_STEP * 100)}% of its default." + watch_note)}
+                       "min_pairs": CALIBRATION_MIN_PAIRS, "min_evidence": CALIBRATION_MIN_EVIDENCE,
+                       "shifts_per_dimension": CALIBRATION_SAMPLES_PER_DIMENSION,
+                       "min_profile_shifts": CALIBRATION_MIN_PROFILE_SHIFTS,
+                       "max_floor_step": CALIBRATION_THRESHOLD_STEP},
+            "note": ("Suggestions only — the engine keeps its current weights, floors and bars until someone applies them. "
+                     f"One apply moves a weight at most {int(CALIBRATION_MAX_STEP * 100)}% of its default, and a floor or "
+                     f"a bar at most {CALIBRATION_THRESHOLD_STEP} points." + watch_note)}
+
+
+def _most_common(values):
+    counts = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    return max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if counts else None
+
+
+def _threshold_fit(points: list, current: float):
+    """(line, evidence, below, above) — of the candidate lines within
+    CALIBRATION_THRESHOLD_RANGE of `current` (every 5 points), the one that
+    best separates the shifts that went worse: for each outcome with data,
+    the gap between the shifts scoring at or over the line and those under
+    it, in standard deviations and signed so positive means the shifts over
+    it did better; evidence is the mean over the outcomes. A line needs
+    CALIBRATION_MIN_SIDE shifts on each side. None when no candidate has
+    them. Ties go to the line nearest `current`. Pure."""
+    best = None
+    lo = max(0, int(current) - CALIBRATION_THRESHOLD_RANGE)
+    hi = min(100, int(current) + CALIBRATION_THRESHOLD_RANGE)
+    for t in range(lo - lo % 5, hi + 1, 5):
+        effects = []
+        for outcome, (sign, *_words) in CALIBRATION_OUTCOMES.items():
+            over = [oc[outcome] for x, oc in points if oc.get(outcome) is not None and x >= t]
+            under = [oc[outcome] for x, oc in points if oc.get(outcome) is not None and x < t]
+            if len(over) < CALIBRATION_MIN_SIDE or len(under) < CALIBRATION_MIN_SIDE:
+                continue
+            ys = over + under
+            mu = sum(ys) / len(ys)
+            sd = math.sqrt(sum((y - mu) ** 2 for y in ys) / len(ys))
+            if sd <= 1e-9:
+                continue
+            effects.append(sign * (sum(over) / len(over) - sum(under) / len(under)) / sd)
+        if not effects:
+            continue
+        ev = sum(effects) / len(effects)
+        below = sum(1 for x, _oc in points if x < t)
+        if best is None or ev > best[1] + 1e-9 or (abs(ev - best[1]) <= 1e-9 and abs(t - current) < abs(best[0] - current)):
+            best = (t, ev, below, len(points) - below)
+    return best
+
+
+def _line_reading(name: str, points: list, current) -> dict:
+    """One floor's or bar's reading: {current, suggested, fitted, evidence,
+    below, above, shifts, explanation} — a bounded step toward the line the
+    record shows, or why it stays."""
+    current = int(round(float(current)))
+    out = {"current": current, "suggested": current, "fitted": None, "evidence": None, "shifts": len(points)}
+    fit = _threshold_fit(points, current)
+    if fit is None:
+        out["explanation"] = (f"{name} stays at {current}: not enough shifts on each side of any line near it "
+                              f"({CALIBRATION_MIN_SIDE} each side needed).")
+        return out
+    line, ev, below, above = fit
+    out.update(fitted=line, evidence=round(ev, 3), below=below, above=above)
+    if ev < CALIBRATION_THRESHOLD_EVIDENCE:
+        out["explanation"] = (f"{name} stays at {current}: shifts under no nearby line did clearly worse "
+                              f"(the best gap was {ev:.2f} standard deviations).")
+        return out
+    if line == current:
+        out["explanation"] = (f"{name} stays at {current}, already where the record puts it: the {below} shifts "
+                              f"under it did worse than the {above} at or over it.")
+        return out
+    step = max(-CALIBRATION_THRESHOLD_STEP, min(CALIBRATION_THRESHOLD_STEP, line - current))
+    out["suggested"] = current + step
+    out["explanation"] = (f"{name} {'up' if step > 0 else 'down'} to {current + step}: the {below} shifts under "
+                          f"{line} did worse than the {above} at or over it (a gap of {ev:.1f} standard deviations)"
+                          + ("" if current + step == line else f"; one apply moves it {CALIBRATION_THRESHOLD_STEP} "
+                                                                "points toward that line") + ".")
+    return out
+
+
+def _profile_settings(restaurant_id, db_path=DB_PATH) -> dict:
+    """{profile key: {"min_quality", "floors"}} the restaurant set itself —
+    its own profiles, and the tuning applied to a built-in — which is where
+    a floor or a bar stands now; a built-in nobody tuned is read from what
+    its shifts were held to."""
+    out = {}
+    try:
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        for p in _models_mod.get_shift_profiles(restaurant_id, **kw) or []:
+            out[str(p.get("key"))] = {"min_quality": p.get("min_quality"), "floors": dict(p.get("floors") or {})}
+        for k, t in (_models_mod.get_quality_tuning(restaurant_id, **kw) or {}).items():
+            e = out.setdefault(str(k), {"min_quality": None, "floors": {}})
+            if t.get("min_quality") is not None:
+                e["min_quality"] = t["min_quality"]
+            e["floors"].update(t.get("floors") or {})
+    except Exception as e:
+        log.warning("[calibration] profile settings unavailable for %s: %s", restaurant_id, e)
+    return out
+
+
+def _profile_calibration(samples: list, settings: dict = None) -> tuple:
+    """({profile key: reading}, {profile key: {"min_quality", "floors"}}) —
+    each profile's quality bar and critical floors read against what its
+    own shifts did (SQ-22), and the suggestions that move. A profile with
+    fewer than CALIBRATION_MIN_PROFILE_SHIFTS shifts on record is named and
+    left alone: a weekly profile is one shift a week, and its numbers are
+    not moved on a handful."""
+    from shift_quality import DIMENSION_LABELS
+    by_profile = {}
+    for sample in samples:
+        meta = sample[3] if len(sample) > 3 else {}
+        if (meta or {}).get("profile"):
+            by_profile.setdefault(meta["profile"], []).append((sample[0], sample[1], meta))
+    report, suggested = {}, {}
+    for key in sorted(by_profile):
+        items = by_profile[key]
+        label = _most_common([m.get("label") or key for _d, _o, m in items]) or key
+        entry = {"label": label, "shifts": len(items)}
+        report[key] = entry
+        if len(items) < CALIBRATION_MIN_PROFILE_SHIFTS:
+            entry["ready"] = False
+            entry["explanation"] = (f"{label}: {len(items)} of its shifts on record — its floors and bar are read "
+                                    f"from {CALIBRATION_MIN_PROFILE_SHIFTS} of its own.")
+            continue
+        entry["ready"] = True
+        own = (settings or {}).get(key) or {}
+        bars = [m.get("bar") for _d, _o, m in items if m.get("bar") is not None]
+        points = [(float(m["score"]), oc) for _d, oc, m in items if m.get("score") is not None]
+        if bars and points:
+            current = own.get("min_quality") if own.get("min_quality") is not None else _most_common(bars)
+            entry["bar"] = _line_reading(f"{label}'s quality bar", points, current)
+        floors = {}
+        for dim in sorted({d for _d, _o, m in items for d in (m.get("floors") or {})}):
+            recorded = [m["floors"][dim] for _d, _o, m in items if dim in (m.get("floors") or {})]
+            current = (own.get("floors") or {}).get(dim)
+            if current is None:
+                current = _most_common(recorded)
+            pts = [(float(d[dim]), oc) for d, oc, _m in items if dim in d]
+            name = f"{label}'s {DIMENSION_LABELS.get(dim, dim).lower()} floor"
+            floors[dim] = _line_reading(name, pts, current)
+        entry["floors"] = floors
+        move = {}
+        if entry.get("bar") and entry["bar"]["suggested"] != entry["bar"]["current"]:
+            move["min_quality"] = entry["bar"]["suggested"]
+        moved_floors = {d: e["suggested"] for d, e in floors.items() if e["suggested"] != e["current"]}
+        if moved_floors:
+            move["floors"] = moved_floors
+        if move:
+            suggested[key] = move
+    return report, suggested
+
+
+def apply_profile_calibration(restaurant_id, cal: dict = None, updated_by: str = None, db_path=DB_PATH) -> dict:
+    """Write the suggested floors and bars (calibrate_weights'
+    `suggested_profiles`) — the owner's Apply (SQ-22). A profile the
+    restaurant configured gets them in its own settings (save_shift_profile);
+    a built-in gets them in the tuning the engine lays over the built-ins
+    (restaurants.quality_tuning_json, shift_quality.profiles_from_config),
+    so the rest of the built-in set stays as it was. Returns
+    {"profiles": {key: what was written}, "before": tuning before} — {} of
+    profiles when there was nothing to write."""
+    cal = cal if cal is not None else calibrate_weights(restaurant_id, db_path=db_path)
+    moves = (cal or {}).get("suggested_profiles") or {}
+    kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+    before = _models_mod.get_quality_tuning(restaurant_id, **kw) or {}
+    if not moves:
+        return {"profiles": {}, "before": before}
+    own = {str(p.get("key")): p for p in (_models_mod.get_shift_profiles(restaurant_id, include_inactive=True, **kw) or [])}
+    tuning = {k: dict(v) for k, v in before.items()}
+    written = {}
+    for key, mv in sorted(moves.items()):
+        if key in own:
+            p = dict(own[key])
+            if mv.get("min_quality") is not None:
+                p["min_quality"] = int(mv["min_quality"])
+            if mv.get("floors"):
+                p["floors"] = {**(p.get("floors") or {}), **{k: int(v) for k, v in mv["floors"].items()}}
+            _models_mod.save_shift_profile(restaurant_id, p, updated_by=updated_by, **kw)
+        else:
+            t = tuning.setdefault(key, {})
+            if mv.get("min_quality") is not None:
+                t["min_quality"] = int(mv["min_quality"])
+            if mv.get("floors"):
+                t["floors"] = {**(t.get("floors") or {}), **{k: int(v) for k, v in mv["floors"].items()}}
+        written[key] = dict(mv)
+    if tuning != before:
+        _models_mod.update_restaurant(restaurant_id, {"quality_tuning_json": json.dumps(tuning, sort_keys=True)}, **kw)
+    return {"profiles": written, "before": before}
 
 
 def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs_n) -> str:

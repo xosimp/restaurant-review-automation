@@ -223,6 +223,35 @@ def _no_shift_data_message(restaurant_id, restaurant=None):
             "this restaurant has its own shifts on file.")
 
 
+def _prompt_experienced(marked, tenure, constraints, roster_pairs) -> list:
+    """The names the prompt lists as experienced (schedule_requirements.
+    experience_block): the owner's marks and — where experience is judged
+    at all, by the scorer's own rule (shift_quality.experience_judged) —
+    the managers, anyone standing in as one and the salaried people on the
+    roster (schedule audit 10/3/26 D-6). Tenure is the punch count, so an
+    owner who never clocks in (1 shift on file) was listed as "still
+    developing — put each of them on with an experienced hand, never two of
+    them together". A history too short to judge anybody stays unclaimed,
+    as the scorer leaves it."""
+    import shift_quality as _sq
+    marked = sorted({n for n in (marked or []) if n})
+    if constraints is None or not _sq.experience_judged(tenure, marked):
+        return marked
+    defaults = _sq.experienced_by_default(constraints.managers, constraints.acting_managers, constraints.salaried)
+    return sorted(set(marked) | {n for n, _r in (roster_pairs or []) if _sq.name_key(n) in defaults})
+
+
+def _quality_tuning(restaurant_id) -> dict:
+    """The calibration the owner applied to the built-in profiles
+    (models.get_quality_tuning, SQ-22), or {} — a failed read is said."""
+    try:
+        from models import get_quality_tuning
+        return get_quality_tuning(restaurant_id) or {}
+    except Exception as _tx:
+        _soft_fail("quality tuning", _tx, restaurant_id)
+        return {}
+
+
 def _soft_fail(what, exc, restaurant_id):
     """An input the draft can do without failed to load: the draft still
     goes ahead, but the failure is said — a silent {} made "keep these two
@@ -378,11 +407,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
     _leader_rules = get_shift_leader_rules(restaurant_id) if _op_scores else []
 
-    # Shift profiles — what each shift is actually judged on. A restaurant
-    # gets the engine's built-in set only once it has rated somebody, so
-    # one that never touches any of this schedules exactly as before. Demand
-    # levels come from its OWN sales rather than from an assumption that
-    # every restaurant's Friday is busy.
+    # Shift profiles — what each shift is actually judged on. Demand levels
+    # come from its OWN sales rather than from an assumption that every
+    # restaurant's Friday is busy.
     import shift_quality as _sq
     _stored_profiles = get_shift_profiles(restaurant_id)
     _demand_by_day = {}
@@ -396,14 +423,25 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                               if (d.get("samples") or 0) >= _MINR}
     except Exception:
         _demand_by_day = {}
-    _profiles = []
-    if _stored_profiles or _op_scores:
-        _profiles = _sq.profiles_from_config(
-            [_sq.profile_from_dict(p) for p in _stored_profiles] or None,
-            default_strength=_strength_thresholds,
-            default_leader_rules=_leader_rules,
-            demand_by_day=_demand_by_day,
-        )
+    # Always built, from the restaurant's own profiles or the built-ins,
+    # each weekday's demand from its own sales and any calibration the
+    # owner applied (schedule audit 10/3/26 SQ-15, SQ-22). They used to be
+    # built only once somebody was rated or a profile was saved, so a
+    # restaurant with neither was scored on the built-ins' guesses — a
+    # Saturday 30% under an average day still "peak" with an 82 bar.
+    _profiles = _sq.profiles_from_config(
+        [_sq.profile_from_dict(p) for p in _stored_profiles] or None,
+        default_strength=_strength_thresholds,
+        default_leader_rules=_leader_rules,
+        demand_by_day=_demand_by_day,
+        tuning=_quality_tuning(restaurant_id),
+    )
+    # The prompt's profile block stays as it was for a restaurant that has
+    # configured none and rated nobody — no claim about its Friday in the
+    # model's words (labor.format_profile_block); the requirements table
+    # settles every shift's demand through the same re-levelled set either
+    # way (shift_quality.profile_set).
+    _prompt_profiles = _profiles if (_stored_profiles or _op_scores) else []
 
     # Dated facts, pairings, reliability and what the manager keeps
     # changing — rendered here from the engine's own data and handed to the
@@ -476,11 +514,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # restaurant with no history of its own a borrowed starting headcount.
     learning = schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, target)
     stated_prefs, learned_prefs = {}, {}
+    # Read on their own: the learned slots now bind the scorer and the
+    # solver too (L-19), and a failed stated read used to drop them silently.
     try:
         stated_prefs = _staff.stated_preferences(restaurant_id)
+    except Exception as _sfx:
+        _soft_fail('stated_preferences', _sfx, restaurant_id)
+    try:
         learned_prefs = _intel.behaviour_preferences(restaurant_id)
-    except Exception:
-        pass
+    except Exception as _sfx:
+        _soft_fail('learned_preferences', _sfx, restaurant_id)
     could_hold = {}
     try:
         could_hold = _intel.could_hold(_intel.mentoring(restaurant_id))
@@ -512,6 +555,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('people["experienced"]', _sfx, restaurant_id)
         _people["experienced"] = []
+    try:
+        _people["experienced"] = _prompt_experienced(_people["experienced"], _people["tenure"], constraints,
+                                                     roster_pairs)
+    except Exception as _sfx:
+        _soft_fail('people["experienced"] defaults', _sfx, restaurant_id)
     # What the rest of the product knows about the nights being drafted
     # (memory audit 9/29/26): what the last four weeks of nightly reports
     # measured per weekday (dsr_to_schedule), the reviews diagnosis's and
@@ -604,7 +652,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         operational_scores=_op_scores,
         strength_thresholds=_strength_thresholds,
         leader_rules=_leader_rules,
-        shift_profiles=_profiles,
+        shift_profiles=_prompt_profiles,
         roster=roster_pairs or None,
         extra_blocks=extra_blocks or None,
         projected_revenue_override=revenue.get("value"),
@@ -635,6 +683,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["manager_plan"] = manager_plan
+    # The scorer, the solver and the optimizer judge every shift against
+    # the full set, whatever the prompt was shown (SQ-15).
+    result["shift_profiles"] = _profiles
+    # What staff showed by what they drop and claim, for the scorer and the
+    # solver as well as the prompt (L-19) — read once.
+    result["learned_preferences"] = learned_prefs
     result["rotation_plan"] = learning["rotation"]
     result["splh_objective"] = learning["splh_objective"]
     result["starting_headcount"] = learning["starting_payload"]
@@ -2810,12 +2864,12 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     except Exception:
         demand_by_day = {}
 
-    profiles = []
-    if stored or scores:
-        profiles = _sq.profiles_from_config(
-            [_sq.profile_from_dict(p) for p in stored] or None,
-            default_strength=thresholds, default_leader_rules=leader_rules,
-            demand_by_day=demand_by_day)
+    # Always built, as the generation builds them (SQ-15, SQ-22): a manager's
+    # edit is judged against the same re-levelled, tuned set.
+    profiles = _sq.profiles_from_config(
+        [_sq.profile_from_dict(p) for p in stored] or None,
+        default_strength=thresholds, default_leader_rules=leader_rules,
+        demand_by_day=demand_by_day, tuning=_quality_tuning(restaurant_id))
 
     try:
         # Through the request-scoped cache, like every other reader. Parsing
@@ -2897,6 +2951,12 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
     its own seven-day box, and the week boundary is exactly where that
     matters — somebody who worked Saturday and Sunday then Monday to Friday
     has worked nine straight and the schedule looked clean.
+
+    No demand level is written: every tail day used to say "normal", so a
+    busy Saturday before the week began read as quiet (schedule audit
+    10/3/26 SQ-27). The scorer reads each one with the restaurant's own
+    profiles, as it reads this week's shifts (shift_quality.build_contexts).
+    How the weeks before this one were loaded is load_ledger's.
     """
     from models import get_schedule_history, get_schedule_history_detail
     import shift_quality as _sq
@@ -2935,8 +2995,7 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
                 continue
             part = _sq.daypart_of(start)
             entry = {"date": date, "daypart": part,
-                     "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
-                     "demand": "normal"}
+                     "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A")}
             bucket = out.setdefault(name, [])
             if not any(e["date"] == date and e["daypart"] == part for e in bucket):
                 bucket.append(entry)
@@ -2948,6 +3007,209 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
         return out
     except Exception:
         return {}
+
+
+# How many published weeks fatigue and fairness read back across (SQ-27) —
+# the same eight the rotation and the fairness ledger read.
+LOAD_LEDGER_WEEKS = 8
+
+
+def load_ledger(restaurant_id, before: str, weeks: int = LOAD_LEDGER_WEEKS) -> dict:
+    """{name: [{"week", "hours", "slots": [[weekday, daypart]], "role"}]},
+    oldest week first: what each person carried in the published weeks of
+    the `weeks` before `before` (schedule audit 10/3/26 SQ-27). Fatigue
+    judged one week and the rotation covers weekends and closes only, so
+    somebody at their hours ceiling or on every Friday and Saturday night
+    week after week never read as strained. The scorer reads which slots
+    were busy with the restaurant's own profiles. The published version of
+    each week only (the one staff received). {} on any failure — the
+    measures that read it withdraw."""
+    if not before:
+        return {}
+    from datetime import datetime as _dt, timedelta as _td
+    from models import get_conn
+    from schedule_versions import rows_from_csv
+    import shift_quality as _sq
+    try:
+        since = (_dt.strptime(str(before)[:10], "%Y-%m-%d") - _td(weeks=int(weeks))).strftime("%Y-%m-%d")
+        conn = get_conn()
+        try:
+            found = conn.execute(
+                "SELECT week_start, schedule_csv FROM schedule_history WHERE restaurant_id=? "
+                "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM "
+                "schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND "
+                "nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND "
+                "nw.id > schedule_history.id) AND week_start < ? AND week_start >= ? "
+                "ORDER BY week_start DESC LIMIT ?", (restaurant_id, str(before)[:10], since, int(weeks))).fetchall()
+        finally:
+            conn.close()
+    except Exception as _lx:
+        _soft_fail("load_ledger", _lx, restaurant_id)
+        return {}
+    out = {}
+    for w in reversed(found):
+        per = {}
+        for r in rows_from_csv(w["schedule_csv"] or ""):
+            n, d = (r.get("employee") or "").strip(), (r.get("date") or "").strip()
+            try:
+                day = _dt.strptime(d, "%Y-%m-%d").strftime("%A")
+            except ValueError:
+                continue
+            if not n:
+                continue
+            e = per.setdefault(n, {"week": w["week_start"], "hours": 0.0, "slots": [], "roles": {}})
+            h = _sq._row_hours(r)
+            e["hours"] += h
+            e["slots"].append([day, _sq.present_dayparts(r)[0]])
+            role = (r.get("role") or "").strip()
+            if role:
+                e["roles"][role] = e["roles"].get(role, 0.0) + h
+        for n, e in per.items():
+            roles = e.pop("roles")
+            e["role"] = max(roles.items(), key=lambda kv: (kv[1], kv[0]))[0] if roles else ""
+            e["hours"] = round(e["hours"], 2)
+            out.setdefault(n, []).append(e)
+    return out
+
+
+def _breach_dayparts(v: dict, row: dict = None) -> list:
+    """The dayparts a hard breach is about: a floor's own daypart, the
+    stretch an unmanaged gap covers, else the row's."""
+    import shift_quality as _sq
+    if v.get("daypart") in ("morning", "night"):
+        return [v["daypart"]]
+    if v.get("gap_start") is not None and v.get("gap_end") is not None:
+        out = []
+        if int(v["gap_start"]) < _sq.DAYPART_CUTOVER:
+            out.append("morning")
+        if int(v["gap_end"]) > _sq.DAYPART_CUTOVER:
+            out.append("night")
+        return out
+    if row is not None:
+        parts = [p for p in _sq.present_dayparts(row) if p != "unknown"]
+        if parts:
+            return parts
+    part = _rules.daypart_of(v.get("shift_start") or "")
+    return [part] if part != "unknown" else ["morning", "night"]
+
+
+def hard_breach_map(viols, rows: list = None) -> dict:
+    """The rule sweep's hard breaches for the rows it swept, as the scorer
+    reads them (schedule audit 10/3/26 SQ-14 — the cap is D1a's):
+    {"by_date": {date: [breach]}, "week": [breach], "rows_sig": {date:
+    signature}}. A breach: {"id" (schedule_rules.breach_id), "kind", "tier"
+    (BREACH_TIER), "label", "detail", "employee" (None for a day-level
+    one), "dayparts", "day_level", "no_show"}, plus "minutes" for an
+    unmanaged gap. "week" holds the ones about no date (no manager on the
+    roster at all). rows_sig is each date's LocalScorer signature when the
+    rows are given: a pass that changes a date's rows changes its signature,
+    and the scorer must not apply that date's breaches to rows they were
+    not found on — recompute with this function over a fresh sweep."""
+    import shift_quality as _sq
+    by_date, week = {}, []
+    for v in viols or []:
+        if not v.get("hard"):
+            continue
+        kind = v.get("kind")
+        idx = v.get("index")
+        row = rows[idx] if (rows is not None and isinstance(idx, int) and 0 <= idx < len(rows)) else None
+        entry = {"id": list(_rules.breach_id(v)), "kind": kind, "tier": _rules.BREACH_TIER.get(kind),
+                 "label": v.get("label"), "detail": v.get("detail"),
+                 "employee": None if v.get("day_level") else v.get("employee"),
+                 "dayparts": _breach_dayparts(v, row), "day_level": bool(v.get("day_level")),
+                 "no_show": bool(v.get("no_show"))}
+        if v.get("minutes") is not None:
+            entry["minutes"] = v.get("minutes")
+        d = v.get("date") or ""
+        if kind in ("no_manager_roster", "manager_rule_unusable") or not d:
+            week.append(entry)
+        else:
+            by_date.setdefault(d, []).append(entry)
+    sig = {}
+    if rows is not None:
+        for d in by_date:
+            sig[d] = _sq.LocalScorer._signature([r for r in rows if (r.get("date") or "").strip() == d
+                                                 and (r.get("employee") or "").strip()])
+    return {"by_date": by_date, "week": week, "rows_sig": sig}
+
+
+def _hard_breaches_for(rows: list, result: dict) -> dict:
+    """hard_breach_map for the rows being scored: the generation's own sweep
+    when it is of these rows (every breach points at the row it names),
+    else a fresh sweep with the week's constraints; {} without them."""
+    viols = result.get("rule_violations")
+    if viols is not None:
+        for v in viols:
+            idx = v.get("index")
+            if not isinstance(idx, int) or not (0 <= idx < len(rows or [])):
+                viols = None
+                break
+            r = rows[idx]
+            if ((r.get("employee") or "") != (v.get("employee") or "") or (r.get("date") or "") != (v.get("date") or "")
+                    or (r.get("shift_start") or "") != (v.get("shift_start") or "")):
+                viols = None
+                break
+    if viols is None:
+        c = result.get("constraints")
+        if c is None:
+            return {}
+        viols = _rules.violations(rows or [], c)
+    return hard_breach_map(viols, rows)
+
+
+def _learned_preferences_signal(raw: dict) -> dict:
+    """schedule_intel.behaviour_preferences as the scorer and the solver read
+    it (schedule audit 10/3/26 L-19): {name: {"avoid": [[weekday,
+    daypart]], "prefer": [...], "weight", "source", "drops", "claims"}}.
+    Each slot is one the person dropped (or picked up) at least twice in
+    the last twelve weeks — that function's own bar for a pattern; a slot
+    they both dropped and claimed says nothing either way and is left out.
+    Counted at shift_quality.LEARNED_PREFERENCE_WEIGHT of a stated one."""
+    import shift_quality as _sq
+
+    def _slot(text):
+        bits = str(text or "").split()
+        if len(bits) != 2 or bits[0] not in _rules.DAYS:
+            return None
+        part = {"night": "night", "day": "morning", "morning": "morning"}.get(bits[1].lower())
+        return [bits[0], part] if part else None
+    out = {}
+    for name, p in (raw or {}).items():
+        if not isinstance(p, dict) or not str(name or "").strip():
+            continue
+        avoid = [s for s in (_slot(x) for x in p.get("avoids") or []) if s]
+        prefer = [s for s in (_slot(x) for x in p.get("prefers") or []) if s]
+        both = {tuple(s) for s in avoid} & {tuple(s) for s in prefer}
+        avoid = [s for s in avoid if tuple(s) not in both]
+        prefer = [s for s in prefer if tuple(s) not in both]
+        if avoid or prefer:
+            out[name] = {"avoid": avoid, "prefer": prefer, "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
+                         "source": "what they drop and pick up", "drops": p.get("drops"), "claims": p.get("claims")}
+    return out
+
+
+def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
+    """What the scorer's overtime measure reads (schedule audit 10/3/26
+    SQ-25) — the overtime forecast's own inputs: the line overtime pay
+    starts past (labor.OVERTIME_THRESHOLD_HOURS), the daily line where the
+    rules set daily overtime, each date's payroll week, the hours already
+    published in those payroll weeks, and the rates the forecast prices its
+    moves at (models.get_role_rates, the restaurant's hourly rate). {}
+    without the week's constraints."""
+    if c is None:
+        return {}
+    rates, default = {}, None
+    try:
+        from models import get_role_rates, get_restaurant
+        rates = get_role_rates(restaurant_id) or {}
+        default = getattr(get_restaurant(restaurant_id), "hourly_rate", None) or rates.get("_default")
+    except Exception as _rx:
+        _soft_fail("overtime rates", _rx, restaurant_id)
+    return {"line": _labor_ot_line(),
+            "daily_line": (c.compliance or {}).get("daily_ot_hours") or None,
+            "bucket_of": {d: c.bucket(d) for d in (c.week_dates or [])},
+            "published": {k: dict(v or {}) for k, v in (c.base_hours or {}).items()},
+            "rates": rates, "default_rate": default, "rules": rules or {}}
 
 
 def _quality_signals(restaurant_id, result, **extra):
@@ -3030,44 +3292,6 @@ def _quality_signals(restaurant_id, result, **extra):
     # objective — the generation's own when it carries them, so a live
     # re-score judges an edit by what the draft was written against.
     signals.update(_learning_signals(restaurant_id, result))
-    # A rule nobody on the roster could satisfy is not the draft's fault,
-    # and confidence should say so rather than the score silently failing.
-    try:
-        scores = signals["scores"]
-        unsat = 0
-        unmeetable = []
-        roles = result.get("roster_roles") or {}
-        try:
-            from models import get_leader_flags as _glf
-            _flags = _glf(restaurant_id) or {}
-        except Exception:
-            _flags = {}
-        cross = result.get("cross_trained") or {}
-        for rule in signals["leader_rules"]:
-            ms = rule.get("min_score")
-            role = (rule.get("role") or "").strip().lower()
-
-            def _in_role(n):
-                return (not roles or (roles.get(n) or "").strip().lower() == role
-                        or role in {str(x).strip().lower() for x in (cross.get(n) or [])})
-            if rule.get("attribute"):
-                # "Authorized to close" nobody in the role holds is as
-                # unmeetable as a score nobody reaches; checked only for
-                # score rules, it scored every closing shift 0 (SCHED-30).
-                able = [n for n, f in _flags.items() if f and _in_role(n)]
-            elif ms is not None:
-                able = [n for n, sc in scores.items() if sc is not None and float(sc) >= float(ms) and _in_role(n)]
-            else:
-                continue
-            if len(able) < int(rule.get("count") or 1):
-                unsat += 1
-                unmeetable.append(rule)
-        signals["unsatisfiable"] = unsat
-        # The rules themselves, so the engine sets them aside instead of
-        # capping every shift they cover (SCHED-30).
-        signals["unmeetable_leader_rules"] = unmeetable
-    except Exception:
-        pass
     # Each of these is a separate read and any one of them can be empty for
     # a new restaurant. A failure to load one must cost that dimension, not
     # the whole evaluation — which is exactly what returning {} does, since
@@ -3087,10 +3311,24 @@ def _quality_signals(restaurant_id, result, **extra):
     except Exception:
         signals["experienced"] = set()
     try:
-        signals["preferences"] = _staff.stated_preferences(restaurant_id)
+        stated = _staff.stated_preferences(restaurant_id)
     except Exception:
-        signals["preferences"] = {}
+        stated = {}
+    _people_signals(restaurant_id, result, signals, stated)
     _reconcile_to_roster(signals)
+    # Leader rules against who on the roster can meet them (schedule audit
+    # 10/3/26 SQ-17), after the ratings and closer flags are reconciled to
+    # the roster: nobody able sets a rule aside (named in confidence, never
+    # failing every shift it covers — SCHED-30); fewer able than it asks for
+    # keeps it, capped at the people able — "2 bartenders scoring 5" with
+    # one such bartender used to be set aside whole, so the one who could be
+    # scheduled was never asked for. People count in a rule's role by
+    # family, through their roster role, the roles their history shows and
+    # the roles they hold.
+    try:
+        _cap_leader_rules(signals)
+    except Exception as _lx:
+        _soft_fail("leader rule check", _lx, restaurant_id)
     try:
         weights = get_quality_weights(restaurant_id)
     except Exception:
@@ -3103,14 +3341,141 @@ def _quality_signals(restaurant_id, result, **extra):
                                       if n.get("employee_name")}
         except Exception:
             signals["constraints"] = {}
+    # The hard breaches of the rows being scored (SQ-14, the cap is D1a's):
+    # only a caller holding those rows can say (_score_schedule_quality
+    # passes them); without it the scorer is told nothing, never a stale
+    # sweep of other rows.
+    signals.setdefault("hard_breaches", {})
     signals.update(extra)
     return signals, weights
 
 
+def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -> None:
+    """The people facts the scorer, the solver and the optimizer read beyond
+    ratings, from the week's constraints (schedule audit 10/3/26 — the D1b
+    signals contract), in place:
+
+      salaried            name keys (models.salaried_name_key) paid the same
+                          whatever the hours: out of the hourly day and SPLH
+                          hours, held to their own ceiling (D-3)
+      salaried_cap        their weekly cap when they set none of their own
+      hours_ceilings      {name key: Constraints.max_hours} — the ceiling the
+                          rules hold each roster person to
+      managers            {lower: role} (Constraints.managers)
+      acting_managers     {lower: set(iso)} — standing in on those dates
+      experienced_default managers, acting managers and salaried people:
+                          experienced whatever their punch count (D-6)
+      role_families, held_roles, closers_by_role — as Constraints holds them
+      stations            the kitchen stations config (SQ-26)
+      overtime            the overtime forecast's inputs (SQ-25)
+      preferences         stated preferences, each person's learned slots
+                          merged in as "learned" (L-19)
+      learned_preferences {name: {"avoid", "prefer", "weight", ...}} — the
+                          same learned slots on their own
+
+    Each read failing costs only its own measure."""
+    import shift_quality as _sq
+    c = result.get("constraints")
+    roster = [n for n in (result.get("roster") or []) if n]
+    if c is not None:
+        salaried = set(getattr(c, "salaried", None) or ())
+        cap = getattr(c, "salaried_cap", None)
+        signals["salaried_cap"] = float(cap) if cap else float(_rules.SALARIED_HOURS_CAP)
+        signals["managers"] = dict(getattr(c, "managers", None) or {})
+        signals["acting_managers"] = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()}
+        signals["role_families"] = dict(getattr(c, "role_families", None) or {})
+        signals["held_roles"] = {k: set(v or ()) for k, v in (getattr(c, "held_roles", None) or {}).items()}
+        signals["closers_by_role"] = {k: set(v or ()) for k, v in (getattr(c, "closers_by_role", None) or {}).items()}
+        signals["stations"] = dict(getattr(c, "stations", None) or {})
+        ceilings = {}
+        for n in (roster or list(getattr(c, "roster_names", None) or [])):
+            try:
+                mx = c.max_hours(n)
+            except Exception:
+                continue
+            if mx:
+                ceilings[_sq.name_key(n)] = float(mx)
+        signals["hours_ceilings"] = ceilings
+        signals["overtime"] = _overtime_inputs(restaurant_id, c, signals.get("rules"))
+    else:
+        # No week's constraints (a bare re-score): who is salaried still
+        # comes from the restaurant, so their hours never read as hourly.
+        try:
+            from models import salaried_staff, salaried_name_key
+            salaried = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+        except Exception as _sx:
+            _soft_fail("salaried staff", _sx, restaurant_id)
+            salaried = set()
+    signals["salaried"] = salaried
+    signals["experienced_default"] = _sq.experienced_by_default(signals.get("managers"),
+                                                                signals.get("acting_managers"), salaried)
+    try:
+        raw = result.get("learned_preferences")
+        if raw is None:
+            import schedule_intel as _si
+            raw = _si.behaviour_preferences(restaurant_id)
+        learned = _learned_preferences_signal(raw)
+    except Exception as _px:
+        _soft_fail("learned preferences", _px, restaurant_id)
+        learned = {}
+    prefs = {n: dict(p) for n, p in (stated or {}).items() if isinstance(p, dict)}
+    for n, lp in learned.items():
+        prefs.setdefault(n, {"preferred_dayparts": [], "desired_hours": None})["learned"] = lp
+    signals["preferences"] = prefs
+    signals["learned_preferences"] = learned
+
+
+def _cap_leader_rules(signals: dict) -> None:
+    """signals["leader_rules"] held to who on the roster can meet them
+    (shift_quality.roster_leader_rules, SQ-17), in place: each rule nobody
+    can meet stays listed and is named in unmeetable_leader_rules (the
+    scorer sets it aside); each one fewer can meet than it asks for is
+    replaced by a copy capped at the people able (capped_leader_rules)."""
+    import shift_quality as _sq
+    rules = list(signals.get("leader_rules") or [])
+    roster_roles = signals.get("roster_roles") or {}
+    people_roles = None
+    if roster_roles:
+        cross = signals.get("cross_trained") or {}
+        held = signals.get("held_roles") or {}
+        people_roles = {}
+        for n, role in roster_roles.items():
+            roles = {role.strip()} if (role or "").strip() else set()
+            roles |= {str(x).strip() for x in (cross.get(n) or []) if str(x).strip()}
+            roles |= {str(x).strip() for x in (held.get((n or "").strip().lower()) or ()) if str(x).strip()}
+            people_roles[n] = roles
+    kept, aside, capped = _sq.roster_leader_rules(rules, signals.get("scores"), signals.get("leader_flags"),
+                                                  people_roles, signals.get("role_families"))
+    out, k = [], iter(kept)
+    for rule in rules:
+        out.append(rule if any(rule is a for a in aside) else next(k))
+    signals["leader_rules"] = out
+    signals["unmeetable_leader_rules"] = aside
+    signals["capped_leader_rules"] = capped
+    signals["unsatisfiable"] = len(aside)
+
+
 def _learning_signals(restaurant_id, result) -> dict:
-    """{rotation, splh_targets, daypart_sales} for the scorer. Either one
-    failing costs only its own dimension's part (each withdraws on {})."""
-    out = {"rotation": {}, "splh_targets": {}, "daypart_sales": {}}
+    """{rotation, splh_targets, daypart_sales, learned, load_ledger} for the
+    scorer. Each failing costs only its own part (each withdraws on {})."""
+    out = {"rotation": {}, "splh_targets": {}, "daypart_sales": {}, "learned": [], "load_ledger": {}}
+    c = result.get("constraints")
+    week = list(result.get("week_dates") or (getattr(c, "week_dates", None) if c is not None else None) or [])
+    # What the restaurant's scheduling memory holds that binds this week
+    # (schedule audit 10/3/26 L-3: learned manager patterns reached only
+    # the prompt): its active memories, for the scorer, the solver and the
+    # optimizer — empty until the memory has any. Read lazily; a memory
+    # that cannot be read costs only itself.
+    try:
+        import schedule_memory as _smem
+        learned = _smem.enforced_signals(restaurant_id, week, roster_names=list(result.get("roster") or []) or None)
+        out["learned"] = [dict(x) for x in (learned or []) if isinstance(x, dict)]
+    except Exception as _mx:
+        _soft_fail("schedule_memory", _mx, restaurant_id)
+    # The published weeks before this one: what fatigue and fairness read
+    # across weeks (SQ-27).
+    if week:
+        out["load_ledger"] = load_ledger(restaurant_id, sorted(week)[0])
     try:
         rot = result.get("rotation_plan")
         if rot is None:
@@ -3140,11 +3505,13 @@ def _reconcile_to_roster(signals: dict) -> None:
     leftovers, staff who left) must not judge this week: fourteen such
     ratings once put a fully staffed Saturday at 0 while the confidence
     panel said nobody was rated. With a roster on file, only its names'
-    facts are scored; without one, everything stands."""
+    facts are scored; without one, everything stands. The weeks before
+    this one are read the same way (schedule audit 10/3/26 SQ-27): somebody
+    who has left is no longer a colleague a share is measured against."""
     roster = {str(n).strip().lower() for n in (signals.get("roster") or []) if n}
     if not roster:
         return
-    for key in ("scores", "leader_flags"):
+    for key in ("scores", "leader_flags", "ledger", "load_ledger"):
         d = signals.get(key) or {}
         if isinstance(d, dict):
             signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
@@ -3160,6 +3527,14 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
     """
     import shift_quality as _sq
     profiles = result.get("shift_profiles") or None
+    if "hard_breaches" not in extra:
+        # The hard breaches of exactly these rows, for the scorer's cap
+        # (SQ-14): the generation's own sweep when it is of them, else a
+        # fresh one.
+        try:
+            extra = dict(extra, hard_breaches=_hard_breaches_for(rows, result))
+        except Exception as _hx:
+            _soft_fail("hard breaches", _hx, restaurant_id)
     signals, weights = _quality_signals(restaurant_id, result, **extra)
     quality = _sq.score_rows(rows, profiles=profiles, weights=weights, **signals)
 
