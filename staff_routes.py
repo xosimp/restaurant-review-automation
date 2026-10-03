@@ -630,14 +630,20 @@ def api_time_off_request(current_user):
     # "That date has passed" is judged on the restaurant's own calendar, not
     # the server's — a request typed at 11pm Pacific is not for yesterday.
     from time_utils import restaurant_now_by_id
+    # Part of a day (schedule audit 10/3/26 D-39): "start_time" / "end_time"
+    # ("off until 4pm") or "daypart" (lunch / dinner); none of them is the
+    # whole day.
     row, err = time_off.request_time_off(rid, name, body.get("start_date"), body.get("end_date"),
                                          reason=body.get("reason"),
-                                         today=restaurant_now_by_id(rid, naive=True).date())
+                                         today=restaurant_now_by_id(rid, naive=True).date(),
+                                         start_time=body.get("start_time"), end_time=body.get("end_time"),
+                                         daypart=body.get("daypart"))
     if err:
         return jsonify(ok=False, error=err), 400
     from models import log_event
     try:
-        log_event(rid, "time_off_requested", {"employee": name, "start": row["start_date"], "end": row["end_date"]})
+        log_event(rid, "time_off_requested", {"employee": name, "start": row["start_date"], "end": row["end_date"],
+                                              "part": time_off.part_words(row) or None})
     except Exception:
         pass
     return jsonify(ok=True, request=row)

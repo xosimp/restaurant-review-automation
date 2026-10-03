@@ -506,6 +506,13 @@ def apply_holds(c, restaurant_id, db_path=DB_PATH):
                     keep = "night" if off == "morning" else "morning"
                     cur = (c.daypart_avail.get(key) or {}).get(wd)
                     c.daypart_avail.setdefault(key, {})[wd] = "off" if cur in (off, "off") else keep
+                elif hasattr(c, "blocked_parts"):
+                    # Only part of the week is inside the hold: its lunch or
+                    # dinner is off on those dates alone (Constraints.
+                    # blocked_parts, schedule audit 10/3/26 D-39) — it was
+                    # not applied at all, the weekday map being by weekday.
+                    c.blocked_parts.setdefault(key, {}).setdefault(d, []).append(
+                        {"from": None, "until": None, "daypart": h["dayparts"][0], "reason": reason})
     except Exception as e:
         try:
             import ops

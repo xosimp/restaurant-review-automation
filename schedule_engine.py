@@ -4319,8 +4319,9 @@ def _rules_for_swaps(c) -> dict:
     base = {}
     for name, per in (c.base_hours or {}).items():
         base[name] = sum(h for b, h in per.items() if b in buckets)
+    blocked, dayparts, windows = _parts_for_swaps(c)
     return {
-        "blocked_dates": c.blocked_dates, "daypart_avail": c.daypart_avail,
+        "blocked_dates": blocked, "daypart_avail": dayparts,
         "hours_limits": c.hours_limits, "base_hours": base, "base_rows": c.base_rows,
         "weekly_ceiling": c.compliance.get("weekly_hours_ceiling"),
         "min_rest_hours": c.compliance.get("min_rest_hours"),
@@ -4332,9 +4333,57 @@ def _rules_for_swaps(c) -> dict:
         "minor_max_daily_hours": c.compliance.get("minor_max_daily_hours"),
         "certifications": {k: sorted(v) for k, v in (c.certifications or {}).items()},
         "role_requirements": {k: sorted(v) for k, v in (c.role_requirements or {}).items()},
-        "time_windows": dict(c.time_windows or {}),
+        "time_windows": windows,
         "pending_off": {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()},
     }
+
+
+def _parts_for_swaps(c):
+    """(blocked_dates, daypart_avail, time_windows) with every part of a
+    day off (Constraints.blocked_parts, schedule audit 10/3/26 D-39) folded
+    into the per-weekday maps the swap index reads: a lunch or dinner off
+    is that weekday's other daypart, "until 4pm" its earliest start, "from
+    6pm" its latest end — on a weekday the week holds once. Anything else
+    (a stretch in the middle, a weekday twice) blocks the whole date: a
+    suggestion kept off a workable evening is a missed suggestion, never a
+    broken rule."""
+    blocked = {k: dict(v) for k, v in (c.blocked_dates or {}).items()}
+    dayparts = {k: dict(v) for k, v in (c.daypart_avail or {}).items()}
+    windows = {k: dict(v) for k, v in (c.time_windows or {}).items()}
+    parts = getattr(c, "blocked_parts", None) or {}
+    if not parts:
+        return blocked, dayparts, windows
+    from datetime import datetime as _dt
+    count = {}
+    for d in c.week_dates or []:
+        try:
+            wd = _dt.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (TypeError, ValueError):
+            continue
+        count[wd] = count.get(wd, 0) + 1
+    for key, by_date in parts.items():
+        for d, plist in by_date.items():
+            try:
+                wd = _dt.strptime(d, "%Y-%m-%d").strftime("%A")
+            except (TypeError, ValueError):
+                continue
+            once = count.get(wd) == 1
+            for p in plist:
+                lo, hi = (windows.get(key) or {}).get(wd) or (None, None)
+                if p.get("daypart") and once:
+                    keep = "night" if p["daypart"] == "morning" else "morning"
+                    cur = (dayparts.get(key) or {}).get(wd)
+                    dayparts.setdefault(key, {})[wd] = "off" if cur in (p["daypart"], "off") else keep
+                elif once and p.get("from") is None and p.get("until") is not None and p["until"] < 24 * 60 \
+                        and (hi is None or p["until"] < hi):
+                    windows.setdefault(key, {})[wd] = (max(lo or 0, p["until"]), hi)
+                elif once and p.get("until") is None and p.get("from") is not None \
+                        and (lo is None or lo < p["from"]) \
+                        and (hi is None or (hi >= 6 * 60 and (lo is None or hi > lo))):
+                    windows.setdefault(key, {})[wd] = (lo, p["from"] if hi is None else min(hi, p["from"]))
+                else:
+                    blocked.setdefault(key, {})[d] = p.get("reason") or _rules.LABELS["approved_time_off"]
+    return blocked, dayparts, windows
 
 
 def _safe_hourly_profile(restaurant_id) -> dict:

@@ -1146,6 +1146,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # {"Friday": {"from": null, "until": "2026-12-15"}} — a blocked
         # weekday that holds only between two dates (employee audit M5).
         ("staff_availability", "day_bounds", "TEXT"),
+        # Part of a day off (schedule audit 10/3/26 D-39): "off until 4pm"
+        # (end_time), "off from 6pm" (start_time), both for a stretch in the
+        # middle, or a daypart ("morning" = lunch, "night" = dinner). None of
+        # them: the whole day, as before.
+        ("staff_time_off", "start_time", "TEXT"),
+        ("staff_time_off", "end_time", "TEXT"),
+        ("staff_time_off", "daypart", "TEXT"),
         ("restaurants", "role_cross_training_json", "TEXT"),
         ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
         ("restaurants", "reservation_provider", "TEXT"),

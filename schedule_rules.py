@@ -763,6 +763,13 @@ class Constraints:
     active: set = field(default_factory=set)               # lowercase
     inactive: set = field(default_factory=set)             # lowercase, deactivated
     blocked_dates: dict = field(default_factory=dict)      # {lower: {date: reason}}
+    # Part of a date a person can't work (schedule audit 10/3/26 D-39):
+    # {lower: {date: [{"from": min|None, "until": min|None, "daypart":
+    # "morning"|"night"|None, "reason"}]}} — approved time off "until 4pm"
+    # or for dinner, and a held note's lunch or dinner on dates that only
+    # part of the week is inside. can_work reads the daypart ones,
+    # window_ok the timed ones.
+    blocked_parts: dict = field(default_factory=dict)
     pending_off: dict = field(default_factory=dict)        # {lower: set(dates)}
     unavailable_days: dict = field(default_factory=dict)   # {lower: set(day)}
     daypart_avail: dict = field(default_factory=dict)      # {lower: {day: any|morning|night|off}}
@@ -925,6 +932,10 @@ class Constraints:
         blocked = self.blocked_dates.get(key) or {}
         if date_str in blocked:
             return False, blocked[date_str]
+        if daypart in ("morning", "night"):
+            for p in ((self.blocked_parts.get(key) or {}).get(date_str) or ()):
+                if p.get("daypart") == daypart:
+                    return False, p.get("reason") or LABELS["approved_time_off"]
         try:
             day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
@@ -1021,8 +1032,19 @@ class Constraints:
         return True, ""
 
     def window_ok(self, name: str, date_str: str, start: str, end: str) -> tuple:
-        """Whether a shift's times sit inside the person's window that day."""
+        """Whether a shift's times sit inside the person's window that day —
+        and clear of any part of that date they have off (blocked_parts)."""
         key = self.key(name)
+        for p in ((self.blocked_parts.get(key) or {}).get(date_str) or ()):
+            if p.get("daypart"):
+                continue                  # can_work reads a daypart off
+            s_, e_ = parse_minutes(start), parse_minutes(end)
+            if s_ is None or e_ is None:
+                continue
+            if e_ <= s_:
+                e_ += 24 * 60
+            if (p.get("from") is None or e_ > p["from"]) and (p.get("until") is None or s_ < p["until"]):
+                return False, p.get("reason") or LABELS["approved_time_off"]
         win = self.time_windows.get(key)
         if not win:
             return True, ""
@@ -1277,7 +1299,22 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     if c.week_dates:
         try:
             import time_off as _to
-            for name, days in (_to.approved_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path=db_path) or {}).items():
+            # Part of a day off (D-39) blocks that part only; the rest of the
+            # day stays workable.
+            for name, by_date in (_to.approved_parts_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1],
+                                                               db_path=db_path) or {}).items():
+                key = _file_under(c, "time off", name, "approved time off on " + ", ".join(
+                    _mdy_safe(d) for d in sorted(by_date)))
+                for d, parts in by_date.items():
+                    for p in parts:
+                        c.blocked_parts.setdefault(key, {}).setdefault(d, []).append(
+                            dict(p, reason=f"{LABELS['approved_time_off']} ({p.get('words') or 'part of the day'})"))
+                if key not in c.display and c.display:
+                    c.input_problems.append({"source": "time off", "name": name,
+                                             "error": "approved time off (" + ", ".join(_mdy_safe(d) for d in sorted(by_date))
+                                                      + ") matches nobody on the roster — check the spelling"})
+            for name, days in (_to.approved_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path=db_path,
+                                                      whole_days_only=True) or {}).items():
                 key = _file_under(c, "time off", name, "approved time off " + ", ".join(_mdy_safe(d) for d in days))
                 c.blocked_dates.setdefault(key, {}).update({d: LABELS["approved_time_off"] for d in days})
                 if key not in c.display and c.display:
@@ -1916,7 +1953,10 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
             out.append(_v("pending_time_off", i, r, LABELS["pending_time_off"]))
         ok, why = c.window_ok(name, r.get("date", ""), r.get("shift_start", ""), r.get("shift_end", ""))
         if not ok:
-            out.append(_v("outside_window", i, r, why))
+            # Part of a day off is time off, or a held note — not a window.
+            kind = ("approved_time_off" if str(why).startswith(LABELS["approved_time_off"]) else
+                    "note_unavailable" if str(why).startswith("your note:") else "outside_window")
+            out.append(_v(kind, i, r, why))
         ok, why = c.cert_ok(name, r.get("role", ""))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
@@ -2688,6 +2728,21 @@ def prompt_block(c: Constraints) -> str:
                 lo, hi = w
                 span = (f"from {_fmt_minutes(lo)}" if lo is not None else "") + (f" until {_fmt_minutes(hi)}" if hi is not None else "")
                 bits.append(f"{d[:3]} only {span.strip()}")
+        # Part of a day off (D-39): the rest of that day they can work.
+        for d, parts in sorted((c.blocked_parts.get(key) or {}).items()):
+            for p in parts:
+                why = str(p.get("reason") or "")
+                words = "approved time off" if why.startswith(LABELS["approved_time_off"]) else (why[:80] or "time off")
+                if p.get("daypart"):
+                    off = "no lunch/day shift" if p["daypart"] == "morning" else "no dinner/night shift"
+                else:
+                    off = (f"off {_fmt_minutes(p['from'] % 1440)}" if p.get("from") is not None else "off")
+                    off += (f" until {_fmt_minutes(p['until'] % 1440)}" if p.get("until") is not None else " to close")
+                try:
+                    when = datetime.strptime(d, "%Y-%m-%d").strftime("%a %-m/%-d")
+                except ValueError:
+                    when = d
+                bits.append(f"{when}: {off} ({words})")
         certs = c.certifications.get(key)
         if certs:
             bits.append("holds " + ", ".join(sorted(certs)))
