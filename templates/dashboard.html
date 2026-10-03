@@ -9899,6 +9899,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
 .swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none;border-color:var(--ember)}
 .swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
+/* Hovering a shift dims the rest of the week behind it (owner, 10/2/26). */
+.swg-t:has(.swg-chip:hover) .swg-chip:not(:hover){opacity:.4}
+.swg-t:has(.swg-chip:hover) .swg-p,.swg-t:has(.swg-chip:hover) .swg-role{opacity:.55;transition:opacity .16s ease}
 .swg-chip .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip.bad{border-color:var(--hb-bad);box-shadow:inset 3px 0 0 var(--hb-bad)}

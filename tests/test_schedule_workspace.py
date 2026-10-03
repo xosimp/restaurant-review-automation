@@ -278,3 +278,8 @@ def test_a_double_stacks_from_the_top_so_the_rest_of_the_row_stays_aligned():
     assert ".swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;" in s
     assert ".swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:flex-start;" in s
     assert "The busiest day this week: the most scheduled hours" in s
+
+
+def test_hovering_a_shift_dims_the_rest_of_the_week():
+    s = _src()
+    assert ".swg-t:has(.swg-chip:hover) .swg-chip:not(:hover){opacity:.4}" in s
