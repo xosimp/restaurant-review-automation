@@ -141,3 +141,11 @@ def test_one_unreadable_person_keeps_everyone_elses_rules(db_path, monkeypatch):
     assert "max" in c.managers and "kid" in c.minors and c.hours_limits.get("max") == (None, 45)
     assert [p.get("name") for p in c.input_problems if p["source"] == "settings"] == ["Ann"]
     assert "ann" in c.active
+
+
+def test_fillable_keeps_code_off_dormant_people_and_noted_days():
+    c = _c(roster_names=["Ann", "Bo"], active={"ann", "bo"}, dormant={"bo": "2026-06-01"},
+           note_caution={"ann": {"days": {"Friday"}, "dates": set(), "text": "can't close Fridays"}})
+    assert c.fillable("Bo", WED)[0] is False
+    assert c.fillable("Ann", "2026-10-09")[0] is False      # a Friday
+    assert c.fillable("Ann", WED) == (True, "")

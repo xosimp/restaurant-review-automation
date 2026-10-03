@@ -825,6 +825,18 @@ class Constraints:
     closers_by_role: dict = field(default_factory=dict)
     # People in training (D-16): {lower: {"target_role", "trainer", "until"}}.
     trainees: dict = field(default_factory=dict)
+    # A salaried person's weekly cap when they set none of their own (E-17:
+    # the gap filler loaded a salaried owner to 66h against an 84h cap).
+    # None keeps SALARIED_HOURS_CAP.
+    salaried_cap: float = None
+    # People on the roster who have not worked in weeks (E-3, D-17):
+    # {lower: last worked iso date}. Still on the roster — a row the owner
+    # writes for them is legal — but never a candidate for a fill.
+    dormant: dict = field(default_factory=dict)
+    # A person's scheduling note nobody has confirmed as a rule (D-34):
+    # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
+    # The model is told it; the fill passes keep off those days.
+    note_caution: dict = field(default_factory=dict)
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -894,6 +906,22 @@ class Constraints:
         the name with its daypart words taken off (shift_quality.role_family)."""
         from shift_quality import role_family
         return role_family(role, self.role_families)
+
+    def fillable(self, name: str, date_str: str) -> tuple:
+        """(ok, reason): whether a pass may CHOOSE `name` to fill a gap on
+        `date_str` — over and above can_add, which asks whether the row is
+        legal. Somebody who has not worked in weeks (dormant) or whose own
+        note about that day nobody has confirmed (note_caution) is never
+        picked by code; the owner can still write them in."""
+        key = (name or "").strip().lower()
+        if key in self.dormant:
+            return False, f"has not worked since {self.dormant[key]}"
+        caution = self.note_caution.get(key) or {}
+        if caution:
+            day = _weekday_of(date_str)
+            if date_str in (caution.get("dates") or ()) or (day and day in (caution.get("days") or ())):
+                return False, f"their note: {str(caution.get('text') or '')[:80]}"
+        return True, ""
 
     def can_add(self, row: dict, rows=(), line: float = None, overtime: bool = True) -> tuple:
         """(ok, reason): whether `row` can join `rows` without a breach about
