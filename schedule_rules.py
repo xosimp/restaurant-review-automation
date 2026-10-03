@@ -2485,6 +2485,15 @@ def prompt_block(c: Constraints) -> str:
                  + (" (the week starts on " + DAYS[c.week_start_day] + ")" if c.week_start_day else "")
                  + (" — except where a person's own maximum below is higher: the owner allows them those hours, "
                     "overtime included" if _above else "") + ".")
+    # A payroll week that runs on into next week's days (E-10): next week's
+    # draft schedules them inside the same overtime line.
+    _tails = [c.bucket_tail(b) for b in sorted({c.bucket(d) for d in (c.week_dates or [])})]
+    _tail = next((t for t in _tails if len(t) >= TAIL_RESERVE_MIN_DAYS), None)
+    if _tail:
+        _from = DAYS[c.week_start_day] if c.week_start_day else "Monday"
+        lines.append(f"- The payroll week that starts {_from} runs on into next week ({_tail_days_text(_tail)}), which "
+                     f"next week's schedule fills from the same overtime line: leave each hourly person about "
+                     f"{len(_tail)}/7 of their line free for those days (about {40 * len(_tail) / 7:.0f}h of 40h).")
     if comp.get("daily_ot_hours"):
         lines.append(f"- Daily overtime starts at {float(comp['daily_ot_hours']):g} hours — avoid it.")
     if comp.get("meal_break_after_hours"):
@@ -2916,6 +2925,12 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
         base = sum(row_hours(r) for r in (c.base_rows.get(e["low"]) or []) if _iso_week(r.get("date") or "") == e["key"])
         return base + sum(row_hours(r) for r in rep.rows if _low(r.get("employee")) == e["low"] and in_period(e, r))
 
+    def _kind(e):
+        return "overtime" if e["kind"] == "overtime" else "minor"
+
+    def _why(e):
+        return "no overtime" if e["kind"] == "overtime" else f"a minor's {e['limit']:g}h week"
+
     def mine(e):
         idx = [i for i, r in enumerate(rep.rows) if _low(r.get("employee")) == e["low"] and in_period(e, r) and free(r)]
         return sorted(idx, key=lambda i: (rep.rows[i].get("date") or "", start_minutes(rep.rows[i]) or 0), reverse=True)
@@ -2933,6 +2948,8 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
             k = (low, c.bucket(r["date"]))
             totals[k] = totals.get(k, 0.0) + row_hours(r)
     for (low, b), h in totals.items():
+        if c.is_salaried(name_of(low)):
+            continue          # no overtime is owed on a salaried week; their cap binds what code adds
         lim = overtime_line(c, name_of(low), line)
         if b and lim and h > lim + 0.05:
             entries.append({"kind": "overtime", "low": low, "key": b, "limit": lim, "excess": h - lim})
@@ -3028,9 +3045,9 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
                     rep.take(trial, after)
                     trims.append({"index": i, "employee": name, "hours": need,
                                   "was": f"{r.get('shift_start')}–{r.get('shift_end')}",
-                                  "now": f"{cut['shift_start']}–{cut['shift_end']}", "kind": "overtime",
+                                  "now": f"{cut['shift_start']}–{cut['shift_end']}", "kind": _kind(e),
                                   "reason": (f"{x.get('employee')} stays on to {ext['shift_end']} and takes the last "
-                                             f"{need:g}h of {name}'s {day} shift — no overtime.")})
+                                             f"{need:g}h of {name}'s {day} shift — {_why(e)}.")})
                     return True
             # b. the tail or the head as a teammate's own shift
             part = max(need, shortest)
@@ -3055,9 +3072,9 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
                     rep.take(trial, after)
                     trims.append({"index": i, "employee": name, "hours": round(part, 2),
                                   "was": f"{r.get('shift_start')}–{r.get('shift_end')}",
-                                  "now": f"{cut['shift_start']}–{cut['shift_end']}", "kind": "overtime",
+                                  "now": f"{cut['shift_start']}–{cut['shift_end']}", "kind": _kind(e),
                                   "reason": (f"Split {name}'s {day} shift: {nm} takes {piece['shift_start']}–"
-                                             f"{piece['shift_end']} — no overtime.")})
+                                             f"{piece['shift_end']} — {_why(e)}.")})
                     return True
         return False
 

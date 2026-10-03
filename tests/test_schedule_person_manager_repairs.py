@@ -572,6 +572,9 @@ def test_a_wednesday_payroll_week_full_by_sunday_is_flagged_softly():
     assert "payroll_tail_full" not in _kinds(rows, _c(roster_names=["Ann"], active={"ann"}))
     # nor for a salaried person, who owes no overtime
     assert "payroll_tail_full" not in _kinds(rows, _c(week_start_day=2, salaried={"ann"}))
+    # the model is told to keep the reserve too
+    assert "runs on into next week (Mon 10/12/26 and Tue 10/13/26)" in sr.prompt_block(c)
+    assert "runs on into next week" not in sr.prompt_block(_c())
 
 
 def test_the_rebalance_keeps_the_reserve_where_a_teammate_has_room():
@@ -590,6 +593,14 @@ def test_the_rebalance_keeps_the_reserve_where_a_teammate_has_room():
 
 
 # ── the shared machinery every pass uses (E-1, P-2) ──────────────────────
+
+def test_generation_keeps_day_level_breaches_off_rows_and_says_why_once():
+    import schedule_engine
+    src = inspect.getsource(schedule_engine._run_schedule_job)
+    assert '_hard = [v for v in _viols if v["hard"] and not v.get("day_level")' in src
+    assert 'result["review"]["lines"].append(_short)' in src
+    assert "manager_coverage=result.get(\"manager_coverage\")" in src and "min_hours=result.get(\"min_hours\")" in src
+
 
 def test_every_pass_judges_by_breach_identity_and_asks_can_add():
     for fn in (sr.rebalance_overtime, sr.fix_person_breaches, sr.cover_manager_gaps, sr.fill_min_hours):

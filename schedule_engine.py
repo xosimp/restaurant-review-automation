@@ -3454,7 +3454,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # for the owner and never counted as coverage.
             _viols = _rules.violations(preview_rows, _constraints)
             _fixes, _unfixed = list(_ot_fixes), []
-            _hard = [v for v in _viols if v["hard"]
+            # A breach about a day (no manager on, a floor short) is no row's
+            # to fix by changing its person: it stays a day-level item in the
+            # review, never an "unfixed" line on whoever's row it is pinned to
+            # (schedule audit 10/3/26 E-13).
+            _hard = [v for v in _viols if v["hard"] and not v.get("day_level")
                      and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
             # A missed run of days off is fixed here too (one of the person's
             # shifts to a legal teammate, least score cost); which rows may
@@ -3619,6 +3623,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["review"]["lines"].append(
                     f"Your rule \u201c{_txt[:120]}\u201d isn't one Cavnar AI can check automatically — check this "
                     f"draft against it")
+            # Why the manager rule could not be met, once for the week (each
+            # day's stretch is already its own day-level line), and who is
+            # still under the minimum hours set for them, with why (E-12,
+            # E-13, P-4). Not "⚠" lines: the breaches themselves are.
+            _short = ((result.get("manager_coverage") or {}).get("shortfall") or {}).get("text")
+            if _short:
+                result["review"]["lines"].append(_short)
+            for _x in ((result.get("min_hours") or {}).get("left") or [])[:4]:
+                result["review"]["lines"].append(
+                    f"{_x['employee']} is {_x['short_by']:g}h under the {_x['min']:g}h minimum you set — {_x['reason']}")
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
@@ -4063,6 +4077,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             splh_report=result.get("splh_report") or {},
             starting_headcount=result.get("starting_headcount") or {"available": False},
             gate=result.get("gate") or {"ran": False},
+            # The manager rule's backstop: what it covered, each stretch it
+            # could not with why each manager could not, and the week's
+            # shortfall (E-12, E-13); and who is still under their minimum
+            # hours (P-4).
+            manager_coverage=result.get("manager_coverage") or {"extended": 0, "added": 0, "left": []},
+            min_hours=result.get("min_hours") or {"moved": 0, "added": 0, "left": []},
         )
         _q_now = (result.get("quality") or {}).get("score")
         if _fallback:
