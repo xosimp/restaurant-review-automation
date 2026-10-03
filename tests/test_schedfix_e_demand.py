@@ -461,3 +461,71 @@ def test_the_demand_forecast_window_is_the_restaurants_own_date(db_path):
     fc = labor.build_demand_forecast(rid, today=today)
     assert fc["ok"] and fc["data_through"] == days[0].isoformat()
     assert all(d["median_sales"] == 4000.0 for d in fc["days"])
+
+
+# ── the whole input build, end to end ────────────────────────────────────
+
+def test_the_draft_is_built_on_the_net_budget_the_scaled_week_and_the_late_night(db_path, monkeypatch):
+    """_build_schedule_result with a real restaurant — salaried staff, a
+    2am Friday close, recent sales, a measured event — and no swallowed
+    failure: every input this workstream added reaches the result."""
+    import types as _t
+    rid = _rid("Simple Test")
+    models.update_restaurant(rid, {
+        "salaried_staff_json": json.dumps([{"name": "Erik Baylis", "annual": 150000}]),
+        "close_times_json": json.dumps({"Friday": "2:00am", "Saturday": "2:00am"}),
+        "labor_target_pct": 35.0}, db_path=db_path)
+    today = date.today()
+    rows = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes,pay_rate"]
+    for k in range(1, 36):
+        d = today - timedelta(days=k)
+        iso = d.isoformat()
+        rows += [f"{iso},X,Ana,Server,17:00,23:00,6,6,6000,,9.5", f"{iso},X,Bo,Server,17:00,23:00,6,6,6000,,9.5",
+                 f"{iso},X,Cal,Line Cook,15:00,23:00,8,8,6000,,22", f"{iso},X,Erik Baylis,Manager FOH,16:00,23:00,7,7,6000,,"]
+        if d.weekday() == 4:
+            rows.append(f"{iso},X,Dee,Bartender,18:00,02:00,8,8,6000,,12")
+    models.save_client_data(rid, "shifts", "\n".join(rows) + "\n", source="upload", db_path=db_path)
+    import labor as _labor
+    by_day = _labor.full_history_by_day(rid)
+    models.save_labor_daily_history(rid, by_day, db_path=db_path)
+    nxt = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    fri = (nxt + timedelta(days=4)).isoformat()
+    _exec("INSERT INTO demand_signals (restaurant_id, date, kind, label, lift_pct, source) VALUES (?,?,?,?,?,?)",
+          (rid, fri, "event", "Homecoming", 30, "manual"))
+    import weather
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+    failures = []
+    monkeypatch.setattr(schedule_engine, "_soft_fail", lambda what, exc, r: failures.append((what, repr(exc))))
+    captured = {}
+
+    def fake(client, **kwargs):
+        import re as _re
+        captured.update(kwargs)
+        dates = _re.findall(r"- (\d{4}-\d{2}-\d{2}): ", kwargs["messages"][0]["content"])
+        body = "\n".join(f"{d},X,Ana,Server,5:00pm,11:00pm,6,x" for d in dates)
+        return _t.SimpleNamespace(content=[_t.SimpleNamespace(
+            text="date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + body
+                 + "\n---SUMMARY---\n- ok")], stop_reason="end_turn")
+    monkeypatch.setattr(_labor, "create_with_retry", fake)
+    monkeypatch.setattr(_labor, "extract_text", lambda m: m.content[0].text)
+    monkeypatch.setattr(_labor, "get_client", lambda *a, **k: None)
+    monkeypatch.setattr(_labor, "model_for", lambda k: "m")
+    result = schedule_engine._build_schedule_result(rid, week_start=nxt.isoformat())
+    mine = {"salaried_week", "date_demand", "staffing_baseline", "labor_standards"}
+    assert not [f for f in failures if f[0] in mine], failures
+    prompt = captured["messages"][0]["content"]
+    # D-1/D-2: the net budget at the measured wage, said.
+    assert result["budget_basis"]["kind"] == "all_in_less_salaries"
+    assert "salaried_week_cost" not in result["budget_basis"]
+    assert "counting salaries" in prompt and "Line Cook: $22.00/hr (POS pay)" in prompt
+    # D-4: the salaried manager's punches are no usual crew.
+    assert all("Manager FOH" not in roles for roles in result["typical_headcount"].values())
+    # D-23/P-19: the event Friday's numbers moved, with the reason, for the score too.
+    assert result["date_demand"][fri]["pct"] == 30
+    assert f"{fri}|night" in result["requirements_by_date"]
+    fri_night = next(r for r in result["requirements"] if r["date"] == fri and r["daypart"] == "night")
+    assert any("Homecoming" in x for x in fri_night["reasons"])
+    # D-32: a 2am Friday has its late row.
+    assert any(r["date"] == fri and r["daypart"] == "late" for r in result["requirements"])
+    # D-33: the freshness the gate read rides with the result.
+    assert result["demand_data_through"]["blocked"] is False and result["demand_data_through"]["line"]
