@@ -92,7 +92,10 @@ struct ScheduleHistoryDetailView: View {
                             .cavnarCard()
                         }
                         if let budget = detail.hoursBudget, budget > 0, let scheduled = detail.hoursScheduled {
-                            parHoursBanner(budget: budget, scheduled: scheduled)
+                            // The hourly hours against the hourly budget,
+                            // salaried said beside them (E-7/P-6).
+                            ParHoursCheck(budget: budget, scheduled: scheduled, hourly: detail.hoursHourly,
+                                          salaried: detail.hoursSalaried, basis: detail.budgetBasis?.value)
                         }
                         if let narrative = detail.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
                            !narrative.isEmpty {
@@ -445,29 +448,6 @@ struct ScheduleHistoryDetailView: View {
         // no-op if this id is already loaded/loading, so this costs
         // nothing on the common path where .task already handled it.
         .onAppear { Task { await viewModel.load(id: historyId) } }
-    }
-
-    private func parHoursBanner(budget: Double, scheduled: Double) -> some View {
-        let diff = scheduled - budget
-        let withinRange = abs(diff) <= max(budget * 0.05, 1)
-        return HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("PAR HOURS CHECK")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(1)
-                    .foregroundStyle(Color.cavnarGreen)
-                Text("Budgeted \(budget.commaFormatted)h for the week")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk2)
-            }
-            Spacer()
-            Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
-        }
-        .padding(10)
-        .background(Color.cavnarGreen.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

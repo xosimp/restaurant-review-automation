@@ -111,7 +111,7 @@ struct AccountMemoryView: View {
             if !rows.isEmpty {
                 AccountSection(kicker: MemoryKind.plural(kind)) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { i, fact in
-                        factRow(fact, showsDivider: i < rows.count - 1)
+                        factRow(fact, schedule: memory.scheduleLine(for: fact), showsDivider: i < rows.count - 1)
                     }
                 }
             }
@@ -121,13 +121,14 @@ struct AccountMemoryView: View {
         if !other.isEmpty {
             AccountSection(kicker: "Other") {
                 ForEach(Array(other.enumerated()), id: \.element.id) { i, fact in
-                    factRow(fact, showsDivider: i < other.count - 1)
+                    factRow(fact, schedule: memory.scheduleLine(for: fact), showsDivider: i < other.count - 1)
                 }
             }
         }
     }
 
-    private func factRow(_ fact: MemoryFact, showsDivider: Bool) -> some View {
+    private func factRow(_ fact: MemoryFact, schedule: (text: String, checked: Bool)? = nil,
+                         showsDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -136,6 +137,13 @@ struct AccountMemoryView: View {
                     HomeMixedText.make(fact.detailLine(viewerIsPrincipal: isPrincipal), size: 13.5, weight: 500,
                                        color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+                    // A staffing rule says how the schedule holds it — or
+                    // that it can't (schedule audit 10/3/26 D-14, D-38).
+                    if let schedule {
+                        HomeMixedText.make(schedule.text, size: 13.5, weight: 600,
+                                           color: schedule.checked ? .cavnarGreen : .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 8)
                 if fact.canForget {
@@ -266,6 +274,20 @@ struct AccountMemoryView: View {
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
                 .disabled(viewModel.adding || viewModel.draft.fact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                // The staffing rule just saved, said back as the schedule
+                // will check it — a rule read wrongly is caught now, not a
+                // week later (schedule audit 10/3/26 D-14).
+                if let rule = viewModel.lastScheduleRule {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: rule.checked ? "checkmark.circle.fill" : "exclamationmark.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(rule.checked ? Color.cavnarGreen : Color.cavnarAmber)
+                            .padding(.top, 2)
+                        HomeMixedText.make(rule.text, size: 14, weight: 600,
+                                           color: rule.checked ? .cavnarInk2 : .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .padding(.vertical, 9)
         }
@@ -373,8 +395,18 @@ struct AccountMemory: Decodable {
     var facts: [MemoryFact] = []
     var lanes: [MemoryLane] = []
     var archived: [ArchivedFact] = []
+    /// How the schedule reads each staffing rule shown (schedule audit
+    /// 10/3/26 D-14, D-38): the rules every draft is checked against, with
+    /// how, and the ones it can't check — an owner-only one only for an
+    /// account holder. Empty on an older server.
+    var scheduleReads: [OwnerRuleReadback] = []
+    var scheduleUnchecked: [String] = []
 
-    enum CodingKeys: String, CodingKey { case facts, lanes, archived }
+    enum CodingKeys: String, CodingKey {
+        case facts, lanes, archived
+        case scheduleReads = "schedule_reads"
+        case scheduleUnchecked = "schedule_unchecked"
+    }
 
     init() {}
 
@@ -383,6 +415,25 @@ struct AccountMemory: Decodable {
         facts = ((try? c.decodeIfPresent(HomeLenientList<MemoryFact>.self, forKey: .facts)) ?? nil)?.items ?? []
         lanes = ((try? c.decodeIfPresent(HomeLenientList<MemoryLane>.self, forKey: .lanes)) ?? nil)?.items ?? []
         archived = ((try? c.decodeIfPresent(HomeLenientList<ArchivedFact>.self, forKey: .archived)) ?? nil)?.items ?? []
+        scheduleReads = c.setupList(OwnerRuleReadback.self, .scheduleReads)
+        scheduleUnchecked = c.setupTexts(.scheduleUnchecked)
+    }
+
+    /// One line beside a staffing rule: how every draft checks it, or that
+    /// the schedule can't — nil for a fact the schedule doesn't read.
+    func scheduleLine(for fact: MemoryFact) -> (text: String, checked: Bool)? {
+        let key = Self.folded(fact.fact)
+        if let r = scheduleReads.first(where: { Self.folded($0.text ?? "") == key }), let reads = r.readsAs {
+            return ("Checked on every draft as: \(reads).", true)
+        }
+        if scheduleUnchecked.contains(where: { Self.folded($0) == key }) {
+            return ("Not checked by the schedule \u{2014} a draft is asked to follow it; check the week yourself.", false)
+        }
+        return nil
+    }
+
+    static func folded(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
     }
 }
 
@@ -554,9 +605,34 @@ final class AccountMemoryViewModel {
         /// True when the fact went to owners only because it is about
         /// someone's job or pay (owner_memory.is_private).
         var privateDefault: Bool? = nil
+        /// A staffing rule said back as the schedule will check it ("Checked
+        /// on every draft as: at least 2 Server PM on Sat at dinner/night.")
+        /// or that it can't be (schedule audit 10/3/26 D-14). Absent for
+        /// anything else, and on an older server.
+        var scheduleRule: ScheduleRuleReadback? = nil
         enum CodingKeys: String, CodingKey {
             case ok, error, evicted
             case privateDefault = "private_default"
+            case scheduleRule = "schedule_rule"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.setupBool(.ok) ?? false
+            error = c.setupText(.error)
+            evicted = c.setupInt(.evicted)
+            privateDefault = c.setupBool(.privateDefault)
+            scheduleRule = (try? c.decodeIfPresent(ScheduleRuleReadback.self, forKey: .scheduleRule)) ?? nil
+        }
+    }
+
+    struct ScheduleRuleReadback: Decodable, Equatable {
+        let checked: Bool
+        let text: String
+        enum CodingKeys: String, CodingKey { case checked, text }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            checked = c.setupBool(.checked) ?? false
+            text = c.setupText(.text) ?? ""
         }
     }
     private struct FactBody: Encodable { let fact: String }
@@ -572,6 +648,9 @@ final class AccountMemoryViewModel {
     var busyId: Int?
     /// The posted check's words after a save.
     var posted: String?
+    /// The last staffing rule added, as the schedule will check it — kept
+    /// under the form until the next add, since the posted check fades.
+    var lastScheduleRule: ScheduleRuleReadback?
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
@@ -619,6 +698,7 @@ final class AccountMemoryViewModel {
                                                        body: body, retryTransient: false)
             guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return }
             Haptic.success()
+            lastScheduleRule = (r.scheduleRule?.text.isEmpty ?? true) ? nil : r.scheduleRule
             draft = Draft()
             if r.privateDefault == true {
                 posted = "Remembered for owners only \u{2014} it is about someone\u{2019}s job or pay. "

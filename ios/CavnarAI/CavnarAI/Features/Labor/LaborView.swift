@@ -958,7 +958,11 @@ struct LaborView: View {
                         .padding(.top, 2)
                     }
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
-                        parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
+                        // The hourly crew's budget against the hourly hours
+                        // (schedule audit 10/3/26 D-1, E-7/P-6, E-24).
+                        ParHoursCheck(budget: budget, scheduled: scheduled, hourly: result.hoursHourly,
+                                      salaried: result.hoursSalaried, dollars: result.laborBudgetDollars,
+                                      basis: result.budgetBasis?.value)
                     }
                     // Cost, the budget trim, staggered starts, and what the
                     // forecast could not see — each only when the payload
@@ -1095,29 +1099,6 @@ struct LaborView: View {
             parts.append(open > 0 ? "\(open) still need\(open == 1 ? "s" : "") you" : "ready to send")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
-    }
-
-    private func parHoursBanner(budget: Double, scheduled: Double, dollars: Double?) -> some View {
-        let diff = scheduled - budget
-        let withinRange = abs(diff) <= max(budget * 0.05, 1)
-        return HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("PAR HOURS CHECK")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(1)
-                    .foregroundStyle(Color.cavnarGreen)
-                Text("Budgeted \(budget.commaFormatted)h\(dollars.map { " ($\($0.commaFormatted))" } ?? "") for the week")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk2)
-            }
-            Spacer()
-            Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
-        }
-        .padding(10)
-        .background(Color.cavnarGreen.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     // The Shift Strength banner is gone. It ran a second leadership check
@@ -1793,10 +1774,16 @@ private struct LaborSetupSheet: View {
                             .id(Self.availabilityID)
                         DemandSignalsSection(viewModel: setupViewModel) { reveal(Self.demandID, proxy) }
                             .id(Self.demandID)
+                        // Next week as the draft will be handed it, and the
+                        // work per person-hour the requirements are sized
+                        // by (schedule audit 10/3/26 D-1, D-24, D-25).
+                        ForecastPreviewSection(store: setupViewModel.teamSetup)
+                        LaborStandardsSection(store: setupViewModel.teamSetup)
                         // Rating the team, then the targets those ratings
                         // feed — a target means nothing before anyone is
                         // rated, and the targets editor says so.
-                        TeamStrengthSection(viewModel: viewModel) { reveal(Self.teamID, proxy) }
+                        TeamStrengthSection(viewModel: viewModel, setup: setupViewModel.teamSetup,
+                                            rolesFor: rolesByName) { reveal(Self.teamID, proxy) }
                             .id(Self.teamID)
                         ShiftTargetsSection(viewModel: viewModel) { reveal(Self.targetsID, proxy) }
                             .id(Self.targetsID)
@@ -1830,5 +1817,13 @@ private struct LaborSetupSheet: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
         }
+    }
+
+    /// The roles each person worked lately, from the roster — what the
+    /// team's per-role ratings offer (schedule audit 10/3/26 D-12).
+    private var rolesByName: [String: [String]] {
+        var out: [String: [String]] = [:]
+        for m in setupViewModel.roster { out[m.name] = ([m.role ?? ""] + (m.recentRoles ?? [])).filter { !$0.isEmpty } }
+        return out
     }
 }

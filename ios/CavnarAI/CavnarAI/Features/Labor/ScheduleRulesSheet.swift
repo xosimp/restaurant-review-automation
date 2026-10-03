@@ -27,15 +27,34 @@ struct ScheduleRulesSheet: View {
     @State private var cutFloor = 2
     @State private var reservationProvider: String = ""
     @State private var reservationKey: String = ""
+    // Schedule audit 10/3/26: one "stays until close + N" per role (D-43)
+    // and the salaried cap (E-12) — each sent only once the owner touched
+    // it, so an unrelated save never settles a close conflict for them.
+    @State private var stays: [String: String] = [:]
+    @State private var staysEdited = false
+    @State private var salariedCap = ""
+    @State private var capEdited = false
+    @State private var showingClosers = false
+    @State private var standingFor: StandingPerson?
+    /// What "Suggest from history" filled in, said until the next save.
+    @State private var floorNote: String?
+
+    private struct StandingPerson: Identifiable { let name: String; var id: String { name } }
 
     /// Every rule, in the order an owner would read them, with the label
     /// and the unit the number is in. Mirrors the keys the API names.
     private static let fields: [(key: String, label: String, hint: String)] = [
         ("min_rest_hours", "Rest between shifts", "hours"),
         ("max_shift_hours", "Longest shift", "hours"),
+        // The shortest shift the owner wants; blank is no rule (schedule
+        // audit 10/3/26 E-16).
+        ("min_shift_hours", "Shortest shift", "hours"),
         ("daily_ot_hours", "Daily overtime after", "hours"),
         ("meal_break_after_hours", "Meal break after", "hours"),
         ("weekly_hours_ceiling", "Hours a week, at most", "hours"),
+        // What "full-time" means for someone with no minimum of their own
+        // (schedule audit 10/3/26 D-41); 0 is no minimum.
+        ("full_time_min_hours", "Full-time means at least", "hours a week"),
         ("max_consecutive_days", "Days in a row, at most", "days"),
         ("notice_days", "Notice before the week starts", "days — a week inside it is held"),
         ("minor_latest_end", "Minors finish by", "time"),
@@ -57,6 +76,23 @@ struct ScheduleRulesSheet: View {
                         jurisdictionSection
                         rulesSection
                         managerSection
+                        // Who counts as the manager on the floor, and the
+                        // managers whose days are nowhere on file (F1-1).
+                        RulesManagersSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules,
+                                             onChanged: { Task { await viewModel.loadRoster() } },
+                                             onOpenPerson: { standingFor = StandingPerson(name: $0) })
+                        RulesClosingSection(store: viewModel.teamSetup, roles: roles, stays: $stays,
+                                            edited: $staysEdited, focus: $focused,
+                                            onOpenClosers: { showingClosers = true })
+                        if viewModel.canEditRules {
+                            RulesSalariedSection(store: viewModel.teamSetup, cap: $salariedCap, edited: $capEdited,
+                                                 focus: $focused, canEdit: viewModel.canEditRules,
+                                                 ownMax: ownMaxHours)
+                            // The rule's words are the owner's — a private
+                            // one never reaches anyone else (D-38).
+                            RulesOwnerRulesSection(rules: viewModel.teamSetup.ownerRules,
+                                                   unchecked: viewModel.teamSetup.ownerRulesUnchecked)
+                        }
                         floorsSection
                         cutFloorSection
                         arrivalsSection
@@ -110,12 +146,33 @@ struct ScheduleRulesSheet: View {
         .task {
             await viewModel.loadRules()
             syncUnlessEdited()
+            // The salaried list is the owner's alone; another login is sent none.
+            if viewModel.canEditRules { await viewModel.teamSetup.loadSalaried() }
+            if viewModel.roster.isEmpty { await viewModel.loadRoster() }
         }
         // A reload (a save's answer, another device's change) refreshes
         // the fields only while the manager hasn't touched them. It used to
         // re-sync unconditionally whenever nothing had been synced into
         // `drafts` yet, replacing a jurisdiction or floor mid-edit (CLIENT-60).
         .onChange(of: viewModel.rules) { _, _ in syncUnlessEdited() }
+        .sheet(isPresented: $showingClosers, onDismiss: {
+            Task { await viewModel.loadRules(); await viewModel.loadRoster() }
+        }) {
+            CloserCleanupSheet(viewModel: viewModel)
+        }
+        .sheet(item: $standingFor, onDismiss: { Task { await viewModel.loadRules() } }) { person in
+            RosterDetailSheet(viewModel: viewModel, name: person.name)
+        }
+    }
+
+    /// Each person's own weekly maximum, where the owner set one — the
+    /// salaried list says it instead of the cap.
+    private var ownMaxHours: [String: Double] {
+        var out: [String: Double] = [:]
+        for m in viewModel.roster {
+            if let v = m.settings?.maxHours, v > 0 { out[m.name] = v }
+        }
+        return out
     }
 
     // MARK: Jurisdiction
@@ -463,6 +520,16 @@ struct ScheduleRulesSheet: View {
         }
     }
 
+    /// The line under a rule: its default, or for the two that have none
+    /// worth stating, what blank and zero mean.
+    private func subline(_ key: String, placeholder: String, hint: String, isTime: Bool) -> String {
+        switch key {
+        case "min_shift_hours": return "1\u{2013}12 hours \u{00B7} blank: no shortest shift"
+        case "full_time_min_hours": return "default \(placeholder) \(hint) \u{00B7} 0: no minimum"
+        default: return "default \(placeholder)\(isTime ? "" : " \(hint)")"
+        }
+    }
+
     private func ruleRow(_ key: String, label: String, hint: String, showsDivider: Bool) -> some View {
         let placeholder = viewModel.ruleDefaults[key]?.display ?? "—"
         let isTime = hint == "time"
@@ -470,7 +537,8 @@ struct ScheduleRulesSheet: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
-                    HomeMixedText.make("default \(placeholder)\(isTime ? "" : " \(hint)")", size: 13, color: .cavnarInk3.opacity(0.8))
+                    HomeMixedText.make(subline(key, placeholder: placeholder, hint: hint, isTime: isTime),
+                                       size: 13, color: .cavnarInk3.opacity(0.8))
                 }
                 Spacer(minLength: 8)
                 TextField(placeholder, text: binding(for: key))
@@ -502,7 +570,11 @@ struct ScheduleRulesSheet: View {
 
     private var roles: [String] {
         var out = viewModel.ruleRoles
+        // The roster's roles, so a restaurant that set nothing yet still
+        // has a row per role to set.
+        for role in viewModel.teamSetup.rosterRoles where !out.contains(role) { out.append(role) }
         for role in floors.keys where !out.contains(role) { out.append(role) }
+        for role in stays.keys.sorted() where !out.contains(role) { out.append(role) }
         for role in arrivals.keys where !out.contains(role) { out.append(role) }
         for role in requirements.keys where !out.contains(role) { out.append(role) }
         for role in crossTraining.keys.sorted() where !out.contains(role) { out.append(role) }
@@ -516,6 +588,48 @@ struct ScheduleRulesSheet: View {
                 .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
+            // Floors from the last eight weeks, filled into the empty
+            // boxes for the owner to check — saved only with Save rules
+            // (schedule audit 10/3/26 D-42).
+            if viewModel.canEditRules {
+                Button {
+                    Task { await suggestFloors() }
+                } label: {
+                    Group {
+                        if viewModel.teamSetup.isSuggestingFloors {
+                            CavnarShimmerText(text: "Reading your history\u{2026}")
+                        } else {
+                            HStack(spacing: 6) {
+                                Image(systemName: "wand.and.stars").font(.system(size: 12, weight: .semibold))
+                                Text("Suggest from history")
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.teamSetup.isSuggestingFloors))
+                .disabled(viewModel.teamSetup.isSuggestingFloors)
+            }
+            if let note = floorNote {
+                HomeMixedText.make(note, size: 13.5, weight: 600, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = viewModel.teamSetup.floorSuggestError {
+                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // Floors that ask for more servers than there are sections —
+            // no schedule can hold both (schedule audit 10/3/26 P-29).
+            ForEach(viewModel.teamSetup.floorCapConflicts) { conflict in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    HomeMixedText.make(conflict.sentence, size: 13.5, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if roles.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
                     .font(.cavnarBody(14))
@@ -669,6 +783,36 @@ struct ScheduleRulesSheet: View {
             })
     }
 
+    /// "Suggest from history": each box the owner left empty takes the
+    /// history's figure; a floor already set is never replaced. Nothing is
+    /// saved until Save rules.
+    private func suggestFloors() async {
+        floorNote = nil
+        guard let s = await viewModel.teamSetup.suggestFloors() else { return }
+        var next = floors
+        var filled = 0
+        for (role, spec) in s.floors {
+            let key = next.keys.first { $0.caseInsensitiveCompare(role) == .orderedSame } ?? role
+            var f = next[key] ?? RoleFloor()
+            if (f.morning ?? 0) == 0, let v = spec.morning, v > 0 { f.morning = v; filled += 1 }
+            if (f.night ?? 0) == 0, let v = spec.night, v > 0 { f.night = v; filled += 1 }
+            for (day, d) in spec.days ?? [:] {
+                var days = f.days ?? [:]
+                var one = days[day] ?? DayFloor()
+                if one.morning == nil, let v = d.morning { one.morning = v; filled += 1 }
+                if one.night == nil, let v = d.night { one.night = v; filled += 1 }
+                days[day] = one
+                f.days = days
+            }
+            next[key] = f
+        }
+        floors = next
+        floorNote = filled == 0
+            ? "Your floors already cover what your history suggests \u{2014} nothing was filled in."
+            : "Filled \(filled) \(filled == 1 ? "box" : "boxes") from your history. "
+                + (s.note ?? "Check each before you save it.") + " Not saved until you tap Save rules."
+    }
+
     // MARK: Sync & parse
 
     /// What the fields said right after the last sync — so an edit since
@@ -709,6 +853,18 @@ struct ScheduleRulesSheet: View {
         cutFloor = viewModel.cutFloorDefault
         reservationProvider = viewModel.reservationFeed?.provider ?? ""
         reservationKey = ""
+        let setup = viewModel.teamSetup
+        stays = setup.roleCloseMins.filter { $0.value > 0 }.mapValues(String.init)
+        staysEdited = false
+        // Blank shows the default as its placeholder; a cap the owner set
+        // shows as typed.
+        if let cap = setup.salariedCap, cap != setup.salariedCapDefault {
+            salariedCap = RulesSalariedSection.hours(cap)
+        } else {
+            salariedCap = ""
+        }
+        capEdited = false
+        floorNote = nil
     }
 
     /// Everything on the sheet, in one body. A setting that matches what
@@ -739,6 +895,18 @@ struct ScheduleRulesSheet: View {
             p.reservationProvider = .some(reservationProvider.isEmpty ? nil : reservationProvider)
             if !reservationKey.isEmpty { p.reservationApiKey = .some(reservationKey) }
         }
+        if staysEdited {
+            var minutes: [String: Int] = [:]
+            for (role, text) in stays {
+                if let n = Int(text.trimmingCharacters(in: .whitespaces)), n > 0 { minutes[role] = min(240, n) }
+            }
+            p.roleCloseMins = minutes
+        }
+        if capEdited {
+            let text = salariedCap.trimmingCharacters(in: .whitespaces)
+            p.salariedCap = .some(text.isEmpty ? nil
+                                  : (NumberFormatter.cavnarDecimal.number(from: text)?.doubleValue ?? Double(text)))
+        }
         return p
     }
 
@@ -755,6 +923,10 @@ struct ScheduleRulesSheet: View {
                 out[key] = .string(trimmed)
             }
         }
+        // A blank shortest shift is no rule — said, because the server
+        // keeps a value a save does not send (an owner's edit never
+        // vanishes behind an older screen).
+        if out["min_shift_hours"] == nil { out["min_shift_hours"] = .null }
         return out
     }
 

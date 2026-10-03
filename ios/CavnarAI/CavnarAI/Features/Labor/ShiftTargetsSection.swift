@@ -65,7 +65,10 @@ struct ShiftTargetsSection: View {
 
     private var thresholdEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("The combined score of everyone in a role on one shift. Leave a role blank to set no target for it.")
+            // A target is judged per person against the largest crew of
+            // the role (schedule audit 10/3/26 SQ-3/SQ-4): a lunch with one
+            // bartender is asked for a 4, not for the whole 8.
+            Text("Set each role\u{2019}s total for its biggest crew on a shift. Cavnar AI judges it per person: 8 across your largest bartender crew of 2 is about 4 a person, so a lunch with one bartender asks for a 4, not an 8. Leave a role blank to set no target.")
                 .font(.cavnarBody(13.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -160,6 +163,21 @@ struct ShiftTargetsSection: View {
                 .padding(.vertical, 2)
             }
 
+            // What the last save said about a rule the team can't meet
+            // ("Only 1 Bartender AM scores 5 or above, so this rule can't
+            // be met on 6 of its 7 shifts") — saved anyway, never dropped
+            // later in silence (schedule audit 10/3/26 D-11).
+            ForEach(viewModel.leaderRuleWarnings, id: \.self) { warning in
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .padding(.top, 2)
+                    HomeMixedText.make(warning, size: 13, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Button {
                 Haptic.light()
                 showingAddRule = true
@@ -175,7 +193,7 @@ struct ShiftTargetsSection: View {
             .buttonStyle(.plain)
         }
         .sheet(isPresented: $showingAddRule) {
-            LeaderRuleEditor(roles: viewModel.teamRoles) { rule in
+            LeaderRuleEditor(roles: viewModel.teamRoles, defaultMinScore: viewModel.leaderRuleDefaultMinScore) { rule in
                 rules.append(rule)
             }
         }
@@ -258,8 +276,16 @@ private struct LeaderRuleEditor: View {
     @State private var role = ""
     @State private var days: Set<String> = []
     @State private var daypart = ""
-    @State private var minScore = 5.0
+    /// Starts at the server's default bar (4 — a 5 is rarely meetable,
+    /// schedule audit 10/3/26 D-11).
+    @State private var minScore: Double
     @State private var count = 1
+
+    init(roles: [String], defaultMinScore: Double = 4, onAdd: @escaping (ShiftLeaderRule) -> Void) {
+        self.roles = roles
+        self.onAdd = onAdd
+        _minScore = State(initialValue: defaultMinScore)
+    }
 
     var body: some View {
         NavigationStack {

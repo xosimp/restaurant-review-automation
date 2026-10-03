@@ -574,11 +574,18 @@ extension RosterSection {
 
 // MARK: - Detail sheet
 
-/// One person's settings, saved a field at a time as they change.
-private struct RosterDetailSheet: View {
+/// One person's settings, saved a field at a time as they change. Opened
+/// from a roster row, and from the rules sheet's "Which days and hours do
+/// … work?" (schedule audit 10/3/26 D-5).
+struct RosterDetailSheet: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     let name: String
     @Environment(\.dismiss) private var dismiss
+
+    init(viewModel: ScheduleSetupViewModel, name: String) {
+        self.viewModel = viewModel
+        self.name = name
+    }
 
     @State private var active = true
     @State private var isMinor = false

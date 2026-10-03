@@ -2285,15 +2285,20 @@ def _do_compliance_get(u):
             "salaried_cap": _sr.salaried_cap(r), "salaried_cap_default": _sr.SALARIED_CAP_DEFAULT,
             "salaried_cap_bounds": list(_sr.SALARIED_CAP_BOUNDS),
             "closer_roles": _sr.closer_roles(r),
-            **_setup_payload(_rid(u))}, 200
+            **_setup_payload(_rid(u), principal=_principal(u))}, 200
 
 
-def _setup_payload(rid) -> dict:
+def _setup_payload(rid, principal=True) -> dict:
     """What the rules screen confirms with the owner (schedule audit
     10/3/26 F1): "Managers: …" and who was left out, the closers per role
     with the data-quality warning, each staffing rule as it is checked, and
     trading days with no close time. One read of next week's rules; a
-    failure costs these keys, never the screen."""
+    failure costs these keys, never the screen.
+
+    A staffing rule the owner kept to the account holders (D-38) is read
+    back to an account holder only (`principal`): its words never travel,
+    and every login that can see labor reads this screen (UI wave 10/3/26 —
+    the read-back sent them to all of them)."""
     try:
         import schedule_setup as _setup
         c = _setup._constraints(rid)
@@ -2303,7 +2308,8 @@ def _setup_payload(rid) -> dict:
                 "closers": {k: cr[k] for k in ("by_role", "flagged", "roster", "share", "warning", "closer_roles",
                                                "closer_roles_basis", "closer_roles_in_force", "outside_roles",
                                                "pending_admin")},
-                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules],
+                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules
+                                if principal or not x.get("private")],
                 "owner_rules_unchecked": list(c.owner_rules_unchecked),
                 "close_times_missing": _setup.close_times_missing(c),
                 "role_families": dict(c.role_families)}
@@ -4451,7 +4457,36 @@ def _do_memory_list(u):
         before = int(raw) if raw else None
     except (TypeError, ValueError):
         return {"ok": False, "error": "archive_before must be a number"}, 400
-    return {"ok": True, **owner_memory.account_view(_rid(u), u, archive_before=before)}, 200
+    out = {"ok": True, **owner_memory.account_view(_rid(u), u, archive_before=before)}
+    out.update(_memory_schedule_checks(u, out.get("facts") or []))
+    return out, 200
+
+
+def _memory_schedule_checks(u, facts) -> dict:
+    """How the schedule reads the staffing rules beside them on Account →
+    Memory (schedule audit 10/3/26 D-14, D-38; UI wave): `schedule_reads`
+    [{text, reads_as}] for each rule every draft is checked against, and
+    `schedule_unchecked` [text] for the ones it can't check — the owner
+    checks the week against those. An owner-only rule is said to an account
+    holder only (its words are theirs), which is where the owner-only ones
+    the schedule can't check had no surface at all. Nothing is built when no
+    fact shown is a staffing rule; a failure costs these keys, never the
+    list."""
+    import owner_memory
+    if not any(f.get("kind") in owner_memory.RULE_KINDS
+               and set(f.get("modules") or []) & {"labor", "schedule"} for f in facts):
+        return {}
+    try:
+        import schedule_setup as _setup
+        c = _setup._constraints(_rid(u))
+    except Exception as e:
+        print(f"[memory] schedule checks unavailable for {_rid(u)}: {e!r}")
+        return {}
+    principal = _principal(u)
+    return {"schedule_reads": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules
+                               if x.get("reads_as") and (principal or not x.get("private"))],
+            "schedule_unchecked": list(c.owner_rules_unchecked)
+            + (list(c.owner_rules_unchecked_private) if principal else [])}
 
 
 def _do_memory_forget(u):
