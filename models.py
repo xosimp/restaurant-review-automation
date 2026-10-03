@@ -7051,20 +7051,33 @@ def get_staff_notes(restaurant_id: int, db_path: str = DB_PATH, include_expired:
     return out
 
 
-def staff_note_line(note: dict) -> str:
+def staff_note_line(note: dict, iso: bool = False) -> str:
     """"Maria G.: mornings only (noted 5/2/26); out until 6/1 (noted 5/20/26,
     ends 6/1/26)" — the one way both prompts print a person's constraints,
     each with the day it was noted (memory audit 9/29/26). Ended ones are
-    never passed here (get_staff_notes leaves them out)."""
+    never passed here (get_staff_notes leaves them out). `iso` writes those
+    dates as weekday and ISO date ("noted Sat 2026-05-02") — the schedule
+    prompt's one date format (schedule audit 10/3/26 PR-20); the person's
+    own words are as they wrote them either way."""
+    def _when(iso_d, label):
+        if iso and iso_d:
+            try:
+                d = datetime.strptime(str(iso_d)[:10], "%Y-%m-%d")
+                return f"{d.strftime('%a')} {d.strftime('%Y-%m-%d')}"
+            except ValueError:
+                pass
+        return label
     bits = []
-    for p in note.get("parts") or [{"text": note.get("notes"), "noted_label": note.get("noted")}]:
+    for p in note.get("parts") or [{"text": note.get("notes"), "noted_label": note.get("noted"),
+                                    "noted": note.get("noted_on")}]:
         if p.get("ended") or not str(p.get("text") or "").strip():
             continue
         when = []
-        if p.get("noted_label"):
-            when.append(f"noted {p['noted_label']}")
-        if p.get("expires_label"):
-            when.append(f"ends {p['expires_label']}")
+        noted, ends = _when(p.get("noted"), p.get("noted_label")), _when(p.get("expires"), p.get("expires_label"))
+        if noted:
+            when.append(f"noted {noted}")
+        if ends:
+            when.append(f"ends {ends}")
         bits.append(str(p["text"]).strip().rstrip(" ;") + (f" ({', '.join(when)})" if when else ""))
     return f"{note.get('employee_name')}: " + "; ".join(bits)
 

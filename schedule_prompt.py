@@ -122,9 +122,13 @@ def model_text(text, limit: int = 240) -> str:
 
 # ── the standing instructions (identical on every call) ─────────────────────
 
-def _clock(m) -> str:
+def clock(m) -> str:
+    """"4:30pm" for minutes past midnight (a close past midnight wraps)."""
     h, mm = divmod(int(m) % (24 * 60), 60)
     return f"{(h % 12) or 12}:{mm:02d}{'am' if h < 12 else 'pm'}"
+
+
+_clock = clock
 
 
 LAYOUT = (
@@ -311,9 +315,9 @@ PRIORITIES = (
     "  1. Hard constraints — never broken for anything below:\n"
     "     1a. A manager or owner on the floor every minute anyone is scheduled — the owner's highest staffing rule: "
     "somebody is always in charge of the floor. It gives way only to a manager's own availability and time off and "
-    "the legal limits on their hours and rest. The managers' shifts are planned in MANAGER COVERAGE: keep those "
-    "rows exactly and write no second shift for those managers on those dates; a stretch it says no manager can "
-    "legally cover is staffed as usual, and the owner is told.\n"
+    "the legal limits on their hours and rest. Where MANAGER COVERAGE plans the managers' shifts, keep those rows "
+    "exactly and write no second shift for those managers on those dates; a stretch it says no manager can legally "
+    "cover is staffed as usual, and the owner is told.\n"
     "     1b. Employee availability and approved time off (the person cannot be there), STAFF CONSTRAINTS, closed "
     "dates, every [HARD] rule and each person's limits in the ROSTER (a minor's hours and a short rest are the "
     "owner's legal exposure), and the RESTAURANT HOURS & SHIFT RULES' opening, closing and arrival times.\n"
@@ -368,8 +372,9 @@ ROSTER_HEAD = (
     "stations they hold — and nothing else; a role that needs a certificate they lack is left out. AVAILABLE is "
     "every day they can work unless it says otherwise: a weekday off, a daypart only, a time window, approved time "
     "off (all [HARD]), and a day they asked off that the owner has not decided ([SOFT]: avoid it if the day can be "
-    "covered). HOURS: MIN-MAX for the week ([SOFT] minimum, [HARD] maximum), OT the overtime line, hours already "
-    "published in a payroll week this week shares, and the room left before overtime. SCORE is the owner's 1-5 "
+    "covered). HOURS: MIN-MAX for the week ([SOFT] minimum, [HARD] maximum), OT where overtime starts below that "
+    "maximum, hours already published in a payroll week this week shares and the room it leaves; \"-\" is the "
+    "restaurant's default — up to {ceiling}h, overtime past {ot}h. SCORE is the owner's 1-5 "
     "rating (\"-\" unrated: unknown, neither strong nor weak — never a reason to leave them off). EXPERIENCE: "
     "experienced ({exp}+ shifts here or marked by the owner) or developing (under {dev}): put a developing person on "
     "with an experienced hand of their role, never two developing together on a busy shift. CLOSES: the roles they "
@@ -379,7 +384,7 @@ ROSTER_HEAD = (
     "shifts on watched nights, recent ones counting most.")
 
 
-def roster_table(people: list, held_shifts: int = 8) -> str:
+def roster_table(people: list, held_shifts: int = 8, ceiling: float = 40.0, ot: float = 40.0) -> str:
     """The ROSTER block: one line per person, every column filled from the
     person's facts (labor._roster_people), nobody dropped by a cap (PR-33).
     `people` is [{name, role, manager, can_work, available, hours, score,
@@ -394,7 +399,8 @@ def roster_table(people: list, held_shifts: int = 8) -> str:
                                                 ("can_work", "available", "hours", "score", "experience", "closes",
                                                  "usual", "wants", "reliability")]
         lines.append("  " + " | ".join(str(c).replace("|", "/") for c in cells))
-    head = ROSTER_HEAD.format(n=len(people), held=held_shifts, exp=_sq.EXPERIENCE_SHIFTS, dev=_sq.DEVELOPING_SHIFTS)
+    head = ROSTER_HEAD.format(n=len(people), held=held_shifts, exp=_sq.EXPERIENCE_SHIFTS, dev=_sq.DEVELOPING_SHIFTS,
+                              ceiling=f"{float(ceiling):g}", ot=f"{float(ot):g}")
     return "\n\n" + head + "\n" + "\n".join(lines)
 
 

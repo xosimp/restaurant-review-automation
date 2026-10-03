@@ -4354,7 +4354,8 @@ def person_facts(c: Constraints, names=None) -> dict:
         f = {"manager": c.managers.get(key), "acting": sorted(c.acting_managers.get(key) or ()),
              "salaried": salaried, "cap": float(c.salaried_limit(name)) if salaried else None,
              "min": float(lim[0]) if lim[0] else None,
-             "max": float(c.max_hours(name)) if c.max_hours(name) else None,
+             "max": float(c.max_hours(name)) if c.max_hours(name) else None, "own_max": bool(lim[1]),
+             "ceiling": float(c.compliance.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"]),
              "ot": None if salaried else float(overtime_line(c, name) or _OT),
              "employment": c.employment.get(key), "full_time_default": key in c.full_time_default,
              "minor": (c.minor_bands.get(key) or "minor") if key in c.minors else None}

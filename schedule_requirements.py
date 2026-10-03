@@ -479,14 +479,18 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
 
 
 def requirements_block(rows: list) -> str:
-    """The SHIFT REQUIREMENTS table: one line per shift."""
+    """The SHIFT REQUIREMENTS table: one line per shift. How coverage is
+    counted, the half-hour ramp and the late-night line are standing
+    instructions (schedule_prompt, the same on every call); the table is
+    this request's numbers and why they moved, each said once (schedule
+    audit 10/3/26 PR-7, PR-8, PR-24)."""
     if not rows:
         return ""
     lines = []
     for r in rows:
         people = ", ".join(f"{x['role']} {x['required']}" + (f" (floor {x['floor']})" if x["floor"] else "")
                            + (" (borrowed)" if x.get("borrowed") else "")
-                           + (f" ({x['reason']})" if x.get("reason") else "")
+                           + (f" ({_model_words(x['reason'])})" if x.get("reason") else "")
                            for x in r["roles"])
         label = _PART_LABEL.get(r["daypart"], r["daypart"])
         if r.get("window"):
@@ -505,31 +509,25 @@ def requirements_block(rows: list) -> str:
         # the sales-per-labor-hour hold, the section cap) — said once, here,
         # in the row it moved (schedule audit 10/3/26 PR-7, PR-8).
         if r.get("reasons"):
-            bits.append("why: " + "; ".join(r["reasons"]))
+            bits.append("why: " + "; ".join(_model_words(x) for x in r["reasons"]))
         lines.append(" | ".join(bits))
-    return ("\n\nSHIFT REQUIREMENTS — priority 2. One line per shift you are writing: the people each role "
-            "needs on it, the day's hours target, the demand level the shift is scored at, and who it needs "
-            "to run it. Each role's number is the larger of the owner's staffing floor and what this "
-            "restaurant typically runs on that weekday and daypart, already moved by that date's measured "
-            "demand where it differs from a typical one (\"why:\" says by what); \"(floor N)\" marks the "
-            "owner's hard minimum inside it. Schedule to these numbers — they already carry every event, "
-            "holiday and measured volume change on the date — and never above them to use up hours. A "
-            "\"late night\" line is the people on from 10pm to close on a late-closing night: they count in "
-            "the night's number too.\n"
-            "  Coverage is counted by who is on the floor. " + presence_rule() + " The owner's floors are "
-            "also checked half-hour by half-hour across each daypart, so a floor must hold from opening "
-            "through close, not only at the peak.\n"
-            "  The day target is that day's share of the weekly hours budget: use up to it when the day's "
-            "shifts need the hours to meet these numbers, and leave it unspent when they do not — a day "
-            "under its target with every shift covered is a good day.\n"
-            + (_HALF_HOUR_NOTE if any(r.get("half_hours") for r in rows) else "")
-            + "\n".join(lines))
+    return ("\n\nSHIFT REQUIREMENTS — priority 2. One line per shift of this request: the people each role needs on "
+            "it (\"(floor N)\" the owner's hard minimum inside the number, \"(borrowed)\" a figure lent by similar "
+            "restaurants, \"(usual N)\" what the number was before this date's demand moved it), the date's hours "
+            "target, the demand level the shift is scored at, who it needs to run it, its half-hour numbers and why "
+            "a number moved. Schedule to these numbers — they already carry every event, holiday, measured volume "
+            "change and staffing ask on the date — and never above them to use up hours. The day target is that "
+            "day's share of the weekly hours budget: use up to it when the day's shifts need the hours to meet these "
+            "numbers, and leave it unspent when they do not — a day under its target with every shift covered is a "
+            "good day.\n" + "\n".join(lines))
 
 
-_HALF_HOUR_NOTE = ("  \"by the half hour\" is how many of a role that shift needs on at once as its sales climb "
-                   "and fall — read from this restaurant's hourly sales and interpolated to the half hour: \"Server "
-                   "2 from 11:00am, 4 from 12:00pm\" means two on from eleven and four from noon. Stagger starts "
-                   "and ends to follow it; the shift's number above is its whole crew across the daypart.\n")
+def _model_words(text) -> str:
+    """A reason as the model may read it: one line, its fence markers
+    broken — an event's label in it is the owner's (or a catalog's) words,
+    shown unfenced inside the table row (ai_guard)."""
+    import ai_guard
+    return ai_guard._neutralise_markers(" ".join(str(text or "").split())[:240])
 
 
 def experience_block(tenure: dict, names: list, leader_flags: dict = None,
@@ -668,10 +666,29 @@ def presence_rule() -> str:
             f"11:30am-7:00pm shift counts at lunch AND at dinner; a 10:00am-5:00pm shift counts at lunch only.")
 
 
-def seam_lines(prior_rows: list, busy: set = None) -> list:
-    """Per person, what the earlier parts of a chunked week already gave
-    them: hours, days, their last shift, and the closes, weekend shifts and
-    busy shifts that fairness is scored on across the whole week.
+def _weekday_span(dates) -> str:
+    """"Mon-Tue" for a run of dates, "Mon/Wed" otherwise."""
+    ds = sorted({str(d)[:10] for d in (dates or []) if d})
+    if not ds:
+        return ""
+    names = [_day_name(d)[:3] for d in ds]
+    try:
+        run = (datetime.strptime(ds[-1], "%Y-%m-%d") - datetime.strptime(ds[0], "%Y-%m-%d")).days == len(ds) - 1
+    except ValueError:
+        run = False
+    return f"{names[0]}-{names[-1]}" if len(ds) > 1 and run else "/".join(names)
+
+
+def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_weeks: dict = None) -> list:
+    """Per person, what the earlier parts of a chunked week (or the kept days
+    of a redo) already gave them: hours, days, their last shift, and the
+    closes, weekend shifts and busy shifts that fairness is scored on across
+    the whole week — and, with `limits` ({name: {min, ot, salaried, cap,
+    carried {payroll week: hours already published}}}), what they still
+    need to reach their minimum and the room left before overtime in each
+    payroll week the week touches (`payroll_weeks` {date: payroll week};
+    schedule audit 10/3/26 PR-4, PR-16, E-9, D-19: the seam said "Xh so
+    far" and nothing about what that left).
 
     A close is a shift ending within 30 minutes of the latest end that day
     (the rotation ledger's tolerance). busy is {(date, daypart)}; without it
@@ -685,24 +702,28 @@ def seam_lines(prior_rows: list, busy: set = None) -> list:
             e += 24 * 60
         d = pr.get("date") or ""
         latest[d] = max(latest.get(d, -1), e)
+    weeks = dict(payroll_weeks or {})
     seen = {}
     for pr in prior_rows or []:
         nm = (pr.get("employee") or "").strip()
         if not nm:
             continue
         e = seen.setdefault(nm, {"hours": 0.0, "days": set(), "last": "", "_k": ("", ""),
-                                 "closes": 0, "weekend": 0, "busy": 0})
-        try:
-            e["hours"] += float(pr.get("scheduled_hours") or 0)
-        except (TypeError, ValueError):
-            pass
+                                 "closes": 0, "weekend": 0, "busy": 0, "by_week": {}})
         date = pr.get("date") or ""
+        try:
+            h = float(pr.get("scheduled_hours") or 0)
+        except (TypeError, ValueError):
+            h = 0.0
+        e["hours"] += h
+        wk = weeks.get(date, "")
+        e["by_week"][wk] = e["by_week"].get(wk, 0.0) + h
         day = pr.get("day") or _day_name(date) or date
         e["days"].add(day[:3])
         key = (date, pr.get("shift_end") or "")
         if key > e["_k"]:
             e["_k"] = key
-            e["last"] = f"{pr.get('day') or date} until {pr.get('shift_end')}"
+            e["last"] = f"{_day_name(date)[:3] or pr.get('day') or ''} {date} until {pr.get('shift_end')}".strip()
         s, end = _minutes(pr.get("shift_start")), _minutes(pr.get("shift_end"))
         if end is not None:
             if s is not None and end <= s:
@@ -718,12 +739,36 @@ def seam_lines(prior_rows: list, busy: set = None) -> list:
                 e["busy"] += 1
         elif any((full_day, p) in DEFAULT_BUSY for p in parts):
             e["busy"] += 1
+    spans = {}
+    for d, wk in weeks.items():
+        spans.setdefault(wk, []).append(d)
     out = []
     for n, e in sorted(seen.items()):
         line = f"  {n}: {e['hours']:g}h so far on {'/'.join(sorted(e['days']))}"
         if e["last"]:
             line += f", last shift {e['last']}"
         line += f"; {e['closes']} close{'' if e['closes'] == 1 else 's'}, {e['weekend']} weekend, {e['busy']} busy"
+        lim = (limits or {}).get(n)
+        if lim:
+            extra = []
+            mn = float(lim.get("min") or 0)
+            if mn and e["hours"] + 0.05 < mn:
+                extra.append(f"needs {mn - e['hours']:g}h more for their {mn:g}h minimum")
+            cap = lim.get("cap") if lim.get("salaried") else lim.get("ot")
+            if cap:
+                carried = lim.get("carried") or {}
+                rooms = []
+                for wk in sorted(set(spans) or {""}):
+                    used = float(carried.get(wk) or 0) + e["by_week"].get(wk, 0.0)
+                    rooms.append((wk, max(0.0, float(cap) - used)))
+                what = "their cap" if lim.get("salaried") else "overtime"
+                if len(rooms) == 1:
+                    extra.append(f"{rooms[0][1]:g}h left before {what}")
+                else:
+                    extra.append(f"{what} room " + ", ".join(f"{room:g}h {_weekday_span(spans.get(wk))}"
+                                                             for wk, room in rooms))
+            if extra:
+                line += "; " + "; ".join(extra)
         out.append(line)
     return out
 

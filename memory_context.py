@@ -101,6 +101,7 @@ counted in ai_memory_sizes.errors and reported to ops.capture at most once
 per surface and section an hour; it never raises into the caller's model
 call (PROMPTS-10).
 """
+import contextvars
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import importlib
@@ -353,18 +354,43 @@ class MemoryBlock:
     sizes: dict = field(default_factory=dict)      # name -> chars rendered
     dropped: dict = field(default_factory=dict)    # name -> lines cut for budget (or for the viewer)
     errors: dict = field(default_factory=dict)     # name -> error text
+    # Each section as `text` carries it (its heading, its lines, its "+N
+    # more" line), and the same without the heading — so a caller can lift
+    # one section into a block of its own (the schedule prompt's owner's
+    # standing rules: schedule audit 10/3/26 PR-2) and keep the rest.
+    rendered: dict = field(default_factory=dict)   # name -> section text with its heading
+    bodies: dict = field(default_factory=dict)     # name -> section text without its heading
+
+    def text_without(self, names) -> str:
+        """`text` less the named sections."""
+        drop = set(names or ())
+        return "\n\n".join(t for n, t in self.rendered.items() if n not in drop)
 
     @property
     def empty(self):
         return not self.text
 
 
+# The date a memory line's meta is written in, for the call being
+# assembled: M/D/YY (what an owner reads — the default) or "iso", the
+# weekday and the ISO date, for a prompt whose every other date is ISO and
+# whose owner-facing words carry no date of the model's (the schedule
+# prompt: schedule audit 10/3/26 PR-20 — three date formats in one prompt).
+_DATE_STYLE = contextvars.ContextVar("memory_context_date_style", default=None)
+DATE_STYLES = ("mdy", "iso")
+
+
 def fmt_date(value):
     """M/D/YY for a memory line's date — the model echoes what it reads, so
-    it must never read an ISO date (time_utils.mdy)."""
+    an owner-facing call never reads an ISO date (time_utils.mdy). A call
+    assembled with date_style "iso" reads "Mon 2026-09-28"."""
     if value is None or value == "":
         return ""
     import time_utils
+    if _DATE_STYLE.get() == "iso":
+        d = _as_date(value)
+        if d is not None:
+            return f"{d.strftime('%a')} {d.isoformat()}"
     if isinstance(value, (date, datetime)):
         return time_utils.mdy(value)
     return time_utils.mdy(str(value))
@@ -855,8 +881,12 @@ def _local_day(value, tz):
 
 # ── the assembler ───────────────────────────────────────────────────────────
 
-def memory_context(restaurant_id, surface, viewer=None, subjects=(), budget_chars=None, now=None, db_path=None):
-    """The memory block for one model call on `surface`. Never raises."""
+def memory_context(restaurant_id, surface, viewer=None, subjects=(), budget_chars=None, now=None, db_path=None,
+                   date_style=None):
+    """The memory block for one model call on `surface`. Never raises.
+    `date_style` "iso" writes each line's dates as weekday and ISO date
+    (fmt_date) — for a prompt whose dates are all ISO; the default is M/D/YY."""
+    token = _DATE_STYLE.set(date_style if date_style in DATE_STYLES else None)
     try:
         return _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_path)
     except Exception as e:                 # the assembler itself must never break a model call
@@ -864,6 +894,8 @@ def memory_context(restaurant_id, surface, viewer=None, subjects=(), budget_char
         block = MemoryBlock()
         block.errors["_assembler"] = str(e)[:200]
         return block
+    finally:
+        _DATE_STYLE.reset(token)
 
 
 def _more_line(name, n, surface):
@@ -1016,6 +1048,7 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
             if not taken[n]:
                 if more:                   # every line cut: the model still hears they exist
                     parts.append(f"{title}:\n{more}")
+                    block.rendered[n], block.bodies[n] = parts[-1], more
                 continue
             # In rank order, whichever pass took each line.
             kept = [l for _i, l in sorted(taken[n], key=lambda il: il[0])]
@@ -1023,6 +1056,7 @@ def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_pa
             if more:
                 text += "\n" + more
             parts.append(text)
+            block.rendered[n], block.bodies[n] = text, text.split("\n", 1)[1] if "\n" in text else ""
             block.sections[n] = kept
             block.sizes[n] = sum(_unit_cost(l) for l in kept)
         block.text = "\n\n".join(parts)
