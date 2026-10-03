@@ -283,3 +283,12 @@ def test_a_double_stacks_from_the_top_so_the_rest_of_the_row_stays_aligned():
 def test_hovering_a_shift_dims_the_rest_of_the_week():
     s = _src()
     assert ".swg-t:has(.swg-chip:hover) .swg-chip:not(:hover){opacity:.4}" in s
+
+
+def test_a_stacked_second_shift_is_reachable_and_the_busiest_day_reads_orange():
+    """The tooltip sat under the hovered chip, over a double's second shift
+    (owner, 10/2/26): it now sits under the whole cell and leaves at once
+    for another shift. The busiest day's people and hours are ember too."""
+    s = _src()
+    assert "top = cc.bottom + 8;" in s and "tip.getAttribute('data-for') !== String(c.getAttribute('data-swg-chip'))" in s
+    assert ".swg-d.hot b,.swg-d.hot .dh,.swg-d.hot .dh .hb-num{color:var(--ember)}" in s

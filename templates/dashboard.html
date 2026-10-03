@@ -9887,7 +9887,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-d b{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
 .swg-d .dt{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
 .swg-d .dh{display:block;font-size:11.5px;color:var(--ink3);margin-top:3px}
-.swg-d.hot b{color:var(--ember)}
+.swg-d.hot b,.swg-d.hot .dh,.swg-d.hot .dh .hb-num{color:var(--ember)}
 .swg-role{grid-column:1/-1;padding:18px 4px 8px}
 .swg-role .pill{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);border:1px solid var(--sf-ai-line);border-radius:999px;padding:4px 12px}
 .swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
@@ -25403,16 +25403,24 @@ function ssTipShow(chip) {
     + (r.needs_review ? '<div class="why bad">' + _escHtml(r.review_reason || 'Breaks a rule') + '</div>' : '')
     + (w ? '<div class="why">' + _escHtml(w.length > 160 ? w.slice(0, 157) + '…' : w) + '</div>' : '')
     + '<div class="ft">Click for details · double-click to edit · drag to move</div>';
-  var rc = chip.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = window.innerHeight;
-  var left = Math.min(Math.max(12, rc.left), vw - 292), top = rc.bottom + 8;
+  // Placed under the whole day cell, not the chip: under the chip it lay
+  // over a second shift stacked beneath it (a double), which could then
+  // not be reached (owner, 10/2/26).
+  var cell = chip.closest('.swg-c') || chip, rc = chip.getBoundingClientRect(), cc = cell.getBoundingClientRect();
+  var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  var left = Math.min(Math.max(12, rc.left), vw - 292), top = cc.bottom + 8;
   t.style.left = left + 'px'; t.style.top = top + 'px';
   t.className = 'on';
-  if (top + t.offsetHeight > vh - 12) t.style.top = Math.max(12, rc.top - t.offsetHeight - 8) + 'px';
+  if (top + t.offsetHeight > vh - 12) t.style.top = Math.max(12, cc.top - t.offsetHeight - 8) + 'px';
+  t.setAttribute('data-for', String(chip.getAttribute('data-swg-chip')));
 }
 document.addEventListener('mouseover', function (ev) {
   var c = ev.target && ev.target.closest ? ev.target.closest('.swg-chip') : null;
   if (!c) { if (_ssTipT || (document.getElementById('ss-tip') || {}).className === 'on') ssTipHide(); return; }
   if (_swDrag !== null || document.getElementById('swp')) return;
+  // Onto a different shift: the last one's tooltip goes at once.
+  var tip = document.getElementById('ss-tip');
+  if (tip && tip.className === 'on' && tip.getAttribute('data-for') !== String(c.getAttribute('data-swg-chip'))) ssTipHide();
   if (_ssTipT) clearTimeout(_ssTipT);
   _ssTipT = setTimeout(function () { _ssTipT = null; if (c.isConnected) ssTipShow(c); }, 280);
 });
