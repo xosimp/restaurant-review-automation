@@ -90,6 +90,13 @@ def test_the_only_manager_off_leaves_the_gap_on_the_day_with_why(db, monkeypatch
     left = res["manager_coverage"]["left"]
     assert left and any(r["employee"] == "Max" and "time off" in r["why"] for r in left[0]["reasons"])
     assert any("has no manager on" in line and "acting manager" in line for line in res["review"]["lines"])
+    # the publish gate names the day, never a server
+    import client_api
+    gate = client_api.publish_review(rid, schedule_id=res["history_id"], today=dt.date(2026, 9, 20))
+    texts = [b["text"] for b in gate["blockers"]]
+    assert any(t.startswith("10/7/26 — no manager on Wednesday") for t in texts), texts
+    assert not any(t.startswith(("Ana —", "Bo —")) and "no manager" in t for t in texts), texts
+    assert gate["blockers"][0]["key"] != "needs_review"
 
 
 def test_a_full_timer_under_their_minimum_is_given_shifts(db, monkeypatch):
