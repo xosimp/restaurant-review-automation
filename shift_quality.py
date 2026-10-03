@@ -68,6 +68,36 @@ def role_words(role, count: int = 1, default: str = "") -> str:
     return " ".join(out)
 
 
+# A role's family: the role with its daypart words taken off, so the job
+# codes a POS splits by shift ("Server AM", "Server PM", "PM Bartender",
+# "Host - Lunch") are one role to every rule that counts people in a role —
+# requirements, floors, the section cap, leader rules, cross-training, the
+# owner's "two servers Saturday" (schedule audit 10/3/26 D-13, D-14, SQ-10).
+# The restaurant's own map (restaurants.role_families_json, {role: family})
+# wins; a role the words would empty keeps its name.
+_DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "lunch", "dinner", "brunch", "breakfast", "day", "night",
+                            "morning", "evening", "late", "overnight", "weekend", "weekday", "wknd", "open",
+                            "opening", "opener", "close", "closing", "closer"})
+
+
+def role_family(role, families=None) -> str:
+    """'Server AM' → 'server'; 'Bartender - PM' → 'bartender'; the
+    restaurant's map ({role lower: family}) first. Lower case."""
+    low = " ".join(str(role or "").strip().lower().split())
+    if not low:
+        return ""
+    if families:
+        mapped = families.get(low)
+        if mapped:
+            return " ".join(str(mapped).strip().lower().split())
+    cleaned = []
+    for w in low.replace("(", " ").replace(")", " ").replace("/", " ").replace("-", " ").replace("_", " ").split():
+        if w.strip(".,:;") in _DAYPART_WORDS:
+            continue
+        cleaned.append(w.strip(".,:;"))
+    return " ".join(w for w in cleaned if w) or low
+
+
 # Demand levels, weakest to strongest. Profiles name one of these; the
 # engine also derives one from the restaurant's own sales history when a
 # profile does not pin it.

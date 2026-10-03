@@ -858,6 +858,13 @@ def insight_error(exc, fallback=INSIGHT_RETRY_LATER):
 HAIKU = "claude-haiku-4-5-20251001"
 SONNET = "claude-sonnet-5"
 OPUS = "claude-opus-5"
+# The week's schedule is the hardest constraint problem the product asks a
+# model to solve: presence per half hour, weekly hours across payroll weeks,
+# a manager every minute, minors, rest. It runs on Opus 5.5 with its
+# adaptive thinking at high effort (schedule audit 10/3/26 PR-6; owner,
+# 10/3/26: "use opus 5.5 for the model call instead of sonnet").
+OPUS_55 = "claude-opus-5-5"
+SONNET_55 = "claude-sonnet-5-5"
 
 # purpose -> (env override, default). A default here is what the call site
 # used before; an override name here is the one it read before, except
@@ -872,7 +879,7 @@ MODELS = {
     "inventory_insight":   ("INVENTORY_INSIGHT_MODEL", SONNET),
     "food_cost_diagnosis": ("CLAUDE_REPORTER_MODEL",  SONNET),
     "labor_insight":       ("LABOR_INSIGHT_MODEL",    SONNET),
-    "schedule":            ("SCHEDULE_MODEL",         SONNET),
+    "schedule":            ("SCHEDULE_MODEL",         OPUS_55),
     "competitor_extract":  ("CLAUDE_MODEL",           HAIKU),
     "competitor_insight":  ("CLAUDE_REPORTER_MODEL",  SONNET),
     "marketing":           ("MARKETING_MODEL",        SONNET),
@@ -907,21 +914,48 @@ MODELS = {
 _THINKING_ALWAYS_ON_PREFIXES = ("claude-fable", "claude-mythos", "claude-opus-5-5")
 
 
+# Models whose thinking is on by default and that refuse {"type": "disabled"}
+# with a 400, but have a lowest setting of their own: Sonnet 5.5's is
+# "between_tools" (no up-front thinking), valid up to effort high (schedule
+# audit 10/3/26 PR-29 — moving any call site to Sonnet 5.5 would otherwise
+# have failed every call, the AI-14 class).
+_THINKING_LOWEST = (("claude-sonnet-5-5", {"type": "between_tools"}),)
+
+
+def _effort_of(kwargs):
+    return ((kwargs or {}).get("output_config") or {}).get("effort")
+
+
 def accepts_disabled_thinking(model, kwargs=None):
     """Whether `model` accepts thinking={"type": "disabled"} on this call.
 
     Forcing it on a model that rejects it turned one env override into every
     AI feature failing with a 400 — and a 400 is not retryable, so the breaker
     never opened to say so. Claude Opus 5 accepts it only at effort high or
-    below."""
+    below; Sonnet 5.5 never does."""
     m = (model or "").lower()
     if m.startswith(_THINKING_ALWAYS_ON_PREFIXES):
         return False
+    if any(m.startswith(prefix) for prefix, _cfg in _THINKING_LOWEST):
+        return False
     if m.startswith("claude-opus-5"):
-        effort = ((kwargs or {}).get("output_config") or {}).get("effort")
-        if effort in ("xhigh", "max"):
+        if _effort_of(kwargs) in ("xhigh", "max"):
             return False
     return True
+
+
+def default_thinking(model, kwargs=None):
+    """The thinking setting a call gets when its caller names none: off where
+    the model allows it, the model's lowest setting where it refuses "off",
+    and nothing at all (the model's own adaptive default) where thinking is
+    always on or the effort asked for needs it."""
+    if accepts_disabled_thinking(model, kwargs):
+        return {"type": "disabled"}
+    m = (model or "").lower()
+    for prefix, cfg in _THINKING_LOWEST:
+        if m.startswith(prefix):
+            return None if _effort_of(kwargs) in ("xhigh", "max") else dict(cfg)
+    return None
 
 
 def model_for(purpose: str) -> str:
@@ -1292,6 +1326,18 @@ def _note_provider_error(provider, reason, exc):
                "or the *_MODEL variables on Railway."])
 
 
+def _send(client, kwargs, stream=False):
+    """One attempt: messages.create, or messages.stream collected into the
+    finished Message when the caller asked to stream. A test double with no
+    stream() is called the ordinary way."""
+    if stream:
+        streamer = getattr(getattr(client, "messages", None), "stream", None)
+        if callable(streamer):
+            with streamer(**kwargs) as s:
+                return s.get_final_message()
+    return client.messages.create(**kwargs)
+
+
 def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, readiness=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.
@@ -1332,8 +1378,20 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
         log_blocked(restaurant_id, action, model, "data_not_ready",
                     detail=str(readiness.get("reason") or readiness.get("decision"))[:200], **attribution)
         raise DataNotReady(readiness)
-    if "thinking" not in kwargs and accepts_disabled_thinking(kwargs.get("model"), kwargs):
-        kwargs["thinking"] = {"type": "disabled"}
+    if "thinking" not in kwargs:
+        _thinking = default_thinking(kwargs.get("model"), kwargs)
+        if _thinking is not None:
+            kwargs["thinking"] = _thinking
+    # A long answer under thinking (the schedule: tens of thousands of output
+    # tokens at high effort) is streamed: a non-streaming request that runs
+    # for minutes can be cut by any idle connection on the way, and the SDK
+    # refuses one past ~21k max_tokens on a default client. The caller asks
+    # with stream=True and still gets one finished Message back.
+    stream = bool(kwargs.pop("stream", False))
+    # A job with a wall-clock limit of its own (the schedule generation:
+    # schedule audit 10/3/26 P-22) passes `deadline` (a time.time() value):
+    # no retry starts past it, so one slice can never outlast the job.
+    deadline = kwargs.pop("deadline", None)
     # anthropic>=0.105 (what Railway installs) rejects `temperature` outright
     # — TypeError before the request is even made — and current Sonnet
     # models refuse it server-side anyway. Strip it here so no caller can
@@ -1363,12 +1421,12 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     started = time.time()
     while True:
         try:
-            message = client.messages.create(**kwargs)
+            message = _send(client, kwargs, stream)
         except Exception as e:
             reason = classify_error(e)
             if _is_retryable(e):
                 attempt += 1
-                if attempt <= retries:
+                if attempt <= retries and (deadline is None or time.time() + backoff ** attempt < float(deadline)):
                     time.sleep(backoff ** attempt)
                     continue
                 # Retry budget exhausted — this is the "AI is down" signal the

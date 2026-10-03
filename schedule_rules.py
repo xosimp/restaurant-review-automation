@@ -802,6 +802,29 @@ class Constraints:
     owner_rules_unchecked: list = field(default_factory=list)
     rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
     tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
+    # ── schedule audit 10/3/26: the facts the fix round added ──────────
+    # A per-person setting or a source that could not be read (P-1): one bad
+    # time window used to drop every rule for everyone after it, silently.
+    # [{name?, source, error}] — the review and the publish gate name each.
+    input_problems: list = field(default_factory=list)
+    # Somebody standing in as the manager on given dates (E-13: the only
+    # manager on vacation): {lower: set(iso dates)}. manages() reads it.
+    acting_managers: dict = field(default_factory=dict)
+    # The days and hours a person always works (D-5: the owners' and
+    # managers' real floor days): {lower: [{"day", "start", "end", "role"}]}.
+    standing_shifts: dict = field(default_factory=dict)
+    # The restaurant's role families (D-13: "Server AM" and "Server PM" are
+    # one role): {role lower: family lower}; family() reads it with
+    # shift_quality.role_family as the default.
+    role_families: dict = field(default_factory=dict)
+    # Roles a person holds beyond their roster role (people.held_roles —
+    # trained, promoted; D-15): {lower: set(role lower)}.
+    held_roles: dict = field(default_factory=dict)
+    # Who closes for which role (D-9: a closer is chosen to close for their
+    # role, the last of it to leave): {family lower: set(person lower)}.
+    closers_by_role: dict = field(default_factory=dict)
+    # People in training (D-16): {lower: {"target_role", "trainer", "until"}}.
+    trainees: dict = field(default_factory=dict)
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -856,6 +879,62 @@ class Constraints:
             return False, LABELS["unavailable_day"]
         if daypart and choice in ("morning", "night") and daypart not in ("unknown", choice):
             return False, LABELS["unavailable_daypart"]
+        return True, ""
+
+    def manages(self, name: str, date_str: str = None) -> bool:
+        """Whether `name` counts as the manager on the floor on `date_str`: a
+        manager (managers), or standing in as one that date (acting_managers)."""
+        key = (name or "").strip().lower()
+        if key in self.managers:
+            return True
+        return bool(date_str) and date_str in (self.acting_managers.get(key) or ())
+
+    def family(self, role: str) -> str:
+        """The role family a role belongs to — the restaurant's own map, else
+        the name with its daypart words taken off (shift_quality.role_family)."""
+        from shift_quality import role_family
+        return role_family(role, self.role_families)
+
+    def can_add(self, row: dict, rows=(), line: float = None, overtime: bool = True) -> tuple:
+        """(ok, reason): whether `row` can join `rows` without a breach about
+        its person — the one question every pass that adds a shift or hands
+        one to somebody asks (schedule audit 10/3/26 P-2). The fill passes
+        used to ask only can_work, so a cloned closing shift landed on a
+        16-17 year old and a seventh day in a row on a dishwasher. Beyond
+        can_work (every daypart the row covers), the window and the
+        certificate, the person's week is swept with the row in: overlaps
+        and rest (the published tail too), a minor's end, start and day and
+        week caps, the hours maximum, the run of days, the shift-length rule
+        — anything new or worse refuses it. Unless `overtime` is False the
+        row may not take them past their overtime line either."""
+        name = (row.get("employee") or "").strip()
+        key = name.lower()
+        if not key:
+            return False, "no name"
+        d = row.get("date", "")
+        from shift_quality import present_dayparts as _present
+        for part in (_present(row) or [daypart_of(row.get("shift_start", ""))]):
+            ok, why = self.can_work(name, d, part)
+            if not ok:
+                return False, why
+        ok, why = self.window_ok(name, d, row.get("shift_start", ""), row.get("shift_end", ""))
+        if not ok:
+            return False, why
+        ok, why = self.cert_ok(name, row.get("role", ""))
+        if not ok:
+            return False, why
+        mine = [r for r in (rows or ()) if r is not row and (r.get("employee") or "").strip().lower() == key]
+        worse = regressions(breach_profile(mine, self, person_only=True),
+                            breach_profile(mine + [row], self, person_only=True), upto=TIER_PERSON)
+        if worse:
+            return False, worse[0]["label"]
+        if overtime and not self.is_salaried(name):
+            b = self.bucket(d)
+            total = (sum(row_hours(r) for r in mine if r.get("date") and self.bucket(r["date"]) == b)
+                     + float((self.base_hours.get(key) or {}).get(b, 0.0) or 0.0) + row_hours(row))
+            ot = overtime_line(self, name, line)
+            if ot and total > ot + 0.05:
+                return False, f"would take them to {total:g}h, past their {ot:g}h overtime line"
         return True, ""
 
     def window_ok(self, name: str, date_str: str, start: str, end: str) -> tuple:
@@ -964,8 +1043,9 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         from models import salaried_staff, salaried_name_key
         c.salaried = {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
-    except Exception:
+    except Exception as exc:
         c.salaried = set()
+        _input_problem(c, "salaried staff", exc)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
@@ -974,75 +1054,55 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         import kitchen_stations as _ks
         c.stations = _ks.normalise(getattr(restaurant, "kitchen_stations_json", None))
-    except Exception:
+    except Exception as exc:
         c.stations = {}
+        _input_problem(c, "kitchen stations", exc)
     c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
     try:
         c.closed_dates = closed_in(restaurant, c.week_dates)
-    except Exception:
+    except Exception as exc:
         c.closed_dates = set()
+        _input_problem(c, "closed dates", exc)
     try:
         c.close_times = get_close_times(restaurant_id, db_path) or {}
         c.role_buffers = get_role_close_buffers(restaurant_id, db_path) or {}
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "open and close times", exc)
 
     # Certificates past their expiry (staff_knowledge.staff_certs) are not
     # held: an expired food-handler card does not satisfy a role that needs
     # one (employee audit B7 handoff). Valid on the week's first day is the
     # test — cert_ok has no day of its own.
     expired = _expired_certs(restaurant_id, c.week_dates, db_path)
-    # roster + per-person settings
+    # roster + per-person settings. One person at a time: a single try
+    # around the whole loop meant one malformed setting (a time window that
+    # would not parse) silently dropped managers, minors, hours limits and
+    # certificates for everyone after that person (schedule audit 10/3/26
+    # P-1). A person whose settings cannot be read keeps their place on the
+    # roster and is named in input_problems — the review and the publish
+    # gate say so.
     try:
         import staff_settings as _ss
-        for e in _ss.roster(restaurant_id, db_path=db_path, include_inactive=True):
-            key = e["name"].strip().lower()
-            if e["active"]:
-                c.roster_names.append(e["name"])
-                c.active.add(key)
-            else:
-                c.inactive.add(key)
-            st = e.get("settings") or {}
-            if e["active"] and is_manager_role(e.get("role")):
-                c.managers[key] = (e.get("role") or "").strip()
-            if st.get("min_hours") is not None or st.get("max_hours") is not None:
-                c.hours_limits[key] = (st.get("min_hours"), st.get("max_hours"))
-            if st.get("employment_type"):
-                c.employment[key] = st["employment_type"]
-            if st.get("daypart_availability"):
-                c.daypart_avail[key] = dict(st["daypart_availability"])
-            if st.get("is_minor") or st.get("minor_age_band"):
-                c.minors.add(key)
-                if st.get("minor_age_band") in MINOR_BANDS:
-                    c.minor_bands[key] = st["minor_age_band"]
-            if st.get("time_windows"):
-                win = {}
-                for day, w in st["time_windows"].items():
-                    lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
-                    if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates):
-                        win[day] = (lo, hi)
-                if win:
-                    c.time_windows[key] = win
-            if st.get("certifications"):
-                gone = expired.get(_ss.name_key(e["name"]), set())
-                c.certifications[key] = {cert_key(x) for x in st["certifications"] if str(x).strip()
-                                         and cert_key(x) not in gone}
-                # A closer is a person the owner marked to close (stays until
-                # close, the last of their role to leave), not a key holder
-                # (owner, 10/2/26) — a manager or keyholder certificate no
-                # longer makes anyone a closer; get_leader_flags below does.
-                if "manager" in c.certifications[key] and e["active"]:
-                    c.managers.setdefault(key, (e.get("role") or "").strip())
-            if st.get("preferred_dayparts") or st.get("desired_hours"):
-                c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
-                                          "desired_hours": st.get("desired_hours")}
-    except Exception:
-        pass
+        _people = list(_ss.roster(restaurant_id, db_path=db_path, include_inactive=True))
+    except Exception as exc:
+        _people = []
+        _input_problem(c, "roster", exc)
+    for e in _people:
+        key = e["name"].strip().lower()
+        if e["active"]:
+            c.roster_names.append(e["name"])
+            c.active.add(key)
+        else:
+            c.inactive.add(key)
+        try:
+            _person_settings(c, e, expired, _ss)
+        except Exception as exc:
+            _input_problem(c, "settings", exc, name=e.get("name"))
     try:
         from models import get_leader_flags
         c.keyholders |= {n.strip().lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "closers", exc)
     c.role_requirements = {str(k).strip().lower(): {cert_key(x) for x in (v or []) if str(x).strip()}
                            for k, v in (_load_json(getattr(restaurant, "role_requirements_json", None), {}) or {}).items() if k}
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
@@ -1080,15 +1140,15 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                     c.blocked_dates.setdefault(key, {}).setdefault(d, LABELS["unavailable_day"])
             if (a.get("notes") or "").strip():
                 c.notes[key] = a["notes"].strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "availability", exc)
     try:
         for n in get_staff_notes(restaurant_id, db_path) or []:
             key = (n.get("employee_name") or "").strip().lower()
             if key and n.get("notes"):
                 c.notes[key] = (c.notes.get(key, "") + " " + n["notes"]).strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "staff notes", exc)
 
     # time off: approved blocks, pending is a warning
     if c.week_dates:
@@ -1098,35 +1158,91 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 c.blocked_dates.setdefault(name.strip().lower(), {}).update({d: LABELS["approved_time_off"] for d in days})
             for name, days in (_pending_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path) or {}).items():
                 c.pending_off.setdefault(name.strip().lower(), set()).update(days)
-        except Exception:
-            pass
+        except Exception as exc:
+            _input_problem(c, "time off", exc)
 
     # hours already published in the same payroll week(s), here and at siblings
     try:
         _published_tail(c, restaurant_id, db_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "last week's shifts", exc)
     # the owner's standing staffing rules, as checks and floors
     try:
         apply_owner_rules(c, restaurant_id, db_path=db_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "your staffing rules", exc)
     # The Studio notes the owner confirmed as rules, every week or this
     # week only (schedule_note_rules, 10/1/26): floors like the ones above.
     try:
         import schedule_note_rules
         schedule_note_rules.apply_note_rules(c, restaurant_id, db_path=db_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "schedule note rules", exc)
     # A person's scheduling notes the owner confirmed as holds ("no Tuesdays
     # until 10/31", "out 12/20-12/28") are unavailability like any other
     # (person_note_holds, 10/2/26).
     try:
         import person_note_holds
         person_note_holds.apply_holds(c, restaurant_id, db_path=db_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        _input_problem(c, "scheduling note holds", exc)
     return c
+
+
+def _input_problem(c: "Constraints", source: str, exc, name: str = None):
+    """Record a source or a person's settings the rules could not read
+    (schedule audit 10/3/26 P-1): kept on the Constraints for the review and
+    the publish gate, and captured so it reaches the daily failure digest."""
+    entry = {"source": source, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    if name:
+        entry["name"] = name
+    c.input_problems.append(entry)
+    try:
+        import ops
+        ops.capture(exc, job="schedule_constraints",
+                    context=f"restaurant {c.restaurant_id} {source}" + (f" {name}" if name else ""))
+    except Exception:
+        pass   # the capture is a report about a failure, never one of its own
+
+
+def _person_settings(c: "Constraints", e: dict, expired: dict, _ss):
+    """One roster person's settings onto the Constraints (build_constraints'
+    per-person step, each person on their own — see P-1 there)."""
+    key = e["name"].strip().lower()
+    st = e.get("settings") or {}
+    if e["active"] and is_manager_role(e.get("role")):
+        c.managers[key] = (e.get("role") or "").strip()
+    if st.get("min_hours") is not None or st.get("max_hours") is not None:
+        c.hours_limits[key] = (st.get("min_hours"), st.get("max_hours"))
+    if st.get("employment_type"):
+        c.employment[key] = st["employment_type"]
+    if st.get("daypart_availability"):
+        c.daypart_avail[key] = dict(st["daypart_availability"])
+    if st.get("is_minor") or st.get("minor_age_band"):
+        c.minors.add(key)
+        if st.get("minor_age_band") in MINOR_BANDS:
+            c.minor_bands[key] = st["minor_age_band"]
+    if st.get("time_windows"):
+        win = {}
+        for day, w in st["time_windows"].items():
+            lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
+            if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates):
+                win[day] = (lo, hi)
+        if win:
+            c.time_windows[key] = win
+    if st.get("certifications"):
+        gone = expired.get(_ss.name_key(e["name"]), set())
+        c.certifications[key] = {cert_key(x) for x in st["certifications"] if str(x).strip()
+                                 and cert_key(x) not in gone}
+        # A closer is a person the owner marked to close (stays until
+        # close, the last of their role to leave), not a key holder
+        # (owner, 10/2/26) — a manager or keyholder certificate no
+        # longer makes anyone a closer; get_leader_flags below does.
+        if "manager" in c.certifications[key] and e["active"]:
+            c.managers.setdefault(key, (e.get("role") or "").strip())
+    if st.get("preferred_dayparts") or st.get("desired_hours"):
+        c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
+                                  "desired_hours": st.get("desired_hours")}
 
 
 # ── the owner's standing rules about staffing (memory re-audit 9/29/26) ──────
@@ -1348,10 +1464,12 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
 
 # ── the violation sweep ────────────────────────────────────────────────────
 
-def violations(rows: list, c: Constraints) -> list:
+def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
     """Every rule the finished week breaks, one entry per breach, each
     naming the person, the date, the rule and whether it is hard (the row
-    cannot stand) or soft (worth a look)."""
+    cannot stand) or soft (worth a look). `person_only` keeps to the rules
+    about one person's own rows (can_add sweeps a single person's week with
+    it: the day-level rules — floors, a closer, a manager — need everyone)."""
     out = []
     by_person = {}
     seen_slots = set()
@@ -1384,7 +1502,8 @@ def violations(rows: list, c: Constraints) -> list:
         hrs = row_hours(r)
         mx = c.compliance.get("max_shift_hours")
         if mx and hrs > float(mx) + 0.01:
-            out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h"))
+            out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h",
+                          severity=round(hrs - float(mx), 2)))
         if key in c.minors:
             band_rules = minor_rules(c.minor_bands.get(key), c.jurisdiction)
             latest_label = c.compliance.get("minor_latest_end")
@@ -1403,10 +1522,12 @@ def violations(rows: list, c: Constraints) -> list:
                 out.append(_v("minor_early", i, r, f"starts {r.get('shift_start')}, {who} start no earlier than {earliest}"))
             mm = c.compliance.get("minor_max_daily_hours")
             if mm and hrs > float(mm) + 0.01:
-                out.append(_v("minor_hours", i, r, f"{hrs:g}h, minors stop at {float(mm):g}h a day"))
+                out.append(_v("minor_hours", i, r, f"{hrs:g}h, minors stop at {float(mm):g}h a day",
+                              severity=round(hrs - float(mm), 2)))
         dot = c.compliance.get("daily_ot_hours")
         if dot and hrs > float(dot) + 0.01 and not c.is_salaried(name):
-            out.append(_v("daily_ot", i, r, f"{hrs:g}h in one day, daily overtime starts at {float(dot):g}h"))
+            out.append(_v("daily_ot", i, r, f"{hrs:g}h in one day, daily overtime starts at {float(dot):g}h",
+                          severity=round(hrs - float(dot), 2)))
         mb = c.compliance.get("meal_break_after_hours")
         if mb and hrs > float(mb) + 0.01:
             out.append(_v("meal_break", i, r, f"{hrs:g}h shift — schedule a meal break"))
@@ -1421,7 +1542,7 @@ def violations(rows: list, c: Constraints) -> list:
 
     # a role that stays until N minutes after close: the last of that role
     # each night must end no earlier ("bartenders stay an hour after close")
-    if c.close_mins and c.close_times:
+    if c.close_mins and c.close_times and not person_only:
         by_date_role = {}
         for i, r in enumerate(rows or []):
             role = (r.get("role") or "").strip().lower()
@@ -1448,14 +1569,15 @@ def violations(rows: list, c: Constraints) -> list:
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
     # whenever the roster has one, and somebody is on at close.
-    out.extend(_coverage_violations(rows, c))
-    # a manager on the floor every minute anyone is (owner, 10/2/26)
-    out.extend(_manager_violations(rows, c))
+    if not person_only:
+        out.extend(_coverage_violations(rows, c))
+        # a manager on the floor every minute anyone is (owner, 10/2/26)
+        out.extend(_manager_violations(rows, c))
 
     # every open daypart needs a manager or keyholder, when the owner says so
-    if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
+    if c.compliance.get("manager_on_duty") and not c.keyholders and rows and not person_only:
         out.append(_v("manager_rule_unusable", 0, rows[0], LABELS["manager_rule_unusable"]))
-    if c.compliance.get("manager_on_duty") and c.keyholders:
+    if c.compliance.get("manager_on_duty") and c.keyholders and not person_only:
         slots = {}
         for i, r in enumerate(rows or []):
             if r.get("date") and (r.get("employee") or "").strip():
@@ -1468,7 +1590,7 @@ def violations(rows: list, c: Constraints) -> list:
                 out.append(_v("no_manager_on_duty", i0, r0, f"{LABELS['no_manager_on_duty']} ({part})"))
 
     # more front-of-house on the floor at once than there are sections
-    if c.section_cap:
+    if c.section_cap and not person_only:
         by_date = {}
         for i, r in enumerate(rows or []):
             if (r.get("role") or "").strip().lower() in c.foh_roles and r.get("date"):
@@ -1511,12 +1633,14 @@ def violations(rows: list, c: Constraints) -> list:
                         # Which payroll week, and by how much, so a fix moves
                         # that week's excess and nothing more.
                         v["bucket"], v["over_by"] = b, round(total - mx, 2)
+                        v["severity"] = v["over_by"]
                         out.append(v)
         mn = c.min_hours(name)
         if mn:
             this_week = sum(row_hours(r) for _, r in items)
             if this_week + 0.05 < mn:
-                out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h"))
+                out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h",
+                              severity=round(mn - this_week, 2)))
         # a minor's age band: the day and week caps (school day / school
         # week vs out of school), counted in date order so the shift that
         # crosses the cap is the one flagged — moving it fixes the breach
@@ -1548,12 +1672,14 @@ def violations(rows: list, c: Constraints) -> list:
                     dcap = br.get("max_daily_school_day" if school_day else "max_daily_other_day")
                     if dcap and day_tot[d] > float(dcap) + 0.01:
                         out.append(_v("minor_hours", i, r, f"{day_tot[d]:g}h on a {'school ' if school_day else ''}day, "
-                                                           f"minors {band} stop at {float(dcap):g}h"))
+                                                           f"minors {band} stop at {float(dcap):g}h",
+                                      severity=round(day_tot[d] - float(dcap), 2)))
                     school_week = is_school_week(d)
                     wcap = br.get("max_weekly_school_week" if school_week else "max_weekly_other_week")
                     if wcap and week_tot[wk] > float(wcap) + 0.01:
                         out.append(_v("minor_week_hours", i, r, f"{week_tot[wk]:g}h in a {'school ' if school_week else ''}week, "
-                                                                f"minors {band} stop at {float(wcap):g}h"))
+                                                                f"minors {band} stop at {float(wcap):g}h",
+                                      week=wk, severity=round(week_tot[wk] - float(wcap), 2)))
         # rest and overlap, against this week's other shifts and the published tail
         spans = [(i, r, *shift_span(r, c.tz)) for i, r in items]
         spans = [(i, r, s, e) for i, r, s, e in spans if s]
@@ -1573,7 +1699,8 @@ def violations(rows: list, c: Constraints) -> list:
             gap = (s_cur - e_prev).total_seconds() / 3600
             # Same date = a double shift, not a rest breach (see rest_ok).
             if need and gap < need - 0.01 and r_cur.get("date") != r_prev.get("date"):
-                out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since their previous shift, the rule is {need:g}h"))
+                out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since their previous shift, the rule is {need:g}h",
+                              severity=round(need - gap, 2)))
         # too many days in a row — the published tail counts, so a Saturday
         # and Sunday already sent plus Monday to Friday here reads as seven
         max_run = c.compliance.get("max_consecutive_days")
@@ -1599,7 +1726,8 @@ def violations(rows: list, c: Constraints) -> list:
                 if week_rows:
                     i_last, r_last = week_rows[-1]
                     out.append(_v("long_run", i_last, r_last,
-                                  f"{len(best_run)} days in a row — the rule is at most {int(max_run)}"))
+                                  f"{len(best_run)} days in a row — the rule is at most {int(max_run)}",
+                                  severity=len(best_run) - int(max_run)))
         # consecutive days off inside the generated week
         req = c.compliance.get("part_time_days_off") if c.employment.get(key) == "part" else c.compliance.get("min_consecutive_days_off")
         if req and c.week_dates:
@@ -1681,7 +1809,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                     src = (c.rule_floor_sources or {}).get((role_low, day, part))
                     out.append(_v("coverage_floor", i0, r0,
                                   f"{len(on)} {role} on for {word} {day}, your floor is {need}"
-                                  + (f" (your rule: \u201c{src[:120]}\u201d)" if src else "")))
+                                  + (f" (your rule: \u201c{src[:120]}\u201d)" if src else ""),
+                                  floor_role=role_low, daypart=part, severity=need - len(on)))
         # the owner's rules that name no daypart: the role on the day at all
         for rule in (c.owner_rules or []):
             if rule.get("daypart") or (rule.get("days") and day not in rule["days"]):
@@ -1692,7 +1821,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
             if len(on) < rule["min"]:
                 i0, r0 = (mine or items)[0]
                 out.append(_v("owner_rule", i0, r0,
-                              f"{len(on)} {rule['role']} on {day} — your rule: \u201c{rule['text'][:120]}\u201d"))
+                              f"{len(on)} {rule['role']} on {day} — your rule: \u201c{rule['text'][:120]}\u201d",
+                              floor_role=role_low, severity=rule["min"] - len(on)))
         ends = [(end_minutes(r), i, r) for i, r in items]
         ends = [(e, i, r) for e, i, r in ends if e is not None]
         if not ends:
@@ -1702,7 +1832,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
         target = close_m if close_m is not None else e_last
         if close_m is not None and e_last < close_m - 15:
             out.append(_v("nobody_at_close", i_last, r_last,
-                          f"the last shift {day} ends {r_last.get('shift_end')}, you close at {_fmt_minutes(close_m % (24 * 60))}"))
+                          f"the last shift {day} ends {r_last.get('shift_end')}, you close at {_fmt_minutes(close_m % (24 * 60))}",
+                          severity=close_m - e_last))
         if c.compliance.get("keyholder_until_close", True) and c.keyholders:
             covered = any(e >= target - 15 for e, _i, r in ends
                           if (r.get("employee") or "").strip().lower() in c.keyholders)
@@ -1771,7 +1902,7 @@ def manager_gaps(rows: list, c: "Constraints", dates=None) -> dict:
     """{date: [(start_min, end_min, row_index)]} — each stretch somebody is
     on and no manager is, pinned to the first row on at its start. Empty
     when the roster has no manager (no_manager_roster says so instead)."""
-    if not c.managers:
+    if not c.managers and not c.acting_managers:
         return {}
     by_date = {}
     for i, r in enumerate(rows or []):
@@ -1787,7 +1918,7 @@ def manager_gaps(rows: list, c: "Constraints", dates=None) -> dict:
     for d, items in sorted(by_date.items()):
         staffed = _merge([sp for sp, _i, _r in items])
         mgr = _merge([sp for sp, _i, r in items
-                      if (r.get("employee") or "").strip().lower() in c.managers
+                      if c.manages(r.get("employee"), d)
                       and c.can_work(r.get("employee"), d)[0]])
         gaps = [(s, e) for s, e in _uncovered(staffed, mgr) if e - s > 0]
         if not gaps:
@@ -1821,14 +1952,161 @@ def _manager_violations(rows: list, c: "Constraints") -> list:
             day = d
         for gs, ge, idx in gaps:
             out.append(_v("no_manager", idx, rows[idx],
-                          f"no manager on {day} from {_fmt_minutes(gs % (24 * 60))} to {_fmt_minutes(ge % (24 * 60))}"))
+                          f"no manager on {day} from {_fmt_minutes(gs % (24 * 60))} to {_fmt_minutes(ge % (24 * 60))}",
+                          gap_start=gs, gap_end=ge, minutes=ge - gs, day_level=True))
     return out
 
 
-def _v(kind, index, row, detail):
-    return {"kind": kind, "index": index, "employee": row.get("employee"), "date": row.get("date"),
-            "day": row.get("day"), "shift_start": row.get("shift_start"), "role": row.get("role"),
-            "detail": detail, "hard": kind in HARD, "no_show": kind in NO_SHOW, "label": LABELS.get(kind, kind)}
+# ── breaches compared by who and when, never by row position ───────────────
+#
+# Every pass compared (row index, kind) before and after a change, so a new
+# breach pinned to the same row as an old one was invisible: two manager
+# gaps on one day share a pin, and the overtime rebalance opened a 7-hour
+# no-manager stretch on a day that already had a 1-hour one; the optimizer
+# compared only counts (schedule audit 10/3/26 E-1, P-14). A breach is now
+# identified by what it is about — the person and the date (or the payroll
+# week, or the run), the role and daypart of a floor, the date of a close —
+# with a severity (hours over, people short, days in the run), and "no
+# manager" is minutes per date. A change may not add a breach, make one
+# worse, or leave any day with more unmanaged minutes than before.
+#
+# The ranked priorities every repair is held to (P-47): a change made for a
+# lower tier may never worsen a higher one.
+TIER_PERSON = 0       # the person can't legally or physically work it
+TIER_MANAGER = 1      # a manager on the floor every minute (owner, 10/2/26)
+TIER_COVERAGE = 2     # floors, a closer until close, somebody at close
+TIER_OVERTIME = 3
+TIER_MIN_HOURS = 4
+TIER_BUDGET = 5
+TIER_QUALITY = 6
+
+PERSON_KINDS = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours",
+                                    "long_run", "minor_early", "minor_week_hours"})
+COVERAGE_KINDS = frozenset({"coverage_floor", "keyholder_until_close", "nobody_at_close", "no_manager_on_duty",
+                            "owner_rule", "ends_before_role_close"})
+BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
+               "no_manager": TIER_MANAGER,
+               **{k: TIER_COVERAGE for k in COVERAGE_KINDS},
+               "daily_ot": TIER_OVERTIME,
+               "under_min_hours": TIER_MIN_HOURS}
+
+
+def _iso_week(d) -> str:
+    try:
+        x = _as_date(d)
+        return (x - timedelta(days=x.weekday())).isoformat()
+    except (TypeError, ValueError):
+        return str(d or "")
+
+
+def breach_id(v) -> tuple:
+    """What a breach is about, independent of where in the list its row sits."""
+    kind = v.get("kind")
+    emp = (v.get("employee") or "").strip().lower()
+    d = v.get("date") or ""
+    if kind == "over_max_hours":
+        return (kind, emp, v.get("bucket") or d)
+    if kind in ("long_run", "under_min_hours", "minor_age_unknown", "days_off"):
+        return (kind, emp)
+    if kind == "minor_week_hours":
+        return (kind, emp, v.get("week") or _iso_week(d))
+    if kind == "coverage_floor":
+        return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower(), v.get("daypart") or "")
+    if kind in ("owner_rule", "ends_before_role_close"):
+        return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower())
+    if kind in ("nobody_at_close", "keyholder_until_close", "over_section_cap"):
+        return (kind, d, v.get("close_role") or "")
+    if kind == "no_manager":
+        return (kind, d)
+    if kind in ("no_manager_roster", "manager_rule_unusable"):
+        return (kind,)
+    if kind == "no_manager_on_duty":
+        return (kind, d, daypart_of(v.get("shift_start") or ""))
+    return (kind, d, emp)
+
+
+def breach_profile(rows: list, c: "Constraints", viols: list = None, person_only: bool = False) -> dict:
+    """{"by_id": {breach_id: severity}, "labels": {breach_id: label},
+    "manager": {date: unmanaged minutes}} for `rows` — the before or after
+    of a change, compared by regressions(). Pass `viols` when the sweep has
+    already been run on these rows."""
+    if viols is None:
+        viols = violations(rows, c, person_only=person_only)
+    by_id, labels, manager = {}, {}, {}
+    for v in viols:
+        if v.get("kind") == "no_manager":
+            d = v.get("date") or ""
+            manager[d] = manager.get(d, 0) + int(v.get("minutes") or 0)
+            labels[("no_manager", d)] = v.get("detail") or v.get("label")
+            continue
+        bid = breach_id(v)
+        sev = v.get("severity")
+        sev = float(sev) if isinstance(sev, (int, float)) else 1.0
+        # A breach repeated across rows (over_max_hours names every row of
+        # the payroll week) counts once, at its worst; any other repeat
+        # (two overlaps the same day) adds up.
+        if v.get("kind") in ("over_max_hours", "long_run", "under_min_hours", "minor_week_hours"):
+            by_id[bid] = max(by_id.get(bid, 0.0), sev)
+        else:
+            by_id[bid] = by_id.get(bid, 0.0) + sev
+        labels.setdefault(bid, v.get("detail") or v.get("label") or v.get("kind"))
+    return {"by_id": by_id, "labels": labels, "manager": manager}
+
+
+def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only: bool = True) -> list:
+    """What `after` made worse than `before`: a breach that is new or more
+    severe, in a tier at or above `upto` (TIER_PERSON is the highest), and
+    any day with more unmanaged minutes when the manager tier is in range.
+    Soft kinds count only when they carry a tier in range and `hard_only` is
+    False. [{id, before, after, label, tier}], most important first."""
+    out = []
+    for bid, sev in (after.get("by_id") or {}).items():
+        kind = bid[0]
+        tier = BREACH_TIER.get(kind)
+        if tier is None or tier > upto:
+            continue
+        if hard_only and kind not in HARD:
+            continue
+        was = (before.get("by_id") or {}).get(bid, 0.0)
+        if sev > was + 0.01:
+            out.append({"id": bid, "before": was, "after": sev, "tier": tier,
+                        "label": (after.get("labels") or {}).get(bid) or LABELS.get(kind, kind)})
+    if TIER_MANAGER <= upto:
+        for d, mins in (after.get("manager") or {}).items():
+            was = (before.get("manager") or {}).get(d, 0)
+            if mins > was:
+                out.append({"id": ("no_manager", d), "before": was, "after": mins, "tier": TIER_MANAGER,
+                            "label": (after.get("labels") or {}).get(("no_manager", d)) or LABELS["no_manager"]})
+    out.sort(key=lambda x: (x["tier"], str(x["id"])))
+    return out
+
+
+def hourly_hours(rows: list, c: "Constraints" = None, salaried=None) -> float:
+    """Hours of the rows worked by hourly people — the hours an hourly budget
+    is spent from. A salaried person's hours are not (schedule audit
+    10/3/26 P-6, E-7, D-3): counting them made a week the review called
+    within budget a publish blocker "over the ceiling" by about the
+    salaried hours, and the optimizer refuse every add once managers were on.
+    `salaried` (an iterable of names) stands in for `c` where no
+    Constraints exist."""
+    if c is not None:
+        paid_same = c.is_salaried
+    else:
+        keys = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
+        paid_same = lambda n: " ".join(str(n or "").lower().split()) in keys  # noqa: E731
+    return round(sum(row_hours(r) for r in (rows or []) if not paid_same(r.get("employee"))), 2)
+
+
+def _v(kind, index, row, detail, **extra):
+    """One breach. `extra` carries what identifies it beyond the person and
+    date (breach_id) and how bad it is (`severity`: hours over, people
+    short, days in the run) — so a change that makes it worse is seen even
+    when the breach was already there."""
+    out = {"kind": kind, "index": index, "employee": row.get("employee"), "date": row.get("date"),
+           "day": row.get("day"), "shift_start": row.get("shift_start"), "role": row.get("role"),
+           "detail": detail, "hard": kind in HARD, "no_show": kind in NO_SHOW, "label": LABELS.get(kind, kind)}
+    out.update(extra)
+    return out
 
 
 def role_cross_training(restaurant) -> dict:

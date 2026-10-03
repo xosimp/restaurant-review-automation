@@ -8,7 +8,7 @@ The model for each call comes from one registry, `ai_utils.MODELS` (purpose → 
 
 | Provider | Used for | Default model | Env override |
 |---|---|---|---|
-| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, marketing insight) and Ask's conversation notes; `claude-sonnet-5` for everything an owner reads as advice (insights, diagnoses, drafts, schedules, Ask Cavnar); `claude-opus-5` for invoice transcription only | per call site — see the table under *Call sites* |
+| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, marketing insight) and Ask's conversation notes; `claude-sonnet-5` for everything an owner reads as advice (insights, diagnoses, drafts, Ask Cavnar); `claude-opus-5-5` for the week's schedule (a constraint problem, run with adaptive thinking — schedule audit 10/3/26); `claude-opus-5` for invoice transcription only | per call site — see the table under *Call sites* |
 | Perplexity | Intel's AI-visibility check only | `sonar` | `AI_VISIBILITY_MODEL` |
 
 No OpenAI usage anywhere in this codebase.
@@ -24,7 +24,7 @@ No OpenAI usage anywhere in this codebase.
 | Food cost insight | `inventory.get_claude_insights` | Sonnet | `INVENTORY_INSIGHT_MODEL` |
 | Food cost root-cause diagnosis | `food_cost_intelligence.py` | Sonnet | `CLAUDE_REPORTER_MODEL` |
 | Labor insight | `labor.py` (`get_claude_insights`) | Sonnet | `LABOR_INSIGHT_MODEL` |
-| Schedule generation | `labor.py` (`generate_schedule`) | Sonnet | `SCHEDULE_MODEL` |
+| Schedule generation | `labor.py` (`generate_optimized_schedule`) | Opus 5.5 (`claude-opus-5-5`), adaptive thinking at effort `high`, streamed (`labor.SCHEDULE_EFFORT`, `SCHEDULE_MAX_TOKENS_THINKING`) | `SCHEDULE_MODEL` |
 | Weekly plan (the Monday three actions) | `strategy_jobs.py` via `ask_with_tools` | Sonnet | `ASK_CAVNAR_MODEL` |
 | Competitor menu extraction (×2) | `competitor.fetch_menu_from_pdf_bytes`, `fetch_menu_from_url` | Haiku | `CLAUDE_MODEL` |
 | Weekly competitor insight | `competitor.generate_competitor_insight` | Sonnet | `CLAUDE_REPORTER_MODEL` |
