@@ -85,7 +85,8 @@ def test_a_built_in_profiles_leader_wish_costs_points_but_never_caps_the_shift()
     res = sq.score_rows(rows, scores={"Ana": 3}, typical_headcount={"Bartender": 2, "Server": 3})
     sat = next(s for s in res["shifts"] if s["date"] == WEEK[5])
     lead = next((d for d in sat["dimensions"] if d["key"] == "leadership"), None)
-    assert lead is not None and lead["score"] == 0
+    # The fixed miss level (schedule audit 10/3/26 SQ-1), never a cap.
+    assert lead is not None and lead["score"] == sq.LEADER_MISS_SCORE
     assert sat.get("capped_by") != "leadership"
     assert sat["score"] > 0
     # An owner's own rule is critical and does cap.

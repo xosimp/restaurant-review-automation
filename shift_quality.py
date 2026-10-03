@@ -40,11 +40,13 @@ Two rules run through the whole file and are easy to break by accident:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
 
 from time_utils import BUSINESS_DAY_START_HOUR
+from types import SimpleNamespace
 
 # The scale every dimension reports on. Percentages, because "Coverage 100%"
 # is a sentence an owner can act on and "Coverage 1.0" is not.
@@ -116,6 +118,19 @@ def name_key(name) -> str:
     return " ".join(str(name or "").lower().split())
 
 
+def job_code_daypart(role):
+    """'morning' for a job code named "... AM", 'night' for "... PM", else
+    None: a rule or a target on an AM or PM job keeps to its own half of
+    the day (owner, 10/2/26 — "Host AM" at dinner is nobody's). The same
+    reading as models.leader_rule_daypart, here for the pure layer."""
+    words = str(role or "").strip().lower().split()
+    if words and words[-1] == "am":
+        return "morning"
+    if words and words[-1] == "pm":
+        return "night"
+    return None
+
+
 # Demand levels, weakest to strongest. Profiles name one of these; the
 # engine also derives one from the restaurant's own sales history when a
 # profile does not pin it.
@@ -126,6 +141,24 @@ DEMAND_RANK = {level: i for i, level in enumerate(DEMAND_LEVELS)}
 # quality. A weak Saturday dinner is a worse week than a weak Monday lunch,
 # and averaging them flat says otherwise.
 DEMAND_WEIGHT = {"low": 0.6, "normal": 1.0, "high": 1.5, "peak": 2.0}
+
+# The critical floors: a dimension under its floor caps the whole shift at
+# its own score (evaluate_shift). They were constants written into each
+# dimension (schedule audit 10/3/26 SQ-23); a profile now carries its own
+# (ShiftProfile.floors) over these, so a quiet lunch and a peak Saturday can
+# draw the line in different places and calibration or the owner can move
+# one without a code change. A floor of 0 means the dimension never caps
+# that profile's shifts. Leadership's floor binds only where an owner wrote
+# a rule (dim_leadership).
+CRITICAL_FLOORS = {"coverage": 70, "operational_strength": 55, "leadership": 60, "coverage_curve": 60}
+
+# A shift carrying a hard breach the rule sweep found (signals
+# "hard_breaches") is held at this, under the bar of every built-in profile
+# (schedule audit 10/3/26 SQ-14). Not a dimension: it has nothing to weigh,
+# only a ceiling, so a clean shift scores exactly what it did before.
+HARD_BREACH_CAP = 50
+HARD_RULES_KEY = "hard_rules"
+HARD_RULES_LABEL = "Hard rules"
 
 
 @dataclass
@@ -168,9 +201,9 @@ class ShiftProfile:
     # taking the busiest of them made a quiet Sunday dinner a "peak" shift
     # whenever Saturday was one (profiles_from_config).
     per_day_demand: bool = False
-    # Critical-dimension floors set for this profile ({dimension key: floor}),
-    # over the dimension's own (schedule audit 10/3/26 SQ-22/SQ-23): written
-    # by the owner on their own profile, or by an applied calibration.
+    # {dimension: floor} over CRITICAL_FLOORS for the shifts this profile
+    # governs (SQ-23): the owner's own, or what an applied calibration set.
+    # A floor on any dimension caps the shift at its score; 0 = never caps.
     floors: dict = field(default_factory=dict)
     # What an applied calibration set on a profile no owner configured
     # ({"min_quality", "floors"}, restaurants.quality_tuning_json): applied
@@ -181,6 +214,17 @@ class ShiftProfile:
     # source text says (the editor round-trips a built-in's). Only these
     # follow a demand level and take tuning (SQ-15, SQ-22).
     builtin: bool = False
+
+    def floor(self, key: str):
+        """The critical floor of `key` on this profile's shifts: its own,
+        else CRITICAL_FLOORS. None when the dimension never caps here."""
+        if key in (self.floors or {}):
+            try:
+                value = int(self.floors[key])
+            except (TypeError, ValueError):
+                value = CRITICAL_FLOORS.get(key)
+            return value if value else None
+        return CRITICAL_FLOORS.get(key)
 
     def matches(self, day: str, daypart: str) -> bool:
         if self.days and (day or "").strip().lower() not in {
@@ -363,8 +407,52 @@ class ShiftContext:
     # week}, "published": {lower: {week: hours}}, "rates", "default_rate",
     # "rules"} — the overtime forecast's own inputs; {} when not supplied.
     overtime: dict = field(default_factory=dict)
+    # ── what the rule sweep found, and what the restaurant's own record says ──
+    # The hard breaches the rule sweep pinned to this shift ([{kind,
+    # label}]); any one holds the shift at HARD_BREACH_CAP (SQ-14).
+    hard_breaches: list = field(default_factory=list)
+    # A daypart this restaurant runs that the draft wrote nobody onto (SQ-8).
+    unwritten: bool = False
+    # {(family, target): (crew, source)}: the full crew each strength target
+    # was set for — the most of that role any shift the target governs needs
+    # (build_contexts). Strength is judged per person against target ÷ crew
+    # (SQ-4), so a quiet lunch is not held to the busiest night's total.
+    strength_crews: dict = field(default_factory=dict)
+    # {family: [ratings]} of the rated people on the roster, and "*" for
+    # every rating on file: what demand match reads this restaurant's own
+    # level from (SQ-12).
+    role_ratings: dict = field(default_factory=dict)
+    # {family: {(weekday, daypart)}} — where each role works by the
+    # restaurant's requirements (role_runs): a leader rule naming no
+    # daypart binds only those (SQ-2).
+    role_runs: dict = field(default_factory=dict)
 
     # ── Derived views every dimension wants ────────────────────────────
+    def family(self, role) -> str:
+        """The role family of `role` ("Server AM" → "server") by the
+        restaurant's own map, else role_family's word rule."""
+        return role_family(role, self.role_families)
+
+    def manages(self, name) -> bool:
+        """Whether `name` is a manager, or an acting manager on this date —
+        Constraints.manages, read from the signals the engine passes."""
+        key = (name or "").strip().lower()
+        if not key:
+            return False
+        if key in (self.managers or {}):
+            return True
+        return bool(self.date) and self.date in ((self.acting_managers or {}).get(key) or ())
+
+    @property
+    def by_family(self) -> dict:
+        """{family: [names]} — by_role with a role's AM/PM job codes as one
+        role, each person still counted once across the shift."""
+        out = {}
+        for role, names in self.by_role.items():
+            bucket = out.setdefault(self.family(role), [])
+            bucket.extend(n for n in names if n not in bucket)
+        return out
+
     @property
     def people(self) -> list:
         """Everybody really on this shift. A row the rule sweep says will not
@@ -477,6 +565,14 @@ class DimensionResult:
     floor: int | None = None
     # What the dimension could not see. Feeds confidence, never the score.
     blind_spots: list = field(default_factory=list)
+
+
+def _floor(ctx, key: str):
+    """The critical floor of `key` on this shift's profile (SQ-23)."""
+    profile = getattr(ctx, "profile", None)
+    if profile is not None and hasattr(profile, "floor"):
+        return profile.floor(key)
+    return CRITICAL_FLOORS.get(key)
 
 
 # The name each dimension carries on screen - the same words its result
@@ -654,13 +750,22 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     score = _pct(filled, total_required)
     res = DimensionResult(
         key="coverage", label="Coverage", score=score,
-        weight=DEFAULT_WEIGHTS["coverage"], floor=70,
+        weight=DEFAULT_WEIGHTS["coverage"], floor=_floor(ctx, "coverage"),
         facts={"required": total_required, "filled": filled, "missing": missing,
                "gaps": gaps, "short": short, "requirement_source": source},
     )
     if over_cap:
         res.facts["held_to_section_cap"] = {"cap": int(ctx.section_cap), "trimmed": over_cap}
-    if missing:
+    if ctx.unwritten:
+        # A daypart this restaurant runs and the draft wrote nobody onto. It
+        # is still 0 — nobody is on it — but "Tuesday dinner 0 / 70" read the
+        # same as a missed leader or a phantom rule, and the owner could not
+        # tell which (schedule audit 10/3/26 SQ-8).
+        part = {"morning": "lunch", "night": "dinner"}.get(ctx.daypart, ctx.daypart or "shift")
+        crew = ", ".join(f"{r} {int(n)}" for r, n in required.items() if int(n or 0) > 0)
+        res.facts["no_shift_written"] = True
+        res.weaknesses.append(f"No shift written for {ctx.day} {part} — it needs {crew} ({source}).")
+    elif missing:
         res.weaknesses.append(
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
     else:
@@ -681,58 +786,72 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
-def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
-    """Combined Operational Score per role, against this shift's target.
+def _strength_crew(ctx: ShiftContext, family: str, target: float) -> tuple:
+    """(crew, source): how many people of `family` the strength target was
+    set for — the most any shift the target governs needs (build_contexts'
+    strength_crews). With nothing on file about how many the role works, the
+    fewest people who could reach the target on the 1-5 scale."""
+    hit = (ctx.strength_crews or {}).get((family, float(target)))
+    if hit and int(hit[0] or 0) > 0:
+        return int(hit[0]), hit[1]
+    return max(1, int(math.ceil(float(target) / SCORE_SCALE_MAX - 1e-9))), "the fewest people who could reach it"
 
-    An unrated person genuinely contributes nothing here, because inventing
-    a middle 3 for them would hide the missing rating forever. That costs
-    the shift real score, so it is also reported as a blind spot and drags
-    confidence rather than passing silently.
+
+def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
+    """Each role's Operational Score on this shift, per person, against the
+    bar its strength target sets.
+
+    The owner's target is a combined score for a full crew ("Bartender 8":
+    two bartenders who together make 8). It is judged per person: the
+    average rating of the role's rated people here against the target ÷ the
+    crew it was set for (the most of that role any shift the target governs
+    needs; strength_crews). Three findings of the 10/3/26 schedule audit,
+    one design:
+      SQ-3  an unrated person counted 0 as soon as anybody in the role was
+            rated, while the prompt and the solver treat unrated as
+            unknown — the bar is judged over the rated share now, and the
+            unrated are named as a blind spot;
+      SQ-4  the full crew's total was asked of every shift, so a quiet
+            lunch that needs one bartender read 4 of 8 and was capped;
+      SQ-5  a sum rewarded bodies — a third average bartender cleared a
+            target two never could. An average does not.
+    A role's AM/PM job codes are one role here (role_family). Nobody rated
+    in a role on the shift: its strength is unknown, not zero.
     """
     targets = {r: v for r, v in (ctx.profile.min_strength or {}).items() if v}
     if not targets or not ctx.scores:
         return None
 
-    on = ctx.by_role
+    on = ctx.by_family
+    roles_on = {}
+    for role, names in ctx.by_role.items():
+        roles_on.setdefault(ctx.family(role), set()).add(role)
     ratios, shorts, mets = [], [], []
-    unrated_here = []
-    # How many of each role the shift needs (coverage's own requirement). A
-    # role short on people is judged on the people it has: the target is
-    # the full crew's, so it is pro-rated to the share staffed. Coverage
-    # owns the missing heads, as it owns an empty role. Held to the full
-    # target, one line cook of the two needed read as 33% strength and
-    # capped the shift below the empty-role version: filling half a gap
-    # scored worse than leaving it (owner, 9/26/26).
-    try:
-        _reqs = shift_role_requirements(ctx.typical_headcount, ctx.role_floors, ctx.role_minimums,
-                                        ctx.profile.critical_positions) or {}
-        _need, _trim = _capped(ctx, {r: n for r, (n, _src) in _reqs.items()})
-        need_by_role = {str(r).strip().lower(): int(n or 0) for r, n in _need.items()}
-    except Exception:
-        need_by_role = {}
+    unrated_by_role = {}
     for role, target in targets.items():
-        people = []
-        for r, names in on.items():
-            if r.strip().lower() == role.strip().lower():
-                people = names
-                break
+        # A target on an AM or PM job is that half of the day's, judged on
+        # the role's people whichever code they punch under.
+        if job_code_daypart(role) not in (None, ctx.daypart):
+            continue
+        fam = ctx.family(role)
+        people = on.get(fam) or []
         if not people:
             continue  # coverage owns an empty role, not strength
-        need = need_by_role.get(role.strip().lower(), 0)
-        if target and need and len(people) < need:
-            target = round(float(target) * len(people) / need, 2)
-        unrated_here.extend(ctx.unrated(people))
-        if not ctx.rated(people):
-            # Nobody in this role on this shift is rated: its strength is
-            # unknown, not zero. Counted as 0 it capped the whole shift at
-            # 0 and sent the optimizer to swap the new hire out.
+        unrated = ctx.unrated(people)
+        if unrated:
+            unrated_by_role[role] = unrated
+        rated = ctx.rated(people)
+        if not rated:
             continue
-        strength = sum(ctx.scores.get(n) or 0 for n in people)
-        ratios.append(min(1.0, strength / float(target)) if target else 1.0)
-        if strength < float(target):
-            shorts.append((role, strength, float(target), people))
-        else:
-            mets.append((role, strength, float(target)))
+        target = float(target)
+        crew, crew_source = _strength_crew(ctx, fam, target)
+        bar = round(max(float(SCORE_SCALE_MIN), min(float(SCORE_SCALE_MAX), target / crew)), 2)
+        avg = round(sum(float(ctx.scores[n]) for n in rated) / len(rated), 2)
+        ratios.append(min(1.0, avg / bar))
+        entry = {"role": role, "strength": avg, "average": avg, "bar": bar, "target": target,
+                 "crew": crew, "crew_source": crew_source, "rated": len(rated), "on": len(people),
+                 "roles": sorted(roles_on.get(fam) or ())}
+        (mets if avg >= bar else shorts).append((entry, rated))
 
     if not ratios:
         return None
@@ -743,25 +862,29 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
     score = int(round(min(ratios) * 100))
     res = DimensionResult(
         key="operational_strength", label="Operational strength", score=score,
-        weight=DEFAULT_WEIGHTS["operational_strength"], floor=55,
+        weight=DEFAULT_WEIGHTS["operational_strength"], floor=_floor(ctx, "operational_strength"),
         facts={"targets": {r: float(v) for r, v in targets.items()},
-               "shortfalls": [{"role": r, "strength": s, "target": t} for r, s, t, _ in shorts],
-               "met": [{"role": r, "strength": s, "target": t} for r, s, t in mets]},
+               "shortfalls": [e for e, _p in shorts], "met": [e for e, _p in mets],
+               "unrated": sorted({n for names in unrated_by_role.values() for n in names}),
+               "judged": "the average of the rated people in each role against target ÷ crew"},
     )
-    for role, strength, target, people in shorts:
+    for e, rated in shorts:
         res.weaknesses.append(
-            f"{role} strength {strength:g} against a target of {target:g} — "
-            f"{_names(people, ctx.scores)}.")
-    # (A pro-rated target reads as the number it is; coverage names the
-    # missing people separately.)
-    for role, strength, target in mets[:2]:
-        res.strengths.append(f"{role} at {strength:g}, clear of its {target:g} target.")
-    if unrated_here:
+            f"{e['role']} strength averages {e['average']:g} against a bar of {e['bar']:g} "
+            f"({e['target']:g} for a crew of {e['crew']}): {_names(rated, ctx.scores)}.")
+    for e, _rated in mets[:2]:
+        res.strengths.append(f"{e['role']} averages {e['average']:g}, clear of its {e['bar']:g} bar "
+                             f"({e['target']:g} for a crew of {e['crew']}).")
+    for role, names in unrated_by_role.items():
         res.blind_spots.append(
-            f"{_names(sorted(set(unrated_here)))} " +
-            _plural(len(set(unrated_here)), "has", "have") +
-            " no Operational Score, so nothing was counted for them.")
+            f"{_names(sorted(set(names)))} " + _plural(len(set(names)), "has", "have")
+            + f" no Operational Score, so {role_words(role)} strength was judged on the rated people only.")
     return res
+
+
+# A leader check with nobody qualified on scores this much; each qualified
+# person found earns their share of the rest (dim_leadership, SQ-1).
+LEADER_MISS_SCORE = 50
 
 
 def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
@@ -771,32 +894,50 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     a shift leader rule can name one precisely ("Saturday dinner needs a
     bartender at 5"). Neither configured means the question is not being
     asked of this restaurant, which is different from failing it.
+
+    Each check earns credit for what it found — a rule its qualified people
+    ÷ the people it asks for, the profile's "somebody able to run it" all or
+    nothing — and the dimension is the weakest check, on a scale where a
+    check with nobody qualified scores LEADER_MISS_SCORE and a met one 100.
+    One missing leader therefore holds an owner-ruled shift at the same
+    level whether one rule applies or four. It used to be rules met ÷ rules
+    applying: one miss capped a shift at 0, the same miss among four at 75
+    or 25, and among three at nothing (schedule audit 10/3/26 SQ-1 — Erik's
+    "Monday dinner 25 / 70" and "Tuesday dinner 0 / 70"). A miss says
+    whether nobody in the role is on the shift or somebody is and does not
+    qualify: the first is a person to add, the second a person to swap.
+    A manager, or an acting manager on their dates, runs the shift the
+    profile asks about (SQ-13).
     """
     rules = [r for r in (ctx.leader_rules or []) if _rule_applies(r, ctx)]
     if not rules and not ctx.profile.requires_leader:
         return None
 
     people = ctx.people
-    on_role = ctx.by_role
+    on_family = ctx.by_family
+    codes = {}
+    for r, names in ctx.by_role.items():
+        codes.setdefault(ctx.family(r), set()).add(r)
     satisfied, missed, unanswerable = [], [], []
 
     # A requirement phrased in scores cannot be judged by a restaurant that
-    # has rated nobody. Answering it "not met" would be a zero, and
+    # has rated nobody. Answering it "not met" would be a miss, and
     # leadership carries a floor, so one unconfigured built-in profile
-    # capped a perfectly good Saturday at nothing on the strength of a fact
-    # the owner never supplied. Unanswerable requirements are set aside and
-    # named; the dimension withdraws if none are left.
-    blind = not ctx.scores and not ctx.leader_flags
+    # capped a perfectly good Saturday on the strength of a fact the owner
+    # never supplied. Unanswerable requirements are set aside and named;
+    # the dimension withdraws if none are left. A rule that needs no score —
+    # authorized to close, or a plain headcount — is always answered (SQ-16).
     answerable = []
     for rule in rules:
-        if blind and rule.get("min_score") is not None and not rule.get("attribute"):
+        if not ctx.scores and rule.get("min_score") is not None and not rule.get("attribute"):
             unanswerable.append(f"{role_words(rule.get('role'), default='somebody')} scoring "
                                 f"{float(rule['min_score']):g} or above")
         else:
             answerable.append(rule)
     rules = answerable
-    check_profile = ctx.profile.requires_leader and not blind
-    if ctx.profile.requires_leader and blind:
+    can_identify = bool(ctx.scores or ctx.leader_flags or ctx.managers or ctx.acting_managers)
+    check_profile = ctx.profile.requires_leader and can_identify
+    if ctx.profile.requires_leader and not can_identify:
         unanswerable.append("somebody able to run the shift")
     if not rules and not check_profile:
         if unanswerable:
@@ -805,16 +946,17 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
                 + ", ".join(sorted(set(unanswerable))) + " could not be identified.")
         return None
 
+    credits = []
     for rule in rules:
         role = (rule.get("role") or "").strip()
-        need = int(rule.get("count") or 1)
+        try:
+            need = max(1, int(rule.get("count") or 1))
+        except (TypeError, ValueError):
+            need = 1
         min_score = rule.get("min_score")
         attribute = (rule.get("attribute") or "").strip()
-        pool = []
-        for r, names in on_role.items():
-            if r.strip().lower() == role.lower():
-                pool = names
-                break
+        # The role's people on the shift, its AM/PM job codes as one role.
+        pool = on_family.get(ctx.family(role)) or []
         # Three ways a rule can be answered, in the order an operator would
         # think of them: a named capability, a minimum score, or simply
         # being on the shift. The capability branch is what makes "every
@@ -831,59 +973,75 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
         # means all 3 (owner, 10/2/26). A plain headcount rule is not capped.
         if (attribute or min_score is not None) and pool:
             need = min(need, len(pool))
+        credit = min(len(qualified), need) / float(need)
+        credits.append(credit)
         label = (f"{need} {role_words(role, need)}" +
                  (" authorized to close" if attribute
                   else (f" scoring {float(min_score):g} or above" if min_score is not None else "")))
         if rule.get("closing"):
             label += " on the closing shift"
-        if len(qualified) >= need:
+        if credit >= 1:
             satisfied.append(label)
         else:
             missed.append({"rule": label, "found": len(qualified),
                            "scheduled": _names(pool, ctx.scores),
                            "role": role, "count": need, "min_score": min_score,
-                           "attribute": attribute or None})
+                           "attribute": attribute or None, "on": len(pool),
+                           "why": "nobody_on" if not pool else ("not_qualified" if not qualified else "short"),
+                           "credit": round(credit, 2),
+                           # The job codes the role's people here work under.
+                           "roles": sorted(codes.get(ctx.family(role)) or ())})
 
-    # The profile's own softer requirement: anybody authorized to close, or
-    # anybody clearing the leader score, in one of the leader roles.
-    profile_ok = True
+    # The profile's own softer requirement: a manager on the floor (an
+    # acting one on their dates), or anybody authorized to close or
+    # clearing the leader score in one of the leader roles. Managers were
+    # left out, so an unrated manager read as nobody able to run the
+    # heaviest-weighted shifts of the week (SQ-13).
+    profile_ok, managers_on = True, []
     if check_profile:
+        managers_on = [n for n in people if ctx.manages(n)]
         pool = people
         if ctx.profile.leader_roles:
-            wanted = {r.strip().lower() for r in ctx.profile.leader_roles}
-            pool = [n for role, names in on_role.items() if role.strip().lower() in wanted
-                    for n in names]
-        leaders = [n for n in pool
-                   if ctx.leader_flags.get(n)
-                   or (ctx.scores.get(n) or 0) >= ctx.profile.leader_min_score]
+            wanted = {ctx.family(r) for r in ctx.profile.leader_roles}
+            pool = [n for fam, names in on_family.items() if fam in wanted for n in names]
+        leaders = managers_on + [n for n in pool if n not in managers_on and (
+            ctx.leader_flags.get(n) or (ctx.scores.get(n) or 0) >= ctx.profile.leader_min_score)]
         profile_ok = bool(leaders)
+        credits.append(1.0 if profile_ok else 0.0)
 
+    worst = min(credits) if credits else 1.0
+    score = int(round(LEADER_MISS_SCORE + (SCORE_MAX - LEADER_MISS_SCORE) * worst))
     total = len(rules) + (1 if check_profile else 0)
     met = len(satisfied) + (1 if (check_profile and profile_ok) else 0)
-    score = _pct(met, total)
 
     # The floor (which caps the whole shift) is earned only by a rule the
     # owner wrote. A built-in profile's "somebody able to run it" is a
     # preference: it costs the dimension its points, never the shift its
-    # score — a fully staffed Saturday is not worth 0 because nobody on it
-    # has been rated 4 yet.
+    # score — a fully staffed Saturday is not held down because nobody on
+    # it has been rated 4 yet.
     res = DimensionResult(
         key="leadership", label="Leadership", score=score,
-        weight=DEFAULT_WEIGHTS["leadership"], floor=60 if rules else None,
+        weight=DEFAULT_WEIGHTS["leadership"], floor=_floor(ctx, "leadership") if rules else None,
         facts={"rules_checked": total, "rules_met": met, "misses": missed,
                "profile_leader_missing": bool(check_profile and not profile_ok),
                "leader_roles": list(ctx.profile.leader_roles or []),
-               "leader_min_score": ctx.profile.leader_min_score},
+               "leader_min_score": ctx.profile.leader_min_score,
+               "managers_on": managers_on, "miss_score": LEADER_MISS_SCORE},
     )
     for miss in missed:
-        res.weaknesses.append(
-            f"Needs {miss['rule']}, found {miss['found']}. On this shift: {miss['scheduled']}.")
+        if miss["why"] == "nobody_on":
+            res.weaknesses.append(
+                f"No {role_words(miss['role'], default='one')} on this shift — needs {miss['rule']}.")
+        else:
+            res.weaknesses.append(
+                f"Needs {miss['rule']}, found {miss['found']}. On this shift: {miss['scheduled']}.")
     if check_profile and not profile_ok:
         res.weaknesses.append(
-            f"Nobody on this shift is authorized to close or rated "
+            f"Nobody on this shift is a manager, authorized to close or rated "
             f"{ctx.profile.leader_min_score:g} or above.")
     if met == total and total:
-        res.strengths.append("Leadership requirements met.")
+        res.strengths.append(
+            "Leadership requirements met" + (f" — {_names(managers_on[:2])} on as manager." if managers_on else "."))
     if unanswerable:
         res.blind_spots.append(
             "Nobody is rated yet, so " + ", ".join(sorted(set(unanswerable)))
@@ -891,20 +1049,69 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
-def _rule_applies(rule: dict, ctx: ShiftContext) -> bool:
-    if not (rule.get("role") or "").strip():
+def leader_rule_applies(rule: dict, day: str, daypart: str, is_closing=None,
+                        runs: dict = None, families: dict = None) -> bool:
+    """Whether a shift leader rule binds one shift — the ONE test the
+    scorer (_rule_applies) and the prompt's requirements table
+    (schedule_requirements.shift_requirements) both ask.
+
+    Its day and daypart, and the closing shift for a closing rule
+    (is_closing None: not known yet, so not ruled out). A rule naming no
+    daypart binds only where its role works: `runs` is role_runs — every
+    weekday and daypart the restaurant's requirements (usual staffing, the
+    owner's floors, role minimums for roles working that daypart, profile
+    critical positions) put the role on, its AM/PM job codes counted as the
+    role. "Saturday: 1 bartender scoring 5" was applied to a Saturday lunch
+    with no bar, scored it 0 and capped it, and the table told the model to
+    add a bartender at lunch (schedule audit 10/3/26 SQ-2). A role nothing
+    on file puts anywhere is unknown, not absent: the rule binds every
+    daypart it names, as before. A rule the owner scoped to a daypart binds
+    that daypart whatever the history says."""
+    role = (rule.get("role") or "").strip()
+    if not role:
         return False
     # "Every closing shift" means the last shift to end that day, not every
     # shift. Applied to all of them it demanded a closer at breakfast.
-    if rule.get("closing") and not ctx.is_closing:
+    if rule.get("closing") and is_closing is not None and not is_closing:
         return False
     days = {d.strip().lower() for d in (rule.get("days") or []) if d}
-    if days and (ctx.day or "").strip().lower() not in days:
+    if days and (day or "").strip().lower() not in days:
         return False
-    part = (rule.get("daypart") or "").strip().lower()
-    if part and part != (ctx.daypart or "").lower():
-        return False
-    return True
+    part = (rule.get("daypart") or "").strip().lower() or job_code_daypart(role)
+    if part:
+        return part == (daypart or "").strip().lower()
+    where = (runs or {}).get(role_family(role, families))
+    if not where:
+        return True
+    return ((day or "").strip().capitalize(), (daypart or "").strip().lower()) in where
+
+
+def _rule_applies(rule: dict, ctx) -> bool:
+    """leader_rule_applies for one scored shift (a caller that passes only
+    day, daypart and is_closing gets the day and daypart test alone)."""
+    return leader_rule_applies(rule, getattr(ctx, "day", ""), getattr(ctx, "daypart", ""),
+                               bool(getattr(ctx, "is_closing", False)), getattr(ctx, "role_runs", None),
+                               getattr(ctx, "role_families", None))
+
+
+def role_runs(typical_headcount: dict = None, role_floors: dict = None, role_minimums: dict = None,
+              profiles: list = None, families: dict = None) -> dict:
+    """{family: {(weekday, daypart)}} — where each role works: every
+    weekday and daypart whose requirement (shift_role_requirements, the one
+    coverage reads) includes it. Shared by the scorer's contexts and the
+    prompt's requirements table so a leader rule binds the same shifts in
+    both (leader_rule_applies, SQ-2)."""
+    profiles = profiles if profiles is not None else BUILTIN_PROFILES
+    out = {}
+    for day in _WEEKDAYS:
+        for part in CORE_WINDOWS:          # every daypart the scorer buckets shifts into
+            profile = resolve_profile(day, part, profiles)
+            reqs = shift_role_requirements((typical_headcount or {}).get((day, part)) or {},
+                                           _floors_for(role_floors, day, part), role_minimums,
+                                           profile.critical_positions)
+            for role in reqs:
+                out.setdefault(role_family(role, families), set()).add((day, part))
+    return out
 
 
 # Somebody is "experienced" once they have worked this many shifts in the
@@ -1145,6 +1352,18 @@ def dim_training_balance(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
+# What a team should average on a shift, against this restaurant's own
+# rated level, at each demand level: a busy night wants the stronger part of
+# the team, a quiet one may run under its average (SQ-12). Never above what
+# the role's strongest people could make on that many places.
+DEMAND_BAR_OFFSET = {"low": -0.4, "normal": 0.0, "high": 0.6, "peak": 1.0}
+# Points demand match gives up per rating point the team is under its bar.
+DEMAND_POINT_STEP = 25
+# Ratings on file before the restaurant's own level is known — per role for
+# a role's own level, else across everybody rated.
+DEMAND_MIN_RATED = 3
+
+
 def dim_demand_match(ctx: ShiftContext) -> DimensionResult | None:
     """Does the quality of the team track how busy the shift will be?
 
@@ -1152,29 +1371,70 @@ def dim_demand_match(ctx: ShiftContext) -> DimensionResult | None:
     a quiet Tuesday is not a fault this dimension should punish — that is
     labor efficiency's question, and double-counting it would push the
     scheduler toward deliberately weak quiet shifts.
+
+    Judged against the restaurant's OWN ratings, role by role: the rated
+    people on the shift against their role's average here, raised for a
+    busy shift (DEMAND_BAR_OFFSET) but never past what the role's strongest
+    people could make in those places. The bars were fixed — 4.0 for a peak
+    shift on a scale where 3 means average — so an average team could never
+    score 100 on a busy night and rating everybody a point higher cleared
+    them (schedule audit 10/3/26 SQ-12). Scored on the distance under the
+    bar, so a scale shifted up or down by the owner moves nothing.
     """
     rated = ctx.rated(ctx.people)
     if not rated:
         return None
+    every = list((ctx.role_ratings or {}).get("*") or [])
+    if not every:
+        every = [float(v) for v in (ctx.scores or {}).values() if v is not None]
+    if len(every) < DEMAND_MIN_RATED:
+        ctx.notes.append(f"Demand match was not judged — it takes {DEMAND_MIN_RATED} rated people to know "
+                         "this team's own level.")
+        return None
     demand = ctx.profile.demand or "normal"
-    avg = sum(ctx.scores.get(n) or 0 for n in rated) / float(len(rated))
-    # What an average team strength ought to be at each demand level.
-    wanted = {"low": 2.6, "normal": 3.0, "high": 3.6, "peak": 4.0}.get(demand, 3.0)
-    score = SCORE_MAX if avg >= wanted else _pct(avg, wanted)
+    offset = DEMAND_BAR_OFFSET.get(demand, 0.0)
+    have_sum = want_sum = mean_sum = 0.0
+    count = 0
+    by_role = {}
+    for fam, names in ctx.by_family.items():
+        here = ctx.rated(names)
+        if not here:
+            continue
+        own = sorted((float(v) for v in ((ctx.role_ratings or {}).get(fam) or [])), reverse=True)
+        # The role's own level once it has enough ratings, else everybody's;
+        # the best it could field is always its own people — a 5-rated
+        # bartender is no bar for the cooks.
+        pool = own if len(own) >= DEMAND_MIN_RATED else sorted((float(v) for v in every), reverse=True)
+        mean = sum(pool) / len(pool)
+        best = (own or pool)[:len(here)]
+        best_possible = sum(best) / len(best)
+        want = max(float(SCORE_SCALE_MIN), min(mean + offset, best_possible))
+        have = sum(float(ctx.scores[n]) for n in here) / len(here)
+        by_role[fam] = {"average": round(have, 2), "wanted": round(want, 2), "team_average": round(mean, 2),
+                        "best_possible": round(best_possible, 2), "rated": len(here)}
+        have_sum += have * len(here)
+        want_sum += want * len(here)
+        mean_sum += mean * len(here)
+        count += len(here)
+    avg, wanted, mean = have_sum / count, want_sum / count, mean_sum / count
+    score = SCORE_MAX if avg >= wanted - 1e-9 else max(0, int(round(SCORE_MAX - (wanted - avg) * DEMAND_POINT_STEP)))
 
     res = DimensionResult(
         key="demand_match", label="Demand match", score=score,
         weight=DEFAULT_WEIGHTS["demand_match"],
-        facts={"demand": demand, "average_score": round(avg, 2), "wanted": wanted,
+        facts={"demand": demand, "average_score": round(avg, 2), "wanted": round(wanted, 2),
+               "team_average": round(mean, 2), "offset": offset, "by_role": by_role,
                "vs_average_day_pct": ctx.demand_pct},
     )
-    if avg >= wanted:
+    if score >= SCORE_MAX:
         res.strengths.append(
-            f"Team averages {avg:.1f} against the {demand}-demand bar of {wanted:g}.")
+            f"Team averages {avg:.1f} against the {wanted:.1f} a {demand}-demand shift here wants "
+            f"(your rated team averages {mean:.1f}).")
     else:
         busy = "your busiest" if demand == "peak" else f"a {demand}-demand"
         res.weaknesses.append(
-            f"Team averages {avg:.1f} on {busy} shift, under the {wanted:g} this profile expects.")
+            f"Team averages {avg:.1f} on {busy} shift — about {wanted:.1f} would match it; "
+            f"your rated team averages {mean:.1f}.")
     if ctx.demand_pct is None:
         res.blind_spots.append("No sales history yet for this day, so demand is the profile's.")
     return res
@@ -2003,14 +2263,112 @@ def _slot_minutes(value: str):
     return None
 
 
+def _row_span(row: dict):
+    """(start, end) minutes of a row on its own date; an end at or before
+    its start runs past midnight. None when either time is unreadable."""
+    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+    if s is None or e is None:
+        return None
+    return (s, e + 24 * 60) if e <= s else (s, e)
+
+
+def floor_window(daypart: str, open_minutes=None, close_minutes=None):
+    """(lo, hi) minutes past midnight an owner's staffing floor for a
+    daypart holds over: the daypart's core service window (CORE_WINDOWS),
+    clipped to the hours the restaurant is open that day. None when the
+    restaurant is not open through any of it.
+
+    The ONE window the scorer's coverage by the hour and schedule_rules'
+    coverage_floor breach hold a floor over (schedule audit 10/3/26 SQ-6).
+    Held flat from the changeover to close, a 4-11pm and a 5-9pm server
+    read as a floor of 2 broken from 9pm on — a critical failure capping
+    the shift at 57 — while the hard rule counted both as on for dinner and
+    passed: one screen, two verdicts. The floor is the owner's statement
+    about service; the shoulders before and after it are the measured sales
+    curve's to judge, where there is one."""
+    win = CORE_WINDOWS.get(daypart)
+    if not win:
+        return None
+    lo, hi = win
+    if open_minutes is not None:
+        lo = max(lo, int(open_minutes))
+    if close_minutes is not None:
+        close = int(close_minutes)
+        # A close before 5am, or at or before opening, is after midnight.
+        if close < 5 * 60 or (open_minutes is not None and close <= int(open_minutes)):
+            close += 24 * 60
+        hi = min(hi, close)
+    return (lo, hi) if hi - lo >= SLOT_MINUTES else None
+
+
+def floor_slots(daypart: str, open_minutes=None, close_minutes=None) -> list:
+    """The half hours (on the clock's own half-hour grid) inside the floor
+    window — the moments a floor is checked at."""
+    win = floor_window(daypart, open_minutes, close_minutes)
+    if not win:
+        return []
+    lo, hi = win
+    return list(range(lo + (-lo) % SLOT_MINUTES, hi, SLOT_MINUTES))
+
+
+def _on_at(spans, t: int, family: str) -> int:
+    """Distinct people of `family` on at minute `t` — spans are
+    (family, person, start, end). A person on two overlapping rows is one."""
+    return len({p for f, p, s, e in spans if f == family and s <= t < e})
+
+
+def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes=None,
+                    close_minutes=None, families: dict = None, skip=None) -> dict:
+    """Whether `need` people of `role` — its AM/PM job codes as one role
+    (role_family, by `families`) — are on at every half hour of the
+    daypart's floor window (floor_window), across one date's `rows`.
+
+    The ONE floor test (SQ-6): the scorer's coverage by the hour runs it on
+    every floor, and schedule_rules._coverage_violations is to call it with
+    the same arguments for its coverage_floor breach, so the hard rule and
+    the score cannot disagree about the same rows. `skip(row)` leaves out a
+    row that does not count (the scorer's flagged rows).
+
+    {"held", "window": (lo, hi) | None, "slots", "short_slots",
+    "short_minutes", "worst_at": minute | None, "on_at_worst", "need"}.
+    No window (no service in the core) is held."""
+    slots = floor_slots(daypart, open_minutes, close_minutes)
+    out = {"held": True, "window": floor_window(daypart, open_minutes, close_minutes), "slots": len(slots),
+           "short_slots": 0, "short_minutes": 0, "worst_at": None, "on_at_worst": None, "need": int(need or 0)}
+    if out["need"] <= 0 or not slots:
+        return out
+    fam = role_family(role, families)
+    spans = []
+    for r in rows or []:
+        person = (r.get("employee") or "").strip().lower()
+        if not person or role_family(r.get("role"), families) != fam or (skip is not None and skip(r)):
+            continue
+        sp = _row_span(r)
+        if sp:
+            spans.append((fam, person, sp[0], sp[1]))
+    for t in slots:
+        on = _on_at(spans, t, fam)
+        if on < out["need"]:
+            out["short_slots"] += 1
+            if out["on_at_worst"] is None or on < out["on_at_worst"]:
+                out["worst_at"], out["on_at_worst"] = t, on
+    out["short_minutes"] = out["short_slots"] * SLOT_MINUTES
+    out["held"] = not out["short_slots"]
+    return out
+
+
 def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     """Is every required position filled at every half hour, not just on
     average across the daypart?
 
-    Requirements are the per-daypart floors the owner set (role_floors),
-    else their whole-day role minimums. Without either, the question is not
-    being asked. The window is this daypart's slice of the opening hours;
-    with no hours on file it is the span of the day's own shifts.
+    Two kinds of requirement. The owner's per-daypart floors (role_floors),
+    else their whole-day role minimums, hold over the daypart's core
+    service window (floor_window — the same test as the hard rule's
+    coverage_floor, floor_shortfall). The measured sales curve's half-hour
+    needs hold across the daypart's whole slice of the opening hours. Each
+    role's AM/PM job codes are one role: a lunch server staying into
+    dinner is a server at dinner. Without floors or a curve the question is
+    not being asked.
     """
     required = {r: int(n) for r, n in (ctx.role_floors or {}).items() if n}
     source = "your staffing floors"
@@ -2030,26 +2388,23 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     rows = ctx.day_rows or ctx.rows
     spans = []
     for r in rows:
-        s, e = _slot_minutes(r.get("shift_start")), _slot_minutes(r.get("shift_end"))
-        if s is None or e is None or ctx._is_flagged(r):
+        sp = _row_span(r)
+        if sp is None or ctx._is_flagged(r):
             continue
-        if e <= s:
-            e += 24 * 60
-        spans.append(((r.get("role") or "").strip().lower(), s, e))
+        spans.append((ctx.family(r.get("role")), (r.get("employee") or "").strip().lower(), sp[0], sp[1]))
     if not spans:
         return None
-    day_open = ctx.open_minutes if ctx.open_minutes is not None else min(s for _, s, _ in spans)
-    day_close = ctx.close_minutes if ctx.close_minutes is not None else max(e for _, _, e in spans)
+    day_open = ctx.open_minutes if ctx.open_minutes is not None else min(s for _f, _p, s, _e in spans)
+    day_close = ctx.close_minutes if ctx.close_minutes is not None else max(e for _f, _p, _s, e in spans)
     if day_close <= day_open:
         day_close += 24 * 60
     # The daypart's window runs from open to the changeover (lunch) or the
     # changeover to close (dinner) — but the changeover is where the day's
     # own shifts hand over, not a fixed 3pm: lunch ending at 2:30 and dinner
     # starting at 4 is a handover, not an hour and a half "short".
-    own = [(s, e) for r in (ctx.rows or []) for s, e in [(_slot_minutes(r.get("shift_start")), _slot_minutes(r.get("shift_end")))]
-           if s is not None and e is not None and not ctx._is_flagged(r)]
+    own = [sp for r in (ctx.rows or []) for sp in [_row_span(r)] if sp is not None and not ctx._is_flagged(r)]
     if ctx.daypart == "morning":
-        latest = max((e if e > s else e + 1440 for s, e in own), default=DAYPART_CUTOVER)
+        latest = max((e for _s, e in own), default=DAYPART_CUTOVER)
         lo, hi = day_open, min(day_close, max(CORE_WINDOWS["morning"][1], min(latest, DAYPART_CUTOVER)))
     elif ctx.daypart == "night":
         earliest = min((s for s, _e in own), default=DAYPART_CUTOVER)
@@ -2059,40 +2414,53 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     if hi - lo < SLOT_MINUTES:
         return None
 
-    slots = list(range(lo, hi, SLOT_MINUTES))
-    total = covered = 0
-    gaps = {}
-    peak_gaps = []
+    # The floors hold through the core of service, where the hard rule
+    # holds them; the sales curve judges every half hour of the daypart.
+    fslots = set(floor_slots(ctx.daypart, ctx.open_minutes, ctx.close_minutes)) if required else set()
+    fwin = floor_window(ctx.daypart, ctx.open_minutes, ctx.close_minutes) if required else None
     # Half-hour needs from this restaurant's own measured sales curve (at
     # least three same-weekday readings), across every half hour of service:
     # the busiest half hour needs most of the usual crew and each other one
     # that crew scaled by its share of the sales. Only the peak hour used to
     # carry a requirement, so the climb into the rush was never judged. The
-    # owner's floors hold under it and the section cap over it. Without a
-    # curve this is the floors alone, exactly as before.
+    # section cap holds over both. Without a curve this is the floors alone.
     curve_needs = _half_hour_requirement(ctx, lo, hi)
     peak_slot = None
     if curve_needs:
         from staffing_curve import half_hour_shares as _hhs
         _shares = _hhs(ctx.demand_curve or {})
         peak_slot = max(curve_needs, key=lambda m: (_shares.get(m, 0), -m))
+    slots = sorted(fslots | (set(range(lo + (-lo) % SLOT_MINUTES, hi, SLOT_MINUTES)) if curve_needs else set()))
+    total = covered = 0
+    gaps = {}
+    peak_gaps = []
     for t in slots:
-        here = dict(required)
+        floor_here = dict(required) if t in fslots else {}
+        here = dict(floor_here)
         for role, n in (curve_needs.get(t) or {}).items():
             match = next((r for r in here if r.strip().lower() == role.strip().lower()), role)
             here[match] = max(int(here.get(match) or 0), int(n))
         here, _over = _capped(ctx, here)
+        # One requirement per role family: its job codes' needs added up,
+        # named by the owner's floor where there is one.
+        fam_need, fam_floor, fam_name = {}, {}, {}
         for role, need in here.items():
             need = int(need or 0)
             if need <= 0:
                 continue
-            key = role.strip().lower()
-            on = sum(1 for rl, s, e in spans if rl == key and s <= t < e)
+            fam = ctx.family(role)
+            fam_need[fam] = fam_need.get(fam, 0) + need
+            fam_floor[fam] = fam_floor.get(fam, 0) + int(floor_here.get(role) or 0)
+            if fam not in fam_name or role in floor_here:
+                fam_name[fam] = role
+        for fam, need in fam_need.items():
+            role = fam_name[fam]
+            on = _on_at(spans, t, fam)
             total += 1
             if on >= need:
                 covered += 1
                 continue
-            from_curve = need > int(required.get(role) or 0)
+            from_curve = need > fam_floor.get(fam, 0)
             if t == peak_slot and from_curve:
                 peak_gaps.append({"role": role, "need": need, "on": on, "at": _fmt_minutes(t),
                                   "worst_minute": t})
@@ -2109,8 +2477,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         required.setdefault(role, g["need"])
     res = DimensionResult(
         key="coverage_curve", label="Coverage by the hour", score=score,
-        weight=DEFAULT_WEIGHTS["coverage_curve"], floor=60,
+        weight=DEFAULT_WEIGHTS["coverage_curve"], floor=_floor(ctx, "coverage_curve"),
         facts={"required": required, "window": [_fmt_minutes(lo), _fmt_minutes(hi)],
+               "floor_window": [_fmt_minutes(fwin[0]), _fmt_minutes(fwin[1])] if fwin else None,
                "slots": len(slots), "gaps": {r: {"minutes_short": g["short_slots"] * SLOT_MINUTES,
                                                   "worst_at": _fmt_minutes(g["worst"]), "on_at_worst": g["worst_on"],
                                                   "worst_minute": g["worst"], "need": g["need"],
@@ -2140,16 +2509,17 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
             continue
         res.weaknesses.append(
             f"{role} is under {need} for {g['short_slots'] * SLOT_MINUTES // 60}h{(g['short_slots'] * SLOT_MINUTES % 60) and ' 30m' or ''} "
-            f"— down to {g['worst_on']} at {_fmt_minutes(g['worst'])}.")
+            f"of service — down to {g['worst_on']} at {_fmt_minutes(g['worst'])}.")
     if not gaps:
-        res.strengths.append(f"Every floor is held from {_fmt_minutes(lo)} to {_fmt_minutes(hi)}.")
+        held_lo, held_hi = fwin if (fwin and not curve_needs) else (lo, hi)
+        res.strengths.append(f"Every floor is held from {_fmt_minutes(held_lo)} to {_fmt_minutes(held_hi)}.")
     in_window = {h: v for h, v in (ctx.demand_curve or {}).items() if lo <= int(h) * 60 < hi}
     if in_window:
         # The busiest hour of THIS daypart by sales share, and whether it is
         # the best-staffed — lunch was being told about the dinner peak.
         peak_hour = max(in_window.items(), key=lambda kv: kv[1])[0]
-        on_peak = sum(1 for _, s, e in spans if s <= int(peak_hour) * 60 < e)
-        on_max = max((sum(1 for _, s, e in spans if s <= t < e) for t in slots), default=0)
+        on_peak = len({p for _f, p, s, e in spans if s <= int(peak_hour) * 60 < e})
+        on_max = max((len({p for _f, p, s, e in spans if s <= t < e}) for t in slots), default=0)
         res.facts["peak_hour"] = int(peak_hour)
         res.facts["on_at_peak"] = on_peak
         if on_max and on_peak < on_max:
@@ -2768,12 +3138,13 @@ WEEK_LEVEL_DIMENSIONS = {
     "overtime": week_overtime,
 }
 
-# What a customer sees today. The rest is computed, stored and available to
-# the explanation layer, but not put on screen yet — a manager reading
-# fourteen numbers is reading none of them.
-CUSTOMER_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "leadership",
-                       "training_balance", "labor_efficiency", "splh", "demand_match", "reliability",
-                       "stations")
+# What the owner sees as a bar: every shift dimension that counts toward the
+# number. Six of them (experience, fairness, pairings, stability,
+# cross-training, preferences — 25 of 130 weight points) used to be scored
+# and hidden, so part of every score had no bar to explain it (schedule
+# audit 10/3/26 SQ-28). The week-level measures show under "Across the
+# week" instead (evaluate_schedule's week_dimensions).
+CUSTOMER_DIMENSIONS = tuple(k for k in DIMENSIONS if k not in WEEK_LEVEL_DIMENSIONS)
 
 # At least one of these has to have data before a shift claims a score. The
 # rest are real dimensions and genuinely count, but none of them alone says
@@ -2831,29 +3202,35 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
             # setting only half works and in the more surprising direction.
             skipped.append({"key": key, "reason": "weighted to zero"})
             continue
-        # A floor set for this profile — by the owner on their own profile,
-        # or by an applied calibration (SQ-22) — holds over the dimension's
-        # own, as the profile's weights do. Only a dimension that carries a
-        # floor at all takes one.
-        if result.floor is not None and (ctx.profile.floors or {}).get(key) is not None:
-            result.floor = int(ctx.profile.floors[key])
+        # A floor this shift's profile sets for the dimension — the owner's,
+        # or what an applied calibration tuned — over its default; 0 is no
+        # floor (SQ-23). The critical dimensions read it themselves too.
+        if key in (getattr(ctx.profile, "floors", None) or {}):
+            result.floor = ctx.profile.floor(key)
         applied.append(result)
 
     # Under the day's hour target is only a problem if the floor is thin.
     # The generator is told the hours budget is a ceiling and landing under
     # it is fine; scoring every under-target day as a loss contradicted that
     # and marked down a week that staffed every position (restaurant 64:
-    # "28h under target" on every shift). With coverage fully met — and the
-    # half-hour sweep too, when it applies — under target is efficiency.
+    # "28h under target" on every shift). While coverage — and the half-hour
+    # sweep too, when it applies — holds its critical floor, under target is
+    # efficiency: a thin spot above the floor is coverage's to charge, and
+    # charging it again here as "under target" was a double penalty. It used
+    # to need both at exactly 100, so one thin half hour turned an
+    # under-target day into two losses (schedule audit 10/3/26 SQ-31).
     _by_key = {d.key: d for d in applied}
     _lab = _by_key.get("labor_efficiency")
     if _lab is not None and (_lab.facts.get("ratio") or 1) < 0.9:
         _cov, _curve = _by_key.get("coverage"), _by_key.get("coverage_curve")
-        if _cov is not None and _cov.score >= SCORE_MAX and (_curve is None or _curve.score >= SCORE_MAX):
+
+        def _holds(d):
+            return d.score >= (d.floor if d.floor is not None else SCORE_MAX)
+        if _cov is not None and _holds(_cov) and (_curve is None or _holds(_curve)):
             _lab.score = SCORE_MAX
             _lab.weaknesses = []
             _lab.strengths = [f"{_lab.facts['scheduled_hours']:g}h against a {_lab.facts['target_hours']:g}h "
-                              "target, with every required position filled."]
+                              "target — under it is fine while coverage holds its floor."]
             _lab.facts["under_with_coverage"] = True
 
     # Fatigue and fairness alone are not an evaluation. Both can return a
@@ -2883,14 +3260,22 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     # The shift is not better than its worst critical part, full stop.
     capped_by = None
     for d in applied:
-        # Level with the score counts too: a shift whose only reading is a
-        # coverage of 0 is held there by coverage. That used to be named
-        # only because a phantom fairness 100 (SQ-11) lifted the mean over
-        # it — without it the owner read "0 / 70" and no reason.
-        if d.floor is not None and d.score < d.floor and (d.score < score or (d.score == score and capped_by is None)):
+        # A critical dimension under its floor that the mean already sits
+        # at (an empty daypart scored on coverage alone) is still the reason
+        # for the number, and is named as one (SQ-8).
+        if d.floor is not None and d.score < d.floor and (d.score < score or (d.score == score and not capped_by)):
             score = d.score
             capped_by = d.key
     score = max(0, min(SCORE_MAX, score))
+    # A hard rule broken on this shift — no manager on the floor, a floor
+    # short, a person who may not legally work it — holds it at
+    # HARD_BREACH_CAP. None of them used to reach the score, so a week read
+    # 92 "excellent" with a manager gap in it (schedule audit 10/3/26
+    # SQ-14). A tie goes to the rule: it is the reason that matters more.
+    breach_lines = [b["label"] for b in (ctx.hard_breaches or []) if b.get("label")]
+    if breach_lines and HARD_BREACH_CAP <= score:
+        score = HARD_BREACH_CAP
+        capped_by = HARD_RULES_KEY
 
     # Weaknesses are ordered by how much each one actually costs the shift —
     # how far under it is, times how much it counts — rather than by score
@@ -2900,21 +3285,36 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     # summary entirely.
     strengths = [s for d in sorted(applied, key=lambda x: -x.weight) for s in d.strengths]
     # The dimension holding the shift at its score speaks first: it is the
-    # reason for the number, whatever the others cost.
-    weaknesses = [w for d in sorted(applied,
-                                    key=lambda x: (0 if x.key == capped_by else 1,
-                                                   -((SCORE_MAX - x.score) * x.weight)))
-                  for w in d.weaknesses]
+    # reason for the number, whatever the others cost. A broken hard rule
+    # comes before everything.
+    breach_text = [f"Hard rule broken: {line}." if not line.endswith(".") else f"Hard rule broken: {line}"
+                   for line in breach_lines]
+    weaknesses = breach_text + [w for d in sorted(applied,
+                                                  key=lambda x: (0 if x.key == capped_by else 1,
+                                                                 -((SCORE_MAX - x.score) * x.weight)))
+                                for w in d.weaknesses]
     held_by = None
-    if capped_by:
+    if capped_by == HARD_RULES_KEY:
+        more = len(breach_lines) - 1
+        held_by = {"key": HARD_RULES_KEY, "label": HARD_RULES_LABEL, "score": score, "floor": None,
+                   "text": f"A hard rule is broken on this shift, holding it at {score}: {breach_lines[0]}"
+                           + (f" (and {more} more)" if more > 0 else "") + "."}
+    elif capped_by:
         _cap = next(d for d in applied if d.key == capped_by)
-        held_by = {"key": _cap.key, "label": _cap.label, "score": _cap.score, "floor": _cap.floor,
-                   "text": f"{_cap.label} is holding this shift at {score}"
-                           + (f": {_cap.weaknesses[0]}" if _cap.weaknesses else ".")}
+        if capped_by == "coverage" and _cap.facts.get("no_shift_written"):
+            # Nobody written onto a daypart the restaurant runs: say that,
+            # not "positions unfilled" (SQ-8).
+            text = _cap.weaknesses[0]
+        else:
+            text = (f"{_cap.label} is holding this shift at {score}"
+                    + (f": {_cap.weaknesses[0]}" if _cap.weaknesses else "."))
+        held_by = {"key": _cap.key, "label": _cap.label, "score": _cap.score, "floor": _cap.floor, "text": text}
     blind = [b for d in applied for b in d.blind_spots] + list(ctx.notes)
     for f in failed:
         blind.append(f"{f['key'].replace('_', ' ').capitalize()} could not be worked out "
                      "for this shift, so it was left out of the score.")
+    line_keys = {line: d.key for d in applied for line in d.strengths + d.weaknesses + d.blind_spots}
+    line_keys.update({line: HARD_RULES_KEY for line in breach_text})
 
     return {
         "date": ctx.date, "day": ctx.day, "daypart": ctx.daypart,
@@ -2925,10 +3325,17 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
         "meets_profile": score >= int(ctx.profile.min_quality or 0),
         "capped_by": capped_by,
         "held_by": held_by,
+        # A daypart the restaurant runs with nobody written onto it (SQ-8).
+        "no_shift_written": bool(ctx.unwritten),
+        # The hard rules broken on this shift, in the sweep's own words.
+        "hard_breaches": breach_lines,
         "people": ctx.people,
         "headline": _headline(ctx, score),
+        # Every dimension that counted, with the floor that caps it: the
+        # owner sees all of them, not the nine the panel used to pick (SQ-28).
         "dimensions": [
             {"key": d.key, "label": d.label, "score": d.score, "weight": d.weight,
+             "floor": d.floor,
              "strengths": d.strengths, "weaknesses": d.weaknesses, "facts": d.facts,
              "customer_facing": d.key in CUSTOMER_DIMENSIONS,
              # The floor this dimension was held to on this shift, kept with
@@ -2955,8 +3362,7 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
         # summary group findings by dimension rather than by exact wording,
         # so "81h under target" and "120h under target" are recognised as
         # one recurring problem instead of two unrelated ones.
-        "line_keys": {line: d.key for d in applied
-                      for line in d.strengths + d.weaknesses + d.blind_spots},
+        "line_keys": line_keys,
     }
 
 
@@ -2978,16 +3384,20 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
         facts["score"] = score
     elif role:
         bits.append(f"{role}, not yet rated")
-    # strength: what this person contributes to the role's target
+    # strength: where this person leaves the role against its per-person bar
     for d in (applied or []):
         if d.key == "operational_strength":
             for m in (d.facts.get("met") or []) + (d.facts.get("shortfalls") or []):
-                if m["role"].strip().lower() == role.lower() and score is not None:
-                    verb = "keeps" if m["strength"] >= m["target"] else "leaves"
-                    bits.append(f"{verb} {role_words(role)} at {m['strength']:g} against a target of {m['target']:g}")
+                if ctx.family(m["role"]) == ctx.family(role) and score is not None:
+                    verb = "keeps" if m["strength"] >= m.get("bar", m["target"]) else "leaves"
+                    bits.append(f"{verb} {role_words(role, 2)} at an average of {m['strength']:g} against a bar of "
+                                f"{m.get('bar', m['target']):g}")
                     facts["role_strength"] = m
                     break
     # leadership
+    if ctx.manages(name):
+        bits.append("manager on duty — able to run the shift")
+        facts["manages"] = True
     if ctx.leader_flags.get(name):
         bits.append("authorized to close")
         facts["can_close"] = True
@@ -3051,7 +3461,10 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
 def _profile_facts(profile: ShiftProfile) -> dict:
     return {"key": profile.key, "label": profile.label, "demand": profile.demand,
             "min_quality": profile.min_quality, "training_allowed": profile.training_allowed,
-            "source": profile.source}
+            "source": profile.source,
+            # The floors this shift's dimensions cap it at (SQ-23).
+            "floors": {k: (profile.floor(k) if hasattr(profile, "floor") else CRITICAL_FLOORS.get(k))
+                       for k in sorted(set(CRITICAL_FLOORS) | set(getattr(profile, "floors", None) or {}))}}
 
 
 def _headline(ctx: ShiftContext, score: int) -> str:
@@ -3088,6 +3501,7 @@ def evaluate_schedule(contexts: list, weights: dict = None,
     for d in week_dims:
         hoisted["weaknesses"] = list(d.weaknesses) + list(hoisted.get("weaknesses") or [])
     share = _week_share(scored, week_dims)
+    details = recommendation_details(scored, week_dims)
 
     return {
         "checked": True,
@@ -3106,19 +3520,42 @@ def evaluate_schedule(contexts: list, weights: dict = None,
             {"key": d.key, "label": d.label, "score": d.score, "weight": d.weight,
              "share": round(share, 3), "strengths": d.strengths, "weaknesses": d.weaknesses,
              "facts": d.facts, "week_level": True} for d in week_dims],
-        "below_profile": [
-            {"date": s["date"], "day": s["day"], "daypart": s["daypart"],
-             "score": s["score"], "min_quality": s["profile"]["min_quality"],
-             "label": s["profile"]["label"]}
-            for s in scored if not s["meets_profile"]
-        ],
+        # Each shift under its profile's bar, with why: the cap holding it
+        # (held_by) or its costliest weakness. The line printed only score
+        # against bar, so "Tuesday dinner 0 / 70" could be an empty daypart,
+        # a missed leader or a rule on the wrong daypart (SQ-8, SQ-28).
+        "below_profile": [_below_line(s) for s in scored if not s["meets_profile"]],
         "worst": min(scored, key=lambda s: s["score"])["headline"] if scored else None,
         "best": max(scored, key=lambda s: s["score"])["headline"] if scored else None,
         "strengths": _week_reasons(hoisted, scored, "strengths"),
         "weaknesses": _week_reasons(hoisted, scored, "weaknesses"),
-        "recommendations": recommendations(scored, week_dims),
+        "recommendations": [d["text"] for d in details],
+        # The same suggestions with their kind, the dimension they lift and
+        # the points the week gains when each is fully done (SQ-28).
+        "recommendation_details": details,
+        "recommendation_points": {d["text"]: d["points"] for d in details},
         "confidence": confidence(shifts, signals or {}),
     }
+
+
+def _below_line(shift: dict) -> dict:
+    """One shift under its profile's bar, with the reason it is there."""
+    held = shift.get("held_by")
+    reason = held.get("text") if held else ""
+    if not reason:
+        # Uncapped: the costliest dimension speaks — what it is under, times
+        # what it counts — from the dimension's own lines, which the week's
+        # pattern-hoisting never strips.
+        for d in sorted(shift.get("dimensions") or [],
+                        key=lambda x: -((SCORE_MAX - x["score"]) * float(x.get("weight") or 0))):
+            if d.get("weaknesses") and d["score"] < SCORE_MAX:
+                reason = d["weaknesses"][0]
+                break
+    return {"date": shift["date"], "day": shift["day"], "daypart": shift["daypart"],
+            "score": shift["score"], "min_quality": shift["profile"]["min_quality"],
+            "label": shift["profile"]["label"], "capped_by": shift.get("capped_by"),
+            "held_by": held, "no_shift_written": bool(shift.get("no_shift_written")),
+            "reason": reason or f"{shift['score']} against a bar of {shift['profile']['min_quality']}."}
 
 
 def evaluate_week_dimensions(contexts: list, weights: dict = None) -> list:
@@ -3347,49 +3784,56 @@ CONFIDENCE_LEVELS = ((80, "high"), (55, "moderate"), (0, "low"))
 
 
 def confidence(shifts: list, signals: dict) -> dict:
-    """How much to trust the scores above, and exactly why."""
+    """How much to trust the scores above, and exactly why.
+
+    Every point taken off is a line in `breakdown` with the points it cost,
+    biggest first, and `top_reason` is the one to show beside the
+    percentage: Erik's "70%" was mostly the share of his staff nobody had
+    rated, which a bare number never said (schedule audit 10/3/26 SQ-32)."""
     score = 100
-    reasons = []
+    reasons, breakdown = [], []
+
+    def charge(points, reason):
+        nonlocal score
+        points = int(points)
+        score -= points
+        reasons.append(reason)
+        if points > 0:
+            breakdown.append({"reason": reason, "points": points})
 
     rated = signals.get("rated_people")
     total = signals.get("scheduled_people")
     if total:
         unrated_share = 1.0 - (float(rated or 0) / float(total))
         if unrated_share > 0:
-            penalty = int(round(unrated_share * 45))
-            score -= penalty
             missing = int(round(unrated_share * total))
-            reasons.append(f"{missing} of {total} scheduled staff have no Operational Score.")
+            charge(int(round(unrated_share * 45)), f"{missing} of {total} scheduled staff have no Operational Score.")
 
     if not signals.get("has_tenure"):
-        score -= 12
-        reasons.append("No shift history yet, so experience could not be judged.")
+        charge(12, "No shift history yet, so experience could not be judged.")
     if not signals.get("has_demand"):
-        score -= 10
-        reasons.append("Not enough sales history to know how busy these days really are.")
+        charge(10, "Not enough sales history to know how busy these days really are.")
     if not signals.get("has_availability"):
-        score -= 8
-        reasons.append("No availability on file, so nobody could be ruled out.")
+        charge(8, "No availability on file, so nobody could be ruled out.")
+    # Only when nothing of this restaurant's own judged the shifts: built-in
+    # profiles re-levelled by its own sales history are its own demand
+    # (score_rows' has_profiles), and were charged as defaults all the same.
     if not signals.get("has_profiles"):
-        score -= 5
-        reasons.append("Using default shift profiles rather than this restaurant's own.")
+        charge(5, "Using default shift profiles rather than this restaurant's own.")
 
     flagged = int(signals.get("rows_needing_review") or 0)
     if flagged:
-        score -= min(15, flagged * 3)
-        reasons.append(f"{flagged} generated {_plural(flagged, 'row')} needed a human check.")
+        charge(min(15, flagged * 3), f"{flagged} generated {_plural(flagged, 'row')} needed a human check.")
     dropped = int(signals.get("dropped_rows") or 0)
     if dropped:
-        score -= min(20, dropped * 5)
-        reasons.append(f"{dropped} {_plural(dropped, 'row')} could not be read at all.")
+        charge(min(20, dropped * 5), f"{dropped} {_plural(dropped, 'row')} could not be read at all.")
 
     broken = sum(len(s.get("failed") or []) for s in shifts)
     if broken:
         # A computation failure is the one confidence penalty that is our
         # fault rather than the owner's, and the one most worth seeing.
-        score -= min(35, broken * 6)
-        reasons.append(f"{broken} dimension {_plural(broken, 'reading')} could not be "
-                       "worked out, so the score is built on less than usual.")
+        charge(min(35, broken * 6), f"{broken} dimension {_plural(broken, 'reading')} could not be "
+                                    "worked out, so the score is built on less than usual.")
 
     for label in signals.get("unmeetable_rules") or []:
         reasons.append(f"Nobody on the roster can meet the rule \u201c{label}\u201d, so it was set aside "
@@ -3402,19 +3846,21 @@ def confidence(shifts: list, signals: dict) -> dict:
 
     unfixable = int(signals.get("unsatisfiable") or 0)
     if unfixable:
-        score -= min(20, unfixable * 7)
-        reasons.append(
-            f"{unfixable} {_plural(unfixable, 'requirement')} could not be met with "
-            "who was available.")
+        charge(min(20, unfixable * 7), f"{unfixable} {_plural(unfixable, 'requirement')} could not be met with "
+                                       "who was available.")
 
     hard_constraints = int(signals.get("constrained_people") or 0)
     if hard_constraints and total and hard_constraints / float(total) > 0.4:
-        score -= 8
-        reasons.append("Availability is tight across most of the roster.")
+        charge(8, "Availability is tight across most of the roster.")
 
     score = max(0, min(100, score))
     level = next(name for floor, name in CONFIDENCE_LEVELS if score >= floor)
+    breakdown.sort(key=lambda b: -b["points"])
     return {"score": score, "level": level, "reasons": reasons,
+            # Each deduction with what it cost, biggest first; the first is
+            # what to name beside the percentage.
+            "breakdown": breakdown,
+            "top_reason": breakdown[0]["reason"] if breakdown else None,
             "summary": {"high": "The engine had what it needed to judge this schedule.",
                         "moderate": "Usable, but some of this is estimated.",
                         "low": "Treat these scores as provisional."}[level]}
@@ -3422,11 +3868,16 @@ def confidence(shifts: list, signals: dict) -> dict:
 
 # ── Recommendations ────────────────────────────────────────────────────────
 
-_REC_KINDS = (("Fill the gap", "coverage"), ("Move somebody", "leadership"), ("Pair ", "strength"),
+_REC_KINDS = (("Fill the gap", "coverage"), ("Cover the gap", "coverage"), ("Move somebody", "leadership"),
+              ("Put a stronger", "strength"), ("Pair ", "strength"), ("Fix the rule", "rules"),
               ("Trim about", "hours"), ("Give ", "fatigue"), ("Spread the busy", "fatigue"), ("Rate the", "ratings"))
 # Kinds about whether the shift is safe to run: never switched off by being
-# ignored — a coverage gap the owner has stopped reading is still a gap.
-PROTECTED_REC_KINDS = frozenset({"coverage", "leadership", "fatigue"})
+# ignored — a coverage gap the owner has stopped reading is still a gap, and
+# a broken hard rule is still broken.
+PROTECTED_REC_KINDS = frozenset({"coverage", "leadership", "fatigue", "rules"})
+# The most suggestions, and the most of one kind, a week carries.
+MAX_RECOMMENDATIONS = 6
+MAX_PER_KIND = 2
 
 
 def recommendation_kind(text: str) -> str:
@@ -3437,61 +3888,142 @@ def recommendation_kind(text: str) -> str:
     return "other"
 
 
-def recommendations(scored: list, week_dims: list = None) -> list:
-    """What the manager could actually do about it, most valuable first.
+def _rescore(shift: dict, fixed: str) -> tuple:
+    """(score, capped_by) of a scored shift with `fixed` — a dimension key,
+    or HARD_RULES_KEY — fully met: the shift's own aggregation over its
+    stored dimensions (weights and floors), the other caps re-applied."""
+    dims = shift.get("dimensions") or []
+    total = sum(float(d.get("weight") or 0) for d in dims) or 1.0
+    raw = sum((SCORE_MAX if d["key"] == fixed else d["score"]) * float(d.get("weight") or 0) for d in dims) / total
+    score, capped = int(round(raw)), None
+    for d in dims:
+        fl = d.get("floor")
+        if d["key"] != fixed and fl is not None and d["score"] < fl and (
+                d["score"] < score or (d["score"] == score and not capped)):
+            score, capped = d["score"], d["key"]
+    if fixed != HARD_RULES_KEY and shift.get("hard_breaches") and HARD_BREACH_CAP <= score:
+        score, capped = HARD_BREACH_CAP, HARD_RULES_KEY
+    return max(0, min(SCORE_MAX, score)), capped
+
+
+def _week_measures(week_dims) -> list:
+    """Week-level measures as week_score_raw reads them, from either the
+    DimensionResults or the dicts evaluate_schedule returns."""
+    return [SimpleNamespace(key=d.get("key"), score=float(d.get("score") or 0), weight=float(d.get("weight") or 0))
+            if isinstance(d, dict) else d for d in (week_dims or [])]
+
+
+def points_if_fixed(shifts: list, shift: dict = None, key: str = None, week_dims: list = None) -> float:
+    """How many points the WEEK's score rises if `key` were fully met on
+    `shift` — the week's own aggregation (week_score_raw) with that one
+    shift re-scored, its other caps standing. With no shift, `key` is a
+    week-level measure (fatigue) judged at 100. The most the suggestion
+    naming it can be worth: each recommendation carries it (SQ-28), and a
+    change the passes make is scored in full by the LocalScorer."""
+    scored = [s for s in (shifts or []) if s.get("scored")]
+    if not scored:
+        return 0.0
+    measures = _week_measures(week_dims)
+    before = week_score_raw(scored, measures)
+    if shift is None:
+        lifted = [SimpleNamespace(key=d.key, score=SCORE_MAX if d.key == key else d.score, weight=d.weight)
+                  for d in measures]
+        return round(max(0.0, week_score_raw(scored, lifted) - before), 2)
+    score, capped = _rescore(shift, key)
+    trial = [dict(s, score=score, capped_by=capped) if s is shift else s for s in scored]
+    return round(max(0.0, week_score_raw(trial, measures) - before), 2)
+
+
+def recommendation_details(scored: list, week_dims: list = None) -> list:
+    """What the manager could actually do about it, most valuable first:
+    [{text, kind, points, dimension, date, daypart}].
 
     Built from the dimensions' own facts rather than written by a model, so
     a recommendation can never reference a shift or a person that is not in
-    the schedule.
+    the schedule. Each carries how many points the week gains if what it
+    names is fully fixed (points_if_fixed); the most valuable come first,
+    at most MAX_PER_KIND of a kind and MAX_RECOMMENDATIONS in all. They used
+    to come in a fixed order with no figure, so the owner could not tell a
+    two-point suggestion from a twenty-point one (schedule audit 10/3/26
+    SQ-28). The sentences keep their shapes: the ledger keys on them and
+    "Fill it" reads "<role> short N of M".
     """
-    out = []
-    unrated = set()
-    coverage_gaps, leader_gaps, isolated, over_hours = [], [], [], []
+    found, unrated = [], False
+    over_hours = []
     overloaded, long_runs = set(), set()
+
+    def add(shift, kind, text, key, order):
+        found.append({"text": text, "kind": kind, "dimension": key,
+                      "date": shift["date"] if shift else None, "daypart": shift["daypart"] if shift else None,
+                      "points": points_if_fixed(scored, shift, key, week_dims), "_order": order})
 
     for shift in scored:
         where = f"{shift['day']} {shift['daypart']}".strip() or shift["date"]
-        for d in shift["dimensions"]:
-            facts = d.get("facts") or {}
-            if d["key"] == "coverage" and facts.get("gaps"):
-                coverage_gaps.append((where, facts["gaps"][0]))
-            if d["key"] == "leadership":
-                for miss in facts.get("misses") or []:
-                    leader_gaps.append((where, miss["rule"]))
-            if d["key"] == "training_balance":
-                isolated.extend((where, n) for n in facts.get("isolated_names") or [])
-            if d["key"] == "labor_efficiency" and facts.get("ratio", 1) > 1.02:
-                over_hours.append((where, facts["scheduled_hours"] - facts["target_hours"]))
-            if d["key"] == "fatigue":
-                overloaded.update(o["name"] for o in facts.get("overloaded") or [])
-                long_runs.update((r["name"], r["days"]) for r in facts.get("long_runs") or [])
-        for spot in shift.get("blind_spots") or []:
-            if "Operational Score" in spot:
-                unrated.add(spot)
+        dims = {d["key"]: d for d in shift["dimensions"]}
+        if shift.get("hard_breaches"):
+            add(shift, "rules", f"Fix the rule breach on {where}: {shift['hard_breaches'][0]}.", HARD_RULES_KEY, 0)
+        facts = (dims.get("coverage") or {}).get("facts") or {}
+        if facts.get("gaps"):
+            add(shift, "coverage", f"Fill the gap on {where}: {facts['gaps'][0]}.", "coverage", 1)
+        facts = (dims.get("coverage_curve") or {}).get("facts") or {}
+        if facts.get("gaps"):
+            role, g = max(facts["gaps"].items(), key=lambda kv: (kv[1]["minutes_short"], kv[0]))
+            add(shift, "coverage", f"Cover the gap in service on {where}: {role} is down to {g['on_at_worst']} "
+                                   f"at {g['worst_at']}, under {g['need']}.", "coverage_curve", 2)
+        for miss in ((dims.get("leadership") or {}).get("facts") or {}).get("misses") or []:
+            add(shift, "leadership", f"Move somebody who clears \"{miss['rule']}\" onto {where}.", "leadership", 3)
+        facts = (dims.get("operational_strength") or {}).get("facts") or {}
+        for sf in facts.get("shortfalls") or []:
+            add(shift, "strength", f"Put a stronger {role_words(sf['role'])} on {where}: "
+                                   f"{role_words(sf['role'], 2)} average {sf['strength']:g} against a bar of "
+                                   f"{sf.get('bar', sf['target']):g}.", "operational_strength", 4)
+        unrated = unrated or bool(facts.get("unrated"))
+        for n in ((dims.get("training_balance") or {}).get("facts") or {}).get("isolated_names") or []:
+            add(shift, "strength", f"Pair {n} on {where} with a stronger hand, or move one there.",
+                "training_balance", 5)
+        facts = (dims.get("labor_efficiency") or {}).get("facts") or {}
+        if facts.get("ratio", 1) > 1.02:
+            over_hours.append((facts["scheduled_hours"] - facts["target_hours"], where, shift))
+        facts = (dims.get("fatigue") or {}).get("facts") or {}
+        overloaded.update(o["name"] for o in facts.get("overloaded") or [])
+        long_runs.update((r["name"], r["days"]) for r in facts.get("long_runs") or [])
+        if any("Operational Score" in spot for spot in shift.get("blind_spots") or []):
+            unrated = True
     for d in week_dims or []:
-        if d.key == "fatigue":
-            overloaded.update(o["name"] for o in d.facts.get("overloaded") or [])
-            long_runs.update((r["name"], r["days"]) for r in d.facts.get("long_runs") or [])
+        if (d.get("key") if isinstance(d, dict) else d.key) == "fatigue":
+            facts = (d.get("facts") if isinstance(d, dict) else d.facts) or {}
+            overloaded.update(o["name"] for o in facts.get("overloaded") or [])
+            long_runs.update((r["name"], r["days"]) for r in facts.get("long_runs") or [])
 
-    for where, gap in coverage_gaps[:2]:
-        out.append(f"Fill the gap on {where}: {gap}.")
-    for where, rule in leader_gaps[:2]:
-        out.append(f"Move somebody who clears \"{rule}\" onto {where}.")
-    for where, name in isolated[:2]:
-        out.append(f"Pair {name} on {where} with a stronger hand, or move one there.")
     if over_hours:
-        where, over = max(over_hours, key=lambda x: x[1])
-        out.append(f"Trim about {over:.0f}h from {where} to get back under target.")
+        over, where, shift = max(over_hours, key=lambda x: x[0])
+        add(shift, "hours", f"Trim about {over:.0f}h from {where} to get back under target.", "labor_efficiency", 6)
     if overloaded:
-        out.append(
-            f"Spread the busy shifts — {_names(sorted(overloaded)[:2])} " +
-            _plural(len(overloaded), "is", "are") + " carrying too many.")
+        add(None, "fatigue", f"Spread the busy shifts — {_names(sorted(overloaded)[:2])} " +
+            _plural(len(overloaded), "is", "are") + " carrying too many.", "fatigue", 7)
     for name, days in sorted(long_runs)[:1]:
-        out.append(f"Give {name} a day off — {days} in a row this week.")
+        add(None, "fatigue", f"Give {name} a day off — {days} in a row this week.", "fatigue", 8)
+
+    found.sort(key=lambda x: (-x["points"], x["_order"]))
+    out, per_kind, seen = [], {}, set()
+    for item in found:
+        if item["text"] in seen or per_kind.get(item["kind"], 0) >= MAX_PER_KIND:
+            continue
+        seen.add(item["text"])
+        per_kind[item["kind"]] = per_kind.get(item["kind"], 0) + 1
+        out.append({k: v for k, v in item.items() if k != "_order"})
     if unrated:
-        out.append("Rate the unscored staff; several shift figures are reading low "
-                   "only because nothing was counted for them.")
-    return out[:6]
+        # Not a score change: a rating turns a blind spot into a judgement.
+        out.append({"text": "Rate the unscored staff — strength and demand on their shifts are judged on the "
+                            "rated people only, so part of each figure is unknown.",
+                    "kind": "ratings", "dimension": None, "date": None, "daypart": None, "points": 0.0})
+    return out[:MAX_RECOMMENDATIONS]
+
+
+def recommendations(scored: list, week_dims: list = None) -> list:
+    """The recommendation sentences, most valuable first
+    (recommendation_details carries the points and kind of each)."""
+    return [d["text"] for d in recommendation_details(scored, week_dims)]
 
 
 # ── Turning a finished schedule into contexts ──────────────────────────────
@@ -3685,6 +4217,223 @@ def profile_set(profiles: list = None, demand_by_day: dict = None) -> list:
     return profiles_from_config(None, demand_by_day=demand_by_day) if demand_by_day else BUILTIN_PROFILES
 
 
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _floors_for(role_floors_all: dict, day: str, part: str) -> dict:
+    """{role: people} the owner's floors ask of one weekday and daypart."""
+    out = {}
+    for role, spec in (role_floors_all or {}).items():
+        dspec = (spec.get("days") or {}).get(day) or {}
+        n = dspec.get(part) if part in dspec else spec.get(part)
+        if n:
+            out[role] = int(n)
+    return out
+
+
+def strength_crews(profiles: list = None, typical_headcount: dict = None, role_floors: dict = None,
+                   role_minimums: dict = None, section_cap: int = 0, cap_roles=None,
+                   families: dict = None) -> dict:
+    """{(family, target): (crew, source)} — the full crew each strength
+    target was set for: the most of the target's role that any weekday and
+    daypart the target governs needs (each resolved to its profile, the
+    requirement read as coverage reads it — shift_role_requirements under
+    the section cap — and a role's AM/PM job codes added up). A target
+    written for Saturday's two bartenders is judged as 4 a person, so a
+    lunch that needs one bartender asks for a 4, not for 8 (SQ-4). A target
+    the profile set apart keeps its own crew. Pure; the scorer and, through
+    INTERFACES, the solver read the same numbers."""
+    profiles = profiles if profiles is not None else BUILTIN_PROFILES
+    out = {}
+    for day in _WEEKDAYS:
+        for part in CORE_WINDOWS:          # every daypart the scorer buckets shifts into
+            profile = resolve_profile(day, part, profiles)
+            targets = {r: float(v) for r, v in (profile.min_strength or {}).items() if v}
+            if not targets:
+                continue
+            reqs = shift_role_requirements((typical_headcount or {}).get((day, part)) or {},
+                                           _floors_for(role_floors, day, part), role_minimums,
+                                           profile.critical_positions)
+            if not reqs:
+                continue
+            need = {r: n for r, (n, _s) in reqs.items()}
+            if section_cap:
+                from staffing_curve import cap_requirement
+                need, _trimmed = cap_requirement(need, section_cap, cap_roles)
+            by_family = {}
+            for r, n in need.items():
+                entry = by_family.setdefault(role_family(r, families), [0, set()])
+                entry[0] += int(n or 0)
+                entry[1].add(reqs[r][1])
+            for role, target in targets.items():
+                if job_code_daypart(role) not in (None, part):
+                    continue
+                n, sources = by_family.get(role_family(role, families), (0, set()))
+                key = (role_family(role, families), target)
+                if n > (out.get(key) or (0, ""))[0]:
+                    out[key] = (n, ", ".join(sorted(s for s in sources if s)))
+    return out
+
+
+def role_ratings(scores: dict = None, roster_roles: dict = None, rows: list = None,
+                 families: dict = None) -> dict:
+    """{family: [ratings], "*": [every rating]} of the rated people: each
+    person under their roster role (else a role they work this week) — the
+    restaurant's own level demand match judges a shift against (SQ-12)."""
+    role_of = {}
+    for name, role in (roster_roles or {}).items():
+        if name and (role or "").strip():
+            role_of[str(name).strip().lower()] = role
+    for r in rows or []:
+        name = (r.get("employee") or "").strip().lower()
+        if name and (r.get("role") or "").strip():
+            role_of.setdefault(name, r.get("role"))
+    out = {"*": []}
+    for name, score in (scores or {}).items():
+        try:
+            value = float(score)
+        except (TypeError, ValueError):
+            continue
+        out["*"].append(value)
+        role = role_of.get(str(name).strip().lower())
+        if role:
+            out.setdefault(role_family(role, families), []).append(value)
+    return out
+
+
+# Breaches about the close of a day: the closing shift carries them.
+_CLOSE_BREACHES = frozenset({"nobody_at_close", "keyholder_until_close"})
+# Breaches named on every row of a person's payroll week or run: the shift
+# that tips them over (their latest) carries them, not the whole week.
+_PERSON_WEEK_BREACHES = frozenset({"over_max_hours", "minor_week_hours", "long_run"})
+
+
+# Breaches about a day — its floors, its manager, its close — not about one
+# person's row, whoever the sweep pinned them to.
+_DAY_BREACHES = frozenset({"no_manager", "coverage_floor", "keyholder_until_close", "nobody_at_close",
+                           "owner_rule", "no_manager_on_duty", "ends_before_role_close"})
+
+
+def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
+    """{(date, daypart): [{kind, label}]} — each hard breach the rule sweep
+    found (signals["hard_breaches"]), on the shift it is about (SQ-14).
+    "*" as the daypart is every shift of that date.
+
+    `breaches` is the engine's map (schedule_engine.hard_breach_map:
+    {"by_date": {date: [breach]}, "week": [breach]}), or a list of
+    violation dicts as schedule_rules.violations returns them, or of
+    schedule_rules.breach_id tuples. A day's breach (a floor short, no
+    manager, nobody at close) lands on its daypart — the dayparts its
+    unmanaged minutes cross, the closing shift for a close — else every
+    shift of its date. A person's own breach lands on the shifts they work
+    that date (the row it names when it is still there); a week-long one
+    (hours over, a run too long) on their latest. A soft flag never lands.
+
+    Scoring rows other than the ones swept (a pass's trial, the what-if's
+    swaps): a person's breach whose person no longer works that date is gone
+    with them and does not land; a day's breach stays. Dropping a whole
+    changed date instead credited ANY change on a capped day with lifting
+    the cap — a what-if "better arrangement" the owner would read that fixed
+    nothing; the score of the finished rows is always swept fresh."""
+    rows_by_date = {}
+    for r in rows or []:
+        d = (r.get("date") or "").strip()
+        if d and (r.get("employee") or "").strip():
+            rows_by_date.setdefault(d, []).append(r)
+    closes_on = closes_on or {}
+    out, latest = {}, {}
+
+    def put(date, parts, kind, label):
+        for part in parts or ("*",):
+            items = out.setdefault((date, part), [])
+            if not any(x["label"] == label for x in items):
+                items.append({"kind": kind, "label": label})
+
+    for b in _breach_items(breaches, rows_by_date):
+        date, kind, label, emp = b["date"], b["kind"], b["label"], b["employee"]
+        if emp:
+            mine = [r for r in rows_by_date.get(date, []) if (r.get("employee") or "").strip().lower() == emp]
+            if not mine:
+                continue
+            exact = [r for r in mine if b["shift_start"] and (r.get("shift_start") or "") == b["shift_start"]]
+            parts = sorted({p for r in (exact or mine) for p in present_dayparts(r) if p != "unknown"}) or None
+            if kind in _PERSON_WEEK_BREACHES:
+                when = (date, _slot_minutes(b["shift_start"]) or 0)
+                if b["week_key"] not in latest or when > latest[b["week_key"]][0]:
+                    latest[b["week_key"]] = (when, date, parts, kind, label)
+                continue
+            put(date, parts, kind, label)
+            continue
+        parts = b["parts"]
+        if not parts and kind in _CLOSE_BREACHES:
+            closing = (closes_on.get(date) or (None, None))[1]
+            parts = [closing] if closing else None
+        put(date, parts, kind, label)
+    for _when, date, parts, kind, label in latest.values():
+        put(date, parts, kind, label)
+    return out
+
+
+def _breach_items(breaches, rows_by_date: dict):
+    """Each hard breach as {date, kind, label, employee (lower; None for a
+    day's), shift_start, parts (None: not known), week_key} — from any of
+    the shapes place_breaches takes. A breach about no date (the engine
+    map's "week") stands on every date with rows."""
+    if isinstance(breaches, dict):
+        raw = [dict(b, date=b.get("date") or d) for d, items in (breaches.get("by_date") or {}).items()
+               for b in (items or []) if isinstance(b, dict)]
+        raw += [dict(b, date=d) for b in (breaches.get("week") or []) if isinstance(b, dict) for d in rows_by_date]
+    else:
+        raw = list(breaches or [])
+    for v in raw:
+        if isinstance(v, (tuple, list)):
+            v = _breach_from_id(v)
+        if not isinstance(v, dict) or v.get("hard") is False:
+            continue
+        date = str(v.get("date") or "").strip()
+        if not date:
+            continue
+        kind = v.get("kind") or ""
+        emp = (v.get("employee") or "").strip().lower()
+        if v.get("day_level") or kind in _DAY_BREACHES:
+            emp = ""
+        parts = [p for p in (v.get("dayparts") or []) if p] or None
+        if not parts:
+            part = (v.get("daypart") or "").strip().lower()
+            if part in CORE_WINDOWS:
+                parts = [part]
+            elif v.get("gap_start") is not None and v.get("gap_end") is not None:
+                try:
+                    gs, ge = int(v["gap_start"]), int(v["gap_end"])
+                    parts = (["morning"] if gs < DAYPART_CUTOVER else []) + (["night"] if ge > DAYPART_CUTOVER else [])
+                except (TypeError, ValueError):
+                    parts = None
+            elif kind == "no_manager_on_duty" and v.get("shift_start"):
+                parts = [daypart_of(v.get("shift_start"))]
+        yield {"date": date, "kind": kind,
+               "label": str(v.get("detail") or v.get("label") or kind.replace("_", " ") or "a hard rule").strip(),
+               "employee": emp or None, "shift_start": v.get("shift_start") or "", "parts": parts or None,
+               "week_key": tuple(v.get("id") or ()) or (kind, emp, v.get("bucket") or v.get("week") or "")}
+
+
+def _breach_from_id(bid) -> dict:
+    """A schedule_rules.breach_id tuple as the fields place_breaches reads:
+    (kind, date, ...) for the day-level kinds, (kind, date, employee) for a
+    person's own. An id with no date cannot be placed and is skipped."""
+    bid = list(bid)
+    kind = str(bid[0]) if bid else ""
+    rest = bid[1:]
+    if kind == "coverage_floor" and len(rest) >= 3:
+        return {"kind": kind, "date": rest[0], "daypart": rest[2], "hard": True}
+    if kind in _CLOSE_BREACHES or kind in ("no_manager", "owner_rule", "ends_before_role_close"):
+        return {"kind": kind, "date": rest[0] if rest else "", "hard": True}
+    if kind == "no_manager_on_duty" and len(rest) >= 2:
+        return {"kind": kind, "date": rest[0], "daypart": rest[1], "hard": True}
+    if len(rest) >= 2 and isinstance(rest[0], str) and rest[0][:2] == "20":
+        return {"kind": kind, "date": rest[0], "employee": rest[1], "hard": True}
+    return {}
+
+
 def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     """Bucket a finished schedule into the shifts the engine scores.
 
@@ -3709,6 +4458,11 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     profiles = profile_set(profiles, demand_by_day)
     demand_by_date = signals.get("demand_by_date") or {}
     salaried = {name_key(n) for n in (signals.get("salaried") or ()) if str(n or "").strip()}
+    # A role's AM/PM job codes are one role (the restaurant's own map over
+    # role_family's word rule), managers run a shift (SQ-13).
+    families = {str(k).strip().lower(): v for k, v in (signals.get("role_families") or {}).items() if k}
+    managers = {str(k).strip().lower(): v for k, v in (signals.get("managers") or {}).items() if k}
+    acting = {str(k).strip().lower(): set(v or ()) for k, v in (signals.get("acting_managers") or {}).items() if k}
     buckets, primary, day_hours, part_hours = {}, {}, {}, {}
     for row in rows or []:
         name = (row.get("employee") or "").strip()
@@ -3737,6 +4491,9 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     def _profile(date, day, part):
         return profile_for_shift(day, part, profiles, demand_by_day,
                                  (demand_by_date.get(date) or {}).get("lift_pct"))
+
+    # The hard breaches the sweep found, each on the shift it is about.
+    breaches_at = place_breaches(signals.get("hard_breaches"), rows, closes_on)
 
     # Who works what across the whole week, so fatigue and fairness can see
     # past the one shift they are scoring. Seeded with the tail of the
@@ -3813,8 +4570,6 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     splh_targets = signals.get("splh_targets") or {}
     daypart_sales = signals.get("daypart_sales") or {}
     # The people facts every context shares (schedule audit 10/3/26, D1b).
-    managers = signals.get("managers") or {}
-    acting = signals.get("acting_managers") or {}
     by_default = signals.get("experienced_default")
     if by_default is None:
         by_default = experienced_by_default(managers, acting, salaried)
@@ -3833,6 +4588,13 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             for p in ("morning", "night"):
                 if _is_busy({"demand": profile_for_shift(d, p, profiles, demand_by_day).demand}):
                     busy_slots.add((d, p))
+    # Week-level facts every shift reads the same: the crew each strength
+    # target was set for (SQ-4), and the restaurant's own ratings by role
+    # (SQ-12).
+    crews = strength_crews(profiles, typical_all, role_floors_all, signals.get("role_minimums") or {},
+                           int(signals.get("section_cap") or 0), set(signals.get("cap_roles") or ()), families)
+    runs = role_runs(typical_all, role_floors_all, signals.get("role_minimums") or {}, profiles, families)
+    ratings = role_ratings(signals.get("scores") or {}, signals.get("roster_roles") or {}, rows, families)
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
@@ -3896,10 +4658,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             daypart_hours=part_hours.get((date, part), 0.0),
             salaried=salaried,
             hours_ceilings=ceilings,
-            managers=managers,
-            acting_managers=acting,
             experienced_default=by_default,
-            role_families=signals.get("role_families") or {},
             held_roles=signals.get("held_roles") or {},
             roster_roles=signals.get("roster_roles") or {},
             stations=signals.get("stations") or {},
@@ -3908,6 +4667,14 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             busy_slots=busy_slots,
             week_start=week_start,
             overtime=signals.get("overtime") or {},
+            managers=managers,
+            acting_managers=acting,
+            role_families=families,
+            hard_breaches=list(breaches_at.get((date, part)) or []) + list(breaches_at.get((date, "*")) or []),
+            unwritten=not shift_rows,
+            strength_crews=crews,
+            role_ratings=ratings,
+            role_runs=runs,
         ))
     return contexts
 
@@ -4051,9 +4818,15 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "has_demand": bool(signals.get("demand_by_day")),
         "has_availability": bool(signals.get("availability")),
         "has_constraints": bool(signals.get("constraints")),
+        # The restaurant's own profiles, or the built-ins re-levelled by its
+        # own sales history (per_day_demand with demand on file): either way
+        # the shifts were judged on this restaurant's demand, and the
+        # "default profiles" charge is for neither (SQ-32).
         "has_profiles": bool(profiles) and profiles is not BUILTIN_PROFILES
-                        and any((getattr(p, "source", "") or "") not in ("default", "your sales history",
-                                                                      "your overall targets") for p in profiles),
+                        and (any((getattr(p, "source", "") or "") not in ("default", "your sales history",
+                                                                       "your overall targets") for p in profiles)
+                             or (bool(signals.get("demand_by_day"))
+                                 and any(getattr(p, "per_day_demand", False) for p in profiles))),
         "rows_needing_review": signals.get("rows_needing_review"),
         "dropped_rows": signals.get("dropped_rows"),
         "constrained_people": len(signals.get("availability") or {}),
@@ -5071,8 +5844,10 @@ def profile_from_dict(data: dict) -> ShiftProfile:
                  for k, v in (data.get("weights") or {}).items() if k in DIMENSIONS},
         priority=int(_num(data.get("priority"), 0, 99, 0)),
         source=str(data.get("source") or "restaurant"),
-        floors={str(k): int(_num(v, 0, 100, 0)) for k, v in (data.get("floors") or {}).items()
-                if k in DIMENSIONS and _num(v, 0, 100, None) is not None},
+        # A floor for any dimension, 0-100; 0 = never caps (SQ-23).
+        floors={str(k): int(_num(v, 0, 100, 0))
+                for k, v in (data.get("floors") if isinstance(data.get("floors"), dict) else {}).items()
+                if str(k) in DIMENSIONS and _num(v, 0, 100, None) is not None},
     )
 
 

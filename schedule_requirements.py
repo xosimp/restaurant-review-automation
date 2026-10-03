@@ -91,14 +91,14 @@ def busy_shifts(dates: list, profiles: list = None, demand_by_day: dict = None,
     return out
 
 
-def _rule_applies(rule: dict, day: str, part: str) -> bool:
-    if not (rule.get("role") or "").strip():
-        return False
-    days = {x.strip().lower() for x in (rule.get("days") or []) if x}
-    if days and day.lower() not in days:
-        return False
-    rp = (rule.get("daypart") or "").strip().lower()
-    return not rp or rp == part
+def _rule_applies(rule: dict, day: str, part: str, runs: dict = None) -> bool:
+    """Whether a leader rule binds this shift: the scorer's own test
+    (shift_quality.leader_rule_applies over shift_quality.role_runs), so a
+    rule naming no daypart is asked only where its role works — the table
+    used to tell the model to add a bartender to a lunch with no bar
+    (schedule audit 10/3/26 SQ-2). The closing shift is not known before
+    the draft, so it is not ruled out."""
+    return _sq.leader_rule_applies(rule, day, part, is_closing=None, runs=runs)
 
 
 def shift_requirements(dates: list, typical_headcount: dict = None, role_floors: dict = None,
@@ -119,9 +119,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     roles     — lowercase roles the people in this request can work; a role
                 nobody here can fill is left to the request that can (a
                 roster split by department). None means every role.
-    leadership_known — whether anybody is rated or authorized to close. A
-                profile's "needs a leader" cannot be judged without one of
-                those, so it is not asked of the model either.
+    leadership_known — whether anybody is rated, authorized to close or a
+                manager. A profile's "needs a leader" cannot be judged
+                without one of those, so it is not asked of the model either.
     borrowed  — {(weekday, daypart): {lower role}}: typical figures lent by
                 similar restaurants (intelligence.staffing) to a restaurant
                 with no history of its own; the row says so.
@@ -139,6 +139,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
     skip = set(skip_dates or ())
+    # Where each role works, by the same requirements the scorer reads: a
+    # leader rule naming no daypart is asked only there (SQ-2).
+    runs = _sq.role_runs(typical_headcount, role_floors, role_minimums, profiles or None)
     out = []
     for d in dates or []:
         if d in skip:
@@ -195,9 +198,12 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             demand = profile.demand
             leader = []
             for rule in leader_rules or []:
-                if not _rule_applies(rule, day, part):
+                if not _rule_applies(rule, day, part, runs):
                     continue
-                if roles is not None and (rule.get("role") or "").strip().lower() not in roles:
+                # A rule for a role the people in this request work, its
+                # AM/PM job codes counted as the role — as the scorer judges
+                # it (a "Bartender" rule is the "Bartender PM" crew's).
+                if roles is not None and _sq.role_family(rule.get("role")) not in {_sq.role_family(r) for r in roles}:
                     continue
                 bit = f"{int(rule.get('count') or 1)} {rule['role'].strip()}"
                 if rule.get("attribute"):
@@ -208,7 +214,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     bit += " on the closing shift"
                 leader.append(bit)
             if profile.requires_leader and leadership_known and not leader:
-                leader.append(f"somebody scoring {profile.leader_min_score:g}+ or authorized to close")
+                # A manager on the floor runs the shift, as the scorer counts
+                # it (SQ-13).
+                leader.append(f"a manager, somebody scoring {profile.leader_min_score:g}+ or "
+                              "somebody authorized to close")
             roles_out = []
             lent = (borrowed or {}).get((day, part)) or set()
             for _k, (name, required, floor, typical) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
