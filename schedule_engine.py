@@ -5591,8 +5591,10 @@ REPAIR_STAGES = (
 )
 _STAGE_TIER = {k: t for k, t, _w, _c in REPAIR_STAGES}
 # Run once per generation: the solver re-solves the whole assignment, and
-# solving its own answer again finds nothing new.
-_REPAIR_ONCE = frozenset({"solver"})
+# solving its own answer again finds nothing new; the top-up fills at most a
+# quarter of a day's target (its own cap, P-20), which a second cycle would
+# have doubled.
+_REPAIR_ONCE = frozenset({"solver", "top_up"})
 _REPAIR_SEARCHES = frozenset({"solver", "optimizer"})
 _COLS_ROW = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 

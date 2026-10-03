@@ -264,7 +264,9 @@ def test_the_loop_runs_its_stages_in_rank_order_until_a_cycle_changes_nothing(mo
     _only(monkeypatch, **{k: once(k) for k in order})
     out = se.repair_week([_row(FRI, "Ana")], _x(_c(roster_names=["Ana", "Bo"], active={"ana", "bo"})))
     assert out["converged"] and out["cycles"] == 2                   # a change, then a cycle with none
-    assert seen[:len(order)] == order and seen.count("solver") == 1   # the solver once a generation
+    assert seen[:len(order)] == order                                 # every stage, in rank order
+    assert seen.count("solver") == 1 and seen.count("top_up") == 1      # once a generation
+    assert seen.count("manager") == 2                                   # every cycle
 
 
 def test_an_overtime_pass_that_raises_is_said_and_the_rest_still_run(db, monkeypatch):
