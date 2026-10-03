@@ -2092,7 +2092,7 @@ def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
     text Twilio refused still recorded "cover" on issue_sms (re-audit C3) —
     they are presented where they are rendered: Home's open-issues list
     (GET /issues, strategy_routes) and the issue page (/i/<token>)."""
-    import issues, ops
+    import issues
     import schedule_rules as _sr
     import staff_settings as _ss
     from shift_quality import role_family
