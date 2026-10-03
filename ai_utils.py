@@ -1446,6 +1446,13 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     # models refuse it server-side anyway. Strip it here so no caller can
     # take production down with a parameter that never mattered.
     kwargs.pop("temperature", None)
+    # Past the job's deadline no call is sent at all (P-22): it could only be
+    # cut, and a streamed call is billed for the input it sent. A zero-cost
+    # 'blocked' row, like the budget and the breaker.
+    if deadline is not None and time.time() >= float(deadline):
+        log_blocked(restaurant_id, action, model, "deadline", detail="the job's time ran out before the call",
+                    **attribution)
+        raise CallDeadlineExceeded("no time was left for this call")
     # One positional argument: callers and tests replace this function with
     # their own; it reads the trigger itself (an admin's call answers only
     # to the global pool, #148).
@@ -1471,8 +1478,6 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     while True:
         try:
             if deadline is not None:
-                if time.time() >= float(deadline):
-                    raise CallDeadlineExceeded("no time was left for this call")
                 # Each attempt waits at most the time left (P-22).
                 kwargs["timeout"] = _attempt_timeout(client, deadline)
             message = _send(client, kwargs, stream, deadline=deadline)
@@ -2008,7 +2013,8 @@ _blocked_lock = threading.Lock()
 def log_blocked(restaurant_id, action, model, reason, detail=None, vendor=None, trigger=None,
                 actor_user_id=None, correlation_id=None):
     """A call refused before it reached its provider (#48): budget,
-    breaker, data_not_ready (the readiness gate), rate_limited, no_key.
+    breaker, data_not_ready (the readiness gate), rate_limited, no_key,
+    deadline (its job's wall clock had run out, schedule audit 10/3/26 P-22).
     Zero cost; `reason` is machine-readable, `detail` says which ceiling or
     why. Never raises."""
     try:
