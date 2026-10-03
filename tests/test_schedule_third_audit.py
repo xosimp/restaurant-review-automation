@@ -49,7 +49,10 @@ def _fake_generator(answers):
     return fake
 
 
-def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_fails(monkeypatch):
+def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwritten(monkeypatch):
+    """Twice empty, the days are named and left unwritten — never filled by
+    a backstop — and the five days already paid for are kept (schedule audit
+    10/3/26 P-34: the whole week used to be thrown away)."""
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)          # two slices
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
@@ -59,10 +62,14 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_fails(monk
         [(WEEK[4], "Ana")],                                # the retry misses again
     ])
     monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
-    with pytest.raises(ValueError) as e:
-        se._generate_in_parts({}, [], [("Ana", "Server")], {"tz_name": None})
-    assert "Saturday, Sunday" in str(e.value) and "not saved" in str(e.value)
+    out = se._generate_in_parts({}, [], [("Ana", "Server")], {"tz_name": None})
     assert len(fake.calls) == 3 and "WROTE NO SHIFTS FOR 2026-10-10, 2026-10-11" in fake.calls[2]["extra"]
+    assert fake.calls[2]["slice"] == [WEEK[5], WEEK[6]]               # only the empty days asked again
+    assert se._missing_dates(out["schedule_csv"], WEEK[:5]) == []
+    assert [u["date"] for u in out["unwritten_dates"]] == [WEEK[5], WEEK[6]]
+    assert {WEEK[5], WEEK[6]} <= set(out["closed_dates"])              # no backstop staffs them
+    note = out["generation_notes"][0]
+    assert note.startswith("⚠") and "Saturday 10/10/26 and Sunday 10/11/26" in note
 
 
 def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
@@ -82,21 +89,30 @@ def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
     assert out["slices"][1]["missing"] == [WEEK[5], WEEK[6]]
 
 
-def test_a_single_call_that_skips_a_day_goes_to_parts(monkeypatch):
+def test_a_single_call_that_skips_a_day_writes_only_that_day_again(monkeypatch):
+    """The six days the call wrote are kept and only Sunday is asked for,
+    with them in view (schedule audit 10/3/26 P-34: the answer used to be
+    thrown away and the whole week written again in two parts)."""
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 50)           # one call
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
+    seen = []
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:6]],                    # no Sunday
-        [(d, "Ana") for d in WEEK[:4]],
-        [(d, "Ana") for d in WEEK[4:]],
+        [(WEEK[6], "Bob")],
     ])
-    monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
+
+    def spy(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
+        seen.append((week_slice, len(prior_rows or [])))
+        return fake(analysis, shifts, week_slice=week_slice, prior_rows=prior_rows, **kwargs)
+    monkeypatch.setattr(labor, "generate_optimized_schedule", spy)
     # Two people: a one-person roster may legitimately leave a day off
     # (SCHED-1), two can cover seven days, so a skipped Sunday is a miss.
     out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Bob", "Server")], {"tz_name": None})
     assert se._missing_dates(out["schedule_csv"], WEEK) == [] and out["chunked"] == 2
     assert out["slices"][0]["missing"] == [WEEK[6]]
+    assert seen == [(None, 0), ([WEEK[6]], 6)]                          # Sunday alone, Mon–Sat in view
+    assert "WROTE NO SHIFTS FOR 2026-10-11" in fake.calls[1]["extra"]
 
 
 def test_very_large_rosters_split_by_department_first(monkeypatch):

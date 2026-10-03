@@ -3207,6 +3207,17 @@ def mobile_labor_insight(current_user):
                        insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
 
 
+def _schedule_wait(job_id, restaurant_id) -> int:
+    """How long a client should keep polling a generation it joined: the
+    time its own deadline leaves (ops.read_async_job's seconds_left), else
+    what a new generation is given (schedule audit 10/3/26 P-22)."""
+    import ops as _ops
+    import schedule_engine as _se
+    job = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+    left = job.get("seconds_left")
+    return int(left) + _ops.ASYNC_DEADLINE_GRACE_SECONDS if left is not None else _se.job_wait_seconds()
+
+
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_generate_schedule(current_user):
@@ -3214,8 +3225,12 @@ def mobile_generate_schedule(current_user):
     (_run_schedule_job plus ops.async_jobs) rather than building a second job
     system — the same async-generate-then-poll pattern the web Labor tab
     already relies on. The ONE body for both surfaces: the web route
-    /api/generate-schedule calls it (client_api.generate_schedule_json)."""
-    import threading
+    /api/generate-schedule calls it (client_api.generate_schedule_json).
+
+    Body: week_start; for a redo of some days, dates + history_id and,
+    optionally, reason (one of schedule_engine.REDO_REASONS) and reason_text
+    (the owner's words). The answer carries wait_seconds: how long the job
+    can run (schedule audit 10/3/26 P-22)."""
     import uuid
     from ai_utils import ai_rate_limited
 
@@ -3226,7 +3241,7 @@ def mobile_generate_schedule(current_user):
     import ops as _ops
     running = _ops.active_job("schedule", rid)
     if running:
-        return jsonify(ok=True, job_id=running, joined=True)
+        return jsonify(ok=True, job_id=running, joined=True, wait_seconds=_schedule_wait(running, rid))
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
@@ -3241,19 +3256,27 @@ def mobile_generate_schedule(current_user):
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
+    # Why the owner is redoing those days (schedule audit 10/3/26 PR-18): a
+    # chip from schedule_engine.REDO_REASONS and/or their own words. The
+    # prompt carries it as their note, fenced; schedule learning records it.
+    import schedule_engine as _se
+    redo_reason, _rr_err = _se.redo_reason_from(body) if dates else (None, None)
+    if _rr_err:
+        return jsonify(ok=False, error=_rr_err), 400
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
     job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
     if joined:
-        return jsonify(ok=True, job_id=job_id, joined=True)
-    from schedule_engine import _run_schedule_job as _run_sched
-    # The owner who pressed Generate is the actor on every model call the job
-    # makes (the thread has no request to read it from, #148).
-    from ai_utils import attributed as _ai_attributed
-    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid),
-                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
+        return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
+    # On the bounded generation pool, not a thread of its own (P-39); the
+    # owner who pressed Generate stays the actor on every model call the job
+    # makes (submit_generation takes the attribution here, #148).
+    _se.submit_generation(job_id, rid, week_start=week_start, dates=dates, base_history_id=base_history_id,
+                          redo_reason=redo_reason)
+    # How long the job can run (P-22): the client waits this long, not a
+    # guessed 15 minutes; a poll while it is pending says what is left.
+    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
+                   wait_seconds=_se.job_wait_seconds())
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")
@@ -3267,7 +3290,9 @@ def mobile_schedule_status(job_id, current_user):
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
-        return jsonify(ok=True, status="pending")
+        # How long the job can still run, when it set its deadline (schedule
+        # audit 10/3/26 P-22) — the web twin says the same.
+        return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]

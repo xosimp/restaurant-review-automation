@@ -1248,7 +1248,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
             _bump("skipped")               # attempted earlier today — never a second paid try
             return
         try:
-            _draft_one(r, db_path, _se, _bump)
+            _draft_one(r, db_path, _se, _bump, period=local[r.id][1])
         except Exception:
             _bump("failed")
             raise
@@ -1263,12 +1263,27 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                    drafted=counts["drafted"], complete=not ran_out)
 
 
-def _draft_one(r, db_path, _se, _bump):
-    """One restaurant's auto-draft and, when it saved, the owner's nudge."""
+def _draft_one(r, db_path, _se, _bump, period=None):
+    """One restaurant's auto-draft and, when it saved, the owner's nudge.
+
+    Claimed like an owner's press (ops.claim_async_job): it used to start a
+    job of its own beside one the owner had running for the same restaurant
+    — two paid generations of the same week, the later one superseding the
+    other (schedule audit 10/3/26 P-39). When the owner's is running, theirs
+    is the draft; today's claim is handed back so a later pass can try again
+    if theirs fails. And it takes a slot of the bounded generation pool
+    (schedule_engine.generation_scope) like any generation, with the same
+    wall clock."""
     import ops
-    job_id = f"auto-{uuid.uuid4().hex[:12]}"
-    ops.start_async_job(job_id, "schedule", r.id)
-    _se._run_schedule_job(job_id, r.id)
+    from schedule_engine import generation_scope
+    job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id)
+    if joined:
+        if period:
+            ops.release_period(f"auto_draft:{r.id}", period)
+        _bump("skipped")
+        return
+    with generation_scope(job_id):
+        _se._run_schedule_job(job_id, r.id)
     # _run_schedule_job reports its own failures into the job row rather
     # than raising, so the push below must wait on that verdict — telling
     # an owner a draft is waiting when none was saved is worse than silence.

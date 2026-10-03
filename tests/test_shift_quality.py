@@ -1769,7 +1769,9 @@ def test_the_missing_shift_data_error_says_which_restaurant_and_why(db_path, mon
     """"No shift data available — upload shifts CSV first" was shown beside a
     Labor tab full of numbers, which reads as a contradiction and gives
     nobody anywhere to start. Those numbers can come from bundled sample
-    data, which is exactly the confusion worth naming."""
+    data, which is exactly the confusion worth naming — in the owner's
+    words: the restaurant's name and the screen to fix it on, never its
+    database id or "client data row" (schedule audit 10/3/26 E-30)."""
     import client_api
     import models
     real = models.get_conn
@@ -1779,14 +1781,14 @@ def test_the_missing_shift_data_error_says_which_restaurant_and_why(db_path, mon
     rid = models.create_restaurant(
         models.Restaurant(name="Nowhere Diner", owner_email="n@x.test"), db_path=db_path)
 
-    message = client_api._no_shift_data_message(rid, models.get_restaurant(rid, db_path))
-    assert "Nowhere Diner" in message and f"id {rid}" in message
-    assert "no client data row at all" in message
+    restaurant = models.get_restaurant(rid, db_path)
+    message = client_api._no_shift_data_message(rid, restaurant)
+    assert "Nowhere Diner" in message and "Upload shifts CSV" in message
     assert "sample data" in message
-
-    models.save_client_data(rid, "shifts", "", source="seed", db_path=db_path)
-    assert "no shifts CSV" in client_api._no_shift_data_message(
-        rid, models.get_restaurant(rid, db_path))
+    for missing in ("history", "unreadable", "team", "basis"):
+        said = client_api._no_shift_data_message(rid, restaurant, missing=missing)
+        assert "Nowhere Diner" in said, missing
+        assert f"id {rid}" not in said and "client data row" not in said and "CSV is" not in said, said
 
 
 def test_half_filling_a_short_role_never_scores_below_leaving_it_empty():

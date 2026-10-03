@@ -64,14 +64,14 @@ def test_the_schedule_job_refuses_sample_data(monkeypatch, db_path):
     conn.commit()
     conn.close()
     monkeypatch.setattr(client_api, "get_restaurant", lambda rid: models.get_restaurant(rid, db_path))
-    with pytest.raises(ValueError, match="no shift data to schedule from") as caught:
+    with pytest.raises(ValueError, match="no team and no shift history") as caught:
         client_api._build_schedule_result(1)
-    # The refusal has to say which restaurant and what is missing. The old
-    # wording was shown beside a Labor tab full of sample-derived numbers,
-    # which read as a contradiction and gave nobody anywhere to start.
-    assert "R (id 1)" in str(caught.value)
-    assert "no client data row at all" in str(caught.value)
-    assert "sample data" in str(caught.value)
+    # The refusal has to say which restaurant and what is missing — in the
+    # owner's words, never the database id or "client data row" (schedule
+    # audit 10/3/26 E-30). A restaurant with a hand-built team drafts from
+    # it instead (tests/test_schedule_b2_calls.py); with neither, this.
+    assert str(caught.value).startswith("R has no team")
+    assert "(id 1)" not in str(caught.value) and "client data row" not in str(caught.value)
 
 
 # ── The partial-data flags reach the payload ───────────────────────────────
