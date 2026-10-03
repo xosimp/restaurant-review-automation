@@ -1060,40 +1060,82 @@ class _WeekData:
         return out
 
 
-def _revert(final_rows, base_rows, items) -> list:
-    """`final_rows` with each of `items` (changes from base to final) undone:
-    the base's row put back where the change replaced or removed it."""
-    rows = [dict(r) for r in final_rows]
-    base_by = {_key(r): r for r in base_rows}
+def _step_changes(data, base, steps) -> list:
+    """Per step, its changes against the step before, each with whose it is:
+    [(attrs, [(change, cavnar source or None)])]. Read once per week."""
+    out, prev = [], base
+    for rows, at in steps:
+        if rows is prev:
+            out.append((at, []))
+            continue
+        chs = []
+        for ch in step_origins(prev, rows)["changes"]:
+            src = next((at["cavnar"].get(key_str(k)) for k in ch["keys"] if at["cavnar"].get(key_str(k))), None) \
+                or ch["source"]
+            chs.append((ch, src))
+        out.append((at, chs))
+        prev = rows
+    return out
 
-    def _drop(k):
-        for i, r in enumerate(rows):
-            if _key(r) == k:
-                return rows.pop(i)
-        return None
-    for kind, keys, item in items:
-        if kind == "added":
-            _drop(_key(item))
-        elif kind == "removed":
-            rows.append(dict(item))
-        elif kind == "moved":
-            k_from = (item.get("date") or "", (item.get("from") or "").strip().lower(), item.get("shift_start") or "")
-            k_to = (item.get("date") or "", (item.get("to") or "").strip().lower(), item.get("shift_start") or "")
-            _drop(k_to)
-            if k_from in base_by:
-                rows.append(dict(base_by[k_from]))
-        elif kind == "retimed":
-            who = (item.get("employee") or "").strip().lower()
-            _drop((item.get("date") or "", who, item.get("new_start") or ""))
-            old = base_by.get((item.get("date") or "", who, item.get("old_start") or ""))
-            if old:
-                rows.append(dict(old))
-        elif kind == "role_changed":
-            k = (item.get("date") or "", (item.get("employee") or "").strip().lower(), item.get("shift_start") or "")
-            _drop(k)
-            if k in base_by:
-                rows.append(dict(base_by[k]))
-    return rows
+
+def _replay(base, changes, take) -> tuple:
+    """The rows the week would hold had only the changes `take(change,
+    source, attrs)` accepts been made, step by step — and, per row key, the
+    save that last touched it. A change acting on a row that a skipped change
+    put there (the manager retiming a row Cavnar AI added) is skipped too:
+    under-learning is safer than crediting the manager with Cavnar AI's
+    choice, or inventing a person the manager never added."""
+    view = {}
+    for r in base:
+        view[_key(r)] = r
+    touched = {}
+    for at, chs in changes:
+        for ch, src in chs:
+            if not take(ch, src, at):
+                continue
+            kind, item, a, b = ch["kind"], ch["item"], ch.get("after"), ch.get("before")
+            if kind == "added" and a is not None:
+                view[_key(a)] = a
+                touched[_key(a)] = at
+            elif kind == "removed":
+                if view.pop(_key(item), None) is not None:
+                    touched[_key(item)] = at
+            elif kind in ("moved", "retimed") and a is not None and b is not None and _key(b) in view:
+                view.pop(_key(b))
+                view[_key(a)] = a
+                touched[_key(b)] = touched[_key(a)] = at
+            elif kind == "role_changed" and a is not None and _key(a) in view:
+                view[_key(a)] = a
+                touched[_key(a)] = at
+    return list(view.values()), touched
+
+
+def _kept(kind, item, final_keys) -> bool:
+    """Whether a change still stands in the week as it went out."""
+    if kind == "removed":
+        return _key(item) not in final_keys
+    if kind == "added":
+        return _key(item) in final_keys
+    if kind == "moved":
+        return (item.get("date") or "", (item.get("to") or "").strip().lower(), item.get("shift_start") or "") \
+            in final_keys
+    if kind == "retimed":
+        return (item.get("date") or "", (item.get("employee") or "").strip().lower(), item.get("new_start") or "") \
+            in final_keys
+    return (item.get("date") or "", (item.get("employee") or "").strip().lower(), item.get("shift_start") or "") \
+        in final_keys
+
+
+def _items_of(base, rows, touched, origin, excluded, source_of=None) -> list:
+    """The changes from `base` to `rows`, each with the save that made it."""
+    out = []
+    for kind, keys, item in change_items(diff(base, rows)):
+        at = next((touched[k] for k in keys if k in touched), {}) or {}
+        out.append({"kind": kind, "keys": keys, "item": item, "origin": origin,
+                    "source": (source_of or {}).get(frozenset(keys)) if source_of is not None else None,
+                    "authority": at.get("authority"), "editor": at.get("editor"), "version": at.get("version"),
+                    "history_id": at.get("history_id"), "excluded": excluded})
+    return out
 
 
 def _week_date(h, gen):
@@ -1107,41 +1149,55 @@ def _week_date(h, gen):
 
 def _record(data: _WeekData, hid: int, today=None):
     """One week as the restaurant settled it (see the section above), or None
-    when the week has no generated draft (an uploaded schedule)."""
+    when the week has no generated draft (an uploaded schedule).
+
+    Each reading replays the saves in order from the original draft taking
+    only one kind of change, so a manager's change and Cavnar AI's on the
+    same slot are never merged into one change and credited to either:
+      final        the manager's own changes (not Cavnar AI's, not an
+                   admin's unless adopted, not a one-off the owner named)
+      final_owner  everything but an admin's hand (the acceptance figure)
+    and the changes Cavnar AI made, and an admin made, that still stand in
+    the week as it went out."""
     comp = data.compose(hid)
     if comp is None:
         return None
     base, steps = comp["base"], comp["steps"]
     final_all = steps[-1][0] if steps else base
-    # Who last touched each row: the latest step's change wins.
-    touch, prev = {}, base
-    for idx, (rows, at) in enumerate(steps):
-        if rows is prev:
-            continue
-        st = step_origins(prev, rows)
-        for ch in st["changes"]:
-            src = next((at["cavnar"].get(key_str(k)) for k in ch["keys"] if at["cavnar"].get(key_str(k))), None) \
-                or ch["source"]
-            for k in ch["keys"]:
-                touch[k] = (idx, at, src)
-        prev = rows
+    final_keys = {_key(r) for r in final_all}
     answered = data.answered_keys(comp["chain"])
-    items, excluded = [], {"cavnar": [], "admin": [], "answered": []}
-    for kind, keys, item in change_items(diff(base, final_all)):
-        hits = [touch[k] for k in keys if k in touch]
-        idx, at, src = max(hits, key=lambda t: t[0]) if hits else (len(steps) - 1, steps[-1][1] if steps else {}, None)
-        why = ("cavnar" if src else "admin" if not at.get("learnable", True) else
-               "answered" if keys & answered else None)
-        entry = {"kind": kind, "keys": keys, "item": item, "origin": "cavnar" if src else "manager",
-                 "source": src, "authority": at.get("authority"), "editor": at.get("editor"),
-                 "version": at.get("version"), "history_id": at.get("history_id"), "excluded": why}
-        items.append(entry)
-        if why:
-            excluded[why].append(entry)
-    learn_out = [(e["kind"], e["keys"], e["item"]) for e in items if e["excluded"]]
-    admin_out = [(e["kind"], e["keys"], e["item"]) for e in items if e["excluded"] == "admin"]
-    final = _revert(final_all, base, learn_out) if learn_out else final_all
-    final_owner = _revert(final_all, base, admin_out) if admin_out else final_all
+    changes = _step_changes(data, base, steps)
+
+    def mine(ch, src, at):
+        return not src and at.get("learnable", True)
+    # Most weeks hold only the manager's own changes: a reading with nothing
+    # to tell apart is not replayed again.
+    any_cavnar = any(src for _at, chs in changes for _ch, src in chs)
+    any_admin = any(chs and not at.get("learnable", True) for at, chs in changes)
+    any_answer = bool(answered) and any(ch["keys"] & answered for _at, chs in changes for ch, _s in chs)
+    final, touched = _replay(base, changes, lambda ch, src, at: mine(ch, src, at) and not (ch["keys"] & answered))
+    items = _items_of(base, final, touched, "manager", None)
+    if any_answer:
+        with_oneoffs, touched_all = _replay(base, changes, mine)
+        learned = {frozenset(e["keys"]) for e in items}
+        items += [dict(e, excluded="answered") for e in _items_of(base, with_oneoffs, touched_all, "manager", None)
+                  if frozenset(e["keys"]) not in learned and e["keys"] & answered]
+    cav, adm = [], []
+    if any_cavnar:
+        sources = {frozenset(ch["keys"]): src for _at, chs in changes for ch, src in chs if src}
+        by_cavnar, touched_c = _replay(base, changes, lambda ch, src, at: bool(src) and at.get("learnable", True))
+        cav = [e for e in _items_of(base, by_cavnar, touched_c, "cavnar", "cavnar", sources)
+               if _kept(e["kind"], e["item"], final_keys)]
+        for e in cav:
+            e["source"] = e["source"] or next((s_ for k, s_ in sources.items() if k & e["keys"]), None)
+    if any_admin:
+        by_admin, touched_a = _replay(base, changes, lambda ch, src, at: not at.get("learnable", True))
+        adm = [e for e in _items_of(base, by_admin, touched_a, "manager", "admin")
+               if _kept(e["kind"], e["item"], final_keys)]
+        final_owner = _replay(base, changes, lambda ch, src, at: at.get("learnable", True))[0]
+    else:
+        final_owner = final_all
+    items += cav + adm
     gen = data.generated(hid)
     pub = data.first_publish(hid)
     person_edit = any(at["reason"] == "edited" and at["learnable"] for _rows, at in steps)
@@ -1157,7 +1213,9 @@ def _record(data: _WeekData, hid: int, today=None):
     today = today or date.today()
     return {"history_id": hid, "week_start": h.get("week_start"), "chain": comp["chain"],
             "base": base, "final": final, "final_all": final_all, "final_owner": final_owner,
-            "diff": diff(base, final), "items": items, "excluded": {k: len(v) for k, v in excluded.items()},
+            "diff": diff(base, final), "items": items,
+            "excluded": {"cavnar": len(cav), "admin": len(adm),
+                         "answered": sum(1 for e in items if e["excluded"] == "answered")},
             "rejected": comp["rejected"], "redo_dates": sorted(comp["redo_dates"]),
             "editor": editor, "edited": bool(learn_items), "looked_at": bool(looked),
             "published": pub is not None or bool(h.get("published_at")),
@@ -1296,6 +1354,12 @@ def learned_patterns(restaurant_id, weeks=LEARN_WEEKS, min_repeats=2, db_path=DB
     for w in week_edits:
         if w.get("edited"):
             by_editor.setdefault(w.get("editor") or "", []).append(w)
+    if len(by_editor) == 1:
+        # One editor taught every pattern: their count is the pattern's.
+        editor = next(iter(by_editor))
+        for p in out:
+            p.setdefault("editors", {})[editor or "unknown"] = p["times"]
+        return out
     import schedule_intel as _si
     for editor, wks in by_editor.items():
         mine = {_si.pattern_key(p): p["times"] for p in _patterns_from_weeks(restaurant_id, wks, 1, db_path, min_rate=0)}

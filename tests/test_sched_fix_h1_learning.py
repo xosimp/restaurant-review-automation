@@ -233,6 +233,29 @@ def test_cavnar_ais_saved_changes_are_not_learned_as_the_managers(note):
     assert w["excluded"]["cavnar"] == 1 and not w["edited"]
 
 
+def test_a_manager_change_and_a_cavnar_change_on_one_slot_are_never_merged():
+    """The manager takes Bob off Tuesday dinner; Improve then swaps Cy for
+    Dee on the same slot. The net diff alone pairs Bob with Dee — one
+    "move" that is half each — so each kind of change is read on its own."""
+    rid = _rid()
+    for w in (2, 1):
+        mon = _monday(w)
+        tue = (mon + timedelta(days=1)).isoformat()
+        hid = _hist(rid, mon, _crew(mon, EVERYONE), published=True)
+        _v(rid, hid, "generated", _crew(mon, EVERYONE), by="Cavnar AI", auth="system")
+        mine = _crew(mon, WITHOUT_BOB)
+        _v(rid, hid, "edited", mine)
+        fixed = [dict(r, employee="Dee", notes="Cavnar AI: a stronger hand") if r["employee"] == "Cy"
+                 and r["date"] == tue else r for r in mine]
+        _v(rid, hid, "edited", fixed)
+        _v(rid, hid, "published", fixed)
+    learned = {(p["kind"], p["employee"]) for p in sv.learned_patterns(rid)}
+    assert ("moved_off", "Bob") in learned, "the manager's own change was lost in Cavnar AI's"
+    assert not learned & {("moved_off", "Cy"), ("moved_on", "Dee")}, "Cavnar AI's swap was learned as the manager's"
+    w = sl.learning_weeks(rid)[-1]
+    assert w["excluded"]["cavnar"] == 1 and w["edited"]
+
+
 def test_a_note_cavnar_ai_wrote_at_generation_is_not_a_new_change():
     """A drafted row already carrying "Cavnar AI:" that the manager retimes
     is the manager's change — only a tag the save ADDED is Cavnar AI's."""
@@ -381,6 +404,51 @@ def test_the_automation_actor_is_system_and_a_queued_person_is_themself():
     assert sv.authority_of(me) == "principal" and me["role"] == "automation"
     old = delayed.queued_actor({"schedule_id": 3, "manual": True, "acknowledge": []})
     assert sv.authority_of(old) == "delegate"
+
+
+def test_a_queued_send_runs_with_the_senders_authority_and_auto_publish_as_system(monkeypatch):
+    import client_api
+    import delayed
+    rid = _rid()
+    models.update_restaurant(rid, {"send_delay_minutes": 30})
+    mon = _monday(-1)
+    hid = _week(rid, mon, _crew(mon, EVERYONE), _crew(mon, EVERYONE), published=False)
+    monkeypatch.setattr(client_api, "publish_review", lambda *a, **k: {"blockers": []})
+    owner = {"id": 1, "username": "erik", "role": "owner", "restaurant_id": rid}
+    with Flask(__name__).test_request_context("/api/labor/publish-schedule", method="POST",
+                                              json={"schedule_id": hid}):
+        resp = client_api._publish_schedule_request(owner)
+    assert resp.get_json()["queued"]
+    payload = json.loads(_sql("SELECT payload_json FROM delayed_actions WHERE restaurant_id=?", rid).fetchone()[0])
+    assert payload["manual"] and payload["authority"] == "principal" and payload["queued_by"] == "erik"
+    ran = []
+    monkeypatch.setattr(client_api, "_publish_schedule",
+                        lambda r, sid, actor, acknowledge=None: ran.append(sv.authority_of(actor)) or ({"ok": True}, 200))
+    delayed._run_schedule_publish(rid, payload, None)
+    delayed._run_schedule_publish(rid, {"schedule_id": hid, "automatic": True}, None)
+    assert ran == ["principal", "system"]
+
+
+def test_the_first_publish_observes_every_change_by_origin(observed):
+    rid = _rid()
+    mon = _monday(-1)
+    tue = (mon + timedelta(days=1)).isoformat()
+    hid = _hist(rid, mon, _crew(mon, EVERYONE), published=True)
+    _v(rid, hid, "generated", _crew(mon, EVERYONE), by="Cavnar AI", auth="system")
+    mine = _crew(mon, WITHOUT_BOB)                                   # the manager takes Bob off
+    _v(rid, hid, "edited", mine)
+    fixed = [dict(r, employee="Dee", notes="Cavnar AI: a stronger hand") if r["employee"] == "Cy"
+             and r["date"] == tue else r for r in mine]                # Improve swaps Cy for Dee
+    _v(rid, hid, "edited", fixed)
+    _v(rid, hid, "published", fixed)
+    assert sv.observe_publish(rid, hid, authority="principal", editor="erik") >= 3
+    kinds = {(k, kw["origin"]) for k, kw in observed}
+    assert ("edit_move", "manager") in kinds and ("cavnar_change_saved", "cavnar") in kinds
+    assert ("edit_headcount", "manager") in kinds and ("week_published", "manager") in kinds
+    assert all(kw["phase"] == "pre_publish" for _k, kw in observed)
+    import inspect
+    import client_api
+    assert "observe_publish(rid, schedule_id" in inspect.getsource(client_api._publish_schedule)
 
 
 def test_a_week_the_automatic_publish_sent_is_nobodys_acceptance_or_evidence():
