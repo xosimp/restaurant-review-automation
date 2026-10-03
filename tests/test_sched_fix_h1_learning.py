@@ -990,3 +990,13 @@ def test_the_publish_check_carries_likely_to_change(monkeypatch):
     with Flask(__name__).test_request_context(f"/labor/publish-check?schedule_id={hid}"):
         body, status = strategy_routes._do_publish_check({"restaurant_id": rid, "id": 1, "role": "owner"})
     assert status == 200 and body["likely_to_change"]["rows"] == [{"employee": "Zed"}]
+
+
+def test_the_draft_is_retimed_to_the_owners_time_rules():
+    """The generator honours a start/end rule in code, not only in the
+    prompt: the job runs apply_role_times over the draft (L-33)."""
+    import inspect
+    import schedule_engine
+    src = inspect.getsource(schedule_engine._run_schedule_job)
+    assert "_rules.apply_role_times(preview_rows, _constraints, editable=_editable)" in src
+    assert "role_times" in inspect.getsource(snr.apply_note_rules)
