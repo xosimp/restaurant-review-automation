@@ -573,7 +573,7 @@ def init_ops(db_path=None):
         conn.executemany("INSERT OR IGNORE INTO job_expected_since (job) VALUES (?)",
                          [(job,) for job in EXPECTED_JOBS])
         for table, columns in (("job_runs", _RUNS_COLUMNS), ("job_failures", _FAILURE_COLUMNS),
-                               ("scheduler_lease", _LEASE_COLUMNS)):
+                               ("scheduler_lease", _LEASE_COLUMNS), ("async_jobs", _ASYNC_JOB_COLUMNS)):
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
             for col, typ in columns:
                 if col not in have:
@@ -955,8 +955,13 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     restaurant_id INTEGER,
     status        TEXT NOT NULL,
     result_json   TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    deadline_at   TEXT
 )"""
+# Added after the table shipped; init_ops adds it to an older database.
+# deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
+# when the job set one (set_async_job_deadline; schedule audit 10/3/26 P-22).
+_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"),)
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -973,10 +978,17 @@ def _async_conn():
     return get_conn()
 
 
-# The longest a generation can plausibly run: a very large roster is written
-# in a dozen or more calls of a minute or two each. A job still pending past
-# this is dead, whatever process owned it.
+# The longest any job can plausibly run. A schedule generation now sets its
+# own, shorter deadline as soon as its calls are planned (at most
+# schedule_engine.SCHEDULE_JOB_MAX_SECONDS, which a test holds under this;
+# schedule audit 10/3/26 P-22), and is read dead past that; this ceiling is
+# for a job that set none. A job still pending past it is dead, whatever
+# process owned it.
 JOB_MAX_MINUTES = 45
+
+# How long past its own deadline (set_async_job_deadline) a job may still be
+# writing its result before a poll calls it dead.
+ASYNC_DEADLINE_GRACE_SECONDS = 90
 
 
 def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
@@ -1010,6 +1022,12 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
         return 0
 
 
+# A pending job past its own deadline (set_async_job_deadline, P-22) is dead
+# whatever its age: never joined, never counted as the one running.
+_NOT_PAST_DEADLINE = ("AND (deadline_at IS NULL OR deadline_at >= datetime('now', '-%d seconds'))"
+                      % ASYNC_DEADLINE_GRACE_SECONDS)
+
+
 def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
     """The job_id of a pending job of this kind for this restaurant, started
     within `max_age_minutes`, or None. Two owners pressing Generate at once
@@ -1021,7 +1039,7 @@ def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         conn.close()
         return row["job_id"] if row else None
@@ -1040,7 +1058,7 @@ def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         if row:
             conn.rollback()
@@ -1079,7 +1097,12 @@ def start_async_job(job_id, kind, restaurant_id):
 
 
 def finish_async_job(job_id, status, result):
-    """Store a finished job's payload. `status` is 'done' or 'error'."""
+    """Store a finished job's payload. `status` is 'done' or 'error'.
+
+    Only a job still pending is written: one already failed — swept at boot,
+    or read past its own deadline (read_async_job) — keeps that verdict. A
+    generation that ran on past it used to overwrite "didn't finish" with a
+    draft the owner had been told never came (schedule audit 10/3/26 P-22)."""
     import json
     try:
         payload = json.dumps(result)
@@ -1088,13 +1111,61 @@ def finish_async_job(job_id, status, result):
     try:
         conn = _async_conn()
         conn.execute(
-            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=?",
+            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND status='pending'",
             (status, payload, str(job_id)),
         )
         conn.commit()
         conn.close()
     except Exception as e:
         log.error(f"finish_async_job({job_id}) failed: {e}")
+
+
+def rewrite_async_result(job_id, result) -> None:
+    """Replace a FINISHED job's stored result, keeping its status — the
+    admin console removing a read-once value (the review account's new
+    password) after its first read. finish_async_job writes only a pending
+    job now (P-22), so this rewrite has its own door."""
+    import json
+    try:
+        payload = json.dumps(result)
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET result_json=? WHERE job_id=? AND status<>'pending'",
+                     (payload, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"rewrite_async_result({job_id}) failed: {e}")
+
+
+def set_async_job_deadline(job_id, deadline_ts) -> None:
+    """Record the wall-clock time (a time.time() value) by which a job will
+    have finished or failed (schedule audit 10/3/26 P-22). Past it, plus
+    ASYNC_DEADLINE_GRACE_SECONDS, a poll reports the job dead rather than
+    waiting out JOB_MAX_MINUTES. Raises nothing: a job whose deadline cannot
+    be written still runs, and is judged by JOB_MAX_MINUTES as before."""
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        at = _dt.fromtimestamp(float(deadline_ts), tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET deadline_at=? WHERE job_id=? AND status='pending'", (at, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"set_async_job_deadline({job_id}) failed: {e}")
+
+
+def job_still_pending(job_id) -> bool:
+    """Whether the job's row still reads pending — False once a poll has
+    called it dead (read_async_job) or the boot sweep failed it. A job that
+    finds itself failed does not save what it was building. True when the
+    row cannot be read (never stop a job over a bookkeeping failure)."""
+    try:
+        conn = _async_conn()
+        row = conn.execute("SELECT status FROM async_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+        conn.close()
+        return True if row is None else row["status"] == "pending"
+    except Exception:
+        return True
 
 
 def read_async_job(job_id, restaurant_id=None):
@@ -1116,8 +1187,11 @@ def read_async_job(job_id, restaurant_id=None):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id, restaurant_id, status, result_json, "
-            "created_at < datetime('now', ?) AS overdue FROM async_jobs WHERE job_id=?",
-            (f"-{JOB_MAX_MINUTES} minutes", str(job_id)),
+            "created_at < datetime('now', ?) AS overdue, "
+            "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
+            "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
+            "FROM async_jobs WHERE job_id=?",
+            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds", str(job_id)),
         ).fetchone()
         if not row:
             conn.close()
@@ -1129,15 +1203,31 @@ def read_async_job(job_id, restaurant_id=None):
             conn.close()
             return None
         status = row["status"]
-        if status == "pending" and row["overdue"]:
-            # Past any real generation: its result was never stored (the
-            # write failed, or the process died after the boot sweep ran).
-            # Polling 'pending' forever helps nobody (DATA-9).
+        if status == "pending" and (row["overdue"] or row["past_deadline"]):
+            # Past any real generation (or past the job's own deadline): its
+            # result was never stored (the write failed, or the process died
+            # after the boot sweep ran). Polling 'pending' forever helps
+            # nobody (DATA-9). Written, once, so a job still running cannot
+            # later overwrite this verdict with a draft (P-22): it sees the
+            # row failed and saves nothing (job_still_pending).
+            failed = {"ok": False, "error": "The schedule didn't finish in the time a generation is given, so "
+                                            "nothing was saved. Try again."}
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(failed), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the overdue job: {e}")
             conn.close()
-            return {"status": "error", "result": {"ok": False, "error": "Generation didn't finish — please try again."}}
+            return {"status": "error", "result": failed}
         if status == "pending":
             conn.close()
-            return {"status": "pending", "result": None}
+            out = {"status": "pending", "result": None}
+            if row["seconds_left"] is not None:
+                # How long the job can still run, when it set its deadline:
+                # a client waits that long rather than a guessed 15 minutes.
+                out["seconds_left"] = max(0, int(row["seconds_left"]))
+            return out
         conn.close()
         try:
             result = json.loads(row["result_json"]) if row["result_json"] else None

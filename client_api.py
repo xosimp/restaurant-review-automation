@@ -5140,7 +5140,6 @@ from schedule_engine import (  # noqa: E402,F401
     _enforce_close_time,
     _row_fields_look_sane,
     _top_up_hours_gap,
-    _extend_shifts_to_close_gap,
     _peak_server_overlap,
     _trim_server_overlap_cap,
     _window_overlap,
@@ -5189,7 +5188,9 @@ def schedule_status(current_user, job_id):
     if not job:
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
-        return jsonify({"ok": True, "status": "pending"})
+        # How long the job can still run, when it set its deadline (schedule
+        # audit 10/3/26 P-22) — the mobile twin says the same.
+        return jsonify({"ok": True, "status": "pending", "seconds_left": job.get("seconds_left")})
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -5198,6 +5199,25 @@ def schedule_status(current_user, job_id):
         return jsonify(result)
     except Exception as e:
         return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
+
+
+def _schedule_in_force(restaurant_id, history_id=None):
+    """The id of the schedule a download serves: `history_id` when the
+    screen names the week it shows (this restaurant's only), else the newest
+    row nothing superseded — never, by default, a rewrite the quality gate
+    discarded or a draft a newer one replaced (P-42). None when there is
+    none."""
+    conn = get_conn()
+    try:
+        if history_id:
+            row = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (int(history_id), restaurant_id)).fetchone()
+            return row["id"] if row else None
+        row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND superseded_by IS NULL "
+                           "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        return row["id"] if row else None
+    finally:
+        conn.close()
 
 
 @client_bp.route("/api/download-schedule")
@@ -5209,17 +5229,24 @@ def download_schedule(current_user):
     again — so the CSV an owner printed was a different week from the one
     on their screen, carried none of the quality review they had just
     worked through, and billed a second model call every press.
+
+    It then served the newest history row, superseded or not — so after a
+    quality-gate rewrite was judged no better and the original draft put
+    back (schedule_engine._restore_draft), the download was the discarded
+    rewrite (schedule audit 10/3/26 P-42). It serves the draft in force: the
+    newest row nothing superseded, or `history_id` when the screen names
+    the week it shows.
     """
     import io
-    from models import get_schedule_history, get_schedule_history_detail
+    from models import get_schedule_history_detail
     try:
         rid = current_user["restaurant_id"]
         restaurant = get_restaurant(rid)
-        entries = get_schedule_history(rid, limit=1)
-        if not entries:
+        current = _schedule_in_force(rid, request.args.get("history_id", type=int))
+        if not current:
             return jsonify(ok=False,
                            error="Generate a schedule first — there's nothing to download yet."), 400
-        detail = get_schedule_history_detail(entries[0]["id"], rid) or {}
+        detail = get_schedule_history_detail(current, rid) or {}
         csv_clean = (detail.get("schedule_csv") or "").strip()
         if not csv_clean:
             return jsonify(ok=False, error="That schedule has no rows to download."), 400
@@ -10684,11 +10711,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         import ops as _ops_pb
         _ops_pb.capture(e, job="publish_blockers_sweep", context=f"restaurant_id={restaurant_id}")
         add("sweep_failed", "The rule check could not run against today's data")
-    # The labor budget is a ceiling. A week the model wrote past it is not
-    # trimmed (a silently thinner week is worse) — it is named here, so the
-    # owner sends it knowing, or takes hours out first. It is an HOURLY
-    # budget, so the week's hourly hours are held against it, as they stand
-    # now: salaried people's hours are never spent from it, and counting
+    # The labor budget is a ceiling. Generation trims back to it when the
+    # owner's trim_to_budget is on (the default; every removal reported, never
+    # below a floor); a week still over it — the trim off, floors that need
+    # more, or hours added since — is not trimmed here: it is named, so the
+    # owner sends it knowing, or takes hours out first (this comment used to
+    # say no week was ever trimmed; schedule audit 10/3/26 P-45). It is an
+    # HOURLY budget, so the week's hourly hours are held against it, as they
+    # stand now: salaried people's hours are never spent from it, and counting
     # them put a spurious "over the ceiling" of about the salaried hours on
     # every week (E-7, P-6).
     hours = None

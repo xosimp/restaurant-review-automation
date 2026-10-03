@@ -699,10 +699,22 @@ def seam_lines(prior_rows: list, busy: set = None) -> list:
     return out
 
 
-def focus_block(focus: list) -> str:
+def _dates_named(dates: list) -> str:
+    """'Saturday 2026-10-10 and Sunday 2026-10-11' — the dates as the rest
+    of the prompt writes them."""
+    named = [f"{_day_name(d, d)} {d}" for d in sorted(set(dates or []))]
+    if len(named) <= 1:
+        return "".join(named)
+    return ", ".join(named[:-1]) + " and " + named[-1]
+
+
+def focus_block(focus: list, dates: list = None) -> str:
     """What the previous draft of these days was scored weak on, named, so
     a regeneration of chosen dates fixes those things rather than
-    reshuffling at random."""
+    reshuffling at random — with the dates it is about (schedule audit
+    10/3/26 PR-18: the header said "THESE DAYS" and never named them). The
+    owner's own reason for a redo is their `instruction` (labor), said once
+    at priority 5, never here as well."""
     items = []
     for f in focus or []:
         text = " ".join(str(f or "").split())[:FOCUS_MAX_CHARS]
@@ -712,6 +724,7 @@ def focus_block(focus: list) -> str:
             break
     if not items:
         return ""
-    return ("\n\nTHE PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
+    which = _dates_named(dates).upper() if dates else "THESE DAYS"
+    return (f"\n\nTHE PREVIOUS DRAFT OF {which} SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
             + "\n  Fix these specifically in this draft, within the PRIORITIES order — never by breaking "
             "anything ranked above the thing being fixed.")

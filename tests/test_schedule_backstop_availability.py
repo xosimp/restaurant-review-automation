@@ -1,6 +1,6 @@
 """Deterministic schedule backstops (_top_up_hours_gap,
-_ensure_role_floors, _extend_shifts_to_close_gap) vs. freeform
-availability notes.
+_ensure_role_floors; the extend-to-close pass is gone, schedule audit
+10/3/26 P-46) vs. freeform availability notes.
 
 staff_availability only has whole-day granularity in its structured
 fields (available_days/unavailable_days) -- a client who writes "only
