@@ -332,6 +332,20 @@ def test_the_input_build_says_every_input_it_goes_without():
     assert "except Exception:\n        weather_forecast = []" not in src
 
 
+def test_every_input_a_draft_can_go_without_has_owner_words():
+    # Asserted against the source, not one run: a raw name like
+    # "forecast_preview revenue" must never reach the owner's review line.
+    import re
+    src = inspect.getsource(se)
+    named = set(re.findall(r"""_soft_fail\(\s*(['"])(.+?)\1\s*,""", src))
+    assert len(named) > 40
+    missing = sorted(w for _q, w in named if w not in se._INPUT_WORDS)
+    assert missing == []
+    # The keyed loops name inputs the map carries too.
+    for key in ("tenure", "leader_flags", "prior_pattern", "availability"):
+        assert key in se._INPUT_WORDS
+
+
 def test_a_scoring_crash_is_a_stage_failure_with_an_owner_cause_and_holds_the_publish(db, monkeypatch):
     rid = _restaurant(db, [("Ana", "Server")])
     _no_search(monkeypatch)

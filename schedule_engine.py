@@ -621,6 +621,11 @@ _INPUT_WORDS = {
     "setup review": "the setup check", "section cap check": "the section count against past weeks",
     "soft requirement check": "which staffing asks the week carries", "station report": "each cook's station",
     "unmet list": "what the week doesn't meet",
+    "forecast_preview revenue": "your sales budget for the week",
+    "forecast_preview salaries": "the salaried staff's share of the budget",
+    "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
+    "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
+    "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
 
