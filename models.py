@@ -1161,6 +1161,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # {"Friday": {"from": null, "until": "2026-12-15"}} — a blocked
         # weekday that holds only between two dates (employee audit M5).
         ("staff_availability", "day_bounds", "TEXT"),
+        # Whose word a floor-section assignment is (schedule audit 10/3/26
+        # L-22): schedule_memory learns each server's usual section from
+        # these, and an admin's (view-as, support) is kept and never counted
+        # as the manager's habit (models._write_attribution).
+        ("shift_sections", "authority", "TEXT"),
         # Part of a day off (schedule audit 10/3/26 D-39): "off until 4pm"
         # (end_time), "off from 6pm" (start_time), both for a stretch in the
         # middle, or a daypart ("morning" = lunch, "night" = dinner). None of
@@ -4232,6 +4237,11 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # What the restaurant's scheduling has learned, as one memory, and the
+    # observation log it is built from (schedule_memory, schedule audit
+    # 10/3/26 L-29).
+    from schedule_memory import init_schedule_memory
+    init_schedule_memory(db_path)
     # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
     from schedule_experiments import init_schedule_experiments
     init_schedule_experiments(db_path)
@@ -9842,10 +9852,12 @@ class SectionInputError(ValueError):
 
 
 def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start: str, section,
-                      updated_by=None, db_path: str = DB_PATH):
+                      updated_by=None, db_path: str = DB_PATH, user=None):
     """Put one shift in a named section, or out of any ("" / None). Returns
     the section as the owner spelled it, or None. Raises ValueError for a
-    section that is not one of the restaurant's or an unreadable shift."""
+    section that is not one of the restaurant's or an unreadable shift.
+    Whose word it is (`user`, else the request's login) is stored as its
+    `authority`: the section learner never counts an admin's (L-22)."""
     from datetime import datetime as _dt
     try:
         day = _dt.strptime(str(date or "")[:10], "%Y-%m-%d").date().isoformat()
@@ -9865,12 +9877,14 @@ def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start:
                          (restaurant_id, day, key, start))
         else:
             conn.execute("""INSERT INTO shift_sections (restaurant_id, date, employee_key, employee_name, shift_start,
-                                section, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))
+                                section, updated_by, updated_at, authority) VALUES (?,?,?,?,?,?,?,datetime('now'),?)
                             ON CONFLICT(restaurant_id, date, employee_key, shift_start) DO UPDATE SET
                                 section=excluded.section, employee_name=excluded.employee_name,
-                                updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+                                updated_by=excluded.updated_by, updated_at=excluded.updated_at,
+                                authority=excluded.authority""",
                          (restaurant_id, day, key, " ".join(str(employee).split()), start,
-                          named[wanted.casefold()], (str(updated_by or "").strip()[:120] or None)))
+                          named[wanted.casefold()], (str(updated_by or "").strip()[:120] or None),
+                          _write_attribution(user).get("authority")))
         conn.commit()
     finally:
         conn.close()

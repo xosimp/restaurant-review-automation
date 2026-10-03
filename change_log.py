@@ -93,7 +93,10 @@ _K = {
               "section_count", "foh_sections_json", "sched_notes",
               # Role families, the roles with chosen closers, the salaried
               # weekly cap (schedule audit 10/3/26 F1).
-              "role_families_json", "closer_roles_json", "salaried_cap"),
+              "role_families_json", "closer_roles_json", "salaried_cap",
+              # The owner's labor standards per role family (schedule audit
+              # 10/3/26 D-25): guests per server-hour and the like.
+              "labor_standards_json"),
     "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json", "person_rates_json"),
     "setting": ("name", "owner_email", "owner_name", "owner_phone", "mailing_address", "location_group",
                 "location_name", "timezone", "week_start_day", "fiscal_period_scheme", "fiscal_week_start_dow",

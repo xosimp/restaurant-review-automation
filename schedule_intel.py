@@ -62,10 +62,23 @@ def _daypart(r):
 
 def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     """For every published week that has ended, one row per date and
-    daypart: scheduled hours (from the published CSV), sales and labor %
-    (labor_daily_history's FINAL day, split by this restaurant's MEASURED
-    morning share — _morning_share), coverage and no-show issues on that
-    date, and the mean review rating dated that day. Idempotent: rows are
+    daypart: scheduled hours and people (from the published CSV — the PLAN),
+    and beside them what HAPPENED (schedule audit 10/3/26 L-12 — the record
+    used to be the plan, so calibration and chemistry learned from planned
+    staffing): `actual_hours` and `actual_people` from the punches
+    (shift_facts — a shift is the daypart its clock-in falls in, as a
+    planned one is; the salaried don't clock in, so their planned shifts
+    count as worked), the shifts missed, late, left early and run past their
+    end; sales (labor_daily_history's FINAL day, split by this restaurant's
+    MEASURED morning share — _morning_share), the DAY's labor % (`labor_pct`
+    — labor_daily_history's, the same on both rows: a day-level figure) and
+    the DAYPART's (`labor_pct_daypart`, L-13: the punched hours priced at
+    each punch's rate, split at the 3pm line the sales split at, over that
+    daypart's measured sales — NULL when the split or the punches are not
+    there, never the day's copied); coverage and no-show issues on that
+    date, and the mean review rating dated that day. What was measured goes
+    into the observation log too (schedule_memory: actual_hours,
+    coverage_gap_actual, labor_vs_target_daypart). Idempotent: rows are
     keyed by (history_id, date, daypart).
 
     A day whose morning share was never measured has NULL daypart sales
@@ -78,9 +91,10 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     today = today or date.today()
     conn = get_conn(db_path)
     written = 0
+    pending = []
     try:
         weeks = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+            "SELECT id, week_start, week_end, schedule_csv, labor_target FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
             "AND week_end < ? ORDER BY id DESC LIMIT ?", (restaurant_id, today.isoformat(), OUTCOME_WEEKS)).fetchall()
         if not weeks:
             return {"written": 0}
@@ -111,6 +125,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 issue_at[key] = issue_at.get(key, 0) + 1
         except Exception as _ix:
             print(f"[outcomes] issues unavailable for restaurant {restaurant_id}: {_ix}")
+        actuals = _Actuals(restaurant_id, db_path)
         for w in weeks:
             rows = rows_from_csv(w["schedule_csv"])
             by = {}
@@ -122,6 +137,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 e["hours"] += _hours(r)
                 e["people"].add(r["employee"])
             placed = _place_reviews(conn, restaurant_id, by, _tz)
+            worked = actuals.week(w["week_start"], w["week_end"], rows)
             for (d, part), e in by.items():
                 day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
                                    f"AND date=? AND {FINAL_SQL}", (restaurant_id, d)).fetchone()
@@ -137,6 +153,10 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                     else:
                         split_basis = "measured"
                         sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
+                a = worked.get((d, part)) or {}
+                labor_part = None
+                if sales and a.get("labor_cost") is not None:
+                    labor_part = round(a["labor_cost"] / float(sales) * 100.0, 1)
                 issues = issue_at.get((d, part), 0)
                 # Each review on the shift it was about (_place_reviews): the
                 # meal the analyser read in it, posted within
@@ -153,22 +173,200 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 conn.execute(
                     "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
                     "review_rating, reviews, review_attribution, review_rating_attributed, reviews_attributed, review_lag_days, "
-                    "split_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
+                    "split_basis, actual_hours, actual_people, actual_basis, missed, late, left_early, stayed_late, "
+                    "labor_cost_daypart, labor_pct_daypart) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
                     "hours=excluded.hours, people=excluded.people, sales=excluded.sales, labor_pct=excluded.labor_pct, "
                     "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, "
                     "review_attribution=excluded.review_attribution, "
                     "review_rating_attributed=excluded.review_rating_attributed, "
                     "reviews_attributed=excluded.reviews_attributed, review_lag_days=excluded.review_lag_days, "
-                    "split_basis=excluded.split_basis, recorded_at=datetime('now')",
+                    "split_basis=excluded.split_basis, actual_hours=excluded.actual_hours, "
+                    "actual_people=excluded.actual_people, actual_basis=excluded.actual_basis, missed=excluded.missed, "
+                    "late=excluded.late, left_early=excluded.left_early, stayed_late=excluded.stayed_late, "
+                    "labor_cost_daypart=excluded.labor_cost_daypart, labor_pct_daypart=excluded.labor_pct_daypart, "
+                    "recorded_at=datetime('now')",
                     (restaurant_id, w["id"], d, part, round(e["hours"], 1), len(e["people"]), sales,
                      (day["labor_pct"] if day else None), issues, rating, n_reviews, attribution,
                      round(sum(attributed) / len(attributed), 2) if attributed else None, len(attributed),
-                     max((g["lag"] for g in got), default=None), split_basis))
+                     max((g["lag"] for g in got), default=None), split_basis,
+                     a.get("hours"), a.get("people"), a.get("basis"), a.get("missed"), a.get("late"),
+                     a.get("left_early"), a.get("stayed_late"), a.get("labor_cost"), labor_part))
                 written += 1
+                if a.get("basis"):
+                    pending.append((w, d, part, e, a, labor_part, sales))
         conn.commit()
     finally:
         conn.close()
+    # What was measured, into the observation log (schedule_memory — after
+    # the outcome rows are committed, on its own connections).
+    for w, d, part, e, a, labor_part, sales in pending:
+        _observe_actuals(restaurant_id, w, d, part, e, a, labor_part, sales, db_path)
     return {"written": written}
+
+
+class _Actuals:
+    """What each date and daypart of a published week actually had, from
+    the punches (schedule audit 10/3/26 L-12, L-13): {(date, daypart):
+    {hours, people, basis, missed, late, left_early, stayed_late,
+    labor_cost, plan_by_family, worked_by_family}}. A date with no punch at
+    all is not a date anybody measured: it is absent (unknown), never 0.
+
+      hours / people   punched hours and people of the shifts whose clock-in
+                       falls in the daypart (the way a planned shift is
+                       placed), plus the salaried people's planned shifts —
+                       they don't clock in, so their plan is their record
+      labor_cost       the punched hours priced at each punch's own pay, the
+                       person's rate, the role's (labor._shift_rate — the
+                       labor analysis's one chain), split at the 3pm line the
+                       daypart sales are split at; hourly only, as the day's
+                       labor % is (labor_daily_history)
+      missed / late / left_early   attendance_events on those shifts
+      stayed_late      published shifts whose punch ran
+                       schedule_memory.STAYED_LATE_MINUTES or more past
+                       their end"""
+
+    def __init__(self, restaurant_id, db_path=DB_PATH):
+        import models
+        self.rid = restaurant_id
+        self.db = None if db_path in (None, DB_PATH) else db_path
+        self.restaurant = models.get_restaurant(restaurant_id, db_path or DB_PATH)
+        try:
+            self.salaried = {models.salaried_name_key(x["name"]) for x in models.salaried_staff(self.restaurant)}
+        except Exception:
+            self.salaried = set()
+        try:
+            self.role_rates = models.get_role_rates(restaurant_id) or {}
+        except Exception:
+            self.role_rates = {}
+        self.fallback = float(getattr(self.restaurant, "hourly_rate", None) or self.role_rates.get("_default") or 0)
+        try:
+            self.person_rates = models.person_rates(self.restaurant)
+        except Exception:
+            self.person_rates = {}
+        try:
+            import schedule_rules
+            self.families = schedule_rules.role_families(self.restaurant) or {}
+        except Exception:
+            self.families = {}
+
+    def _fam(self, role):
+        from shift_quality import role_family
+        return role_family(role, self.families)
+
+    def week(self, week_start, week_end, plan_rows) -> dict:
+        import labor
+        import shift_facts
+        import schedule_memory as _sm
+        from schedule_rules import daypart_of
+        from models import salaried_name_key
+        punches = [p for p in shift_facts.rows(self.rid, since=week_start, until=week_end, db_path=self.db)
+                   if p.get("actual_hours") not in (None, "")
+                   and salaried_name_key(p.get("employee")) not in self.salaried]
+        if not punches:
+            return {}
+        _people, role_typical = labor.rate_book(punches, self.person_rates)
+        measured = {str(p["date"])[:10] for p in punches}
+        out = {}
+
+        def slot(d, part):
+            return out.setdefault((d, part), {"hours": 0.0, "people": set(), "basis": "punches", "missed": 0,
+                                              "late": 0, "left_early": 0, "stayed_late": 0, "labor_cost": 0.0,
+                                              "plan_by_family": {}, "worked_by_family": {}})
+        for p in punches:
+            d = str(p["date"])[:10]
+            part = daypart_of(p.get("shift_start") or "")
+            try:
+                hours = float(p.get("actual_hours") or 0)
+            except (TypeError, ValueError):
+                continue
+            if part == "unknown":
+                continue
+            e = slot(d, part)
+            e["hours"] += hours
+            e["people"].add(salaried_name_key(p.get("employee")))
+            e["worked_by_family"].setdefault(self._fam(p.get("role")), set()).add(salaried_name_key(p.get("employee")))
+            rate = labor._shift_rate(p, self.role_rates, self.fallback, self.person_rates, role_typical)
+            s, t = _sm._minutes(p.get("shift_start")), _sm._minutes(p.get("shift_end"))
+            split = 15 * 60
+            if s is None or t is None or part == "night" and s < split:
+                slot(d, part)["labor_cost"] += hours * rate
+                continue
+            if t <= s:
+                t += 24 * 60
+            span = float(t - s) or 1.0
+            early = max(0, min(t, split) - s) / span
+            if early:
+                slot(d, "morning")["labor_cost"] += hours * early * rate
+            if early < 1:
+                slot(d, "night")["labor_cost"] += hours * (1 - early) * rate
+        by_person = {}
+        for p in punches:
+            by_person.setdefault((str(p["date"])[:10], salaried_name_key(p.get("employee"))), []).append(p)
+        for r in plan_rows or []:
+            d = str(r.get("date") or "")[:10]
+            part = daypart_of(r.get("shift_start") or "")
+            if d not in measured or part == "unknown":
+                continue
+            k = salaried_name_key(r.get("employee"))
+            e = slot(d, part)
+            e["plan_by_family"].setdefault(self._fam(r.get("role")), set()).add(k)
+            if k in self.salaried:
+                e["hours"] += _hours(r)
+                e["people"].add(k)
+                e["worked_by_family"].setdefault(self._fam(r.get("role")), set()).add(k)
+                continue
+            mine = _sm.match_punch(r, by_person.get((d, k)))
+            over = _sm.minutes_past_end(r, mine) if mine else None
+            if over is not None and over >= _sm.STAYED_LATE_MINUTES:
+                e["stayed_late"] += 1
+        conn = get_conn(self.db)
+        try:
+            for a in conn.execute("SELECT business_date, shift_start, outcome FROM attendance_events WHERE "
+                                  "restaurant_id=? AND business_date BETWEEN ? AND ?",
+                                  (self.rid, week_start, week_end)).fetchall():
+                d, part = str(a["business_date"])[:10], daypart_of(a["shift_start"] or "")
+                if (d, part) not in out:
+                    continue
+                if a["outcome"] in ("no_show", "called_out"):
+                    out[(d, part)]["missed"] += 1
+                elif a["outcome"] in ("late", "left_early"):
+                    out[(d, part)][a["outcome"]] += 1
+        except Exception as e:
+            print(f"[outcomes] attendance unavailable for restaurant {self.rid}: {e}")
+        finally:
+            conn.close()
+        for e in out.values():
+            e["hours"] = round(e["hours"], 1)
+            e["people"] = len(e["people"])
+            e["labor_cost"] = round(e["labor_cost"], 2)
+        return out
+
+
+def _observe_actuals(restaurant_id, w, d, part, e, a, labor_part, sales, db_path=DB_PATH):
+    """What one slot measured, into the observation log (schedule_memory,
+    phase as_run): the plan beside the punches, each role family the
+    punches left short of the plan, the daypart's labor % against the
+    week's target. Keyed by the slot, so the Monday re-read replaces it."""
+    import schedule_memory as _sm
+    db = None if db_path in (None, DB_PATH) else db_path
+    common = dict(week_start=w["week_start"], date=d, daypart=part, history_id=w["id"], origin="system",
+                  phase="as_run", authority="system", source="punches", db_path=db)
+    _sm.observe(restaurant_id, "actual_hours", value={
+        "planned_hours": round(e["hours"], 1), "actual_hours": a.get("hours"), "planned_people": len(e["people"]),
+        "actual_people": a.get("people"), "missed": a.get("missed"), "late": a.get("late"),
+        "left_early": a.get("left_early"), "stayed_late": a.get("stayed_late")},
+        fact_key=f"actual_hours|{d}|{part}", **common)
+    for fam, planned in (a.get("plan_by_family") or {}).items():
+        worked = len((a.get("worked_by_family") or {}).get(fam) or ())
+        if fam and worked < len(planned):
+            _sm.observe(restaurant_id, "coverage_gap_actual", role=fam,
+                        value={"planned": len(planned), "worked": worked}, fact_key=f"coverage_gap|{d}|{part}|{fam}",
+                        **common)
+    if labor_part is not None:
+        _sm.observe(restaurant_id, "labor_vs_target_daypart", value={
+            "labor_pct": labor_part, "target": w["labor_target"], "labor_cost": a.get("labor_cost"),
+            "sales": sales}, fact_key=f"labor_daypart|{d}|{part}", **common)
 
 
 MORNING_SPLIT_HOUR = 15        # schedule_rules.daypart_of: a shift starting at 3pm or later is "night"
@@ -317,16 +515,29 @@ def _dsr_morning_shares(conn, restaurant_id) -> dict:
 
 
 def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
-    """{weekday: {daypart: {weeks, avg_hours, avg_sales, splh, issues, troubled, rating}}}
-    over the recorded weeks."""
+    """{weekday: {daypart: {weeks, avg_hours, avg_actual_hours, actual_weeks,
+    avg_people, avg_actual_people, missed, stayed_late, avg_sales, splh,
+    splh_basis, labor_pct, issues, troubled, rating}}} over the recorded
+    weeks — the plan (avg_hours, avg_people) and what the punches say
+    happened (avg_actual_hours / avg_actual_people over the `actual_weeks`
+    that had punches, missed and stayed-late shifts; schedule audit 10/3/26
+    L-12). Sales per labor hour is over the hours WORKED where the weeks
+    have them (`splh_basis` "worked"), else over the hours scheduled
+    ("scheduled"); `labor_pct` is the daypart's own (L-13), None unless
+    measured."""
     conn = get_conn(db_path)
     try:
         # Daypart sales only where the split was measured (split_basis): a
         # row recorded before the column existed divided the day by a stated
         # 0.4, and its sales per labor hour is not a figure to hand the
         # schedule prompt (QUALITY-11).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
+        extra = (", actual_hours, actual_people, missed, stayed_late, labor_pct_daypart, people"
+                 if "actual_hours" in cols else
+                 ", NULL AS actual_hours, NULL AS actual_people, NULL AS missed, NULL AS stayed_late, "
+                 "NULL AS labor_pct_daypart, people")
         rows = conn.execute("SELECT date, daypart, hours, CASE WHEN split_basis='measured' THEN sales END AS sales, "
-                            "issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
+                            f"issues, review_rating{extra} FROM schedule_outcomes WHERE restaurant_id=? "
                             "ORDER BY date DESC LIMIT 400", (restaurant_id,)).fetchall()
     except Exception:
         return {}
@@ -345,11 +556,25 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
             continue
         e = acc.setdefault(wd, {}).setdefault(r["daypart"], {"weeks": 0, "hours": 0.0, "sales": 0.0, "sales_n": 0,
                                                              "issues": 0, "ratings": [], "watched": 0,
-                                                             "clean_watched": 0})
+                                                             "clean_watched": 0, "people": 0, "a_weeks": 0,
+                                                             "a_hours": 0.0, "a_people": 0, "missed": 0,
+                                                             "stayed_late": 0, "w_sales": 0.0, "w_hours": 0.0,
+                                                             "labor": []})
         e["weeks"] += 1
         e["hours"] += float(r["hours"] or 0)
+        e["people"] += int(r["people"] or 0)
         if r["sales"] is not None:
             e["sales"] += float(r["sales"]); e["sales_n"] += 1
+        if r["actual_hours"] is not None:
+            e["a_weeks"] += 1
+            e["a_hours"] += float(r["actual_hours"] or 0)
+            e["a_people"] += int(r["actual_people"] or 0)
+            e["missed"] += int(r["missed"] or 0)
+            e["stayed_late"] += int(r["stayed_late"] or 0)
+            if r["sales"] is not None and r["actual_hours"]:
+                e["w_sales"] += float(r["sales"]); e["w_hours"] += float(r["actual_hours"])
+        if r["labor_pct_daypart"] is not None:
+            e["labor"].append(float(r["labor_pct_daypart"]))
         e["issues"] += int(r["issues"] or 0)
         if (r["issues"] or 0) or str(r["date"]) in seen:
             e["watched"] += 1
@@ -370,9 +595,18 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
                 label = f"no issues on {e['watched']} watched night{'s' if e['watched'] != 1 else ''}"
             else:
                 label = "not watched — coverage wasn't checked on these nights"
+            worked_splh = round(e["w_sales"] / e["w_hours"], 0) if e["w_hours"] else None
             out.setdefault(wd, {})[part] = {
                 "weeks": e["weeks"], "avg_hours": round(avg_h, 1), "avg_sales": round(avg_s, 0) if avg_s else None,
-                "splh": round(avg_s / avg_h, 0) if (avg_s and avg_h) else None,
+                "avg_people": round(e["people"] / e["weeks"], 1),
+                "actual_weeks": e["a_weeks"],
+                "avg_actual_hours": round(e["a_hours"] / e["a_weeks"], 1) if e["a_weeks"] else None,
+                "avg_actual_people": round(e["a_people"] / e["a_weeks"], 1) if e["a_weeks"] else None,
+                "missed": e["missed"] if e["a_weeks"] else None,
+                "stayed_late": e["stayed_late"] if e["a_weeks"] else None,
+                "labor_pct": round(sum(e["labor"]) / len(e["labor"]), 1) if e["labor"] else None,
+                "splh": worked_splh if worked_splh else (round(avg_s / avg_h, 0) if (avg_s and avg_h) else None),
+                "splh_basis": "worked" if worked_splh else ("scheduled" if (avg_s and avg_h) else None),
                 "issues": e["issues"],
                 # `issues` is None when no night was a reading at all, so a
                 # client cannot print "no issues" for nights nobody watched.
@@ -398,8 +632,15 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
             if not e:
                 continue
             bits = [f"about {e['avg_hours']:g}h scheduled"]
+            # What the punches say was worked beside the plan (schedule
+            # audit 10/3/26 L-12): the block is called "actually did".
+            if e.get("avg_actual_hours") is not None:
+                bits.append(f"{e['avg_actual_hours']:g}h worked")
+            if e.get("missed"):
+                bits.append(f"{e['missed']} shift{'s' if e['missed'] != 1 else ''} missed in {e['actual_weeks']} weeks")
             if e.get("splh"):
-                bits.append(f"${e['splh']:,.0f} of sales per labor hour")
+                bits.append(f"${e['splh']:,.0f} of sales per labor hour"
+                            + (" worked" if e.get("splh_basis") == "worked" else " scheduled"))
             if e["issues"]:
                 bits.append(f"{e['issues']} coverage or no-show issue{'s' if e['issues'] != 1 else ''} in {e['weeks']} weeks")
             if e.get("rating") is not None:
@@ -1057,6 +1298,28 @@ def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
     for hid, csv_text in csvs.items():
         for r in rows_from_csv(csv_text):
             people_by_slot.setdefault((hid, r["date"], _daypart(r)), set()).add(r["employee"])
+    # Who actually worked each shift where the punches say (schedule audit
+    # 10/3/26 L-12): a pair the schedule put together but one of whom never
+    # came did not share that night. The salaried don't clock in — their
+    # planned shifts stand.
+    try:
+        import shift_facts as _sf
+        from models import get_restaurant as _gr, salaried_staff, salaried_name_key
+        sal = {salaried_name_key(x["name"]) for x in salaried_staff(_gr(restaurant_id))}
+        worked = {}
+        for p in _sf.rows(restaurant_id, since=dates[0], until=dates[-1],
+                          db_path=None if db_path in (None, DB_PATH) else db_path):
+            if p.get("actual_hours") in (None, ""):
+                continue
+            worked.setdefault((str(p["date"])[:10], _daypart(p)), set()).add(p["employee"])
+        punched = {d for d, _p in worked}
+        for key in list(people_by_slot):
+            hid, d, part = key
+            if d in punched:
+                people_by_slot[key] = worked.get((d, part), set()) | {
+                    n for n in people_by_slot[key] if salaried_name_key(n) in sal}
+    except Exception as _wx:
+        print(f"[schedule_intel] chemistry read the plan only for {restaurant_id}: {_wx}")
     shared, clean = {}, {}
     for o in outs:
         people = sorted(people_by_slot.get((o["history_id"], o["date"], o["daypart"]), set()))
@@ -1243,6 +1506,294 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
                             "band": res["band"], "before_nights": res["before_n"], "after_nights": res["after_n"],
                             "through": max(o["date"] for o in after)},
                       source_ref=f"nights:{accepted_on}:{day}:{part}", db_path=db_path):
+            n += 1
+    return n
+
+
+# ── the week as it ran (schedule audit 10/3/26 L-29, L-34) ───────────────
+#
+# A published week was scored once, as planned. Nothing scored it as it RAN
+# — who actually came, when they came and went — so a recommendation the
+# manager carried out could only ever be judged on a watched night's issue
+# count, and pairing, fatigue, strength and the rest never got an outcome
+# (what_worked stayed thin). The week as it ran is the punches (the salaried
+# people's planned shifts beside them: they don't clock in), scored by the
+# same engine and the same inputs a live rescore uses
+# (schedule_engine.quality_inputs_from_db, _quality_signals), and kept per
+# shift beside the planned score in the observation log (schedule_memory:
+# sq_as_run, sq_planned). A recommendation's outcome is then the dimension it
+# named, on the shift it named, as the shift ran — against the same
+# dimension in the draft it was made on.
+
+AS_RUN_WEEKS = 4
+AS_RUN_BAND = 10.0               # points a dimension must move, as run, to read better or worse
+AS_RUN_LOOKBACK_DAYS = REC_ACCEPTED_LOOKBACK_DAYS   # long enough for the week to end and be scored
+
+
+def as_run_rows(restaurant_id, week_start, week_end, plan_rows, db_path=DB_PATH) -> list:
+    """The week as it ran: each punch with its hours (shift_facts, worked
+    hours as the row's hours), plus the salaried people's planned rows. []
+    when the week has no punch at all — never the plan passed off as what
+    happened."""
+    import shift_facts
+    from models import get_restaurant, salaried_staff, salaried_name_key
+    try:
+        sal = {salaried_name_key(x["name"]) for x in salaried_staff(get_restaurant(restaurant_id))}
+    except Exception:
+        sal = set()
+    out = []
+    for p in shift_facts.rows(restaurant_id, since=week_start, until=week_end,
+                              db_path=None if db_path in (None, DB_PATH) else db_path):
+        if p.get("actual_hours") in (None, "") or salaried_name_key(p.get("employee")) in sal:
+            continue
+        d = str(p["date"])[:10]
+        out.append({"date": d, "day": datetime.strptime(d, "%Y-%m-%d").strftime("%A"), "employee": p["employee"],
+                    "role": p.get("role") or "", "shift_start": p.get("shift_start") or "",
+                    "shift_end": p.get("shift_end") or "", "scheduled_hours": str(p.get("actual_hours")), "notes": ""})
+    if not out:
+        return []
+    out += [dict(r) for r in plan_rows or [] if salaried_name_key(r.get("employee")) in sal]
+    return out
+
+
+def _planned_quality(conn, history_id):
+    """The quality the published week carried when it was first sent (the
+    first `published` version's), else the latest stored for the week."""
+    row = conn.execute("SELECT quality_json FROM schedule_versions WHERE history_id=? AND reason='published' AND "
+                       "quality_json IS NOT NULL ORDER BY version LIMIT 1", (history_id,)).fetchone()
+    if row is None:
+        row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    try:
+        return json.loads(row["quality_json"] or "null") or {} if row else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _unrated(s) -> bool:
+    """A shift judged without the Operational Scores of some of its people
+    (shift_quality's blind spot) — what "Rate the unscored staff" fixes."""
+    return any("Operational Score" in str(b) for b in s.get("blind_spots") or [])
+
+
+def _shift_reading(s) -> dict:
+    return {"score": s.get("score"), "capped_by": s.get("capped_by"),
+            "dims": {d["key"]: d.get("score") for d in s.get("dimensions") or [] if d.get("key")},
+            "hard_breaches": len(s.get("hard_breaches") or []), "unrated": _unrated(s)}
+
+
+def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS) -> int:
+    """Each published week that has ended (the newest `weeks`), scored as it
+    ran, beside its planned score — per shift into the observation log
+    (sq_as_run, sq_planned; phase as_run; keyed by week, date and daypart,
+    so a re-read replaces them), the week-level measures too. Returns the
+    shifts recorded; a week with no punch records nothing."""
+    import schedule_memory as _sm
+    from schedule_versions import rows_from_csv
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        hist = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history h WHERE restaurant_id=? AND "
+            "published_at IS NOT NULL AND superseded_by IS NULL AND week_end < ? AND NOT EXISTS (SELECT 1 FROM "
+            "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
+            "n.published_at IS NOT NULL AND n.id > h.id) ORDER BY week_start DESC LIMIT ?",
+            (restaurant_id, today.isoformat(), int(weeks))).fetchall()
+        planned = {h["id"]: _planned_quality(conn, h["id"]) for h in hist}
+    finally:
+        conn.close()
+    n = 0
+    db = None if db_path in (None, DB_PATH) else db_path
+    for h in hist:
+        rows = as_run_rows(restaurant_id, h["week_start"], h["week_end"], rows_from_csv(h["schedule_csv"] or ""),
+                           db_path)
+        if not rows:
+            continue
+        quality = score_as_run(restaurant_id, h["id"], rows)
+        if not quality.get("checked"):
+            continue
+        common = dict(week_start=h["week_start"], history_id=h["id"], origin="system", phase="as_run",
+                      authority="system", source="as_run_score", db_path=db)
+        plan_by = {(s.get("date"), s.get("daypart")): s for s in (planned.get(h["id"]) or {}).get("shifts") or []
+                   if s.get("scored")}
+        for s in quality.get("shifts") or []:
+            if not s.get("scored"):
+                continue
+            key = (s.get("date"), s.get("daypart"))
+            _sm.observe(restaurant_id, "sq_as_run", date=s.get("date"), daypart=s.get("daypart"),
+                        value=_shift_reading(s), fact_key=f"sq_as_run|{h['id']}|{key[0]}|{key[1]}", **common)
+            if key in plan_by:
+                _sm.observe(restaurant_id, "sq_planned", date=s.get("date"), daypart=s.get("daypart"),
+                            value=_shift_reading(plan_by[key]), fact_key=f"sq_planned|{h['id']}|{key[0]}|{key[1]}",
+                            **common)
+            n += 1
+        _sm.observe(restaurant_id, "sq_as_run", value={
+            "score": quality.get("score"),
+            "week_dims": {d.get("key"): d.get("score") for d in quality.get("week_dimensions") or []
+                          if isinstance(d, dict) and d.get("key")},
+            "confidence": (quality.get("confidence") or {}).get("level") if isinstance(quality.get("confidence"), dict)
+            else quality.get("confidence")}, fact_key=f"sq_as_run|{h['id']}|week", **common)
+    return n
+
+
+def score_as_run(restaurant_id, history_id, rows) -> dict:
+    """The Shift Quality of `rows` (the week as it ran) on the inputs a live
+    rescore of that week uses — never a what-if, never a showing."""
+    import shift_quality as _sq
+    from schedule_engine import quality_inputs_from_db, stored_daily_targets, _quality_signals
+    inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=stored_daily_targets(restaurant_id, history_id),
+                                    week_rows=rows)
+    signals, weights = _quality_signals(restaurant_id, inputs)
+    return _sq.score_rows(rows, profiles=inputs.get("shift_profiles") or None, weights=weights, **signals)
+
+
+# What each recommendation shape names, and the dimension its outcome is read
+# on — the sentences shift_quality.recommendation_details writes.
+_REC_DIMENSION = (
+    (re.compile(r"^Fill the gap on (?P<where>.+?): "), "coverage"),
+    (re.compile(r"^Cover the gap in service on (?P<where>.+?): "), "coverage_curve"),
+    (re.compile(r'^Move somebody who clears ".*" onto (?P<where>.+?)\.?$'), "leadership"),
+    (re.compile(r"^Put a stronger .+? on (?P<where>.+?): "), "operational_strength"),
+    (re.compile(r"^Pair .+? on (?P<where>.+?) with a stronger hand"), "training_balance"),
+    (re.compile(r"^Trim about [\d.]+h from (?P<where>.+?) to get back"), "labor_efficiency"),
+    (re.compile(r"^Fix the rule breach on (?P<where>.+?): "), "hard_rules"),
+    (re.compile(r"^Spread the busy shifts"), "fatigue"),
+    (re.compile(r"^Give .+? a day off"), "fatigue"),
+    (re.compile(r"^Rate the unscored staff"), "ratings"),
+)
+# A ratings recommendation's reading: the share of the week's shifts judged
+# without some of their people's ratings, as it ran against the draft it
+# was made on — this many points of share either way.
+AS_RUN_RATED_BAND = 0.25
+
+
+def _rec_target(text):
+    """(dimension, weekday | None, daypart | None) a recommendation sentence
+    is about, or None for one no shift measures (a rating to enter)."""
+    for rx, dim in _REC_DIMENSION:
+        m = rx.match(text or "")
+        if not m:
+            continue
+        where = (m.groupdict().get("where") or "").strip().rstrip(".")
+        parts = where.split()
+        if len(parts) == 2 and parts[1] in ("morning", "night"):
+            return dim, parts[0], parts[1]
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", where):
+            return dim, where, None
+        return dim, None, None
+    return None
+
+
+def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -> int:
+    """Every recommendation the manager carried out — by the button or by
+    the edit itself (schedule_learning.addressed_recommendations) — read
+    against the week it was for, AS IT RAN (schedule audit 10/3/26 L-34:
+    only night coverage on watched nights was ever measured). The week is
+    the published one whose stored quality carried the sentence before it
+    was accepted; the reading is the dimension the sentence names, on the
+    shift it names (or the week, for fatigue), in the week as it ran
+    (sq_as_run) against the draft it was made on: AS_RUN_BAND points better
+    is improved, worse is worsened, else no clear change — and for a rule
+    breach, whether the shift ran without one. The punched heads of a
+    coverage gap's slot ride along (actual coverage). Recorded once per
+    recommendation and week as its rec_ledger outcome (a measured tracker's
+    verdict, where there is one, still stands over it). Returns outcomes
+    recorded."""
+    import rec_ledger as _rl
+    import schedule_memory as _sm
+    from shift_quality import recommendation_kind
+    today = today or date.today()
+    conn = get_conn(db_path)
+    try:
+        acc = conn.execute("SELECT kind, key, MIN(created_at) AS at FROM schedule_recommendation_events WHERE "
+                           "restaurant_id=? AND action='accepted' AND created_at >= datetime('now', ?) "
+                           "GROUP BY kind, key", (restaurant_id, f"-{AS_RUN_LOOKBACK_DAYS} days")).fetchall()
+        if not acc:
+            return 0
+        vers = conn.execute(
+            "SELECT v.history_id, v.created_at, v.quality_json, h.week_start, h.week_end FROM schedule_versions v "
+            "JOIN schedule_history h ON h.id=v.history_id WHERE h.restaurant_id=? AND h.published_at IS NOT NULL "
+            "AND h.week_end < ? AND v.quality_json IS NOT NULL AND v.created_at >= datetime('now', ?) "
+            "ORDER BY v.created_at", (restaurant_id, today.isoformat(), f"-{AS_RUN_LOOKBACK_DAYS + 14} days")).fetchall()
+    finally:
+        conn.close()
+    db = None if db_path in (None, DB_PATH) else db_path
+    as_run = {}
+    for o in _sm.observations(restaurant_id, kinds=("sq_as_run",), db_path=db):
+        as_run[(o.get("history_id"), o.get("date") or "week", o.get("daypart"))] = o.get("value") or {}
+    gaps = {}
+    for o in _sm.observations(restaurant_id, kinds=("coverage_gap_actual", "actual_hours"), db_path=db):
+        gaps.setdefault((o.get("date"), o.get("daypart")), []).append(o)
+    n = 0
+    for a in acc:
+        text = str(a["key"] or "")
+        target = _rec_target(text)
+        if not target:
+            continue
+        dim, day, part = target
+        made = None
+        for v in vers:
+            if str(v["created_at"]) > str(a["at"]):
+                break
+            try:
+                q = json.loads(v["quality_json"] or "null") or {}
+            except (TypeError, ValueError):
+                continue
+            if text in [str(r) for r in (q.get("recommendations") or [])]:
+                made = (v, q)
+        if made is None:
+            continue
+        v, q = made
+        hid = v["history_id"]
+        if dim == "ratings":
+            planned = [s_ for s_ in q.get("shifts") or [] if s_.get("scored")]
+            ran = [v for (h_, d_, _p), v in as_run.items() if h_ == hid and d_ != "week"]
+            if not planned or not ran:
+                continue
+            before = {"ratings": sum(1 for s_ in planned if _unrated(s_)) / float(len(planned))}
+            after = {"ratings": sum(1 for v in ran if v.get("unrated")) / float(len(ran))}
+            date_s = None
+        elif day is None and part is None:
+            before = {d.get("key"): d.get("score") for d in q.get("week_dimensions") or [] if isinstance(d, dict)}
+            after = (as_run.get((hid, "week", None)) or {}).get("week_dims") or {}
+            date_s = None
+        else:
+            date_s = day if re.match(r"^\d{4}-\d{2}-\d{2}$", str(day)) else next(
+                (s.get("date") for s in q.get("shifts") or [] if s.get("day") == day and s.get("daypart") == part), None)
+            shift = next((s for s in q.get("shifts") or [] if s.get("date") == date_s
+                          and (part is None or s.get("daypart") == part)), None)
+            if not shift or not date_s:
+                continue
+            part = part or shift.get("daypart")
+            before = {d["key"]: d.get("score") for d in shift.get("dimensions") or [] if d.get("key")}
+            before["hard_rules"] = len(shift.get("hard_breaches") or [])
+            reading = as_run.get((hid, date_s, part))
+            if not reading:
+                continue
+            after = dict(reading.get("dims") or {}, hard_rules=reading.get("hard_breaches"))
+        if dim not in before or after.get(dim) is None or before.get(dim) is None:
+            continue
+        b, x = float(before[dim]), float(after[dim])
+        if dim == "hard_rules":
+            verdict = "improved" if b > 0 and x == 0 else ("worsened" if x > b else "no_clear_change")
+        elif dim == "ratings":
+            # A falling share of shifts judged without ratings is better.
+            verdict = ("improved" if b - x >= AS_RUN_RATED_BAND else "worsened" if x - b >= AS_RUN_RATED_BAND
+                       else "no_clear_change")
+        else:
+            verdict = ("improved" if x - b >= AS_RUN_BAND else "worsened" if b - x >= AS_RUN_BAND
+                       else "no_clear_change")
+        meta = {"verdict": verdict, "measure": "as_run", "dimension": dim, "before": round(b, 3), "as_run": round(x, 3),
+                "band": AS_RUN_RATED_BAND if dim == "ratings" else AS_RUN_BAND, "history_id": hid, "date": date_s,
+                "daypart": part}
+        if dim in ("coverage", "coverage_curve") and date_s:
+            obs = gaps.get((date_s, part)) or []
+            heads = next((o.get("value") for o in obs if o.get("kind") == "actual_hours"), None)
+            short = [dict(o.get("value") or {}, role=o.get("role")) for o in obs
+                     if o.get("kind") == "coverage_gap_actual"]
+            meta["actual_coverage"] = {"planned_people": (heads or {}).get("planned_people"),
+                                       "worked_people": (heads or {}).get("actual_people"), "short": short}
+        if _rl.record(restaurant_id, schedule_rec_key(recommendation_kind(text), text), "outcome", meta=meta,
+                      source_ref=f"as_run:{hid}:{date_s or 'week'}:{part or ''}", db_path=db_path):
             n += 1
     return n
 
@@ -1540,9 +2091,18 @@ def init_schedule_intel(db_path: str = DB_PATH):
     # in the review itself and it was posted within REVIEW_LAG_DAYS of that
     # shift; "hours" when it was put on the day's busiest daypart for want
     # of anything better. Calibration reads the first kind only.
+    # What happened beside what was planned (schedule audit 10/3/26 L-12,
+    # L-13 — record_outcomes): the punched hours and people (actual_basis
+    # 'punches'; NULL where the date has no punch — unknown, never 0), the
+    # shifts missed, late, left early and run past their end, and the
+    # daypart's own labor cost and labor % (NULL unless its sales split was
+    # measured). `labor_pct` stays the DAY's figure.
     _oc = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
     for _col, _typ in (("review_attribution", "TEXT"), ("review_rating_attributed", "REAL"),
-                       ("reviews_attributed", "INTEGER"), ("review_lag_days", "INTEGER")):
+                       ("reviews_attributed", "INTEGER"), ("review_lag_days", "INTEGER"),
+                       ("actual_hours", "REAL"), ("actual_people", "INTEGER"), ("actual_basis", "TEXT"),
+                       ("missed", "INTEGER"), ("late", "INTEGER"), ("left_early", "INTEGER"),
+                       ("stayed_late", "INTEGER"), ("labor_cost_daypart", "REAL"), ("labor_pct_daypart", "REAL")):
         if _col not in _oc:
             try:
                 conn.execute(f"ALTER TABLE schedule_outcomes ADD COLUMN {_col} {_typ}")

@@ -346,7 +346,10 @@ def backfill_from_csv(db_path=None, max_seconds=15.0) -> int:
 def rows(restaurant_id, since=None, until=None, db_path=None) -> list:
     """Stored shifts as dicts shaped like the file's rows ({date, employee,
     role, shift_start, shift_end, scheduled_hours, actual_hours, person_id,
-    source, schedule_known}), oldest first, inside [since, until]."""
+    source, schedule_known, pay_rate}), oldest first, inside [since, until].
+    `pay_rate` is what the POS paid for the punch (labor._shift_rate's first
+    link) — the daypart labor cost prices each punch with it (schedule audit
+    10/3/26 L-13)."""
     sql = "SELECT * FROM shift_facts WHERE restaurant_id=?"
     args = [restaurant_id]
     if since:
@@ -368,7 +371,7 @@ def rows(restaurant_id, since=None, until=None, db_path=None) -> list:
                     "shift_start": r["shift_start"] or "", "shift_end": r["shift_end"] or "",
                     "scheduled_hours": r["scheduled_hours"], "actual_hours": r["actual_hours"],
                     "person_id": r["person_id"], "source": r["source"],
-                    "schedule_known": r["scheduled_hours"] is not None})
+                    "schedule_known": r["scheduled_hours"] is not None, "pay_rate": r["pay_rate"]})
     return out
 
 

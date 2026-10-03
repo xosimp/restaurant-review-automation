@@ -777,6 +777,15 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('learned', _sfx, restaurant_id)
         learned, pattern_conflicts = [], []
+    # The scheduling memory's habits, refreshed from those same patterns
+    # before this draft reads it (schedule audit 10/3/26 L-29, L-3): an edit
+    # published today binds today's draft — the prompt and the passes alike
+    # — not tomorrow's after the nightly consolidation.
+    import schedule_memory as _smem
+    try:
+        _smem.consolidate(restaurant_id, patterns=(learned, pattern_conflicts), only=("patterns",))
+    except Exception as _sfx:
+        _soft_fail('schedule_memory patterns', _sfx, restaurant_id)
     # The money and the record: what a holiday did here last time, sales per
     # labor hour by daypart, what published weeks actually did, who has
     # carried the weekends, what staff want, who could hold a station.
@@ -991,24 +1000,32 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     owner_rule_reads = [{"reads_as": r.get("reads_as") or _rules.rule_reads_as(r), "floor": bool(r.get("floor_role"))}
                         for r in (constraints.owner_rules or []) if not r.get("private")]
     owner_rule_reads += [{"unchecked": True} for _t in (constraints.owner_rules_unchecked or [])]
-    # What has been learned reaches the model as ONE budgeted block
-    # (schedule_memory.prompt_lines, L-28): the restaurant-level blocks
-    # below share its budget. What is about one person — attendance, what
-    # they want, a role they could hold — is their ROSTER line; the add and
-    # trim verbs these blocks used to carry are gone (PR-7): the numbers
-    # are made in code.
-    learned_sections = [("reliability", _reliability_block(reliability)),
-                        ("outcomes", _intel.outcome_block(outcomes, week_days)),
-                        ("rotation", _intel.rotation_block(learning["rotation"])),
-                        ("ledger", _intel.ledger_block(ledger)),
-                        ("splh", _econ.splh_block(splh)),
-                        ("splh_objective", _econ.splh_objective_block(learning["splh_objective"], next_week_dates,
-                                                                      signals_by_date)),
-                        ("cohort", _cohort_block(restaurant_id, restaurant)),
-                        ("starting", learning["starting_block"])]
+    # Everything learned reaches the model as ONE budgeted block (schedule
+    # audit 10/3/26 L-28): the scheduling memory's own facts (the manager's
+    # habits, openers, sections, teams, overtime and late closes, the
+    # owner's redos: candidates in full, a fact the passes hold as one short
+    # [held] line) and each restaurant-level learned block below as a
+    # section with its share, every line ranked by relevance to this week
+    # and the least relevant cut first. What is about one person —
+    # attendance, what they want, a role they could hold — is their ROSTER
+    # line (PR-33), not a section; the add and trim verbs these blocks used
+    # to carry are gone: the numbers are made in code (PR-7). The owner's
+    # pairings, the dated facts, the last nights, the open asks and
+    # memory_context (already budgeted) are not learned memory.
     learned_blk = ""
     try:
-        learned_blk = _learned_block(restaurant_id, next_week_dates, roster_pairs, learned, learned_sections)
+        learned_blk = _smem.prompt_lines(
+            restaurant_id, next_week_dates, roster_names=[n for n, _r in roster_pairs],
+            budget_chars=_smem.LEARNED_PROMPT_BUDGET_CHARS,
+            sections=[("reliability", _reliability_block(reliability)),
+                      ("outcomes", _intel.outcome_block(outcomes, week_days)),
+                      ("rotation", _intel.rotation_block(learning["rotation"])),
+                      ("ledger", _intel.ledger_block(ledger)),
+                      ("splh", _econ.splh_block(splh)),
+                      ("splh_objective", _econ.splh_objective_block(learning["splh_objective"], next_week_dates,
+                                                                    signals_by_date)),
+                      ("cohort", _cohort_block(restaurant_id, restaurant)),
+                      ("starting", learning["starting_block"])])
     except Exception as _sfx:
         _soft_fail('learned prompt block', _sfx, restaurant_id)
     extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
@@ -2291,25 +2308,6 @@ def _roster_signals(facts, restaurant_id, display=None, reliability=None, stated
             merged.setdefault(who, {})[role] = merged.get(who, {}).get(role, 0) + int(k or 0)
     put("role_shifts", merged)
     return facts
-
-
-def _learned_block(restaurant_id, dates, roster_pairs, patterns, sections) -> str:
-    """ONE learned block (schedule_memory.prompt_lines — budgeted, ranked by
-    relevance to this week, L-28) carrying the manager's habits the memory
-    holds and the restaurant-level learned `sections` [(name, text)]. Until
-    the learning workstream's memory lands, prompt_lines takes no sections:
-    the manager's habits block (schedule_versions.prompt_block) and the
-    sections are joined in order, as they were. (Transitional: once
-    schedule_memory.prompt_lines takes `sections` everywhere, only the
-    first branch runs.)"""
-    import inspect
-    import schedule_memory as _smem
-    names = [n for n, _r in (roster_pairs or [])]
-    if "sections" in inspect.signature(_smem.prompt_lines).parameters:
-        return _smem.prompt_lines(restaurant_id, dates, roster_names=names,
-                                  budget_chars=getattr(_smem, "LEARNED_PROMPT_BUDGET_CHARS", 6000), sections=sections)
-    return ((_smem.prompt_lines(restaurant_id, dates, roster_names=names) or "") + _versions.prompt_block(patterns)
-            + "".join(text for _n, text in (sections or []) if text))
 
 
 COHORT_BLOCK_HEADER = "HOW THIS RESTAURANT'S LABOR COMPARES"
@@ -5782,6 +5780,33 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["role_times"] = {"retimed": len(_rt["retimed"]), "left": _rt["left"]}
             except Exception as _rtx:
                 print(f"[schedule] role time rules not applied: {_rtx}")
+            # The closes of a role that measurably run past their scheduled
+            # end, ended when they really end (schedule audit 10/3/26 L-16 —
+            # who overruns never shaped the draft): an active end_overrun
+            # memory pads them where the person can legally take it
+            # (can_add, their overtime line included), never a pinned row or
+            # an undrafted day, never over the owner's own end-time rule.
+            # Before the solver, the optimizer and the pricing, so the week's
+            # hours and overtime are the ones it will really run.
+            try:
+                import schedule_memory as _smem_pad
+                _pad = _smem_pad.pad_overruns(
+                    preview_rows, _smem_pad.enforced_signals(restaurant_id, result.get("week_dates") or [],
+                                                             roster_names=list(result.get("roster") or []) or None),
+                    c=_constraints, editable=_editable)
+                if _pad["padded"]:
+                    preview_rows = _pad["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _pad["padded"]:
+                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + str(_x["from"]),
+                                          "to": _x["to"], "kind": "end_overrun", "reason": _x["reason"]})
+                result["end_overruns"] = {"padded": len(_pad["padded"]), "left": _pad["left"]}
+            except Exception as _pdx:
+                print(f"[schedule] closing overruns not padded: {_pdx}")
+                try:
+                    _ops.capture(_pdx, job="schedule_end_overrun", context=f"restaurant_id={restaurant_id}")
+                except Exception as _cx:
+                    print(f"[schedule] capture failed: {_cx}")
             def _price_week(_rows):
                 try:
                     from models import get_role_rates as _grr
