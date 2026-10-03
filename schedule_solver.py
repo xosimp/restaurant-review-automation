@@ -2872,7 +2872,7 @@ def merge_into_optimizer(optimizer: dict, solver: dict) -> dict:
         return opt
     opt["solver"] = {k: solver.get(k) for k in ("applied", "status", "proved_optimal", "seconds", "slots", "people",
                                                 "components", "components_proved", "nodes", "kept", "before_score",
-                                                "after_score", "infeasible", "notes")}
+                                                "after_score", "infeasible", "notes", "dollars_before", "dollars_after")}
     if not solver.get("applied"):
         return opt
     changes = list(solver.get("changes") or []) + list(opt.get("changes") or [])

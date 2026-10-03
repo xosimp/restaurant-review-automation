@@ -5742,7 +5742,7 @@ def _people_by_family(rows: list, roster: list, signals: dict, families: dict = 
 
 def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
                        max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None,
-                       **signals) -> dict:
+                       max_seconds: float = None, **signals) -> dict:
     """Hill-climb same-role swaps and replacements, and report what the
     alternatives cost.
 
@@ -5764,7 +5764,14 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
     not as nothing, so it decides (SQ-19); rated pairs, where a gap can be
     seen, are tried first. Candidates are ranked with the local scorer and
     the one taken is confirmed by the full score (P-25: sixty whole-week
-    scores per drag)."""
+    scores per drag). `max_seconds` bounds the search in time as well as in
+    evaluations (a generation's deadline); the verdict speaks only of what
+    was tried."""
+    import time as _time
+    t0 = _time.monotonic()
+
+    def out_of_time() -> bool:
+        return max_seconds is not None and _time.monotonic() - t0 > max_seconds
     baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
     if not baseline.get("checked"):
         return {"ran": False, "reason": baseline.get("reason"), "baseline": baseline,
@@ -5812,7 +5819,7 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
                  for v in viols if v.get("no_show")}, [v for v in viols if v.get("hard")], after)
 
     improved = True
-    while improved and evaluated < max_evaluations:
+    while improved and evaluated < max_evaluations and not out_of_time():
         improved = False
         index = _SwapIndex(current_rows, availability, constraints, rules)
         # Rated pairs first, the widest rating gap first: that is where an
@@ -5851,7 +5858,7 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
         ranked.sort(key=lambda t: t[0])
 
         for _prio, i, j in ranked:
-            if evaluated >= max_evaluations:
+            if evaluated >= max_evaluations or out_of_time():
                 break
             trial = list(current_rows)
             if isinstance(j, tuple):
@@ -5964,7 +5971,7 @@ PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_bo
 
 def apply_fixes(rows: list, violations: list, profiles: list = None, weights: dict = None,
                 max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None,
-                only_dates=None, **signals) -> dict:
+                only_dates=None, max_seconds: float = None, **signals) -> dict:
     """Repair the rows that break a hard rule by putting somebody legal on
     them, choosing the replacement that scores best. Rows nobody legal can
     take are left as they are and named, never dropped: a coverage gap the
@@ -5989,8 +5996,8 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     closer, and — taking somebody under their line — no overtime or minimum
     hours either (schedule_rules.regressions; it used to compare (row index,
     kind) sets, blind to a new breach pinned to the same row — E-1). Rows the
-    evaluation budget did not reach are reported as not tried, never as
-    impossible.
+    evaluation budget (or `max_seconds`, a generation's deadline) did not
+    reach are reported as not tried, never as impossible.
 
     A missed day off (schedule_rules "days_off": fewer consecutive days off
     than the rule) is fixable too, after the hard breaches: one of the
@@ -6052,6 +6059,11 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     pools = None
     seen_idx = set()
     budget_out = False
+    import time as _time
+    t0 = _time.monotonic()
+
+    def spent() -> bool:
+        return evaluated >= max_evaluations or (max_seconds is not None and _time.monotonic() - t0 > max_seconds)
     for v in sorted(hard, key=lambda x: (0 if x.get("no_show") else 1, x.get("index", 0))):
         i = v.get("index")
         if i is None or i in seen_idx or i >= len(rows):
@@ -6066,7 +6078,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
             continue
         if only_dates is not None and row.get("date") not in only_dates:
             continue
-        if budget_out or evaluated >= max_evaluations:
+        if budget_out or spent():
             budget_out = True
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
                             "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
@@ -6094,7 +6106,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         legal_opts, tried = [], 0
         for under_line in (True, False) if c is not None else (True,):
             for name in candidates:
-                if evaluated >= max_evaluations:
+                if spent():
                     budget_out = True
                     break
                 trial = list(rows)

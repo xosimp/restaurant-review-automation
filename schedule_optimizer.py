@@ -927,6 +927,32 @@ def _moves_for(problem, state: _State) -> list:
                         continue
                     replace_in(i, lambda n, nm=name: n == nm, why, limit=1)
                     _swap_moves(state, i, moves, why, want=lambda n, nm=name: n == nm)
+        # A pairing from one of the owner's owner-only rules (schedule audit
+        # 10/3/26 D-38) counts in the score and is never named — not in the
+        # dimension's facts, and not here: the change list and the row
+        # notes are read by the team, so its moves say only that the shift
+        # is better arranged.
+        pairs = state.signals.get("pairs") or {}
+        private = pairs.get("private") or set()
+        if private:
+            why = f"a better arrangement for {where}"
+            names_here = {_low(n): n for n in (shift.get("people") or [])}
+            for pair in private:
+                members = sorted(pair)
+                here = [x for x in members if x in names_here]
+                if pair in (pairs.get("avoid") or set()) and len(here) == len(members):
+                    for x in here:
+                        off_shift(names_here[x], why, want=lambda n, p=pair: _low(n) not in p)
+                elif pair in (pairs.get("prefer") or set()) and len(here) == 1:
+                    other = next(x for x in members if x not in names_here)
+                    name = next((n for n in list(state.signals.get("roster") or [])
+                                 + [(r.get("employee") or "").strip() for r in state.rows] if _low(n) == other), None)
+                    fams = {state.family(r.get("role")) for r in state.rows if _low(r.get("employee")) == other}
+                    for fam in sorted(fams) if name else ():
+                        for i in [i for i in state.family_rows(date, fam, part)
+                                  if _low(state.rows[i].get("employee")) not in pair][:2]:
+                            replace_in(i, lambda n, nm=name: n == nm, why, limit=1)
+                            _swap_moves(state, i, moves, why, want=lambda n, nm=name: n == nm)
 
     elif key == "preferences":
         # Staff preferences, week-level (SQ-24, L-19): a strained person's

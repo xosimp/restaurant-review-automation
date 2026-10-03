@@ -455,3 +455,21 @@ def test_a_realistic_week_keeps_every_rule_and_the_memory():
     assert sr.regressions(before, sr.breach_profile(res["rows"], c), upto=sr.TIER_BUDGET, hard_only=False) == []
     assert so.overtime_created(rows, res["rows"], c) == []
     assert all(any(r == x for x in res["rows"]) for r in rows if r.get("_pinned"))
+
+
+def test_a_pair_from_an_owner_only_rule_is_kept_apart_and_never_named():
+    """F2 holds a private pairing in the score without naming it (D-38);
+    the search moves it as well, and its change and the row notes say only
+    that the shift is better arranged — the team reads both."""
+    names = ["Ann", "Bob", "Kim"]
+    c = cons(names)
+    rows = [row(TUE, "Ann", "4:00pm", "10:00pm"), row(TUE, "Bob", "4:00pm", "10:00pm"),
+            row(WED, "Kim", "4:00pm", "10:00pm")]
+    pair = frozenset({"ann", "bob"})
+    sig = _sig(names, pairs={"avoid": {pair}, "prefer": set(), "private": {pair}},
+               typical_headcount={("Tuesday", "night"): {"Server": 2}, ("Wednesday", "night"): {"Server": 1}})
+    res = so.optimize(rows, {}, signals=sig, constraints=c, target=101)
+    tue = {r["employee"] for r in res["rows"] if r["date"] == TUE}
+    assert not {"Ann", "Bob"} <= tue
+    text = " ".join([ch["reason"] for ch in res["changes"]] + [r.get("notes") or "" for r in res["rows"]])
+    assert res["changes"] and "apart" not in text and "rule" not in text

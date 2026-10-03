@@ -145,6 +145,21 @@ def test_somebody_in_a_role_they_do_not_hold_is_replaced_by_somebody_who_holds_i
     assert out["rows"][0]["employee"] in ("Cook", "Kim") and out["fixes"][0]["kind"] == "role_not_held"
 
 
+def test_apply_fixes_and_the_what_if_keep_to_a_deadline():
+    """Neither had any time limit, only an evaluation count; a generation's
+    deadline could not bound them (P-24's list). Out of time, a fix is
+    reported as not tried — never as impossible."""
+    names = ["Ann", "Kim"]
+    c = cons(names, blocked_dates={"ann": {TUE: "on approved time off"}})
+    rows = [row(TUE, "Ann", "4:00pm", "10:00pm"), row(MON, "Kim", "4:00pm", "10:00pm")]
+    sig = _sig(names, typical_headcount={("Tuesday", "night"): {"Server": 1}})
+    late = sq.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=0, **sig)
+    assert not late["fixes"] and late["unfixed"][0].get("not_tried")
+    assert sq.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=30, **sig)["fixes"]
+    out = sq.compare_candidates(rows, rule_constraints=c, max_seconds=0, **_sig(names, scores={"Kim": 5}))
+    assert out["evaluated"] == 0 and not out["swaps"]
+
+
 # ── P-25: the Studio's re-score as the manager drags ─────────────────────────
 
 @pytest.fixture(autouse=True)
