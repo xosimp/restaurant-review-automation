@@ -1903,6 +1903,12 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
         except ValueError:
             return set()
         return {(a + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((b - a).days + 1)}
+    # The week being built is never its own tail: its stored copies (the
+    # live published week, its draft) are what the caller's rows replace —
+    # a rescore of an edit that removed Sunday would read the stored Sunday
+    # back as "last week".
+    published = [w for w in published if not (_dates(w) & week_set)]
+    drafts = [w for w in drafts if not (_dates(w) & week_set)]
     covered = set()
     for w in published:
         covered |= _dates(w)
@@ -1939,7 +1945,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     for w in drafts:
         ws = str(w["week_start"] or "")[:10]
         span = _dates(w)
-        if ws in drafted or not (span - covered - week_set):
+        if ws in drafted or not (span - covered):
             continue
         drafted.add(ws)
         for r in rows_from_csv(w["schedule_csv"]):

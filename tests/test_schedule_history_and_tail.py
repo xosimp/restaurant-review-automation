@@ -273,3 +273,13 @@ def test_an_overlap_inside_a_long_shift_is_found():
             _row("Ana", "1:00pm", "3:00pm", WEEK[1])]
     over = [v for v in sr.violations(rows, c, person_only=True) if v["kind"] == "overlap"]
     assert sorted(v["index"] for v in over) == [1, 2]
+
+
+def test_the_week_being_rescored_is_never_its_own_tail():
+    # A live rescore builds constraints from the edited rows' dates; the
+    # stored copy of the same week (its Sunday removed in the edit) must not
+    # come back as "last week".
+    rid = _rid()
+    _week(rid, WEEK, [(WEEK[0], "Ana", "9:00am", "3:00pm", 6), (WEEK[6], "Ana", "6:00pm", "11:00pm", 5)])
+    c = sr.build_constraints(rid, WEEK[:6], [_day(d) for d in WEEK[:6]])
+    assert "ana" not in c.base_rows and "ana" not in c.base_hours
