@@ -484,3 +484,58 @@ def test_the_job_saves_what_the_week_misses_with_its_review(db, monkeypatch):
     finally:
         conn.close()
     assert stored["unmet"] == unmet
+
+
+def test_an_edited_week_keeps_its_list_of_what_it_misses_and_its_asks(db, monkeypatch):
+    """The re-score an edit runs (one body for web and phone) says what the
+    edited week misses as generation does, and saves the asks with it so
+    the next edit still reads them."""
+    from flask import Flask
+    import auth
+    import mobile_api
+    import strategy_routes
+    from models import create_restaurant, Restaurant
+    monkeypatch.setattr(auth, "DB_PATH", db)
+    auth.init_auth(db_path=db)
+    rid = create_restaurant(Restaurant(name="Edit Grill", owner_email="e@x.test", module_labor=1), db_path=db)
+    for name, role in (("Max", "Manager"), ("Ana", "Server")):
+        models.add_manual_team_member(rid, name, role=role, db_path=db)
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r, **k: {"is_live": True})
+    rows = [{"date": WEEK[4], "day": "Friday", "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""}]
+    csv_text = so.CSV_HEADER + "\n" + "\n".join(so.csv_lines(rows))
+    hid = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6, 4, 30, csv_text, [], db_path=db)
+    ask = {"day": "Friday", "date": WEEK[4], "daypart": "night", "role": "Server", "source": "reviews",
+           "text": "+1 Server — waits", "applied": True, "scheduled": 2, "typical": 1}
+    conn = models.get_conn(db)
+    conn.execute("UPDATE schedule_history SET review_json=? WHERE id=?", (json.dumps({"soft_requirements": [ask]}), hid))
+    conn.commit()
+    conn.close()
+    uid = auth.create_user(rid, "owner", "o@x.test", "pw", db_path=db)
+    conn = models.get_conn(db)
+    conn.execute("UPDATE users SET role='client' WHERE id=?", (uid,))
+    conn.commit()
+    conn.close()
+    headers = {"Authorization": f"Bearer {auth.create_session(uid, db_path=db)}"}
+    app = Flask(__name__)
+    app.register_blueprint(mobile_api.mobile_bp)
+    app.register_blueprint(strategy_routes.strategy_mobile_bp)
+    client = app.test_client()
+    for _round in (1, 2):
+        versions = schedule_versions.list_versions(rid, hid)
+        r = client.post("/mobile/api/labor/schedule/score", headers=headers,
+                        json={"rows": rows, "history_id": hid, "save": True,
+                              "version": versions[-1]["version"] if versions else None})
+        assert r.status_code == 200, r.get_json()
+        review = r.get_json()["review"]
+        kinds = {u["kind"] for u in review["unmet"]}
+        assert {"manager", "ask", "budget"} <= kinds, review["unmet"]
+        assert review["soft_requirements"][0]["applied"] is False     # re-read against the edited rows
+        conn = models.get_conn(db)
+        stored = json.loads(conn.execute("SELECT review_json FROM schedule_history WHERE id=?",
+                                         (hid,)).fetchone()["review_json"])
+        conn.close()
+        assert stored["unmet"] == review["unmet"] and stored["soft_requirements"]
+    # the re-check route after an edit says the same
+    r = client.post("/mobile/api/labor/schedule/violations", headers=headers, json={"rows": rows, "history_id": hid})
+    assert {"manager", "ask", "budget"} <= {u["kind"] for u in r.get_json()["review"]["unmet"]}

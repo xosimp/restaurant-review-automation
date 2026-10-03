@@ -2326,6 +2326,15 @@ def _do_schedule_violations(u):
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
+    # What the rows on screen miss — the same list generation saves with the
+    # review (schedule audit 10/3/26 PR-11).
+    try:
+        import schedule_output as _so_rc
+        out["review"].update(_so_rc.week_review_extras(_rid(u), rows, c, violations=viols,
+                                                       typical=inputs.get("typical_headcount"),
+                                                       history_id=b.get("history_id")))
+    except Exception as e:
+        print(f"[schedule] unmet list unavailable: {e!r}")
     # Who the rows on screen push into overtime, with a same-role person who
     # has room and what moving the shift saves — the one-tap move (#27).
     try:

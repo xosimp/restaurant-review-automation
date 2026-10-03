@@ -523,6 +523,49 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
     return out
 
 
+def week_review_extras(restaurant_id, rows, constraints, violations=None, quality=None, typical=None,
+                       history_id=None, db_path=None) -> dict:
+    """{"unmet", "soft_requirements"} for a week someone is editing (the
+    re-score and re-check routes), so the review says what the week misses
+    however it got to its rows: the generation's own hours budget and
+    staffing asks — stored with the week — read against the rows as they
+    stand now (staffing_signals.applied), the stations, and the owner's
+    rules no code can check. The asks ride on in the review an edit saves,
+    so a second edit still has them."""
+    budget, asks = None, []
+    if history_id:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT hours_budget, review_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if row:
+            budget = row["hours_budget"]
+            try:
+                asks = (json.loads(row["review_json"] or "{}") or {}).get("soft_requirements") or []
+            except (TypeError, ValueError):
+                asks = []
+    if asks:
+        # Judged against the usual crew the generation judged them by (each
+        # ask keeps its own `typical`), today's typical where it kept none.
+        import staffing_signals
+        merged = {k: dict(v) for k, v in (typical or {}).items()}
+        for a in asks:
+            t = a.get("typical")
+            if isinstance(t, (int, float)) and a.get("day") and a.get("daypart") and a.get("role"):
+                merged.setdefault((a["day"], a["daypart"]), {})[a["role"]] = t
+        asks = staffing_signals.applied(asks, rows, merged or None)
+    gaps = None
+    if getattr(constraints, "stations", None):
+        from schedule_engine import station_report
+        gaps = (station_report(rows, constraints, list(constraints.week_dates or [])) or {}).get("gaps")
+    return {"unmet": unmet_items(rows, constraints=constraints, violations=violations, quality=quality,
+                                 soft_requirements=asks, hours_budget=budget, station_gaps=gaps,
+                                 owner_rules_unchecked=getattr(constraints, "owner_rules_unchecked", None)),
+            "soft_requirements": asks}
+
+
 def _role_label(v, role) -> str:
     """The floor's role as a row spells it ("Line Cook"); the row the
     breach is pinned to may be any role's when nobody of the floor's was on."""

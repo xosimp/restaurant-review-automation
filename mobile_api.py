@@ -7483,6 +7483,17 @@ def mobile_score_schedule(current_user):
                     c.roster_names = list(inputs["roster"])
                 violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)
+                # What the edited week misses, read from its rows as
+                # generation reads it, and the week's staffing asks re-read
+                # against them — saved with the review (schedule audit
+                # 10/3/26 PR-11).
+                try:
+                    import schedule_output as _so_rs
+                    review.update(_so_rs.week_review_extras(
+                        rid, rows, c, violations=violations, quality=quality,
+                        typical=inputs.get("typical_headcount"), history_id=data.get("history_id")))
+                except Exception as _ux:
+                    print(f"[schedule] unmet list unavailable rid={rid}: {_ux!r}")
             else:
                 violations = None
         except Exception:

@@ -335,3 +335,18 @@ def test_the_security_doc_names_the_record_and_its_redaction():
     assert "`schedule_model_calls` keeps every schedule generation call's full request" in text
     assert "180 days" in text.split("**Schedule call record**", 1)[1].split("\n", 1)[0]
     assert ops._RETENTION_DAYS["schedule_model_calls"] == 180
+
+
+def test_the_default_repair_runs_the_owners_floors_and_the_manager_rule(db, monkeypatch):
+    rid = _rid(db)
+    for name, role in (("Max", "Manager"), ("Ana", "Server"), ("Bea", "Server")):
+        models.add_manual_team_member(rid, name, role=role, db_path=db)
+    c = schedule_rules.build_constraints(rid, WEEK, list(schedule_rules.DAYS), models.get_restaurant(rid))
+    c.role_floors = {"Server": {"morning": 0, "night": 2}}
+    c.closed_dates = {d for d in WEEK if d != FRI}
+    rows = [{"date": FRI, "day": "Friday", "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""}]
+    fixed = sme.default_repair(rows, c, {"Max": "Manager", "Ana": "Server", "Bea": "Server"})
+    on = {(r["employee"], r["role"]) for r in fixed}
+    assert ("Bea", "Server") in on                           # the floor of two servers
+    assert any(r["employee"] == "Max" for r in fixed)       # a manager every minute

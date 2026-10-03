@@ -37,8 +37,9 @@ ALLOWLIST = {
     ("competitor.py", "fetch_menu_from_url"):
         "menu extraction: spot_check_menu keeps only items found in the source page",
     ("labor.py", "generate_optimized_schedule"):
-        "schedule rows (CSV / JSON schema): schedule_rules.violations repairs and sweeps them; "
-        "its prose note is validated in _drop_note_bullets",
+        "schedule rows (the generation's JSON schema: roster, roles, dates and times as enums, a row's note "
+        "one of schedule_output.NOTE_VALUES — the CSV fallback's notes mapped to it): schedule_rules.violations "
+        "repairs and sweeps them; its prose note is validated in _drop_note_bullets",
 }
 
 # (module, function that calls the model) → the function in the same module

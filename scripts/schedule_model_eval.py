@@ -267,10 +267,24 @@ def week_context(generation, calls, db_path=None) -> dict:
 
 def default_repair(rows, c, roster_roles=None) -> list:
     """The deterministic backstops, in the order the job runs them: the
-    overtime rebalance, close-out, a manager every minute, the person
-    breaches. Pass --repair module:function to replay another loop."""
+    owner's role floors, the overtime rebalance, close-out, a manager every
+    minute, the person breaches. Pass --repair module:function to replay
+    another loop (the job's own, once it has one entry point)."""
     import schedule_rules as sr
     out = [dict(r) for r in rows]
+    if roster_roles and not getattr(c, "roster_roles", None):
+        c.roster_roles = dict(roster_roles)        # who holds each role, as the job sets it
+    if getattr(c, "role_floors", None):
+        try:
+            from schedule_engine import _ensure_role_floors
+            from models import get_close_times, get_role_close_buffers
+            days = [__import__("datetime").date.fromisoformat(d).strftime("%A") for d in c.week_dates]
+            out, _n, _dates = _ensure_role_floors(out, list(c.week_dates), days, c.restaurant_id,
+                                                  get_close_times(c.restaurant_id),
+                                                  get_role_close_buffers(c.restaurant_id),
+                                                  floors=c.role_floors, constraints=c)
+        except Exception as e:
+            print(f"  repair step failed: role floors: {type(e).__name__}: {e}")
     for step in (lambda rs: sr.rebalance_overtime(rs, c, roster_roles=roster_roles),
                  lambda rs: sr.close_out_gaps(rs, c),
                  lambda rs: sr.cover_manager_gaps(rs, c),
