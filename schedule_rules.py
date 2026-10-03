@@ -3481,6 +3481,11 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
 # why each manager could not, and the week's `shortfall` says so once.
 
 MANAGER_FILL_MAX_SWEEPS = 120
+# Four hours: the gap filler sized every added manager shift to at least
+# this, so a 1h gap bought 4h (E-16) — it now sizes to the stretch or the
+# owner's min_shift_hours. Kept because the manager plan
+# (schedule_skeleton.MIN_SHIFT_MIN) reads it as its planned-shift minimum.
+MANAGER_MIN_SHIFT_MIN = 4 * 60
 
 
 def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
