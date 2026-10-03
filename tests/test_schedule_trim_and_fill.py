@@ -87,23 +87,26 @@ def test_the_budget_trim_never_takes_the_nights_only_closer():
 
 def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped():
     """The audit's t5: two managers on Friday night; the trim took the one
-    who stays to close and left 11pm-2am with no manager."""
+    who stays to close and left 11pm-2am with no manager. Here Ida (a
+    manager) works a bartender row to 2am beside another bartender, so no
+    rule of the trim's own protects her — only the manager rule does."""
     c = _c(managers={"max": "Manager", "ida": "Manager"}, roster_names=["Max", "Ida", "Bo"],
            active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"})
-    rows = []
-    for d in (FRI, THU):
-        rows += [_row(d, "Max", "Manager", "3:00pm", "11:00pm"), _row(d, "Ida", "Manager", "5:00pm", "2:00am"),
-                 _row(d, "Bo", "Bartender", "5:00pm", "2:00am")]
+    rows = [_row(FRI, "Max", "Manager", "3:00pm", "11:00pm"), _row(FRI, "Ida", "Bartender", "5:00pm", "2:00am"),
+            _row(FRI, "Bo", "Bartender", "10:00pm", "2:00am"), _row(THU, "Ida", "Manager", "3:00pm", "11:00pm")]
     assert not _kinds(rows, c, "no_manager")
     report = {}
-    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 40, {}, constraints=c, report=report)
-    ida = [r for r in out if r["employee"] == "Ida"]
-    assert len(ida) == 2 and all(r["shift_end"] == "2:00am" for r in ida), trimmed
-    assert not _kinds(out, c, "no_manager")
-    assert removed > 0
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c, report=report)
+    ida = next(r for r in out if r["employee"] == "Ida" and r["date"] == FRI)
+    assert (ida["shift_start"], ida["shift_end"]) == ("5:00pm", "2:00am"), trimmed
+    assert trimmed == [] and not _kinds(out, c, "no_manager")
     # Still over: what held the rest is said once, the manager rule among it.
     assert report["conflict"]["held"].get("rule"), report
     assert any(x["reason"] == "rule" and "manager" in x["label"] for x in report["conflict"]["examples"])
+    # and Ida is also never the one taken when she stays latest in her role
+    rows[2] = _row(FRI, "Bo", "Bartender", "10:00pm", "1:00am")
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c)
+    assert any(r["employee"] == "Ida" and r["date"] == FRI and r["shift_end"] == "2:00am" for r in out)
 
 
 def test_the_trim_never_touches_a_pinned_row():

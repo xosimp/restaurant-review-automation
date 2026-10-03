@@ -896,8 +896,9 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
        target — preferring the daypart with the lowest sales per labor hour
        and, on a rainy day, a patio role. Never somebody's only shift of the
        week, never under their minimum hours, never the last of a role on a
-       daypart they were on the floor for, never below a role floor, never
-       the only trained cover for a kitchen station.
+       daypart they were on the floor for or the one who stays latest in
+       their role that night, never below a role floor, never the only
+       trained cover for a kitchen station.
 
     Neither ever (E-2, P-13, SQ-7, L-24, P-10):
       * makes a rule breach new or worse at any rank above the budget's —
@@ -1190,7 +1191,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         live = _live(rows)
         keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
         parts_of = {id(x): _se._present(x) for x in rows}
-        day_hours, person_rows, person_hours, crew, by_person_day = {}, {}, {}, {}, {}
+        ends = {id(x): (_se._span_minutes(x) or (0, 0))[1] for x in rows}
+        day_hours, person_rows, person_hours, crew, by_person_day, last_out = {}, {}, {}, {}, {}, {}
         for x in live:
             low = (x.get("employee") or "").strip().lower()
             day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
@@ -1198,6 +1200,12 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             person_hours[low] = person_hours.get(low, 0.0) + _hours(x)
             for part in parts_of[id(x)]:
                 crew.setdefault((x.get("date"), keys[id(x)], part), set()).add(low)
+            # who stays latest in each role each night: [latest end, how many]
+            lo = last_out.setdefault((x.get("date"), keys[id(x)]), [ends[id(x)], 0])
+            if ends[id(x)] > lo[0]:
+                lo[0], lo[1] = ends[id(x)], 0
+            if ends[id(x)] == lo[0]:
+                lo[1] += 1
         for x in rows:
             by_person_day.setdefault((x.get("employee"), x.get("date")), []).append(x)
 
@@ -1236,6 +1244,12 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                     return False, ("last_of_role", None)
                 if n - 1 < _floor(k, day, part):
                     return False, ("floor", None)
+            # Never the one who stays latest in their role that night — the
+            # last of a role out is never the shift taken away, as it is
+            # never the one sent home early (the tails above).
+            lo = last_out.get((d, k))
+            if lo and ends[id(r)] >= lo[0] and lo[1] <= 1:
+                return False, ("last_of_role", None)
             # Never the only trained cover for a kitchen station the owner
             # requires on that daypart (kitchen_stations, 9/30/26).
             _st = getattr(c, "stations", None) if c is not None else None
