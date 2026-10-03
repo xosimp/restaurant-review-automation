@@ -1800,8 +1800,14 @@ def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
     (c.owner_pairs, D-38) added, and "private": the ones stated in an
     owner-only rule — scored and solved against, never printed where the
     team reads (the prompt's PAIRINGS block, the scorer's sentences)."""
-    out = {"prefer": set((pairs or {}).get("prefer") or ()), "avoid": set((pairs or {}).get("avoid") or ()),
-           "private": set((pairs or {}).get("private") or ())}
+    def _one(pair):
+        # Each member under the roster's spelling of the person it means
+        # (D-8): a pairing kept under "Mike" holds for the roster's "Michael".
+        if c is None or not getattr(c, "display", None):
+            return pair
+        return frozenset(c.key(x) for x in pair)
+    out = {k: {q for q in (_one(p) for p in ((pairs or {}).get(k) or ())) if len(q) == 2}
+           for k in ("prefer", "avoid", "private")}
     for p in (getattr(c, "owner_pairs", None) or []) if c is not None else []:
         pair = frozenset((p["a"].lower(), p["b"].lower()))
         out.setdefault(p["kind"], set()).add(pair)

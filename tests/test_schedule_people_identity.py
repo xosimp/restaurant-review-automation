@@ -248,3 +248,12 @@ def test_saving_a_salaried_name_links_it_to_the_person(monkeypatch):
     staff = models.salaried_staff(models.get_restaurant(rid))
     assert staff[0]["name"] == "Michael Smith" and staff[0].get("person_id")
     assert out["targets"]["salaried_warnings"] == []
+
+
+def test_a_pairing_kept_under_an_old_spelling_holds_for_the_person():
+    rid = _rid()
+    _renamed(rid)
+    staff_settings.set_pair(rid, "Mike Smith", "Ana B.", "avoid")
+    c = sr.build_constraints(rid, WEEK, DAYS)
+    pairs = sr.pairs_with_rules(staff_settings.pair_sets(rid), c)
+    assert frozenset({"michael smith", "ana b."}) in pairs["avoid"]
