@@ -10524,36 +10524,15 @@ def _local_today(restaurant_id):
 
 
 # What each source the rules could not read means for the week, in the
-# owner's words (schedule_rules._input_problem — schedule audit 10/3/26 P-1).
-# A source not named here reads as "<source> couldn't be read".
-_INPUT_PROBLEM_WORDS = {
-    "roster": "The team list couldn't be read, so nobody's own rules (hours, minors, availability, certificates) "
-              "were checked",
-    "availability": "Staff availability couldn't be read, so nobody's days off were checked",
-    "time off": "Time off couldn't be read, so approved days off weren't checked",
-    "open and close times": "Opening and closing times couldn't be read, so the close rules weren't checked",
-    "closers": "Who closes couldn't be read, so the closer rule wasn't checked",
-    "salaried staff": "The salaried staff list couldn't be read, so everyone was checked as hourly",
-    "last week's shifts": "The week before's published shifts couldn't be read, so overtime and rest across the "
-                          "two weeks weren't checked",
-    "your staffing rules": "Your staffing rules couldn't be read, so their floors weren't checked",
-    "schedule note rules": "The notes you confirmed as rules couldn't be read, so they weren't checked",
-    "scheduling note holds": "The staff notes you confirmed as holds couldn't be read, so they weren't checked",
-    "staff notes": "Staff notes couldn't be read",
-    "closed dates": "Your closed dates couldn't be read, so a closed day wasn't checked as closed",
-    "kitchen stations": "Kitchen stations couldn't be read, so station coverage wasn't checked",
-}
-
-
+# owner's words (schedule_rules._input_problem — schedule audit 10/3/26 P-1):
+# one wording, schedule_rules.INPUT_PROBLEM_WORDS, shared with the
+# generation's review.
 def _input_problem_text(p) -> str:
     """One blocker line for a setting or source the rules could not read
-    (Constraints.input_problems): a person's settings name the person and
-    where to fix them."""
-    if p.get("name"):
-        return (f"Settings for {p['name']} couldn't be read — fix them in Team; this week wasn't checked against "
-                "their rules")
-    src = str(p.get("source") or "a setting")
-    return _INPUT_PROBLEM_WORDS.get(src) or f"{src[:1].upper()}{src[1:]} couldn't be read, so the rules check ran without it"
+    (Constraints.input_problems) — schedule_rules.input_problem_text, the
+    line the generation's review names it with."""
+    import schedule_rules as _sr_ipt
+    return _sr_ipt.input_problem_text(p)
 
 
 def _notice_text(short, week_start) -> str:

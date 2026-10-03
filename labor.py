@@ -3243,8 +3243,10 @@ def _held_roles_by_name(restaurant_id, names) -> dict:
         return {}
     try:
         import people as _people
+        from schedule_engine import frozen_read as _frozen_hr
         held = {}
-        for r in _people.held_roles(restaurant_id):
+        # Once per generation, whichever call asks (schedule audit 10/3/26 P-36).
+        for r in _frozen_hr(("held_roles", restaurant_id), lambda: _people.held_roles(restaurant_id)):
             if (r.get("role") or "").strip():
                 held.setdefault(r["key"], set()).add(" ".join(r["role"].split()))
     except Exception:
@@ -4119,7 +4121,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _events = []
     if restaurant_id:
         try:
-            _events = _ss_ns.attendance_events(restaurant_id)
+            # Read once per generation, not once per call (schedule audit
+            # 10/3/26 P-36: every slice re-read the year of attendance).
+            from schedule_engine import frozen_read as _frozen_ns
+            _events = _frozen_ns(("attendance_events", restaurant_id),
+                                 lambda: _ss_ns.attendance_events(restaurant_id))
         except Exception as _ae:
             print(f"[schedule] attendance unavailable for {restaurant_id}: {_ae}")
             _events = []
@@ -5017,7 +5023,10 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     # current each is) rather than refusing the schedule.
     import data_health as _dh_sched
     from ai_utils import with_data_state as _with_ds_sched
-    _ready_sched = (_dh_sched.readiness(restaurant_id, "schedule") if restaurant_id
+    # Once per generation (P-36): every call re-ran the readiness checks.
+    from schedule_engine import frozen_read as _frozen_rd
+    _ready_sched = (_frozen_rd(("readiness", restaurant_id, "schedule"),
+                               lambda: _dh_sched.readiness(restaurant_id, "schedule")) if restaurant_id
                     else _dh_sched.NOT_APPLICABLE)
     prompt = _with_ds_sched(prompt, _ready_sched)
 

@@ -1203,6 +1203,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # 10/3/26 E-7, P-6). hours_scheduled stays the all-in total.
         ("schedule_history", "hours_hourly", "REAL"),
         ("schedule_history", "hours_salaried", "REAL"),
+        # How long each stage of the generation took, and end to end
+        # (schedule audit 10/3/26 P-24; the platform check reads the p95).
+        ("schedule_history", "stage_seconds_json", "TEXT"),
+        ("schedule_history", "total_seconds", "REAL"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -10720,7 +10724,8 @@ def _ensure_history_columns(conn):
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
-                       ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL")):
+                       ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL"),
+                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
