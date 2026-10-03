@@ -484,7 +484,9 @@ def test_withdraw_and_decline_tell_the_people_waiting(db, told):
     told["staff"].clear()
     assert srq.withdraw(rid, req["id"], "Ana")
     gone = next(n for n in told["staff"] if n["subject"].startswith("Open shift gone"))
-    assert gone["to"] == offered_to
+    # The same people, whatever order: the open-shift notice goes round in
+    # turn now (schedule audit 10/3/26 E-3), the "gone" one by name.
+    assert sorted(gone["to"]) == sorted(offered_to)
     swap = srq.request_swap(rid, "Ana", W1[2], "11:00am", "Ben", W1[3], "11:00am", now=NOW)
     told["managers"].clear()
     srq.respond_swap(rid, swap["id"], "Ben", False, now=NOW)
@@ -523,7 +525,12 @@ def test_the_sibling_conflict_check_reads_every_overlapping_published_week(db):
     _publish(db, sib, [(W1[2], "Dana", "Server", "4:00pm", "11:00pm", 7)])
     _publish(db, sib, [(W2[2], "Dana", "Server", "4:00pm", "11:00pm", 7)], dates=W2)   # next week, published later
     c = schedule_rules.build_constraints(rid, W1, [_day(d) for d in W1])
-    assert W1[2] in (c.blocked_dates.get("dana") or {})
+    # Read as a row of the tail, checked by overlap and rest — no longer a
+    # whole-date block (schedule audit 10/3/26 D-40).
+    assert W1[2] in [r["date"] for r in c.base_rows.get("dana") or []]
+    clash = {"date": W1[2], "day": _day(W1[2]), "employee": "Dana", "role": "Server", "shift_start": "5:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "5", "notes": ""}
+    assert not c.can_add(clash, [])[0]
 
 
 # ── M6: time off ───────────────────────────────────────────────────────────

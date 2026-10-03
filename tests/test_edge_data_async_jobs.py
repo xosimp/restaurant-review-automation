@@ -110,8 +110,11 @@ def test_generate_after_a_restart_does_not_join_the_dead_job(client, db_path, mo
     import schedule_engine
     rid = _restaurant(db_path)
     token = _token(client, db_path, rid)
-    started = []
-    monkeypatch.setattr(schedule_engine, "_run_schedule_job", lambda job_id, *a, **k: started.append(job_id))
+    started, ran = [], threading.Event()
+    # The job is queued on the bounded generation pool (schedule audit
+    # 10/3/26 P-39), so it starts a moment after the press returns.
+    monkeypatch.setattr(schedule_engine, "_run_schedule_job",
+                        lambda job_id, *a, **k: (started.append(job_id), ran.set()))
     _pending_job(db_path, "zombie", rid, age_minutes=2)
     ops.sweep_stale_jobs()                                   # boot
 
@@ -119,7 +122,7 @@ def test_generate_after_a_restart_does_not_join_the_dead_job(client, db_path, mo
                        headers={"Authorization": f"Bearer {token}"}).get_json()
     assert body["ok"] is True
     assert body.get("job_id") != "zombie" and not body.get("joined"), body
-    assert started, "no generation was started — the owner is polling a job nothing will finish"
+    assert ran.wait(10) and started, "no generation was started — the owner is polling a job nothing will finish"
 
 
 def test_a_job_whose_result_could_not_be_stored_does_not_poll_pending_forever(db_path, monkeypatch):
@@ -143,8 +146,9 @@ def test_two_concurrent_generate_presses_start_one_generation(client, db_path, m
     import schedule_engine
     rid = _restaurant(db_path)
     token = _token(client, db_path, rid)
-    started = []
-    monkeypatch.setattr(schedule_engine, "_run_schedule_job", lambda job_id, *a, **k: started.append(job_id))
+    started, ran = [], threading.Event()
+    monkeypatch.setattr(schedule_engine, "_run_schedule_job",
+                        lambda job_id, *a, **k: (started.append(job_id), ran.set()))
     real_active = ops.active_job
     both_checked = threading.Barrier(2)
 
@@ -169,17 +173,20 @@ def test_two_concurrent_generate_presses_start_one_generation(client, db_path, m
     for t in threads:
         t.join(5)
     assert len({b.get("job_id") for b in bodies}) == 1, bodies
-    assert len(started) == 1, f"{len(started)} paid generations started for one week"
+    # Queued on the generation pool (P-39): one job claimed, one run.
+    assert ran.wait(10)
+    assert len(_jobs(db_path)) == 1 and len(started) == 1, f"{len(started)} paid generations started for one week"
 
 
 def test_a_press_during_a_long_live_generation_joins_it(client, db_path, monkeypatch):
     import schedule_engine
     rid = _restaurant(db_path)
     token = _token(client, db_path, rid)
-    started, release = [], threading.Event()
+    started, release, ran = [], threading.Event(), threading.Event()
 
     def slow_generation(job_id, *a, **k):
         started.append(job_id)
+        ran.set()
         release.wait(3)                                      # still running in this process
     monkeypatch.setattr(schedule_engine, "_run_schedule_job", slow_generation)
     try:
@@ -189,6 +196,7 @@ def test_a_press_during_a_long_live_generation_joins_it(client, db_path, monkeyp
         second = client.post("/mobile/api/labor/generate-schedule", json={},
                              headers={"Authorization": f"Bearer {token}"}).get_json()
     finally:
+        ran.wait(10)                                         # queued on the generation pool (P-39)
         release.set()
     assert second.get("job_id") == first["job_id"] and second.get("joined") is True, second
     assert len(started) == 1

@@ -269,6 +269,7 @@ Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one
 | `RUN_REQUEST_TTL_MINUTES` | `"30"` | ops.py |
 | `SCHEDULER_LEASE_STALE_SECONDS` | `"1800"` | ops.py |
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
+| `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
 | `SWEEP_WORKERS` | `"1"` | scheduler.py |

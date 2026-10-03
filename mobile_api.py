@@ -3211,6 +3211,17 @@ def mobile_labor_insight(current_user):
                        insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
 
 
+def _schedule_wait(job_id, restaurant_id) -> int:
+    """How long a client should keep polling a generation it joined: the
+    time its own deadline leaves (ops.read_async_job's seconds_left), else
+    what a new generation is given (schedule audit 10/3/26 P-22)."""
+    import ops as _ops
+    import schedule_engine as _se
+    job = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+    left = job.get("seconds_left")
+    return int(left) + _ops.ASYNC_DEADLINE_GRACE_SECONDS if left is not None else _se.job_wait_seconds()
+
+
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_generate_schedule(current_user):
@@ -3218,8 +3229,14 @@ def mobile_generate_schedule(current_user):
     (_run_schedule_job plus ops.async_jobs) rather than building a second job
     system — the same async-generate-then-poll pattern the web Labor tab
     already relies on. The ONE body for both surfaces: the web route
-    /api/generate-schedule calls it (client_api.generate_schedule_json)."""
-    import threading
+    /api/generate-schedule calls it (client_api.generate_schedule_json).
+
+    Body: week_start; instruction (the owner's words for this draft); for a
+    redo of some days, dates + history_id; and, for a redo or a whole week
+    over an unsent draft, the owner's reason — reason_chip | reason (one of
+    schedule_engine.REDO_REASONS, or their own short label) and reason_text |
+    whats_wrong — which joins the instruction. The answer carries
+    wait_seconds: how long the job can run (schedule audit 10/3/26 P-22)."""
     import uuid
     from ai_utils import ai_rate_limited
 
@@ -3230,7 +3247,7 @@ def mobile_generate_schedule(current_user):
     import ops as _ops
     running = _ops.active_job("schedule", rid)
     if running:
-        return jsonify(ok=True, job_id=running, joined=True)
+        return jsonify(ok=True, job_id=running, joined=True, wait_seconds=_schedule_wait(running, rid))
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
@@ -3248,17 +3265,18 @@ def mobile_generate_schedule(current_user):
     # What the owner asked for with this draft, in their words — Ask Cavnar's
     # generate_schedule card posts it (schedule audit 10/3/26 PR-19). It
     # reaches every model call of the generation, ranked with the Studio
-    # notes (priority 5).
+    # notes (priority 5). Why they are redoing some days, or throwing the
+    # draft away — a chip (schedule_engine.REDO_REASONS) and their own words,
+    # read from reason_chip / reason and reason_text / whats_wrong — rides the
+    # same field, so the prompt says the owner's words once (PR-18).
+    import schedule_engine as _se
     instruction = " ".join(str(body.get("instruction") or "").split())[:500] or None
+    instruction = _se.with_redo_reason(instruction, _se.redo_reason_from(body))
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
     job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
     if joined:
-        return jsonify(ok=True, job_id=job_id, joined=True)
-    from schedule_engine import _run_schedule_job as _run_sched
-    # The owner who pressed Generate is the actor on every model call the job
-    # makes (the thread has no request to read it from, #148).
-    from ai_utils import attributed as _ai_attributed
+        return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
     # used to teach nothing (schedule audit 10/3/26 L-26): "redo these days"
     # is kept with the owner's optional reason (a chip and their words —
@@ -3278,8 +3296,11 @@ def mobile_generate_schedule(current_user):
     _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction
-    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid), kwargs=_job_kw, daemon=True)
-    t.start()
+    # On the bounded generation pool, not a thread of its own (schedule audit
+    # 10/3/26 P-39); the owner who pressed Generate stays the actor on every
+    # model call the job makes (submit_generation takes the attribution here,
+    # #148).
+    _se.submit_generation(job_id, rid, **_job_kw)
     try:
         import schedule_versions as _sv_rej
         _chip = body.get("reason_chip") or body.get("reason")
@@ -3294,7 +3315,10 @@ def mobile_generate_schedule(current_user):
                                      user=current_user)
     except Exception as _rjx:
         _ops.capture(_rjx, job="schedule_rejection", context=f"restaurant_id={rid}")
-    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
+    # How long the job can run (P-22): the client waits this long, not a
+    # guessed 15 minutes; a poll while it is pending says what is left.
+    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
+                   wait_seconds=_se.job_wait_seconds())
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")
@@ -3308,7 +3332,9 @@ def mobile_schedule_status(job_id, current_user):
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
-        return jsonify(ok=True, status="pending")
+        # How long the job can still run, when it set its deadline (schedule
+        # audit 10/3/26 P-22) — the web twin says the same.
+        return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -4818,33 +4844,48 @@ def mobile_labor_team(current_user):
                            note=None if team else
                                 "Upload your shifts CSV under Account, or add your team by "
                                 "hand below, and they'll appear here to rate."), 200
-        shifts = load_shifts_for_restaurant(rid)
-        # Most recent role each person worked, and how many shifts — enough
-        # to order the list usefully without inventing a roster.
+        # The one roster (staff_settings.roster): each person once however
+        # the POS spells them, their role the one they worked most over
+        # their last eight weeks — this screen kept the newest punch's role,
+        # so one host pickup made a bartender a Host here (schedule audit
+        # 10/3/26 D-17) — and who has stopped working, with when (E-3).
+        _everyone = _ss_team.roster(rid, include_inactive=True)
+        try:
+            _dormant = _ss_team.dormant_people(rid, people=_everyone)
+        except Exception as _dx:
+            print(f"[team] dormancy unavailable for {rid}: {_dx!r}")
+            _dormant = {}
         seen = {}
-        for sh in shifts:
-            n = (sh.get("employee") or "").strip()
-            if not n or _ss_team.name_key(n) in _gone:
+        for e in _everyone:
+            if not e.get("active", True) or _ss_team.name_key(e["name"]) in _gone:
                 continue
-            e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last": ""})
-            e["shifts"] += 1
-            d = sh.get("date") or ""
-            if d >= e["last"]:
-                e["last"] = d
-                e["role"] = (sh.get("role") or "").strip() or e["role"]
-
-        shift_names = set(seen.keys())
-        for m in manual:
-            if m["name"] not in seen:
-                seen[m["name"]] = {"name": m["name"], "role": m["role"], "shifts": 0, "last": ""}
+            seen[e["name"]] = {"name": e["name"], "role": e.get("role"), "shifts": e.get("shifts") or 0,
+                               "last": e.get("last_worked") or "", "is_manual": bool(e.get("is_manual")),
+                               **_ss_team.dormancy_fields(e, _dormant)}
+        shift_names = {n for n, e in seen.items() if not e["is_manual"]}
 
         caps = get_capabilities(rid)
+        # Per-role scores and how old each rating is (schedule audit
+        # 10/3/26 D-12): "Rated 6/1/26 — still right?" after 90 days.
+        from models import get_role_scores, rating_ages
+        try:
+            _role_sc = get_role_scores(rid)
+            _ages = rating_ages(rid)
+        except Exception as _rx:
+            print(f"[team] rating ages unavailable for {rid}: {_rx!r}")
+            _role_sc, _ages = {}, {}
         team = []
         for n, e in seen.items():
             c = (caps.get(n) or {}).get("overall") or {}
             closer = (caps.get(n) or {}).get("can_close") or {}
+            age = _ages.get(n) or {}
             team.append({
                 "name": n, "role": e["role"], "shifts": e["shifts"],
+                "dormant": e["dormant"], "last_worked_label": e["last_worked_label"],
+                "dormant_text": e["dormant_text"],
+                "role_scores": {f.title(): v for f, v in (_role_sc.get(n) or {}).items()},
+                "rated_label": age.get("rated_label"), "rating_due": bool(age.get("due")),
+                "rating_due_text": age.get("due_text"),
                 "score": c.get("score"),
                 # Authorized to close. A fact about a person that owes
                 # nothing to their rating, and the only way a leadership
@@ -4920,6 +4961,15 @@ def mobile_set_rating(current_user):
     who = current_user.get("username") or current_user.get("email")
     name = data.get("employee_name") or data.get("name") or ""
     attribute = data.get("attribute") or "overall"
+    if data.get("role") and attribute == "overall":
+        # A score for one role (schedule audit 10/3/26 D-12): {"role":
+        # "Bartender", "score": 4} rates them as a bartender; the overall
+        # score stays their fallback everywhere else.
+        from models import role_score_attribute
+        attribute = role_score_attribute(data.get("role")) or "overall"
+    elif str(attribute).startswith("role:"):
+        from models import role_score_attribute
+        attribute = role_score_attribute(str(attribute)[5:]) or attribute
     try:
         before = (get_capabilities(rid).get(name) or {}).get(attribute)
         out = set_capability(

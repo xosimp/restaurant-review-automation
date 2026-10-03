@@ -232,7 +232,7 @@ def test_build_constraints_reads_time_off_roster_and_published_hours(db_path, ri
     assert any(x["kind"] == "rest_gap" for x in v)
 
 
-def test_a_sibling_sites_published_shift_blocks_the_date_here(db_path, rid):
+def test_a_sibling_sites_published_shift_is_checked_by_overlap_not_the_date(db_path, rid):
     conn = get_conn(db_path)
     conn.execute("UPDATE restaurants SET location_group='Group', owner_email='r@x.com' WHERE id=?", (rid,))
     conn.commit()
@@ -248,8 +248,16 @@ def test_a_sibling_sites_published_shift_blocks_the_date_here(db_path, rid):
     conn.commit()
     conn.close()
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
-    ok, why = c.can_work("Ana", WEEK[2])
-    assert not ok and "North" in why
+    # The sibling's shift is a row of the tail, checked by overlap and rest:
+    # the date is not blocked whole (schedule audit 10/3/26 D-40) — lunch
+    # here before the 4pm there is a double; anything into it overlaps.
+    assert c.can_work("Ana", WEEK[2])[0]
+    lunch = {"date": WEEK[2], "day": "Wednesday", "employee": "Ana", "role": "Server", "shift_start": "10:00am",
+             "shift_end": "2:00pm", "scheduled_hours": "4", "notes": ""}
+    assert not sr.violations([lunch], c, person_only=True)
+    over = sr.violations([dict(lunch, shift_start="3:00pm", shift_end="9:00pm", scheduled_hours="6")], c,
+                         person_only=True)
+    assert [v["kind"] for v in over] == ["overlap"] and "North" in over[0]["detail"]
     assert c.base_hours["ana"][c.bucket(WEEK[2])] == 6.0
 
 

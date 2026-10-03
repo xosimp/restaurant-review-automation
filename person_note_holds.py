@@ -242,6 +242,112 @@ def read_part(text, noted=None, expires=None, today=None) -> dict:
     return dict(out, kind="hold", hold=hold)
 
 
+def mentioned(text, noted=None, today=None) -> dict:
+    """{"days", "start", "end", "neg", "only"} — the weekdays and dates a note
+    names, and whether it says "not" or "only", however much else it says.
+    read_part holds a note only when every word is accounted for; this is
+    for the rest ("not with Mike on Fridays", "out 12/20-12/28 probably"),
+    which nobody confirmed and the fill passes still keep clear of."""
+    today = today or date.today()
+    try:
+        ref = date.fromisoformat(str(noted)[:10]) if noted else today
+    except ValueError:
+        ref = today
+    head, _reason = _split_reason(text)
+    low = _norm(head)
+    start = end = None
+    try:
+        rng = re.search(_DATE_RX + r"\s*(?:-|–|to|thru|through|till|until)\s*" + _DATE_RX, low)
+        if rng:
+            start = _date_of(rng.group(1), rng.group(2), rng.group(3), ref)
+            end = _date_of(rng.group(4), rng.group(5), rng.group(6), start)
+            low = low[:rng.start()] + " " + low[rng.end():]
+        else:
+            m = re.search(r"\b(?:until|till|thru|through|before)\s+" + _DATE_RX, low)
+            if m:
+                end = _date_of(m.group(1), m.group(2), m.group(3), ref)
+                low = low[:m.start()] + " " + low[m.end():]
+            singles = list(re.finditer(_DATE_RX, low))
+            if len(singles) == 1 and end is None:
+                start = end = _date_of(singles[0].group(1), singles[0].group(2), singles[0].group(3), ref)
+    except ValueError:
+        start = end = None
+    tokens = re.findall(r"[a-z]+", low)
+    days = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        d = _DAY_ABBR.get(t) or _DAY_ABBR.get(t.rstrip("s"))
+        b = (_DAY_ABBR.get(tokens[i + 2]) or _DAY_ABBR.get(tokens[i + 2].rstrip("s"))) if (
+            d and i + 2 < len(tokens) and tokens[i + 1] in ("to", "thru", "through", "till")) else None
+        if b:
+            k = DAYS.index(d)
+            while True:
+                days.append(DAYS[k])
+                if DAYS[k] == b:
+                    break
+                k = (k + 1) % 7
+            i += 3
+            continue
+        if d:
+            days.append(d)
+        elif t in _GROUPS:
+            days.extend(_GROUPS[t])
+        i += 1
+    return {"days": [d for d in DAYS if d in set(days)], "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None, "neg": any(t in _NOT for t in tokens),
+            "only": any(t in _ONLY for t in tokens)}
+
+
+def caution(text, noted=None, expires=None, week_dates=(), today=None):
+    """{"days": set, "dates": set, "parts": set} a note nobody has confirmed keeps the
+    fill passes off (schedule audit 10/3/26 D-34), or None. A note the
+    reader can hold ("can't close Fridays") cautions the days it names;
+    one it can't ("not with Mike on Fridays") cautions the days or dates it
+    names when it says "not" (or, with "only", the other days). A note
+    naming no day or date ("max 25 hours", "prefers bar") cautions none.
+    `dates` are the dates of `week_dates` it covers; `days` its weekdays
+    when it has no end — for a reader with no week. The whole day, never a
+    part: the note is unconfirmed, so the fills keep well clear of it."""
+    r = read_part(text, noted=noted, expires=expires, today=today)
+    parts = set()
+    if r.get("kind") == "hold":
+        h = r["hold"]
+        days, start, end = list(h.get("days") or []), h.get("start"), h.get("end")
+        parts = set(h.get("dayparts") or [])
+    else:
+        m = mentioned(text, noted=noted, today=today)
+        if not (m["neg"] or m["only"]) or not (m["days"] or m["start"] or m["end"]):
+            return None
+        if m["neg"] and m["only"]:
+            return None
+        days, start, end = list(m["days"]), m["start"], m["end"]
+        if m["only"]:
+            if not days:
+                return None
+            days = [d for d in DAYS if d not in days]
+        if expires and (end is None or str(expires)[:10] < end):
+            end = str(expires)[:10]
+    dates = set()
+    for d in week_dates or ():
+        d = str(d)[:10]
+        if (start and d < start) or (end and d > end):
+            continue
+        try:
+            wd = date.fromisoformat(d).strftime("%A")
+        except ValueError:
+            continue
+        if days and wd not in days:
+            continue
+        dates.add(d)
+    week_days = set(days) if (days and not end) else (set(DAYS) if (not days and not end and not start) else set())
+    if not dates and not week_days:
+        return None
+    # `parts`: the lunch or dinner a held reading names ("no nights") — a
+    # fill that says which daypart it is filling may use the other one.
+    return {"days": week_days, "dates": dates, "parts": parts}
+
+
 def words_for(h) -> str:
     """"off Tuesdays at dinner, 10/2/26–10/31/26"."""
     from time_utils import mdy
@@ -380,7 +486,10 @@ def apply_holds(c, restaurant_id, db_path=DB_PATH):
         for h in holds(restaurant_id, db_path=db_path, include_ended=True):
             if (h.get("end") and h["end"] < first) or (h.get("start") and h["start"] > last):
                 continue
-            key = h["employee_key"]
+            # Filed under the person's one key (Constraints.key — people's
+            # identity): a hold kept under "Mike" holds for the roster's
+            # "Michael" (schedule audit 10/3/26 D-8).
+            key = c.key(h["employee_name"]) if hasattr(c, "key") else h["employee_key"]
             reason = "your note: " + h["part_text"][:120]
             inside = all((not h.get("start") or d >= h["start"]) and (not h.get("end") or d <= h["end"])
                          for d in c.week_dates)
@@ -397,6 +506,13 @@ def apply_holds(c, restaurant_id, db_path=DB_PATH):
                     keep = "night" if off == "morning" else "morning"
                     cur = (c.daypart_avail.get(key) or {}).get(wd)
                     c.daypart_avail.setdefault(key, {})[wd] = "off" if cur in (off, "off") else keep
+                elif hasattr(c, "blocked_parts"):
+                    # Only part of the week is inside the hold: its lunch or
+                    # dinner is off on those dates alone (Constraints.
+                    # blocked_parts, schedule audit 10/3/26 D-39) — it was
+                    # not applied at all, the weekday map being by weekday.
+                    c.blocked_parts.setdefault(key, {}).setdefault(d, []).append(
+                        {"from": None, "until": None, "daypart": h["dayparts"][0], "reason": reason})
     except Exception as e:
         try:
             import ops
