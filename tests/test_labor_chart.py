@@ -136,15 +136,16 @@ def test_no_caller_other_than_labor_passes_a_target():
                     calls.append(s[m.start():j + 1])
                     break
     # The fifth is Intel's rating over time (memory round 9/29/26,
-    # memIntelHistoryHtml) — no target, so it never opts into the split.
-    assert len(calls) == 5, "expected exactly the five known glowLine call sites: " + str(len(calls))
+    # memIntelHistoryHtml) — no target, so it never opts into the split. The
+    # sixth is the website-analytics line (a021c547, 10/2/26), also untargeted.
+    assert len(calls) == 6, "expected exactly the six known glowLine call sites: " + str(len(calls))
 
     def _enclosing_fn(pos):
         prev = list(re.finditer(r"function (\w+)\(", s[:pos]))
         return prev[-1].group(1) if prev else None
 
     non_labor = [c for c in calls if _enclosing_fn(s.index(c)) != "renderLaborHero"]
-    assert len(non_labor) == 4
+    assert len(non_labor) == 5
     for c in non_labor:
         assert "target:" not in c, "a non-Labor caller now opts into the red-split fill: " + c[:120]
 

@@ -9891,7 +9891,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-role{grid-column:1/-1;padding:18px 4px 8px}
 .swg-role .pill{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);border:1px solid var(--sf-ai-line);border-radius:999px;padding:4px 12px}
 .swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
-.swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}
+.swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-bottom:1px solid var(--hb-line2)}
 .swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swg-p .h{font-size:12px;color:var(--ink3)}
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
@@ -18626,6 +18626,17 @@ function _escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// A role inside a sentence, as shift_quality.role_words: ordinary words in
+// lower case, AM/PM and words written in capitals kept ("bartender AM").
+function _roleWords(r) {
+  var w = String(r == null ? '' : r).split(/\s+/), out = [], i;
+  for (i = 0; i < w.length; i++) {
+    if (!w[i]) continue;
+    var lw = w[i].toLowerCase();
+    out.push(lw === 'am' || lw === 'pm' ? lw.toUpperCase() : (w[i].length > 1 && w[i] === w[i].toUpperCase() && /[A-Z]/.test(w[i]) ? w[i] : lw));
+  }
+  return out.join(' ');
+}
 // Check for unread on load
 (function(){
   fetch('/api/changelog/unread-count').then(apiJson).then(function(d){
@@ -22269,7 +22280,7 @@ function _schedRenderTable(collapse) {
     // Clicking a name opens the list of people who could take that shift
     // instead; the row itself opens the engine's reason for the assignment.
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.88);font-weight:600">'
-          + '<span data-shift-row="' + i + '" title="Swap for somebody who can take this shift" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.25)">'
+          + '<span data-shift-row="' + i + '" title="Swap for somebody who can take this shift" style="cursor:pointer">'
           + _escHtml(empName) + '</span>' + constraintBadge
           + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
           + (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + '</span>' : '')
@@ -24481,7 +24492,7 @@ function swLive() {
     for (rk in rh) if (rh.hasOwnProperty(rk)) {
       var cap = (cnt[rk] || 0) * ceil, over = cap && rh[rk] > cap;
       rows2 += _swBar(_escHtml(rk), rh[rk], rmx, cap || null, over ? 'over role' : 'role', '<span class="hb-num">' + _schedHrs(rh[rk]) + '</span>' + (cap ? '/<span class="hb-num">' + cap + 'h</span>' : 'h'));
-      if (over) flags.push('<b>' + _escHtml(rk) + '</b>: <span class="hb-num">' + _schedHrs(rh[rk]) + 'h</span> scheduled, but <span class="hb-num">' + cnt[rk] + '</span> ' + (cnt[rk] === 1 ? 'person covers' : 'people cover') + ' <span class="hb-num">' + cap + 'h</span> without overtime. Add someone who can work ' + _escHtml(rk.toLowerCase()) + ', or take <span class="hb-num">' + _schedHrs(rh[rk] - cap) + 'h</span> off.');
+      if (over) flags.push('<b>' + _escHtml(rk) + '</b>: <span class="hb-num">' + _schedHrs(rh[rk]) + 'h</span> scheduled, but <span class="hb-num">' + cnt[rk] + '</span> ' + (cnt[rk] === 1 ? 'person covers' : 'people cover') + ' <span class="hb-num">' + cap + 'h</span> without overtime. Add someone who can work ' + _escHtml(_roleWords(rk)) + ', or take <span class="hb-num">' + _schedHrs(rh[rk] - cap) + 'h</span> off.');
     }
     // By role only when a role is past what its roster covers without
     // overtime (the flag below says which): otherwise it was a second chart

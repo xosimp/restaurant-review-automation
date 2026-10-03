@@ -7751,6 +7751,7 @@ def validate_strength_thresholds(thresholds: dict, roster_scores: dict = None,
     A threshold no roster could ever reach is not a target, it is a warning
     the owner will see every week and learn to ignore.
     """
+    from shift_quality import role_words as _role_words
     problems = []
     for role, v in (thresholds or {}).items():
         try:
@@ -7771,7 +7772,7 @@ def validate_strength_thresholds(thresholds: dict, roster_scores: dict = None,
                           reverse=True)
             if best and n > sum(best):
                 problems.append(
-                    f"{role}: {n:g} is higher than your whole {role.lower()} team combined "
+                    f"{role}: {n:g} is higher than your whole {_role_words(role)} team combined "
                     f"({sum(best):g}), so it can never be met")
     return problems
 

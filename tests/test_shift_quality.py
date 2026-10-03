@@ -1815,3 +1815,15 @@ def test_every_dimension_has_its_own_name_on_screen():
     assert sq.DIMENSION_LABELS["splh"] == "Sales per labor hour"
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mobile_api.py")).read()
     assert '_sq.DIMENSION_LABELS.get(k)' in src
+
+
+def test_a_role_in_a_sentence_keeps_am_pm_and_acronyms_in_capitals():
+    """"needs 1 host am", "Level 5 bartender am" (Will, 10/2/26): every
+    sentence that names a role goes through role_words."""
+    import shift_quality as sq
+    assert sq.role_words("Bartender AM") == "bartender AM"
+    assert sq.role_words("server am", 2) == "servers AM"
+    assert sq.role_words("Host PM", 3) == "hosts PM"
+    assert sq.role_words("Manager FOH") == "manager FOH"
+    assert sq.role_words("Line Cook", 2) == "line cooks"
+    assert sq.role_words("", default="somebody") == "somebody"

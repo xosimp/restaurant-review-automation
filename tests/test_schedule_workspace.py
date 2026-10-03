@@ -162,7 +162,9 @@ def test_the_shift_editor_is_a_centred_modal_with_even_fields():
 
 def test_the_grid_reads_as_rows():
     s = _src()
-    assert ".swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}" in s
+    # Each row's line is under it (10/2/26), so a group closes with a line and
+    # the next role pill sits inside its own group, never above the line.
+    assert ".swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-bottom:1px solid var(--hb-line2)}" in s
     assert ".swg-chip~.swg-add{display:none}" in s and ".swg-add{position:absolute;" in s
     assert '<div class="swg-role"><span class="pill">' in s
     # A darker shade of the page's own grey (owner, 9/26/26), not an ember tint.

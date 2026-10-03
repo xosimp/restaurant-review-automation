@@ -1991,7 +1991,8 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     saving = (f"saves about {hours:g}h" + (f" (~${dollars:,.0f})" if dollars else "")
               + (" in wages, before any predictability pay a same-day change may owe under your notice rule"
                  " — check with counsel" if pay_caveat else ""))
-    text = (f"{len(people)} {role.lower()}{'' if len(people) == 1 else 's'} on at {_clock(PULSE_CUT_HOUR)} "
+    from shift_quality import role_words as _rw
+    text = (f"{len(people)} {_rw(role, len(people))} on at {_clock(PULSE_CUT_HOUR)} "
             f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
             f"{_clock(PULSE_CUT_HOUR)} {saving}.")
     import staff_settings as _ss

@@ -47,6 +47,27 @@ from datetime import datetime, timedelta
 # is a sentence an owner can act on and "Coverage 1.0" is not.
 SCORE_MAX = 100
 
+def _role_word_kept(w: str) -> bool:
+    return w.lower() in ("am", "pm") or (len(w) > 1 and w.isupper())
+
+
+def role_words(role, count: int = 1, default: str = "") -> str:
+    """A role inside a sentence: ordinary words in lower case, AM/PM and
+    any word the owner wrote in capitals kept that way — "Bartender AM" →
+    "bartender AM", never "bartender am" (Will, 10/2/26). A count other
+    than one pluralises the last ordinary word: "2 bartenders AM"."""
+    words = str(role or "").split()
+    if not words:
+        return default
+    out = [w.upper() if w.lower() in ("am", "pm") else (w if _role_word_kept(w) else w.lower()) for w in words]
+    if count != 1:
+        idx = [i for i, w in enumerate(out) if not _role_word_kept(w)]
+        i = idx[-1] if idx else len(out) - 1
+        w = out[i]
+        out[i] = w + ("es" if w.endswith(("s", "sh", "ch", "x")) else "s")
+    return " ".join(out)
+
+
 # Demand levels, weakest to strongest. Profiles name one of these; the
 # engine also derives one from the restaurant's own sales history when a
 # profile does not pin it.
@@ -513,7 +534,7 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
                 res.score = min(res.score, 60)
     for clash in ctx.role_conflicts:
         res.weaknesses.append(
-            f"{clash['name']} is down for {' and '.join(r.lower() for r in clash['roles'])} "
+            f"{clash['name']} is down for {' and '.join(role_words(r) for r in clash['roles'])} "
             "at the same time — only one of them is counted.")
     res.facts["role_conflicts"] = ctx.role_conflicts
     return res
@@ -628,7 +649,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
     answerable = []
     for rule in rules:
         if blind and rule.get("min_score") is not None and not rule.get("attribute"):
-            unanswerable.append(f"{(rule.get('role') or 'somebody').lower()} scoring "
+            unanswerable.append(f"{role_words(rule.get('role'), default='somebody')} scoring "
                                 f"{float(rule['min_score']):g} or above")
         else:
             answerable.append(rule)
@@ -664,7 +685,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
             qualified = list(pool)
         else:
             qualified = [n for n in pool if (ctx.scores.get(n) or 0) >= float(min_score)]
-        label = (f"{need} {role.lower()}{'' if need == 1 else 's'}" +
+        label = (f"{need} {role_words(role, need)}" +
                  (" authorised to close" if attribute
                   else (f" scoring {float(min_score):g} or above" if min_score is not None else "")))
         if rule.get("closing"):
@@ -849,10 +870,10 @@ def dim_training_balance(ctx: ShiftContext) -> DimensionResult | None:
             if strongest >= (ctx.scores.get(w) or 0) + 2:
                 mentored += 1
                 mentor = max(rated, key=lambda n: ctx.scores.get(n) or 0)
-                mentored_pairs.append(f"{w} with {mentor} on {role.lower()}")
+                mentored_pairs.append(f"{w} with {mentor} on {role_words(role)}")
             else:
                 isolated += 1
-                isolated_names.append(f"{w} on {role.lower()}")
+                isolated_names.append(f"{w} on {role_words(role)}")
 
     if not checked:
         return None
@@ -1413,7 +1434,7 @@ def dim_cross_training(ctx: ShiftContext) -> DimensionResult | None:
     elif short:
         r = short[0]
         f = per_role[r]
-        res.weaknesses.append(f"{f['flexible']} of {f['on_shift']} {r.lower()} on this shift can cover another "
+        res.weaknesses.append(f"{f['flexible']} of {f['on_shift']} {role_words(r, f['on_shift'])} on this shift can cover another "
                               f"station — the target is {int(round(f['target'] * 100))}%.")
     return res
 
@@ -2022,7 +2043,7 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
     score = ctx.scores.get(name)
     if score is not None:
         label = {1: "very weak", 2: "below average", 3: "average", 4: "strong", 5: "excellent"}.get(int(score), "")
-        bits.append(f"Level {int(score)} {role.lower() or 'team member'}" + (f" ({label})" if label else ""))
+        bits.append(f"Level {int(score)} {role_words(role, default='team member')}" + (f" ({label})" if label else ""))
         facts["score"] = score
     elif role:
         bits.append(f"{role}, not yet rated")
@@ -2032,7 +2053,7 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
             for m in (d.facts.get("met") or []) + (d.facts.get("shortfalls") or []):
                 if m["role"].strip().lower() == role.lower() and score is not None:
                     verb = "keeps" if m["strength"] >= m["target"] else "leaves"
-                    bits.append(f"{verb} {role.lower()} at {m['strength']:g} against a target of {m['target']:g}")
+                    bits.append(f"{verb} {role_words(role)} at {m['strength']:g} against a target of {m['target']:g}")
                     facts["role_strength"] = m
                     break
     # leadership

@@ -917,7 +917,7 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None, cost_basis:
         say = (f"{emp} worked {_n1(x['hours'])}h the week of {x['week']} — {_n1(extra)}h past 40"
                + (f", about {_money(prem)} over straight time." if prem else "."))
         if mate:
-            say += (f" {mate['name']} ({role.lower()}) worked {mate['hours_text']}h that week — giving them "
+            say += (f" {mate['name']} ({_role_words(role)}) worked {mate['hours_text']}h that week — giving them "
                     f"those hours at straight time saves that premium.")
         x.update({"dollars_text": _money(prem) if prem else "—", "label": "overtime premium",
                   "hours_text": _n1(x["hours"]), "extra_text": _n1(extra),
@@ -1748,6 +1748,7 @@ def _period_length_days(snapshot: dict) -> int:
 # member travels alongside it, and the verification below reports both.
 
 from shift_quality import daypart_of as _daypart_of  # same 3pm split, one definition
+from shift_quality import role_words as _role_words  # "bartender AM", never "bartender am"
 
 def shift_strength(rows: list, scores: dict) -> dict:
     """Combined Operational Score per (date, daypart, role).
@@ -1869,8 +1870,7 @@ def _leader_reason(date, part, role, need, min_score, qualified, bucket) -> str:
     """One sentence an owner can act on, not a rule id."""
     who = ", ".join(f"{m['name']} ({m['score']})" for m in
                     sorted(bucket["members"], key=lambda m: -m["score"]))
-    plural = "" if need == 1 else "s"
-    head = (f"{bucket.get('day') or date} {part}: needs {need} {role.lower()}{plural} "
+    head = (f"{bucket.get('day') or date} {part}: needs {need} {_role_words(role, need)} "
             f"scoring {float(min_score):g} or above, found {len(qualified)}.")
     if who:
         return head + f" Scheduled: {who}."
@@ -1908,7 +1908,7 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
             if len(qualified) < need:
                 misses.append({
                     "date": date, "day": b.get("day"), "daypart": part, "role": role,
-                    "rule": f"at least {need} {role.lower()}"
+                    "rule": f"at least {need} {_role_words(role, need)}"
                             f"{'' if need == 1 else 's'} scoring {min_score:g} or above",
                     "found": len(qualified),
                     "reason": _leader_reason(date, part, role, need, min_score,
