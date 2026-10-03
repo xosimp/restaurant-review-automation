@@ -42,6 +42,7 @@ code (merge_pinned), and carry "_pinned": "manager_plan" through the job
 (restore_pinned): no pass removes, re-times or re-assigns a pinned row.
 cover_manager_gaps stays the backstop for whatever the plan could not cover.
 """
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import models as _models_mod
@@ -458,8 +459,10 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         return (c.managers or {}).get(key) or roster_roles.get(key) or "Manager"
 
     def pool(d):
-        """Who may manage on `d`: the managers, then anybody acting on it."""
-        return [(k, False) for k in managers] + [(k, True) for k in sorted(acting) if d in acting[k]]
+        """Who may manage on `d`: the managers, then anybody standing in as
+        one that date (Constraints.manages — the one answer to "counts as
+        the manager on the floor")."""
+        return [(k, False) for k in managers] + [(k, True) for k in sorted(acting) if c.manages(name_of(k), d)]
 
     def hours_in(key, bucket):
         total = float((c.base_hours.get(key) or {}).get(bucket, 0.0) or 0.0)
@@ -480,17 +483,22 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                 "notes": f"{PLAN_NOTE} — {reason}", "_pinned": PLAN_SOURCE, "_pin_reason": reason,
                 "_plan_source": source}
 
-    def legal(row, without=None, check_fill=True):
+    # A standing shift is the owner writing the person in, not code choosing
+    # them: "dormant" (no shift in weeks — a guess, and managers rarely
+    # punch) does not stand against it; an unconfirmed note about the day
+    # still does (fillable, with the dormant guess set aside).
+    owner_fill = replace(c, dormant={}) if getattr(c, "dormant", None) else c
+
+    def legal(row, without=None, standing=False):
         """(ok, why): the one legality question (can_add), who code may
         choose (fillable), and a salaried manager's weekly cap."""
         others = [r for r in prior + plan if r is not without]
         ok, why = c.can_add(row, others, line=line, overtime=True)
         if not ok:
             return False, why
-        if check_fill:
-            ok, why = c.fillable(row["employee"], row["date"])
-            if not ok:
-                return False, why
+        ok, why = (owner_fill if standing else c).fillable(row["employee"], row["date"])
+        if not ok:
+            return False, why
         key = row["employee"].strip().lower()
         bucket = c.bucket(row["date"])
         cap = _week_cap(c, row["employee"], line)
@@ -533,7 +541,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                 row = make_row(key, d, s, e, role_of(key, st), "standing",
                                f"{name_of(key)}'s standing {_weekday(d)} shift"
                                + (" (acting manager this date)" if is_acting else ""))
-                ok, why = legal(row)
+                ok, why = legal(row, standing=True)
                 if ok:
                     plan.append(row)
                 else:
@@ -856,6 +864,22 @@ def priority_line(pinned_rows, plan=None, dates=None) -> str:
     return text
 
 
+def _model_why(why) -> str:
+    """A reason as the model may read it: a person's own note words
+    ("their note: …", "your note: …" — free text staff typed) never reach the
+    prompt unfenced; that there is a note about the day is enough."""
+    out = []
+    for part in str(why or "").split("; "):
+        name, sep, reason = part.partition(": ")
+        if sep and "note" in reason.lower():
+            out.append(f"{name}: a scheduling note about that day")
+        elif not sep and "note" in part.lower():
+            out.append("a scheduling note about that day")
+        else:
+            out.append(part)
+    return "; ".join(out)
+
+
 def prompt_block(pinned_rows, plan=None, dates=None) -> str:
     """MANAGER COVERAGE — ALREADY SCHEDULED: the planned rows for the dates
     this call writes, each date's manager window, the stretches nobody can
@@ -877,7 +901,7 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
         w = windows.get(d) or {}
         bits = [f"{r['employee']} {r['shift_start']}–{r['shift_end']} ({r.get('role') or 'manager'})"
                 for r in sorted((r for r in rows if r["date"] == d), key=lambda r: (_span(r) or (0, 0))[0])]
-        bits += [f"NO MANAGER {u['from']}–{u['to']} — nobody can legally cover it ({u['why']}); staff it as "
+        bits += [f"NO MANAGER {u['from']}–{u['to']} — nobody can legally cover it ({_model_why(u['why'])}); staff it as "
                  f"usual, the owner is told in the review" for u in unc if u["date"] == d]
         bits += [f"not planned ({x['why']}) — keep a manager on every minute anyone is" for x in unplanned
                  if x["date"] == d]
@@ -999,6 +1023,9 @@ def review_lines(plan, gaps=None) -> list:
     manager, by those minutes."""
     from time_utils import mdy
     out = []
+    if (plan or {}).get("failed"):
+        out.append("Cavnar AI couldn't plan the managers' shifts before writing this draft, so its manager "
+                   "coverage was filled in afterwards — check every day has a manager on from open to close.")
     for u in (plan or {}).get("uncovered") or []:
         spans = [(u["start"], u["end"])] if gaps is None else \
             [(max(gs, u["start"]), min(ge, u["end"])) for gs, ge, _i in (gaps.get(u["date"]) or [])
