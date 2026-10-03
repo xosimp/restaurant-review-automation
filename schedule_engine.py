@@ -3359,8 +3359,9 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
                           whatever the hours: out of the hourly day and SPLH
                           hours, held to their own ceiling (D-3)
       salaried_cap        their weekly cap when they set none of their own
-      hours_ceilings      {name key: Constraints.max_hours} — the ceiling the
-                          rules hold each roster person to
+      hours_ceilings      {name key: Constraints.max_hours, or
+                          salaried_limit for a salaried person} — the
+                          ceiling each roster person's week is judged by
       managers            {lower: role} (Constraints.managers)
       acting_managers     {lower: set(iso)} — standing in on those dates
       experienced_default managers, acting managers and salaried people:
@@ -3390,7 +3391,11 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         ceilings = {}
         for n in (roster or list(getattr(c, "roster_names", None) or [])):
             try:
-                mx = c.max_hours(n)
+                # A salaried person's week is judged against the most code
+                # would schedule them for (their own maximum, else the
+                # salaried cap — 55h by default), not the 84h hard line the
+                # sweep keeps for a week they write themselves (E-17, D-3).
+                mx = c.salaried_limit(n) if c.is_salaried(n) else c.max_hours(n)
             except Exception:
                 continue
             if mx:
