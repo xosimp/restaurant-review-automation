@@ -4291,6 +4291,20 @@ def test_rating_route_sets_and_clears_a_score(client, db_path, monkeypatch):
     assert get_operational_scores(rid, db_path=db_path) == {}
 
 
+def test_rating_route_takes_a_score_for_one_role(client, db_path):
+    """A score for the role a person works (schedule audit 10/3/26 D-12):
+    kept per role family beside the overall score it falls back to, and
+    the team list carries it with how old each rating is."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import get_operational_scores, get_role_scores
+    ok = client.post("/mobile/api/labor/team/rating", json={"employee_name": "Pat", "role": "Server AM", "score": 4},
+                     headers=_auth_headers(token)).get_json()
+    assert ok["ok"] is True and ok["attribute"] == "role:server"
+    assert get_role_scores(rid, db_path=db_path) == {"Pat": {"server": 4}}
+    assert get_operational_scores(rid, db_path=db_path) == {}
+
+
 def test_rating_route_refuses_a_score_off_the_scale(client, db_path):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)

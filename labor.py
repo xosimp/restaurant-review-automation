@@ -586,10 +586,13 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
 
 
 def _without_salaried(restaurant_id, shifts):
-    """(the shifts less the salaried people's punches, their hours)."""
+    """(the shifts less the salaried people's punches, their hours). Every
+    spelling of a salaried person counts (models.salaried_keys — people's
+    identity): punches as "Gabe Huerta" for a salaried "Gabriel Huerta"
+    stayed in the hourly analysis (schedule audit 10/3/26 D-7)."""
     try:
-        from models import get_restaurant, salaried_staff, salaried_name_key
-        names = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+        from models import get_restaurant, salaried_keys, salaried_name_key
+        names = salaried_keys(get_restaurant(restaurant_id))
     except Exception:
         names = set()
     if not names:
@@ -3528,9 +3531,10 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
         shifts = load_shifts_for_restaurant(restaurant_id) or []
     salaried = set()
     try:
-        from models import get_restaurant, salaried_staff, salaried_name_key, get_close_times
+        from models import get_restaurant, salaried_keys, get_close_times
         r = get_restaurant(restaurant_id)
-        salaried = {salaried_name_key(s["name"]) for s in salaried_staff(r)}
+        # Every spelling of every salaried person (D-7, people's identity).
+        salaried = set(salaried_keys(r))
         if close_times is None:
             close_times = get_close_times(restaurant_id)
     except Exception as e:
@@ -4534,7 +4538,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if restaurant_id:
         try:
             import time_off as _to
-            for _emp, _days in sorted(_to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1]).items()):
+            # Whole days here; part of a day off ("until 4pm", D-39) is in the
+            # rules' PER-PERSON block, with the rest of that day workable.
+            # Each under the spelling the roster uses (people's identity, D-8).
+            _offs = _to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1], whole_days_only=True)
+            try:
+                import people as _people_to
+                _canon = _people_to.canonical_names(restaurant_id, list(_offs))
+            except Exception:
+                _canon = {}
+            for _emp, _days in sorted(((_canon.get(e) or e), d) for e, d in _offs.items()):
                 _named = ", ".join(f"{_d} ({datetime.strptime(_d, '%Y-%m-%d').strftime('%A')})" for _d in _days)
                 _time_off_lines.append(f"  {_emp}: APPROVED TIME OFF on {_named} — do not schedule")
         except Exception:

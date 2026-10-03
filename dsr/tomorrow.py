@@ -310,9 +310,11 @@ def _published(rid, day, db_path):
 
 
 def _salaried(restaurant):
+    """Every spelling of every salaried person (models.salaried_keys,
+    people's identity — schedule audit 10/3/26 D-7)."""
     try:
-        from models import salaried_staff, salaried_name_key
-        return {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
+        from models import salaried_keys
+        return set(salaried_keys(restaurant))
     except Exception:
         return set()
 
