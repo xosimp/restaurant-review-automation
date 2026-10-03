@@ -614,7 +614,7 @@ def _row_parts(row: dict) -> set:
 
 
 def _clock(m) -> str:
-    h, mm = divmod(int(m), 60)
+    h, mm = divmod(int(m) % (24 * 60), 60)      # a close past midnight (26:00) is 2:00am
     return f"{(h % 12) or 12}:{mm:02d}{'am' if h < 12 else 'pm'}"
 
 

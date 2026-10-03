@@ -3252,7 +3252,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         latest shift past 11pm stands for its close.
     """
     from collections import defaultdict as _dd
-    from shift_quality import late_window, late_minutes, PRESENCE_MIN_OVERLAP
+    from shift_quality import late_window, late_minutes
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
 
     def _key(name):
@@ -3288,7 +3288,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
             e = _late_end(s)
             if date_ and e is not None:
                 latest[date_] = max(latest.get(date_, 0), e)
-        late_dates = _dd(set)
+        late_dates = {}                       # day -> {date: window}
         for s in rows:
             date_ = (s.get("date") or "").strip()[:10]
             role = (s.get("role") or "").strip()
@@ -3314,9 +3314,9 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 close_m = _close_m((close_times or {}).get(day))
                 window = late_window(close_m if close_m is not None else latest.get(date_))
                 if window:
-                    late_dates[day].add(date_)
-                    if late_minutes(s, window) >= min(PRESENCE_MIN_OVERLAP, window[1] - window[0]):
-                        late_by[day][role][date_].add(name)
+                    late_dates.setdefault(day, {})[date_] = window
+                    if late_minutes(s, window) > 0:
+                        late_by[day][role][date_].add((name, s.get("shift_start"), s.get("shift_end")))
         return by_role_date, dates_by_day, late_by, late_dates
 
     def _typical(by_role_date, dates_by_day):
@@ -3342,15 +3342,36 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                     typical[(day, part)] = counts
         return typical
 
+    def _held(spans, window):
+        # The people a role holds ACROSS the late window: the median of its
+        # count at each half hour from 10pm to close — a bartender leaving
+        # at 11 is not the 2am close's crew.
+        counts = []
+        for t in range(window[0], window[1], 30):
+            on = 0
+            for _n, st, en in spans:
+                a, b = _clock_minutes(st), _clock_minutes(en)
+                if a is None or b is None:
+                    continue
+                if b <= a:
+                    b += 24 * 60
+                if a <= t < b:
+                    on += 1
+            counts.append(on)
+        counts.sort()
+        return counts[len(counts) // 2] if counts else 0
+
     def _late(late_by, late_dates):
         out = {}
         for day, per_role in late_by.items():
-            dates = sorted(late_dates[day])[-TYPICAL_WEEKS:]
+            windows = late_dates.get(day) or {}
+            dates = sorted(windows)[-TYPICAL_WEEKS:]
             weight = {d: i + 1 for i, d in enumerate(dates)}
             total_w = float(sum(weight.values())) or 1.0
             counts = {}
             for role, per_date in per_role.items():
-                n = int(math.floor(sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+                n = int(math.floor(sum(_held(per_date.get(d, ()), windows[d]) * weight[d] for d in dates)
+                                   / total_w + 0.5))
                 if n:
                     counts[role] = n
             if counts:
@@ -3748,9 +3769,14 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
         elif base:
             _target_basis = "recent"
     if base:
+        # The same bounded factor the requirements table scales the usual
+        # crew by (schedule_requirements.demand_factor), so a day's hours and
+        # its people move together.
+        from schedule_requirements import demand_factor as _demand_factor
         weights = {}
         for d, h in base.items():
-            f = float((demand.get(d) or {}).get("factor") or 1.0)
+            _ratio = (demand.get(d) or {}).get("ratio")
+            f = _demand_factor(_ratio) if _ratio else 1.0
             weights[d] = h * f
             why = list((demand.get(d) or {}).get("reasons") or [])
             if abs(f - 1.0) >= 0.005 and why:
@@ -4197,18 +4223,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if _w_all_stale:
         weather_forecast = []
     if weather_forecast:
-        _weather_block = ("\n\nWeather forecast for next week — a MODEST nudge on top of TYPICAL "
-                          "HEADCOUNT and the per-day targets above, never a replacement for them. Heavy "
-                          "rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
-                          "seating; mild/clear days, especially on weekends, typically mean higher patio "
-                          "traffic. But a day can still turn out busy despite a bad forecast (or slow "
-                          "despite a good one) — actual demand routinely doesn't match the forecast, so "
-                          "weather alone should shift staffing by at most a person or two on any given "
-                          "day, never restructure it. This especially applies to a day that's ALREADY "
-                          "historically slow (e.g. a typical quiet Tuesday): its historical pattern "
-                          "already reflects ordinary weather variance for that day, so bad weather on top "
-                          "of it is not a reason to cut further below the historical baseline or the "
-                          "minimum staffing floors below — those floors hold regardless of forecast.\n"
+        # Context, not a lever (schedule audit 10/3/26 D-30): where this
+        # restaurant's rain effect is MEASURED, a rainy date's requirements
+        # and target already carry it (schedule_economics.date_demand) and
+        # the dated facts say so; an unmeasured effect moves nothing — it
+        # used to invite "a person or two" on a guess, on top of numbers.
+        _weather_block = ("\n\nWeather forecast for next week — context only. Where this restaurant's own "
+                          "nights have measured what rain does to its sales, a rainy date's SHIFT REQUIREMENTS "
+                          "and day target already carry that measured effect (the dated facts name it); "
+                          "do not adjust staffing for the weather beyond that. A day can still turn out busy "
+                          "despite a bad forecast, and the floors hold regardless of forecast. Use it to place "
+                          "patio roles and to word the summary.\n"
                           + "\n".join(_w_lines))
     else:
         # Said, not silently omitted (NS4 M8): with no block the note wrote
@@ -5138,11 +5163,11 @@ def format_demand_block(forecast: dict) -> str:
     return ("\n\nEXPECTED DEMAND BY DAY — this restaurant's own median sales per weekday over the "
             f"last {forecast['weeks']} weeks, so the schedule can put people where the money "
             f"actually is. {forecast['busiest']} is the busiest day and {forecast['quietest']} the "
-            "quietest. Weight staffing toward the higher-demand days and trim the quiet ones, but "
-            "treat this the same way as the weather block: it adjusts the TYPICAL HEADCOUNT "
-            "starting point by a person or two per day, it does not replace it, and it never "
-            "overrides the minimum staffing floors or a day's own coverage requirements. Median, "
-            "not average, so a one-off private event or a storm-closed day hasn't skewed it.\n"
+            "quietest. Context only: each weekday's usual crew already follows its own sales, and "
+            "each date's measured difference from its weekday is already in SHIFT REQUIREMENTS. This "
+            "block does not replace it, never overrides the minimum staffing floors, and is no reason to "
+            "adjust headcount again (schedule audit 10/3/26 D-23). Median, not average, so a one-off "
+            "private event or a storm-closed day hasn't skewed it.\n"
             + "\n".join(lines))
 
 

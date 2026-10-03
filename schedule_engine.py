@@ -133,16 +133,37 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     except Exception as e:
         _soft_fail("forecast_preview salaries", e, restaurant_id)
         salaried, show_salary = None, False
+    # Each date's one demand number (the owner's budget for the night, the
+    # dated facts, measured effects, measured rain on the forecast already
+    # on file) — the draft's own, so a day's hours here are the day's hours
+    # there (D-24).
+    date_demand = {}
+    try:
+        try:
+            import weather as _wx
+            _wx_rows = _wx.cached_forecast_for_week(restaurant, dates)
+        except Exception:
+            _wx_rows = []
+        _h, date_demand = _merge_date_demand(restaurant_id, dates, _signals.by_date(restaurant_id, dates),
+                                             weather=_wx_rows, closed=closed_here)
+    except Exception as e:
+        _soft_fail("forecast_preview date demand", e, restaurant_id)
+        date_demand = {}
     plan = week_hours_plan(analysis, dates, target, rate,
                            yoy_context=get_yoy_schedule_context(restaurant_id, dates, today=restaurant_now(restaurant).date()),
                            projected_revenue_override=revenue.get("value"), monthly_revenue_target=monthly,
-                           salaried=salaried, closed_dates=closed_here, rate_basis=analysis.get("rate_basis"),
-                           show_salary=show_salary)
+                           salaried=salaried, closed_dates=closed_here, date_demand=date_demand,
+                           rate_basis=analysis.get("rate_basis"), show_salary=show_salary)
     days = []
     for d in dates:
         wd = _date_of(d).strftime("%A")
         row = {"date": d, "weekday": wd, "hours": plan["daily_target_hours"].get(d),
                "closed": d in closed["closed_dates"] or wd in closed["closed_weekdays"]}
+        dd = date_demand.get(d) or {}
+        if dd and not dd.get("closed"):
+            # How far the date sits from a typical one, and why (D-23, D-30).
+            row["demand"] = {"pct": dd.get("pct"), "reasons": list(dd.get("reasons") or []),
+                             "projected_sales": dd.get("projected_sales"), "typical_sales": dd.get("typical_sales")}
         try:
             fc = demand.forecast_day(restaurant_id, _date_of(d), calibrate=False)
         except Exception:
