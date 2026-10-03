@@ -200,7 +200,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             for rule in leader_rules or []:
                 if not _rule_applies(rule, day, part, runs):
                     continue
-                if roles is not None and (rule.get("role") or "").strip().lower() not in roles:
+                # A rule for a role the people in this request work, its
+                # AM/PM job codes counted as the role — as the scorer judges
+                # it (a "Bartender" rule is the "Bartender PM" crew's).
+                if roles is not None and _sq.role_family(rule.get("role")) not in {_sq.role_family(r) for r in roles}:
                     continue
                 bit = f"{int(rule.get('count') or 1)} {rule['role'].strip()}"
                 if rule.get("attribute"):

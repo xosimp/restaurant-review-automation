@@ -160,6 +160,13 @@ def test_the_requirements_table_asks_for_the_leader_only_where_the_role_works():
     assert by_part["night"]["leader"] == ["1 Bartender scoring 5+"]
 
 
+def test_the_table_asks_a_slice_for_its_roles_rule_whatever_job_codes_it_works():
+    rule = {"role": "Bartender", "days": ["Saturday"], "daypart": "night", "count": 1, "min_score": 5}
+    table = req.shift_requirements([SAT], typical_headcount={("Saturday", "night"): {"Bartender PM": 2}},
+                                   leader_rules=[rule], roles={"bartender pm"})
+    assert table[0]["leader"] == ["1 Bartender scoring 5+"]
+
+
 def test_am_pm_job_codes_answer_a_rule_for_their_role():
     """"AM/PM job codes are dayparts of one role" (owner): a Bartender rule
     is answered by whoever works the bar, whichever code they punch under."""
