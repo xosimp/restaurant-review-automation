@@ -230,6 +230,8 @@ def test_a_tracker_carries_a_change_stamp_the_accrual_does_not_move(db):
     assert first
     _x(db, "UPDATE recommendation_outcomes SET accrued_through=date('now') WHERE id=?", (tid,))
     assert _q(db, "SELECT changed_at FROM recommendation_outcomes WHERE id=?", (tid,))[0]["changed_at"] == first
+    import time as _t
+    _t.sleep(0.003)     # the stamp is to the millisecond; pooled connections made both writes land in one
     _x(db, "UPDATE recommendation_outcomes SET recheck_verdict='faded' WHERE id=?", (tid,))
     assert _q(db, "SELECT changed_at FROM recommendation_outcomes WHERE id=?", (tid,))[0]["changed_at"] > first
 

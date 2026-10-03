@@ -864,6 +864,7 @@ def test_the_restore_drill_proves_the_newest_snapshot_and_cleans_up(db_path, mon
     from models import update_restaurant
     update_restaurant(1, {"gmb_refresh_token": "tok"}, db_path=db_path)
     bdir = tmp_path / "backups"; bdir.mkdir()
+    models.checkpoint(db_path)      # a live file copied by hand (connections are pooled)
     shutil.copyfile(db_path, bdir / "cavnar_ai_backup_2026-09-18.db")
     shutil.copyfile(db_path, bdir / "cavnar_ai_backup_2026-09-19.db")
     monkeypatch.setenv("BACKUP_DIR", str(bdir))
@@ -886,6 +887,7 @@ def test_the_restore_drill_fails_when_the_snapshot_lost_its_tokens(db_path, monk
     update_restaurant(1, {"gmb_refresh_token": "tok"}, db_path=db_path)
     bdir = tmp_path / "backups"; bdir.mkdir()
     snap = bdir / "cavnar_ai_backup_2026-09-19.db"
+    models.checkpoint(db_path)
     shutil.copyfile(db_path, snap)
     conn = sqlite3.connect(snap); conn.execute("UPDATE restaurants SET gmb_refresh_token=NULL"); conn.commit(); conn.close()
     monkeypatch.setenv("BACKUP_DIR", str(bdir))

@@ -3844,6 +3844,8 @@ def run_restore_drill():
             conn.close()
 
     _clean()
+    import models as _models_ck
+    _models_ck.checkpoint(newest)       # pooled connections: the file alone holds every commit
     shutil.copyfile(newest, scratch)
     # Fresh (#2): the drill picked the newest snapshot with no age check, so
     # a backup that had silently stopped weeks ago still "passed".

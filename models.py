@@ -765,11 +765,267 @@ class _TrackedConnection(sqlite3.Connection):
 _open_conns = threading.local()
 
 
-def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+# ── connection reuse (owner, 10/3/26) ─────────────────────────────────────
+#
+# A new connection re-reads the whole schema (695 tables and indexes) before
+# its first statement: ~2.6ms, against ~0.001ms for a statement on an open
+# one, and nearly every small read here opened its own. So get_conn hands
+# out a HANDLE over a pooled connection, and close() hands the connection
+# back. Nothing a caller sees changes:
+#   - each open handle has a connection of its own (a nested get_conn while
+#     one is open gets another), so one caller's commit or rollback never
+#     touches another's work;
+#   - a handle returned with work uncommitted is rolled back, exactly as a
+#     closed connection discards it; a handle dropped without close() is
+#     returned when it is garbage-collected, as the connection used to be
+#     closed then;
+#   - each checkout resets what a caller may have changed: rows as
+#     sqlite3.Row, str text, the default isolation level, foreign keys on,
+#     the 30s busy timeout; a connection given any other PRAGMA write, an
+#     ATTACH, a temp table or a custom function is closed, never reused;
+#   - a closed handle refuses further use, as a closed connection does;
+#   - pools are per thread (sqlite connections are), bounded, and dropped
+#     when the database file is replaced (a restore, a test's fresh file);
+#     ":memory:" and URI paths are never pooled.
+# CAVNAR_CONN_POOL=0 turns it off: every get_conn opens and closes for real.
+
+_POOL_PER_PATH = 3
+_POOL_PER_THREAD = 6
+_pool_local = threading.local()
+_SAFE_PRAGMA_WRITES = ("foreign_keys", "busy_timeout")
+
+
+def _pool_enabled() -> bool:
+    return os.getenv("CAVNAR_CONN_POOL", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def _file_id(db_path):
+    try:
+        st = os.stat(db_path)
+        return (st.st_dev, st.st_ino)
+    except OSError:
+        return None
+
+
+def _poolable(db_path) -> bool:
+    p = str(db_path or "")
+    return bool(p) and p != ":memory:" and not p.startswith("file:") and _pool_enabled()
+
+
+def _taints(sql) -> bool:
+    """Whether a statement leaves state on the connection that a later
+    borrower must not inherit."""
+    import re as _re_t
+    for stmt in str(sql or "").split(";"):
+        t = stmt.strip().lower()
+        if not t:
+            continue
+        if t.startswith("attach") or t.startswith("detach"):
+            return True
+        if _re_t.match(r"create\s+(temp|temporary)\b", t):
+            return True
+        m = _re_t.match(r"pragma\s+([a-z_]+)\s*(=|\()", t)
+        if m and m.group(2) == "=" and m.group(1) not in _SAFE_PRAGMA_WRITES:
+            return True
+        if m and m.group(2) == "(" and m.group(1) in ("query_only", "journal_mode", "synchronous", "temp_store",
+                                                      "cache_size", "recursive_triggers", "defer_foreign_keys"):
+            return True
+    return False
+
+
+def _real_close(conn):
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _release(conn, key, owner_tid, tainted):
+    """Hand a connection back to its thread's pool, or close it."""
+    if threading.get_ident() != owner_tid:
+        return          # another thread can't touch it; dropping it closes it
+    try:
+        if conn.in_transaction:
+            conn.rollback()
+    except Exception:
+        _real_close(conn)
+        return
+    if tainted or key is None or not _pool_enabled():
+        _real_close(conn)
+        return
+    pools = getattr(_pool_local, "pools", None)
+    if pools is None:
+        pools = _pool_local.pools = {}
+        _pool_local.order = []
+    idle = pools.setdefault(key, [])
+    if len(idle) >= _POOL_PER_PATH:
+        _real_close(conn)
+        return
+    idle.append(conn)
+    order = _pool_local.order
+    order.append((key, conn))
+    while len(order) > _POOL_PER_THREAD:
+        k_old, c_old = order.pop(0)
+        lst = pools.get(k_old) or []
+        if c_old in lst:
+            lst.remove(c_old)
+            _real_close(c_old)
+
+
+def _checkout(db_path):
+    key = None
+    if _poolable(db_path):
+        fid = _file_id(db_path)
+        if fid is not None:
+            key = (os.path.abspath(str(db_path)), fid)
+            pools = getattr(_pool_local, "pools", None) or {}
+            idle = pools.get(key) or []
+            while idle:
+                conn = idle.pop()
+                try:
+                    _pool_local.order.remove((key, conn))
+                except (AttributeError, ValueError):
+                    pass
+                try:
+                    conn.row_factory = sqlite3.Row
+                    conn.text_factory = str
+                    conn.isolation_level = ""
+                    conn.execute("PRAGMA foreign_keys=ON")
+                    conn.execute("PRAGMA busy_timeout=30000")
+                    return conn, key
+                except Exception:
+                    _real_close(conn)
     conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
+    if key is not None and _file_id(db_path) != key[1]:
+        key = None          # the file changed under the open: don't pool it
+    return conn, key
+
+
+class _ConnHandle:
+    """One borrower's view of a pooled connection: the sqlite3 connection's
+    API, until close(), after which it refuses use like a closed one."""
+    __slots__ = ("_conn", "_key", "_tid", "_tainted", "_closed", "_final", "_fin", "__weakref__")
+
+    def __init__(self, conn, key):
+        self._conn, self._key, self._tid = conn, key, threading.get_ident()
+        self._tainted, self._closed = False, False
+        self._final = _HandleFinal(conn, key, self._tid)
+        self._fin = weakref.finalize(self, self._final)
+
+    def _live(self):
+        if self._closed:
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        return self._conn
+
+    # statements: a tainting one marks the connection as never to be reused
+    def execute(self, sql, *a, **k):
+        c = self._live()
+        if not self._tainted and _taints(sql):
+            self._taint()
+        return c.execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        c = self._live()
+        if not self._tainted and _taints(sql):
+            self._taint()
+        return c.executemany(sql, *a, **k)
+
+    def executescript(self, sql, *a, **k):
+        c = self._live()
+        if not self._tainted and _taints(sql):
+            self._taint()
+        return c.executescript(sql, *a, **k)
+
+    def _taint(self):
+        self._tainted = True
+        self._final.tainted = True
+
+    def create_function(self, *a, **k):
+        self._taint()
+        return self._live().create_function(*a, **k)
+
+    def create_aggregate(self, *a, **k):
+        self._taint()
+        return self._live().create_aggregate(*a, **k)
+
+    def create_collation(self, *a, **k):
+        self._taint()
+        return self._live().create_collation(*a, **k)
+
+    def set_trace_callback(self, *a, **k):
+        self._taint()
+        return self._live().set_trace_callback(*a, **k)
+
+    def set_authorizer(self, *a, **k):
+        self._taint()
+        return self._live().set_authorizer(*a, **k)
+
+    def set_progress_handler(self, *a, **k):
+        self._taint()
+        return self._live().set_progress_handler(*a, **k)
+
+    def cursor(self, *a, **k):
+        return self._live().cursor(*a, **k)
+
+    def commit(self):
+        return self._live().commit()
+
+    def rollback(self):
+        return self._live().rollback()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._fin()          # release now (rollback + back to the pool)
+
+    def __enter__(self):
+        self._live()
+        return self
+
+    def __exit__(self, et, ev, tb):
+        c = self._live()
+        if et is None:
+            c.commit()
+        else:
+            c.rollback()
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._live(), name)
+
+    def __setattr__(self, name, value):
+        if name in _ConnHandle.__slots__:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._live(), name, value)
+
+
+class _HandleFinal:
+    """What a handle hands back when it is closed or collected."""
+    __slots__ = ("conn", "key", "tid", "tainted")
+
+    def __init__(self, conn, key, tid):
+        self.conn, self.key, self.tid, self.tainted = conn, key, tid, False
+
+    def __call__(self):
+        conn, self.conn = self.conn, None
+        if conn is not None:
+            _release(conn, self.key, self.tid, self.tainted)
+
+
+def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+    if not _pool_enabled():
+        conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+    else:
+        raw, key = _checkout(db_path)
+        conn = _ConnHandle(raw, key)
     bag = getattr(_open_conns, "bag", None)
     if bag is None:
         bag = _open_conns.bag = weakref.WeakSet()
@@ -778,6 +1034,32 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     except TypeError:
         pass
     return conn
+
+
+def checkpoint(db_path: str = DB_PATH) -> None:
+    """Fold the write-ahead log into the database file, so the file alone
+    holds every commit — before copying a LIVE database file by hand. With
+    connections pooled, the last close no longer does this on its own.
+    (Backups use sqlite's backup API and never need it.)"""
+    close_pooled_connections()
+    c = sqlite3.connect(db_path, timeout=30)
+    try:
+        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        c.close()
+
+
+def close_pooled_connections() -> int:
+    """Close this thread's idle pooled connections (a job's end, a test's)."""
+    pools = getattr(_pool_local, "pools", None) or {}
+    n = 0
+    for idle in pools.values():
+        while idle:
+            _real_close(idle.pop())
+            n += 1
+    if hasattr(_pool_local, "order"):
+        _pool_local.order = []
+    return n
 
 
 def close_thread_connections() -> int:

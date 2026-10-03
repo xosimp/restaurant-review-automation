@@ -98,6 +98,8 @@ def test_the_offsite_copy_blanks_removed_reviews_at_once(db_path, tmp_path):
     _review(db_path, rid, "hidden", deleted_days_ago=1)
     _review(db_path, rid, "shown")
     copy = str(tmp_path / "copy.db")
+    import models as _m
+    _m.checkpoint(db_path)          # a live file copied by hand (connections are pooled)
     shutil.copyfile(db_path, copy)
     out = offsite_backup.redact(copy)
     assert "reviews.text (removed rows)" in out["rows"]

@@ -72,6 +72,13 @@ def restore_if_requested(db_path=None) -> dict:
                            f"restaurants table {'present' if 'restaurants' in tables else 'missing'}); nothing was changed")
     expected = _count_restaurants(snapshot)
 
+    # Every commit in the files themselves before they move: pooled
+    # connections (models.get_conn, 10/3/26) keep the write-ahead log open,
+    # so a copy of the main file alone could miss the newest writes.
+    import models as _models
+    _models.checkpoint(snapshot)
+    if os.path.exists(db_path):
+        _models.checkpoint(db_path)
     stamp = int(time.time())
     if os.path.exists(db_path):
         # Kept as evidence; it may still be partially readable.
