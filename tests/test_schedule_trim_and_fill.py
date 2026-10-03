@@ -245,10 +245,25 @@ def test_the_trim_keeps_off_a_day_cuts_measured_worse_and_a_troubled_daypart():
     assert "Fridays, where staffing cuts measured worse here" in line and "Thursday dinner" in line
 
 
+def test_the_trim_keeps_the_extra_person_the_reviews_asked_for():
+    # the draft honoured "+1 server Friday dinner" (the reviews diagnosis):
+    # four servers where three is usual; the trim may not take the fourth
+    rows = [_row(d, n, "Server", "4:00pm", "8:00pm") for d in (THU, FRI) for n in ("Ana", "Bob", "Cy", "Dee")]
+    reqs = [_need(FRI, "Server", 3), _need(THU, "Server", 3)]
+    ask = [{"source": "reviews", "day": "Friday", "date": FRI, "daypart": "night", "role": "server", "delta": 1}]
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 24, {}, constraints=_c(),
+                                                requirements=reqs, soft_asks=ask)
+    assert sum(1 for r in out if r["date"] == FRI) == 4 and {t["date"] for t in trimmed} == {THU}
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 24, {}, constraints=_c(),
+                                                requirements=reqs)
+    assert FRI in {t["date"] for t in trimmed}, "without the ask the fourth Friday server is spare"
+
+
 def test_the_engine_hands_both_trims_what_was_learned():
     src = inspect.getsource(se._run_schedule_job)
     assert src.count("learned_worse=result.get(\"learned_worse\")") == 2
     assert src.count("outcomes=result.get(\"outcomes_by_daypart\")") == 2
+    assert src.count("soft_asks=result.get(\"soft_requirements\")") == 2
 
 
 # ── P-20: thin is measured against the requirement ─────────────────────

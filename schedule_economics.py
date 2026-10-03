@@ -880,7 +880,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                    splh: dict = None, rainy_dates: set = None, patio_roles: set = None,
                    tolerance: float = TRIM_TOLERANCE, score_fn=None,
                    score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None, requirements=None,
-                   learned_worse: dict = None, outcomes: dict = None, report: dict = None) -> tuple:
+                   learned_worse: dict = None, outcomes: dict = None, report: dict = None,
+                   soft_asks: list = None) -> tuple:
     """Take the most discretionary hours out until the week is within the
     budget — the tails of shifts first, then whole shifts — every change
     reported.
@@ -913,7 +914,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
       * touches a weekday where staffing cuts measured worse here
         (`learned_worse`, rec_learning.worsened_levers through schedule_
         engine.learned_worse_levers) or a daypart that has gone wrong before
-        (`outcomes`, schedule_intel.outcomes_by_daypart's "troubled");
+        (`outcomes`, schedule_intel.outcomes_by_daypart's "troubled"), or
+        takes back a "+1" the reviews or the nightly reports asked for
+        (`soft_asks`, staffing_signals.soft_requirements: the role is kept
+        at its usual number plus the ask on that night);
       * touches a row the owner kept ("_pinned"), a day outside
         `only_dates` (a partial redo), or a row already marked for review.
     A row that will not stand (time off, a double booking) is not hours
@@ -983,6 +987,23 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     patio = {p.strip().lower() for p in (patio_roles or set())}
     only = set(only_dates) if only_dates else None
     index = _se.requirement_index(requirements, c) if requirements else {}
+    # A "+1" the reviews or the nightly reports asked for (L-24's soft asks)
+    # is part of what that night needs while the trim runs: its role is kept
+    # at the usual number plus the ask — never the top-up's requirement.
+    for ask in soft_asks or []:
+        d, role = ask.get("date"), ask.get("role")
+        k = _se._role_key(role, c)
+        if not (d and k):
+            continue
+        try:
+            delta = int(ask.get("delta") or 1)
+        except (TypeError, ValueError):
+            delta = 1
+        parts = [ask["daypart"]] if ask.get("daypart") else (list((index.get(d) or {}).keys()) or ["morning", "night"])
+        for part in parts:
+            spec = index.setdefault(d, {}).setdefault(part, {}).setdefault(
+                k, {"role": str(role).strip(), "required": 0, "typical": 0, "half": {}})
+            spec["required"] = max(spec["required"], int(spec.get("typical") or 0) + delta)
     worse_days = {str(k).strip().lower() for k, v in (learned_worse or {}).items()
                   if isinstance(v, dict) and int(v.get("worsened") or 0) > 0}
     troubled = {(str(wd).strip().lower(), part) for wd, parts in (outcomes or {}).items() if isinstance(parts, dict)

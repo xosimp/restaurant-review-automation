@@ -1509,8 +1509,8 @@ def _ramp_slots(points, end) -> dict:
 
 
 def requirement_index(requirements, c=None) -> dict:
-    """{date: {daypart: {role family: {"role", "required", "half": {minute:
-    people}}}}} from the SHIFT REQUIREMENTS rows (schedule_requirements
+    """{date: {daypart: {role family: {"role", "required", "typical", "half":
+    {minute: people}}}}} from the SHIFT REQUIREMENTS rows (schedule_requirements
     .shift_requirements, week_requirements): the people each role needs on
     each shift — the number the model was given and the coverage score
     judges, demand-scaled where it is — and the half-hour ramp where the
@@ -1531,6 +1531,10 @@ def requirement_index(requirements, c=None) -> dict:
                 continue
             spec = slot.setdefault(key, {"role": (x.get("role") or "").strip(), "required": 0, "half": {}})
             spec["required"] = max(spec["required"], n)
+            try:
+                spec["typical"] = max(int(spec.get("typical") or 0), int(x.get("typical") or 0))
+            except (TypeError, ValueError):
+                pass
         end = _ramp_end(row.get("day") or _weekday_name(d), part, c)
         for role, pts in (row.get("half_hours") or {}).items():
             key = _role_key(role, c)
@@ -3713,7 +3717,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     constraints=_constraints, floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
                     rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_score_fn,
                     only_dates=_editable, requirements=_reqs, learned_worse=result.get("learned_worse"),
-                    outcomes=result.get("outcomes_by_daypart"), report=_trim_report)
+                    outcomes=result.get("outcomes_by_daypart"), soft_asks=result.get("soft_requirements"),
+                    report=_trim_report)
                 result["trimmed"] = _trimmed
                 result["hours_trimmed"] = _hours_trimmed
                 result["budget_conflict"] = _trim_report.get("conflict")
@@ -3861,7 +3866,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
                         rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_t2_score,
                         only_dates=_editable, requirements=_reqs, learned_worse=result.get("learned_worse"),
-                        outcomes=result.get("outcomes_by_daypart"), report=_t2_report)
+                        outcomes=result.get("outcomes_by_daypart"), soft_asks=result.get("soft_requirements"),
+                        report=_t2_report)
                     result["budget_conflict"] = _t2_report.get("conflict")
                     if _t2:
                         result["trimmed"] = (result.get("trimmed") or []) + _t2
