@@ -214,14 +214,19 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
 
         # ── labor ────────────────────────────────────────────────────────
         if getattr(r, "module_labor", 0) and "labor" not in denied:
-            sched = _row(conn, "SELECT week_start, generated_at, hours_scheduled, hours_budget FROM schedule_history "
-                               "WHERE restaurant_id=? ORDER BY generated_at DESC LIMIT 1", (restaurant_id,))
+            sched = _row(conn, "SELECT week_start, generated_at, hours_scheduled, hours_hourly, hours_budget "
+                               "FROM schedule_history WHERE restaurant_id=? ORDER BY generated_at DESC LIMIT 1",
+                         (restaurant_id,))
             if sched and sched["generated_at"] and sched["generated_at"] >= month:
                 from time_utils import mdy
+                from models import history_hourly
+                # The budget is hourly: the hourly hours are what it is spent
+                # on, never the salaried ones (schedule audit 10/3/26 E-7).
+                hourly = history_hourly(sched)
                 entries.append({"at": _iso_z(sched["generated_at"]), "module": "labor", "kind": "scheduled",
                                 "text": f"Built the schedule for the week of {mdy(sched['week_start'])}."
-                                        + (f" {sched['hours_scheduled']:.0f} of {sched['hours_budget']:.0f} budgeted hours."
-                                           if sched["hours_scheduled"] and sched["hours_budget"] else "")})
+                                        + (f" {hourly:.0f} of {sched['hours_budget']:.0f} budgeted hourly hours."
+                                           if hourly and sched["hours_budget"] else "")})
             pos = _row(conn, "SELECT business_date, MAX(captured_hour) AS h, MAX(created_at) AS at FROM pos_intraday "
                              "WHERE restaurant_id=? AND created_at >= ?", (restaurant_id, day))
             if pos and pos["at"]:

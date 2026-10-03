@@ -10496,8 +10496,65 @@ def _local_today(restaurant_id):
         return _d.today()
 
 
+# What each source the rules could not read means for the week, in the
+# owner's words (schedule_rules._input_problem — schedule audit 10/3/26 P-1).
+# A source not named here reads as "<source> couldn't be read".
+_INPUT_PROBLEM_WORDS = {
+    "roster": "The team list couldn't be read, so nobody's own rules (hours, minors, availability, certificates) "
+              "were checked",
+    "availability": "Staff availability couldn't be read, so nobody's days off were checked",
+    "time off": "Time off couldn't be read, so approved days off weren't checked",
+    "open and close times": "Opening and closing times couldn't be read, so the close rules weren't checked",
+    "closers": "Who closes couldn't be read, so the closer rule wasn't checked",
+    "salaried staff": "The salaried staff list couldn't be read, so everyone was checked as hourly",
+    "last week's shifts": "The week before's published shifts couldn't be read, so overtime and rest across the "
+                          "two weeks weren't checked",
+    "your staffing rules": "Your staffing rules couldn't be read, so their floors weren't checked",
+    "schedule note rules": "The notes you confirmed as rules couldn't be read, so they weren't checked",
+    "scheduling note holds": "The staff notes you confirmed as holds couldn't be read, so they weren't checked",
+    "staff notes": "Staff notes couldn't be read",
+    "closed dates": "Your closed dates couldn't be read, so a closed day wasn't checked as closed",
+    "kitchen stations": "Kitchen stations couldn't be read, so station coverage wasn't checked",
+}
+
+
+def _input_problem_text(p) -> str:
+    """One blocker line for a setting or source the rules could not read
+    (Constraints.input_problems): a person's settings name the person and
+    where to fix them."""
+    if p.get("name"):
+        return (f"Settings for {p['name']} couldn't be read — fix them in Team; this week wasn't checked against "
+                "their rules")
+    src = str(p.get("source") or "a setting")
+    return _INPUT_PROBLEM_WORDS.get(src) or f"{src[:1].upper()}{src[1:]} couldn't be read, so the rules check ran without it"
+
+
+def _notice_text(short, week_start) -> str:
+    """The notice-rule blocker. A week already under way said "starts in -2
+    days" (schedule audit 10/3/26 E-22): it says when it started."""
+    from time_utils import mdy as _mdy_n
+    given = int(short["days_given"])
+    when = (f"starts in {given} day{'s' if given != 1 else ''}" if given > 0 else "starts today" if given == 0
+            else f"started {-given} day{'s' if given != -1 else ''} ago")
+    return (f"Less notice than your {short['notice_days']}-day schedule notice rule: the week of "
+            f"{_mdy_n(week_start)} {when}")
+
+
+def _live_week(restaurant_id, week_start, not_id):
+    """The published copy of `week_start` staff have now (not superseded),
+    other than row `not_id`, or None."""
+    conn = get_conn()
+    try:
+        return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                            "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL ORDER BY id DESC "
+                            "LIMIT 1", (restaurant_id, week_start, not_id)).fetchone()
+    finally:
+        conn.close()
+
+
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
-    """{"blockers": [{"key", "text"}], "soft": [text], "schedule_id"} — the
+    """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
+    "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
     publish gate, computed against the data as it stands NOW.
 
     It read the review saved when the draft was generated, so time off
@@ -10506,6 +10563,16 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     The rule sweep is re-run here on every call, over the saved review's
     lines (a line from either is a blocker), and the notice rule is checked
     against today's date (NS5 H2 notice_short).
+
+    Blockers are what must be read before the week goes out: hard rule
+    breaches, a setting or source the rules could not read (P-1), the rule
+    check or the quality engine failing to run (P-16), the notice rule, a
+    change inside the notice window to a week staff already have (E-22),
+    and hourly hours past the hourly budget (E-7). The quality verdict —
+    a weak week, low confidence, shifts below the bar — is a note, never a
+    blocker (SQ-29): the scorer's structural caps put one on nearly every
+    week, which taught owners to acknowledge without reading. Notes ride in
+    `notes` (with keys) and `soft`.
 
     `unattended` is automation (auto-publish, its delayed run): the soft
     flags schedule_rules.HOLD_UNATTENDED names stop it too, and every other
@@ -10517,7 +10584,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     try:
         _ensure_history_columns(conn)
         cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, hours_scheduled, "
-                "hours_budget, published_at FROM schedule_history ")
+                "hours_hourly, hours_salaried, hours_budget, published_at FROM schedule_history ")
         if schedule_id:
             row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
@@ -10525,13 +10592,20 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     finally:
         conn.close()
     if not row:
-        return {"blockers": [], "soft": [], "schedule_id": None}
-    out, soft, seen = [], [], set()
+        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None}
+    out, soft, notes, seen = [], [], [], set()
 
     def add(key, text):
         if text and text not in seen:
             seen.add(text)
             out.append({"key": key, "text": text})
+
+    def note(key, text):
+        # Acknowledge-able, never holding a publish (SQ-29).
+        if text and text not in seen:
+            seen.add(text)
+            notes.append({"key": key, "text": text})
+            soft.append(text)
 
     flagged = sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line)
     if flagged:
@@ -10546,16 +10620,22 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             add("saved:" + t, t)
     # The sweep against today's data: time off approved, a person
     # deactivated, a floor or a minor's age band set since the draft.
+    import schedule_rules as _sr
+    from schedule_versions import rows_from_csv
+    rows = rows_from_csv(row["schedule_csv"] or "")
+    c = None
     try:
-        import schedule_rules as _sr
-        from schedule_versions import rows_from_csv
         from datetime import datetime as _dt, timedelta as _td
-        rows = rows_from_csv(row["schedule_csv"] or "")
         ws = _dt.strptime(str(row["week_start"])[:10], "%Y-%m-%d")
         we = _dt.strptime(str(row["week_end"] or row["week_start"])[:10], "%Y-%m-%d")
         dates = [(ws + _td(days=i)).strftime("%Y-%m-%d") for i in range(max(0, min(13, (we - ws).days)) + 1)]
         days = [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates]
         c = _sr.build_constraints(restaurant_id, dates, days, restaurant=get_restaurant(restaurant_id))
+        # A setting or source the rules could not read checked this week
+        # without it — a person's managers, minors, hours limits or
+        # certificates silently gone (P-1). Named, never passed over.
+        for p in (getattr(c, "input_problems", None) or []):
+            add(f"input:{p.get('source')}:{(p.get('name') or '').strip().lower()}", _input_problem_text(p))
         viols = _sr.violations(rows, c)
         hard = [v for v in viols if v["hard"] and v["kind"] != "over_max_hours"] + \
                [v for v in viols if v["kind"] == "over_max_hours"][:1]
@@ -10572,41 +10652,74 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 add(f"soft:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}", text)
             elif text not in soft:
                 soft.append(text)
-        if not row["published_at"]:
-            short = _sr.notice_shortfall(c.compliance, row["week_start"], today or _local_today(restaurant_id))
+        now = today or _local_today(restaurant_id)
+        import schedule_versions as _sv_pb
+        live = None if row["published_at"] else _live_week(restaurant_id, row["week_start"], row["id"])
+        if live is not None:
+            # A regenerated draft of a week staff already have: what moves
+            # is the shifts that differ, and inside the notice window that
+            # is the predictability-pay warning — not "the week starts in
+            # -2 days" from the notice rule (E-22).
+            changed = _sv_pb.shift_changes(rows_from_csv(live["schedule_csv"] or ""), rows)["dates"]
+            warn = _sr.late_change_warning(c.compliance, changed, now)
+            if warn:
+                add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + warn)
+        elif not row["published_at"]:
+            short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
             if short:
-                from time_utils import mdy as _mdy_n
-                given = short["days_given"]
-                add("notice_short",
-                    f"Less notice than your {short['notice_days']}-day schedule notice rule: the week of "
-                    f"{_mdy_n(row['week_start'])} starts in {given} day{'s' if given != 1 else ''}")
+                add("notice_short", _notice_text(short, row["week_start"]))
+        else:
+            # Saved changes to a week staff have, about to be sent.
+            pending = _sv_pb.unsent_changes(restaurant_id, row["id"]) or {}
+            warn = _sr.late_change_warning(c.compliance, pending.get("dates") or [], now)
+            if warn:
+                add("late_change:" + ",".join(pending.get("dates") or []), warn)
     except Exception as e:
         import ops as _ops_pb
         _ops_pb.capture(e, job="publish_blockers_sweep", context=f"restaurant_id={restaurant_id}")
         add("sweep_failed", "The rule check could not run against today's data")
     # The labor budget is a ceiling. A week the model wrote past it is not
     # trimmed (a silently thinner week is worse) — it is named here, so the
-    # owner sends it knowing, or takes hours out first.
+    # owner sends it knowing, or takes hours out first. It is an HOURLY
+    # budget, so the week's hourly hours are held against it, as they stand
+    # now: salaried people's hours are never spent from it, and counting
+    # them put a spurious "over the ceiling" of about the salaried hours on
+    # every week (E-7, P-6).
+    hours = None
     try:
-        hs, hb = float(row["hours_scheduled"] or 0), float(row["hours_budget"] or 0)
+        hours = (_sr.hours_split(rows, c) if c is not None else
+                 {"hourly": float(row["hours_hourly"]) if row["hours_hourly"] is not None else
+                  float(row["hours_scheduled"] or 0),
+                  "salaried": float(row["hours_salaried"] or 0), "total": float(row["hours_scheduled"] or 0)})
+        hb = float(row["hours_budget"] or 0)
     except (TypeError, ValueError, KeyError, IndexError):
-        hs = hb = 0.0
-    if hb > 0 and hs > hb * 1.02:
-        add("hours_over", f"{hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
+        hb = 0.0
+    if hours and hb > 0 and hours["hourly"] > hb * 1.02:
+        hs = hours["hourly"]
+        add("hours_over", f"{hs:,.0f}h of hourly shifts against a {hb:,.0f}h hourly budget — {hs - hb:,.0f}h over "
+                          "the ceiling" + (f" (the {hours['salaried']:,.0f}h salaried aren't counted against it)"
+                                           if hours.get("salaried") else ""))
     try:
         quality = json.loads(row["quality_json"] or "null") or {}
     except Exception:
         quality = {}
-    if quality.get("checked"):
+    if "checked" in quality and not quality.get("checked"):
+        # The quality engine failed on this week: said, with the cause, so
+        # a week nobody could score never goes out as if it had passed
+        # (P-16).
+        cause = str(quality.get("error") or quality.get("reason") or "").strip()
+        add("quality_unchecked", "Shift Quality couldn't check this week" + (f" ({cause[:160]})" if cause else "")
+            + " — read it yourself before it goes to staff")
+    elif quality.get("checked"):
         if quality.get("band") == "weak":
-            add("quality_weak", f"Shift Quality {quality.get('score')}/100 — a weak week")
+            note("quality_weak", f"Shift Quality {quality.get('score')}/100 — a weak week")
         if (quality.get("confidence") or {}).get("level") == "low":
-            add("quality_low", "The quality engine had too little to judge this week on")
+            note("quality_low", "The quality engine had too little to judge this week on")
         below = quality.get("below_profile") or []
         if below:
-            add("below_profile",
-                f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    return {"blockers": out, "soft": soft, "schedule_id": row["id"]}
+            note("below_profile",
+                 f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
+    return {"blockers": out, "soft": soft, "notes": notes, "hours": hours, "schedule_id": row["id"]}
 
 
 def _drop_share(token, schedule_id):
@@ -10923,6 +11036,9 @@ def _needs_ack(review, unacked, schedule_id):
             # the client sends back `acknowledge: [the keys it showed]` (F2-9).
             "blocker_keys": [b["key"] for b in review["blockers"]],
             "blocker_items": review["blockers"], "new_blockers": [b["text"] for b in unacked],
+            # Worth a look, never holding the send (the quality verdict,
+            # SQ-29): shown beside the blockers, nothing to acknowledge.
+            "notes": review.get("notes") or [],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409
 

@@ -1221,7 +1221,7 @@ def _build(current_user, present=True):
     _labor_tgt = _labor_tgt_for["phrase"]
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
     client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
-    last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
+    last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_hourly, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
 
     # ── food cost ───────────────────────────────────────────────────────────
     inv, inv_live = {}, False
@@ -1846,7 +1846,10 @@ def _build(current_user, present=True):
                 add_change(f"Labor % fell {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "good", "labor")
                 add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{_wk_cur:.1f}% last week vs {prev_pct:.1f}% the week before.", "labor")
             if last_schedule and _ts(last_schedule.get("generated_at")) and _ts(last_schedule["generated_at"]) >= since_dt:
-                hs = float(last_schedule.get("hours_scheduled") or 0); hb = float(last_schedule.get("hours_budget") or 0)
+                # The budget is hourly: held against the hourly hours, never
+                # the salaried ones (schedule audit 10/3/26 E-7).
+                from models import history_hourly as _hh_hb
+                hs = float(_hh_hb(last_schedule) or 0); hb = float(last_schedule.get("hours_budget") or 0)
                 add_change(f"New schedule built for {_mdy(last_schedule.get('week_start')) or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
             _lab_interp = ((f"{over:.1f} pts over target. " + (f"{max(dow.items(), key=lambda kv: kv[1] or 0)[0]} is the heaviest day." if dow else "")) if over > 0 else f"On target. {min(dow.items(), key=lambda kv: kv[1] or 99)[0] if dow else ''} runs leanest.".strip())
             _lab_state = "bad" if over > 6 else ("warn" if over > 0 else "good")
