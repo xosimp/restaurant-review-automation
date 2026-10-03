@@ -10624,6 +10624,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
             t = line.lstrip("⚠ ").strip()
             add("saved:" + t, t)
+    # A repair stage of a hard rule or the manager rule that did not run on
+    # this draft (schedule audit 10/3/26 P-3, P-17): its breaches were never
+    # repaired, so the week is read before it goes out — wherever its line
+    # sits in the review.
+    for f in review.get("stage_failures") or []:
+        if f.get("blocks_publish"):
+            add(f"stage:{f.get('stage')}", (str(f.get("line") or "").lstrip("⚠ ").strip()
+                                            or f"A repair step ({f.get('stage')}) didn't run on this draft"))
     # The sweep against today's data: time off approved, a person
     # deactivated, a floor or a minor's age band set since the draft.
     import schedule_rules as _sr

@@ -1665,6 +1665,45 @@ def _dsr_missing(db_path=None):
         return []
 
 
+# Schedule generation end to end (schedule audit 10/3/26 P-24): each week
+# saves its stage timings and total (schedule_history.total_seconds, written
+# by schedule_engine._annotate_history). The p95 of the last
+# SCHEDULE_P95_SAMPLE generations in SCHEDULE_P95_DAYS past
+# SCHEDULE_P95_ALERT_SECONDS is a warning the platform check pages once a
+# day — the owner sits waiting on every one, and the clients' wait is 15
+# minutes. Fewer than SCHEDULE_P95_MIN generations say nothing.
+SCHEDULE_P95_ALERT_SECONDS = 600
+SCHEDULE_P95_SAMPLE = 20
+SCHEDULE_P95_MIN = 5
+SCHEDULE_P95_DAYS = 14
+
+
+def schedule_generation_latency(db_path=None) -> dict:
+    """{"n", "p50", "p95", "max", "slow", "alert_seconds"}: end-to-end
+    seconds of the recent schedule generations (nearest-rank percentiles);
+    {"n": 0, ...} with none on file."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT total_seconds FROM schedule_history WHERE total_seconds IS NOT NULL "
+                            "AND generated_at >= datetime('now', ?) ORDER BY id DESC LIMIT ?",
+                            (f"-{int(SCHEDULE_P95_DAYS)} days", int(SCHEDULE_P95_SAMPLE))).fetchall()
+    finally:
+        conn.close()
+    vals = sorted(float(r[0]) for r in rows if r[0] is not None)
+    out = {"n": len(vals), "p50": None, "p95": None, "max": None, "slow": False,
+           "alert_seconds": SCHEDULE_P95_ALERT_SECONDS}
+    if not vals:
+        return out
+
+    def rank(p):
+        import math
+        return vals[max(0, min(len(vals) - 1, int(math.ceil(p / 100.0 * len(vals))) - 1))]
+    out.update(p50=round(rank(50), 1), p95=round(rank(95), 1), max=round(vals[-1], 1))
+    out["slow"] = len(vals) >= SCHEDULE_P95_MIN and out["p95"] > SCHEDULE_P95_ALERT_SECONDS
+    return out
+
+
 def _has_urgent(out, state, write_ok=True) -> bool:
     """Whether check_platform_sla's problems include one that cannot wait a
     day: the scheduler dead or stuck, a job past its SLA, the volume almost
@@ -1706,7 +1745,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "alerted": False}
+           "schedule_generation": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -1777,6 +1816,17 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     if out["messaging"]:
         warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])
+    try:
+        out["schedule_generation"] = schedule_generation_latency(db_path)
+    except Exception as e:
+        log.warning(f"schedule generation timings unavailable to the platform check: {e}")
+    gen = out["schedule_generation"] or {}
+    if gen.get("slow"):
+        warn_kinds.add("schedule_slow")
+        problems.append(f"Schedule generations are slow: the p95 of the last {gen['n']} is "
+                        f"{gen['p95'] / 60:.1f} minutes (alert past {SCHEDULE_P95_ALERT_SECONDS // 60}), the "
+                        f"slowest {gen['max'] / 60:.1f} — the stage timings are on each week "
+                        "(schedule_history.stage_seconds_json).")
     out["problems"] = problems
     if not problems or not send:
         return out

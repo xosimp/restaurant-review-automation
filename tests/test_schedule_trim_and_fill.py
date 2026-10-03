@@ -123,16 +123,18 @@ def test_the_trim_never_touches_a_pinned_row():
 
 def test_the_post_fix_trim_has_its_scorer_rain_requirement_and_lessons():
     """The second trim (after the fix pass) ran with no score_fn and no
-    rain, after close-out; it now runs exactly as the first."""
-    src = inspect.getsource(se._run_schedule_job)
+    rain, after close-out. There is one budget stage now (the repair loop,
+    schedule audit 10/3/26 P-47), the same call every cycle and at the
+    reconcile, with everything the first trim had."""
+    src = inspect.getsource(se._stage_budget)
     calls = src.split("_econ.trim_to_budget(")[1:]
-    assert len(calls) == 2
-    for call in calls:
-        body = call.split("report=", 1)[0]
-        for kw in ("score_fn=", "rainy_dates=_rainy", "requirements=_reqs", "only_dates=_editable",
-                   "learned_worse=result.get(\"learned_worse\")", "outcomes=result.get(\"outcomes_by_daypart\")",
-                   "constraints=_constraints"):
-            assert kw in body, kw
+    assert len(calls) == 1
+    body = calls[0].split("report=", 1)[0]
+    for kw in ("score_fn=", "rainy_dates=x.rainy", "requirements=x.requirements", "only_dates=x.editable",
+               "learned_worse=x.result.get(\"learned_worse\")", "outcomes=x.result.get(\"outcomes_by_daypart\")",
+               "constraints=x.c"):
+        assert kw in body, kw
+    assert "_econ.trim_to_budget(" not in inspect.getsource(se._run_schedule_job)
 
 
 # ── P-27: tails first, the close stagger ─────────────────────────────────
@@ -225,7 +227,9 @@ def test_the_half_hour_ramp_is_held_through_a_tail_cut():
 def test_the_engine_says_the_budget_conflict_once_beside_the_over_budget_line():
     src = inspect.getsource(se._run_schedule_job)
     block = src.split("over the ceiling\")", 1)[1].split("result[\"review\"][\"trimmed\"]", 1)[0]
-    assert "budget_conflict_line(" in block and "lines\"].insert(1, _bcl)" in block
+    # The over-budget line, then its conflict line, lead the review together.
+    assert "budget_conflict_line(" in block and "_budget_lines.append(_bcl)" in block
+    assert "result[\"review\"][\"lines\"][0:0] = _budget_lines" in block
     assert "result[\"review\"][\"budget_conflict\"] = _bc" in block
 
 
@@ -262,10 +266,11 @@ def test_the_trim_keeps_the_extra_person_the_reviews_asked_for():
 
 
 def test_the_engine_hands_both_trims_what_was_learned():
-    src = inspect.getsource(se._run_schedule_job)
-    assert src.count("learned_worse=result.get(\"learned_worse\")") == 2
-    assert src.count("outcomes=result.get(\"outcomes_by_daypart\")") == 2
-    assert src.count("soft_asks=result.get(\"soft_requirements\")") == 2
+    # One budget stage, every cycle and the reconcile (P-47): it carries all three.
+    src = inspect.getsource(se._stage_budget)
+    assert src.count("learned_worse=x.result.get(\"learned_worse\")") == 1
+    assert src.count("outcomes=x.result.get(\"outcomes_by_daypart\")") == 1
+    assert src.count("soft_asks=x.result.get(\"soft_requirements\")") == 1
 
 
 # ── P-20: thin is measured against the requirement ─────────────────────
@@ -305,11 +310,12 @@ def test_the_top_up_covers_the_half_hours_the_ramp_is_short(no_avail):
 
 def test_the_engine_builds_the_requirements_once_and_hands_them_on():
     src = inspect.getsource(se._run_schedule_job)
+    assert src.count("week_requirements(") == 1
     assert "_reqs = week_requirements(restaurant_id, result, _constraints, curve=_curve)" in src
-    top = src.split("_top_up_hours_gap(", 1)[1].split("if hours_added", 1)[0]
-    assert "requirements=_reqs" in top
-    stagger = src.split("stagger_same_starts(", 1)[1].split("result[\"staggered\"]", 1)[0]
-    assert "requirements=_reqs" in stagger
+    assert "requirements=_reqs" in src.split("RepairContext(", 1)[1].split(")", 1)[0] + \
+        src.split("RepairContext(", 1)[1].split("curve=", 1)[0]
+    for stage in (se._stage_top_up, se._stage_stagger, se._stage_budget, se._stage_section_cap):
+        assert "requirements=x.requirements" in inspect.getsource(stage), stage.__name__
 
 
 def test_week_requirements_are_the_prompts_numbers():
@@ -552,9 +558,12 @@ def test_the_rules_screen_carries_the_floor_cap_conflict(db_path, monkeypatch):
 
 def test_the_engine_names_the_cap_conflict_once():
     src = inspect.getsource(se._run_schedule_job)
-    assert "report=_cap_report" in src and "cap_floor_conflict_line(" in src
-    cap_call = src.split("_trim_server_overlap_cap(", 1)[1].split("result[\"cap_floor_conflicts\"]", 1)[0]
-    assert "floors=_constraints.role_floors" in cap_call and "constraints=_constraints" in cap_call
+    assert "cap_floor_conflict_line(" in src
+    cap = inspect.getsource(se._stage_section_cap)
+    assert "report=rep" in cap and "\"conflicts\": rep.get(\"conflicts\")" in cap
+    cap_call = cap.split("_trim_server_overlap_cap(", 1)[1]
+    assert "floors=x.c.role_floors" in cap_call and "constraints=x.c" in cap_call
+    assert "result[\"cap_floor_conflicts\"] = (rep.get(\"section_cap\")" in inspect.getsource(se._apply_repair_reports)
 
 
 # ── P-10: a partial redo never changes the days the owner kept ──────────
@@ -596,11 +605,17 @@ def test_every_early_pass_keeps_to_the_days_being_redone(no_avail):
 
 
 def test_the_engine_threads_the_redo_days_through_every_early_pass():
-    src = inspect.getsource(se._run_schedule_job)
-    for call in ("_ensure_role_floors(", "_ensure_station_coverage(", "_top_up_hours_gap(",
-                 "_trim_server_overlap_cap(", "stagger_same_starts("):
-        for seg in src.split(call)[1:]:
-            assert "only_dates=_editable" in seg.split("\n            if ", 1)[0], call
+    # Every pass is a stage of the repair loop (P-47), each handed the days
+    # a redo rewrites — and the loop refuses any stage's change to a kept day.
+    for stage, call in ((se._stage_floors, "_ensure_role_floors("), (se._stage_stations, "_ensure_station_coverage("),
+                        (se._stage_top_up, "_top_up_hours_gap("), (se._stage_section_cap, "_trim_server_overlap_cap("),
+                        (se._stage_stagger, "stagger_same_starts("), (se._stage_budget, "trim_to_budget(")):
+        src = inspect.getsource(stage)
+        assert call in src and "only_dates=x.editable" in src.split(call, 1)[1], stage.__name__
+    for stage in (se._stage_person, se._stage_manager, se._stage_close_out, se._stage_overtime,
+                  se._stage_min_hours, se._stage_role_times):
+        assert "editable=x.editable" in inspect.getsource(stage), stage.__name__
+    assert "editable=_editable" in inspect.getsource(se._run_schedule_job).split("RepairContext(", 1)[1]
 
 
 def test_a_pinned_row_is_never_staggered_or_cut_at_the_cap():
