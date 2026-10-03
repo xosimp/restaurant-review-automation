@@ -1824,11 +1824,18 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         # at some half hours, the one of them covering the most of those.
         tpls = list(tpl_by_date.get((target_date, key, part)) or []) + \
             [t for t in (tpl_by_part.get((key, part)) or []) if t not in (tpl_by_date.get((target_date, key, part)) or [])]
-        if short["count"] <= 0 and short["minutes"] and tpls:
+        if short["count"] <= 0 and short["minutes"]:
             def _covers(t):
                 sp = _span_minutes({"shift_start": t[0], "shift_end": t[1]})
                 return sum(1 for m in short["minutes"] if sp and sp[0] <= m < sp[1])
             tpls.sort(key=lambda t: -_covers(t))
+            if not tpls or not _covers(tpls[0]):
+                # No shift of that role runs over the short half hours: one
+                # that does, ending with them, four hours at the least.
+                hi = max(short["minutes"]) + _SLOT_MIN
+                lo = min(min(short["minutes"]), hi - 4 * 60)
+                tpls = [(_format_minutes_to_time(lo), _format_minutes_to_time(hi),
+                         tpls[0][2] if tpls else (spec.get("role") or key))]
         if tpls:
             start, end, row_role = tpls[0]
         else:
