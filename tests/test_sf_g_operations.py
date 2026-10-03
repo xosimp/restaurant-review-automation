@@ -302,6 +302,20 @@ def test_covering_one_gap_leaves_the_others_open_and_arrivals_close_it(db_path, 
     assert status == {"Ana Bell": "covered", "Bo Chen": "arrived", "Cy Diaz": "arrived"}
 
 
+def test_a_large_call_off_keeps_its_meta_whole():
+    """meta_json was cut with a slice at 4,000 characters — not JSON any
+    more, so every reader saw no people and no covers."""
+    import issues
+    meta = {"people": [{"employee": f"Person {i}", "role": "Server", "shift_start": "5:00pm", "status": "missing",
+                        "hold": " They said at 5:10pm they'd be about 20 minutes late."} for i in range(40)],
+            "covers": [{"name": f"Cover {i}", "for": f"Person {i}", "shift_start": "5:00pm",
+                        "how": "on today until 5:00pm — could stay on"} for i in range(200)]}
+    text = issues.meta_text(meta)
+    back = json.loads(text)
+    assert len(text) <= issues.META_MAX_CHARS and len(back["people"]) == 40 and 0 < len(back["covers"]) < 200
+    assert issues.meta_text(None) is None
+
+
 def test_ask_to_cover_offers_the_gap_the_suggestion_was_for(db_path, monkeypatch, texts):
     import intraday, issues, strategy_jobs
     rid = _call_off_world(db_path, monkeypatch)

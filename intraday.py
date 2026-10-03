@@ -537,7 +537,7 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
         conn = get_conn(db_path)
         try:
             conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
-                         (_json.dumps(meta)[:4000], issue_id, restaurant_id))
+                         (issues.meta_text(meta), issue_id, restaurant_id))
             conn.commit()
         finally:
             conn.close()
@@ -578,7 +578,7 @@ def mark_cover_answer(restaurant_id, issue_id, name, accepted, db_path=None) -> 
         conn = _models.get_conn(db)
         try:
             conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
-                         (_json.dumps(meta)[:4000], issue_id, restaurant_id))
+                         (issues.meta_text(meta), issue_id, restaurant_id))
             conn.commit()
         finally:
             conn.close()

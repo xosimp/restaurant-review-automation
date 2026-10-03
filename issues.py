@@ -120,6 +120,32 @@ def clear_routing(restaurant_id, role, db_path=DB_PATH):
 
 # ── lifecycle ──────────────────────────────────────────────────────────────
 
+# How long an issue's meta_json may grow. It was cut at 4,000 characters
+# with a slice, which leaves a string that is not JSON — every reader then
+# saw no meta at all. A coverage issue now holds a role's whole call-off
+# (schedule audit 10/3/26 E-31), so the cap is wider and never cuts JSON.
+META_MAX_CHARS = 16000
+
+
+def meta_text(meta):
+    """`meta` as the JSON stored in ops_issues.meta_json, or None — always
+    whole JSON: past META_MAX_CHARS the trailing entries of its longest
+    lists (suggested covers, asks, then people) are dropped, never a cut
+    mid-string."""
+    import json as _json
+    if not meta:
+        return None
+    text = _json.dumps(meta)
+    if len(text) <= META_MAX_CHARS:
+        return text
+    m = dict(meta)
+    for key in ("covers", "asked", "people"):
+        while isinstance(m.get(key), list) and len(m[key]) > 1 and len(_json.dumps(m)) > META_MAX_CHARS:
+            m[key] = m[key][:-1]
+    text = _json.dumps(m)
+    return text if len(text) <= META_MAX_CHARS else None
+
+
 def _public(row):
     """The issue as clients read it. `meta` is the parsed meta_json (a
     coverage issue's suggested covers and who was already asked), so a
@@ -219,7 +245,7 @@ def create_issue(restaurant_id, kind, title, detail=None, severity="normal", sou
             (restaurant_id, kind, source_key, title[:200], (detail or "")[:2000] or None, severity,
              assignee_contact_id, assignee_name, created_by,
              (routing.get("escalation") or {}).get("contact_id"),
-             0 if notify else 1, _json.dumps(meta)[:4000] if meta else None))
+             0 if notify else 1, meta_text(meta)))
         conn.commit()
         issue_id = cur.lastrowid
     finally:
@@ -1244,7 +1270,7 @@ def update_coverage(restaurant_id, issue_id, change, renotify=False, db_path=DB_
             return None
         title, detail = coverage_texts(meta)
         conn.execute("UPDATE ops_issues SET meta_json=?, title=?, detail=? WHERE id=? AND restaurant_id=?",
-                     (_json.dumps(meta)[:4000], title, detail, issue_id, restaurant_id))
+                     (meta_text(meta), title, detail, issue_id, restaurant_id))
         if renotify and row["status"] != "resolved":
             conn.execute("UPDATE ops_issues SET status='open', acknowledged_at=NULL, notified_at=NULL, "
                          "notify_attempts=0, notify_error=NULL, notify_next_at=NULL WHERE id=? "

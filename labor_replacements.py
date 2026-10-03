@@ -151,14 +151,34 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
     if rows is None:
         return out[:limit]
     import schedule_engine as _se
+    c = constraints if constraints is not None else _week_constraints(restaurant_id, rows)
     legal = []
     for m in out:
         if len(legal) >= limit:
             break
-        ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, m["name"], constraints=constraints)
+        # Never CHOSEN by code: somebody who has not worked in weeks, or whose
+        # own unconfirmed note covers the day (Constraints.fillable).
+        if c is not None and not c.fillable(m["name"], day.isoformat())[0]:
+            continue
+        ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, m["name"], constraints=c)
         if ok:
             legal.append(m)
     return legal
+
+
+def _week_constraints(restaurant_id, rows):
+    """The rules of the week `rows` belong to, built once for every
+    candidate (replacement_is_legal built them again per candidate), or None
+    when they cannot be built — each check then builds its own."""
+    try:
+        import schedule_rules as _rules
+        from datetime import datetime as _dt
+        dates = sorted({r.get("date") for r in rows if r.get("date")})
+        return _rules.build_constraints(restaurant_id, dates, [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
+    except Exception as e:
+        import ops
+        ops.capture(e, job="coverage_replacements", context=f"restaurant_id={restaurant_id} rules")
+        return None
 
 
 def gap_week(restaurant_id, day, shift, db_path=DB_PATH):
@@ -228,12 +248,15 @@ def stay_on(restaurant_id, gap, on_today, exclude=(), db_path=DB_PATH, limit=2, 
                                          "ends": r.get("shift_end"), "_end": end,
                                          "_listed": (r.get("listed_as") or name).strip()}
     ranked = sorted(cands.values(), key=lambda m: (-m["_end"], -(m["score"] or 0), m["name"]))
+    c = constraints if constraints is not None else _week_constraints(restaurant_id, rows)
     out = []
     for m in ranked:
         if len(out) >= limit:
             break
+        if c is not None and not c.fillable(m["_listed"], day.isoformat())[0]:
+            continue                       # their own unconfirmed note covers today
         # Judged under the week's own spelling, so their own rows are seen.
-        ok, _why = _se.replacement_is_legal(restaurant_id, rows, index, m["_listed"], constraints=constraints)
+        ok, _why = _se.replacement_is_legal(restaurant_id, rows, index, m["_listed"], constraints=c)
         if ok:
             how = (f"on today until {m['ends']} — could stay on" if m["_end"] == start
                    else f"on today until {m['ends']} — could come back for it")

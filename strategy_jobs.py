@@ -2233,6 +2233,8 @@ def _gap_covers(r, day, people, on_today, away, taken, c, db_path=DB_PATH) -> li
                     ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
                     pick = []
             for f in pick[:1]:
+                if f["name"] in used:
+                    continue                # never one name for two gaps, whatever a picker returns
                 used.append(f["name"])
                 out.append({"name": f["name"], "score": f.get("score"), "kind": f.get("kind") or "off",
                             "how": f.get("how"), "for": m["employee"], "shift_start": m.get("shift_start")})
