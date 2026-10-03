@@ -684,6 +684,11 @@ struct StaffStats: Codable {
     var scheduled: Scheduled? = nil
     var actual: Actual? = nil
     var overtime: Overtime? = nil
+    /// Their own watched shifts over the last 30 days, each outcome in the
+    /// restaurant's words — "Drop approved" for a drop the manager let go
+    /// that nobody picked up (schedule audit 10/3/26 E-5), never a miss.
+    /// Absent on an older server.
+    var attendance: StaffAttendance? = nil
     var error: String? = nil
 
     /// The overtime heads-up in hours, only when it applies and says
@@ -781,3 +786,73 @@ extension StaffPersonalBrief: StaffRefusable {}
 extension StaffStats: StaffRefusable {}
 extension StaffEarnings: StaffRefusable {}
 extension StaffRecognition: StaffRefusable {}
+
+/// GET /staff/api/stats `attendance` (staff_insights.my_attendance): the
+/// caller's own watched shifts over the last `days`, each outcome as the
+/// restaurant recorded it — no notes, no who-covered, no score. A shift
+/// nobody watched is not in it, and a restaurant that watches nobody says
+/// so (`message`) rather than showing a clean record.
+struct StaffAttendance: Codable {
+    struct Entry: Codable, Hashable, Identifiable {
+        let date: String
+        var dateLabel: String? = nil
+        let outcome: String
+        var label: String? = nil
+        var minutesLate: Int? = nil
+        var id: String { date + outcome }
+
+        enum CodingKeys: String, CodingKey {
+            case date, outcome, label
+            case dateLabel = "date_label"
+            case minutesLate = "minutes_late"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            date = c.staffString(.date) ?? ""
+            dateLabel = c.staffString(.dateLabel)
+            outcome = c.staffString(.outcome) ?? ""
+            label = c.staffString(.label)
+            minutesLate = c.staffInt(.minutesLate)
+        }
+
+        /// The restaurant's own word for the outcome; for an excused drop
+        /// "Drop approved" even from a server too old to send the label.
+        var outcomeLabel: String {
+            if let label, !label.isEmpty { return label }
+            switch outcome {
+            case "excused": return "Drop approved"
+            case "on_time": return "On time"
+            case "no_show": return "No-show"
+            case "called_out": return "Called out"
+            case "left_early", "short": return "Left early"
+            default: return outcome.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+        }
+
+        /// A miss reads amber; a drop the manager approved, a cover, on
+        /// time, all ink.
+        var isMiss: Bool { ["no_show", "called_out", "late", "left_early", "short"].contains(outcome) }
+    }
+
+    var tracked: Bool = false
+    var days: Int? = nil
+    var shiftsChecked: Int = 0
+    var recent: [Entry] = []
+    var message: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case tracked, days, recent, message
+        case shiftsChecked = "shifts_checked"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tracked = c.staffBool(.tracked)
+        days = c.staffInt(.days)
+        shiftsChecked = c.staffInt(.shiftsChecked) ?? 0
+        recent = ((try? c.decodeIfPresent(HomeLenientListDecodable<Entry>.self, forKey: .recent)) ?? nil)?
+            .items.filter { !$0.date.isEmpty } ?? []
+        message = c.staffString(.message)
+    }
+}

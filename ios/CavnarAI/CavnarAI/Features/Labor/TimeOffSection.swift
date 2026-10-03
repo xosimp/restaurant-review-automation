@@ -72,7 +72,14 @@ struct TimeOffSection: View {
                     Button {
                         Haptic.light()
                         Task { await viewModel.decideTimeOff(req.id, approve: true) }
-                    } label: { Text(viewModel.timeOffBusyId == req.id ? "…" : "Approve").frame(maxWidth: .infinity) }
+                    } label: {
+                        Group {
+                            // The pulse, never "…" (DESIGN_SYSTEM §10).
+                            if viewModel.timeOffBusyId == req.id { CavnarShimmerText(text: "Approving", color: .white) }
+                            else { Text("Approve") }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.timeOffBusyId == req.id))
                     .disabled(viewModel.timeOffBusyId == req.id)
                 }
@@ -92,6 +99,9 @@ struct TimeOffRequest: Decodable, Identifiable, Equatable {
     let reason: String?
     let status: String
     let decisionNote: String?
+    /// "10/7/26, until 4:00pm" — the dates and, for part of a day, which
+    /// part (schedule audit 10/3/26 D-39). Absent on an older server.
+    var spanLabel: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, reason, status
@@ -99,7 +109,10 @@ struct TimeOffRequest: Decodable, Identifiable, Equatable {
         case startDate = "start_date"
         case endDate = "end_date"
         case decisionNote = "decision_note"
+        case spanLabel = "span_label"
     }
 
-    var dateLabel: String { CavnarDate.mdyRange(startDate, endDate) }
+    /// What the manager is deciding: the server's span with the part of
+    /// the day, else the dates alone.
+    var dateLabel: String { spanLabel.flatMap { $0.isEmpty ? nil : $0 } ?? CavnarDate.mdyRange(startDate, endDate) }
 }
