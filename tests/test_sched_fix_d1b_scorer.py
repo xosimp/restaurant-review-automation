@@ -427,6 +427,18 @@ def test_sq22_each_scored_dimension_keeps_the_floor_it_was_held_to():
     assert cov["floor"] == 70
 
 
+def test_sq22_a_floor_set_for_the_profile_is_the_one_the_shift_is_held_to():
+    rows = [row(SAT, "Ana", "Server"), row(SAT, "Bo", "Server"), row(SAT, "Cy", "Server")]
+    need = {("Saturday", "night"): {"Server": 5}}
+    held = sq.score_rows(rows, profiles=[sq.ShiftProfile()], typical_headcount=need)["shifts"][0]
+    assert held["capped_by"] == "coverage" and held["score"] == 60
+    tuned = sq.score_rows(rows, profiles=[sq.ShiftProfile(floors={"coverage": 55})], typical_headcount=need)["shifts"][0]
+    assert tuned["capped_by"] is None and dim(tuned, "coverage")["floor"] == 55
+    # a floor on a dimension that carries none is not invented
+    plain = sq.score_rows(rows, profiles=[sq.ShiftProfile(floors={"fairness": 90})], typical_headcount=need)
+    assert all(d["floor"] is None for d in plain["shifts"][0]["dimensions"] if d["key"] == "fairness")
+
+
 def test_sq22_a_profiles_floors_round_trip_and_stay_bounded():
     p = sq.profile_from_dict({"key": "sat", "floors": {"coverage": 65, "leadership": 150, "nonsense": 5}})
     assert p.floors == {"coverage": 65, "leadership": 100}

@@ -2697,6 +2697,12 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
             # setting only half works and in the more surprising direction.
             skipped.append({"key": key, "reason": "weighted to zero"})
             continue
+        # A floor set for this profile — by the owner on their own profile,
+        # or by an applied calibration (SQ-22) — holds over the dimension's
+        # own, as the profile's weights do. Only a dimension that carries a
+        # floor at all takes one.
+        if result.floor is not None and (ctx.profile.floors or {}).get(key) is not None:
+            result.floor = int(ctx.profile.floors[key])
         applied.append(result)
 
     # Under the day's hour target is only a problem if the floor is thin.
