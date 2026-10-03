@@ -165,7 +165,7 @@ def test_two_roster_names_an_open_question_joins_are_one_week_in_the_sweep():
     assert c.sweep_key("Kim T.") == c.sweep_key("Kim Tran")
     rows = [_row("Kim T.", "9:00am", "3:00pm"), _row("Kim Tran", "1:00pm", "9:00pm")]
     over = [v for v in sr.violations(rows, c) if v["kind"] == "overlap"]
-    assert over and "Kim T." in over[0]["detail"] and "one person" in over[0]["detail"]
+    assert over and "Kim T." in over[0]["detail"] and "may be the same person" in over[0]["detail"]
     # Hours too: 5 x 9h under one name and a 9h day under the other is 54h.
     week = [_row("Kim T.", "9:00am", "6:00pm", d=d) for d in WEEK[:5]]
     ok, why = c.can_add(_row("Kim Tran", "9:00am", "6:00pm", d=WEEK[5]), week)

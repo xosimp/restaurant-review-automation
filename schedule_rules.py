@@ -2326,7 +2326,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                             or r_cur.get("date") != r_p.get("date")):
                         out.append(_v("overlap", own_i, own_r, f"overlaps {_whose(other, own_r)}"
                                       f"{other.get('shift_start')}–{other.get('shift_end')} on "
-                                      f"{_mdy_safe(other.get('date'))}{_tail_note(other)}"))
+                                      f"{_mdy_safe(other.get('date'))}{_tail_note(other)}{_maybe_same(other, own_r)}"))
                 else:
                     gap = (s_cur - e_p).total_seconds() / 3600
                     # Same date = a double shift, not a rest breach (see rest_ok).
@@ -2334,7 +2334,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                         said = ("since " + _whose(other, own_r, "previous shift") if own_r is r_cur
                                 else "before " + _whose(other, own_r, "next shift"))
                         out.append(_v("rest_gap", own_i, own_r, f"{gap:.1f}h {said}{_tail_note(other)}, "
-                                                                 f"the rule is {need:g}h",
+                                                                 f"the rule is {need:g}h{_maybe_same(other, own_r)}",
                                       severity=round(need - gap, 2)))
             if reach is None or e_cur > reach[3]:
                 reach = cur
@@ -2400,11 +2400,19 @@ def _mdy_safe(iso) -> str:
 
 def _whose(prev: dict, cur: dict, what: str = "") -> str:
     """"their " — or "Kim T.'s " when the other row is under a name an open
-    "same person?" question joins to this one (E-25), with why it counts."""
+    "same person?" question joins to this one (E-25)."""
     a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
     if a and b and a.lower() != b.lower():
-        return f"{a}'s {what + ' ' if what else ''}(not yet answered whether {a} and {b} are one person) "
+        return f"{a}'s {what + ' ' if what else ''}"
     return f"their {what + ' ' if what else ''}"
+
+
+def _maybe_same(prev: dict, cur: dict) -> str:
+    """Why another name's shift counts against this one (E-25), or ""."""
+    a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
+    if a and b and a.lower() != b.lower():
+        return f" — {a} may be the same person as {b}: answer it on the Team page"
+    return ""
 
 
 def _tail_note(r: dict) -> str:
