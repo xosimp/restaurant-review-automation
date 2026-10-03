@@ -3806,6 +3806,7 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     _daily_target_map: dict = {}
     _daily_reasons: dict = {}
     _target_basis = None
+    _scaled = False
     # A scale factor of budget/covered-hours hands the WHOLE week's budget
     # to whichever days happen to carry history. With two of seven days
     # covered, those two days were each told to absorb roughly triple their
@@ -3900,7 +3901,11 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
             # hours by weekday), "last_year", or None; and why a date's share
             # moved off its weekday's (D-24).
             "daily_target_basis": _target_basis,
-            "daily_target_reasons": _daily_reasons}
+            "daily_target_reasons": _daily_reasons,
+            # Whether the day targets are shares of the weekly budget (most
+            # of the week has hours history) or each date's own usual hours.
+            "daily_targets_scaled": bool(_scaled),
+            "daily_target_days": len(base)}
 
 
 # The 400 the API answers when it will not take a structured-output schema:
@@ -4028,6 +4033,8 @@ def _roster_people(employees, facts=None, availability=None, time_off=None, scor
             continue
         f = facts.get(n) or by_low.get(str(n).strip().lower()) or {}
         p = {"name": n, "role": r or "", "manager": bool(f.get("manager")) if f else _sr.is_manager_role(r)}
+        p.update({k: "" for k in ("can_work", "available", "hours", "score", "experience", "closes", "usual",
+                                  "wants", "reliability")})
         if f.get("acting"):
             p["role"] = (p["role"] + " " if p["role"] else "") + f"(acting manager {_day_list(f['acting'])})"
 
@@ -4157,8 +4164,10 @@ def _roster_people(employees, facts=None, availability=None, time_off=None, scor
         pat = (prior_pattern or {}).get(n) or {}
         ub = []
         days = _rq._days_label(pat.get("days") or [])
+        parts = _rq._parts_label(pat.get("dayparts") or [])
         if days:
-            ub.append(days + (" " + _rq._parts_label(pat.get("dayparts") or []) if _rq._parts_label(pat.get("dayparts") or []) else ""))
+            # "Fri/Sat nights"; "any day, day or night"
+            ub.append(days + ((", " if days == "any day" else " ") + parts if parts else ""))
         if pat.get("avg_hours"):
             ub.append(f"~{float(pat['avg_hours']):g}h a week")
         st = pat.get("starts") or {}
@@ -4637,8 +4646,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         from ai_guard import _neutralise_markers as _neut_n
         _owner_notes, _, _findings = str(sched_notes).partition(SCHED_FINDINGS_HEADER)
         if _owner_notes.strip():
-            _owner_parts.append("ADDITIONAL SCHEDULING NOTES — priority 5, the owner's notes for every draft. Follow "
-                                "each one; only priorities 1-4 may stop you:\n" + _neut_n(_owner_notes.strip()))
+            _owner_parts.append("ADDITIONAL SCHEDULING NOTES — priority 5, the owner's notes for every draft. "
+                                "Follow each one; only priorities 1-4 may stop you:\n" + _neut_n(_owner_notes.strip()))
         if _findings.strip():
             _owner_parts.append(SCHED_FINDINGS_HEADER + "\n" + _neut_n(_findings.strip()))
     # What the owner asked for with THIS draft — Ask Cavnar's
@@ -4807,7 +4816,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                             show_salary=False)
     projected_revenue, hours_budget = _plan["projected_revenue"], _plan["hours_budget"]
     labor_budget_dollars = _plan["labor_budget_dollars"]
-    _daily_target_map, _daily_targets = _plan["daily_target_hours"], _plan["daily_targets_text"]
+    _daily_target_map = _plan["daily_target_hours"]
     _budget_basis = _plan.get("budget_basis") or {}
 
     # Build role rates block — every role's wage as measured here (the
@@ -4974,11 +4983,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # A labor target is a CEILING, not a quota. Under budget is a good
     # outcome once every shift meets its SHIFT REQUIREMENTS; a day's target
     # is spent only as far as its shifts need. One hours anchor (schedule
-    # audit 10/3/26 PR-24): the ceiling and each date's target, said once
-    # and briefly — the trim rule it used to restate in the SCHEDULING RULES
-    # ("Weekly hours must not EXCEED …") and the hardcoded "No employee over
-    # 40h" and CONSECUTIVE DAYS OFF lines (retired 10/2/26; emitted only
-    # when nothing else stated the rules) are gone (PR-22).
+    # audit 10/3/26 PR-24): each date's target is said once, on its SHIFT
+    # REQUIREMENTS rows, and the ceiling here in a few lines — the per-day
+    # list it used to repeat, the trim rule it restated in the SCHEDULING
+    # RULES ("Weekly hours must not EXCEED …") and the hardcoded "No
+    # employee over 40h" and CONSECUTIVE DAYS OFF lines (retired 10/2/26)
+    # are gone (PR-22).
     if _budget_basis.get("kind") == "all_in_less_salaries":
         _target_line = (f"Projected revenue ${projected_revenue:,.0f}; labor target {labor_target}% counting salaries "
                         f"→ after the salaried staff's pay for the week, ${labor_budget_dollars:,.0f} is the hourly "
@@ -4989,26 +4999,32 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _rate_line = (f"at ${hourly_rate}/hr"
                   + (" (measured from what each hour is paid here)" if not _budget_basis.get("caveat")
                      else f" — {_budget_basis['caveat']}"))
+    _own_targets = ""
+    if _daily_target_map and not _plan.get("daily_targets_scaled"):
+        _own_targets = (f" Only {_plan.get('daily_target_days') or len(_daily_target_map)} of the week's days have "
+                        "hours history here, so the day targets in SHIFT REQUIREMENTS are those dates' own usual "
+                        "hours, not shares of a weekly total: never try to reach a weekly figure from them.")
     if not hours_budget and _budget_basis.get("salaries_exceed_target"):
         par_block = (f"\n\nPAR HOURS CEILING — none: the {labor_target}% labor target counts salaries, and the "
                      "salaried staff's pay for this week already reaches it, so no hourly hours fit under the target. "
-                     "Staff from SHIFT REQUIREMENTS and the owner's floors only — add nothing beyond them." + _daily_targets)
+                     "Staff from SHIFT REQUIREMENTS and the owner's floors only — add nothing beyond them." + _own_targets)
     elif not hours_budget:
         # No defensible revenue projection — too little history, and no
         # revenue target on file. "0.0h is the MAXIMUM for the week" read as
         # an instruction to schedule nobody; there is no ceiling instead.
         par_block = ("\n\nPAR HOURS CEILING — none available. There isn't enough sales history (and no revenue target "
                      "on file) to put an honest weekly hours budget on this schedule. Staff it from SHIFT "
-                     "REQUIREMENTS and the owner's floors, and do not invent a total to aim at." + _daily_targets)
+                     "REQUIREMENTS and the owner's floors, and do not invent a total to aim at." + _own_targets)
     else:
         par_block = (f"\n\nPAR HOURS CEILING — priority 4: {hours_budget}h is the MAXIMUM for the week (hourly hours; "
                      f"salaried hours are not spent from it). {_target_line} {_rate_line}. This is a ceiling, not a "
                      f"quota. Coming in under it is a good outcome when every shift meets its SHIFT REQUIREMENTS and "
-                     f"needs no compensating headcount. Each date's target below is its share: use up to it when the "
-                     f"day's shifts need the hours to meet their requirements, and leave it unspent when they do not. "
-                     f"Over the ceiling, trim what no requirement needs — over-long shifts, early starts, stays past "
-                     f"the taper — from the dates furthest over their target, never below SHIFT REQUIREMENTS or a "
-                     f"floor. The hours ceiling only ever removes hours; it never adds them.{_daily_targets}")
+                     f"needs no compensating headcount."
+                     + (" Each date's day target in SHIFT REQUIREMENTS is its share of it." if not _own_targets
+                        else _own_targets)
+                     + " Over the ceiling, trim what no requirement needs — over-long shifts, early starts, stays past "
+                     "the taper — from the dates furthest over their day target, never below SHIFT REQUIREMENTS or a "
+                     "floor. The hours ceiling only ever removes hours; it never adds them.")
 
     # The dates to write rows for. A big roster is generated in parts; the
     # rules that span the whole week (the hours ceiling, rest, runs of days)
@@ -5131,7 +5147,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _seam = _req.seam_lines(prior_rows, busy=_busy, limits=_seam_limits(roster_facts, employees),
                                 payroll_weeks=payroll_weeks)
         if _seam:
-            _seam_block = ("\n\nALREADY WRITTEN FOR THE OTHER DATES OF THIS WEEK — count these toward each person's "
+            _seam_block = ("\n\nALREADY WRITTEN FOR THE OTHER DAYS OF THIS WEEK — count these toward each person's "
                            "hours, overtime line, rest and days in a row (the rules are checked across the whole "
                            "week), give the closes, weekend shifts and busy shifts to the people with fewer so far, "
                            "and fill from the people who still need hours:\n" + "\n".join(_seam))
@@ -5179,7 +5195,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                   + (f"\nClosed: {_sp.days_text(_closed_week)} — write no shifts on "
                      f"{'that date' if len(_closed_week) == 1 else 'those dates'}." if _closed_week else "")
                   + holidays_block)
-    _context = (f"\n\nCONTEXT — this restaurant's record and the week's figures. Facts to plan with: none of it asks "
+    _context = (f"\n\nCONTEXT: this restaurant's record and the week's figures — facts to plan with. None of it asks "
                 f"for more or fewer people (SHIFT REQUIREMENTS already carry every number).\n{_history_lines}"
                 + _demand_block + yoy_block + _weather_block + _prior_schedule_block + par_block + role_rates_block
                 + _headcount_block + _section_block + _daypart_block + _delivery_block + _role_minimums_extra
@@ -5468,6 +5484,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         role_floors=role_floors, role_minimums=_role_minimums_dict(role_minimums_json),
         keyholders=[n for n, v in (leader_flags or {}).items() if v],
         registry_state=_ready_sched.get("data_state"))
+    # Checked against the prompt as written (ISO dates), then read by the
+    # owner: any date the model wrote anyway becomes M/D/YY (PR-20).
+    summary_bullets = [_sp.owner_dates(b) for b in summary_bullets]
 
     return {
         "schedule_csv": csv_clean,

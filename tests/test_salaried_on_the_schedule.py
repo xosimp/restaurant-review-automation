@@ -87,7 +87,14 @@ def test_the_constraints_and_prompt_know_who_is_salaried(db_path, monkeypatch):
         models.add_manual_team_member(rid, n, role="Manager FOH", db_path=db_path)
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
     assert {"erik baylis", "jim"} <= c.salaried and c.is_salaried("ERIK  Baylis")
-    assert ("Salaried (the same pay whatever the hours): Erik Baylis (at most 55h a week), Jim (at most 55h a week)"
-            in sr.prompt_block(c))
-    assert "Gabriel" not in sr.prompt_block(c)
+    # Each salaried person is marked in their own ROSTER line with their cap
+    # (C1, PR-33); the rule is said once, naming nobody.
+    import labor
+    import schedule_prompt
+    table = schedule_prompt.roster_table(labor._roster_people(
+        [(n, "Manager FOH") for n in c.roster_names], facts=sr.person_facts(c)))
+    assert "Erik Baylis | Manager FOH (manager) | Manager FOH | any day | salaried, at most 55h" in table
+    assert "Jim | Manager FOH (manager) | Manager FOH | any day | salaried, at most 55h" in table
+    assert "Salaried people (marked salaried in the ROSTER" in sr.prompt_block(c)
+    assert "Gabriel" not in sr.prompt_block(c) and "Gabriel" not in table
     assert [u["name"] for u in c.unmatched if u["source"] == "salaried staff"] == ["Gabriel Huerta"]

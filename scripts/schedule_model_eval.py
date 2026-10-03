@@ -23,7 +23,9 @@ The stored production answer is always scored as the "production" arm, free.
 Prompt variants: "stored" (the exact request the week was generated with),
 "rerender" (the prompt today's code builds from the stored arguments), or
 "module:function" (a transform of the stored request: fn(request, call) ->
-request). Without --live nothing is called: the plan and an estimate of its
+request; its user turn is the list of text blocks schedule_prompt.
+request_content builds — the standing instructions, the restaurant's week,
+this request). Without --live nothing is called: the plan and an estimate of its
 cost (from the stored calls' own token counts) are printed. A live run's calls
 are metered in ai_usage as action "schedule_model_eval" against no restaurant.
 

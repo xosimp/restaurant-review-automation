@@ -4092,12 +4092,16 @@ def _rule(kind, text, why=None) -> str:
 
 
 def _iso_day(d) -> str:
-    """"Wed 2026-10-07": the one date the model reads (PR-20)."""
-    try:
-        x = datetime.strptime(str(d)[:10], "%Y-%m-%d")
-    except (TypeError, ValueError):
-        return str(d or "")
-    return f"{x.strftime('%a')} {x.strftime('%Y-%m-%d')}"
+    """"Wed 2026-10-07": the one date the model reads (PR-20). An owner's
+    M/D/YY (a trainee's "until 12/1/26") reads the same way."""
+    text = str(d or "").strip()
+    for fmt, part in (("%Y-%m-%d", text[:10]), ("%m/%d/%y", text), ("%m/%d/%Y", text)):
+        try:
+            x = datetime.strptime(part, fmt)
+        except ValueError:
+            continue
+        return f"{x.strftime('%a')} {x.strftime('%Y-%m-%d')}"
+    return text
 
 
 def _iso_days(dates) -> str:
@@ -4244,8 +4248,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         lines.append(_rule("long_run", f"Nobody works more than {int(comp['max_consecutive_days'])} days in a row, "
                            "counting days already published last week", why="the owner's limit on days in a row"))
     if c.minors:
-        lines.append(_rule("minor_late", "MINORS (marked minor in the ROSTER) — the limits the code checks, starting "
-                           "values and not legal advice", why="child-labor law is the owner's legal exposure"))
+        lines.append(_rule("minor_late", "MINORS (marked minor in the ROSTER) — the limits the code checks, as "
+                           "starting values, not legal advice", why="child-labor law is the owner's legal exposure"))
         lines.extend(_minor_band_lines(c))
     if c.salaried:
         # Each one's weekly cap — their own, the restaurant's, or the

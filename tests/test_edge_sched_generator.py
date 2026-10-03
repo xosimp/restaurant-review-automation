@@ -12,6 +12,7 @@ marker is removed with the fix. The model is never called: the generator is
 stubbed the way tests/test_schedule_third_audit.py does it, and the one
 test that exercises labor.generate_optimized_schedule stubs its client.
 """
+import schedule_prompt
 import datetime as dt
 import json
 import re
@@ -184,14 +185,14 @@ def _fallback_harness(monkeypatch):
     seen = []
 
     def fake_create(client, **kw):
-        prompt = kw["messages"][0]["content"]
+        prompt = schedule_prompt.prompt_text(kw["messages"][0]["content"])
         seen.append({"structured": "format" in (kw.get("output_config") or {}),
-                     "dates": re.findall(r"- (\d{4}-\d{2}-\d{2}): ", prompt),
-                     "budget": re.search(r"→ ([\d.]+)h is the MAXIMUM", prompt),
+                     "dates": schedule_prompt.request_dates(prompt),
+                     "budget": re.search(r"([\d.]+)h is the MAXIMUM", prompt),
                      "prior": "ALREADY WRITTEN FOR THE OTHER DAYS" in prompt})
         if "format" in (kw.get("output_config") or {}):
             raise _format_refusal()
-        dates = re.findall(r"- (\d{4}-\d{2}-\d{2}): ", prompt)
+        dates = schedule_prompt.request_dates(prompt)
         return _Msg(HEADER + "\n" + "\n".join(f"{d},X,Ana,Server,11:00am,3:00pm,4,x" for d in dates)
                     + "\n---SUMMARY---\n- a")
     monkeypatch.setattr(labor, "create_with_retry", fake_create)
@@ -424,7 +425,7 @@ def _capture_prompt(monkeypatch):
     prompts = []
 
     def fake_create(client, **kw):
-        prompts.append(kw["messages"][0]["content"])
+        prompts.append(schedule_prompt.prompt_text(kw["messages"][0]["content"]))
         return _Msg(HEADER + "\n2026-10-05,Monday,Ana,Server,11:00am,3:00pm,4,x\n---SUMMARY---\n- a")
     monkeypatch.setattr(labor, "create_with_retry", fake_create)
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
@@ -443,10 +444,15 @@ def test_an_availability_note_is_quoted_as_untrusted_text_not_a_hard_constraint(
                                       week_start="2026-10-05", staff_availability=avail, structured=False)
     prompt = prompts[-1]
     assert _INJECTION in prompt, "the note is still visible to the model, as data"
-    start = prompt.index("EMPLOYEE AVAILABILITY")
-    block = prompt[start:prompt.find("\n\n", start + 1) if prompt.find("\n\n", start + 1) > 0 else len(prompt)]
-    assert "hard constraint" in block.lower()
-    assert _INJECTION not in block
+    # The hard availability is the ROSTER's AVAILABLE column (C1, PR-33);
+    # the person's own words sit in their own fenced block, never in it.
+    start = prompt.index("ROSTER — ")
+    roster = prompt[start:prompt.index("\n\n", start + 1)]
+    assert "approved time off (all [HARD])" in roster
+    assert _INJECTION not in roster
+    notes = prompt[prompt.index("NOTES STAFF WROTE ABOUT THEIR OWN AVAILABILITY"):]
+    fenced = notes[notes.index("<<<UNTRUSTED_GUEST_TEXT"):notes.index("UNTRUSTED_GUEST_TEXT>>>")]
+    assert _INJECTION in fenced and "context only" in notes.split("\n", 1)[0]
 
 
 def test_structured_availability_still_reaches_the_prompt_as_a_hard_constraint(db, monkeypatch):
@@ -454,8 +460,8 @@ def test_structured_availability_still_reaches_the_prompt_as_a_hard_constraint(d
     avail = [{"employee_name": "Ana", "available_days": "[]", "unavailable_days": '["Monday"]', "notes": ""}]
     labor.generate_optimized_schedule(_ANALYSIS, [], roster=[("Ana", "Server")], week_start="2026-10-05",
                                       staff_availability=avail, structured=False)
-    block = prompts[-1][prompts[-1].index("EMPLOYEE AVAILABILITY"):]
-    assert "Ana: NOT available: Monday" in block
+    block = prompts[-1][prompts[-1].index("ROSTER — "):]
+    assert "  Ana | Server | Server | off Mon |" in block
 
 
 # ── SCHED-33: New Year's week and the fixed-lift claim ───────────────────
@@ -522,10 +528,18 @@ def test_a_holiday_later_the_same_year_reaches_the_events_block(db, monkeypatch)
 
 def test_the_events_block_never_asserts_an_unmeasured_fixed_lift(db, monkeypatch):
     prompts = _capture_prompt(monkeypatch)
+    import time_utils
+    today = time_utils.restaurant_now(None, naive=True).date()
+    away = (dt.date(2026, 10, 10) - today).days
     labor.generate_optimized_schedule(_ANALYSIS, [], roster=[("Ana", "Server")], week_start="2026-10-05",
-                                      upcoming_events=[{"name": "Halloween", "date_str": "Oct 31", "days_away": 20}],
+                                      upcoming_events=[{"name": "Harvest Fest", "date_str": "Oct 10", "days_away": away},
+                                                       {"name": "Halloween", "date_str": "Oct 31", "days_away": away + 21}],
                                       structured=False)
-    assert "Halloween" in prompts[-1]
+    # A holiday inside the week is named once, with its date; what it did
+    # here is already in that date's numbers (C1, PR-8). One past the week
+    # is not this draft's.
+    assert "Holidays this week: Harvest Fest (Sat 2026-10-10)" in prompts[-1]
+    assert "Halloween" not in prompts[-1]
     assert "20-40%" not in prompts[-1]
 
 

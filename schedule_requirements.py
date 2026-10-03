@@ -26,9 +26,6 @@ _DAY_ORDER = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 WEEKEND_DAYS = ("Friday", "Saturday", "Sunday")
 # Busy shifts when no profile says otherwise: Friday and Saturday night.
 DEFAULT_BUSY = (("Friday", "night"), ("Saturday", "night"))
-# The usual-pattern block is a courtesy to the model, not a roster dump: a
-# 250-person restaurant stops listing after this many characters.
-PATTERN_CHAR_CAP = 4000
 FOCUS_MAX_ITEMS = 12
 FOCUS_MAX_CHARS = 240
 # How far a date's measured demand (and the sales-per-labor-hour hold) may
@@ -516,8 +513,8 @@ def requirements_block(rows: list) -> str:
             "restaurants, \"(usual N)\" what the number was before this date's demand moved it), the date's hours "
             "target, the demand level the shift is scored at, who it needs to run it, its half-hour numbers and why "
             "a number moved. Schedule to these numbers — they already carry every event, holiday, measured volume "
-            "change and staffing ask on the date — and never above them to use up hours. The day target is that "
-            "day's share of the weekly hours budget: use up to it when the day's shifts need the hours to meet these "
+            "change and staffing ask on the date — and never above them to use up hours. The day target is the hours "
+            "that date's shifts are expected to take: use up to it when the day's shifts need the hours to meet these "
             "numbers, and leave it unspent when they do not — a day under its target with every shift covered is a "
             "good day.\n" + "\n".join(lines))
 
@@ -530,44 +527,9 @@ def _model_words(text) -> str:
     return ai_guard._neutralise_markers(" ".join(str(text or "").split())[:240])
 
 
-def experience_block(tenure: dict, names: list, leader_flags: dict = None,
-                     experienced: set = None) -> str:
-    """Who is experienced, who is still developing, who can run a shift.
-
-    Experienced is the scorer's rule: EXPERIENCE_SHIFTS on file, or the
-    owner's word for it (staff_settings.experienced_names). Silent when
-    nobody on this list qualifies either way: a short history window makes
-    everybody look new, and "nobody here is experienced" would be a false
-    statement the model would act on — the scorer withdraws the dimension
-    in exactly that case."""
-    names = [n for n in (names or []) if n]
-    out = ""
-    ten = tenure or {}
-    flagged = {str(n).strip().lower() for n in (experienced or ()) if n}
-
-    def _veteran(n):
-        return n.strip().lower() in flagged or int(ten.get(n) or 0) >= _sq.EXPERIENCE_SHIFTS
-
-    veterans = sorted(n for n in names if _veteran(n))
-    if veterans:
-        developing = sorted(n for n in names if n in ten and not _veteran(n)
-                            and int(ten.get(n) or 0) < _sq.DEVELOPING_SHIFTS)
-        out += (f"\n\nEXPERIENCED STAFF — {_sq.EXPERIENCE_SHIFTS}+ shifts here, or marked experienced by the owner: "
-                + ", ".join(veterans) + ".")
-        if developing:
-            out += (f"\n  Still developing — under {_sq.DEVELOPING_SHIFTS} shifts here: " + ", ".join(developing)
-                    + ". Put each of them on with an experienced hand in the same role, never two of them "
-                    "together on a busy shift.")
-        out += ("\n  Every shift is scored on its share of experienced hands (the profile's experience mix); "
-                "spread the experienced people across shifts rather than stacking them on one.")
-    leaders = sorted(n for n in names if (leader_flags or {}).get(n))
-    if leaders:
-        out += ("\n\nAUTHORIZED TO CLOSE — each counts as somebody able to run a shift: "
-                + ", ".join(leaders) + ".")
-    return out
-
-
 def _days_label(days: list) -> str:
+    """"Fri/Sat", or "any day": the weekdays of a ROSTER line's USUAL column
+    (labor._roster_people)."""
     ds = [d for d in _DAY_ORDER if d in set(days or [])]
     if len(ds) == 7:
         return "any day"
@@ -575,6 +537,8 @@ def _days_label(days: list) -> str:
 
 
 def _parts_label(parts: list) -> str:
+    """"days", "nights" or "day or night": the dayparts of a ROSTER line's
+    USUAL column."""
     ps = sorted({(p or "").strip().lower() for p in parts or [] if p})
     if set(ps) >= {"morning", "night"}:
         return "day or night"
@@ -583,64 +547,6 @@ def _parts_label(parts: list) -> str:
     if ps == ["night"]:
         return "nights"
     return ""
-
-
-def usual_pattern_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHAR_CAP) -> str:
-    """Each person's usual weekdays and dayparts, people with the same
-    pattern on one line. Stability is scored per shift: somebody on a
-    weekday AND a daypart they usually work counts as familiar."""
-    groups = {}
-    for n in names or []:
-        p = (prior_pattern or {}).get(n) or {}
-        days = _days_label(p.get("days") or [])
-        if not days:
-            continue
-        parts = _parts_label(p.get("dayparts") or [])
-        groups.setdefault((days, parts), []).append(n)
-    out = ""
-    if groups:
-        lines, used, dropped = [], 0, 0
-        for (days, parts), people in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-            line = f"  {days}{', ' + parts if parts else ''}: " + ", ".join(sorted(people))
-            if used + len(line) > cap:
-                dropped += len(people)
-                continue
-            lines.append(line)
-            used += len(line) + 1
-        if dropped:
-            lines.append(f"  ({dropped} more people not listed.)")
-        out = ("\n\nUSUAL PATTERN — the weekdays and dayparts each person has worked here. Schedule stability "
-               "is scored: a person on a weekday and daypart they usually work counts as familiar. Keep people "
-               "on their pattern unless a higher priority needs the move:\n" + "\n".join(lines))
-    return out + usual_hours_block(prior_pattern, names, cap=cap)
-
-
-def usual_hours_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHAR_CAP) -> str:
-    """Each regular's usual hours a week and start times (models.
-    usual_pattern avg_hours / starts — schedule audit 10/3/26 D-37): a
-    32h-a-week regular cut to 12h was a change nothing said. Most hours
-    first, within `cap` characters."""
-    rows = []
-    for n in names or []:
-        p = (prior_pattern or {}).get(n) or {}
-        if not p.get("avg_hours"):
-            continue
-        st = p.get("starts") or {}
-        when = "/".join(st[k] for k in ("morning", "night") if st.get(k))
-        rows.append((-float(p["avg_hours"]), n, f"{n} ~{float(p['avg_hours']):g}h" + (f" (starts {when})" if when else "")))
-    if not rows:
-        return ""
-    bits, used, dropped = [], 0, 0
-    for _h, _n, text in sorted(rows):
-        if used + len(text) > cap:
-            dropped += 1
-            continue
-        bits.append(text)
-        used += len(text) + 2
-    line = "  " + ", ".join(bits) + (f" ({dropped} more not listed.)" if dropped else "")
-    return ("\n\nUSUAL HOURS — about how many hours a week each regular has worked over their recent weeks, and "
-            "when they usually start. Keep a regular near their usual hours and start unless demand, the budget "
-            "or a rule needs otherwise; schedule stability is scored against it:\n" + line)
 
 
 def _row_parts(row: dict) -> set:

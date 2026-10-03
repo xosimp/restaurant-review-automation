@@ -4,6 +4,7 @@ gap, out of scope here); these tests are scoped narrowly to confirming the
 weather forecast block this task added actually reaches the AI prompt,
 mirroring the create_with_retry-capture style already used in
 test_guest_marketing.py."""
+import schedule_prompt
 import types
 
 import pytest
@@ -44,10 +45,11 @@ def test_weather_forecast_reaches_the_prompt(monkeypatch):
     generate_optimized_schedule(_minimal_analysis(), _minimal_shifts(),
                                  restaurant_name="Test Bistro", weather_forecast=weather_forecast)
 
-    prompt = captured["messages"][0]["content"]
-    assert "Weather forecast for next week" in prompt
-    assert "2026-07-11 (Saturday): 91°F, Sunny, 5% chance of rain" in prompt
-    assert "2026-07-12 (Sunday): 68°F, Rain Showers, 85% chance of rain" in prompt
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    # Context only, dates in the prompt's one format (C1, PR-20).
+    assert "WEATHER FORECAST FOR THE WEEK — context only." in prompt
+    assert "  Sat 2026-07-11: 91°F, Sunny, 5% chance of rain" in prompt
+    assert "  Sun 2026-07-12: 68°F, Rain Showers, 85% chance of rain" in prompt
 
 
 def test_no_weather_forecast_omits_the_block(monkeypatch):
@@ -55,8 +57,8 @@ def test_no_weather_forecast_omits_the_block(monkeypatch):
 
     generate_optimized_schedule(_minimal_analysis(), _minimal_shifts(), restaurant_name="Test Bistro")
 
-    prompt = captured["messages"][0]["content"]
-    assert "Weather forecast" not in prompt
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    assert "WEATHER FORECAST FOR THE WEEK" not in prompt and labor.NO_WEATHER_MARKER in prompt
 
 
 def test_zero_percent_precip_omits_the_rain_chance_clause(monkeypatch):
@@ -71,6 +73,6 @@ def test_zero_percent_precip_omits_the_rain_chance_clause(monkeypatch):
     generate_optimized_schedule(_minimal_analysis(), _minimal_shifts(),
                                  restaurant_name="Test Bistro", weather_forecast=weather_forecast)
 
-    prompt = captured["messages"][0]["content"]
-    assert "2026-07-11 (Saturday): 75°F, Clear" in prompt
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    assert "  Sat 2026-07-11: 75°F, Clear" in prompt
     assert "chance of rain" not in prompt

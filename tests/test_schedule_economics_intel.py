@@ -246,8 +246,16 @@ def test_settings_carry_windows_certifications_and_wishes_into_the_constraints(d
     assert "ana" in c.managers and "ana" not in c.keyholders and c.certifications["ana"] == {"alcohol", "manager"}
     assert c.time_windows["ana"]["Monday"] == (sr.parse_minutes("10:00am"), sr.parse_minutes("9:00pm"))
     assert ss.stated_preferences(rid, db_path=db_path)["Ana"]["desired_hours"] == 30
-    block = intel.preferences_block({}, ss.stated_preferences(rid, db_path=db_path))
-    assert "Ana: prefers night; would like about 30h a week" in block
+    # What staff want is each person's ROSTER line now (C1, PR-33): the
+    # engine adds it to their facts, the table says it.
+    import labor
+    import schedule_engine
+    import schedule_prompt
+    assert intel.preferences_block({}, ss.stated_preferences(rid, db_path=db_path)) == ""
+    facts = sr.person_facts(c, ["Ana"])
+    schedule_engine._roster_signals(facts, rid, stated=ss.stated_preferences(rid, db_path=db_path))
+    line = schedule_prompt.roster_table(labor._roster_people([("Ana", "Server")], facts=facts))
+    assert "prefers nights; ~30h a week" in line
 
 
 # ── intel: outcomes, ledger, behaviour, mentoring, ledger-aware fairness ──

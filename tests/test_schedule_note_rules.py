@@ -199,9 +199,14 @@ def test_read_notes_marks_the_sentence_a_rule_came_from(rid, db):
 
 
 def test_the_draft_ranks_the_owners_notes():
+    # PRIORITIES is a standing instruction now (schedule_prompt, the same on
+    # every call — schedule audit 10/3/26 PR-26): priority 5 still opens with
+    # the owner's notes, now beside the owner's request for the draft (PR-2).
     import labor
+    import schedule_prompt
     src = inspect.getsource(labor.generate_optimized_schedule)
-    assert "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES first" in src and "Follow each one" in src
+    assert ("Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT "
+            "first") in schedule_prompt.PRIORITIES and "Follow each one" in src
 
 
 # ── the routes ─────────────────────────────────────────────────────────────

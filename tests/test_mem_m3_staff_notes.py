@@ -7,6 +7,7 @@ no date and no end, and the schedule prompt said it outranks every rule. A
 server's three no-shows last winter kept them "unreliable" after six clean
 months, and a cook who moved to nights in June was still offered mornings.
 """
+import schedule_prompt
 import types
 from datetime import date, timedelta
 
@@ -94,8 +95,10 @@ def test_both_prompts_print_the_day_each_constraint_was_noted(monkeypatch):
                 "total_sales": 60000, "period_days": 21, "by_day": {}}
     labor.generate_optimized_schedule(analysis, [], restaurant_name="T", hourly_rate=20.0, labor_target=30.0,
                                       week_start="2026-10-05", staff_notes=notes, roster=[("Luis R.", "Cook")])
-    prompt = captured["messages"][0]["content"]
-    assert "- Luis R.: mornings only (noted 5/2/26)" in prompt
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    # The owner reads M/D/YY (above); the model reads every date as weekday
+    # and ISO (C1, PR-20).
+    assert "- Luis R.: mornings only (noted Sat 2026-05-02)" in prompt
     assert "Each is dated the day it was noted" in prompt
 
 

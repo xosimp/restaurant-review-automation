@@ -126,10 +126,17 @@ def test_the_age_band_round_trips_and_clears_with_is_minor(db_path, rid):
 
 def test_the_prompt_states_minor_limits_as_checked_starting_values(db_path, rid):
     ss.upsert(rid, "Kid", minor_age_band="14-15", db_path=db_path)
-    block = sr.prompt_block(sr.build_constraints(rid, WEEK, DAYS))
+    c = sr.build_constraints(rid, WEEK, DAYS)
+    block = sr.prompt_block(c)
     assert "MINORS (Kid): no later than" not in block
     assert "starting values, not legal advice" in block
-    assert "Kid (age 14-15): start no earlier than 7:00am" in block
+    # The limits once per age band; who is in which band is their ROSTER
+    # line (C1, PR-33).
+    assert "Minors 14-15: start no earlier than 7:00am" in block
+    import labor
+    import schedule_prompt
+    line = schedule_prompt.roster_table(labor._roster_people([("Kid", "Host")], facts=sr.person_facts(c, ["Kid"])))
+    assert "minor 14-15" in line
 
 
 # ── L13: pack values are starting values ───────────────────────────────

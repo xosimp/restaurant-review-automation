@@ -24,7 +24,29 @@ def test_closed_weekdays_and_dates_reach_the_constraints_and_the_prompt(rid, db_
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
     assert c.closed_dates == {"2026-12-21", "2026-12-25"}
     block = sr.prompt_block(c)
-    assert "CLOSED on Monday 12/21, Friday 12/25" in block
+    # The closed dates are a fact of this restaurant's week, said once at
+    # the head of THIS RESTAURANT'S WEEK, weekday and ISO (C1, PR-26, PR-20)
+    # — no longer a rule line of their own.
+    assert "CLOSED on" not in block
+    import types
+    import labor
+    import schedule_prompt
+    seen = {}
+    labor_stub = types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text='{"days": [], "summary": []}')],
+                                       stop_reason="end_turn")
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(labor, "create_with_retry", lambda client, **kw: seen.update(kw) or labor_stub)
+        mp.setattr(labor, "get_client", lambda *a, **k: None)
+        mp.setattr(labor, "model_for", lambda k: "m")
+        labor.generate_optimized_schedule({"overall_labor_pct": 25, "overstaffed_days": [], "understaffed_days": [],
+                                           "dow_summary": {}, "period_days": 0, "total_sales": 0}, [],
+                                          roster=[("Ana", "Server")], week_start=WEEK[0],
+                                          closed_dates=sorted(c.closed_dates))
+    finally:
+        mp.undo()
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
+    assert "Closed: Mon 2026-12-21 and Fri 2026-12-25 — write no shifts on those dates." in prompt
 
 
 def test_saving_the_rules_keeps_the_closures(rid, db_path):

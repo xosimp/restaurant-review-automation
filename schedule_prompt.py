@@ -112,6 +112,26 @@ def iso_dates(text) -> str:
     return "".join(out)
 
 
+_ISO_FOR_OWNER = re.compile(r"\b(?:((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*),? )?(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def owner_dates(text) -> str:
+    """The model's words as the owner reads them: every ISO date written
+    M/D/YY, its weekday kept as written — "Fri 2026-10-09" becomes "Fri
+    10/9/26" (DESIGN_SYSTEM.md → Dates and times). The model reads ISO
+    (PR-20) and is told to name days by weekday; a date it writes anyway
+    never reaches an owner as ISO."""
+    from time_utils import mdy
+
+    def _sub(m):
+        try:
+            d = date(int(m.group(2)), int(m.group(3)), int(m.group(4)))
+        except ValueError:
+            return m.group(0)
+        return (m.group(1) + " " if m.group(1) else "") + mdy(d)
+    return _ISO_FOR_OWNER.sub(_sub, str(text or ""))
+
+
 def model_text(text, limit: int = 240) -> str:
     """Code-built words that carry a person's or an owner's phrase (an event
     label inside a requirement's reason): one line, capped, with any fence

@@ -66,9 +66,10 @@ def test_a_fill_tuesday_text_is_a_signal_on_tuesday_that_every_reader_sees():
     assert row["lift_pct"] is None                         # no measured campaign lift yet: the assumed path
     block = demand_signals.prompt_block(demand_signals.by_date(rid, ["2026-09-29"]), ["2026-09-29"])
     assert "Text to 412 guests to fill Tuesday" in block and "ASSUMED" in block
-    # The owner's words are fenced and the date is M/D/YY, like all memory in a prompt.
+    # The owner's words are fenced and the date is the schedule prompt's one
+    # format, weekday and ISO (C1, PR-20); the owner reads M/D/YY (below).
     import ai_guard
-    assert "Tuesday 9/29/26: " + ai_guard.UNTRUSTED_OPEN in block and "2026-09-29" not in block
+    assert "Tue 2026-09-29: " + ai_guard.UNTRUSTED_OPEN in block and "9/29/26" not in block
     # No trim of that night, and the reason is said.
     g = staffing_signals.trim_guard(rid, "Tuesday", on_date=date(2026, 9, 29))
     assert g["suppress"] is True and "Text to 412 guests" in g["why"] and "9/29/26" in g["why"]

@@ -451,8 +451,8 @@ def _no_shift_data_message(restaurant_id, restaurant=None, missing="history"):
 
 
 def _prompt_experienced(marked, tenure, constraints, roster_pairs) -> list:
-    """The names the prompt lists as experienced (schedule_requirements.
-    experience_block): the owner's marks and — where experience is judged
+    """The names the prompt marks experienced (the EXPERIENCE column of
+    their ROSTER line, labor._roster_people): the owner's marks and — where experience is judged
     at all, by the scorer's own rule (shift_quality.experience_judged) —
     the managers, anyone standing in as one and the salaried people on the
     roster (schedule audit 10/3/26 D-6). Tenure is the punch count, so an
@@ -973,33 +973,6 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('manager_plan', _sfx, restaurant_id)
         manager_plan = _skeleton.failed_plan(constraints, _sfx)
-    # The rules block is kept apart from the rest so a department call can be
-    # given the rules for its own people only (E-29, PR-17: a kitchen-only
-    # call was told every manager's name and the whole roster's floors, then
-    # told to schedule nobody off its list). It sits after MANAGER COVERAGE;
-    # the rest is the end of THIS RESTAURANT'S WEEK (schedule audit 10/3/26
-    # PR-26: the same text on every call of the generation, cached).
-    rules_block = _rules.prompt_block(constraints, manager_plan=manager_plan)
-    # Each person's facts for the one ROSTER table (PR-33): what the rules
-    # hold them to (schedule_rules.person_facts) and what the engine knows
-    # of them — reliability, what they want, a role trained up beside a
-    # closer, the shifts they have worked in each role, a per-role score —
-    # under the roster's spelling. They used to be eight blocks the model
-    # joined by name, one of them capped.
-    roster_facts = None
-    try:
-        roster_facts = _rules.person_facts(constraints, [n for n, _r in roster_pairs])
-        _roster_signals(roster_facts, restaurant_id, display=_disp, reliability=reliability,
-                        stated=stated_prefs, learned=learned_prefs, could_hold=could_hold, role_scores=_role_scores)
-    except Exception as _sfx:
-        _soft_fail('roster facts', _sfx, restaurant_id)
-        roster_facts = None
-    # How the code reads each of the owner's standing rules, said beside
-    # them (PR-2); an owner-only rule's reading never reaches the prompt
-    # (D-38).
-    owner_rule_reads = [{"reads_as": r.get("reads_as") or _rules.rule_reads_as(r), "floor": bool(r.get("floor_role"))}
-                        for r in (constraints.owner_rules or []) if not r.get("private")]
-    owner_rule_reads += [{"unchecked": True} for _t in (constraints.owner_rules_unchecked or [])]
     # Everything learned reaches the model as ONE budgeted block (schedule
     # audit 10/3/26 L-28): the scheduling memory's own facts (the manager's
     # habits, openers, sections, teams, overtime and late closes, the
@@ -1028,6 +1001,33 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                       ("starting", learning["starting_block"])])
     except Exception as _sfx:
         _soft_fail('learned prompt block', _sfx, restaurant_id)
+    # The rules block is kept apart from the rest so a department call can be
+    # given the rules for its own people only (E-29, PR-17: a kitchen-only
+    # call was told every manager's name and the whole roster's floors, then
+    # told to schedule nobody off its list). It sits after MANAGER COVERAGE;
+    # the rest is the end of THIS RESTAURANT'S WEEK (schedule audit 10/3/26
+    # PR-26: the same text on every call of the generation, cached).
+    rules_block = _rules.prompt_block(constraints, manager_plan=manager_plan)
+    # Each person's facts for the one ROSTER table (PR-33): what the rules
+    # hold them to (schedule_rules.person_facts) and what the engine knows
+    # of them — reliability, what they want, a role trained up beside a
+    # closer, the shifts they have worked in each role, a per-role score —
+    # under the roster's spelling. They used to be eight blocks the model
+    # joined by name, one of them capped.
+    roster_facts = None
+    try:
+        roster_facts = _rules.person_facts(constraints, [n for n, _r in roster_pairs])
+        _roster_signals(roster_facts, restaurant_id, display=_disp, reliability=reliability,
+                        stated=stated_prefs, learned=learned_prefs, could_hold=could_hold, role_scores=_role_scores)
+    except Exception as _sfx:
+        _soft_fail('roster facts', _sfx, restaurant_id)
+        roster_facts = None
+    # How the code reads each of the owner's standing rules, said beside
+    # them (PR-2); an owner-only rule's reading never reaches the prompt
+    # (D-38).
+    owner_rule_reads = [{"reads_as": r.get("reads_as") or _rules.rule_reads_as(r), "floor": bool(r.get("floor_role"))}
+                        for r in (constraints.owner_rules or []) if not r.get("private")]
+    owner_rule_reads += [{"unchecked": True} for _t in (constraints.owner_rules_unchecked or [])]
     extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
                   + _pairs_block(pairs, roster_pairs)
                   + learned_blk
@@ -1798,7 +1798,10 @@ def _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, r
             # Only this part's people: its managers (or where they are), its
             # floors, its per-person limits (E-29, PR-17).
             dk["rules_block"] = _chunk_rules_block(rules_c, t["people"], manager_plan=kwargs.get("manager_plan"))
-        if extra_rest and not dk.get("extra_blocks"):
+        if extra_rest is not None:
+            # A caller that hands the context apart from the rules (its
+            # extra_blocks carrying the whole roster's rules): the part sees
+            # its own rules only.
             dk["extra_blocks"] = extra_rest
         notes += _department_addendum(t, written_rows, managers)
     if redo is not None and kept:
