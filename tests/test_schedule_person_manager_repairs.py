@@ -244,20 +244,27 @@ def test_overtime_goes_to_a_teammate_already_on_that_day_as_a_second_leg():
 
 
 def test_a_teammate_running_on_takes_the_tail_of_a_shift():
+    # Vince is 2h over; Bea (36h) can take no whole shift without overtime,
+    # and nobody covers the last two hours of any of his shifts — but Bea's
+    # Saturday ends at 7pm, so she runs on to 10pm and Vince goes home at 8pm.
     c = _c(roster_names=["Vince", "Bea"], active={"vince", "bea"})
-    rows = [_row(i, "Vince", "2:00pm", "10:00pm", "Line Cook") for i in range(5)]
-    rows.append(_row(5, "Vince", "12:00pm", "10:00pm", "Line Cook"))                    # 50h
-    rows.append(_row(5, "Bea", "11:00am", "7:00pm", "Line Cook"))                       # 8h
+    rows = [_row(i, "Vince", "2:00pm", "10:00pm", "Line Cook") for i in range(4)]
+    rows.append(_row(5, "Vince", "12:00pm", "10:00pm", "Line Cook"))                    # 42h
+    rows += [_row(i, "Bea", "10:00am", "5:00pm", "Line Cook") for i in range(4)]
+    rows.append(_row(5, "Bea", "11:00am", "7:00pm", "Line Cook"))                       # 36h
     out = sr.rebalance_overtime(rows, c, roster_roles={"Vince": "Line Cook", "Bea": "Line Cook"})
-    assert _hours(out["rows"], "Vince") <= 40
-    assert not out["left"]
+    assert _hours(out["rows"], "Vince") == 40 and _hours(out["rows"], "Bea") == 39
+    sat = {r["employee"]: r for r in out["rows"] if r["date"] == WEEK[5]}
+    assert sat["Vince"]["shift_end"] == "8:00pm" and sat["Bea"]["shift_end"] == "10:00pm"
+    assert not out["left"] and not out["moves"]
     assert not _hard(out["rows"], c)
 
 
 def test_a_trim_bigger_than_one_shift_allows_is_spread_over_shifts():
+    # 3.75h over: more than one shift's 2.5h trim, which used to mean no trim at all
     c = _c(roster_names=["Vince", "Bea"], active={"vince", "bea"})
-    rows = [_row(i, "Vince", "2:00pm", "10:30pm", "Line Cook") for i in range(5)]       # 42.5h
-    rows += [_row(i, "Bea", "2:00pm", "10:30pm", "Line Cook") for i in range(5)]        # 42.5h, nobody has room
+    rows = [_row(i, "Vince", "2:00pm", "10:45pm", "Line Cook") for i in range(5)]       # 43.75h
+    rows += [_row(i, "Bea", "2:00pm", "10:45pm", "Line Cook") for i in range(5)]        # 43.75h, nobody has room
     out = sr.rebalance_overtime(rows, c, roster_roles={"Vince": "Line Cook", "Bea": "Line Cook"})
     assert _hours(out["rows"], "Vince") <= 40 and _hours(out["rows"], "Bea") <= 40
     assert len(out["trims"]) >= 2 and not out["left"]
@@ -270,10 +277,12 @@ def test_an_overtime_move_never_opens_a_manager_gap():
     rows = [_row(2, "Ann", "9:00am", "9:00pm"), _row(2, "Max", "10:00am", "3:00pm", "Manager"),
             _row(2, "Max", "3:00pm", "10:00pm", "Bartender")]
     rows += [_row(i, "Max", "10:00am", "6:00pm", "Manager") for i in (0, 1, 3, 4)]
-    rows += [_row(2, "Bob", "4:00pm", "10:00pm", "Bartender")]
+    rows += [_row(0, "Bob", "11:00am", "5:00pm", "Bartender")]                         # off Wednesday, room
     before = sr.breach_profile(rows, c)["manager"]
+    assert before == {WEEK[2]: 60}
     out = sr.rebalance_overtime(rows, c, roster_roles={"Max": "Manager", "Ann": "Server", "Bob": "Bartender"})
-    assert sr.breach_profile(out["rows"], c)["manager"].get(WEEK[2], 0) <= before.get(WEEK[2], 0)
+    assert sr.breach_profile(out["rows"], c)["manager"] == before, "never a 3-9pm gap to save 4h of overtime"
+    assert not any(m["to"] == "Bob" and out["rows"][m["index"]]["date"] == WEEK[2] for m in out["moves"])
 
 
 def test_a_pinned_row_is_never_moved_or_retimed():
@@ -418,18 +427,18 @@ def test_an_owner_operator_week_is_covered_to_the_cap_and_the_rest_explained():
 # ── E-16: a second leg for a manager on the day, shifts sized to the gap ──
 
 def test_a_one_hour_gap_buys_a_one_hour_shift_not_four():
-    c = _c(roster_names=["Erik", "Andrew", "Ann"], active={"erik", "andrew", "ann"},
+    # 10-11pm with nobody managing; Andrew (9am-7pm) can't run on that far
+    # inside the 12h shift rule, and Erik is off. The 4h minimum made it
+    # Erik 7-11pm; now it is one hour (Andrew's second leg or Erik's).
+    c = _c(roster_names=["Erik", "Andrew", "Ann", "Sam"], active={"erik", "andrew", "ann", "sam"},
            managers={"erik": "Owner", "andrew": "Manager FOH"})
-    rows = [_row(2, "Ann", "4:00pm", "11:00pm"), _row(2, "Andrew", "11:00am", "6:00pm", "Manager FOH"),
-            _row(2, "Erik", "4:00pm", "10:00pm", "Owner")]
-    rows += [_row(i, "Erik", "10:00am", "8:00pm", "Owner") for i in (0, 1, 3)]          # 36h + 6h already
+    rows = [_row(2, "Andrew", "9:00am", "7:00pm", "Manager FOH"), _row(2, "Sam", "9:00am", "7:00pm"),
+            _row(2, "Ann", "10:00pm", "11:00pm")]
     out = sr.cover_manager_gaps(rows, c)
     assert "no_manager" not in _kinds(out["rows"], c)
-    changed = out["extended"] + out["added"]
-    assert changed
-    added = [x for x in out["added"]]
-    for x in added:
-        assert float(out["rows"][x["index"]]["scheduled_hours"]) == 1.0
+    assert out["added"] and not out["extended"]
+    new = out["rows"][out["added"][0]["index"]]
+    assert (new["shift_start"], new["shift_end"], new["scheduled_hours"]) == ("10:00pm", "11:00pm", "1")
 
 
 def test_the_owners_shortest_shift_sizes_an_added_shift():
