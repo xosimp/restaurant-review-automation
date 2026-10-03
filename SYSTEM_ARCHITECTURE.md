@@ -268,7 +268,7 @@ A pure evaluation layer with no I/O: `ShiftContext` (what happened) → per-dime
 1. A dimension with no data returns `None`, never `0` — weights renormalize across whatever dimensions *do* have data.
 2. A critical dimension under its floor **caps the shift at its own score** (never drags it further via an arbitrary penalty).
 3. Confidence (how much data backed the score) is tracked separately from the score itself — a high-confidence 60 and a low-confidence 60 are reported differently.
-`SUBSTANTIVE_DIMENSIONS` gates the "fatigue alone can't produce a score" rule. The what-if / swap evaluator (`_SwapIndex`) only considers same-role swaps and is bounded (`MAX_CANDIDATE_EVALUATIONS`) so it stays O(1)-ish per legality check rather than re-scanning the whole schedule.
+`SUBSTANTIVE_DIMENSIONS` gates the "fatigue alone can't produce a score" rule. The what-if (`compare_candidates`) tries same-role-family swaps and replacements, bounded by `MAX_CANDIDATE_EVALUATIONS` (and `max_seconds` when a deadline is passed); `_SwapIndex` keeps its cheap checks O(1)-ish, and given the week's `Constraints` every candidate is also held to every rule — the person-level rules for whoever gains a shift and the whole week by breach identity through a kept sweep (`schedule_rules.IncrementalSweep`) that re-sweeps only the people and dates a trial moved. `LocalScorer` re-scores only the dates a trial touched (the week-level measures every time); `exact=True` is `score_rows`' answer field for field (schedule audit 10/3/26 P-33, P-37, P-38).
 
 ## The day's jobs (workflow audit #19)
 
