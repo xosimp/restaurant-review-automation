@@ -17,7 +17,16 @@ deterministic, and never calls a model.
   predict_row_edits            which rows of a draft the manager is likely
                                to change, from smoothed edit rates over their
                                own finished drafts (edit_prediction_backtest
-                               measures it on held-out weeks)
+                               measures it on held-out weeks); once the
+                               backtest has earned it, likely_edit_signals /
+                               likely_to_change put it to use (L-15)
+  learning_weeks / edited_weeks  every week a person finished with, read by
+                               schedule_versions.learning_weeks (the original
+                               draft, the manager's own pre-publish changes)
+  capture_save                 what a save teaches as it is made: Cavnar AI's
+                               kept changes credit that move, a change to a
+                               sent week is a reaction, the first weeks ask a
+                               one-tap why (answer_edit_question)
   calibrate_weights            the Shift Quality weights fitted to what
                                published shifts did (a joint ridge fit per
                                outcome, watched nights only for issues,
