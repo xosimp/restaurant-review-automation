@@ -6300,6 +6300,11 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
     # Closed dates and days the generation accepted as not trading.
     c.closed_dates = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
     newly = _take_new_time_off(c, fresh) if (fresh is not None and fresh is not c) else []
+    if fresh is not None and fresh is not c:
+        # A setting that has become unreadable since is named too (P-1).
+        for p in getattr(fresh, "input_problems", None) or []:
+            if p not in c.input_problems:
+                c.input_problems.append(p)
     if newly or (fresh is not None and fresh is not c):
         result["pending_time_off"] = {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()}
     return c, newly

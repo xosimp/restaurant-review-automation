@@ -258,6 +258,7 @@ def test_the_verdict_is_stored_once_a_week(db):
     assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 12))["written"] == 1
     rows = sx.verdicts(EXP["key"], db_path=db)
     assert [r["week"] for r in rows] == ["2026-W42", "2026-W41"] and rows[0]["method"] == sx.VERDICT_METHOD
-    assert rows[0]["state"] == "insufficient" and rows[0]["arms"]
+    # One restaurant can never reach a verdict: paused, said (P-21).
+    assert rows[0]["state"] == "paused" and rows[0]["arms"]
     hist = sx.readout(db_path=db)["experiments"][0]["verdict_history"]      # the admin readout carries it
     assert [h["week"] for h in hist] == ["2026-W42", "2026-W41"]
