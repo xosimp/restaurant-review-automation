@@ -354,10 +354,14 @@ def _calibration_world(db_path, rid, weeks, shifts_per_week=6):
         for d, part, issues, rating, labor in outcomes:
             # The rating as attributed to the shift (the reviews named its
             # meal, posted within two days) — what calibration reads
-            # (memory audit 9/29/26, reviews_to_labor).
+            # (memory audit 9/29/26, reviews_to_labor). The labor % per
+            # shift is the DAYPART's own (labor_pct_daypart — schedule audit
+            # 10/3/26 L-13): labor_pct is the day's figure, the same on both
+            # rows, and calibration no longer reads it as a shift's.
             conn.execute("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, issues, "
-                         "review_rating, review_rating_attributed, labor_pct) VALUES (?,?,?,?,10,2,?,?,?,?)",
-                         (rid, cur.lastrowid, d, part, issues, rating, rating, labor))
+                         "review_rating, review_rating_attributed, labor_pct, labor_pct_daypart) "
+                         "VALUES (?,?,?,?,10,2,?,?,?,?,?)",
+                         (rid, cur.lastrowid, d, part, issues, rating, rating, labor, labor))
     conn.commit()
     conn.close()
 

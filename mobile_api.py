@@ -7894,7 +7894,10 @@ def mobile_schedule_sections(current_user):
     `start` and `end` (iso dates) — the Schedule Studio's section picker,
     web (/api/labor/schedule/sections) and phone alike (employee audit V12).
     {ok, sections: [names], assigned: [{date, employee, shift_start
-    ("HH:MM"), section}], foh_roles: [lowercase roles the picker is for]}."""
+    ("HH:MM"), section}], usual: [{employee, day, daypart, section,
+    confidence, status, because}] (each server's usual section, from the
+    scheduling memory — schedule audit 10/3/26 L-22), foh_roles: [lowercase
+    roles the picker is for]}."""
     import json as _json
     from models import foh_sections, shift_sections_between, get_restaurant
     rid = current_user["restaurant_id"]
@@ -7907,7 +7910,17 @@ def mobile_schedule_sections(current_user):
                if str(x).strip()]
     except Exception:
         foh = []
-    return jsonify(ok=True, sections=names, assigned=assigned, foh_roles=foh or ["server"]), 200
+    # Each server's usual section by weekday and daypart, from the
+    # scheduling memory (schedule audit 10/3/26 L-22) — suggested beside a
+    # shift that has none; never assigned by code.
+    usual = []
+    if names:
+        try:
+            import schedule_memory as _smem
+            usual = [u for u in _smem.usual_sections(rid) if u["section"] in names]
+        except Exception as _ux:
+            print(f"[sections] usual sections unavailable rid={rid}: {_ux}")
+    return jsonify(ok=True, sections=names, assigned=assigned, usual=usual, foh_roles=foh or ["server"]), 200
 
 
 @mobile_bp.route("/labor/schedule/sections", methods=["POST"])
@@ -7930,7 +7943,8 @@ def mobile_schedule_sections_save(current_user):
             return jsonify(ok=True, sections=set_foh_sections(rid, data.get("sections"))), 200
         section = set_shift_section(rid, data.get("date"), data.get("employee"), data.get("shift_start"),
                                     data.get("section"),
-                                    updated_by=current_user.get("username") or current_user.get("email"))
+                                    updated_by=current_user.get("username") or current_user.get("email"),
+                                    user=current_user)
         return jsonify(ok=True, section=section, sections=foh_sections(rid)), 200
     except SectionInputError as e:
         return jsonify(ok=False, error=e.user_message), 400

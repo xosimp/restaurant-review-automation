@@ -529,6 +529,13 @@ _LEAD = re.compile(r'^Move somebody who clears ".*" onto (?P<where>.+?)\.?$')
 _PAIR = re.compile(r"^Pair (?P<name>.+?) on (?P<where>.+?) with a stronger hand")
 _TRIM = re.compile(r"^Trim about (?P<h>\d+(?:\.\d+)?)h from (?P<where>.+?) to get back")
 _REST = re.compile(r"^Give (?P<name>.+?) a day off — \d+ in a row")
+# The shapes the five above missed (schedule audit 10/3/26 L-34: most kinds
+# never got an outcome because an edit that carried them out was never read
+# as acceptance). A rule breach is not here: whether an edit fixed it needs
+# the rule sweep, and Apply fixes — Cavnar AI's own change — answers it.
+_COVER = re.compile(r"^Cover the gap in service on (?P<where>.+?): (?P<role>.+?) is down to \d+ at (?P<at>\S+), under")
+_STRONGER = re.compile(r"^Put a stronger (?P<role>.+?) on (?P<where>.+?): ")
+_SPREAD = re.compile(r"^Spread the busy shifts — (?P<names>.+?) (?:is|are) carrying too many")
 
 
 def _slot_test(where: str):
@@ -597,9 +604,59 @@ def addressed_recommendations(recommendations: list, before_rows: list, after_ro
         elif _REST.match(rec):
             name = _REST.match(rec).group("name").strip().lower()
             hit = _longest_run(after_rows, name) < _longest_run(before_rows, name)
+        elif _COVER.match(rec):
+            m = _COVER.match(rec)
+            test = _slot_test(m.group("where"))
+            at = _covering_minute(m.group("at"))
+            if test and at is not None:
+                role = m.group("role")
+                b = {n for n in _family_people(before_rows, test, role) if _covers(before_rows, n, test, at)}
+                a = {n for n in _family_people(after_rows, test, role) if _covers(after_rows, n, test, at)}
+                hit = len(a) > len(b)
+        elif _STRONGER.match(rec):
+            m = _STRONGER.match(rec)
+            test = _slot_test(m.group("where"))
+            if test:
+                role = m.group("role")
+                hit = bool(_family_people(after_rows, test, role) - _family_people(before_rows, test, role))
+        elif _SPREAD.match(rec):
+            names = [n.strip().lower() for n in re.split(r",| and ", _SPREAD.match(rec).group("names")) if n.strip()]
+            count = lambda rows, n: sum(1 for r in rows if (r.get("employee") or "").strip().lower() == n)
+            hit = any(count(after_rows, n) < count(before_rows, n) for n in names)
         if hit:
             out.append(rec)
     return out
+
+
+def _family_people(rows, test, role):
+    """_people for a role FAMILY ("server" holds "Server AM" and "Server
+    PM"): the sentences name a requirement's role, the rows a job code."""
+    from shift_quality import role_family
+    fam = role_family(role)
+    return {(r.get("employee") or "").strip().lower() for r in rows if test(r) and (r.get("employee") or "").strip()
+            and role_family(r.get("role")) == fam}
+
+
+def _covering_minute(text):
+    from schedule_rules import parse_minutes
+    return parse_minutes(text)
+
+
+def _covers(rows, name_low, test, minute) -> bool:
+    """Whether `name_low` has a row on the slot that is on the floor at
+    `minute` (a close past midnight read across it)."""
+    from schedule_rules import parse_minutes
+    for r in rows:
+        if (r.get("employee") or "").strip().lower() != name_low or not test(r):
+            continue
+        s, e = parse_minutes(r.get("shift_start") or ""), parse_minutes(r.get("shift_end") or "")
+        if s is None or e is None:
+            continue
+        e = e + 1440 if e <= s else e
+        m = minute + 1440 if minute < s and minute + 1440 < e else minute
+        if s <= m < e:
+            return True
+    return False
 
 
 # ── predicting which draft rows the manager will change ───────────────────
@@ -1460,7 +1517,8 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
 CALIBRATION_OUTCOMES = {
     "issues": (-1, "coverage and no-show issues", "fewer coverage or no-show issues", "more coverage or no-show issues"),
     "review_rating": (1, "the day's review rating", "better reviews that day", "worse reviews that day"),
-    "labor_vs_target": (-1, "labor % against target", "labor % nearer or under target", "labor % further over target"),
+    "labor_vs_target": (-1, "the daypart's labor % against target", "labor % nearer or under target",
+                        "labor % further over target"),
 }
 
 
@@ -1478,11 +1536,17 @@ def _calibration_samples(restaurant_id, db_path):
         # (review_rating_attributed — memory audit 9/29/26,
         # reviews_to_labor): a dinner complaint posted on Sunday used to be
         # scored against Sunday lunch, and the calibration learned from noise.
+        # Labor % is the DAYPART's own (schedule audit 10/3/26 L-13): the
+        # punched hours priced at their rates over the daypart's measured
+        # sales (schedule_intel.record_outcomes). The day's figure, copied
+        # onto both rows, fitted lunch and dinner to the same number; a row
+        # without a measured daypart figure has no labor reading at all.
         try:
             outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating_attributed AS review_rating, "
-                                "labor_pct FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+                                "labor_pct_daypart AS labor_pct FROM schedule_outcomes WHERE restaurant_id=?",
+                                (restaurant_id,)).fetchall()
         except Exception:
-            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, labor_pct "
+            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, NULL AS labor_pct "
                                 "FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         ids = sorted({o["history_id"] for o in outs})
         hist = {}

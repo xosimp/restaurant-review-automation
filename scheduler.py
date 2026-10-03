@@ -4740,8 +4740,11 @@ def scheduler_loop():
                 from shift_requests import run_open_shift_watch
                 _ops.run_job("open_shift_watch", run_open_shift_watch)
 
-            # Sunday 5am — let each restaurant's own clean and troubled weeks
-            # nudge its quality weights (strategy_jobs.run_quality_calibration).
+            # Sunday 5am — what each restaurant's own shift outcomes suggest
+            # for its Shift Quality weights, floors and bars, recorded as a
+            # suggestion the owner applies — never applied here; a strong one
+            # waits in the action queue (strategy_jobs.run_quality_calibration,
+            # schedule audit 10/3/26 L-14).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):
                 from strategy_jobs import run_quality_calibration
                 _ops.run_job("quality_calibration", run_quality_calibration)
@@ -4759,6 +4762,15 @@ def scheduler_loop():
             if _due(now, 5) and _ops.claim_period("people_nightly", str(today)):
                 from strategy_jobs import run_people_nightly
                 _ops.run_job("people_nightly", run_people_nightly)
+
+            # 6am daily, once people_nightly has kept the standing patterns
+            # and last night's attendance current — what each restaurant's
+            # scheduling has learned, rebuilt as one memory with its
+            # confidence and status (schedule_memory, schedule audit 10/3/26
+            # L-29). Sends nothing.
+            if _due(now, 6) and _ops.claim_period("schedule_memory", str(today)):
+                from strategy_jobs import run_schedule_memory
+                _ops.run_job("schedule_memory", run_schedule_memory)
 
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the

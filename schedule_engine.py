@@ -930,6 +930,15 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('learned', _sfx, restaurant_id)
         learned, pattern_conflicts = [], []
+    # The scheduling memory's habits, refreshed from those same patterns
+    # before this draft reads it (schedule audit 10/3/26 L-29, L-3): an edit
+    # published today binds today's draft — the prompt and the passes alike
+    # — not tomorrow's after the nightly consolidation.
+    import schedule_memory as _smem
+    try:
+        _smem.consolidate(restaurant_id, patterns=(learned, pattern_conflicts), only=("patterns",))
+    except Exception as _sfx:
+        _soft_fail('schedule_memory patterns', _sfx, restaurant_id)
     # The money and the record: what a holiday did here last time, sales per
     # labor hour by daypart, what published weeks actually did, who has
     # carried the weekends, what staff want, who could hold a station.
@@ -1114,6 +1123,36 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('manager_plan', _sfx, restaurant_id)
         manager_plan = _skeleton.failed_plan(constraints, _sfx)
+    # Everything learned reaches the model as ONE budgeted block (schedule
+    # audit 10/3/26 L-28): the scheduling memory's own facts (the manager's
+    # habits — standing patterns uncapped before — openers, sections, teams,
+    # overtime and late closes, the owner's redos: candidates in full, a
+    # fact the passes hold as one short [held] line) and each learned block
+    # below as a section with its share, every line ranked by relevance to
+    # this week (people on the roster, this week's weekdays) and the least
+    # relevant cut first. About fifteen blocks were concatenated with no
+    # budget, so the prompt bloated and diluted as history grew. The owner's
+    # pairings, the dated facts, the last nights, the open asks and
+    # memory_context (already budgeted) are not learned memory and stay as
+    # they were.
+    learned_blk = ""
+    try:
+        learned_blk = _smem.prompt_lines(
+            restaurant_id, next_week_dates, roster_names=[n for n, _r in roster_pairs],
+            budget_chars=_smem.LEARNED_PROMPT_BUDGET_CHARS,
+            sections=[("reliability", _reliability_block(reliability)),
+                      ("outcomes", _intel.outcome_block(outcomes, week_days)),
+                      ("preferences", _intel.preferences_block(learned_prefs, stated_prefs)),
+                      ("rotation", _intel.rotation_block(learning["rotation"])),
+                      ("ledger", _intel.ledger_block(ledger)),
+                      ("could_hold", _could_hold_block(could_hold)),
+                      ("splh", _econ.splh_block(splh)),
+                      ("splh_objective", _econ.splh_objective_block(learning["splh_objective"], next_week_dates,
+                                                                    signals_by_date)),
+                      ("cohort", _cohort_block(restaurant_id, restaurant)),
+                      ("starting", learning["starting_block"])])
+    except Exception as _sfx:
+        _soft_fail('learned prompt block', _sfx, restaurant_id)
     # The rules block is kept apart from the rest so a department call can be
     # given the rules for its own people only (E-29, PR-17: a kitchen-only
     # call was told every manager's name and the whole roster's floors, then
@@ -1121,17 +1160,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     rules_block = _rules.prompt_block(constraints, manager_plan=manager_plan)
     extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
                     + _pairs_block(pairs, roster_pairs)
-                    + _reliability_block(reliability)
-                    + _versions.prompt_block(learned)
-                    + _econ.splh_block(splh)
-                    + _intel.outcome_block(outcomes, week_days)
-                    + _intel.ledger_block(ledger)
-                    + _intel.preferences_block(learned_prefs, stated_prefs)
-                    + _could_hold_block(could_hold)
-                    + _cohort_block(restaurant_id, restaurant)
-                    + _intel.rotation_block(learning["rotation"])
-                    + _econ.splh_objective_block(learning["splh_objective"], next_week_dates, signals_by_date)
-                    + learning["starting_block"]
+                    + learned_blk
                     + last_nights_blk
                     + _stsig.soft_block(soft_reqs)
                     + memory_blk)
@@ -5547,6 +5576,10 @@ REPAIR_STAGES = (
     ("overtime", _rules.TIER_OVERTIME, "The overtime rebalance", "overtime a teammate could take may still be in it"),
     ("min_hours", _rules.TIER_MIN_HOURS, "The minimum-hours fill",
      "people under the minimum you set may still be short"),
+    # Closes that measurably run late, ended when they really end (L-16) —
+    # counted against the budget before the trim makes room for them.
+    ("pad_overruns", _rules.TIER_BUDGET, "The pass that ends late-running closes when they really end",
+     "the closes that usually run late still end at their scheduled time"),
     ("section_cap", _rules.TIER_BUDGET, "The section-count trim", "a night may have more servers than sections"),
     ("budget", _rules.TIER_BUDGET, "The trim to the hours budget", "the week may be over its hours budget"),
     ("top_up", _rules.TIER_QUALITY, "The fill to the shift requirements", "a shift may be short of its usual crew"),
@@ -5895,6 +5928,25 @@ def _stage_min_hours(rows, x):
             "report": {"moved": len(out["moves"]), "added": len(out["added"]), "left": out.get("left") or []}}
 
 
+def _stage_pad_overruns(rows, x):
+    """The closes of a role that measurably run past their scheduled end,
+    ended when they really end (schedule_memory.pad_overruns — schedule audit
+    10/3/26 L-16): an active end_overrun memory pads them where the person
+    can legally take it (their overtime line included), never a pinned row
+    or a kept day, never over the owner's own end-time rule. A stage of the
+    budget's rank, ahead of the trim: the week's hours are the ones it will
+    really run, and the trim makes room among the discretionary ones."""
+    learned = [m for m in (x.signals.get("learned") or []) if m.get("kind") == "end_overrun"]
+    if not learned:
+        return {"rows": rows}
+    import schedule_memory as _smem_pad
+    out = _smem_pad.pad_overruns(rows, learned, c=x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + str(e["from"]), "to": e["to"],
+              "kind": "end_overrun", "reason": e["reason"]} for e in out.get("padded") or []]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"padded": len(out.get("padded") or []), "left": out.get("left") or []}}
+
+
 def _stage_section_cap(rows, x):
     rep = {}
     new, n, dates = _trim_server_overlap_cap(
@@ -5997,7 +6049,8 @@ def _stage_role_times(rows, x):
 
 _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager,
               "floors": _stage_floors, "stations": _stage_stations, "close_out": _stage_close_out,
-              "overtime": _stage_overtime, "min_hours": _stage_min_hours, "section_cap": _stage_section_cap,
+              "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
+              "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
               "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times}
 
@@ -6187,7 +6240,8 @@ def _net_repair(state, prof, x, ledger, converged, restored) -> dict:
         c = counts.setdefault(rec["stage"], {})
         for k, v in (rec["report"] or {}).items():
             if isinstance(v, (int, float)) and not isinstance(v, bool) and k in ("moved", "trimmed", "added",
-                                                                               "extended", "retimed", "hours"):
+                                                                               "extended", "retimed", "hours",
+                                                                               "padded"):
                 c[k] = round(c.get(k, 0) + v, 2)
     cap_dates = {}
     for rec in records:
@@ -6323,6 +6377,8 @@ def _apply_repair_reports(result, loop) -> None:
     result["min_hours"] = {"moved": n("min_hours", "moved"), "added": n("min_hours", "added"),
                            "left": (rep.get("min_hours") or {}).get("left") or []}
     result["role_times"] = {"retimed": n("role_times", "retimed"), "left": (rep.get("role_times") or {}).get("left") or []}
+    result["end_overruns"] = {"padded": n("pad_overruns", "padded"),
+                              "left": (rep.get("pad_overruns") or {}).get("left") or []}
     result["cap_floor_conflicts"] = (rep.get("section_cap") or {}).get("conflicts") or []
     result["trimmed"] = list(loop.get("trimmed") or [])
     result["hours_trimmed"] = float(loop.get("hours_trimmed") or 0.0)
