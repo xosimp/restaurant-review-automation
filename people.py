@@ -1365,9 +1365,16 @@ def _ask(conn, idx, pid_new, pid_old, kind, reason, evidence=None):
     if a == b:
         return None
     lo, hi = min(a, b), max(a, b)
-    answered = conn.execute("SELECT id FROM person_questions WHERE restaurant_id=? AND kind=? AND "
-                            "((person_a=? AND person_b=?) OR (person_a=? AND person_b=?))",
-                            (idx.rid, kind, a, b, b, a)).fetchone()
+    # Two exact lookups on the UNIQUE(restaurant_id, person_a, person_b,
+    # kind) index — the stored order (hi, lo) first. The one OR-query over
+    # both orders scanned the table, and a big sync asks thousands of these
+    # (a 25-page Toast window: 72s of one test, 10/2/26).
+    answered = None
+    for pa, pb in ((hi, lo), (lo, hi)):
+        answered = conn.execute("SELECT id FROM person_questions WHERE restaurant_id=? AND person_a=? "
+                                "AND person_b=? AND kind=?", (idx.rid, pa, pb, kind)).fetchone()
+        if answered:
+            break
     if answered:
         return answered["id"]
     cur = conn.execute("INSERT OR IGNORE INTO person_questions (restaurant_id, person_a, person_b, kind, reason, "

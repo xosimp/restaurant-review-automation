@@ -2311,7 +2311,8 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
         good, keys = _ok(trial, (i, v["kind"]))
         if not good:
             continue
-        fixes.append({"index": i, "from": f"{r.get('employee')} {r.get('shift_start')}–{r.get('shift_end')}",
+        was = f"{r.get('employee')} {r.get('shift_start')}–{r.get('shift_end')}"
+        fixes.append({"index": i, "from": was,
                       "to": f"{trial[i]['shift_start']}–{trial[i]['shift_end']}", "kind": "minor",
                       "reason": f"{r.get('employee')} is a minor: {v['detail']} — the shift now ends inside the limit."})
         rows, base = trial, keys

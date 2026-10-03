@@ -391,9 +391,11 @@ def test_the_home_cache_is_bounded(monkeypatch):
 
 def test_the_ask_context_cache_is_bounded(monkeypatch):
     monkeypatch.setattr(ask_cavnar, "_CONTEXT_CACHE", {})
-    for name in ("_identity_context", "_profile_context", "_memory_context", "_decisions_context",
-                 "_intelligence_context", "_alerts_context", "_commitments_context",
-                 "_cross_module_context"):
+    # Every context reader, not a fixed list: _dsr_context arrived later,
+    # was not stubbed, and made this cache test 20,000 database reads
+    # (223s of a full run, 10/2/26).
+    for name in [n for n in dir(ask_cavnar) if n.startswith("_") and n.endswith("_context")
+                 and callable(getattr(ask_cavnar, n))]:
         monkeypatch.setattr(ask_cavnar, name, lambda *a, **k: "")
     for i in range(_MANY):
         ask_cavnar.build_context(types.SimpleNamespace(id=i, google_place_id=None))
