@@ -1496,7 +1496,7 @@ def _span_minutes(row):
     """(start, end) minutes past the row's own midnight, an end past
     midnight on the next day's clock (24:30 for 12:30am); None when
     unreadable."""
-    s, e = _rules.parse_minutes(row.get("shift_start", "")), _rules.end_minutes(row)
+    s, e = _rules.start_minutes(row), _rules.end_minutes(row)
     if s is None or e is None or e <= s:
         return None
     return s, e

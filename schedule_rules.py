@@ -692,24 +692,37 @@ def parse_minutes(t: str):
     return None
 
 
-def _night_offset(start_m) -> int:
-    """1440 when a start is in the small hours of its row's night: a row's
-    date is its BUSINESS date, and a start before the business day's first
-    hour (time_utils.BUSINESS_DAY_START_HOUR) is after that night's midnight
-    — a 12:30am porter dated Friday works Saturday 00:30, after Friday's
-    close. It was read as the start of Friday, so the porter's own Thursday
-    close looked like an overlap and the row opened a false manager gap at
-    dawn (schedule audit 10/3/26 E-32). The same reading as the no-show
-    watch (intraday.coverage_gaps, staff_comms._due)."""
+# A start between these hours with no end to judge by is early prep for the
+# morning (a 4:30am baker), not last night's tail.
+_EARLY_PREP_FROM = 4 * 60
+
+
+def _night_offset(start_m, end_m=None) -> int:
+    """1440 when a shift is in the small hours of its row's night: a row's
+    date is its BUSINESS date, and a shift that starts before the business
+    day's first hour (time_utils.BUSINESS_DAY_START_HOUR) AND is over by
+    6am is after that night's midnight — a 12:30am–4:00am porter dated
+    Friday works Saturday 00:30, after Friday's close. It was read as the
+    start of Friday, so the porter's own Thursday close looked like an
+    overlap and the row opened a false manager gap at dawn (schedule audit
+    10/3/26 E-32). A shift that starts that early and runs into the morning
+    is the morning's (a 4:30am–12:30pm baker); with no end to judge by, a
+    start from 4am on is too. The same night as the no-show watch
+    (intraday.coverage_gaps, staff_comms._due)."""
     from time_utils import BUSINESS_DAY_START_HOUR
-    return 24 * 60 if start_m is not None and start_m < BUSINESS_DAY_START_HOUR * 60 else 0
+    if start_m is None or start_m >= BUSINESS_DAY_START_HOUR * 60:
+        return 0
+    if end_m is None:
+        return 24 * 60 if start_m < _EARLY_PREP_FROM else 0
+    end = end_m if end_m > start_m else end_m + 24 * 60
+    return 24 * 60 if end <= _OVERNIGHT_LATEST_BEFORE else 0
 
 
 def start_minutes(row):
     """A row's start as minutes past its own (business) date's midnight —
     past 1440 for a start in the small hours of its night (E-32)."""
     s = parse_minutes(row.get("shift_start", ""))
-    return None if s is None else s + _night_offset(s)
+    return None if s is None else s + _night_offset(s, parse_minutes(row.get("shift_end", "")))
 
 
 def shift_span(row, tz=None) -> tuple:
@@ -729,7 +742,7 @@ def shift_span(row, tz=None) -> tuple:
     s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
     if s is None or e is None:
         return None, None
-    night = _night_offset(s)
+    night = _night_offset(s, e)
     start = base + timedelta(minutes=s + night)
     end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
     zone = _zone(tz)
@@ -786,7 +799,7 @@ def window_allows(lo, hi, start_m, end_m) -> tuple:
     # A start in the small hours is that night's (E-32): a 12:30am porter is
     # after a "from 6pm" window opens, not eighteen hours before it, and the
     # window's own small-hours bounds are read in the same night.
-    night = _night_offset(start_m)
+    night = _night_offset(start_m, end_m)
     if night:
         lo = None if lo is None else (lo + 24 * 60 if lo < _OVERNIGHT_LATEST_BEFORE else lo)
         if hi is not None and (hi < _OVERNIGHT_LATEST_BEFORE or (lo is not None and hi < lo)):
@@ -1796,7 +1809,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         for d, items in by_date.items():
             events = []
             for i, r in items:
-                s_, e_ = parse_minutes(r.get("shift_start", "")), end_minutes(r)
+                s_, e_ = start_minutes(r), end_minutes(r)
                 if s_ is not None and e_ is not None and e_ > s_:
                     events.append((s_, 1, i)); events.append((e_, -1, i))
             events.sort(key=lambda ev: (ev[0], ev[1]))
@@ -1997,9 +2010,10 @@ def end_minutes(row):
     s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
     if e is None:
         return None
+    night = _night_offset(s, e)
     if s is not None and e <= s:
         e += 24 * 60
-    return e + _night_offset(s)
+    return e + night
 
 
 def _coverage_violations(rows: list, c: Constraints) -> list:

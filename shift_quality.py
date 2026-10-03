@@ -2718,8 +2718,9 @@ def daypart_of(shift_start: str) -> str:
             continue
         # A start in the small hours is the night it belongs to — the row's
         # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
-        # schedule audit 10/3/26 E-32), never the next morning.
-        return "night" if hour >= 15 or hour < BUSINESS_DAY_START_HOUR else "morning"
+        # schedule audit 10/3/26 E-32), never the next morning; from 4am it
+        # is early prep for the morning (schedule_rules._night_offset).
+        return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
     return "unknown"
 
 
@@ -3228,6 +3229,20 @@ def _unavailable(availability: dict, name: str, day: str) -> bool:
     return (day or "").strip().lower() in {str(d).strip().lower() for d in blocked}
 
 
+def _small_hours_night(start_m, end_m=None) -> int:
+    """1440 when a shift belongs to the small hours of its row's night —
+    schedule_rules._night_offset's rule, here because this module is pure:
+    it starts before the business day's first hour and is over by 6am (a
+    12:30am porter), or, with no end to judge by, starts before 4am. A
+    4:30am–12:30pm baker is the morning's (schedule audit 10/3/26 E-32)."""
+    if start_m is None or start_m >= BUSINESS_DAY_START_HOUR * 60:
+        return 0
+    if end_m is None:
+        return 24 * 60 if start_m < 4 * 60 else 0
+    end = end_m if end_m > start_m else end_m + 24 * 60
+    return 24 * 60 if end <= 6 * 60 else 0
+
+
 def _span(row):
     """(start, end) datetimes on the row's date; an end before the start
     crosses midnight, and a start in the small hours is that night's
@@ -3240,7 +3255,7 @@ def _span(row):
     s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
     if s is None or e is None:
         return None, None
-    night = 24 * 60 if s < BUSINESS_DAY_START_HOUR * 60 else 0
+    night = _small_hours_night(s, e)
     start = base + timedelta(minutes=s + night)
     end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
     return start, end

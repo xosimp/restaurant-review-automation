@@ -639,3 +639,22 @@ def test_every_pass_judges_by_breach_identity_and_asks_can_add():
     assert "c.can_add(" in src and "c.fillable(" in src
     assert "c.can_add(" in inspect.getsource(sr.cover_manager_gaps)
     assert "c.fillable(" in inspect.getsource(sr.cover_manager_gaps)
+
+
+def test_a_baker_starting_before_five_is_the_mornings_not_last_nights():
+    # E-32 reads a small-hours shift as its night; a 4:30am–12:30pm prep
+    # shift runs into the morning and is the morning's (lead, 10/3/26)
+    import schedule_rules as _r
+    import shift_quality as _q
+    baker = {"date": "2026-10-06", "employee": "B", "role": "Baker", "shift_start": "4:30am",
+             "shift_end": "12:30pm", "scheduled_hours": "8"}
+    porter = {"date": "2026-10-06", "employee": "P", "role": "Porter", "shift_start": "12:30am",
+              "shift_end": "4:00am", "scheduled_hours": "3.5"}
+    assert _r.start_minutes(baker) == 270 and _r.end_minutes(baker) == 750
+    assert _r.start_minutes(porter) == 1470 and _r.end_minutes(porter) == 1680
+    assert _r.daypart_of("4:30am") == _q.daypart_of("4:30am") == "morning"
+    assert _r.daypart_of("12:30am") == _q.daypart_of("12:30am") == "night"
+    s, e = _r.shift_span(baker)
+    assert (s.hour, s.minute, e.hour) == (4, 30, 12) and s.day == 6
+    qs, qe = _q._span(baker)
+    assert (qs, qe) == (s, e)
