@@ -821,6 +821,15 @@ def _learn_patterns(ctx, patterns=None) -> list:
     else:
         live_all, conflicts = patterns
     dismissed = si.dismissed_patterns(ctx.rid, **kw)
+    # Every column the standing row keeps, carried as it is (the migration
+    # loses nothing): the counts and dates the owner's screen and the
+    # standing lifecycle read beside the evidence above.
+    conn = get_conn(ctx.db)
+    try:
+        raw = {r["pattern_key"]: dict(r) for r in conn.execute(
+            "SELECT * FROM schedule_standing_patterns WHERE restaurant_id=?", (ctx.rid,)).fetchall()}
+    finally:
+        conn.close()
     out, keys = [], set()
     clash = {(_nk(c.get("employee")), c.get("day"), c.get("daypart")) for c in (conflicts or [])}
     for s in standing:
@@ -858,6 +867,13 @@ def _learn_patterns(ctx, patterns=None) -> list:
             m["value"]["conflict"] = True
         if status == "rule":
             m["value"]["rule"] = (s.get("rule") or {}).get("note")
+        row = raw.get(s["key"]) or {}
+        m["value"]["standing"] = {f: row.get(f) for f in (
+            "times_applied", "times_confirmed", "times_overridden", "last_overridden", "checked_through",
+            "first_learned", "last_confirmed", "retired_at", "retired_week", "retest_since", "last_retest_end",
+            "retests", "dormant_at", "rule_note", "ruled_by", "source", "authority", "status") if f in row}
+        if row.get("person_id"):
+            m["person_id"] = row["person_id"]
         m["status"], m["retired_reason"] = status, reason
         m["authority"] = s.get("authority") or "principal"
         out.append(m)
@@ -2005,6 +2021,7 @@ SECTION_ORDER = ("memory", "reliability", "outcomes", "preferences", "rotation",
 # budget; prompt_lines' own default stays the contract's 1600 for the
 # memory alone).
 LEARNED_PROMPT_BUDGET_CHARS = 6000
+_MORE_NOTE_CHARS = 90
 
 
 def _short(m) -> str:
@@ -2153,7 +2170,9 @@ def prompt_lines(restaurant_id, week_dates, roster_names=None, budget_chars=1600
         return ""
     order = {n: i for i, n in enumerate(SECTION_ORDER)}
     parts.sort(key=lambda p: order.get(p[0], len(order)))
-    budget = max(0, int(budget_chars or 0))
+    # Room is kept for each section's "(+N more … not shown)" line, so the
+    # block stays inside its budget whatever it had to cut.
+    budget = max(0, int(budget_chars or 0) - _MORE_NOTE_CHARS * len(parts))
     shares = [SECTION_SHARES.get(p[0], DEFAULT_SECTION_SHARE) for p in parts]
     total = float(sum(shares)) or 1.0
     taken = [[] for _p in parts]

@@ -214,6 +214,12 @@ def test_every_standing_pattern_is_in_the_memory_with_all_its_evidence():
     assert m["misses_by_hand"] == standing["times_overridden"]
     assert m["confidence"] == round(float(standing["confidence"]), 3)
     assert m["value"]["slot"] == "off" and m["text"] == standing["text"]
+    # Nothing the standing row keeps is lost.
+    raw = _q("SELECT * FROM schedule_standing_patterns WHERE pattern_key=?", standing["key"])[0]
+    kept = m["value"]["standing"]
+    for col in ("times_applied", "times_confirmed", "times_overridden", "last_overridden", "checked_through",
+                "first_learned", "last_confirmed", "retired_week", "retest_since", "retests", "dormant_at"):
+        assert kept[col] == raw[col], col
 
 
 def test_a_retired_ruled_or_dormant_pattern_keeps_its_status_in_the_memory():
@@ -811,6 +817,42 @@ def test_the_generation_routes_its_learned_blocks_through_the_one_budget():
                 "_could_hold_block(", "_intel.preferences_block("):
         assert raw not in assembled, f"{raw} still concatenated outside the budget"
     assert "_smem.consolidate(restaurant_id, patterns=(learned, pattern_conflicts), only=(\"patterns\",))" in src
+
+
+def test_a_generation_tells_the_model_what_was_learned_in_the_one_budgeted_block(monkeypatch):
+    import datetime as dt
+    import labor
+    import schedule_engine as se
+    import time_utils
+    import weather
+    rid = _rid(open_times_json=json.dumps({d: "11:00am" for d in ("Monday", "Tuesday", "Wednesday", "Thursday",
+                                                                    "Friday", "Saturday", "Sunday")}),
+               close_times_json=json.dumps({d: "10:00pm" for d in ("Monday", "Tuesday", "Wednesday", "Thursday",
+                                                                     "Friday", "Saturday", "Sunday")}))
+    for name, role in (("Ana", "Kitchen"), ("Bo", "Kitchen"), ("Erik", "Owner")):
+        models.add_manual_team_member(rid, name, role=role)
+    _sql("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, role, day, daypart, "
+         "status, enforcement, confidence, value_json, text, opportunities, hits) VALUES "
+         "(?,?,?,?,?,?,?,?,'active','soft',0.81,?,?,6,6)", rid, "opener|kitchen|Saturday|ana", "opener",
+         "ownership", "Ana", "kitchen", "Saturday", "morning", json.dumps({"start": "8:55am", "role": "Kitchen"}),
+         "Ana opens Kitchen on Saturdays — the first Kitchen in on 6 of the 6 Saturdays they worked it.")
+    monkeypatch.setattr(labor, "load_shifts_for_restaurant", lambda r: [{"date": "2026-09-28", "employee": "Ana"}])
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r, **k: {"is_live": True, "blended_rate": 20.0})
+    monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 1, 9, 0))
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+    monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
+    captured = {}
+
+    def fake_parts(analysis, shifts, roster_pairs, kwargs):
+        captured.update(kwargs)
+        return {"schedule_csv": HEAD, "narrative": [], "summary": []}
+    monkeypatch.setattr(se, "_generate_in_parts", fake_parts)
+    se._build_schedule_result(rid)
+    extra = captured["extra_blocks"]
+    assert sm.LEARNED_TITLE in extra
+    assert "[held] Ana opens Kitchen on Saturdays, from about 8:55am (81% sure)." in extra
+    assert "WHAT THE MANAGER KEEPS CHANGING" not in extra
 
 
 # ══ L-34: more advice read as carried out, each measured as it ran ═════════
