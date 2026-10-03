@@ -5494,6 +5494,12 @@ def _places_author_row(conn, r: "Review"):
     ext = r.external_id or ""
     if r.platform != "google" or r.review_name or not ext.startswith("google_"):
         return None
+    # A row already holding this exact key (a removed one included) is the
+    # ordinary re-fetch path; re-keying another row onto it would break the
+    # unique key and fail the whole batch (10/3/26: the removed duplicate).
+    if conn.execute("SELECT 1 FROM reviews WHERE restaurant_id=? AND platform='google' AND external_id=?",
+                    (r.restaurant_id, ext)).fetchone():
+        return None
     parts = ext.split("_", 2)
     suffix = parts[2] if len(parts) == 3 else ""
     if not suffix.startswith("http"):

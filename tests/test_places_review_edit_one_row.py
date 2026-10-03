@@ -66,3 +66,21 @@ def test_two_reviewers_are_never_merged_and_a_bare_name_is_not_trusted(db_path):
     save_reviews([_rv(rid, 1790900000, author_part="Anonymous"),
                   _rv(rid, 1790900500, author_part="Anonymous")], db_path=db_path)
     assert len(_rows(db_path, rid)) == 4, "two 'Anonymous' reviews by name alone stay two"
+
+
+def test_a_removed_duplicate_holding_the_new_key_never_breaks_the_batch(db_path):
+    """Simple EJ's, 10/3/26: the second SIP row was removed; the next fetch
+    brings the edit under that removed row's key. The batch must not fail."""
+    rid = _rid(db_path)
+    save_reviews([_rv(rid, 1790913539)], db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, "
+                 "fetched_at, deleted_at) VALUES (?, 'google', ?, 'SIP', 5, 'x', '2026-10-02T05:32:13', '2026-10-02T12:03:23', "
+                 "datetime('now'))",
+                 (rid, f"google_1790937133_{URL}"))
+    conn.commit(); conn.close()
+    other = _rv(rid, 1790999999, author_part="https://www.google.com/maps/contrib/5/reviews")
+    n, _ = save_reviews([_rv(rid, 1790937133), other], db_path=db_path)
+    assert n == 1, "the other guest's review in the same batch still lands"
+    live = [r for r in _rows(db_path, rid)]
+    assert len(live) == 3
