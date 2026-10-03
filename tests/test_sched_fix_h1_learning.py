@@ -932,17 +932,13 @@ def test_an_admins_answer_waits_for_the_owner():
 
 # ══ L-15: the predictor steers once its backtest has earned it ════════════
 
-def _predict_history(rid, weeks, noisy=False):
+def _predict_history(rid, weeks):
     for i in range(weeks):
         mon = _monday(i + 1)
         draft = [_row(mon + timedelta(days=d), n) for n in ("Ana", "Ben", "Cy", "Dee", "Eve", "Flo") for d in range(5)]
         draft += [_row(mon + timedelta(days=5), "Zed"), _row(mon + timedelta(days=6), "Zed")]
-        if noisy:
-            final = [r for k, r in enumerate(draft) if (k + i) % 4]
-        else:
-            final = [r for r in draft if r["employee"] != "Zed"]
-            final = final[:i] + final[i + 1:]
-        _week(rid, mon, draft, final)
+        final = [r for r in draft if r["employee"] != "Zed"]
+        _week(rid, mon, draft, final[:i] + final[i + 1:])
 
 
 def test_the_predictor_steers_only_at_its_backtest_hit_rate():
@@ -958,10 +954,25 @@ def test_the_predictor_steers_only_at_its_backtest_hit_rate():
                                                   "features", "origin"} <= set(zed[0])
     review = sl.likely_to_change(rid, rows)
     assert review["ready"] and review["rows"][0]["employee"] == "Zed" and "were right" in review["note"]
-    rid2 = _rid()
-    _predict_history(rid2, 6, noisy=True)
-    weak = sl.likely_edit_signals(rid2, rows)
-    assert weak["ready"] is False and weak["flags"] == [] and weak["reason"]
+    # A manager who changes Zed's rows about half the time: the predictor
+    # flags them, but its own backtest is right only 38% of the time — shown,
+    # never steering.
+    import random
+    rng = random.Random(5)
+    weeks = []
+    for i in range(8):
+        start = _monday(-1) + timedelta(weeks=i)
+        wrows, edited = [], []
+        for n in ("Ana", "Ben", "Cy", "Dee", "Eve", "Flo", "Zed"):
+            for d in range(7):
+                if rng.random() < 0.6:
+                    wrows.append(_row(start + timedelta(days=d), n, start="4:00pm", hours=6))
+                    edited.append(rng.random() < (0.5 if n == "Zed" else 0.05))
+        weeks.append({"history_id": i, "week_start": start.isoformat(), "rows": wrows, "edited": edited})
+    bt = sl.edit_prediction_backtest(weeks)
+    assert bt["weeks"] >= sl.PREDICT_MIN_BACKTEST_WEEKS and bt["flagged"] and bt["hit_rate"] < 0.6
+    weak = sl.likely_edit_signals(rid, rows, weeks=weeks)
+    assert weak["ready"] is False and weak["flags"] == [] and "right 8 of 21 times" in weak["reason"]
 
 
 def test_the_publish_check_carries_likely_to_change(monkeypatch):
