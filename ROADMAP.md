@@ -127,7 +127,7 @@ restaurant 5; restaurant 4 is Will's demo copy.
     called off, reasons and notes both ways; availability by hours and dates
     with one versioned save; floor sections per shift.
   - Tasks: a same-day cover takes the sheet, one round trip per tick,
-    photos authorised before they are stored and capped, the critical
+    photos authorized before they are stored and capped, the critical
     out-of-range alert, last night's note.
   - Running late, announcements with Got it, a thread with the manager on
     duty and the Team inbox under Labor.

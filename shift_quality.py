@@ -188,7 +188,7 @@ class ShiftContext:
     profile: ShiftProfile = field(default_factory=ShiftProfile)
     scores: dict = field(default_factory=dict)         # {name: 1-5}
     tenure: dict = field(default_factory=dict)         # {name: shifts worked}
-    leader_flags: dict = field(default_factory=dict)   # {name: authorised to close}
+    leader_flags: dict = field(default_factory=dict)   # {name: authorized to close}
     leader_rules: list = field(default_factory=list)
     cross_trained: dict = field(default_factory=dict)  # {name: [roles]}
     typical_headcount: dict = field(default_factory=dict)   # {role: people}
@@ -677,7 +677,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
         # Three ways a rule can be answered, in the order an operator would
         # think of them: a named capability, a minimum score, or simply
         # being on the shift. The capability branch is what makes "every
-        # closing shift needs somebody authorised to close" real rather
+        # closing shift needs somebody authorized to close" real rather
         # than documented.
         if attribute:
             qualified = [n for n in pool if ctx.leader_flags.get(n)]
@@ -686,7 +686,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
         else:
             qualified = [n for n in pool if (ctx.scores.get(n) or 0) >= float(min_score)]
         label = (f"{need} {role_words(role, need)}" +
-                 (" authorised to close" if attribute
+                 (" authorized to close" if attribute
                   else (f" scoring {float(min_score):g} or above" if min_score is not None else "")))
         if rule.get("closing"):
             label += " on the closing shift"
@@ -698,7 +698,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
                            "role": role, "count": need, "min_score": min_score,
                            "attribute": attribute or None})
 
-    # The profile's own softer requirement: anybody authorised to close, or
+    # The profile's own softer requirement: anybody authorized to close, or
     # anybody clearing the leader score, in one of the leader roles.
     profile_ok = True
     if check_profile:
@@ -734,7 +734,7 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
             f"Needs {miss['rule']}, found {miss['found']}. On this shift: {miss['scheduled']}.")
     if check_profile and not profile_ok:
         res.weaknesses.append(
-            f"Nobody on this shift is authorised to close or rated "
+            f"Nobody on this shift is authorized to close or rated "
             f"{ctx.profile.leader_min_score:g} or above.")
     if met == total and total:
         res.strengths.append("Leadership requirements met.")
@@ -2032,7 +2032,7 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
 def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> dict:
     """Why this person is on this shift, in one sentence an owner can argue
     with: "Level 5 bartender; keeps the bar at 9 against a target of 8; the
-    one authorised to close; usually works Saturday nights; 32h this week."
+    one authorized to close; usually works Saturday nights; 32h this week."
 
     Built only from what the context holds. A fact that is not on file
     (no rating, no history) is simply not claimed.
@@ -2058,7 +2058,7 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
                     break
     # leadership
     if ctx.leader_flags.get(name):
-        bits.append("authorised to close")
+        bits.append("authorized to close")
         facts["can_close"] = True
     elif ctx.profile.requires_leader and score is not None and score >= ctx.profile.leader_min_score:
         bits.append(f"clears the {ctx.profile.leader_min_score:g}+ leader bar this shift wants")
@@ -2867,7 +2867,7 @@ def _rule_label(rule: dict) -> str:
     need = int(rule.get("count") or 1)
     role = (rule.get("role") or "").strip().lower()
     return (f"{need} {role}{'' if need == 1 else 's'}"
-            + (" authorised to close" if (rule.get("attribute") or "").strip()
+            + (" authorized to close" if (rule.get("attribute") or "").strip()
                else f" scoring {float(rule['min_score']):g} or above"))
 
 
@@ -2877,7 +2877,7 @@ def _unmeetable_rules(rows: list, signals: dict) -> dict:
     The engine knows the roster and passes the rules it found unmeetable
     (`unmeetable_leader_rules`). A caller that only says HOW MANY were
     unmeetable (`unsatisfiable`) gets the rules that ask for a capability —
-    a minimum score, or authorised to close — nobody in that role this
+    a minimum score, or authorized to close — nobody in that role this
     week, or cross-trained into it, has. With neither, nothing is set aside:
     a qualified person merely off this shift is a real miss."""
     explicit = signals.get("unmeetable_leader_rules")
@@ -3267,7 +3267,7 @@ class _SwapIndex:
         # The cap binds only the side whose hours go UP. Somebody already
         # over it (a week written at 47.5h against 40) can still trade a
         # shift for one no longer than it — refusing that left the only
-        # authorised closer unable to move to the night that needed him.
+        # authorized closer unable to move to the night that needed him.
         delta = _row_hours(b) - _row_hours(a)
         if delta > 0 and self.total_hours(low_a) + delta > self.cap(low_a):
             return False

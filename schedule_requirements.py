@@ -119,7 +119,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     roles     — lowercase roles the people in this request can work; a role
                 nobody here can fill is left to the request that can (a
                 roster split by department). None means every role.
-    leadership_known — whether anybody is rated or authorised to close. A
+    leadership_known — whether anybody is rated or authorized to close. A
                 profile's "needs a leader" cannot be judged without one of
                 those, so it is not asked of the model either.
     borrowed  — {(weekday, daypart): {lower role}}: typical figures lent by
@@ -201,14 +201,14 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     continue
                 bit = f"{int(rule.get('count') or 1)} {rule['role'].strip()}"
                 if rule.get("attribute"):
-                    bit += " authorised to close"
+                    bit += " authorized to close"
                 elif rule.get("min_score") is not None:
                     bit += f" scoring {float(rule['min_score']):g}+"
                 if rule.get("closing"):
                     bit += " on the closing shift"
                 leader.append(bit)
             if profile.requires_leader and leadership_known and not leader:
-                leader.append(f"somebody scoring {profile.leader_min_score:g}+ or authorised to close")
+                leader.append(f"somebody scoring {profile.leader_min_score:g}+ or authorized to close")
             roles_out = []
             lent = (borrowed or {}).get((day, part)) or set()
             for _k, (name, required, floor, typical) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
@@ -314,7 +314,7 @@ def experience_block(tenure: dict, names: list, leader_flags: dict = None,
                 "spread the experienced people across shifts rather than stacking them on one.")
     leaders = sorted(n for n in names if (leader_flags or {}).get(n))
     if leaders:
-        out += ("\n\nAUTHORISED TO CLOSE — each counts as somebody able to run a shift: "
+        out += ("\n\nAUTHORIZED TO CLOSE — each counts as somebody able to run a shift: "
                 + ", ".join(leaders) + ".")
     return out
 

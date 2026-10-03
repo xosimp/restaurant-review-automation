@@ -163,7 +163,7 @@ def test_a_token_with_no_stores_is_reported_as_such(db_path, monkeypatch):
     _stub_api(monkeypatch, {"store/get": []})
     out = rpower.test_token("tok")
     assert out["ok"] is False
-    assert "not authorised for any store" in out["error"]
+    assert "not authorized for any store" in out["error"]
 
 
 # ── net sales: the flags that separate revenue from activity ───────────────

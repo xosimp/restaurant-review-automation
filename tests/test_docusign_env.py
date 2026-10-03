@@ -3,7 +3,7 @@
 Before Sep 7 2026 get_access_token() hard-coded account-d.docusign.com (the
 developer sandbox). Pointing DOCUSIGN_BASE_URL at a production shard would
 have kept minting sandbox tokens and every production send would 401. These
-pin the inference and the consent link used to authorise the key."""
+pin the inference and the consent link used to authorize the key."""
 import docusign_helper as d
 
 

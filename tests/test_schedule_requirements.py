@@ -74,7 +74,7 @@ def test_a_recorded_lift_raises_demand_exactly_as_the_scorer_does():
 
 
 def test_a_leader_requirement_is_not_asked_when_nobody_could_be_identified():
-    """The scorer withdraws leadership when nobody is rated or authorised
+    """The scorer withdraws leadership when nobody is rated or authorized
     to close; the prompt must not demand what cannot be judged."""
     typical = {("Saturday", "night"): {"Server": 4}}
     blind = req.shift_requirements([SAT], typical_headcount=typical, leadership_known=False)
@@ -138,10 +138,10 @@ def test_the_owners_word_makes_somebody_experienced():
     assert "Still developing" not in out     # marked experienced is not developing
 
 
-def test_people_authorised_to_close_are_named_even_without_tenure():
+def test_people_authorized_to_close_are_named_even_without_tenure():
     out = req.experience_block({}, ["Ana", "Ben"], leader_flags={"Ben": True})
     assert "EXPERIENCED STAFF" not in out
-    assert "AUTHORISED TO CLOSE" in out and "Ben" in out
+    assert "AUTHORIZED TO CLOSE" in out and "Ben" in out
 
 
 def test_usual_pattern_groups_people_and_caps_its_length():

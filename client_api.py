@@ -9093,7 +9093,7 @@ def staff_schedule_page(token):
     floor staff don't have dashboard accounts, and requiring one is exactly
     why schedules end up as a photo of a printout in a group chat.
 
-    The token is the whole authorisation — long, random, per employee per
+    The token is the whole authorization — long, random, per employee per
     send (models.create_schedule_share, stored only as its hash) — and it
     only ever exposes that one person's shifts, never the full roster, wages,
     or anything else. An unknown token 404s rather than saying whether it
@@ -9196,7 +9196,7 @@ def staff_availability_submit(token):
     block), so what someone submits here genuinely shapes next week's
     schedule instead of going to a manager to be re-typed.
 
-    Authorised by the same per-person token as the page itself, and it can
+    Authorized by the same per-person token as the page itself, and it can
     only ever write that one person's row — the employee name comes from
     the token, never from the form, so a submitted name can't be forged. A
     refusal is a page, never a bare string: the branded invalid page, or

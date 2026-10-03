@@ -6,7 +6,7 @@ public/privacy.html promises, and Google's API Services User Data Policy
 connection — Google Business Profile reviews, their text and ratings, and
 anything derived from them (an average rating, a reply rate or reply time,
 a complaint share by category, a measured change in any of those) — is used
-only for the restaurant that authorised the connection, never to train a
+only for the restaurant that authorized the connection, never to train a
 generalized model. Every POOLED read in this package (bands, patterns,
 trends and the cohort series, recommendation priors at every rung, the
 confidence log, DNA norms, neighbour predictions) is exactly that kind of

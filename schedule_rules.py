@@ -1758,9 +1758,9 @@ def prompt_block(c: Constraints) -> str:
         lines.append(f"- Everyone gets at least {int(comp['min_consecutive_days_off'])} consecutive days off"
                      + (f"; part-time staff {int(comp['part_time_days_off'])}." if comp.get("part_time_days_off") else "."))
     if comp.get("manager_on_duty"):
-        lines.append("- Every open daypart has somebody authorised to close or holding a manager/keyholder certification on it.")
+        lines.append("- Every open daypart has somebody authorized to close or holding a manager/keyholder certification on it.")
     if comp.get("keyholder_until_close", True) and c.keyholders:
-        lines.append("- Every open day has somebody authorised to close or holding a manager/keyholder certification on until close.")
+        lines.append("- Every open day has somebody authorized to close or holding a manager/keyholder certification on until close.")
     if c.role_floors:
         lines.append("- The staffing floors below are hard: a day under a floor is flagged to the owner.")
     pack = comp.get("_pack") or {}

@@ -188,7 +188,7 @@ def test_an_inactive_membership_fails_closed_rather_than_falling_back(db_path):
     m = upsert_membership(uid, rid, "employee", db_path=db_path)
     set_membership_active(m["id"], rid, False, db_path=db_path)
     token = create_session(uid, db_path=db_path)
-    # An identity with memberships but none active here is not authorised
+    # An identity with memberships but none active here is not authorized
     # here. It used to fall back to users.role 'client' — the owner console
     # of the restaurant that had just removed them (SEC-1).
     assert get_session_user(token, db_path=db_path) is None

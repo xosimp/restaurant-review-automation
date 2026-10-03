@@ -190,7 +190,7 @@ struct RatedEmployee: Codable, Identifiable, Equatable {
     var score: Int?
     var scoreLabel: String?
     var notes: String?
-    // Authorised to close. A fact about a person that owes nothing to their
+    // Authorized to close. A fact about a person that owes nothing to their
     // rating, and the only way a leadership rule can be satisfied by
     // somebody the owner trusts to lock up but would not call a 5.
     var canClose: Bool?
@@ -3282,7 +3282,7 @@ final class LaborViewModel {
         }
     }
 
-    /// Mark somebody authorised to close, or take it back.
+    /// Mark somebody authorized to close, or take it back.
     ///
     /// Stored against the same capability layer as the rating but as a flag
     /// rather than a score, because being trusted to lock up is not a point

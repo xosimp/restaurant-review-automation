@@ -1502,7 +1502,7 @@ def _build(current_user, present=True):
         _rv_fetch = data_freshness.review_fetch_state(r, now=now)
         if google_connected and _rv_fetch["state"] == "stale" and last_fetch_age is not None:
             add_attn("reviews_stale", "important", f"Reviews haven't refreshed since {_rv_fetch['as_of']}",
-                     "The Google connection may need re-authorising. Numbers below are as of the last pull.", "account", "Check connection",
+                     "The Google connection may need re-authorizing. Numbers below are as of the last pull.", "account", "Check connection",
                      since=f"{int(last_fetch_age)}d")
         # trend: negative share last 2 weeks vs prior 2
         if len(sentiment) >= 4:

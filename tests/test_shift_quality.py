@@ -218,7 +218,7 @@ def test_a_peak_shift_with_no_qualified_leader_is_caught():
     assert leadership["facts"]["misses"]
 
 
-def test_someone_authorised_to_close_satisfies_the_profile_requirement():
+def test_someone_authorized_to_close_satisfies_the_profile_requirement():
     """The can_close capability was registered in version one and surfaced
     by nothing. This is the architecture claim actually paying off."""
     rows = saturday({"Bartender": ["Alex"], "Server": ["Dana"]})
@@ -1539,7 +1539,7 @@ def test_a_closing_requirement_binds_the_closing_shift_and_no_other():
     assert "leadership" in by_part["morning"]["not_applicable"]
     night = next(d for d in by_part["night"]["dimensions"] if d["key"] == "leadership")
     assert night["score"] == 0
-    assert "authorised to close" in night["facts"]["misses"][0]["rule"]
+    assert "authorized to close" in night["facts"]["misses"][0]["rule"]
 
 
 def test_a_closer_flag_satisfies_a_closing_requirement():
@@ -1641,7 +1641,7 @@ def test_the_stale_job_sweep_exists_and_runs_at_boot():
     assert "sweep_stale_jobs()" in boot
 
 
-def test_both_surfaces_can_mark_somebody_authorised_to_close():
+def test_both_surfaces_can_mark_somebody_authorized_to_close():
     """P1-3. The capability was registered from day one and reachable from
     no interface, so a leadership rule could only ever be answered by a
     score and an experienced closer rated 3 never qualified."""

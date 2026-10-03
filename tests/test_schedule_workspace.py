@@ -165,7 +165,11 @@ def test_the_grid_reads_as_rows():
     # Each row's line is under it (10/2/26), so a group closes with a line and
     # the next role pill sits inside its own group, never above the line.
     assert ".swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-bottom:1px solid var(--hb-line2)}" in s
-    assert ".swg-chip~.swg-add{display:none}" in s and ".swg-add{position:absolute;" in s
+    assert ".swg-chip~.swg-add{display:none}" in s and ".swg-c .swg-add{position:static;display:flex;flex-direction:column;" in s
+    # The add is a ghost chip, ember-outlined, with its words inside it — not a
+    # floating + beside a native tooltip (10/2/26); a hovered chip outlines too.
+    assert '<span class="t">+ Add a shift</span>' in s and 'title="Add a shift"' not in s
+    assert "outline:none;border-color:var(--ember)}" in s
     assert '<div class="swg-role"><span class="pill">' in s
     # A darker shade of the page's own grey (owner, 9/26/26), not an ember tint.
     assert "background:linear-gradient(var(--ss-dayrow,var(--hb-tint2)),var(--ss-dayrow,var(--hb-tint2))),var(--surface)}" in s

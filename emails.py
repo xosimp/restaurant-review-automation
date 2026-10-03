@@ -1912,7 +1912,7 @@ def pay_link(restaurant_id, period="monthly") -> str:
 
 
 def read_pay_token(token):
-    """The restaurant id a pay token authorises, or None. Accepts the kept-
+    """The restaurant id a pay token authorizes, or None. Accepts the kept-
     secret form (<rid>.v<n>.<sig>) and the SECRET_KEY form (<rid>.<sig>)."""
     import hmac
     try:

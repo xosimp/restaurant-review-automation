@@ -795,14 +795,14 @@ def unresolved(result: dict, signals: dict = None, limit: int = 4) -> list:
                                 if (r.get("role") or "").strip().lower() == role.lower()}
                     able = sorted(n for n in in_role if flags.get(n))
                     if len(able) <= 1:
-                        # Only what was checked: who in the role is authorised
+                        # Only what was checked: who in the role is authorized
                         # (the whole roster, not only this week's rows), and
                         # that no legal change put them here.
-                        text = (f"{where} has no {sq.role_words(role)} authorised to close. "
+                        text = (f"{where} has no {sq.role_words(role)} authorized to close. "
                                 + (f"Only {able[0]} is, and no legal change could put them on this shift "
                                    f"(they may be off that day, at their hours limit, or needed on another close). "
                                    if able else "Nobody in that role is. ")
-                                + f"Authorising another {sq.role_words(role)} to close fixes this.")
+                                + f"Authorizing another {sq.role_words(role)} to close fixes this.")
         key = (s["date"], s["daypart"], d["key"])
         if key in seen or not text:
             continue

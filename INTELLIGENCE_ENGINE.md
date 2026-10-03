@@ -1848,7 +1848,7 @@ rule, and so does every restaurant-level learner (`docs/ops/SECURITY.md` →
 Google's API Services User Data Policy (Limited Use), and
 `public/privacy.html`, allow data received through an owner's Google OAuth
 connection — Business Profile reviews, their text and ratings, and anything
-derived from them — to be used only for the restaurant that authorised it,
+derived from them — to be used only for the restaurant that authorized it,
 never to train a generalized model. Every pooled read here is that kind of
 learning, so `intelligence/provenance.py` holds one rule and the trace
 behind it: a restaurant whose reviews come, or ever came, through the

@@ -2596,7 +2596,7 @@ def _quality_signals(restaurant_id, result, **extra):
                 return (not roles or (roles.get(n) or "").strip().lower() == role
                         or role in {str(x).strip().lower() for x in (cross.get(n) or [])})
             if rule.get("attribute"):
-                # "Authorised to close" nobody in the role holds is as
+                # "Authorized to close" nobody in the role holds is as
                 # unmeetable as a score nobody reaches; checked only for
                 # score rules, it scored every closing shift 0 (SCHED-30).
                 able = [n for n, f in _flags.items() if f and _in_role(n)]

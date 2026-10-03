@@ -783,7 +783,7 @@ def preferences_block(learned: dict, stated: dict) -> str:
 def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
     """{name: {role: shifts beside a closer}} — shifts a person worked in a
     role that is not their usual one, on the same date and daypart as
-    somebody authorised to close. At MENTOR_SHIFTS_TO_HOLD they could hold
+    somebody authorized to close. At MENTOR_SHIFTS_TO_HOLD they could hold
     the station."""
     from models import get_leader_flags
     try:

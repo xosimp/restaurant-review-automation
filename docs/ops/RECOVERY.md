@@ -170,7 +170,7 @@ or `/admin` → Engineering → Overview → Backups, `GET /admin/api/backup`):
   **The local snapshots are complete and directly restorable.** They are not
   redacted — the scrub applies only to copies that leave the server. This
   was fixed in audit #21; snapshots taken *before* that fix have credentials
-  stripped, and restoring one means re-authorising every integration by
+  stripped, and restoring one means re-authorizing every integration by
   hand (see [After any restore](#after-any-restore)).
 
 - **The object-storage copy** (Cloudflare R2 / S3, `BACKUP_S3_*`) —

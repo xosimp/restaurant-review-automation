@@ -7124,7 +7124,7 @@ CAPABILITY_ATTRIBUTES = {
     },
     # Registered so shift-leader rules can reference it and validation knows
     # its shape. Not surfaced in Version 1's UI.
-    "can_close": {"label": "Authorised to close", "kind": "flag", "v1": False,
+    "can_close": {"label": "Authorized to close", "kind": "flag", "v1": False,
                   "help": "May be listed as the closer on a shift"},
 }
 
@@ -8694,7 +8694,7 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 
 def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """{employee_name: True} for everyone marked authorised to close.
+    """{employee_name: True} for everyone marked authorized to close.
 
     Reads the capability layer's can_close attribute — registered since
     version one and surfaced for the first time here, which is the
@@ -15261,7 +15261,7 @@ def unsubscribe_token(restaurant_id: int) -> str:
 
 
 def verify_unsubscribe_token(token: str):
-    """Return the restaurant_id a token authorises, or None. Links signed
+    """Return the restaurant_id a token authorizes, or None. Links signed
     with SECRET_KEY before the kept secret existed still verify while that
     key is unchanged."""
     import hmac as _hmac

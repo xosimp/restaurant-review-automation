@@ -2667,7 +2667,7 @@ TOOLS = [
         "spec": {
             "name": "read_team",
             "description": ("Everyone on the roster with their Operational Score (1 weakest to 5 "
-                            "strongest, set by the owner), whether they are authorised to close, "
+                            "strongest, set by the owner), whether they are authorized to close, "
                             "how many shifts they have worked, plus the per-role strength targets "
                             "and shift leader rules the scheduler is held to. Use this for "
                             "questions about who is strong or weak, who can close, who is still "

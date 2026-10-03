@@ -98,7 +98,7 @@ class RPowerNoSalesYet(RPowerError):
 
 
 class RPowerAuthError(RPowerError):
-    """The token is missing, expired or not authorised for this store.
+    """The token is missing, expired or not authorized for this store.
 
     Separate from RPowerError because the caller's response is different: a
     transport failure is worth retrying, a rejected token is worth telling
@@ -184,7 +184,7 @@ def _request(token: str, path: str, params: dict = None) -> object:
         if resp.status_code in (401, 403):
             raise RPowerAuthError(
                 f"RPOWER rejected the token ({resp.status_code}). Check that the token is "
-                f"current and that it is authorised for this store.")
+                f"current and that it is authorized for this store.")
         if resp.status_code == 429 or resp.status_code >= 500:
             # Undocumented but assumed to exist. Honour Retry-After when the
             # server sends one rather than guessing over the top of it.
@@ -322,7 +322,7 @@ def test_token(token: str) -> dict:
         return {"ok": False, "error": f"Couldn't reach RPOWER: {e}"}
     if not stores:
         return {"ok": False,
-                "error": "The token works but is not authorised for any store yet. "
+                "error": "The token works but is not authorized for any store yet. "
                          "RPOWER has to grant it access to this customer."}
     return {
         "ok": True,

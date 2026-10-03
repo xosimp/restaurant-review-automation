@@ -11,7 +11,7 @@ final class ScheduleOptimizerDecodingTests: XCTestCase {
                    "changes": [{"kind": "add", "reason": "Added Cara to Saturday dinner: coverage was one bartender short.", "gain": 6.5},
                                {"kind": "swap", "reason": "Swapped Ana and Bob on Friday: puts a closer on the night.", "gain": 3}],
                    "unresolved": [{"date": "2026-10-03", "day": "Saturday", "daypart": "night", "dimension": "leadership",
-                                   "text": "Saturday dinner has no bartender authorised to close.", "fixable_by_draft": false}],
+                                   "text": "Saturday dinner has no bartender authorized to close.", "fixable_by_draft": false}],
                    "evaluations": 212, "seconds": 3.4, "stopped": "no improving move",
                    "verdict": "Cavnar AI made 2 changes to the draft, raising Shift Quality from 71 to 84."},
      "gate": {"ran": true, "kept": "regenerated", "focus": ["coverage"], "reason": "The weakest days were regenerated with what was wrong with them."},

@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS membership_pin_attempts (
 -- identifies WHICH restaurant's roster to show, so an employee never types a
 -- restaurant name. Same shape as schedule_shares.token, which has served the
 -- unauthenticated /s/<token> schedule page for exactly this reason.
--- Revocable and re-mintable; it authorises nothing on its own.
+-- Revocable and re-mintable; it authorizes nothing on its own.
 CREATE TABLE IF NOT EXISTS staff_portal_tokens (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2632,7 +2632,7 @@ def get_or_create_staff_portal_token(restaurant_id: int, db_path: str = DB_PATH)
     """The restaurant's current staff-portal token, minting one on first use.
 
     This identifies WHICH restaurant's roster to show and nothing else. It
-    authorises no data on its own — every read still requires a PIN session —
+    authorizes no data on its own — every read still requires a PIN session —
     so its only real secret value is the roster of first names behind it.
     """
     conn = get_conn(db_path)
@@ -4931,7 +4931,7 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     # from every session already switched into it — for 30 days on iOS. The
     # switch is re-validated on every request (one indexed lookup, only for
     # a switched owner) and cleared the moment it no longer holds.
-    # An active membership at the location is itself authorisation there.
+    # An active membership at the location is itself authorization there.
     if owner_switched and user["active_restaurant_id"] != user.get("restaurant_id") \
             and not (joined and row["_m_id"] is not None) \
             and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"]):
@@ -4966,7 +4966,7 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
                 user["view_as_full_control"] = False
 
     # SEC-1: fail closed. An identity that HAS memberships but none active
-    # where this session acts is not authorised there — it used to fall back
+    # where this session acts is not authorized there — it used to fall back
     # to users.role ('client' for PIN identities), which opened the owner
     # console of a restaurant that had just removed the person. Only a login
     # with no membership rows at all (legacy, pre-backfill) keeps users.role,
@@ -5377,7 +5377,7 @@ def _module_permission_denied(user):
     table: that one asks whether the restaurant BOUGHT the module, this asks
     whether the signed-in role may SEE it. They are genuinely different —
     a shift manager at a restaurant on the full plan is entitled to nothing
-    they are not authorised for — and they fail in opposite directions.
+    they are not authorized for — and they fail in opposite directions.
     _module_blocked fails OPEN because it protects revenue; this fails CLOSED
     because it protects data, exactly like _console_denied.
     """
@@ -5794,11 +5794,11 @@ def login_required(f):
             from flask import jsonify as _jsonify_ml
             return _jsonify_ml(ok=False, error=_module_blocked_message(locked),
                                module_locked=True, module=locked), 403
-        unauthorised = _module_permission_denied(user)
-        if unauthorised:
+        unauthorized = _module_permission_denied(user)
+        if unauthorized:
             from flask import jsonify as _jsonify_mp
-            return _jsonify_mp(ok=False, error=_module_permission_message(unauthorised),
-                               module_forbidden=True, module=unauthorised), 403
+            return _jsonify_mp(ok=False, error=_module_permission_message(unauthorized),
+                               module_forbidden=True, module=unauthorized), 403
         view_as = _view_as_context(user)
         if view_as_write_denied(user):
             record_view_as_write(view_as, 403)
@@ -6075,11 +6075,11 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mml
             return _jsonify_mml(ok=False, error=_module_blocked_message(locked),
                                 module_locked=True, module=locked), 403
-        unauthorised = _module_permission_denied(user)
-        if unauthorised:
+        unauthorized = _module_permission_denied(user)
+        if unauthorized:
             from flask import jsonify as _jsonify_mmp
-            return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorised),
-                                module_forbidden=True, module=unauthorised), 403
+            return _jsonify_mmp(ok=False, error=_module_permission_message(unauthorized),
+                                module_forbidden=True, module=unauthorized), 403
         view_as = _view_as_context(user)
         if view_as_write_denied(user):
             record_view_as_write(view_as, 403)

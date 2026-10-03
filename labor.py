@@ -1884,7 +1884,7 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
     """Shift leader requirements, on top of the same capability data.
 
     "Saturday dinner must include at least one bartender scoring 5."
-    "Every closing shift needs somebody authorised to close."
+    "Every closing shift needs somebody authorized to close."
     """
     role = (rule.get("role") or "").strip()
     if not role:
@@ -3183,7 +3183,7 @@ def format_profile_block(profiles: list = None) -> str:
                 f"{int(c)} {r}" for r, c in sorted(p.critical_positions.items())))
         if p.requires_leader:
             bits.append(f"needs somebody who can run it ({p.leader_min_score:g}+ or "
-                        f"authorised to close)")
+                        f"authorized to close)")
         if p.experience_mix:
             bits.append(f"about {int(round(p.experience_mix * 100))}% experienced hands")
         if p.training_allowed:
@@ -3445,7 +3445,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     closed_dates  — dates the restaurant is closed; no requirement lines.
     tenure        — models.get_employee_tenure: {name: shifts worked}.
     prior_pattern — models.get_prior_shift_pattern: usual days/dayparts.
-    leader_flags  — models.get_leader_flags: who is authorised to close.
+    leader_flags  — models.get_leader_flags: who is authorized to close.
     focus         — named weaknesses of the previous draft of these days,
                     for a regeneration of chosen dates (schedule_requirements
                     .focus_block).

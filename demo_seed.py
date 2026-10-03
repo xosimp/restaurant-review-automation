@@ -176,7 +176,7 @@ _EJS_CLOSE_TIMES = {
     "Saturday": "12:00am",
 }
 
-# Bartenders are the one role authorised past close, to break down the bar.
+# Bartenders are the one role authorized past close, to break down the bar.
 _EJS_CLOSE_BUFFER = {"Bartender": 30}
 
 # Per-role combined Operational Score targets, and the one leadership rule

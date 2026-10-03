@@ -92,7 +92,7 @@ def test_what_it_cannot_fix_is_said_with_why():
     res = so.optimize(rows, {}, signals=sig)
     s = so.summary(res, sig)
     assert s["ran"] and not s["applied"]
-    assert any("authorised to close" in u["text"] for u in s["unresolved"])
+    assert any("authorized to close" in u["text"] for u in s["unresolved"])
 
 
 def test_the_summary_lists_every_change_with_its_reason():

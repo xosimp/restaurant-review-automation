@@ -244,7 +244,7 @@ def test_the_tick_answers_with_the_sheet_and_photo_tokens_are_joined(client, db_
     assert not [q for q in seen if "FROM task_proof_media WHERE id" in q]
 
 
-# ── LG-31 / SEC-13: authorise first, then store; multipart; a cap ──────────
+# ── LG-31 / SEC-13: authorize first, then store; multipart; a cap ──────────
 
 def test_a_photo_against_someone_elses_sheet_stores_nothing(client, db_path):
     rid = _rid(db_path)

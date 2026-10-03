@@ -114,7 +114,7 @@ def test_an_employee_holds_no_module_permission():
 
 def test_every_module_prefix_maps_to_a_permission():
     """The path table and the permission table have to stay in step, or a
-    module gains routes nothing authorises."""
+    module gains routes nothing authorizes."""
     from auth import _MODULE_PREFIXES
     from permissions import MODULE_VIEW_PERMISSIONS
     keys = {key for _prefix, key in _MODULE_PREFIXES}

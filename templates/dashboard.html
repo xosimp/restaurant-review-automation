@@ -9897,7 +9897,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
 .swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
-.swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none}
+.swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none;border-color:var(--ember)}
 .swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
 .swg-chip .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
@@ -9908,9 +9908,16 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-chip.editing{box-shadow:0 0 0 2px var(--ember)}
 /* The + floats in an empty cell; it adds no height, so a row's shifts sit
    level with its name (it pushed them up, owner 9/26/26). */
-.swg-add{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:0;transition:opacity .12s ease}
+/* An empty cell's add is a ghost of the chip it would make: the chip's own
+   box, padding and two lines, at the top of the cell where the chip lands,
+   outlined in ember on hover (owner, 10/2/26 — a floating + and a native
+   tooltip sat apart from each other). */
+.swg-c .swg-add{position:static;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:1px;width:100%;height:auto;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;border:1px solid var(--ember);background:transparent;box-shadow:none;color:var(--ember);font:inherit;text-align:left;opacity:0;transition:opacity .12s ease}
+.swg-add .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;white-space:nowrap}
+.swg-add .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip~.swg-add{display:none}
 .swg-c:hover .swg-add,.swg-add:focus-visible{opacity:1}
+.swg-c .swg-add:hover,.swg-c .swg-add:focus-visible{background:var(--sf-ai);border-color:var(--ember);color:var(--ember)}
 .swg-foot{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 8px 0;font-size:12.5px;color:var(--ink3)}
 .swg-foot i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:5px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
 .swg-foot i.bad{border-color:var(--hb-bad);box-shadow:inset 2px 0 0 var(--hb-bad)}
@@ -23840,12 +23847,12 @@ function renderTeamList() {
       html += '<button type="button" data-score="' + v + '" style="font-family:inherit;font-size:15.5px;font-weight:700;width:34px;height:30px;cursor:pointer;border-radius:6px;border:1px solid ' + (on ? 'transparent' : 'var(--paper3)') + ';background:' + (on ? _scoreColor(v) : 'var(--surface)') + ';color:' + (on ? '#fff' : 'var(--ink2)') + '">' + v + '</button>';
     }
     html += '</div>';
-    // Authorised to close. Registered in the capability layer from day one
+    // Authorized to close. Registered in the capability layer from day one
     // and reachable from no interface until now, which meant a leadership
     // rule could only ever be answered by a score — so an experienced closer
     // rated 3 never qualified, and "every closing shift needs somebody
-    // authorised to close" could not be satisfied at all.
-    html += '<label title="Authorised to close" style="display:flex;align-items:center;gap:5px;'
+    // authorized to close" could not be satisfied at all.
+    html += '<label title="Authorized to close" style="display:flex;align-items:center;gap:5px;'
          + 'font-size:15px;color:' + (m.can_close ? '#6fcf97' : 'var(--ink3)') + ';cursor:pointer;'
          + 'white-space:nowrap;user-select:none">'
          + '<input type="checkbox" data-team-close="' + i + '"' + (m.can_close ? ' checked' : '')
@@ -24316,7 +24323,7 @@ function swRenderGrid() {
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
              + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span></button>';
         }
-        h += '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" aria-label="' + _escAttr('Add a shift for ' + q.name + ' on ' + _schedDayOf(days[k])) + '" title="Add a shift">+</button></div>';
+        h += '<button type="button" class="cbtn cbtn-text cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" aria-label="' + _escAttr('Add a shift for ' + q.name + ' on ' + _schedDayOf(days[k])) + '"><span class="t">+ Add a shift</span><span class="s">' + _escHtml(_schedDayOf(days[k]).slice(0, 3)) + ' <span class="hb-num">' + _escHtml(mdy(days[k])) + '</span></span></button></div>';
       }
       h += '</div>';
     }

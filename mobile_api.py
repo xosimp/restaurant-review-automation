@@ -4802,7 +4802,7 @@ def mobile_labor_team(current_user):
             team.append({
                 "name": n, "role": e["role"], "shifts": e["shifts"],
                 "score": c.get("score"),
-                # Authorised to close. A fact about a person that owes
+                # Authorized to close. A fact about a person that owes
                 # nothing to their rating, and the only way a leadership
                 # rule can be satisfied by somebody the owner trusts to
                 # lock up but would not call a 5.
