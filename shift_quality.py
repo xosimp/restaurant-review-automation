@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 # The scale every dimension reports on. Percentages, because "Coverage 100%"
 # is a sentence an owner can act on and "Coverage 1.0" is not.
@@ -90,6 +91,14 @@ def role_family(role, families=None) -> str:
         mapped = families.get(low)
         if mapped:
             return " ".join(str(mapped).strip().lower().split())
+    return _family_words(low)
+
+
+@lru_cache(maxsize=4096)
+def _family_words(low: str) -> str:
+    """The family a role name's own words give (role_family without the
+    restaurant's map) — pure, so remembered: the scorer asks it for every
+    person on every shift it scores."""
     cleaned = []
     for w in low.replace("(", " ").replace(")", " ").replace("/", " ").replace("-", " ").replace("_", " ").split():
         if w.strip(".,:;") in _DAYPART_WORDS:
@@ -2438,9 +2447,27 @@ def week_overtime(contexts: list) -> DimensionResult | None:
     def _total(k, b):
         return hours.get((k, b), 0.0) + _published(k, b)
 
-    index = None
-    if ot.get("rules") is not None:
-        index = _SwapIndex(rows, ctx.availability or {}, {}, ot.get("rules") or {})
+    # The cheap half of the swap index's legality (_SwapIndex.person_fits):
+    # approved time off, a pending request, the day or daypart they can't
+    # work, a deactivated name. Enough to tell avoidable overtime from the
+    # rest on every option a pass scores; the move itself is re-checked in
+    # full by whatever makes it (the rebalance, the optimizer).
+    rules = ot.get("rules") or {}
+    blocked = {str(k).lower(): v for k, v in (rules.get("blocked_dates") or {}).items()}
+    pending = {str(k).lower(): set(v or ()) for k, v in (rules.get("pending_off") or {}).items()}
+    by_daypart = {str(k).lower(): v for k, v in (rules.get("daypart_avail") or {}).items()}
+    inactive = {str(n).lower() for n in (rules.get("inactive") or [])}
+
+    def _free(other, r):
+        low = (other or "").strip().lower()
+        day = _day_name(r.get("date"), r.get("day", ""))
+        if low in inactive or r.get("date") in (blocked.get(low) or {}) or r.get("date") in pending.get(low, ()):
+            return False
+        if _unavailable(ctx.availability or {}, other, day):
+            return False
+        choice = (by_daypart.get(low) or {}).get(day)
+        return choice != "off" and works_daypart_ok(r, choice)
+
     people_by_family = {}
     for n, role in (ctx.roster_roles or {}).items():
         people_by_family.setdefault(role_family(role, ctx.role_families), set()).add(n)
@@ -2460,11 +2487,7 @@ def week_overtime(contexts: list) -> DimensionResult | None:
                     continue
                 cap = ctx.ceiling_for(other)
                 room = min(line, cap) if cap else line
-                if _total(ok, b) + _row_hours(r) > room + 0.05:
-                    continue
-                if _unavailable(ctx.availability or {}, other, _day_name(r.get("date"), r.get("day", ""))):
-                    continue
-                if index is not None and not index.person_fits(other, r):
+                if _total(ok, b) + _row_hours(r) > room + 0.05 or not _free(other, r):
                     continue
                 return other
         return None

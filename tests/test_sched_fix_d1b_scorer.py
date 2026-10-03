@@ -240,6 +240,18 @@ def test_sq25_published_hours_count_and_a_salaried_person_owes_none():
     assert [(p["name"], p["overtime_hours"], p["published_hours"]) for p in people] == [("Ana", 2.0, 10.0)]
 
 
+def test_sq25_a_teammate_who_cannot_work_those_days_is_not_room_and_costs_less():
+    """Overtime nobody else could take is a cost, not a choice this week
+    made: it counts at UNAVOIDABLE_OVERTIME_SHARE of the avoidable kind."""
+    off = {"blocked_dates": {"bo": {d: "approved time off" for d in (MON, TUE, WED, THU, FRI)}}}
+    avoidable = week_dim(sq.score_rows(OT_ROWS, overtime=OT, **OT_KW), "overtime")
+    stuck = week_dim(sq.score_rows(OT_ROWS, overtime=dict(OT, rules=off), **OT_KW), "overtime")
+    who = stuck["facts"]["people"][0]
+    assert who["avoidable"] is False and who["teammate"] is None
+    assert stuck["weaknesses"][0].endswith("nobody else in the role has room to take a shift.")
+    assert 100 > stuck["score"] > avoidable["score"]
+
+
 def test_sq25_the_passes_scorer_sees_the_overtime():
     """The optimizer and the fill passes choose by LocalScorer: handing
     Ana's Friday to Bo, who has room, must now read as the better week."""
