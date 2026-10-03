@@ -3427,10 +3427,10 @@ def hard_breach_map(viols, rows: list = None) -> dict:
     return {"by_date": by_date, "week": week, "rows_sig": sig}
 
 
-def _hard_breaches_for(rows: list, result: dict) -> dict:
-    """hard_breach_map for the rows being scored: the generation's own sweep
-    when it is of these rows (every breach points at the row it names),
-    else a fresh sweep with the week's constraints; {} without them."""
+def _viols_for(rows: list, result: dict):
+    """The rule sweep of exactly `rows`: the generation's own when it is of
+    these rows (every breach points at the row it names), else a fresh one
+    with the week's constraints; None without them."""
     viols = result.get("rule_violations")
     if viols is not None:
         for v in viols:
@@ -3446,9 +3446,27 @@ def _hard_breaches_for(rows: list, result: dict) -> dict:
     if viols is None:
         c = result.get("constraints")
         if c is None:
-            return {}
+            return None
         viols = _rules.violations(rows or [], c)
+    return viols
+
+
+def _hard_breaches_for(rows: list, result: dict, viols=None) -> dict:
+    """hard_breach_map for the rows being scored (_viols_for); {} without
+    the week's constraints."""
+    viols = _viols_for(rows, result) if viols is None else viols
+    if viols is None:
+        return {}
     return hard_breach_map(viols, rows)
+
+
+def _flagged_for(rows: list, result: dict, viols=None) -> set:
+    """(person, date, start) of the rows of `rows` the sweep says will not
+    stand (off roster, on time off, double-booked …) — never counted as
+    somebody on the floor (P-28); empty without the week's constraints."""
+    viols = _viols_for(rows, result) if viols is None else viols
+    return {((v.get("employee") or "").strip().lower(), v.get("date") or "", v.get("shift_start") or "")
+            for v in (viols or []) if v.get("no_show")}
 
 
 def _learned_preferences_signal(raw: dict) -> dict:
@@ -3702,6 +3720,22 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
                 ceilings[_sq.name_key(n)] = float(mx)
         signals["hours_ceilings"] = ceilings
         signals["overtime"] = _overtime_inputs(restaurant_id, c, signals.get("rules"))
+        # What each person and each role is paid (labor.person_rate_book):
+        # the solver and the optimizer weigh a move's labor dollars by them
+        # (schedule audit 10/3/26 P-32). Read once per result — the passes
+        # gather these signals several times a generation.
+        book = result.get("_rate_book")
+        if book is None:
+            try:
+                import labor as _lab_rates
+                book = _lab_rates.person_rate_book(restaurant_id)
+            except Exception as _bx:
+                _soft_fail("person rates", _bx, restaurant_id)
+                book = ({}, {})
+            result["_rate_book"] = book
+        if signals["overtime"]:
+            signals["overtime"]["person_rates"] = dict(book[0] or {})
+            signals["overtime"]["role_typical"] = dict(book[1] or {})
     else:
         # No week's constraints (a bare re-score): who is salaried still
         # comes from the restaurant, so their hours never read as hourly.
@@ -3842,31 +3876,134 @@ def _reconcile_to_roster(signals: dict) -> None:
             signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
 
 
-def _score_schedule_quality(restaurant_id, rows, result, **extra):
+# ── the Studio's re-score as a manager edits (schedule audit 10/3/26 P-25) ─
+#
+# Every drag in the Studio re-scored the week from nothing: all of the shift
+# history for "is this restaurant live", every input the generation read
+# rebuilt from the database, the whole week scored, the what-if's sixty
+# whole-week scores and the rule sweep — several seconds on one of four
+# gunicorn threads, and two editors could hold the process. Now the
+# inputs, the signals, the restaurant's live check, a kept sweep and an
+# exact local scorer are built once per week being edited and reused for
+# STUDIO_CACHE_SECONDS; each drag re-sweeps and re-scores only the people
+# and dates it moved (the answer is score_rows' and violations' exactly);
+# the what-if runs only when the editor asks for it. A save always rebuilds
+# from the database, so what is stored is never judged on minutes-old inputs.
+
+STUDIO_CACHE_SECONDS = 120.0
+STUDIO_CACHE_SIZE = 8
+# The dates (in their edited variants) one week's kept scorer holds.
+STUDIO_SCORER_DATES = 96
+_studio_cache = {}
+_studio_live = {}
+
+
+def studio_invalidate(restaurant_id=None) -> None:
+    """Forget the kept Studio inputs and live checks — one restaurant's, or
+    every one (the test suite's fresh database per test reuses ids)."""
+    for store in (_studio_cache, _studio_live):
+        for k in [k for k in list(store) if restaurant_id is None
+                  or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
+            store.pop(k, None)
+
+
+def studio_is_live(restaurant_id) -> bool:
+    """Whether the restaurant's own shifts are on file (labor.
+    analyse_shifts_for_restaurant's is_live), remembered for
+    STUDIO_CACHE_SECONDS — it reads every shift the restaurant has."""
+    import time as _time
+    now = _time.monotonic()
+    hit = _studio_live.get(restaurant_id)
+    if hit is not None and now - hit[1] < STUDIO_CACHE_SECONDS:
+        return hit[0]
+    from labor import analyse_shifts_for_restaurant
+    live = bool((analyse_shifts_for_restaurant(restaurant_id) or {}).get("is_live"))
+    if len(_studio_live) > 256:
+        _studio_live.clear()
+    _studio_live[restaurant_id] = (live, now)
+    return live
+
+
+def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=None, fresh: bool = False) -> dict:
+    """What a Studio re-score of `rows` reads, built once per week being
+    edited ({inputs, signals, weights, sweep, scorer, built}): the inputs
+    the generation would rebuild (quality_inputs_from_db), the scorer's
+    signals and weights (_quality_signals), the week's Constraints with the
+    roster on them, a kept rule sweep (schedule_rules.IncrementalSweep) and
+    an exact local scorer (shift_quality.LocalScorer). Kept for
+    STUDIO_CACHE_SECONDS per restaurant, week, hour targets and
+    capability_version (a rating, profile, leader rule or weight changed);
+    `fresh` rebuilds it (a save)."""
+    import time as _time
+    from models import capability_version
+    dates = tuple(sorted({r.get("date") for r in rows or [] if r.get("date")}))
+    targets = tuple(sorted((str(k), float(v)) for k, v in (daily_target_hours or {}).items()))
+    try:
+        cap = capability_version(restaurant_id)
+    except Exception:
+        cap = None
+    key = (restaurant_id, history_id or None, dates, targets, cap)
+    now = _time.monotonic()
+    hit = _studio_cache.get(key)
+    if hit is not None and not fresh and now - hit["built"] < STUDIO_CACHE_SECONDS:
+        return hit
+    inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
+    c = inputs.get("constraints")
+    if c is not None and inputs.get("roster"):
+        c.active = {n.lower() for n in inputs["roster"]}
+        c.roster_names = list(inputs["roster"])
+    signals, weights = _quality_signals(restaurant_id, inputs)
+    import threading as _threading
+    # One editor's drag at a time per week: the kept scorer re-points its
+    # kept shifts at each call's week, so two at once would read each
+    # other's (the web process runs four threads).
+    entry = {"inputs": inputs, "signals": signals, "weights": weights, "built": now,
+             "sweep": _rules.IncrementalSweep(c) if c is not None else None, "scorer": None,
+             "lock": _threading.Lock()}
+    for k in [k for k, v in _studio_cache.items() if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
+        _studio_cache.pop(k, None)
+    while len(_studio_cache) >= STUDIO_CACHE_SIZE:
+        _studio_cache.pop(next(iter(_studio_cache)))
+    _studio_cache[key] = entry
+    return entry
+
+
+def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, **extra):
     """Score the finished schedule, then see whether a better one existed.
 
     The what-if pass only ever trades two people between shifts of the same
     role, so headcount, hours and coverage cannot move. That restriction is
     what makes running it on every generation affordable and its answers
     explainable: exactly two names changed, and here is what it bought.
+    Every swap it offers is held to every rule the week is (the week's
+    Constraints, schedule audit 10/3/26 P-33). `what_if` False skips it —
+    the Studio's re-score on every drag asks for it only on demand (P-25).
     """
     import shift_quality as _sq
     profiles = result.get("shift_profiles") or None
-    if "hard_breaches" not in extra:
-        # The hard breaches of exactly these rows, for the scorer's cap
-        # (SQ-14): the generation's own sweep when it is of them, else a
-        # fresh one.
+    if prepared is not None:
+        # The Studio's kept inputs (studio_prepared): the sweep and the score
+        # of exactly these rows, re-done only where the edit moved them.
+        lock = prepared.get("lock")
+        if lock is not None:
+            lock.acquire()
         try:
-            extra = dict(extra, hard_breaches=_hard_breaches_for(rows, result))
-        except Exception as _hx:
-            _soft_fail("hard breaches", _hx, restaurant_id)
-    signals, weights = _quality_signals(restaurant_id, result, **extra)
-    quality = _sq.score_rows(rows, profiles=profiles, weights=weights, **signals)
+            quality, signals, weights = _score_prepared(restaurant_id, rows, result, prepared, extra, profiles)
+        finally:
+            if lock is not None:
+                lock.release()
+    else:
+        quality, signals, weights = _score_fresh(restaurant_id, rows, result, extra, profiles)
 
-    what_if = {"ran": False, "reason": "Nothing to compare."}
-    if quality.get("checked"):
+    if not what_if:
+        what_if = {"ran": False, "on_demand": True,
+                   "reason": "Ask for a better arrangement to look for one."}
+    else:
+        what_if = {"ran": False, "reason": "Nothing to compare."}
+    if quality.get("checked") and not what_if.get("on_demand"):
         try:
-            what_if = _sq.compare_candidates(rows, profiles=profiles, weights=weights, **signals)
+            what_if = _sq.compare_candidates(rows, profiles=profiles, weights=weights,
+                                             rule_constraints=result.get("constraints"), **signals)
             # The engine reports what a better arrangement WOULD have been;
             # it does not silently rewrite the schedule the owner is about
             # to read. A swap the manager did not ask for, applied without
@@ -3942,6 +4079,59 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
     except Exception as _rx:
         print(f"[schedule] recommendation filter failed: {_rx}")
     return quality, what_if
+
+
+def _score_fresh(restaurant_id, rows, result, extra, profiles) -> tuple:
+    """(quality, signals, weights) of `rows`, every input read now."""
+    import shift_quality as _sq
+    if "hard_breaches" not in extra or ("flagged" not in extra and result.get("constraints") is not None):
+        # The hard breaches of exactly these rows, for the scorer's cap
+        # (SQ-14), and the rows of them that will not stand (P-28): the set
+        # read before the solver and the optimizer moved them (flagged_rows)
+        # judged the finished week by rows it no longer had. The
+        # generation's own sweep when it is of these rows, else a fresh one.
+        try:
+            _sweep = _viols_for(rows, result)
+            if "hard_breaches" not in extra:
+                extra = dict(extra, hard_breaches=_hard_breaches_for(rows, result, viols=_sweep) if _sweep is not None else {})
+            if "flagged" not in extra and _sweep is not None:
+                extra = dict(extra, flagged=_flagged_for(rows, result, viols=_sweep))
+        except Exception as _hx:
+            _soft_fail("hard breaches", _hx, restaurant_id)
+    signals, weights = _quality_signals(restaurant_id, result, **extra)
+    quality = _sq.score_rows(rows, profiles=profiles, weights=weights, **signals)
+    return quality, signals, weights
+
+
+def _score_prepared(restaurant_id, rows, result, prepared, extra, profiles) -> tuple:
+    """(quality, signals, weights) of `rows` over the Studio's kept inputs:
+    the kept sweep, and — the week's rules being there — the kept exact
+    scorer (shift_quality.LocalScorer.evaluate: score_rows' answer,
+    re-scoring only the dates the edit moved)."""
+    import shift_quality as _sq
+    viols = prepared["sweep"].violations(rows) if prepared.get("sweep") is not None else None
+    if "hard_breaches" not in extra:
+        extra = dict(extra, hard_breaches=hard_breach_map(viols, rows) if viols is not None else {})
+    if "flagged" not in extra and viols is not None:
+        extra = dict(extra, flagged=_flagged_for(rows, result, viols=viols))
+    signals = dict(prepared["signals"])
+    signals.update(extra)
+    weights = prepared["weights"]
+    prepared["violations"] = viols
+    if viols is None:
+        # No rules to keep a sweep of (the week's constraints could not be
+        # built): nothing to gain from keeping the scorer either.
+        return _sq.score_rows(rows, profiles=profiles, weights=weights, **signals), signals, weights
+    if prepared.get("scorer") is None:
+        prepared["scorer"] = _sq.LocalScorer(rows, profiles=profiles, weights=weights, exact=True,
+                                             cache_limit=STUDIO_SCORER_DATES,
+                                             **{k: v for k, v in signals.items()
+                                                if k not in ("flagged", "hard_breaches")})
+    quality = prepared["scorer"].evaluate(rows, flagged=signals.get("flagged") or set(),
+                                          hard_breaches=signals.get("hard_breaches") or {})
+    return quality, signals, weights
+
+
 
 
 def mark_next_week_built(restaurant_id, history_id) -> int:

@@ -7494,8 +7494,15 @@ def mobile_score_schedule(current_user):
     are treated as untrusted input — only the eight schedule columns are
     read, and everything the score depends on beyond them (ratings,
     profiles, targets, history) is loaded server-side.
+
+    A re-score as the manager drags is cheap (schedule audit 10/3/26 P-25):
+    the inputs, the restaurant's live check, the rule sweep and the scorer
+    are kept per week being edited (schedule_engine.studio_prepared) and
+    re-done only where the edit moved rows; the what-if — sixty whole-week
+    scores — runs only when the request asks for it (`what_if: true`). A
+    save rebuilds everything from the database.
     """
-    from schedule_engine import quality_inputs_from_db, _score_schedule_quality
+    from schedule_engine import _score_schedule_quality, studio_prepared, studio_is_live
     rid = current_user["restaurant_id"]
     data = request.get_json(silent=True) or {}
     raw_rows = data.get("rows")
@@ -7526,28 +7533,35 @@ def mobile_score_schedule(current_user):
     # substitutes a bundled fictional week when nothing has been uploaded,
     # which would judge this restaurant's tenure and typical headcount
     # against a restaurant that does not exist.
-    from labor import analyse_shifts_for_restaurant
     try:
-        if not (analyse_shifts_for_restaurant(rid) or {}).get("is_live"):
+        if not studio_is_live(rid):
             return jsonify(ok=False,
                            error="Upload your shifts before scoring a schedule."), 400
     except Exception:
         pass
 
     try:
-        inputs = quality_inputs_from_db(rid, daily_target_hours=targets, week_rows=rows)
-        quality, what_if = _score_schedule_quality(rid, rows, inputs)
+        hid_key = None
+        try:
+            hid_key = int(data.get("history_id")) if data.get("history_id") not in (None, "") else None
+        except (TypeError, ValueError):
+            hid_key = None
+        prepared = studio_prepared(rid, rows, daily_target_hours=targets, history_id=hid_key,
+                                   fresh=bool(data.get("save")))
+        inputs = prepared["inputs"]
+        quality, what_if = _score_schedule_quality(rid, rows, inputs, what_if=bool(data.get("what_if")),
+                                                   prepared=prepared)
         # The same rule sweep generation runs, so an edit that breaks a rule
-        # is named on screen before it is saved or sent.
+        # is named on screen before it is saved or sent — the kept sweep's,
+        # exactly schedule_rules.violations of these rows.
         violations, review = [], None
         try:
             import schedule_rules as _sr
             c = inputs.get("constraints")
             if c is not None:
-                if inputs.get("roster"):
-                    c.active = {n.lower() for n in inputs["roster"]}
-                    c.roster_names = list(inputs["roster"])
-                violations = _sr.violations(rows, c)
+                violations = prepared.get("violations")
+                if violations is None:
+                    violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)
                 # What the edited week misses, read from its rows as
                 # generation reads it, and the week's staffing asks re-read
