@@ -13,7 +13,6 @@ now set_staff_hours: a time window or a daypart, merged into the person's
 stored limits, through the staff-settings route the Team screen saves with.
 """
 import dataclasses
-import json
 import sys
 import types
 from datetime import date, timedelta

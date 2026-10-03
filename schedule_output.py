@@ -28,7 +28,6 @@ a model, effort or prompt change can be replayed against real weeks
 models.init_db); pruned by the retention registry (ops._RETENTION_DAYS).
 """
 import dataclasses
-import hashlib
 import json
 import re
 import zlib
@@ -66,7 +65,6 @@ TIME_STEP_MINUTES = 15
 OLD_TOKENS_PER_ROW = 60
 ANSWER_TOKENS_PER_ROW_ESTIMATE = 30
 
-_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _CSV_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 CSV_HEADER = ",".join(_CSV_COLS)
 
@@ -195,10 +193,6 @@ def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
         "required": ["days", "summary"],
         "additionalProperties": False,
     }
-
-
-def schema_hash(schema) -> str:
-    return hashlib.sha256(json.dumps(schema, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def vocabulary_note(note) -> str:
