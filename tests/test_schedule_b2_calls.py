@@ -947,3 +947,17 @@ def test_a_read_once_admin_value_is_still_removed_after_its_first_read(db, monke
     again = c.get("/admin/api/admin-jobs/seed-9")
     assert "abcde" not in again.get_data(as_text=True)
     assert ops.read_async_job("seed-9")["status"] == "done"
+
+
+def test_a_failure_around_the_job_on_the_pool_still_closes_it(db, monkeypatch):
+    rid = _restaurant(db)
+    ops.claim_async_job("pool-fail", "schedule", rid)
+
+    @__import__("contextlib").contextmanager
+    def broken(job_id):
+        raise RuntimeError("slot table unreadable")
+        yield
+    monkeypatch.setattr(se, "generation_scope", broken)
+    se.submit_generation("pool-fail", rid).result(10)
+    job = ops.read_async_job("pool-fail", restaurant_id=rid)
+    assert job["status"] == "error" and "problem on our side" in job["result"]["error"]

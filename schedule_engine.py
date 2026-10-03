@@ -39,12 +39,14 @@ import demand_signals as _signals
 # keys a row as JSON; the old figure, 60, was the CSV row's and undercounted
 # the JSON one); tests/test_schedule_b2_calls.py holds it to the schema, so a
 # schema change re-sizes the calls. A call's minutes grow with its rows as
-# well, so the rows held per call (ROWS_PER_CALL_TIME_CAP) stay where a
-# slice was measured to finish inside the old 360-second client timeout
-# rather than where the tokens alone would let it run. Every call logs its
-# rows, characters written and seconds (`slices`), so both figures can be
-# re-read from real weeks. A wrong guess costs a split, not the week: a cut
-# answer keeps its finished days and the rest is written again smaller.
+# well — and with its thinking — so the rows held per call
+# (ROWS_PER_CALL_TIME_CAP) stay at the slice size that finished well inside
+# the old 360-second timeout with the earlier, non-thinking model, rather
+# than where the tokens alone would let a call run (321 rows: about twice
+# the minutes). Every call logs its rows, characters written and seconds
+# (`slices`), so both figures can be re-read from the first real Opus weeks.
+# A wrong guess costs a split, not the week: a cut answer keeps its finished
+# days and the rest is written again smaller.
 SCHEDULE_TOKEN_CEILING = 64000          # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
 THINKING_TOKENS_RESERVED = 40000        # adaptive thinking at effort "high", left room before rows
 SUMMARY_TOKENS = 1500                   # the three bullets and the JSON around the rows
@@ -149,7 +151,9 @@ _gen_pool_lock = threading.Lock()
 def generation_scope(job_id):
     """One generation's slot and clock: waits for one of the
     SCHEDULE_GEN_WORKERS slots (P-39), then starts the clock (P-22) — a
-    generation queued behind two others does not spend its time waiting."""
+    generation queued behind two others does not spend its time waiting.
+    submit_generation runs an owner's job inside it; the auto-draft enters it
+    itself (strategy_jobs._draft_one)."""
     with _GEN_SLOTS:
         clock = GenerationClock(job_id)
         token = _CLOCK.set(clock)
@@ -157,13 +161,6 @@ def generation_scope(job_id):
             yield clock
         finally:
             _CLOCK.reset(token)
-
-
-def run_generation(job_id, restaurant_id, **job_kwargs):
-    """_run_schedule_job inside its slot and clock — what the generation
-    pool and the auto-draft run."""
-    with generation_scope(job_id):
-        return _run_schedule_job(job_id, restaurant_id, **job_kwargs)
 
 
 def submit_generation(job_id, restaurant_id, **job_kwargs):
@@ -181,8 +178,15 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
     job = _run_schedule_job            # the job as it stands when the owner pressed, not when a slot frees
 
     def _run(*a, **k):
-        with generation_scope(job_id):
-            return job(*a, **k)
+        try:
+            with generation_scope(job_id):
+                return job(*a, **k)
+        except Exception as e:
+            # The job reports its own failures; this is one around it (the
+            # slot, the clock). Said, and the job closed, so the owner's poll
+            # never waits on a job nothing will finish.
+            _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
+            _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     return _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
 
 
@@ -3745,7 +3749,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     on a redo the owner asked for, which must touch only the days they chose.
     redo_reason is the owner's {"chip", "text"} for a redo (redo_reason_from).
 
-    Run inside generation_scope (run_generation / submit_generation) it has
+    Run inside generation_scope (submit_generation, the auto-draft) it has
     one wall clock (P-22): its model calls stop in time for the rest of the
     job, and a job its poll has already declared dead saves nothing."""
     if dates and not focus:
