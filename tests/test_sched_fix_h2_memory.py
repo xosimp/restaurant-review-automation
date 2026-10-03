@@ -357,6 +357,23 @@ def test_an_opener_handed_to_someone_else_twice_by_hand_is_retired():
     assert ana["misses_by_hand"] == 2
 
 
+def test_a_closer_the_restaurant_keeps_choosing_is_learned_as_the_last_of_the_role_out():
+    rid = _rid()
+    for w in range(1, 7):
+        d = _monday(w) + timedelta(days=4)
+        _punch(rid, d, "Ana", "16:00", "22:00", 6)
+        _punch(rid, d, "Bo", "17:00", "23:40", 6.7)
+    sm.consolidate(rid)
+    bo = [m for m in _mem(rid, kind="closer") if m["person"] == "Bo"][0]
+    assert (bo["day"], bo["role"], bo["hits"], bo["status"]) == ("Friday", "server", 6, "active")
+    assert bo["value"]["end"] == "11:40pm" and "Bo closes Server on Fridays" in bo["text"]
+    assert not [m for m in _mem(rid, kind="closer") if m["person"] == "Ana" and m["status"] != "retired"]
+    fri = (_monday(-1) + timedelta(days=4)).isoformat()
+    sig = [s_ for s_ in sm.enforced_signals(rid, [fri], ["Ana", "Bo"]) if s_["kind"] == "closer"]
+    rows = [_row(fri, "Bo", "4:00pm", "10:00pm"), _row(fri, "Ana", "5:00pm", "11:30pm")]
+    assert [m["kind"] for m in sm.misses(rows, sig)] == ["closer"]
+
+
 def test_a_usual_section_is_learned_from_the_restaurants_own_hand_never_an_admins():
     rid = _rid()
     models.update_restaurant(rid, {"foh_sections_json": json.dumps(["Patio", "Bar"])})
@@ -371,6 +388,52 @@ def test_a_usual_section_is_learned_from_the_restaurants_own_hand_never_an_admin
     assert [(m["value"]["section"], m["hits"], m["opportunities"]) for m in secs] == [("Patio", 3, 3)]
     assert "Ana usually takes Patio on Friday dinner/night" in secs[0]["text"]
     assert secs[0]["enforcement"] == "prompt"
+
+
+def test_the_studio_suggests_a_servers_usual_section_and_never_assigns_it():
+    import mobile_api
+    from auth import create_session, create_user, upsert_membership
+    from flask import Flask
+    rid = _rid()
+    models.update_restaurant(rid, {"foh_sections_json": json.dumps(["Patio", "Bar"])})
+    for w in range(1, 4):
+        d = _monday(w) + timedelta(days=4)
+        models.set_shift_section(rid, d.isoformat(), "Ana", "5:00pm", "Patio", updated_by="erik", user=OWNER)
+    sm.consolidate(rid)
+    usual = sm.usual_sections(rid)
+    assert [(u["employee"], u["day"], u["daypart"], u["section"]) for u in usual] == [("Ana", "Friday", "night",
+                                                                                       "Patio")]
+    uid = create_user(rid, "erik", "erik@x.test", "pw-h2-test-1")
+    upsert_membership(uid, rid, "client")
+    app = Flask(__name__)
+    app.register_blueprint(mobile_api.mobile_bp)
+    nxt = _monday(-1)
+    resp = app.test_client().get(f"/mobile/api/labor/schedule/sections?start={nxt}&end={nxt + timedelta(days=6)}",
+                                 headers={"Authorization": "Bearer " + create_session(uid, device_type="ios")})
+    body = resp.get_json()
+    assert resp.status_code == 200 and body["usual"][0]["section"] == "Patio" and body["assigned"] == []
+    # The web twin is the same body (client_api delegates to it).
+    import client_api as _ca
+    assert "mobile_schedule_sections" in inspect.getsource(_ca.labor_schedule_sections)
+
+
+def test_the_owners_redos_and_thrown_away_drafts_are_remembered_with_their_reason():
+    rid = _rid()
+    for w in (3, 2, 1):
+        mon = _monday(w)
+        hid = _week(rid, mon, [_row(mon, "Ana")], [_row(mon, "Ana")], published=False)
+        if w != 3:
+            sv.record_rejection(rid, hid, "redo_days", dates=[(mon + timedelta(days=4)).isoformat()],
+                                reason_chip="too many people", user=OWNER)
+        sv.record_rejection(rid, hid, "draft_discarded", reason_chip="wrong week", user=OWNER)
+    sv.record_rejection(rid, hid, "redo_days", dates=[(_monday(1) + timedelta(days=5)).isoformat()], user=VIEW_AS)
+    sm.consolidate(rid)
+    redo = _mem(rid, kind="redo_reason")
+    fri = [m for m in redo if m["day"] == "Friday"][0]
+    assert (fri["hits"], fri["opportunities"]) == (2, 3) and '("too many people")' in fri["text"]
+    whole = [m for m in redo if m["day"] is None][0]
+    assert whole["hits"] == 3 and "threw away 3 of 3 recent drafts whole" in whole["text"]
+    assert not [m for m in redo if m["day"] == "Saturday"], "an admin's redo was learned as the owner's"
 
 
 # ══ L-12, L-13: what happened, beside the plan ════════════════════════════
@@ -812,6 +875,52 @@ def test_the_week_is_scored_as_it_ran_beside_its_planned_score(monkeypatch):
     obs = {o["kind"]: o for o in sm.observations(rid, kinds=("sq_as_run", "sq_planned")) if o.get("date")}
     assert obs["sq_as_run"]["value"]["dims"]["coverage"] == 50 and obs["sq_planned"]["value"]["dims"]["coverage"] == 100
     assert obs["sq_as_run"]["history_id"] == hid
+
+
+def test_a_ratings_recommendation_is_measured_on_how_many_shifts_ran_unjudged():
+    rid = _rid()
+    mon = _monday(2)
+    sat = (mon + timedelta(days=5)).isoformat()
+    rec = ("Rate the unscored staff — strength and demand on their shifts are judged on the rated people only, "
+           "so part of each figure is unknown.")
+    blind = ["Operational Score: 3 of 4 people unrated"]
+    quality = {"recommendations": [rec], "shifts": [
+        {"date": sat, "daypart": "night", "scored": True, "blind_spots": blind, "dimensions": []},
+        {"date": sat, "daypart": "morning", "scored": True, "blind_spots": blind, "dimensions": []}]}
+    hid = _hist(rid, mon, [_row(sat, "Ana")])
+    _v(rid, hid, "generated", [_row(sat, "Ana")], by="Cavnar AI", auth="system", quality=quality)
+    _sql("UPDATE schedule_versions SET created_at=datetime('now', '-15 days') WHERE history_id=?", hid)
+    key = schedule_intel.schedule_rec_key("ratings", rec)
+    schedule_intel.record_recommendation(rid, "ratings", rec, "accepted", actor="erik", authority="principal")
+    rec_ledger.present(rid, key, "schedule", "schedule_review", kind="schedule_ratings", title=rec)
+    rec_ledger.record(rid, key, "accepted", authority="principal")
+    for part in ("night", "morning"):
+        sm.observe(rid, "sq_as_run", date=sat, daypart=part, history_id=hid, phase="as_run", origin="system",
+                   authority="system", value={"score": 70, "dims": {}, "unrated": False},
+                   fact_key=f"sq_as_run|{hid}|{sat}|{part}")
+    assert schedule_intel.measure_recommendations_as_run(rid) == 1
+    meta = json.loads(_q("SELECT meta FROM rec_events WHERE event='outcome'")[0]["meta"])
+    assert (meta["verdict"], meta["dimension"], meta["before"], meta["as_run"]) == ("improved", "ratings", 1.0, 0.0)
+
+
+def test_the_labor_read_and_ask_read_the_memory_and_the_schedule_does_not_twice():
+    import memory_context as mc
+    rid = _rid()
+    _sql("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, role, day, daypart, "
+         "status, enforcement, confidence, value_json, text, opportunities, hits) VALUES "
+         "(?,?,?,?,?,?,?,?,'active','soft',0.81,?,?,6,6)", rid, "opener|kitchen|Saturday|ana", "opener",
+         "ownership", "Ana", "kitchen", "Saturday", "morning", json.dumps({"start": "8:55am", "role": "Kitchen"}),
+         "Ana opens Kitchen on Saturdays — the first Kitchen in on 6 of the 6 Saturdays they worked it.")
+    _sql("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, status, enforcement, "
+         "confidence, value_json, text, opportunities, hits) VALUES (?,?,?,?,?,'candidate','prompt',0.7,?,?,8,1)",
+         rid, "pair|avoid|ana+bo", "pair", "team", "Ana", json.dumps({"kind": "avoid", "with": ["Bo"]}),
+         "Ana and Bo on the same shift: 1 of 8 shared shifts ran well against 55%.")
+    block = mc.memory_context(rid, "labor_read", subjects=["labor:day:saturday"])
+    assert "WHAT THE SCHEDULING HAS LEARNED HERE" in block.text and "Ana opens Kitchen on Saturdays" in block.text
+    assert "Measured: 6 of 6, 81% sure; held by the schedule's checks." in block.text
+    assert "Ana and Bo on the same shift" not in block.text, "a learned keep-apart reached the team's read"
+    assert "schedule_memory" not in mc.SURFACE_SECTIONS["schedule"]
+    assert "schedule_memory" in mc.SURFACE_SECTIONS["ask"]
 
 
 # ══ L-23, D-27: measured server performance, the owner's to confirm ═══════

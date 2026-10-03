@@ -1457,10 +1457,16 @@ def _planned_quality(conn, history_id):
         return {}
 
 
+def _unrated(s) -> bool:
+    """A shift judged without the Operational Scores of some of its people
+    (shift_quality's blind spot) — what "Rate the unscored staff" fixes."""
+    return any("Operational Score" in str(b) for b in s.get("blind_spots") or [])
+
+
 def _shift_reading(s) -> dict:
     return {"score": s.get("score"), "capped_by": s.get("capped_by"),
             "dims": {d["key"]: d.get("score") for d in s.get("dimensions") or [] if d.get("key")},
-            "hard_breaches": len(s.get("hard_breaches") or [])}
+            "hard_breaches": len(s.get("hard_breaches") or []), "unrated": _unrated(s)}
 
 
 def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS) -> int:
@@ -1540,7 +1546,12 @@ _REC_DIMENSION = (
     (re.compile(r"^Fix the rule breach on (?P<where>.+?): "), "hard_rules"),
     (re.compile(r"^Spread the busy shifts"), "fatigue"),
     (re.compile(r"^Give .+? a day off"), "fatigue"),
+    (re.compile(r"^Rate the unscored staff"), "ratings"),
 )
+# A ratings recommendation's reading: the share of the week's shifts judged
+# without some of their people's ratings, as it ran against the draft it
+# was made on — this many points of share either way.
+AS_RUN_RATED_BAND = 0.25
 
 
 def _rec_target(text):
@@ -1621,7 +1632,15 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
             continue
         v, q = made
         hid = v["history_id"]
-        if day is None and part is None:
+        if dim == "ratings":
+            planned = [s_ for s_ in q.get("shifts") or [] if s_.get("scored")]
+            ran = [v for (h_, d_, _p), v in as_run.items() if h_ == hid and d_ != "week"]
+            if not planned or not ran:
+                continue
+            before = {"ratings": sum(1 for s_ in planned if _unrated(s_)) / float(len(planned))}
+            after = {"ratings": sum(1 for v in ran if v.get("unrated")) / float(len(ran))}
+            date_s = None
+        elif day is None and part is None:
             before = {d.get("key"): d.get("score") for d in q.get("week_dimensions") or [] if isinstance(d, dict)}
             after = (as_run.get((hid, "week", None)) or {}).get("week_dims") or {}
             date_s = None
@@ -1644,11 +1663,16 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         b, x = float(before[dim]), float(after[dim])
         if dim == "hard_rules":
             verdict = "improved" if b > 0 and x == 0 else ("worsened" if x > b else "no_clear_change")
+        elif dim == "ratings":
+            # A falling share of shifts judged without ratings is better.
+            verdict = ("improved" if b - x >= AS_RUN_RATED_BAND else "worsened" if x - b >= AS_RUN_RATED_BAND
+                       else "no_clear_change")
         else:
             verdict = ("improved" if x - b >= AS_RUN_BAND else "worsened" if b - x >= AS_RUN_BAND
                        else "no_clear_change")
-        meta = {"verdict": verdict, "measure": "as_run", "dimension": dim, "before": b, "as_run": x,
-                "band": AS_RUN_BAND, "history_id": hid, "date": date_s, "daypart": part}
+        meta = {"verdict": verdict, "measure": "as_run", "dimension": dim, "before": round(b, 3), "as_run": round(x, 3),
+                "band": AS_RUN_RATED_BAND if dim == "ratings" else AS_RUN_BAND, "history_id": hid, "date": date_s,
+                "daypart": part}
         if dim in ("coverage", "coverage_curve") and date_s:
             obs = gaps.get((date_s, part)) or []
             heads = next((o.get("value") for o in obs if o.get("kind") == "actual_hours"), None)

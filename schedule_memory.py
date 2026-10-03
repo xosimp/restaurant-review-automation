@@ -126,7 +126,8 @@ HALF_LIFE_DAYS = {
     "moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LIFE_DAYS, "role_change": PERSON_HALF_LIFE_DAYS,
     "leader_swap": SLOT_HALF_LIFE_DAYS, "retime_start": SLOT_HALF_LIFE_DAYS, "retime_end": SLOT_HALF_LIFE_DAYS,
     "headcount_add": SLOT_HALF_LIFE_DAYS, "headcount_cut": SLOT_HALF_LIFE_DAYS,
-    "opener": SLOT_HALF_LIFE_DAYS, "section": SLOT_HALF_LIFE_DAYS, "pair": SLOT_HALF_LIFE_DAYS,
+    "opener": SLOT_HALF_LIFE_DAYS, "closer": SLOT_HALF_LIFE_DAYS, "section": SLOT_HALF_LIFE_DAYS,
+    "pair": SLOT_HALF_LIFE_DAYS,
     "ot_risk": PERSON_HALF_LIFE_DAYS, "end_overrun": SLOT_HALF_LIFE_DAYS, "redo_reason": SLOT_HALF_LIFE_DAYS,
     "staff_avoid": PERSON_HALF_LIFE_DAYS, "staff_prefer": PERSON_HALF_LIFE_DAYS, "reliability": 90,
     "daypart_outcome": SLOT_HALF_LIFE_DAYS, "could_hold": 365,
@@ -136,7 +137,7 @@ HALF_LIFE_DAYS = {
 FACT_CLASS = {
     "moved_off": "habit", "moved_on": "habit", "retime_start": "habit", "retime_end": "habit",
     "headcount_add": "habit", "headcount_cut": "habit", "role_change": "habit", "leader_swap": "habit",
-    "opener": "ownership", "section": "ownership", "pair": "team", "ot_risk": "overtime",
+    "opener": "ownership", "closer": "ownership", "section": "ownership", "pair": "team", "ot_risk": "overtime",
     "end_overrun": "overtime", "redo_reason": "rejection", "staff_avoid": "staff", "staff_prefer": "staff",
     "reliability": "attendance", "daypart_outcome": "outcome", "could_hold": "mentoring",
 }
@@ -144,7 +145,8 @@ PATTERN_KINDS = ("moved_off", "moved_on", "retime_start", "retime_end", "headcou
                  "role_change", "leader_swap")
 # What an ACTIVE memory of each kind is held to. Candidates are prompt-only.
 KIND_ENFORCEMENT = {k: "soft" for k in PATTERN_KINDS}
-KIND_ENFORCEMENT.update({"opener": "soft", "section": "prompt", "pair": "soft", "ot_risk": "soft",
+KIND_ENFORCEMENT.update({"opener": "soft", "closer": "soft", "section": "prompt", "pair": "soft",
+                         "ot_risk": "soft",
                          "end_overrun": "soft", "redo_reason": "prompt", "staff_avoid": "soft",
                          "staff_prefer": "soft", "reliability": "soft", "daypart_outcome": "prompt",
                          "could_hold": "prompt"})
@@ -228,6 +230,16 @@ def _minutes(value):
 def _daypart(start) -> str:
     from schedule_rules import daypart_of
     return daypart_of(start or "")
+
+
+def _end_part(row) -> str:
+    """The daypart a shift ENDS in — what a close is about: a double that
+    started at 10am and closed at 11pm closed the night."""
+    s, e = _minutes(row.get("shift_start")), _minutes(row.get("shift_end"))
+    if s is None or e is None:
+        return _daypart(row.get("shift_start"))
+    e = e + 1440 if e <= s else e
+    return "night" if e > 15 * 60 else "morning"
 
 
 def _clock(minutes, like=""):
@@ -831,7 +843,10 @@ def _learn_patterns(ctx, patterns=None) -> list:
         m["misses_by_hand"] = int(s.get("times_overridden") or 0)
         m["last_hand"] = hand
         status = _STANDING_STATUS.get(s["status"], "candidate")
-        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE:
+        # The owner's own one-tap "always" (source owner_said, L-35) is their
+        # word, applied at once like a "keep"; a learned row binds the passes
+        # only once its confidence clears the line.
+        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and s.get("source") != "owner_said":
             status = "candidate"
         reason = s.get("retired_reason") if status == "retired" else None
         if s["key"] in dismissed:
@@ -888,26 +903,50 @@ def _by_role_day(ctx, rows) -> dict:
     return by
 
 
+def _end_adj(m, end):
+    """A row's end in minutes, read across midnight from its start."""
+    if end is None:
+        return None
+    return end + (1440 if end <= m else 0)
+
+
+def _edge_of(group, kind) -> set:
+    """The people who open (first in, OPENER_TIE_MINUTES of the first) or
+    close (last out, as close to the last) a role on one day."""
+    if kind == "opener":
+        first = min(m for m, *_r in group)
+        return {_nk(n) for m, n, *_r in group if m - first <= OPENER_TIE_MINUTES}
+    ends = [(_end_adj(m, e), n) for m, n, _r, _s, e in group if e is not None]
+    if not ends:
+        return set()
+    last = max(x for x, _n in ends)
+    return {_nk(n) for x, n in ends if last - x <= OPENER_TIE_MINUTES}
+
+
 def _openers_of(group) -> set:
-    first = min(m for m, *_r in group)
-    return {_nk(n) for m, n, *_r in group if m - first <= OPENER_TIE_MINUTES}
+    return _edge_of(group, "opener")
 
 
-def _learn_openers(ctx) -> list:
-    """Who opens each role on each weekday (L-22: "Ana always opens
-    Saturday kitchen" was relearned by hand every week). Evidence:
+def _learn_edges(ctx, kind) -> list:
+    """Who opens, or closes, each role on each weekday (L-22: "Ana always
+    opens Saturday kitchen" was relearned by hand every week; raw_L §3:
+    openers and closers per role are shift ownership the manager keeps
+    choosing). An opener is the first of the role in that day, a closer the
+    last of the role out — the owner's own meaning of a closer (the last of
+    their role to leave). Evidence:
       * the restaurant's own scheduling before Cavnar AI drafted it — who
-        clocked in first for the role that day (shift_facts), by hand;
+        clocked in first, or out last, for the role that day (shift_facts),
+        by hand;
       * each week Cavnar AI drafted, as the manager settled it before it
-        went out (learning_weeks: their own changes only) — the opener in
-        that week, BY HAND when the manager made them the opener (the draft
-        had somebody else), merely kept when the draft already had them; the
-        manager handing the opening to somebody else is a miss by hand.
+        went out (learning_weeks: their own changes only) — BY HAND when the
+        manager gave them the opening or the close (the draft had somebody
+        else), merely kept when the draft already had them; the manager
+        handing it to somebody else is a miss by hand.
     An opportunity is a day the person worked that role."""
-    hl = half_life("opener")
+    hl = half_life(kind)
     ev = {}
 
-    def take(group, d, opened, by_hand, missed=()):
+    def take(group, d, edge, by_hand, missed=()):
         w = recency_weight(ctx.age(d), hl)
         seen = set()
         for m, name, role, _start, end in sorted(group, key=lambda x: (x[0], x[1])):
@@ -915,24 +954,24 @@ def _learn_openers(ctx) -> list:
             if k in seen:
                 continue
             seen.add(k)
-            e = ev.setdefault((ctx.fam(role), _weekday(d), k), dict(_evidence("opener"), ends=[]))
-            hit = k in opened
+            e = ev.setdefault((ctx.fam(role), _weekday(d), k), dict(_evidence(kind), ends=[]))
+            hit = k in edge
             _note(e, d, w, hit, hand=hit and by_hand(k), person=name, role=role,
                   start=m if hit else None, week=_week_of(d))
             if hit and end is not None:
-                e["ends"].append(end + (1440 if end <= m else 0))
+                e["ends"].append(_end_adj(m, end))
             if not hit and k in missed:
                 e["miss_dates"].append(d)
 
     cav = ctx.cavnar_dates()
     pre = [r for r in ctx.punches() if str(r.get("date") or "")[:10] not in cav]
     for (d, _fam), g in _by_role_day(ctx, pre).items():
-        take(g, d, _openers_of(g), lambda k: True)
+        take(g, d, _edge_of(g, kind), lambda k: True)
     for rec in ctx.weeks():
         fin, base = _by_role_day(ctx, rec.get("final")), _by_role_day(ctx, rec.get("base"))
         for (d, fam), g in fin.items():
-            drafted = _openers_of(base[(d, fam)]) if (d, fam) in base else set()
-            take(g, d, _openers_of(g), lambda k, _d=drafted: k not in _d, missed=drafted)
+            drafted = _edge_of(base[(d, fam)], kind) if (d, fam) in base else set()
+            take(g, d, _edge_of(g, kind), lambda k, _d=drafted: k not in _d, missed=drafted)
     out = []
     for (fam, wd, k), e in ev.items():
         if not e["hits"] or not fam or not wd:
@@ -943,14 +982,26 @@ def _learn_openers(ctx) -> list:
         part = _daypart(_clock(start)) if start is not None else None
         role = _display(e, "roles") or fam
         meal = _MEAL.get(part, "")
-        text = (f"{name} opens {role} on {wd}s — the first {role} in on {e['hits']} of the {e['opps']} {wd}s they "
-                f"worked it" + (f", usually at {_clock(start)}" if start is not None else "") + ".")
-        out.append(_memory(ctx, f"opener|{fam}|{wd}|{_person_token(ctx, name)}", "opener", e, person=name,
+        if kind == "opener":
+            text = (f"{name} opens {role} on {wd}s — the first {role} in on {e['hits']} of the {e['opps']} {wd}s "
+                    f"they worked it" + (f", usually at {_clock(start)}" if start is not None else "") + ".")
+        else:
+            text = (f"{name} closes {role} on {wd}s — the last {role} out on {e['hits']} of the {e['opps']} {wd}s "
+                    f"they worked it" + (f", usually until {_clock(end)}" if end is not None else "") + ".")
+        out.append(_memory(ctx, f"{kind}|{fam}|{wd}|{_person_token(ctx, name)}", kind, e, person=name,
                            role=fam, day=wd, daypart=part,
                            value={"start": _clock(start) if start is not None else None,
                                   "end": _clock(end) if end is not None else None, "role": role, "meal": meal},
                            text=text, source="punches_and_edits", origin="manager"))
     return out
+
+
+def _learn_openers(ctx) -> list:
+    return _learn_edges(ctx, "opener")
+
+
+def _learn_closers(ctx) -> list:
+    return _learn_edges(ctx, "closer")
 
 
 def _learn_sections(ctx) -> list:
@@ -1144,7 +1195,7 @@ def _learn_overruns(ctx) -> list:
                 over = minutes_past_end(r, p) if p else None
                 if over is None:
                     continue
-                part = _daypart(r.get("shift_start"))
+                part = _end_part(r)
                 e = ev.setdefault((fam, _weekday(d), part), dict(_evidence("end_overrun"), over=[], ends=[]))
                 e["ends"].append(last)
                 hit = over >= STAYED_LATE_MINUTES
@@ -1181,8 +1232,9 @@ def _learn_pairs(ctx) -> list:
     acted). Every recorded shift (schedule_outcomes, the punches for who
     actually worked it) is read as ran-well or not against the restaurant's
     own record: its sales per labor hour at or above the median for that
-    weekday and daypart, no coverage or no-show issue on a night the check
-    was watching, no review under GOOD_REVIEW placed on it — every reading
+    weekday and daypart, its Shift Quality as it ran at or above that
+    night's median, no coverage or no-show issue on a night the check was
+    watching, no review under GOOD_REVIEW placed on it — every reading
     the shift has, none of the readings it lacks. A pair (or a trio) whose
     shared shifts ran well clearly more often than the restaurant's do —
     PAIR_MIN_SHARED of them at least, PAIR_MIN_LIFT above it — is a
@@ -1235,11 +1287,24 @@ def _learn_pairs(ctx) -> list:
         medians.setdefault((_weekday(d), part), []).append(v)
     medians = {k: _median(v) for k, v in medians.items() if len(v) >= 3}
 
+    # The shift's Shift Quality as it ran (schedule_intel.record_as_run_quality),
+    # against the same weekday and daypart's median as-run score.
+    as_run = {}
+    for o in observations(ctx.rid, kinds=("sq_as_run",), since=ctx.since, db_path=ctx.db):
+        if o.get("date") and (o.get("value") or {}).get("score") is not None:
+            as_run[(str(o["date"])[:10], o.get("daypart"))] = float(o["value"]["score"])
+    sq_med = {}
+    for (d, part), v in as_run.items():
+        sq_med.setdefault((_weekday(d), part), []).append(v)
+    sq_med = {k: _median(v) for k, v in sq_med.items() if len(v) >= 3}
+
     def ran_well(d, part, o):
         readings = []
         med = medians.get((_weekday(d), part))
         if (d, part) in splh and med:
             readings.append(splh[(d, part)] >= med)
+        if (d, part) in as_run and sq_med.get((_weekday(d), part)) is not None:
+            readings.append(as_run[(d, part)] >= sq_med[(_weekday(d), part)])
         if (o["issues"] or 0) or d in watched:
             readings.append(not (o["issues"] or 0))
         if o["rating"] is not None and (o["reviews"] or 0):
@@ -1285,9 +1350,10 @@ def _learn_pairs(ctx) -> list:
         shown = [names.get(k) or k.title() for k in g]
         together = ", ".join(shown[:-1]) + " and " + shown[-1]
         if kind_ == "prefer":
-            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
-                    f"labor hour at or above the usual for that night, no coverage issue, no poor review) against "
-                    f"{_pct(base)} of this restaurant's shifts — a team worth keeping together.")
+                text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
+                    f"labor hour and the Shift Quality as it ran at or above the usual for that night, no coverage "
+                    f"issue, no poor review) against {_pct(base)} of this restaurant's shifts — a team worth keeping "
+                    f"together.")
         else:
             text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well against "
                     f"{_pct(base)} of this restaurant's shifts — for the owner to look at, never applied on its own.")
@@ -1308,7 +1374,8 @@ def _learn_redos(ctx) -> list:
     weekday the owner keeps redoing, with the reason they gave — from the
     redo route's observations (redo_days), an admin's redo never counted.
     The opportunity is a week Cavnar AI drafted."""
-    rows = observations(ctx.rid, kinds=("redo_days",), since=ctx.since, db_path=ctx.db, counted_only=True)
+    rows = observations(ctx.rid, kinds=("redo_days", "draft_discarded"), since=ctx.since, db_path=ctx.db,
+                        counted_only=True)
     if not rows:
         return []
     conn = get_conn(ctx.db)
@@ -1322,7 +1389,9 @@ def _learn_redos(ctx) -> list:
     hl = half_life("redo_reason")
     by = {}
     for o in rows:
-        wd = _weekday(o.get("date"))
+        # A whole draft thrown away is a rejection of the week (day None);
+        # a redo of some days, of each weekday it named.
+        wd = _weekday(o.get("date")) if o.get("kind") == "redo_days" else "week"
         if not wd:
             continue
         chip = " ".join(str((o.get("value") or {}).get("reason") or "").split())[:40]
@@ -1334,10 +1403,15 @@ def _learn_redos(ctx) -> list:
         for wk in sorted(drafted | v["weeks"]):
             _note(e, wk, recency_weight(ctx.age(wk), hl), wk in v["weeks"], hand=True, week=wk)
         reason = f' ("{v["chip"]}")' if v["chip"] else ""
-        text = (f"The owner redid {wd} in {e['hits']} of {e['opps']} recent drafts{reason} — check {wd} against "
-                f"the requirements and the owner's rules before writing it.")
-        out.append(_memory(ctx, f"redo_reason|{wd}|{ck or '-'}", "redo_reason", e, day=wd,
-                           value={"reason": v["chip"] or None}, text=text, source="redo_route", origin="owner"))
+        if wd == "week":
+            text = (f"The owner threw away {e['hits']} of {e['opps']} recent drafts whole{reason} — check the week "
+                    f"against the requirements and the owner's rules before writing it.")
+        else:
+            text = (f"The owner redid {wd} in {e['hits']} of {e['opps']} recent drafts{reason} — check {wd} against "
+                    f"the requirements and the owner's rules before writing it.")
+        out.append(_memory(ctx, f"redo_reason|{wd}|{ck or '-'}", "redo_reason", e, day=None if wd == "week" else wd,
+                           value={"reason": v["chip"] or None, "whole_week": wd == "week"}, text=text,
+                           source="redo_route", origin="owner"))
     return out
 
 
@@ -1543,6 +1617,7 @@ def _write(ctx, produced, kinds_done) -> dict:
 _LEARNERS = (
     ("patterns", PATTERN_KINDS, None),
     ("openers", ("opener",), _learn_openers),
+    ("closers", ("closer",), _learn_closers),
     ("sections", ("section",), _learn_sections),
     ("overtime", ("ot_risk",), _learn_overtime),
     ("overruns", ("end_overrun",), _learn_overruns),
@@ -1736,26 +1811,28 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
         elif kind in ("retime_start", "retime_end"):
             want = _minutes(v.get("time"))
             col = "shift_start" if kind == "retime_start" else "shift_end"
-            hit = [i for i in slot if _fam(rows[i].get("role"), families) == m.get("role")
+            hit = [i for i in slot if _fam(rows[i].get("role"), families) == _fam(m.get("role"), families)
                    and want is not None and _minutes(rows[i].get(col)) != want]
         elif kind == "role_change":
             hit = [i for i in slot if name_of(i) == who and _nk(rows[i].get("role")) != _nk(v.get("role"))]
         elif kind == "leader_swap":
             names = {_nk(n) for n in v.get("names") or []}
-            mine = [i for i in slot if not m.get("role") or _fam(rows[i].get("role"), families) == m.get("role")]
+            mine = [i for i in slot if not m.get("role")
+                    or _fam(rows[i].get("role"), families) == _fam(m.get("role"), families)]
             if mine and not any(name_of(i) in names for i in mine):
                 hit = [-1]
-        elif kind == "opener":
+        elif kind in ("opener", "closer"):
             by_date = {}
             for i, r in enumerate(rows or []):
-                if _weekday(r.get("date")) == day and _fam(r.get("role"), families) == m.get("role"):
-                    by_date.setdefault(r.get("date"), []).append(i)
-            for _d, idx in by_date.items():
-                if any(name_of(i) == who for i in idx):
-                    first = min(_minutes(rows[i].get("shift_start")) or 0 for i in idx)
-                    mine = min(_minutes(rows[i].get("shift_start")) or 0 for i in idx if name_of(i) == who)
-                    if mine - first > OPENER_TIE_MINUTES:
-                        hit.append(min(i for i in idx if name_of(i) == who))
+                if _weekday(r.get("date")) == day and _fam(r.get("role"), families) == _fam(m.get("role"), families):
+                    s_, e_ = _minutes(r.get("shift_start")), _minutes(r.get("shift_end"))
+                    if s_ is not None:
+                        by_date.setdefault(r.get("date"), []).append((s_, r.get("employee"), r.get("role"),
+                                                                       r.get("shift_start"), e_, i))
+            for _d, g in by_date.items():
+                mine = [x for x in g if _nk(x[1]) == who]
+                if mine and who not in _edge_of([x[:5] for x in g], kind):
+                    hit.append(mine[0][5])
         elif kind == "pair":
             group = {who} | {_nk(n) for n in v.get("with") or []}
             dates = {}
@@ -1788,9 +1865,10 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
             want = _minutes(v.get("padded_end"))
             if pad and want is not None:
                 closes = {}
-                for i in slot:
-                    if _fam(rows[i].get("role"), families) == m.get("role"):
-                        closes.setdefault(rows[i].get("date"), []).append(i)
+                for i, r in enumerate(rows or []):
+                    if _weekday(r.get("date")) == day and _end_part(r) == part \
+                            and _fam(r.get("role"), families) == _fam(m.get("role"), families):
+                        closes.setdefault(r.get("date"), []).append(i)
                 for _d, idx in closes.items():
                     def _end(i):
                         s, e = _minutes(rows[i].get("shift_start")), _minutes(rows[i].get("shift_end"))
@@ -1875,7 +1953,7 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                 if end != last:
                     continue
                 r = out[i]
-                if part and _daypart(r.get("shift_start")) != part:
+                if part and _end_part(r) != part:
                     continue
                 if r.get("_pinned"):
                     left.append({"index": i, "employee": r.get("employee"), "date": d, "reason": "a fixed row"})
@@ -1910,7 +1988,7 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
 # attendance, outcomes and mentoring have their own blocks, handed in as
 # sections.
 PROMPT_KINDS = ("moved_off", "moved_on", "retime_start", "retime_end", "role_change", "leader_swap", "opener",
-                "section", "pair", "ot_risk", "end_overrun", "redo_reason")
+                "closer", "section", "pair", "ot_risk", "end_overrun", "redo_reason")
 LEARNED_TITLE = ("WHAT THIS RESTAURANT'S SCHEDULING HAS LEARNED (from the manager's own edits before a week went "
                  "out, what actually happened on the floor and the owner's answers — each with how sure it is. "
                  "A line marked [held] is also held by the checks that run after you, so write the week that way; "
@@ -1934,7 +2012,7 @@ def _short(m) -> str:
     enforced in code needs no paragraph)."""
     kind, v = m.get("kind"), m.get("value") or {}
     who, day, meal = m.get("person") or "", m.get("day") or "", _MEAL.get(m.get("daypart"), m.get("daypart") or "")
-    role = v.get("role") if kind == "opener" else m.get("role")
+    role = v.get("role") if kind in ("opener", "closer") else m.get("role")
     if kind == "moved_off":
         return f"{who} off {day} {meal}"
     if kind == "moved_on":
@@ -1947,6 +2025,9 @@ def _short(m) -> str:
         return f"one of {', '.join(v.get('names') or [])} on {day} {meal}" + (f" ({role})" if role else "")
     if kind == "opener":
         return f"{who} opens {role} on {day}s" + (f", from about {v.get('start')}" if v.get("start") else "")
+    if kind == "closer":
+        return f"{who} closes {v.get('role') or role} on {day}s" + (
+            f", until about {v.get('end')}" if v.get("end") else "")
     if kind == "pair":
         return f"{who} with {' and '.join(v.get('with') or [])} on the same shifts"
     if kind == "ot_risk":
@@ -2208,7 +2289,7 @@ def _rule_refusal(r, value):
         if value.get("size", 2) != 2:
             return _RULE_NOTES["pair_avoid_trio"]
         return None
-    if kind == "opener":
+    if kind in ("opener", "closer"):
         return None if value.get("start") and value.get("end") else "There is no usual shift to hold yet."
     if kind == "end_overrun":
         return None if value.get("padded_end") and value.get("role") else "There is no usual close time to hold yet."
@@ -2301,7 +2382,7 @@ def _make_rule(restaurant_id, r, value, user, db_path) -> str:
         staff_settings.set_pair(restaurant_id, r.get("person"), other, kind,
                                 note="learned from how their shared shifts went", created_by=who, **kw)
         return f"{r.get('person')} and {other}: " + ("work well together" if kind == "prefer" else "keep apart")
-    if r["kind"] == "opener":
+    if r["kind"] in ("opener", "closer"):
         import staff_settings
         name = r.get("person")
         mine = staff_settings.for_name(restaurant_id, name, **kw) or {}
@@ -2501,4 +2582,24 @@ def memory_lines(req) -> list:
         if r["kind"] == "pair" and value.get("kind") == "avoid":
             line["audience"] = "principals"
         out.append(line)
+    return out
+
+
+def usual_sections(restaurant_id, db_path=None) -> list:
+    """[{employee, day, daypart, section, confidence, status, because}] —
+    each server's usual floor section on a weekday and daypart, as the
+    memory holds it (candidate or applied), for the Studio's section picker
+    to suggest beside a shift that has none (L-22: what the manager keeps
+    choosing is offered, never assigned by code — a section is the
+    manager's call on the night)."""
+    if not _learns(restaurant_id, db_path):
+        return []
+    out = []
+    for r in _rows(restaurant_id, ("candidate", "active"), db_path, kinds=("section",)):
+        value = _loads(r.get("value_json")) or {}
+        if not value.get("section"):
+            continue
+        out.append({"employee": r.get("person"), "day": r.get("day"), "daypart": r.get("daypart"),
+                    "section": value["section"], "confidence": r.get("confidence"), "status": r["status"],
+                    "because": r.get("text")})
     return out
