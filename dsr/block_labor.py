@@ -201,14 +201,17 @@ def _coverage(ctx, day_rows=()):
     """{"measured", "no_shows", "late", "reason"}.
 
     The live clock-in check (strategy_jobs.run_coverage_check) opens one
-    "hasn't clocked in" issue per person, keyed by the CALENDAR date it ran
-    on — so a shift after midnight is keyed the next day and is still this
-    business date's (D1-17). Who of them turned up is read from the night's
-    own punches: the check closing the issue at a clock-in, or the person
-    having worked that day in the synced shifts, is a late arrival; nobody
-    else is a no-show — a manager closing the issue says nothing about
-    whether they came. With no issues, "0 no-shows" is stated only for a
-    night the check actually ran (store.coverage_ran)."""
+    "hasn't clocked in" issue per business date and role, keyed by the
+    BUSINESS date (schedule audit 10/3/26 E-4), each person on it read
+    through issues.coverage_people. An issue from before that was one per
+    person keyed by the CALENDAR date it ran on — so a shift after midnight
+    is keyed the next day and is still this business date's (D1-17); those
+    are still read that way. Who of them turned up is read from the night's
+    own punches: the check marking them arrived (or closing their issue at a
+    clock-in), or the person having worked that day in the synced shifts, is
+    a late arrival; nobody else is a no-show — a manager closing the issue
+    says nothing about whether they came. With no issues, "0 no-shows" is
+    stated only for a night the check actually ran (store.coverage_ran)."""
     import issues
     import intraday
     import pos
@@ -226,22 +229,20 @@ def _coverage(ctx, day_rows=()):
     no_shows, late = [], []
     seen = 0
     for r in rows:
-        try:
-            meta = json.loads(r["meta_json"] or "null") or {}
-        except (TypeError, ValueError):
-            meta = {}
         keyed = r["source_key"].split(":", 2)[1]
-        past_midnight = _after_midnight(meta.get("shift_start"))
-        if (keyed == ctx.day and past_midnight) or (keyed == nxt and not past_midnight):
-            continue                     # another business date's shift
-        seen += 1
-        entry = {"employee": meta.get("missing") or r["source_key"].split(":", 2)[2],
-                 "role": meta.get("role"), "shift_start": meta.get("shift_start")}
-        if (r["resolution_note"] or "").startswith("Closed automatically: they clocked in") \
-                or staff_settings.name_key(entry["employee"]) in worked:
-            late.append(entry)
-        else:
-            no_shows.append(entry)
+        for p in issues.coverage_people(r):
+            if p.get("calendar_keyed"):
+                past_midnight = _after_midnight(p.get("shift_start"))
+                if (keyed == ctx.day and past_midnight) or (keyed == nxt and not past_midnight):
+                    continue             # another business date's shift
+            elif p.get("business_date") != ctx.day:
+                continue                 # keyed by its own business date: another night's
+            seen += 1
+            entry = {"employee": p["employee"], "role": p.get("role"), "shift_start": p.get("shift_start")}
+            if p.get("status") == "arrived" or staff_settings.name_key(entry["employee"]) in worked:
+                late.append(entry)
+            else:
+                no_shows.append(entry)
     if seen:
         return {"measured": True, "no_shows": no_shows, "late": late, "reason": None}
     why = None

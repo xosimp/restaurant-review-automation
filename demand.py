@@ -936,8 +936,12 @@ def upcoming_holidays(restaurant_id, now=None, days=HOLIDAY_LOOKAHEAD_DAYS, db_p
             # A holiday whose date is only approximated (the Super Bowl) has
             # no "last year's night" to read: the calendar's guess for last
             # year may not have been the game at all (re-audit OPP-1).
-            own = {} if approximate else \
+            # Each holiday reads its OWN night last year: a date carrying two
+            # (Valentine's Day and Super Bowl Sunday on 2/14/27) keeps them
+            # apart (schedule audit 10/3/26 E-8).
+            _day = {} if approximate else \
                 ((schedule_economics.holiday_lift(restaurant_id, [iso], db_path=db_path) or {}).get(iso) or {})
+            own = (_day.get("by_name") or {}).get(display) or _day
             if own.get("lift_pct") is not None and own.get("based_on"):
                 lift = int(own["lift_pct"])
                 # Last year's holiday is measured against ITS weekday (Veterans

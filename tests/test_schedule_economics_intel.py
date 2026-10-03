@@ -63,13 +63,17 @@ def test_cost_delta_says_what_an_edit_moves():
 
 
 def test_trim_removes_discretionary_hours_first_and_reports_each():
-    rows = [_row(d, n, "4:00pm", "10:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]   # 126h
-    rows.append(_row(WEEK[4], "Dee", "4:00pm", "10:00pm", notes="added — coverage top-up"))
+    # Four-hour shifts leave no tail to end early (the trim ends tails first
+    # since schedule audit 10/3/26 P-27 — tests/test_schedule_trim_and_fill.py);
+    # this pins the order whole shifts go in.
+    rows = [_row(d, n, "4:00pm", "8:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]     # 84h
+    rows.append(_row(WEEK[4], "Dee", "4:00pm", "8:00pm", notes="added — coverage top-up"))
     rows.append(_row(WEEK[5], "Ana", "11:00am", "3:00pm"))                                   # first leg; the 4pm is her second
-    out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=120.0, daily_targets={d: 17 for d in WEEK},
+    out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=76.0, daily_targets={d: 17 for d in WEEK},
                                                 constraints=_c(), floors={})
-    assert removed >= 16 and sum(float(r["scheduled_hours"]) for r in out) <= 120.0
+    assert removed >= 16 and sum(float(r["scheduled_hours"]) for r in out) <= 76.0
     reasons = [t["reason"] for t in trimmed]
+    assert all(t["kind"] == "removed" for t in trimmed)
     assert reasons[0].startswith("added by the top-up")
     assert any("second leg of a double" in r for r in reasons)
     assert all(t.get("employee") for t in trimmed)
@@ -440,10 +444,15 @@ def test_the_history_list_reads_the_stored_headline_and_supersedes_drafts(db_pat
 
 def test_demand_blind_notice_reads_the_last_sales_date(db_path, rid):
     import schedule_engine
-    assert schedule_engine._demand_data_through(rid) == {"date": None, "days_ago": None, "blind": True}
+    # No sales ever: blind, said, never blocked — nothing stale to mislead (schedule audit 10/3/26 D-33
+    # added the gate and its words to what was a report).
+    none = schedule_engine._demand_data_through(rid)
+    assert {k: none[k] for k in ("date", "days_ago", "blind")} == {"date": None, "days_ago": None, "blind": True}
+    assert none["blocked"] is False and none["line"]
     conn = get_conn(db_path)
     old = (dt.date.today() - dt.timedelta(days=40)).isoformat()
     conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales) VALUES (?,?,?,?)", (rid, old, "Monday", 5000))
     conn.commit(); conn.close()
     out = schedule_engine._demand_data_through(rid)
     assert out["date"] == old and out["days_ago"] == 40 and out["blind"]
+    assert out["blocked"] and out["stale"] and "Reconnect the POS" in out["message"]

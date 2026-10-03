@@ -348,6 +348,27 @@ def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
     return [_row(d, by_day[d]) for d in week_dates if d in by_day]
 
 
+def cached_forecast_for_week(restaurant, week_dates) -> list:
+    """get_forecast_for_week from the copy of the forecast already on file —
+    never a fetch: a manager's live rescore must not wait on NWS, and it
+    judges the week by the forecast the draft read (schedule audit 10/3/26
+    D-30). The same rows, `stale` past FORECAST_STALE_HOURS; [] when no
+    usable copy is held."""
+    if not restaurant:
+        return []
+    periods = _cached_periods(restaurant) or _stale_periods(restaurant) or []
+    as_of = None
+    stamp = _cached_at(restaurant)
+    if stamp is not None:
+        as_of = stamp.isoformat()
+    by_day = {}
+    for p in periods:
+        pdate = (p.get("startTime") or "")[:10]
+        if pdate and p.get("isDaytime"):
+            by_day[pdate] = dict(p, _as_of=as_of)
+    return [_row(d, by_day[d]) for d in week_dates or [] if d in by_day]
+
+
 def forecast_for_day(restaurant, day, db_path=DB_PATH):
     """The forecast NWS gave for one date, day and night:
     {"day": row or None, "night": row or None}, where a night row carries

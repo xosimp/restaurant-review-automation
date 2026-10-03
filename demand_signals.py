@@ -267,7 +267,13 @@ def migrate_post_signals(conn) -> dict:
 
 
 def parse_reservations_csv(text):
-    """'date,covers' lines → rows of kind reservations. Header skipped."""
+    """'date,covers' lines → rows of kind reservations. Header skipped. A
+    reservation system's own export (one row per booking, with a party size
+    and a status) is read by parse_reservation_export instead — the paste
+    box takes either."""
+    rows, _summary = parse_reservation_export(text)
+    if rows is not None:
+        return rows
     rows = []
     for line in (text or "").splitlines():
         parts = [p.strip() for p in line.replace("\t", ",").split(",")]
@@ -275,6 +281,118 @@ def parse_reservations_csv(text):
             continue
         rows.append({"date": parts[0], "kind": "reservations", "covers": parts[1]})
     return rows
+
+
+# ── a reservation system's own report, imported ─────────────────────────────
+#
+# No reservation system is live (reservation_feeds: every provider needs a
+# partner grant Cavnar AI does not hold), so busy booked nights were
+# invisible unless the owner typed a date and a cover count (schedule audit
+# 10/3/26 D-31). Every one of them exports its bookings as a report — one row
+# per reservation, a date, a time, a party size, a status — and that file
+# now imports as it is: the bookings are summed per date (cancelled,
+# no-show and declined ones left out), and each date is one reservations
+# row the schedule reads exactly like a typed count. The columns are found by
+# their header words, so OpenTable's, Resy's, Tock's and SevenRooms' exports
+# all read without a template.
+
+_EXPORT_DATE = ("visit date", "reservation date", "booking date", "res date", "date")
+_EXPORT_TIME = ("visit time", "reservation time", "booking time", "res time", "time")
+_EXPORT_SIZE = ("party size", "covers", "cover count", "guest count", "guests", "party", "size", "pax", "people")
+_EXPORT_STATUS = ("reservation status", "booking status", "status", "state")
+_NOT_COMING = ("cancel", "no show", "no-show", "noshow", "declin", "reject", "waitlist", "deleted")
+EXPORT_MAX_ROWS = 20000
+
+
+def _export_date(value, iso):
+    """An export's date cell as ISO: the cell as it is, its first word (a
+    "2026-10-09 19:30" stamp), or a written-out "Oct 9, 2026" / "Friday,
+    October 9, 2026"."""
+    from datetime import datetime as _dtx
+    v = str(value or "").strip()
+    if not v:
+        return None
+    got = iso(v) or iso(v.split(" ")[0]) or iso(v.split("T")[0])
+    if got:
+        return got
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%a, %b %d, %Y", "%A, %B %d, %Y", "%a %b %d %Y", "%m/%d/%Y %I:%M %p"):
+        try:
+            return _dtx.strptime(v, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _header_index(header, words):
+    """The first column whose header is one of `words` (exactly), else the
+    first that contains one — so "Visit Date" wins over "Date Booked"."""
+    low = [h.strip().lower().replace("_", " ") for h in header]
+    for w in words:
+        if w in low:
+            return low.index(w)
+    for w in words:
+        for i, h in enumerate(low):
+            if w in h:
+                return i
+    return None
+
+
+def parse_reservation_export(text):
+    """(rows, summary) from a reservation system's booking export, or
+    (None, None) when the text is not one (no header naming a date and a
+    party size — the two-column "date,covers" paste). rows: one
+    {date, kind: "reservations", label, covers} per date; summary: {dates,
+    bookings, covers, skipped_status, skipped_unreadable, late_covers}."""
+    import csv as _csv
+    import io as _io
+    raw = (text or "").strip()
+    if not raw:
+        return None, None
+    try:
+        sample = raw[:4096]
+        dialect = _csv.Sniffer().sniff(sample, delimiters=",\t;")
+    except Exception:
+        dialect = _csv.excel
+    reader = _csv.reader(_io.StringIO(raw), dialect)
+    header = next(reader, None) or []
+    i_date, i_size = _header_index(header, _EXPORT_DATE), _header_index(header, _EXPORT_SIZE)
+    if i_date is None or i_size is None or i_date == i_size or len(header) < 3:
+        return None, None
+    i_time, i_status = _header_index(header, _EXPORT_TIME), _header_index(header, _EXPORT_STATUS)
+    from labor import _iso_date
+    per_date, late = {}, {}
+    bookings = skipped_status = skipped_bad = 0
+    for n, row in enumerate(reader):
+        if n >= EXPORT_MAX_ROWS:
+            break
+        if not row or not any(c.strip() for c in row):
+            continue
+        try:
+            if i_status is not None and any(w in row[i_status].strip().lower() for w in _NOT_COMING):
+                skipped_status += 1
+                continue
+            d = _export_date(row[i_date], _iso_date)
+            size = int(round(float(str(row[i_size]).strip() or "x")))
+        except (IndexError, ValueError, TypeError):
+            skipped_bad += 1
+            continue
+        if not d or size <= 0 or size > 500:
+            skipped_bad += 1
+            continue
+        bookings += 1
+        per_date[d] = per_date.get(d, 0) + size
+        if i_time is not None:
+            try:
+                from time_utils import parse_clock
+                hm = parse_clock(row[i_time])
+                if hm and (hm[0] >= 22 or hm[0] < 5):
+                    late[d] = late.get(d, 0) + size
+            except (IndexError, TypeError, ValueError):
+                pass
+    rows = [{"date": d, "kind": "reservations", "label": "Reservations", "covers": c}
+            for d, c in sorted(per_date.items())]
+    return rows, {"dates": len(rows), "bookings": bookings, "covers": sum(per_date.values()),
+                  "skipped_status": skipped_status, "skipped_unreadable": skipped_bad, "late_covers": late}
 
 
 def delete(restaurant_id, signal_id, db_path=DB_PATH, by=None, source="owner"):
@@ -587,6 +705,17 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
                     m = seen[0]
                     tail += (f"; the same kind of night measured {m['median_lift_pct']:+.0f}% here over "
                              f"{m['n']} past night{'s' if m['n'] != 1 else ''}")
+            # The date's one demand number (schedule_engine._merge_date_demand)
+            # differs from the signal's own lift when the owner's budget for
+            # the night, a measured forecast effect or measured rain moved it:
+            # the reasons say what made the figure, not the signal alone
+            # (schedule audit 10/3/26 D-23, D-30, PR-8).
+            dem = e.get("demand") or {}
+            if dem.get("reasons") and e.get("signal_lift_pct") != lift:
+                import ai_guard as _ag_dem
+                tail = (f" — expect about {abs(lift)}% {'more' if lift > 0 else 'less'} than a typical {day}"
+                        if lift else " — about a typical day")
+                tail += " (" + _ag_dem.wrap_untrusted("; ".join(dem["reasons"])) + ")"
         elif e.get("covers"):
             tail = f" — {e['covers']} covers booked"
         elif e.get("assumed"):
@@ -609,6 +738,7 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
         return ""
     return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "
             "texts or posts they sent to fill a night — "
-            "a stronger signal than the weekday averages above for the date it names; scale that day's "
-            "headcount by roughly the lift stated, proportionally across roles, and say so in the summary):\n"
+            "a stronger signal than the weekday averages above for the date it names. Each date's figure is "
+            "ALREADY in its SHIFT REQUIREMENTS numbers and its day target (schedule audit 10/3/26 D-23) — do "
+            "not scale that day again; say so in the summary when it is one of the week's biggest decisions):\n"
             + "\n".join(lines))

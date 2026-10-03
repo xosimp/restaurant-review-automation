@@ -1580,6 +1580,7 @@ EXPECTED_JOBS = jobs_registry.expected_hours()
 HEARTBEAT_ALERT_MINUTES = jobs_registry.HEARTBEAT_STALE_MINUTES
 # One out-of-band alert per this many minutes, however many requests see it.
 PLATFORM_ALERT_COOLDOWN_MINUTES = 60
+PLATFORM_WARN_COOLDOWN_MINUTES = 24 * 60
 
 
 def jobs_overdue(now=None, db_path=None) -> list:
@@ -1664,6 +1665,19 @@ def _dsr_missing(db_path=None):
         return []
 
 
+def _has_urgent(out, state, write_ok=True) -> bool:
+    """Whether check_platform_sla's problems include one that cannot wait a
+    day: the scheduler dead or stuck, a job past its SLA, the volume almost
+    full, the database refusing writes."""
+    hb = out.get("heartbeat_minutes")
+    disk = out.get("disk") or {}
+    return bool((hb is not None and hb > HEARTBEAT_ALERT_MINUTES)
+                or state.get("wedged") or state.get("loop_stalled")
+                or out.get("jobs_overdue")
+                or disk.get("state") == "critical"
+                or not write_ok)
+
+
 def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     """The scheduler's watchdog, run from a REQUEST thread: {heartbeat_minutes,
     loop_minutes, running_job, jobs_overdue, disk, write_ok, backup,
@@ -1727,6 +1741,11 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             log.warning(f"messaging health unavailable to the platform check: {e}")
 
     problems = []
+    # Kinds that can wait a day: a volume filling (not full), a stale
+    # backup, a late DSR, a messaging channel. Anything else is urgent.
+    # 10/3/26: "Volume filling up - 239 MB free" texted Will every hour
+    # for a day because every problem shared one 60-minute cooldown.
+    warn_kinds = set()
     hb = out["heartbeat_minutes"]
     if hb is not None and hb > HEARTBEAT_ALERT_MINUTES:
         problems.append(f"Scheduler heartbeat is {int(hb)} minutes old — nothing scheduled is running.")
@@ -1740,17 +1759,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"{j['job']}: no successful run in {j['hours_since']:g}h (expected within {j['max_hours']}h)")
     disk = out["disk"] or {}
     if disk.get("state") in ("low", "critical"):
+        if disk["state"] == "low":
+            warn_kinds.add("disk_low")
         problems.append(f"Volume {'almost full' if disk['state'] == 'critical' else 'filling up'} — "
                         f"{disk.get('free_mb', '?')} MB free ({disk.get('pct_free', '?')}%).")
     if not out["write_ok"]:
         problems.append(f"The database refuses writes: {write_err or 'write probe failed'}.")
     b = out["backup"] or {}
     if b.get("state") in ("stale", "failed", "no_offsite"):
+        warn_kinds.add("backup")
         problems.append(b.get("summary") or "The nightly backup is not healthy.")
     if out["dsr_missing"]:
+        warn_kinds.add("dsr_missing")
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
                         f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+    if out["messaging"]:
+        warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])
     out["problems"] = problems
     if not problems or not send:
@@ -1761,7 +1786,15 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             return out
     except Exception:
         return out
-    res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    # An urgent problem pages hourly. Only warnings: once a day for the same
+    # set, sooner when a new kind joins it (the key names the set).
+    urgent = _has_urgent(out, state, write_ok=out["write_ok"])
+    if urgent:
+        res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    else:
+        res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
+                            "Cavnar AI: the platform needs you", problems,
+                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES)
     out["alerted"] = bool(res.get("sent"))
     return out
 
@@ -2211,6 +2244,12 @@ _RETENTION_DAYS = {
     # dismissed; a year is plenty to know which kinds an owner ignores
     # (SCHED-27).
     "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
+    # The owner's redos and discarded drafts, and the one-tap "why" for a
+    # big edit in the first weeks (schedule audit 10/3/26 L-26, L-35): the
+    # learners read 24 weeks (schedule_versions.LEARN_DAYS); a year and a
+    # month keeps last year's same weeks.
+    "schedule_rejections": int(os.getenv("RETAIN_SCHED_REJECTIONS_DAYS", "400")),
+    "schedule_edit_answers": int(os.getenv("RETAIN_SCHED_EDIT_ANSWERS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2353,6 +2392,10 @@ _RETENTION_DAYS = {
     # The website's daily figures (web_analytics): two years, so a year-on-year
     # comparison stays possible.
     "web_analytics_daily": int(os.getenv("RETAIN_WEB_ANALYTICS_DAYS", "800")),
+    # Every schedule call's full input and answer (schedule_output, schedule
+    # audit 10/3/26 PR-31): half a year of real weeks to replay a model,
+    # effort or prompt change against (scripts/schedule_model_eval.py).
+    "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "180")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2387,6 +2430,8 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
+    "schedule_model_calls": "created_at",
+    "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2449,6 +2494,8 @@ _RETENTION_FLOOR_DAYS = {
     "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
     "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
     "schedule_recommendation_events": 180, "job_period_claims": 35, "alert_holds": 7,
+    # The schedule learners read 24 weeks of redos and answers (L-26, L-35).
+    "schedule_rejections": 168, "schedule_edit_answers": 168,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2489,6 +2536,9 @@ _RETENTION_FLOOR_DAYS = {
     # the model-confidence check read a year; Ask reads up to 180 days of
     # reads. Every closed quarter is summarised first (the rollup below).
     "ai_reads": 365, "ai_claims": 365,
+    # The schedule-call record: the measured tokens a row reads 60 days, and
+    # a replay wants a quarter of real weeks at the least.
+    "schedule_model_calls": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2560,7 +2610,14 @@ _RETENTION_READERS = {
                           # every food-cost reader's loader — the seasonal re-check
                           # (outcomes.expected_for → metrics → cogs) included
                           ("waste_trend.load_waste_history", None, "inventory_summary_weeks")),
-    "schedule_versions": (("schedule_learning.edited_weeks", 56, None),),
+    # Every schedule learner reads a week through schedule_versions.
+    # learning_weeks: 24 weeks, weighted by half-life (schedule audit
+    # 10/3/26 L-27), inside the intermediate versions' floor.
+    "schedule_versions": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.edited_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
+    "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
@@ -2570,8 +2627,11 @@ _RETENTION_READERS = {
                     ("schedule_intel.mentoring", "schedule_intel.MENTOR_WINDOW_DAYS", None),
                     ("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                     ("shift_facts.tenure", None, "person_quarters")),
+    # One weighted reader for every attendance consumer (schedule audit
+    # 10/3/26 L-17): reliability, by-weekday, standby and the prompt's
+    # no-show block all read staff_settings.attendance_events.
     "attendance_events": (("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
-                          ("schedule_learning._attendance_tally", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("staff_settings.attendance_events", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                           ("attendance.summary_lines", 84, None)),
     "person_signals": (("people.cover_record", 180, None),
                        ("people.get_person", "people.PERSON_MENTION_DAYS", None),
@@ -2591,6 +2651,9 @@ _RETENTION_READERS = {
                   ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
     # The after-shift pulse: the owner's summary reads 90 days at most.
     "staff_shift_pulse": (("staff_insights.pulse_summary", 90, None),),
+    # What a schedule row really costs in output tokens (P-35), from the
+    # last 60 days of calls.
+    "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
@@ -2637,8 +2700,8 @@ VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
 REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
 # The prunes that are not one table's rows by one stamp, with the same
-# floor rule: {name: (current days, floor)}. The schedule learner reads the
-# last 8 weeks of edits (schedule_learning.EDIT_WEEKS); the waste trend,
+# floor rule: {name: (current days, floor)}. The schedule learners read the
+# last 24 weeks of edits (schedule_versions.LEARN_DAYS); the waste trend,
 # price trends and food cost % bucket inventory by ISO week; the seasonal
 # baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
 # and the seasonal re-check further, from the weekly summary.
@@ -2646,7 +2709,9 @@ def _special_retention():
     return {
         "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
         "inventory_daily_detail": (INVENTORY_DAILY_DAYS, 28),
-        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 60),
+        # The learners read 24 weeks of a week's saves (schedule_versions.
+        # LEARN_DAYS, 168 — schedule audit 10/3/26 L-27); they used to read 8.
+        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 168),
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
         "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),

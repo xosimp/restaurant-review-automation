@@ -190,10 +190,19 @@ def published_rows(restaurant_id, day, db_path=DB_PATH):
 
 
 def _todays_scheduled(restaurant_id, day, db_path=DB_PATH):
-    """[{employee, role, shift_start}] from the PUBLISHED week that covers
-    today."""
-    return [{"employee": r["employee"], "role": r["role"], "shift_start": r["shift_start"]}
+    """[{employee, role, shift_start, shift_end}] from the PUBLISHED week
+    that covers today. The end rides along so the coverage check can name
+    an on-shift person whose own shift ends as a gap begins (E-31)."""
+    return [{"employee": r["employee"], "role": r["role"], "shift_start": r["shift_start"],
+             "shift_end": r.get("shift_end") or ""}
             for r in published_rows(restaurant_id, day, db_path)]
+
+
+# How a published row reads to the coverage check once a manager let its
+# holder off it (an approved drop nobody claimed, or the holder's shift put
+# on the open board before it began — shift_requests.shift_release): the
+# shift is open, not theirs (schedule audit 10/3/26 E-5).
+OPEN_DROPPED = "open (dropped)"
 
 
 def _short(key):
@@ -279,13 +288,37 @@ def is_here(name, keys, scheduled_keys=()):
     return len(hits) == 1 and (_abbreviated(k) or _abbreviated(hits[0]))
 
 
+def _released(restaurant_id, day, restaurant, db_path=DB_PATH) -> list:
+    """shift_requests.shift_release for the business date, or [] when the
+    requests can't be read (then every published row is expected, as
+    before — said in the log, never a crash of the check)."""
+    try:
+        import shift_requests
+        return shift_requests.shift_release(restaurant_id, day, restaurant=restaurant, db_path=db_path)
+    except Exception as e:
+        log.warning("coverage check: shift requests unreadable rid=%s: %s", restaurant_id, e)
+        return []
+
+
 def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None,
                   grace_minutes=COVERAGE_GRACE_MINUTES):
     """Who was on the PUBLISHED schedule for a shift that has already started
     and has not clocked in. {"available": False, "reason"} where the POS has
     no live clock-in feed, or where no published week covers today.
     `arrived_keys` (everyone clocked in, aliases resolved) lets the caller
-    close an earlier no-show issue for someone who arrived late."""
+    close an earlier no-show issue for someone who arrived late.
+
+    Every answer carries `business_date` — the service the clock is in — and
+    the caller keys its issues by it, never by the calendar date (schedule
+    audit 10/3/26 E-4: after midnight on a 2am close the calendar date made a
+    second issue for the same person and never closed the first).
+
+    A published row whose holder a manager let off it (an approved drop
+    nobody claimed — shift_requests.shift_release) reads as "open
+    (dropped)": it is listed in `released`, never in `missing` (E-5); a
+    covered one likewise. Somebody who asked to drop the shift and was never
+    approved is still expected, and when missing carries `asked_off` and the
+    notice they gave."""
     import pos
     import staff_settings as _ss
     from models import get_restaurant
@@ -298,14 +331,15 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     day = business_date(restaurant, local)
     scheduled = _todays_scheduled(restaurant_id, day, db_path=db_path)
     if not scheduled:
-        return {"available": False, "reason": "no published schedule covers today"}
+        return {"available": False, "reason": "no published schedule covers today",
+                "business_date": day.isoformat()}
     try:
         clocked, provider = pos.fetch_clock_ins_today(restaurant_id, day)
     except pos.POSCapabilityError as e:
-        return {"available": False, "reason": str(e)}
+        return {"available": False, "reason": str(e), "business_date": day.isoformat()}
     except Exception as e:
         log.warning("coverage check failed rid=%s: %s", restaurant_id, e)
-        return {"available": False, "reason": "the POS didn't answer"}
+        return {"available": False, "reason": "the POS didn't answer", "business_date": day.isoformat()}
     here = arrival_keys(restaurant_id, clocked, db_path)
     # The published week may carry a spelling from before a rename: each
     # scheduled name is read as the person it means now (people).
@@ -314,7 +348,10 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
         _canon = _people.canonical_names(restaurant_id, [s["employee"] for s in scheduled], db_path=db_path)
     except Exception:
         _canon = {}
-    scheduled = [dict(s, employee=_canon.get(s["employee"], s["employee"])) for s in scheduled]
+    # `listed_as` keeps the week's own spelling: the row is found by it when
+    # a cover is judged against the published week (labor_replacements).
+    scheduled = [dict(s, employee=_canon.get(s["employee"], s["employee"]), listed_as=s["employee"])
+                 for s in scheduled]
     # Salaried people don't clock in (owner, 9/30/26: "managers don't clock
     # in"): a missing punch is never theirs.
     import attendance as _att
@@ -322,6 +359,20 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     if _sal:
         from models import salaried_name_key
         scheduled = [s for s in scheduled if salaried_name_key(s["employee"]) not in _sal]
+    # What the shift requests say about each row (E-5): a holder a manager
+    # let off the shift, or whose shift somebody took, is not expected.
+    import shift_requests as _sreq
+    releases = _released(restaurant_id, day, restaurant, db_path)
+    released, expected = [], []
+    for s in scheduled:
+        hit = _sreq.released_for(releases, s["employee"], s["shift_start"])
+        if hit and hit["outcome"] in ("excused", "covered"):
+            released.append(dict(s, status=OPEN_DROPPED if hit["outcome"] == "excused" else "covered",
+                                 request_id=hit.get("request_id"), covered_by=hit.get("replacement")))
+            continue
+        expected.append(dict(s, asked_off=True, notice_minutes=hit.get("notice_minutes"))
+                        if hit and hit["outcome"] == "called_out" else s)
+    scheduled = expected
     scheduled_keys = [_ss.name_key(s["employee"]) for s in scheduled]
     missing = []
     for s in scheduled:
@@ -348,11 +399,12 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     # restaurant where nobody came in: every one of them would be a no-show
     # issue on the manager's phone (DH2-8).
     if not clocked and any(m["minutes_late"] > EMPTY_FEED_UNAVAILABLE_MINUTES for m in missing):
-        return {"available": False, "reason": "clock-in feed incomplete — the POS reported nobody clocked in"}
+        return {"available": False, "reason": "clock-in feed incomplete — the POS reported nobody clocked in",
+                "business_date": day.isoformat()}
     arrived ={k for k in scheduled_keys if is_here(k, here, scheduled_keys)} | here
-    return {"available": True, "provider": provider, "missing": missing,
+    return {"available": True, "provider": provider, "missing": missing, "business_date": day.isoformat(),
             "scheduled": len(scheduled), "scheduled_rows": scheduled, "clocked_in": len(clocked or []),
-            "arrived_keys": sorted(arrived)}
+            "arrived_keys": sorted(arrived), "released": released}
 
 
 # ── asking someone to cover (#13) ─────────────────────────────────────────────
@@ -416,15 +468,28 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     from models import get_restaurant
     r = get_restaurant(restaurant_id, db_path)
     place = (getattr(r, "location_name", None) or getattr(r, "name", None) or "the restaurant") if r else "the restaurant"
-    missing, role, start = meta.get("missing") or "A teammate", meta.get("role") or "", meta.get("shift_start") or ""
+    group = issues.is_group_coverage(issue.get("source_key"))
+    if group:
+        # A role's issue holds several gaps: the suggestion names the one
+        # it is for (strategy_jobs.run_coverage_check, E-31), and only a gap
+        # still missing can be offered.
+        gap = next((p for p in issues.coverage_people(issue)
+                    if _ss.name_key(p.get("employee")) == _ss.name_key(suggested[0].get("for"))
+                    and (not suggested[0].get("shift_start") or p.get("shift_start") == suggested[0]["shift_start"])),
+                   None)
+        if not gap or gap.get("status") != "missing":
+            return {"ok": False, "error": "That shift is already covered or they've clocked in."}
+        missing, role, start = gap["employee"], gap.get("role") or meta.get("role") or "", gap.get("shift_start") or ""
+    else:
+        missing, role, start = meta.get("missing") or "A teammate", meta.get("role") or "", meta.get("shift_start") or ""
     tail = str(issue.get("source_key") or "").split(":")
-    day = tail[1] if len(tail) >= 3 else None
+    day = (meta.get("business_date") or tail[1]) if len(tail) >= 3 else None
     offer_id = None
     via = None
-    if day and meta.get("missing") and start:
+    if day and (missing if group else meta.get("missing")) and start:
         import shift_requests as _sreq
         try:
-            out = _sreq.post_open_shift(restaurant_id, day, start, employee=meta["missing"],
+            out = _sreq.post_open_shift(restaurant_id, day, start, employee=missing if group else meta["missing"],
                                         actor=actor or "coverage issue", offer_to=who, issue_id=issue_id,
                                         db_path=db_path)
             offer_id, via = out["offer"]["id"], out["offer"].get("via") or "app"
@@ -461,14 +526,21 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     ask = {"name": who, "via": via, "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}
     if offer_id:
         ask["offer_id"] = offer_id        # answered in the app (shift_requests.respond_offer)
-    meta.setdefault("asked", []).append(ask)
-    conn = get_conn(db_path)
-    try:
-        conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
-                     (_json.dumps(meta)[:4000], issue_id, restaurant_id))
-        conn.commit()
-    finally:
-        conn.close()
+    if group:
+        ask["for"], ask["shift_start"] = missing, start
+        # In one write with whatever else is editing the issue (the check
+        # marking an arrival, another ask) — a read-then-write lost one.
+        issues.update_coverage(restaurant_id, issue_id, lambda m: m.setdefault("asked", []).append(ask) or True,
+                               db_path=db_path)
+    else:
+        meta.setdefault("asked", []).append(ask)
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
+                         (issues.meta_text(meta), issue_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
     try:
         import rec_ledger
         rec_ledger.record(restaurant_id, cover_key(issue), "accepted", surface=surface, user_id=user_id,
@@ -506,7 +578,7 @@ def mark_cover_answer(restaurant_id, issue_id, name, accepted, db_path=None) -> 
         conn = _models.get_conn(db)
         try:
             conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
-                         (_json.dumps(meta)[:4000], issue_id, restaurant_id))
+                         (issues.meta_text(meta), issue_id, restaurant_id))
             conn.commit()
         finally:
             conn.close()

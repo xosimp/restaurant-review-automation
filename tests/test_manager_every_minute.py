@@ -32,9 +32,11 @@ def _kinds(rows, c):
 
 
 def test_manager_and_owner_roles_count_and_others_do_not():
-    for role in ("Manager FOH", "General Manager", "GM", "Owner", "Kitchen Manager", "Bar Supervisor"):
+    for role in ("Manager FOH", "General Manager", "GM", "Owner", "AGM", "MOD", "Shift Lead"):
         assert sr.is_manager_role(role), role
-    for role in ("Server", "Bartender AM", "Line Cook", "Host PM", "Busser", ""):
+    # A department's manager does not run the floor by its title alone: the
+    # owner says so per person (schedule audit 10/3/26 P-7).
+    for role in ("Server", "Bartender AM", "Line Cook", "Host PM", "Busser", "", "Kitchen Manager", "Bar Supervisor"):
         assert not sr.is_manager_role(role), role
 
 

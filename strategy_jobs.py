@@ -2027,9 +2027,22 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
 def run_coverage_check(db_path=DB_PATH, restaurants=None):
     """A scheduled person who hasn't clocked in becomes the routed manager's
     issue — the one staffing problem that is still fixable while it matters.
-    One issue per person per day (source_key)."""
+
+    Everything here runs on the restaurant's BUSINESS date — the issue key,
+    the arrivals it closes, the night's coverage marker, the covers it
+    suggests and the week their legality is judged on (schedule audit
+    10/3/26 E-4). It used the calendar date: at 12:10am on a 2am close a
+    10pm starter missing since 10:15pm got a second issue keyed to
+    Saturday, and their arrival never closed Friday's, which the nightly
+    attendance read then recorded as a no-show.
+
+    One issue per business date and role family (_raise_coverage, E-31): a
+    mass call-off is one text — "3 of 6 servers haven't clocked in" — not a
+    burst, each gap gets its own covers instead of the same two names for
+    every gap, and someone already on whose shift ends as the gap begins
+    (the lunch server who could stay) is suggested before anyone off."""
     import intraday, issues, ops
-    from time_utils import restaurant_now
+    from time_utils import restaurant_now, business_date
     opened = 0
     st = {"attempted": 0, "failed": 0}
     for r in _slot_iter("coverage_check", restaurants, db_path, state=st):
@@ -2043,29 +2056,23 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
         st["attempted"] += 1
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
-            # Everyone on today's schedule is busy; the person missing is the
-            # gap. Best fits come from the same engine as the replacements
-            # screen, folded into the text the manager actually reads.
-            # "scheduled" is a count; the rows are "scheduled_rows". Iterating
-            # the count crashed this job on every restaurant with a schedule
-            # (MOD-LAB-1).
-            on_today = {str(x.get("employee") or "") for x in (gaps.get("scheduled_rows") or [])}
+            # The service the clock is in — the date coverage_gaps read the
+            # published week and the clock-ins for (E-4).
+            bday = str(gaps.get("business_date") or business_date(r, local).isoformat())[:10]
             # Someone who turned up late closes their own no-show issue on
             # this pass — the manager is not left chasing a person already
             # on the floor (#13 / #18).
             if gaps.get("available"):
-                issues.resolve_coverage(r.id, local.date().isoformat(), set(gaps.get("arrived_keys") or []),
-                                        db_path=db_path)
+                issues.resolve_coverage(r.id, bday, set(gaps.get("arrived_keys") or []), db_path=db_path)
                 # The nightly report states "0 no-shows" only for a night
                 # this check really read the clock-ins (dsr D1-17).
                 try:
-                    import closeout
                     from dsr import store as _dsr_store
-                    _dsr_store.mark_coverage_ran(r.id, closeout.business_date_for(r, local), db_path=db_path)
+                    _dsr_store.mark_coverage_ran(r.id, bday, db_path=db_path)
                 except Exception as me:
                     ops.capture(me, job="coverage_check", context=f"restaurant_id={r.id} dsr marker")
-            import staff_settings as _ss
             import staff_comms
+            due = []
             for m in (gaps.get("missing") or []):
                 # They said they're running late (staff app, COM-05): no
                 # "hasn't clocked in" until their start + ETA + the grace;
@@ -2078,42 +2085,181 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     ops.capture(he, job="coverage_check", context=f"restaurant_id={r.id} running-late hold")
                 if hold and hold["holding"]:
                     continue
-                fits_text, fits = "", []
-                try:
-                    import labor_replacements
-                    fits = labor_replacements.for_gap(r.id, m.get("role"), local.strftime("%A"),
-                                                      exclude=on_today | {m["employee"]}, db_path=db_path,
-                                                      on_date=local.date().isoformat(),
-                                                      shift={"employee": m["employee"],
-                                                             "shift_start": m.get("shift_start")}) or []
-                    fits_text = labor_replacements.sentence(fits)
-                except Exception as fe:
-                    ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
-                # The suggested covers travel with the issue, so its page can
-                # offer "Ask Ana to cover" as one tap (intraday.ask_to_cover).
-                meta = {"missing": m["employee"], "role": m.get("role"), "shift_start": m.get("shift_start"),
-                        "covers": [{"name": f["name"], "score": f.get("score")} for f in fits]}
-                issue, token = issues.create_issue(
-                    r.id, "coverage",
-                    f"{m['employee']} hasn't clocked in",
-                    detail=f"Scheduled {m['shift_start']} as {m['role']} — "
-                           f"{m['minutes_late']} minutes ago, with no clock-in on the POS."
-                           + staff_comms.hold_sentence(hold) + fits_text,
-                    severity="high",
-                    source_key=f"coverage:{local.date().isoformat()}:{_ss.name_key(m['employee'])}",
-                    meta=meta, db_path=db_path)
-                if token:
-                    opened += 1
-                    # The suggested covers are NOT presented here. The text the
-                    # manager gets names the issue, not the covers, and a text
-                    # Twilio refused still recorded "cover" on issue_sms (re-audit
-                    # C3). They are presented where they are rendered: Home's
-                    # open-issues list (GET /issues, strategy_routes) and the
-                    # issue page a person acted on (/i/<token>).
+                due.append(dict(m, hold=staff_comms.hold_sentence(hold)))
+            if due:
+                opened += _raise_coverage(r, bday, due, gaps, local, db_path)
         except Exception as e:
             st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
     return _slot_counts(st, opened=opened)
+
+
+# Covers suggested for each gap on a coverage issue (the issue page offers
+# "Ask Ana to cover" for each).
+COVERS_PER_GAP = 2
+
+
+def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
+    """The coverage check's missing people onto the business date's issues,
+    one per role family (schedule audit 10/3/26 E-31): somebody not on any
+    issue yet joins their role's open issue — the manager is texted its new
+    title once — or opens one ("#2" when a manager already closed the
+    first). Somebody already on an issue for that date, open or closed, is
+    never raised twice. Returns how many issues it opened.
+
+    The suggested covers travel with the issue (meta.covers), so its page
+    can offer "Ask Ana to cover" as one tap (intraday.ask_to_cover). They are
+    NOT presented here: the text names the issue, not the covers, and a
+    text Twilio refused still recorded "cover" on issue_sms (re-audit C3) —
+    they are presented where they are rendered: Home's open-issues list
+    (GET /issues, strategy_routes) and the issue page (/i/<token>)."""
+    import issues
+    import schedule_rules as _sr
+    import staff_settings as _ss
+    from shift_quality import role_family
+    from datetime import date as _date
+    day = _date.fromisoformat(bday)
+    c = _coverage_constraints(r, day, due, db_path)
+    families = getattr(c, "role_families", None) or None
+    on_today = gaps.get("scheduled_rows") or []
+
+    def _gap_id(p):
+        return _ss.name_key(p.get("employee")), _sr.parse_minutes(p.get("shift_start") or "")
+
+    raised, newest = set(), {}
+    known = issues.coverage_issues_for(r.id, bday, db_path=db_path)
+    if local.date().isoformat() != bday:
+        # A person-keyed issue from before this check keyed by business date
+        # carries the calendar date it was opened on.
+        known += [i for i in issues.coverage_issues_for(r.id, local.date().isoformat(), db_path=db_path)
+                  if not issues.is_group_coverage(i.get("source_key"))]
+    for iss in known:
+        raised |= {_gap_id(p) for p in issues.coverage_people(iss)}
+        if issues.is_group_coverage(iss.get("source_key")):
+            newest[(iss.get("meta") or {}).get("family") or ""] = iss         # oldest first: the last one wins
+    groups = {}
+    for m in sorted(due, key=lambda x: (_sr.parse_minutes(x.get("shift_start") or "") or 0, x["employee"])):
+        if _gap_id(m) not in raised:
+            groups.setdefault(role_family(m.get("role") or "", families) or "staff", []).append(m)
+    # Nobody missing and nobody let off today is asked to cover; everyone
+    # else on today only to stay on as their own shift ends (stay_on).
+    away = [m["employee"] for m in due] + [x.get("employee") for x in (gaps.get("released") or [])]
+    stamp = local.strftime("%Y-%m-%d %H:%M")
+    opened = 0
+    for fam, people in groups.items():
+        iss = newest.get(fam)
+        live = iss is not None and iss.get("status") != "resolved"
+        # A name the open issue already suggests is not suggested again for
+        # a second gap: each gap gets its own (E-31).
+        taken = [x.get("name") for x in ((iss or {}).get("meta") or {}).get("covers") or []] if live else []
+        covers = _gap_covers(r, day, people, on_today, away, taken, c, db_path)
+        entries = [{"employee": m["employee"], "role": m.get("role"), "shift_start": m.get("shift_start"),
+                    "shift_end": m.get("shift_end"), "minutes_late": m.get("minutes_late"), "status": "missing",
+                    "hold": m.get("hold") or "", "asked_off": bool(m.get("asked_off")),
+                    "notice_minutes": m.get("notice_minutes"), "seen_at": stamp} for m in people]
+        in_role = len({_ss.name_key(x.get("employee")) for x in on_today
+                       if (role_family(x.get("role") or "", families) or "staff") == fam})
+        if live:
+            def _merge(meta, entries=entries, covers=covers, in_role=in_role):
+                have = {_gap_id(p) for p in meta.get("people") or [] if isinstance(p, dict)}
+                add = [e for e in entries if _gap_id(e) not in have]
+                if not add:
+                    return False
+                meta.setdefault("people", []).extend(add)
+                meta.setdefault("covers", []).extend(covers)
+                meta["scheduled_in_role"] = in_role
+                return True
+            issues.update_coverage(r.id, iss["id"], _merge, renotify=True, db_path=db_path)
+            continue
+        seq = 1
+        if iss is not None:
+            tail = str(iss.get("source_key") or "").rsplit("#", 1)
+            seq = (int(tail[1]) if len(tail) == 2 and tail[1].isdigit() else 1) + 1
+        meta = {"business_date": bday, "role": fam, "family": fam, "people": entries, "covers": covers,
+                "scheduled_in_role": in_role,
+                # The first person, as a one-person issue always carried them.
+                "missing": entries[0]["employee"], "shift_start": entries[0]["shift_start"]}
+        title, detail = issues.coverage_texts(meta)
+        _issue, token = issues.create_issue(r.id, "coverage", title, detail=detail, severity="high",
+                                            source_key=issues.coverage_key(bday, fam, seq), meta=meta,
+                                            db_path=db_path)
+        if token:
+            opened += 1
+    return opened
+
+
+def _coverage_constraints(r, day, due, db_path=DB_PATH):
+    """The rules of the published week holding `day`, built once for every
+    cover's legality check on this pass (each check built its own), or None
+    when no published row can be found to judge by."""
+    import labor_replacements
+    import schedule_rules as _sr
+    from datetime import datetime as _dt
+    for m in due:
+        rows, _idx = labor_replacements.gap_week(r.id, day, {"employee": m.get("listed_as") or m["employee"],
+                                                            "shift_start": m.get("shift_start")}, db_path)
+        if rows:
+            dates = sorted({x.get("date") for x in rows if x.get("date")})
+            try:
+                return _sr.build_constraints(r.id, dates, [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates],
+                                             restaurant=r)
+            except Exception as e:
+                import ops
+                ops.capture(e, job="coverage_replacements", context=f"restaurant_id={r.id} rules")
+                return None
+    return None
+
+
+def _gap_covers(r, day, people, on_today, away, taken, c, db_path=DB_PATH) -> list:
+    """Covers for each gap, earliest gap first: someone on today whose shift
+    ends as it begins (labor_replacements.stay_on), else someone off today
+    (for_gap) — never a name already suggested for another gap (`taken`, the
+    open issue's own) or anyone in `away` (missing, or let off today). Dealt
+    a round at a time — every gap its first cover before any gap its second
+    — so the first gap cannot take every good name. Each names the gap it is
+    for: [{"name", "score", "kind", "how", "for", "shift_start"}]."""
+    import labor_replacements
+    import ops
+    used = [n for n in taken if n]
+    on_names = [x.get("employee") for x in on_today if x.get("employee")]
+    gaps = []
+    for m in people:
+        listed = m.get("listed_as") or m["employee"]
+        try:
+            rows, idx = labor_replacements.gap_week(r.id, day, {"employee": listed,
+                                                               "shift_start": m.get("shift_start")}, db_path)
+        except Exception as fe:
+            ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id} week")
+            rows, idx = None, None
+        gaps.append((m, listed, rows, idx))
+    out = []
+    for _round in range(COVERS_PER_GAP):
+        for m, listed, rows, idx in gaps:
+            pick = []
+            try:
+                pick = labor_replacements.stay_on(
+                    r.id, {"employee": listed, "role": m.get("role"), "shift_start": m.get("shift_start"),
+                           "date": day.isoformat()},
+                    on_today, exclude=used + list(away), db_path=db_path, limit=1, constraints=c, rows=rows,
+                    index=idx)
+            except Exception as fe:
+                ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id} stay on")
+            if not pick:
+                try:
+                    pick = [dict(f, kind="off") for f in labor_replacements.for_gap(
+                        r.id, m.get("role"), day.strftime("%A"), exclude=set(on_names) | set(away) | set(used),
+                        db_path=db_path, limit=1, on_date=day.isoformat(),
+                        shift={"employee": listed, "shift_start": m.get("shift_start")}, constraints=c) or []]
+                except Exception as fe:
+                    ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
+                    pick = []
+            for f in pick[:1]:
+                if f["name"] in used:
+                    continue                # never one name for two gaps, whatever a picker returns
+                used.append(f["name"])
+                out.append({"name": f["name"], "score": f.get("score"), "kind": f.get("kind") or "off",
+                            "how": f.get("how"), "for": m["employee"], "shift_start": m.get("shift_start")})
+    return out
 
 
 def _metric_permissions(metric):

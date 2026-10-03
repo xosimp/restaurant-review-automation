@@ -78,19 +78,28 @@ def test_blockers_name_flagged_rows_hard_breaches_and_a_weak_verdict(db_path, ri
     b = client_api.publish_blockers(rid, hid)
     assert "1 shift marked NEEDS REVIEW" in b
     assert "Bob — Tuesday 4:00pm: approved time off" in b
-    assert any("weak week" in x for x in b) and any("too little to judge" in x for x in b)
+    # The quality verdict is a note, never a blocker (schedule audit 10/3/26
+    # SQ-29): it is said, and the send is not held for it.
+    assert not any("weak week" in x for x in b) and not any("too little to judge" in x for x in b)
+    review = client_api.publish_review(rid, hid)
+    said = [n["text"] for n in review["notes"]]
+    assert any("weak week" in x for x in said) and any("too little to judge" in x for x in said)
+    assert all(x in review["soft"] for x in said)
 
 
 def test_a_week_written_past_the_budget_is_a_blocker_not_a_trim(db_path, rid):
+    # CLEAN is 12h of hourly shifts: the gate holds the rows' own hourly
+    # hours, as they stand, against the hourly budget (E-7) — not a stored
+    # total that an edit or a salaried person's shifts left wrong.
     hid = _history(db_path, rid, CLEAN)
     conn = get_conn(db_path)
-    conn.execute("UPDATE schedule_history SET hours_scheduled=1457, hours_budget=1314 WHERE id=?", (hid,))
+    conn.execute("UPDATE schedule_history SET hours_scheduled=1457, hours_budget=10 WHERE id=?", (hid,))
     conn.commit()
     conn.close()
     b = client_api.publish_blockers(rid, hid)
-    assert any("143h over the ceiling" in x for x in b), b
+    assert any("12h of hourly shifts against a 10h hourly budget — 2h over the ceiling" in x for x in b), b
     conn = get_conn(db_path)
-    conn.execute("UPDATE schedule_history SET hours_scheduled=1320 WHERE id=?", (hid,))   # inside the 2% tolerance
+    conn.execute("UPDATE schedule_history SET hours_budget=11.8 WHERE id=?", (hid,))   # inside the 2% tolerance
     conn.commit()
     conn.close()
     assert client_api.publish_blockers(rid, hid) == []
@@ -248,6 +257,13 @@ def test_role_floor_backstop_respects_the_hours_ceiling_and_rest(monkeypatch):
     assert dates == {}                                # nobody legal — no invented cook
 
 
+def _servers_needed(dates, n):
+    """SHIFT REQUIREMENTS rows: `n` servers at dinner on each date — what a
+    day is "thin" against since schedule audit 10/3/26 P-20."""
+    return [{"date": d, "day": DAYS[WEEK.index(d)], "daypart": "night",
+             "roles": [{"role": "Server", "required": n, "floor": 0, "typical": n}]} for d in dates]
+
+
 def test_hours_top_up_never_spends_toward_the_budget(monkeypatch):
     """A week well under budget with every role at its usual headcount
     gains nothing: the budget is a ceiling, not a quota."""
@@ -256,18 +272,19 @@ def test_hours_top_up_never_spends_toward_the_budget(monkeypatch):
     targets = {d: 40.0 for d in WEEK}
     out, hours_added, dates = schedule_engine._top_up_hours_gap(
         list(rows), targets, hours_budget=280.0, hours_scheduled=84.0, restaurant_id=1,
-        close_times={}, role_buffers={}, constraints=_plain_constraints())
+        close_times={}, role_buffers={}, constraints=_plain_constraints(), requirements=_servers_needed(WEEK, 2))
     assert hours_added == 0 and dates == {} and len(out) == len(rows)
 
 
 def test_hours_top_up_fills_only_a_genuinely_thin_day(monkeypatch):
     monkeypatch.setattr(models, "get_staff_availability", lambda r, *a, **k: [])
-    rows = [_row(d, n, "4:00pm", "9:00pm", role="Server", hours=5.0) for d in WEEK[:6] for n in ("Ana", "Bob", "Cy")]
+    # Tuesday to Saturday (a Sunday shift is nobody's seventh day in a row, P-2)
+    rows = [_row(d, n, "4:00pm", "9:00pm", role="Server", hours=5.0) for d in WEEK[1:6] for n in ("Ana", "Bob", "Cy")]
     rows.append(_row(WEEK[6], "Ana", "4:00pm", "9:00pm", role="Server", hours=5.0))     # Sunday has one server, not three
     targets = {d: 40.0 for d in WEEK}
     out, hours_added, dates = schedule_engine._top_up_hours_gap(
-        list(rows), targets, hours_budget=280.0, hours_scheduled=95.0, restaurant_id=1,
-        close_times={}, role_buffers={}, constraints=_plain_constraints())
+        list(rows), targets, hours_budget=280.0, hours_scheduled=80.0, restaurant_id=1,
+        close_times={}, role_buffers={}, constraints=_plain_constraints(), requirements=_servers_needed(WEEK, 3))
     assert set(dates) == {WEEK[6]}
     added = [r for r in out if r["date"] == WEEK[6] and r not in rows]
     assert added and all("top-up" in r["notes"] for r in added)
@@ -276,14 +293,14 @@ def test_hours_top_up_fills_only_a_genuinely_thin_day(monkeypatch):
 
 def test_top_up_honours_time_off_and_the_ceiling(monkeypatch):
     monkeypatch.setattr(models, "get_staff_availability", lambda r, *a, **k: [])
-    rows = [_row(d, n, "4:00pm", "9:00pm", role="Server", hours=5.0) for d in WEEK[:6] for n in ("Ana", "Bob", "Cy")]
+    rows = [_row(d, n, "4:00pm", "9:00pm", role="Server", hours=5.0) for d in WEEK[1:6] for n in ("Ana", "Bob", "Cy")]
     rows.append(_row(WEEK[6], "Ana", "4:00pm", "9:00pm", role="Server", hours=5.0))
     c = _plain_constraints(blocked_dates={"bob": {WEEK[6]: sr.LABELS["approved_time_off"]}},
-                           hours_limits={"cy": (None, 33)})
+                           hours_limits={"cy": (None, 28)})
     out, hours_added, dates = schedule_engine._top_up_hours_gap(
-        list(rows), {d: 40.0 for d in WEEK}, hours_budget=280.0, hours_scheduled=95.0, restaurant_id=1,
-        close_times={}, role_buffers={}, constraints=c)
-    assert dates == {}          # Bob is off, Cy would pass 33h: nobody legal, gap stays
+        list(rows), {d: 40.0 for d in WEEK}, hours_budget=280.0, hours_scheduled=80.0, restaurant_id=1,
+        close_times={}, role_buffers={}, constraints=c, requirements=_servers_needed([WEEK[6]], 3))
+    assert dates == {}          # Bob is off, Cy would pass 28h: nobody legal, gap stays
 
 
 # ── explanations ───────────────────────────────────────────────────────

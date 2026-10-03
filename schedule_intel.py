@@ -838,17 +838,28 @@ def could_hold(mentored: dict) -> dict:
 #   1. the Labor module is on;
 #   2. issue routing names a manager (issues.get_routing has "manager");
 #   3. the connected POS has a live clock-in feed (its provider module
-#      exposes fetch_clock_ins_today — Toast does; RPOWER, month-at-a-time,
-#      does not);
-#   4. the restaurant was open and the POS was read during service THAT DAY.
+#      exposes fetch_clock_ins_today — Toast and RPOWER both do: RPOWER's
+#      above-store data is fed while the store trades, and
+#      rpower.fetch_clock_ins_today reads the business day's punches; this
+#      used to say RPOWER could not be watched, which sent anyone asking
+#      why Simple EJ's nights were unwatched the wrong way — schedule audit
+#      10/3/26 L-32);
+#   4. the check actually read the clock-ins during THAT night's service.
 #
-# 1-3 are read from the current configuration. 4 is per date: a pos_intraday
-# reading exists for it (run_intraday_capture takes one each open hour from
-# the same live POS, on the same open-hours rule as the coverage check).
-# Without all four, "8 of 8 shared dayparts ran without an issue", an
-# accepted recommendation "improved", and auto-publish's "ran clean" weeks
-# were all true of every restaurant by default (re-audit A-19) — so those
-# reads are withheld for any date nobody was watching.
+# 1-3 are read from the current configuration. 4 is per date: the check
+# marks each business date it read the clock-ins for (dsr_coverage_runs,
+# written only when a published week covered the night and the POS
+# answered). Before that mark existed (COVERAGE_RUNS_SINCE) the evidence was
+# a pos_intraday sales reading that day — which also counted a night with no
+# published week to check against, or one whose clock-in read failed while
+# sales still came through (an RPOWER pull refused for unmatched punches),
+# as watched. So at an RPOWER restaurant the real gates are the manager
+# routing (2), a published week covering the night, and the clock-in read
+# itself. Without all four, "8 of 8 shared dayparts ran without an issue",
+# an accepted recommendation "improved", and auto-publish's "ran clean"
+# weeks were all true of every restaurant by default (re-audit A-19) — so
+# those reads are withheld for any date nobody was watching.
+COVERAGE_RUNS_SINCE = "2026-09-25"
 
 def coverage_watch_missing(restaurant_id, db_path=DB_PATH) -> list:
     """What stops run_coverage_check from watching this restaurant's nights,
@@ -879,16 +890,25 @@ def coverage_check_possible(restaurant_id, db_path=DB_PATH) -> bool:
 
 def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
     """ISO dates in [start, end] on which a clean night means something:
-    coverage_check_possible, and a live POS reading taken that day (4)."""
+    coverage_check_possible, and the check really read that night's
+    clock-ins (4: dsr_coverage_runs) — or, for a night before that mark was
+    kept (COVERAGE_RUNS_SINCE), a live POS reading taken that day."""
     if not coverage_check_possible(restaurant_id, db_path):
         return set()
+    s, e = str(start)[:10], str(end)[:10]
+    out = set()
     conn = get_conn(db_path)
     try:
-        return {r["business_date"] for r in conn.execute(
-            "SELECT DISTINCT business_date FROM pos_intraday WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
-            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
-    except Exception as e:
-        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {e}")
+        out |= {str(r["business_date"])[:10] for r in conn.execute(
+            "SELECT business_date FROM dsr_coverage_runs WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
+            (restaurant_id, s, e)).fetchall()}
+        if s < COVERAGE_RUNS_SINCE:
+            out |= {r["business_date"] for r in conn.execute(
+                "SELECT DISTINCT business_date FROM pos_intraday WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
+                "AND business_date < ?", (restaurant_id, s, e, COVERAGE_RUNS_SINCE)).fetchall()}
+        return out
+    except Exception as ex:
+        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {ex}")
         return set()
     finally:
         conn.close()
@@ -1279,17 +1299,47 @@ def pattern_key(p: dict) -> str:
     return key
 
 
+# A dismissal counts when it is the restaurant's own word (schedule audit
+# 10/3/26 L-10): an account holder's or a manager's — or one stored before
+# the authority was (NULL, read as it always was) — and an admin's only once
+# the account holder adopted it. An admin's dismissal through view-as used
+# to silence the pattern for everyone, forever.
+_DISMISSAL_COUNTS_SQL = "(COALESCE(authority, '') <> 'admin' OR adopted_at IS NOT NULL)"
+
+
 def dismissed_patterns(restaurant_id, db_path=DB_PATH) -> set:
+    """The pattern keys the restaurant has dismissed (an admin's only once
+    adopted — L-10)."""
     conn = get_conn(db_path)
     try:
-        return {r["key"] for r in conn.execute("SELECT key FROM schedule_pattern_dismissals WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+        return {r["key"] for r in conn.execute(
+            f"SELECT key FROM schedule_pattern_dismissals WHERE restaurant_id=? AND {_DISMISSAL_COUNTS_SQL}",
+            (restaurant_id,)).fetchall()}
     except Exception:
         return set()
     finally:
         conn.close()
 
 
-def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH) -> None:
+def admin_dismissed_patterns(restaurant_id, db_path=DB_PATH) -> dict:
+    """{key: who} for the dismissals an admin made that do not count yet —
+    the owner sees them and may count them as theirs (adopt_admin_dismissals)."""
+    conn = get_conn(db_path)
+    try:
+        return {r["key"]: r["dismissed_by"] for r in conn.execute(
+            "SELECT key, dismissed_by FROM schedule_pattern_dismissals WHERE restaurant_id=? AND authority='admin' "
+            "AND adopted_at IS NULL", (restaurant_id,)).fetchall()}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH, authority=None) -> None:
+    """Dismiss a learned pattern with whose word it is (`authority`,
+    permissions.answer_authority of the login; None from a caller that has
+    none, read as before). The restaurant's own word over an admin's
+    replaces it: the owner dismissing what support already dismissed counts."""
     conn = get_conn(db_path)
     try:
         # The person the key names (its second field), so a rename or merge
@@ -1303,9 +1353,36 @@ def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH) -> Non
                                               ).get(who) or who
             except Exception:
                 pass
-        conn.execute("INSERT OR IGNORE INTO schedule_pattern_dismissals (restaurant_id, key, dismissed_by, employee) "
-                     "VALUES (?,?,?,?)", (restaurant_id, str(key)[:200], (actor or "")[:120] or None, who))
+        auth = authority if authority in ("principal", "delegate", "admin") else None
+        conn.execute("INSERT OR IGNORE INTO schedule_pattern_dismissals (restaurant_id, key, dismissed_by, employee, "
+                     "authority) VALUES (?,?,?,?,?)",
+                     (restaurant_id, str(key)[:200], (actor or "")[:120] or None, who, auth))
+        if auth != "admin":
+            conn.execute("UPDATE schedule_pattern_dismissals SET authority=?, dismissed_by=?, "
+                         "created_at=datetime('now') WHERE restaurant_id=? AND key=? AND authority='admin' "
+                         "AND adopted_at IS NULL", (auth, (actor or "")[:120] or None, restaurant_id, str(key)[:200]))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def adopt_admin_dismissals(restaurant_id, user, db_path=DB_PATH) -> int:
+    """The account holder counts, as their own, the pattern dismissals an
+    admin made through view-as or support (L-10, mirroring
+    models.adopt_admin_ratings). Only a principal signed in as themselves
+    may; returns how many now count."""
+    from permissions import answer_authority
+    from models import CapabilityError
+    if answer_authority(user) != "principal":
+        raise CapabilityError("Only the account holder, signed in as themselves, can count these as theirs.")
+    who = ((user.get("username") or user.get("email") or "owner") + " (confirmed)")[:120]
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE schedule_pattern_dismissals SET adopted_by=?, adopted_at=datetime('now') "
+                         "WHERE restaurant_id=? AND authority='admin' AND adopted_at IS NULL",
+                         (who, restaurant_id)).rowcount
+        conn.commit()
+        return n
     finally:
         conn.close()
 
@@ -1437,16 +1514,90 @@ def init_schedule_intel(db_path: str = DB_PATH):
             except Exception as _e:
                 if "duplicate column" not in str(_e).lower():
                     raise
+    # The standing pattern's evidence and decay (schedule audit 10/3/26 L-6,
+    # L-30): opportunities / hits — the published weeks that tested it and
+    # the ones that kept it, an unedited week counting as a keep; last_hand
+    # — the week (ISO date) a manager's own hand last confirmed it (the
+    # weeks that taught it, a week they re-applied it, or the owner's "keep
+    # it"); confidence — the Wilson lower bound of hits over opportunities
+    # times the half-life decay since last_hand; retest_since — while set
+    # (status 'retest') the next draft leaves it out once to see whether the
+    # manager puts it back; last_retest_end / retests; retired_reason
+    # (reversed | retest | decayed | owner); source 'learned' | 'owner_said'
+    # (the owner's one-tap "always", L-35) and authority — whose word made it.
+    _sp2 = {r[1] for r in conn.execute("PRAGMA table_info(schedule_standing_patterns)").fetchall()}
+    for _col, _typ in (("opportunities", "INTEGER NOT NULL DEFAULT 0"), ("hits", "INTEGER NOT NULL DEFAULT 0"),
+                       ("last_hand", "TEXT"), ("confidence", "REAL"), ("retest_since", "TEXT"),
+                       ("last_retest_end", "TEXT"), ("retests", "INTEGER NOT NULL DEFAULT 0"),
+                       ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT")):
+        if _col not in _sp2:
+            try:
+                conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
     # Whose pattern a dismissal is (INVENTORY-2): the key carries the name,
     # so a rename re-keys it (people._repoint_patterns) and a merge folds it.
+    # Whose word the dismissal is (schedule audit 10/3/26 L-10): authority
+    # (permissions.answer_authority — principal | delegate | admin); an
+    # admin's (view-as, support) is kept but does not count until the
+    # account holder adopts it (adopted_by / adopted_at).
     _pd = {r[1] for r in conn.execute("PRAGMA table_info(schedule_pattern_dismissals)").fetchall()}
-    for _col, _typ in (("employee", "TEXT"), ("person_id", "INTEGER")):
+    for _col, _typ in (("employee", "TEXT"), ("person_id", "INTEGER"), ("authority", "TEXT"),
+                       ("adopted_by", "TEXT"), ("adopted_at", "TEXT")):
         if _col not in _pd:
             try:
                 conn.execute(f"ALTER TABLE schedule_pattern_dismissals ADD COLUMN {_col} {_typ}")
             except Exception as _e:
                 if "duplicate column" not in str(_e).lower():
                     raise
+    # The owner throwing a draft away (schedule audit 10/3/26 L-26): "redo
+    # these days" (kind redo_days, with the owner's optional reason chip and
+    # words) and a whole-week regeneration over a draft that was never sent
+    # (kind draft_discarded). history_id is the draft rejected; the learners
+    # read a redo to link the new draft to the original it replaced, so the
+    # earlier edits are not lost, and the edit predictor counts the rejected
+    # days' rows as changed.
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_rejections (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+        week_start     TEXT,
+        kind           TEXT    NOT NULL,          -- redo_days | draft_discarded
+        dates_json     TEXT,
+        reason_chip    TEXT,
+        reason_text    TEXT,
+        authority      TEXT,
+        requested_by   TEXT,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rejections ON schedule_rejections(restaurant_id, history_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rejections_created ON schedule_rejections(created_at)")
+    # The owner's one-tap "why" for a big edit in the first weeks (schedule
+    # audit 10/3/26 L-35): asked on the save (answer NULL), answered
+    # always | this_week | call_off. `keys` are the changed rows' keys
+    # (date|employee|start) the answer is about; `subject` the question's
+    # facts (kind, person, role, day, daypart, time, delta).
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_edit_answers (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+        version        INTEGER,
+        question_key   TEXT    NOT NULL,
+        kind           TEXT    NOT NULL,
+        subject_json   TEXT,
+        keys_json      TEXT,
+        phase          TEXT,
+        answer         TEXT,
+        authority      TEXT,
+        answered_by    TEXT,
+        asked_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        answered_at    TEXT,
+        adopted_by     TEXT,
+        adopted_at     TEXT,
+        UNIQUE(restaurant_id, history_id, question_key)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_edit_answers_asked ON schedule_edit_answers(asked_at)")
     conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         employee_name  TEXT    NOT NULL,

@@ -29,6 +29,11 @@ def _row(i, emp, role="Cook", start="4:00pm", end="10:00pm", hours=6.0):
             "shift_end": end, "scheduled_hours": str(hours), "notes": ""}
 
 
+def _servers_needed(date, n, part="night"):
+    return [{"date": date, "day": DAYS[WEEK.index(date)], "daypart": part,
+             "roles": [{"role": "Server", "required": n, "floor": 0, "typical": n}]}]
+
+
 def _scorer_for(scores, role, **extra):
     profiles = [sq.ShiftProfile(key="n", min_strength={role: 4}, source="restaurant")]
     return lambda rows: sq.LocalScorer(rows, profiles=profiles, scores=scores, **extra)
@@ -77,8 +82,10 @@ def test_the_top_up_takes_the_legal_people_that_cost_the_least(monkeypatch):
             for i in range(1, 6) for n in ("Ana", "Bob", "Cy")]
     rows.append(_row(6, "Ana", role="Server", start="4:00pm", end="9:00pm", hours=5.0))
     c = _c(roster_roles={"Dee": "Server", "Eve": "Server"})
+    # Sunday dinner needs three servers (the SHIFT REQUIREMENTS the draft was
+    # written to — "thin" is measured against them, schedule audit 10/3/26 P-20).
     kw = dict(hours_budget=400.0, hours_scheduled=95.0, restaurant_id=1, close_times={}, role_buffers={},
-              constraints=c)
+              constraints=c, requirements=_servers_needed(WEEK[6], 3))
     targets = {d: 40.0 for d in WEEK}
     out, _h, _d = se._top_up_hours_gap([dict(r) for r in rows], dict(targets), **kw)
     plain = sorted(r["employee"] for r in out if r["date"] == WEEK[6] and "top-up" in r["notes"])
@@ -102,7 +109,7 @@ def test_the_top_up_still_tries_the_next_legal_person_when_the_first_is_not():
     rows.append(_row(6, "Ana", role="Server", start="4:00pm", end="9:00pm", hours=5.0))
     c = _c(roster_roles={"Dee": "Server"}, hours_limits={"dee": (None, 3)})
     out, _h, dates = se._top_up_hours_gap([dict(r) for r in rows], {d: 40.0 for d in WEEK}, 400.0, 95.0, 1,
-                                          {}, {}, constraints=c)
+                                          {}, {}, constraints=c, requirements=_servers_needed(WEEK[6], 3))
     assert WEEK[6] in dates
 
 

@@ -3747,12 +3747,14 @@ def run_auto_publish_schedules():
             skipped += 1
             continue
         # Never unread: a week with flagged rows, a hard rule breach, a
-        # weak quality verdict or a low-confidence score waits for a human,
-        # and the owner is told why instead of being told it went out.
-        # The gate as it stands now, as automation sees it: the notice rule,
-        # hard breaches against today's data, and the soft flags a person
-        # decides (meal breaks, daily overtime, unanswered time off) all
-        # hold it; any other soft flag is named in the notice (NS5 H2/H3/M7).
+        # setting the rules could not read, or a quality check that could
+        # not run waits for a human, and the owner is told why instead of
+        # being told it went out. The gate as it stands now, as automation
+        # sees it: the notice rule, hard breaches against today's data, and
+        # the soft flags a person decides (meal breaks, daily overtime,
+        # unanswered time off) all hold it; any other soft flag — the
+        # quality verdict among them, a note and never a hold (schedule
+        # audit 10/3/26 SQ-29) — is named in the notice (NS5 H2/H3/M7).
         soft = []
         try:
             from client_api import publish_review
