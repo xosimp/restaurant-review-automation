@@ -4759,7 +4759,9 @@ def mobile_labor_team(current_user):
                 team.append({
                     "name": m["name"], "role": m["role"], "shifts": 0,
                     "score": c.get("score"),
-                    "can_close": bool(closer.get("flag")),
+                    # Counted only when it is the owner's (L-9).
+                    "can_close": bool(closer.get("flag")) and closer.get("authority") != "admin",
+                    "can_close_pending": bool(closer.get("flag")) and closer.get("authority") == "admin",
                     "score_label": SCORE_LABELS.get(c.get("score")) if c.get("score") else None,
                     "notes": c.get("notes"),
                     "updated_by": c.get("updated_by"),
@@ -4771,6 +4773,7 @@ def mobile_labor_team(current_user):
                            coverage=(capability_coverage(rid, [t["name"] for t in team])
                                     if team else None),
                            thresholds={}, leader_rules=[],
+                           leader_rule_defaults=dict(__import__("models").LEADER_RULE_DEFAULTS),
                            note=None if team else
                                 "Upload your shifts CSV under Account, or add your team by "
                                 "hand below, and they'll appear here to rate."), 200
@@ -4819,11 +4822,28 @@ def mobile_labor_team(current_user):
             })
         # Unrated first — that is the work in front of the owner.
         team.sort(key=lambda t: (t["score"] is not None, -t["shifts"], t["name"]))
+        # A closer flag entered through support waits on the owner like a
+        # rating does (L-9); leader rules load whether or not anyone is
+        # rated, and say when they judge nobody (D-10); a new rule's bar
+        # starts at 4, not 5 (D-11).
+        from models import admin_leader_flags, LEADER_RULE_DEFAULTS
+        _pending = set(admin_leader_flags(rid))
+        for t in team:
+            t["can_close_pending"] = t["name"] in _pending
+            if t["can_close_pending"]:
+                t["can_close"] = False
+        try:
+            import schedule_setup as _setup
+            _lrs = _setup.leader_rules_status(rid, [t["name"] for t in team])
+        except Exception:
+            _lrs = None
         return jsonify(
             ok=True, is_live=True, team=team,
             coverage=capability_coverage(rid, [t["name"] for t in team]),
             thresholds=get_role_strength_thresholds(rid),
             leader_rules=get_shift_leader_rules(rid),
+            leader_rule_defaults=dict(LEADER_RULE_DEFAULTS),
+            leader_rules_status=_lrs,
             scale={"min": SCORE_MIN, "max": SCORE_MAX, "labels": SCORE_LABELS},
             capability_version=__import__("models").capability_version(rid),
             attributes={k: v for k, v in CAPABILITY_ATTRIBUTES.items() if v.get("v1")},
@@ -4961,11 +4981,22 @@ def mobile_set_thresholds(current_user):
         warnings = validate_strength_thresholds(
             cleaned, get_operational_scores(rid), load_shifts_for_restaurant_roles(rid))
         fields = {"role_strength_json": _j.dumps(cleaned)}
+        rule_warnings = []
         if "leader_rules" in data:
-            rules = data.get("leader_rules") or []
-            if not isinstance(rules, list):
-                return jsonify(ok=False, error="leader_rules must be a list"), 400
+            # Each rule read the way the engine reads it, refused when it
+            # can't be, and checked against the team as it stands: "only 1
+            # Bartender AM scores 5 or above, so this rule can't be met on 6
+            # of its 7 shifts" — saved, and said, never dropped later in
+            # silence (schedule audit 10/3/26 D-11).
+            import schedule_setup as _setup
+            rules, errs = _setup.clean_leader_rules(data.get("leader_rules") or [])
+            if errs:
+                return jsonify(ok=False, error="; ".join(errs[:3])), 400
             fields["shift_leader_rules_json"] = _j.dumps(rules)
+            try:
+                rule_warnings = [w["text"] for w in _setup.leader_rule_warnings(rid, rules)]
+            except Exception as _we:
+                print(f"[team] leader rule check unavailable for {rid}: {_we!r}")
         from models import record_capability_change, get_role_strength_thresholds
         _before = get_role_strength_thresholds(rid)
         update_restaurant(rid, fields)
@@ -4974,7 +5005,8 @@ def mobile_set_thresholds(current_user):
             changed_by=current_user.get("username") or current_user.get("email"))
         # Unreachable targets are saved and warned about rather than
         # refused — an owner may be describing the team they intend to have.
-        return jsonify(ok=True, thresholds=cleaned, warnings=warnings), 200
+        return jsonify(ok=True, thresholds=cleaned, warnings=warnings + rule_warnings,
+                       leader_rule_warnings=rule_warnings), 200
     except (TypeError, ValueError) as ve:
         return jsonify(ok=False, error=f"Could not read those thresholds: {ve}"), 400
     except Exception as e:
@@ -7760,10 +7792,12 @@ def mobile_shift_profiles(current_user):
     try:
         stored = get_shift_profiles(rid)
         scores = get_operational_scores(rid)
+        # Leader rules apply whether or not anyone is rated (schedule audit
+        # 10/3/26 P-18): a closing rule needs no score at all.
         resolved = _sq.profiles_from_config(
             [_sq.profile_from_dict(p) for p in stored] or None,
             default_strength=get_role_strength_thresholds(rid) if scores else {},
-            default_leader_rules=get_shift_leader_rules(rid) if scores else [])
+            default_leader_rules=get_shift_leader_rules(rid))
         return jsonify(
             ok=True,
             using_defaults=not stored,

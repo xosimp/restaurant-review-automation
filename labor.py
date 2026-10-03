@@ -3076,6 +3076,47 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
 TYPICAL_WEEKS = 8
 
 
+def _restaurant_role_families(restaurant_id) -> dict:
+    """The owner's {job code: role} map (schedule_rules.role_families), {}
+    without one or a restaurant."""
+    if not restaurant_id:
+        return {}
+    try:
+        from models import get_restaurant
+        from schedule_rules import role_families
+        return role_families(get_restaurant(restaurant_id))
+    except Exception:
+        return {}
+
+
+def _held_roles_by_name(restaurant_id, names) -> dict:
+    """{name as in `names`: {role}} — the roles each person holds beyond
+    the shifts they worked (people.held_roles), for the cross-training list
+    and the roles the requirements table may ask of them (D-15)."""
+    if not restaurant_id or not names:
+        return {}
+    try:
+        import people as _people
+        held = {}
+        for r in _people.held_roles(restaurant_id):
+            if (r.get("role") or "").strip():
+                held.setdefault(r["key"], set()).add(" ".join(r["role"].split()))
+    except Exception:
+        return {}
+    key = lambda n: " ".join(str(n or "").split()).casefold()  # noqa: E731
+    return {n: held[key(n)] for n in names if key(n) in held}
+
+
+def _training_role(role) -> bool:
+    from schedule_rules import is_training_role
+    return is_training_role(role)
+
+
+def _role_family(role, families=None) -> str:
+    from shift_quality import role_family
+    return role_family(role, families)
+
+
 def historical_patterns(shifts: list) -> dict:
     """What this restaurant's own history says about how it staffs.
 
@@ -3093,10 +3134,17 @@ def historical_patterns(shifts: list) -> dict:
     dates_by_day = _dd(set)
     roles_by_employee = _dd(set)
 
+    from schedule_rules import is_training_role as _is_training
+    from shift_quality import role_family as _family
     for s in shifts or []:
         date = (s.get("date") or "").strip()
         role = (s.get("role") or "").strip()
         name = (s.get("employee") or "").strip()
+        # A training job code ("Training") is not a role with a headcount of
+        # its own: history asked every draft for "Training 1" (schedule audit
+        # 10/3/26 D-16).
+        if _is_training(role):
+            continue
         if name and role:
             roles_by_employee[name].add(role)
         if not date:
@@ -3141,7 +3189,10 @@ def historical_patterns(shifts: list) -> dict:
 
     return {
         "typical_headcount": typical,
-        "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items() if len(r) > 1},
+        # Cross-trained means two ROLES, not two job codes of one: a server
+        # who works "Server AM" and "Server PM" is not cross-trained (D-13).
+        "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items()
+                          if len({_family(x) for x in r}) > 1},
     }
 
 
@@ -3547,13 +3598,20 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                           f"On these days, say in the summary that a standby should be on call — do not add "
                           f"a person beyond the requirements for it.")
 
-    # Detect cross-trained employees from shift history (appear with 2+ distinct roles)
+    # Cross-trained staff: two or more ROLES (families — "Server AM" and
+    # "Server PM" are one role, D-13) among the roles they have worked and
+    # the roles they hold (people.held_roles: trained, promoted, the POS job
+    # list — a server trained on bar was never offered a bar shift, D-15).
+    _families = _restaurant_role_families(restaurant_id)
     _emp_roles = {}
     for s in shifts:
         e, r = s.get("employee",""), s.get("role","")
-        if e and r:
+        if e and r and not _training_role(r):
             _emp_roles.setdefault(e, set()).add(r)
-    _cross_trained = {e: sorted(roles) for e, roles in _emp_roles.items() if len(roles) > 1}
+    for _hn, _hr in _held_roles_by_name(restaurant_id, [n for n, _r in employees]).items():
+        _emp_roles.setdefault(_hn, set()).update(_hr)
+    _cross_trained = {e: sorted(roles) for e, roles in _emp_roles.items()
+                      if len({_role_family(x, _families) for x in roles}) > 1}
     _cross_block = ""
     if _cross_trained:
         _lines = [f"  {e}: {' / '.join(roles)}" for e, roles in sorted(_cross_trained.items())]
@@ -4077,6 +4135,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     import schedule_requirements as _req
     _can_work = None
     if employees:
+        # The roster's roles, every role these people worked or hold (D-15).
         _can_work = {(r or "").strip().lower() for _n, r in employees if (r or "").strip()}
         for _n, _r in employees:
             _can_work |= {x.strip().lower() for x in _emp_roles.get(_n, ()) if x and x.strip()}

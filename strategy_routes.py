@@ -1497,11 +1497,23 @@ def _do_memory_add(u):
     log_account_event(_rid(u), "memory_added", current_user=u,
                       detail=owner_memory.activity_detail(_kind, _aud),
                       extra={"memory": {"kind": _kind, "audience": _aud or "team"}})
+    # A staffing rule is said back as the schedule will check it — "at least
+    # 2 Server PM on Saturday at dinner" — or as one it can't (schedule audit
+    # 10/3/26 D-14): a rule that never parsed used to go unchecked unseen.
+    schedule_rule = None
+    if _kind in owner_memory.RULE_KINDS and set(modules or []) & {"labor", "schedule"} \
+            and _answer_authority(u) == "principal":
+        try:
+            import schedule_setup as _setup
+            schedule_rule = _setup.owner_rule_preview(_rid(u), fact)
+        except Exception as e:
+            print(f"[memory] schedule rule preview unavailable for {_rid(u)}: {e!r}")
     # `similar`: the notes this one may replace ("does this replace …?" —
     # post again with `replaces`); `replaced`: the one it did; `confirmed`:
     # someone had already said it, and this login's words were stamped on
     # theirs (memory re-audit 9/29/26, R3).
-    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
+    return {"ok": True, "schedule_rule": schedule_rule,
+            "fact": saved.get("fact") if isinstance(saved, dict) else fact,
             "kind": saved.get("kind"), "audience": saved.get("audience"),
             "evicted": saved.get("evicted", 0), "evicted_facts": saved.get("evicted_facts") or [],
             "similar": saved.get("similar") or [], "replaced": saved.get("replaced"),
@@ -1642,19 +1654,34 @@ def _do_roster_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the roster.")
     import staff_settings as _ss
+    import schedule_setup as _setup
     from models import get_operational_scores, get_leader_flags
     rid = _rid(u)
     scores = get_operational_scores(rid)
     closers = get_leader_flags(rid)
+    # A closer flag set through support counts once the owner takes it as
+    # theirs (L-9): shown, marked as waiting, never counted before.
+    pending = {_ss.name_key(n) for n in get_leader_flags(rid, include_admin=True) if n not in closers}
     rel = {}
     try:
         rel = _ss.reliability(rid)
     except Exception:
         rel = {}
+    people = _ss.roster(rid, include_inactive=True)
+    try:
+        bases = _setup.roster_bases(rid, people)
+    except Exception:
+        bases = {}
     out = []
-    for e in _ss.roster(rid, include_inactive=True):
+    for e in people:
+        b = bases.get(e["name"]) or {}
         out.append({**e, "score": scores.get(e["name"]), "can_close": bool(closers.get(e["name"])),
-                    "reliability": rel.get(e["name"])})
+                    "can_close_pending": _ss.name_key(e["name"]) in pending,
+                    "reliability": rel.get(e["name"]),
+                    # Who runs the floor (P-7, E-14): the owner's yes/no
+                    # (settings.floor_manager) or what automatic reads.
+                    "floor_manager": {"counts": bool(b.get("counts")), "basis": b.get("basis"), "why": b.get("why"),
+                                      "set": (e.get("settings") or {}).get("floor_manager")}})
     suggested = []
     try:
         import schedule_intel as _si
@@ -1666,7 +1693,16 @@ def _do_roster_get(u):
     return {"ok": True, "roster": out, "pairs": _ss.pairs(rid), "suggested_pairs": suggested,
             "ratings_off_roster": off_roster,
             "choices": {"employment_type": list(_ss.EMPLOYMENT_TYPES), "daypart": list(_ss.DAYPART_CHOICES),
-                        "days": list(_ss.DAYS), "certifications": list(_ss.CERTIFICATIONS)}, "can_edit": _may_rate(u)}, 200
+                        "days": list(_ss.DAYS), "certifications": list(_ss.CERTIFICATIONS),
+                        "certification_labels": dict(_ss.CERTIFICATION_LABELS)},
+            "can_edit": _may_rate(u), "can_edit_owner_facts": _principal(u)}, 200
+
+
+# The per-person facts only the account holder sets (schedule audit
+# 10/3/26 F1): who runs the floor and stands in for the manager is the
+# owner's highest rule, and an Owner role paid by the hour is pay.
+_OWNER_STAFF_FIELDS = ("floor_manager", "acting_manager", "paid_hourly")
+_F1_STAFF_FIELDS = ("floor_manager", "paid_hourly", "acting_manager", "standing_shifts", "trainee", "closes_for")
 
 
 def _do_staff_settings_set(u):
@@ -1675,6 +1711,15 @@ def _do_staff_settings_set(u):
     import staff_settings as _ss
     from client_api import log_account_event
     b = _body()
+    if any(k in b for k in _OWNER_STAFF_FIELDS) and not _principal(u):
+        return _forbidden("Only the account owner can set who runs the floor, who stands in as the manager, "
+                          "and an owner's pay.")
+    if isinstance(b.get("trainee"), dict) and (b["trainee"].get("trainer") or "").strip():
+        # A trainer is somebody on the roster: a name nobody is scheduled
+        # under would pair the trainee with no one.
+        _tr = " ".join(str(b["trainee"]["trainer"]).split()).casefold()
+        if _tr not in {_ss.name_key(e["name"]) for e in _ss.roster(_rid(u))}:
+            return {"ok": False, "error": "The trainer isn't on the roster."}, 400
     if b.get("experienced") is not None:
         # "Experienced" changes how every shift is scored; a name nobody is
         # scheduled under would change it for no one real.
@@ -1690,12 +1735,16 @@ def _do_staff_settings_set(u):
                          time_windows=b.get("time_windows"), certifications=b.get("certifications"),
                          preferred_dayparts=b.get("preferred_dayparts"), desired_hours=b.get("desired_hours"),
                          experienced=b.get("experienced"), minor_age_band=b.get("minor_age_band"),
+                         floor_manager=b.get("floor_manager"), paid_hourly=b.get("paid_hourly"),
+                         acting_manager=b.get("acting_manager"), standing_shifts=b.get("standing_shifts"),
+                         trainee=(b.get("trainee") if b.get("trainee") is not None else ({} if "trainee" in b else None)),
+                         closes_for=b.get("closes_for"),
                          updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
     changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",
                            "time_windows", "certifications", "preferred_dayparts", "desired_hours",
-                           "experienced", "minor_age_band") if k in b]
+                           "experienced", "minor_age_band") + _F1_STAFF_FIELDS if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
                       detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
     return {"ok": True, "settings": row}, 200
@@ -2113,7 +2162,12 @@ def _do_compliance_get(u):
             "role_arrivals": {k: abs(int(v)) for k, v in (_sr._load_json(getattr(r, "role_arrival_json", None), {}) or {}).items()
                               if isinstance(v, (int, float))},
             "roles_without_clock_in": __import__("attendance").roles_without_clock_in(_rid(u), r),
-            "role_close_mins": _sr._load_json(getattr(r, "role_close_min_json", None), {}),
+            # One "stays until close + N min" setting per role (schedule
+            # audit 10/3/26 D-43): the must-stay and may-run values merged;
+            # a role where the two stored values differ is named until the
+            # owner saves the one setting (which writes both).
+            "role_close_mins": _sr.role_close_stays(r),
+            "role_close_conflicts": _sr.role_close_conflicts(r),
             "manager_rule_unusable": bool(rules.get("manager_on_duty")) and not _keyholders(_rid(u)),
             "role_requirements": _sr._load_json(getattr(r, "role_requirements_json", None), {}),
             "foh_roles": _sr._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"],
@@ -2137,7 +2191,36 @@ def _do_compliance_get(u):
             "kitchen_stations": _kitchen_stations_payload(_rid(u), r),
             "closures": _sr.closures(r),
             "certifications": list(__import__("staff_settings").CERTIFICATIONS),
-            "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available()}, 200
+            "certification_labels": dict(__import__("staff_settings").CERTIFICATION_LABELS),
+            "reservation_feed": reservation_feeds.status(r), "reservation_providers": reservation_feeds.available(),
+            # A salaried person's weekly cap with no limit of their own (E-12).
+            "salaried_cap": _sr.salaried_cap(r), "salaried_cap_default": _sr.SALARIED_CAP_DEFAULT,
+            "salaried_cap_bounds": list(_sr.SALARIED_CAP_BOUNDS),
+            "closer_roles": _sr.closer_roles(r),
+            **_setup_payload(_rid(u))}, 200
+
+
+def _setup_payload(rid) -> dict:
+    """What the rules screen confirms with the owner (schedule audit
+    10/3/26 F1): "Managers: …" and who was left out, the closers per role
+    with the data-quality warning, each staffing rule as it is checked, and
+    trading days with no close time. One read of next week's rules; a
+    failure costs these keys, never the screen."""
+    try:
+        import schedule_setup as _setup
+        c = _setup._constraints(rid)
+        ms = _setup.manager_status(rid, c=c)
+        cr = _setup.closer_review(rid, c=c)
+        return {"managers": ms, "managers_line": ms["line"],
+                "closers": {k: cr[k] for k in ("by_role", "flagged", "roster", "share", "warning", "closer_roles",
+                                               "outside_roles", "pending_admin")},
+                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules],
+                "owner_rules_unchecked": list(c.owner_rules_unchecked),
+                "close_times_missing": _setup.close_times_missing(c),
+                "role_families": dict(c.role_families)}
+    except Exception as e:
+        print(f"[rules] setup payload unavailable for {rid}: {e!r}")
+        return {}
 
 
 def _do_compliance_set(u):
@@ -2208,15 +2291,46 @@ def _do_compliance_set(u):
                 continue
         settings["role_arrival_json"] = _j.dumps(clean) if clean else None
         out["role_arrivals"] = clean
-    if "role_close_mins" in b and isinstance(b.get("role_close_mins"), dict):
+    _stays = b.get("role_close_stays") if isinstance(b.get("role_close_stays"), dict) else \
+        (b.get("role_close_mins") if isinstance(b.get("role_close_mins"), dict) else None)
+    if _stays is not None:
         clean = {}
-        for k, v in b["role_close_mins"].items():
+        for k, v in _stays.items():
             try:
                 clean[str(k).strip()[:60]] = max(0, min(240, int(v)))
             except (TypeError, ValueError):
                 continue
+        # One "stays until close + N" per role (D-43): the must-stay and the
+        # after-close allowance are the same number from here on, so the
+        # close-time clamp and the stays-after-close rule read one setting.
         settings["role_close_min_json"] = _j.dumps(clean) if clean else None
+        settings["role_close_buffer_json"] = _j.dumps(clean) if clean else None
         out["role_close_mins"] = clean
+    if "salaried_cap" in b:
+        v = b.get("salaried_cap")
+        if v in (None, ""):
+            settings["salaried_cap"] = None
+        else:
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                n = -1
+            lo, hi = _sr.SALARIED_CAP_BOUNDS
+            if isinstance(v, bool) or not lo <= n <= hi:
+                return {"ok": False, "error": f"The salaried weekly cap is {lo:g} to {hi:g} hours, or blank for "
+                                              f"{_sr.SALARIED_CAP_DEFAULT:g}."}, 400
+            settings["salaried_cap"] = n
+        out["salaried_cap"] = settings["salaried_cap"] if settings["salaried_cap"] is not None else _sr.SALARIED_CAP_DEFAULT
+    if "closer_roles" in b:
+        if not isinstance(b.get("closer_roles"), list):
+            return {"ok": False, "error": "closer_roles is a list of roles."}, 400
+        clean = []
+        for x in b["closer_roles"]:
+            x = " ".join(str(x or "").split())[:60]
+            if x and x.casefold() not in {y.casefold() for y in clean}:
+                clean.append(x)
+        settings["closer_roles_json"] = _j.dumps(clean) if clean else None
+        out["closer_roles"] = clean
     if "role_requirements" in b and isinstance(b.get("role_requirements"), dict):
         clean = {str(k).strip()[:60]: sorted({str(x).strip().lower()[:40] for x in (v or []) if str(x).strip()})
                  for k, v in b["role_requirements"].items() if str(k).strip()}
@@ -2277,6 +2391,148 @@ def _do_compliance_set(u):
         return {"ok": False, "error": "Send rules, role_floors, or a setting."}, 400
     log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail=", ".join(out))
     return {"ok": True, **out}, 200
+
+
+# ── the owner's scheduling setup (schedule audit 10/3/26 F1) ───────────────
+# Who runs the floor, who closes for which role, which job codes are one
+# role, the floors a role never goes below. Read for confirmation; written
+# only as the owner sends it (schedule_setup reads, these routes store).
+
+def _do_managers_get(u):
+    """"Managers: …" for the owner to confirm: who counts as the manager on
+    the floor next week and why, who was left out (department managers,
+    people set as not), who stands in on which dates, and the managers
+    whose working days are nowhere on file (P-7, E-14, E-13, D-5)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_setup as _setup
+    return {"ok": True, **_setup.manager_status(_rid(u)), "can_edit": _principal(u)}, 200
+
+
+def _do_managers_set(u):
+    """{name, floor_manager: true | false | "auto"} — the owner's word on
+    who runs the floor. The account owner only: the manager on the floor
+    is their highest rule."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can set who runs the floor.")
+    import staff_settings as _ss
+    import schedule_setup as _setup
+    from client_api import log_account_event
+    b = _body()
+    name = " ".join(str(b.get("name") or b.get("employee_name") or "").split())
+    if not name or _ss.name_key(name) not in {_ss.name_key(e["name"]) for e in _ss.roster(_rid(u))}:
+        return {"ok": False, "error": "That name isn't on the roster."}, 400
+    if "floor_manager" not in b:
+        return {"ok": False, "error": "Send floor_manager: true, false or auto."}, 400
+    try:
+        _ss.upsert(_rid(u), name, floor_manager=("auto" if b.get("floor_manager") is None else b["floor_manager"]),
+                   updated_by=_who(u))
+    except _ss.StaffSettingsError as e:
+        return {"ok": False, "error": str(e)}, 400
+    log_account_event(_rid(u), "staff_settings_changed", current_user=u, detail=f"{name}: floor manager")
+    return {"ok": True, **_setup.manager_status(_rid(u))}, 200
+
+
+def _do_closers_get(u):
+    """The closers per role as the rules read them, the share of the roster
+    marked (warned past 30%), the flags entered through support waiting on
+    the owner, and a keep / unmark / add suggestion per person from the
+    punches — the one-time cleanup (D-9, L-9). Nothing changes here."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_setup as _setup
+    return {"ok": True, **_setup.closer_review(_rid(u)), "can_edit": _principal(u)}, 200
+
+
+def _do_closers_set(u):
+    """{changes: [{name, can_close, closes_for?}], closer_roles?: [role]} —
+    the owner's cleanup, applied as sent: each person marked or unmarked to
+    close (and the roles they close for), and which roles have closers.
+    Every change is the owner's own (recorded with who made it)."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can choose the closers.")
+    import json as _j
+    import staff_settings as _ss
+    import schedule_setup as _setup
+    from client_api import log_account_event
+    from models import set_capability, record_capability_change, get_capabilities, update_restaurant, CapabilityError
+    b = _body()
+    changes = b.get("changes") or []
+    if not isinstance(changes, list) or len(changes) > 200:
+        return {"ok": False, "error": "Send changes as a list of {name, can_close}."}, 400
+    roster = {_ss.name_key(e["name"]): e["name"] for e in _ss.roster(_rid(u), include_inactive=True)}
+    for ch in changes:
+        if not isinstance(ch, dict) or _ss.name_key(ch.get("name")) not in roster or \
+                not isinstance(ch.get("can_close", True), bool):
+            return {"ok": False, "error": f"{(ch or {}).get('name') if isinstance(ch, dict) else ch!r} isn't on the "
+                                          "roster, or can_close isn't true or false."}, 400
+    roles = None
+    if "closer_roles" in b:
+        if not isinstance(b.get("closer_roles"), list):
+            return {"ok": False, "error": "closer_roles is a list of roles."}, 400
+        roles = []
+        for x in b["closer_roles"]:
+            x = " ".join(str(x or "").split())[:60]
+            if x and x.casefold() not in {y.casefold() for y in roles}:
+                roles.append(x)
+    who = _who(u)
+    done = 0
+    try:
+        for ch in changes:
+            name = roster[_ss.name_key(ch["name"])]
+            if "can_close" in ch:
+                before = (get_capabilities(_rid(u)).get(name) or {}).get("can_close")
+                after = set_capability(_rid(u), name, attribute="can_close", flag=bool(ch["can_close"]),
+                                       updated_by=who, user=u)
+                record_capability_change(_rid(u), "rating", subject=name, attribute="can_close",
+                                         before=before, after=after, changed_by=who)
+            if "closes_for" in ch:
+                _ss.upsert(_rid(u), name, closes_for=ch.get("closes_for") or [], updated_by=who)
+            done += 1
+    except (CapabilityError, _ss.StaffSettingsError) as e:
+        return {"ok": False, "error": str(e), "applied": done}, 400
+    if roles is not None:
+        update_restaurant(_rid(u), {"closer_roles_json": _j.dumps(roles) if roles else None})
+    log_account_event(_rid(u), "closers_changed", current_user=u,
+                      detail=f"{done} people" + (", closer roles" if roles is not None else ""))
+    return {"ok": True, "applied": done, **_setup.closer_review(_rid(u))}, 200
+
+
+def _do_role_families_get(u):
+    """The job codes in use grouped into roles — the owner's map, else
+    suggested from the POS job names (D-13)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_setup as _setup
+    return {"ok": True, **_setup.suggest_role_families(_rid(u)), "can_edit": _principal(u)}, 200
+
+
+def _do_role_families_set(u):
+    """{families: {job code: role}} — the owner's confirmed map; {} clears
+    it back to the suggestion."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can change the roles.")
+    import json as _j
+    import schedule_setup as _setup
+    from client_api import log_account_event
+    from models import update_restaurant
+    try:
+        clean = _setup.clean_role_families(_body().get("families"))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    update_restaurant(_rid(u), {"role_families_json": _j.dumps(clean) if clean else None})
+    log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail="role families")
+    return {"ok": True, **_setup.suggest_role_families(_rid(u))}, 200
+
+
+def _do_floor_suggestions(u):
+    """"Never below" per role and daypart, pre-filled from the 25th
+    percentile of history (D-42) — for the owner to confirm and save with
+    the rules (role_floors); nothing is saved here."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_setup as _setup
+    return {"ok": True, **_setup.suggest_role_floors(_rid(u)), "can_edit": _principal(u)}, 200
 
 
 def _do_schedule_versions(u, history_id):
@@ -5928,6 +6184,13 @@ _ROUTES = [
     ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
+    ("/labor/managers", ["GET"], _do_managers_get, "schedule_managers_get"),
+    ("/labor/managers", ["POST"], _do_managers_set, "schedule_managers_set"),
+    ("/labor/closers", ["GET"], _do_closers_get, "schedule_closers_get"),
+    ("/labor/closers", ["POST"], _do_closers_set, "schedule_closers_set"),
+    ("/labor/role-families", ["GET"], _do_role_families_get, "role_families_get"),
+    ("/labor/role-families", ["POST"], _do_role_families_set, "role_families_set"),
+    ("/labor/floors/suggest", ["GET"], _do_floor_suggestions, "floor_suggestions"),
     ("/labor/schedule-history/<int:history_id>/versions", ["GET"], _do_schedule_versions, "schedule_versions"),
     ("/labor/schedule/violations", ["POST"], _do_schedule_violations, "schedule_violations"),
     ("/labor/schedule/apply-fixes", ["POST"], _do_schedule_apply_fixes, "schedule_apply_fixes"),

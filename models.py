@@ -613,6 +613,14 @@ class Restaurant:
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
     patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
     role_cross_training_json: Optional[str] = None  # {"Server": 40} % of a role on a shift able to cover a second station
+    # Schedule audit 10/3/26 F1: the owner's map of job codes to roles
+    # ({"Server AM": "Server"}; unset = the code with its daypart words
+    # taken off — shift_quality.role_family), the roles that have chosen
+    # closers (["Bartender", "Server"]; unset = every role a closer closes
+    # for), and a salaried person's weekly cap with no limit of their own.
+    role_families_json: Optional[str] = None
+    closer_roles_json: Optional[str] = None
+    salaried_cap: Optional[float]    = None  # hours; None reads as schedule_rules.SALARIED_CAP_DEFAULT (55)
     trim_to_budget: int              = 1     # the deterministic trim past the hours budget (schedule_economics)
     reservation_provider: Optional[str] = None  # reservation_feeds provider code
     reservation_api_key: Optional[str]  = None
@@ -1147,6 +1155,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # weekday that holds only between two dates (employee audit M5).
         ("staff_availability", "day_bounds", "TEXT"),
         ("restaurants", "role_cross_training_json", "TEXT"),
+        # Role families, the roles with chosen closers and the salaried
+        # weekly cap (schedule audit 10/3/26 F1: D-13, D-9, E-12).
+        ("restaurants", "role_families_json", "TEXT"),
+        ("restaurants", "closer_roles_json", "TEXT"),
+        ("restaurants", "salaried_cap", "REAL"),
         ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
         ("restaurants", "reservation_provider", "TEXT"),
         ("restaurants", "reservation_api_key", "TEXT"),
@@ -4695,6 +4708,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json","cut_floor_default",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
+        "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -5431,6 +5445,9 @@ def _restaurant_from_row(row) -> Restaurant:
         foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
         patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
         role_cross_training_json=row["role_cross_training_json"] if "role_cross_training_json" in row.keys() else None,
+        role_families_json=row["role_families_json"] if "role_families_json" in row.keys() else None,
+        closer_roles_json=row["closer_roles_json"] if "closer_roles_json" in row.keys() else None,
+        salaried_cap=row["salaried_cap"] if "salaried_cap" in row.keys() else None,
         trim_to_budget=(row["trim_to_budget"] if row["trim_to_budget"] is not None else 1) if "trim_to_budget" in row.keys() else 1,
         reservation_provider=row["reservation_provider"] if "reservation_provider" in row.keys() else None,
         reservation_api_key=row["reservation_api_key"] if "reservation_api_key" in row.keys() else None,
@@ -7805,7 +7822,14 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("preferred_dayparts", "TEXT"),    # the employee's own: ["night"]
                        ("desired_hours", "REAL"),         # the employee's own weekly wish
                        ("experienced", "INTEGER"),        # owner's word that they know the job, whatever the history shows
-                       ("minor_age_band", "TEXT")):       # '14-15' | '16-17' | NULL — which minor rule table (schedule_rules.MINOR_BANDS)
+                       ("minor_age_band", "TEXT"),        # '14-15' | '16-17' | NULL — which minor rule table (schedule_rules.MINOR_BANDS)
+                       # The owner's scheduling facts about a person (schedule audit 10/3/26 F1):
+                       ("floor_manager", "INTEGER"),      # 1 runs the floor, 0 never, NULL automatic (schedule_rules.manager_basis)
+                       ("paid_hourly", "INTEGER"),        # an Owner-role person paid by the hour (held to the overtime line)
+                       ("acting_manager", "TEXT"),        # [{"from", "until", "note"}] dates they stand in as the manager
+                       ("standing_shifts", "TEXT"),       # [{"day", "start", "end", "role"}] the shifts they always work
+                       ("trainee", "TEXT"),               # {"target_role", "trainer", "from", "until"} while in training
+                       ("closes_for", "TEXT")):           # ["Bartender"] the roles a closer closes for; [] = their own
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()
@@ -9029,17 +9053,35 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {}
 
 
-def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH, include_admin: bool = False) -> dict:
     """{employee_name: True} for everyone marked authorized to close.
 
     Reads the capability layer's can_close attribute — registered since
     version one and surfaced for the first time here, which is the
     architecture claim actually paying off.
+
+    A flag an admin set (support, or anyone through view-as) is not the
+    owner's word, exactly as a rating is not (get_operational_scores,
+    PEOPLE-15): it counts once someone at the restaurant sets it or adopts
+    it (adopt_admin_ratings covers flags too). It used to count — closer
+    flags entered through view-as drove the closing rule, leader rules,
+    mentoring and could-hold while the same session's ratings did not
+    (schedule audit 10/3/26 L-9). `include_admin` keeps them, for a screen
+    that shows them awaiting confirmation.
     """
     caps = get_capabilities(restaurant_id, attribute="can_close", db_path=db_path)
     return {name: bool(attrs.get("can_close", {}).get("flag"))
             for name, attrs in caps.items()
-            if attrs.get("can_close", {}).get("flag")}
+            if attrs.get("can_close", {}).get("flag")
+            and (include_admin or attrs.get("can_close", {}).get("authority") != "admin")}
+
+
+def admin_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Names an admin marked to close (support, view-as) that do not count
+    until the account holder confirms them (get_leader_flags, L-9)."""
+    caps = get_capabilities(restaurant_id, attribute="can_close", db_path=db_path)
+    return sorted(n for n, a in caps.items()
+                  if (a.get("can_close") or {}).get("flag") and (a.get("can_close") or {}).get("authority") == "admin")
 
 
 def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -9217,6 +9259,13 @@ def load_shifts_for_restaurant_roles(restaurant_id: int, db_path: str = DB_PATH)
         return out
     except Exception:
         return {}
+
+
+# A new shift leader rule's bar when the owner picks none (schedule audit
+# 10/3/26 D-11): 5 on a 1-5 scale is "Excellent" only, rarely held by more
+# than one person in a role, so most rules at 5 could never be met. Both
+# clients take it from the team payload (`leader_rule_defaults`).
+LEADER_RULE_DEFAULTS = {"min_score": 4, "count": 1}
 
 
 def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
@@ -10925,15 +10974,19 @@ def get_close_times(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 def get_role_close_buffers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Per-role minutes a shift may run past close (e.g. {"Bartender": 60}
     for a stated "stay 1h after close" rule). Any role not present here
-    defaults to 0 — must end at or before close."""
-    import json as _json
+    defaults to 0 — must end at or before close.
+
+    One "stays until close + N min" setting per role (schedule audit
+    10/3/26 D-43): this is the cap side of it, the larger of the role's
+    stay (role_close_min_json) and its after-close allowance
+    (role_close_buffer_json) — a role told to stay an hour past close is
+    never clamped at close (schedule_rules.role_close_caps). Look a role up
+    with schedule_rules.role_minutes: "Bartender" holds for "Bartender PM"."""
     r = get_restaurant(restaurant_id, db_path)
-    if not r or not r.role_close_buffer_json:
+    if not r:
         return {}
-    try:
-        return {k: int(v) for k, v in _json.loads(r.role_close_buffer_json).items()}
-    except Exception:
-        return {}
+    from schedule_rules import role_close_caps
+    return role_close_caps(r)
 
 
 def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0) -> float:
