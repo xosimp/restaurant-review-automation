@@ -782,14 +782,35 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
     else:
         res.strengths.append("Every required position is filled.")
-    # Somebody already working another site in this group tonight is not
-    # coverage here, whatever the row says.
+    # Somebody already working another site in this group at the same time
+    # is not coverage here, whatever the row says. A shift there that ends
+    # before this one starts (lunch there, dinner here) is not a clash
+    # (schedule audit 10/3/26 D-40); one without times is read as the date.
     for name in ctx.people:
+        mine = [r for r in ctx.rows if (r.get("employee") or "").strip() == name]
         for entry in (ctx.elsewhere.get(name) or []):
-            if entry.get("date") == ctx.date:
-                res.weaknesses.append(
-                    f"{name} is also on the schedule at {entry['location']} on this date.")
-                res.score = min(res.score, 60)
+            if entry.get("date") != ctx.date:
+                continue
+            es, ee = _end_minutes(entry.get("shift_start")), _end_minutes(entry.get("shift_end"))
+            if es >= 0 and ee >= 0 and mine:
+                if ee <= es:
+                    ee += 24 * 60
+                clash = False
+                for r in mine:
+                    rs, re_ = _end_minutes(r.get("shift_start")), _end_minutes(r.get("shift_end"))
+                    if rs < 0 or re_ < 0:
+                        clash = True
+                        break
+                    if re_ <= rs:
+                        re_ += 24 * 60
+                    if rs < ee and es < re_:
+                        clash = True
+                        break
+                if not clash:
+                    continue
+            res.weaknesses.append(
+                f"{name} is also on the schedule at {entry['location']} at the same time.")
+            res.score = min(res.score, 60)
     for clash in ctx.role_conflicts:
         res.weaknesses.append(
             f"{clash['name']} is down for {' and '.join(role_words(r) for r in clash['roles'])} "
@@ -2104,6 +2125,13 @@ def _rotation_findings(ctx: ShiftContext, kinds: set):
 
 
 
+# A regular is someone whose usual week is at least this many hours; one
+# scheduled under this share of it is not getting the week they usually get
+# (models.usual_pattern avg_hours, D-37).
+USUAL_HOURS_FLOOR = 16.0
+USUAL_HOURS_CUT = 0.6
+
+
 def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
     """Are people getting roughly the schedule they had last week?
 
@@ -2122,28 +2150,42 @@ def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
     if not people:
         return None
     familiar = 0
-    changed = []
+    changed, cut = [], []
     for name in people:
         pattern = ctx.prior_pattern.get(name) or {}
         days = {d.strip().lower() for d in (pattern.get("days") or [])}
         parts = {p.strip().lower() for p in (pattern.get("dayparts") or [])}
         day_ok = not days or (ctx.day or "").strip().lower() in days
         part_ok = not parts or (ctx.daypart or "").lower() in parts
-        if day_ok and part_ok:
+        # Their usual hours too (schedule audit 10/3/26 D-37): a regular cut
+        # well below the week they usually work is not getting the schedule
+        # they had, whatever day this shift is on.
+        usual = pattern.get("avg_hours")
+        hours_ok = True
+        if usual and float(usual) >= USUAL_HOURS_FLOOR:
+            week = sum(float(e.get("hours") or 0) for e in (ctx.week_assignments.get(name) or [])
+                       if not e.get("prior"))
+            if week + 0.05 < USUAL_HOURS_CUT * float(usual):
+                hours_ok = False
+                cut.append((name, float(usual), round(week, 1)))
+        if day_ok and part_ok and hours_ok:
             familiar += 1
-        else:
+        elif not (day_ok and part_ok):
             changed.append(name)
     score = _pct(familiar, len(people))
     res = DimensionResult(
         key="stability", label="Schedule stability", score=score,
         weight=DEFAULT_WEIGHTS["stability"],
-        facts={"familiar": familiar, "changed": changed, "checked": len(people)},
+        facts={"familiar": familiar, "changed": changed, "checked": len(people),
+               "hours_cut": [{"name": n, "usual": u, "week": w} for n, u, w in cut]},
     )
     if changed:
         res.weaknesses.append(
             f"{_names(changed[:3])} " + _plural(len(changed), "is", "are") +
             " on a shift they do not usually work.")
-    else:
+    for n, u, w in cut[:2]:
+        res.weaknesses.append(f"{n} usually works about {u:g}h a week; {w:g}h this week.")
+    if not changed and not cut:
         res.strengths.append("Everybody is on a shift they normally work.")
     return res
 
@@ -2760,14 +2802,23 @@ def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     if not clashes and not matches and not splits:
         return None
     score = max(0, SCORE_MAX - 45 * len(clashes) - PAIR_SPLIT_COST * len(splits))
+    # A pairing from an owner-only rule counts and is never named: the
+    # review is shared with the team (schedule audit 10/3/26 D-38).
+    private = (ctx.pairs or {}).get("private") or set()
     res = DimensionResult(key="pairings", label="Pairings", score=score,
                           weight=DEFAULT_WEIGHTS["pairings"],
-                          facts={"clashes": [sorted(on[x] for x in p) for p in clashes],
-                                 "matches": [sorted(on[x] for x in p) for p in matches],
-                                 "splits": [sorted(x for x in p) for p in splits]})
+                          facts={"clashes": [sorted(on[x] for x in p) for p in clashes if p not in private],
+                                 "matches": [sorted(on[x] for x in p) for p in matches if p not in private],
+                                 "splits": [sorted(x for x in p) for p in splits if p not in private],
+                                 "private": sum(1 for p in clashes + matches + splits if p in private)})
     for p in clashes[:2]:
+        if p in private:
+            res.weaknesses.append("Two people one of your owner-only rules keeps apart are on together.")
+            continue
         a, b = sorted(on[x] for x in p)
         res.weaknesses.append(f"{a} and {b} are on together, and you asked to keep them apart.")
+    matches = [p for p in matches if p not in private]
+    splits = [p for p in splits if p not in private]
     for p in matches[:2]:
         a, b = sorted(on[x] for x in p)
         res.strengths.append(f"{a} and {b} are on together, as you prefer.")
@@ -4681,6 +4732,28 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
 
     splh_targets = signals.get("splh_targets") or {}
     daypart_sales = signals.get("daypart_sales") or {}
+    base_scores = signals.get("scores") or {}
+    role_scores = signals.get("role_scores") or {}
+
+    def _scores_for(shift_rows):
+        """The scores this shift is judged on: each person's score for the
+        role their row is in when the owner rated them in it, else their
+        overall score (schedule audit 10/3/26 D-12 — a 5 as Server counted
+        the same on Bar)."""
+        if not role_scores:
+            return base_scores
+        out = dict(base_scores)
+        for r in shift_rows:
+            name = (r.get("employee") or "").strip()
+            mine = role_scores.get(name)
+            if not mine:
+                continue
+            role = (r.get("role") or "").strip()
+            for key in (role_family(role, families), role_family(role), role.lower()):
+                if key in mine and mine[key] is not None:
+                    out[name] = mine[key]
+                    break
+        return out
     # The people facts every context shares (schedule audit 10/3/26, D1b).
     by_default = signals.get("experienced_default")
     if by_default is None:
@@ -4752,7 +4825,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             elsewhere=signals.get("elsewhere") or {},
             constraints=signals.get("constraints") or {},
             flagged=signals.get("flagged") or set(),
-            scores=signals.get("scores") or {},
+            scores=_scores_for(shift_rows),
             tenure=signals.get("tenure") or {},
             leader_flags=signals.get("leader_flags") or {},
             leader_rules=signals.get("leader_rules") or [],

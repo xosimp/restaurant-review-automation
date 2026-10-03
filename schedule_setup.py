@@ -88,14 +88,29 @@ def roster_bases(restaurant_id, people) -> dict:
     without building a week's rules."""
     import people as _people_mod
     import staff_settings as _ss
+    # Through people's identity, as build_constraints files them (schedule
+    # audit 10/3/26 D-8): a role held or worked under an alias or an old POS
+    # spelling is the roster person's.
+    try:
+        key_of = (_people_mod.identity_index(restaurant_id, [e["name"] for e in people or []]) or {}).get("key_of") or {}
+    except Exception:
+        key_of = {}
+
+    def _pk(n):
+        f = " ".join(str(n or "").split()).lower()
+        return key_of.get(f, key_of.get(f.casefold(), f))
     held = {}
     try:
         for r in _people_mod.held_roles(restaurant_id):
-            held.setdefault(r["key"], []).append(r["role"])
+            held.setdefault(_pk(r["key"]), []).append(r["role"])
     except Exception:
         held = {}
+    worked = {}
     try:
-        worked = _ss.worked_roles(restaurant_id) or {}
+        for k, roles in (_ss.worked_roles(restaurant_id) or {}).items():
+            per = worked.setdefault(_pk(k), {})
+            for role, last in (roles or {}).items():
+                per[role] = max(per.get(role) or "", last or "")
     except Exception:
         worked = {}
     try:
@@ -106,11 +121,11 @@ def roster_bases(restaurant_id, people) -> dict:
     since = (today - timedelta(weeks=_sr.MANAGER_RECENT_WEEKS)).isoformat()
     out = {}
     for e in people or []:
-        nk = _ss.name_key(e["name"])
+        nk = _pk(e["name"])
         st = e.get("settings") or {}
         recent = [r for r, last in sorted((worked.get(nk) or {}).items(), key=lambda kv: kv[1] or "", reverse=True)
                   if (last or "") >= since]
-        out[e["name"]] = _sr.manager_basis(e["name"], e.get("role"), st, sorted(held.get(nk) or []), recent,
+        out[e["name"]] = _sr.manager_basis(e["name"], e.get("role"), st, sorted(set(held.get(nk) or [])), recent,
                                            st.get("certifications") or [])
     return out
 

@@ -323,10 +323,13 @@ def clock_in_leads(restaurant) -> dict:
 def salaried_keys(restaurant) -> set:
     """salaried_name_key()s of the salaried staff — they don't clock in
     (owner, 9/30/26: "managers don't clock in"), so a missing punch is
-    never theirs to answer for."""
+    never theirs to answer for. Every spelling of each of them
+    (models.salaried_keys, people's identity — schedule audit 10/3/26
+    D-7): "Gabriel Huerta" salaried and punching as "Gabe Huerta" is
+    salaried here too."""
     try:
-        from models import salaried_staff, salaried_name_key
-        return {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
+        from models import salaried_keys as _salaried_keys
+        return set(_salaried_keys(restaurant))
     except Exception:
         return set()
 

@@ -45,11 +45,17 @@ DEFAULTS = {
     # on until close every trading day — enforced whenever anyone on the
     # roster is a keyholder (NS5 M8). The owner can switch it off.
     "keyholder_until_close": True,
+    # What "full-time" means when the owner set no minimum for the person
+    # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
+    # the field said nothing): at least this many hours a week. 30 is the
+    # usual US full-time line (the ACA's); 0 or blank turns it off.
+    "full_time_min_hours": 30.0,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hours": (1, 12), "daily_ot_hours": (4, 24),
            "meal_break_after_hours": (2, 12), "minor_max_daily_hours": (1, 12),
            "min_consecutive_days_off": (0, 4), "part_time_days_off": (0, 5),
-           "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30)}
+           "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30),
+           "full_time_min_hours": (0, 60)}
 
 # Reasons that mean the person is not really on that shift, so the row must
 # not count as coverage. Everything else in HARD is a cost or a rule breach
@@ -907,6 +913,13 @@ class Constraints:
     active: set = field(default_factory=set)               # lowercase
     inactive: set = field(default_factory=set)             # lowercase, deactivated
     blocked_dates: dict = field(default_factory=dict)      # {lower: {date: reason}}
+    # Part of a date a person can't work (schedule audit 10/3/26 D-39):
+    # {lower: {date: [{"from": min|None, "until": min|None, "daypart":
+    # "morning"|"night"|None, "reason"}]}} — approved time off "until 4pm"
+    # or for dinner, and a held note's lunch or dinner on dates that only
+    # part of the week is inside. can_work reads the daypart ones,
+    # window_ok the timed ones.
+    blocked_parts: dict = field(default_factory=dict)
     pending_off: dict = field(default_factory=dict)        # {lower: set(dates)}
     unavailable_days: dict = field(default_factory=dict)   # {lower: set(day)}
     daypart_avail: dict = field(default_factory=dict)      # {lower: {day: any|morning|night|off}}
@@ -944,6 +957,12 @@ class Constraints:
     # and the schedule rules it could not read, which the review names.
     owner_rules: list = field(default_factory=list)
     owner_rules_unchecked: list = field(default_factory=list)
+    # An owner-only rule the code could not read (D-38): never put on the
+    # shared review; for a surface only the account holders read.
+    owner_rules_unchecked_private: list = field(default_factory=list)
+    # The pairings the owner's rules state (parse_pair_rule):
+    # [{"kind": "avoid"|"prefer", "a", "b", "text", "private"}].
+    owner_pairs: list = field(default_factory=list)
     rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
     tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
     # ── schedule audit 10/3/26: the facts the fix round added ──────────
@@ -984,6 +1003,25 @@ class Constraints:
     # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
     # The model is told it; the fill passes keep off those days.
     note_caution: dict = field(default_factory=dict)
+    # One person, one key (D-8, E-25): every spelling people's identity
+    # knows for a roster person — an alias, the name before a POS rename,
+    # an owner's "Mike" for the roster's "Michael" — to the key the roster
+    # spells them by ({spelling lower: roster key}); key() reads it. Every
+    # per-person input is filed under key(), so a time-off block typed
+    # under an old spelling still holds.
+    aliases: dict = field(default_factory=dict)
+    # Roster people an open "same person?" question joins: one person in
+    # the sweep until the owner answers (E-25). {roster key: group key}.
+    linked: dict = field(default_factory=dict)
+    # {roster key: the roster's spelling}, deactivated people included.
+    display: dict = field(default_factory=dict)
+    # Full-timers whose minimum is the restaurant's full-time line, not one
+    # the owner set for them (D-41) — said so wherever the minimum is.
+    full_time_default: set = field(default_factory=set)
+    # Per-person inputs whose name matches nobody on the roster, active or
+    # not (D-8): [{"source", "name", "detail"}] — the review names each,
+    # so a fact typed under a spelling nobody goes by is never silent.
+    unmatched: list = field(default_factory=list)
     # Every role a person can be scheduled in (F1, D-15): their roster role,
     # the roles they hold (held_roles) and every role they have worked here.
     # {lower: set(role lower)}; holds() reads it by family. A role written
@@ -1012,6 +1050,26 @@ class Constraints:
     role_times: dict = field(default_factory=dict)
 
     # ── lookups ────────────────────────────────────────────────────────
+    def key(self, name) -> str:
+        """The key every map here files `name`'s facts under: the roster's
+        own spelling of the one person it means (aliases — people's
+        identity), else the name folded (spacing collapsed, lower case).
+        One person, one key (schedule audit 10/3/26 D-8)."""
+        k = " ".join(str(name or "").split()).lower()
+        if not self.aliases:
+            return k
+        hit = self.aliases.get(k)
+        if hit is None:
+            hit = self.aliases.get(k.casefold())
+        return k if hit is None else hit
+
+    def sweep_key(self, name) -> str:
+        """key(), with roster people an open "same person?" question joins
+        read as one (E-25): until the owner answers, "Kim T." and "Kimberly
+        Tran" share one week of overlaps, rest, hours and days in a row."""
+        k = self.key(name)
+        return self.linked.get(k, k)
+
     def bucket(self, date_str: str) -> str:
         from labor import _week_key
         try:
@@ -1045,8 +1103,11 @@ class Constraints:
 
     def is_salaried(self, name: str) -> bool:
         """Paid the same whatever the hours (models.salaried_staff) — Erik and
-        Jim at Simple EJ's work the floor most of the week (owner, 9/30/26)."""
-        return " ".join(str(name or "").lower().split()) in self.salaried
+        Jim at Simple EJ's work the floor most of the week (owner, 9/30/26).
+        Through the person's identity: a salaried entry typed "Gabriel
+        Huerta" holds for the "Gabe Huerta" he punches as (D-7)."""
+        k = self.key(name)
+        return k in self.salaried or " ".join(str(name or "").lower().split()) in self.salaried
 
     def salaried_limit(self, name: str) -> float:
         """The most hours code schedules a salaried person for in a week:
@@ -1054,7 +1115,7 @@ class Constraints:
         SALARIED_HOURS_CAP (schedule audit 10/3/26 E-17: the manager gap
         filler loaded a salaried owner to 66h against an 84h line, because
         their hours "cost nothing")."""
-        lim = self.hours_limits.get((name or "").strip().lower())
+        lim = self.hours_limits.get(self.key(name))
         if lim and lim[1]:
             return float(lim[1])
         if self.salaried_cap:
@@ -1072,7 +1133,7 @@ class Constraints:
         owner's limit for them (their own, else the restaurant's salaried
         cap), else SALARIED_HOURS_MAX — a default the code never schedules
         them past on its own (salaried_limit) but the owner may."""
-        lim = self.hours_limits.get((name or "").strip().lower())
+        lim = self.hours_limits.get(self.key(name))
         if self.is_salaried(name):
             if lim and lim[1]:
                 return float(lim[1])
@@ -1082,12 +1143,12 @@ class Constraints:
         return float(self.compliance.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
 
     def min_hours(self, name: str):
-        lim = self.hours_limits.get((name or "").strip().lower())
+        lim = self.hours_limits.get(self.key(name))
         return float(lim[0]) if lim and lim[0] else None
 
     def can_work(self, name: str, date_str: str, daypart: str = None) -> tuple:
         """(ok, reason) — the one legality question every pass asks."""
-        key = (name or "").strip().lower()
+        key = self.key(name)
         if not key:
             return False, "no name"
         if key in self.inactive:
@@ -1099,6 +1160,10 @@ class Constraints:
         blocked = self.blocked_dates.get(key) or {}
         if date_str in blocked:
             return False, blocked[date_str]
+        if daypart in ("morning", "night"):
+            for p in ((self.blocked_parts.get(key) or {}).get(date_str) or ()):
+                if p.get("daypart") == daypart:
+                    return False, p.get("reason") or LABELS["approved_time_off"]
         try:
             day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
@@ -1115,7 +1180,7 @@ class Constraints:
     def manages(self, name: str, date_str: str = None) -> bool:
         """Whether `name` counts as the manager on the floor on `date_str`: a
         manager (managers), or standing in as one that date (acting_managers)."""
-        key = (name or "").strip().lower()
+        key = self.key(name)
         if key in self.managers:
             return True
         return bool(date_str) and date_str in (self.acting_managers.get(key) or ())
@@ -1131,7 +1196,7 @@ class Constraints:
         family is one of theirs (roster role, held roles, roles worked
         here), or the role they are training into, while training lasts.
         Somebody nothing is known about is not judged."""
-        key = (name or "").strip().lower()
+        key = self.key(name)
         mine = self.known_roles.get(key)
         fam = self.family(role)
         if not mine or not fam or is_training_role(role):
@@ -1154,24 +1219,29 @@ class Constraints:
         and no pass hands one out."""
         if is_training_role(row.get("role")):
             return True
-        t = self.trainees.get((row.get("employee") or "").strip().lower())
+        t = self.trainees.get(self.key(row.get("employee")))
         return bool(t) and self.family(row.get("role")) == self.family(t.get("target_role")) \
             and self._training_on(t, row.get("date"))
 
-    def fillable(self, name: str, date_str: str) -> tuple:
+    def fillable(self, name: str, date_str: str, daypart: str = None) -> tuple:
         """(ok, reason): whether a pass may CHOOSE `name` to fill a gap on
         `date_str` — over and above can_add, which asks whether the row is
         legal. Somebody who has not worked in weeks (dormant) or whose own
         note about that day nobody has confirmed (note_caution) is never
-        picked by code; the owner can still write them in."""
-        key = (name or "").strip().lower()
+        picked by code; the owner can still write them in. A note that
+        names only a lunch or a dinner ("no nights") leaves the other one
+        to a fill that says which `daypart` it is filling."""
+        key = self.key(name)
         if key in self.dormant:
-            return False, f"has not worked since {self.dormant[key]}"
+            from time_utils import mdy
+            return False, f"has not worked since {mdy(self.dormant[key]) if self.dormant[key] else 'they were added'}"
         caution = self.note_caution.get(key) or {}
         if caution:
             day = _weekday_of(date_str)
             if date_str in (caution.get("dates") or ()) or (day and day in (caution.get("days") or ())):
-                return False, f"their note: {str(caution.get('text') or '')[:80]}"
+                parts = caution.get("parts") or set()
+                if not (parts and daypart in ("morning", "night") and daypart not in parts):
+                    return False, f"their note: {str(caution.get('text') or '')[:80]}"
         return True, ""
 
     def can_add(self, row: dict, rows=(), line: float = None, overtime: bool = True) -> tuple:
@@ -1187,7 +1257,7 @@ class Constraints:
         — anything new or worse refuses it. Unless `overtime` is False the
         row may not take them past their overtime line either."""
         name = (row.get("employee") or "").strip()
-        key = name.lower()
+        key = self.key(name)
         if not key:
             return False, "no name"
         d = row.get("date", "")
@@ -1206,7 +1276,10 @@ class Constraints:
         # owner places training beside a trainer (D-16).
         if self.training_row(row):
             return False, "a training shift — not coverage, and placed beside a trainer by the owner"
-        mine = [r for r in (rows or ()) if r is not row and (r.get("employee") or "").strip().lower() == key]
+        # Their week under every spelling that is them, and the roster
+        # person an open "same person?" question joins to them (E-25).
+        group = self.sweep_key(name)
+        mine = [r for r in (rows or ()) if r is not row and self.sweep_key(r.get("employee")) == group]
         worse = regressions(breach_profile(mine, self, person_only=True),
                             breach_profile(mine + [row], self, person_only=True), upto=TIER_PERSON)
         if worse:
@@ -1215,8 +1288,10 @@ class Constraints:
             # A salaried person's line is their weekly cap (E-17): code never
             # loads them past it, whatever their hours cost.
             b = self.bucket(d)
+            carried = sum(float((per or {}).get(b, 0.0) or 0.0) for k, per in self.base_hours.items()
+                          if k == key or self.linked.get(k, k) == group)
             total = (sum(row_hours(r) for r in mine if r.get("date") and self.bucket(r["date"]) == b)
-                     + float((self.base_hours.get(key) or {}).get(b, 0.0) or 0.0) + row_hours(row))
+                     + carried + row_hours(row))
             ot = overtime_line(self, name, line)
             if ot and total > ot + 0.05:
                 if self.is_salaried(name):
@@ -1225,8 +1300,19 @@ class Constraints:
         return True, ""
 
     def window_ok(self, name: str, date_str: str, start: str, end: str) -> tuple:
-        """Whether a shift's times sit inside the person's window that day."""
-        key = (name or "").strip().lower()
+        """Whether a shift's times sit inside the person's window that day —
+        and clear of any part of that date they have off (blocked_parts)."""
+        key = self.key(name)
+        for p in ((self.blocked_parts.get(key) or {}).get(date_str) or ()):
+            if p.get("daypart"):
+                continue                  # can_work reads a daypart off
+            s_, e_ = parse_minutes(start), parse_minutes(end)
+            if s_ is None or e_ is None:
+                continue
+            if e_ <= s_:
+                e_ += 24 * 60
+            if (p.get("from") is None or e_ > p["from"]) and (p.get("until") is None or s_ < p["until"]):
+                return False, p.get("reason") or LABELS["approved_time_off"]
         win = self.time_windows.get(key)
         if not win:
             return True, ""
@@ -1249,7 +1335,7 @@ class Constraints:
         need = self.role_requirements.get((role or "").strip().lower()) or set()
         if not need:
             return True, ""
-        have = self.certifications.get((name or "").strip().lower()) or set()
+        have = self.certifications.get(self.key(name)) or set()
         missing = sorted(need - have)
         if missing:
             return False, f"{LABELS['missing_cert']} ({', '.join(missing)})"
@@ -1264,11 +1350,16 @@ class Constraints:
         s, e = shift_span(candidate, self.tz)
         if not s:
             return True, ""
-        key = (name or "").strip().lower()
-        for r in list(other_rows) + list(self.base_rows.get(key) or []):
-            if (r.get("employee") or "").strip().lower() != key:
-                continue
-            if r is candidate or (r.get("date") == candidate.get("date") and r.get("shift_start") == candidate.get("shift_start")):
+        group = self.sweep_key(name)
+        # This week's rows (the candidate itself is among them), then the
+        # tail — last week's, a sibling site's, a draft's: a tail row is
+        # never the candidate, so one at the same start is an overlap.
+        mine = [(r, False) for r in other_rows if self.sweep_key(r.get("employee")) == group]
+        mine += [(r, True) for k, rs_ in self.base_rows.items() if k == self.key(name) or self.linked.get(k, k) == group
+                 for r in (rs_ or [])]
+        for r, tail in mine:
+            if r is candidate or (not tail and r.get("date") == candidate.get("date")
+                                  and r.get("shift_start") == candidate.get("shift_start")):
                 continue
             rs, re_ = shift_span(r, self.tz)
             if not rs:
@@ -1589,12 +1680,6 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
     c.compliance = compliance(restaurant)
-    try:
-        from models import salaried_staff, salaried_name_key
-        c.salaried = {salaried_name_key(s["name"]) for s in salaried_staff(restaurant)}
-    except Exception as exc:
-        c.salaried = set()
-        _input_problem(c, "salaried staff", exc)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
@@ -1621,11 +1706,6 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception as exc:
         _input_problem(c, "open and close times", exc)
 
-    # Certificates past their expiry (staff_knowledge.staff_certs) are not
-    # held: an expired food-handler card does not satisfy a role that needs
-    # one (employee audit B7 handoff). Valid on the week's first day is the
-    # test — cert_ok has no day of its own.
-    expired = _expired_certs(restaurant_id, c.week_dates, db_path)
     # roster + per-person settings. One person at a time: a single try
     # around the whole loop meant one malformed setting (a time window that
     # would not parse) silently dropped managers, minors, hours limits and
@@ -1639,12 +1719,52 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception as exc:
         _people = []
         _input_problem(c, "roster", exc)
+    # One person, one key (schedule audit 10/3/26 D-8, E-25): every spelling
+    # people's identity knows for a roster person files their facts under
+    # the roster's spelling, before any fact is read.
+    _identity(c, restaurant_id, _people, db_path)
+    try:
+        c.salaried = _salaried_keys(c, restaurant, db_path)
+    except Exception as exc:
+        c.salaried = set()
+        _input_problem(c, "salaried staff", exc)
+    # Certificates past their expiry (staff_knowledge.staff_certs) are not
+    # held: an expired food-handler card does not satisfy a role that needs
+    # one (employee audit B7 handoff). Valid on the week's first day is the
+    # test — cert_ok has no day of its own.
+    expired = {}
+    for k, v in (_expired_certs(restaurant_id, c.week_dates, db_path) or {}).items():
+        expired.setdefault(c.key(k), set()).update(v)
+    if c.stations and c.stations.get("skills"):
+        # A station skill typed under another spelling is the person's own.
+        skills = {}
+        for person, have in c.stations["skills"].items():
+            k = _file_under(c, "kitchen station skills", person)
+            who = c.display.get(k, person)
+            skills[who] = sorted(set(skills.get(who, [])) | set(have),
+                                 key=lambda s_: (c.stations.get("stations") or []).index(s_)
+                                 if s_ in (c.stations.get("stations") or []) else 99)
+        c.stations = dict(c.stations, skills=skills)
     # Every role each person holds or has worked (F1 — E-14, D-15): who is
     # a manager and which roles are somebody's read all of them, not only
-    # the roster's most recent one.
+    # the roster's most recent one — filed under each person's one key
+    # (D-8), so a role held under an old spelling is still theirs.
     held, worked = _roles_on_file(c, restaurant_id, db_path)
+    held, worked = _by_person_key(c, held, keep=min), _by_person_key(c, worked, keep=max)
+    # An Owner role is salaried-style unless the owner marked them paid by
+    # the hour (E-12): no overtime line, the salaried weekly cap. Read before
+    # each person's settings, so a salaried-style owner is never given the
+    # restaurant's full-time minimum either (D-41: their pay does not follow
+    # their hours).
     for e in _people:
-        key = e["name"].strip().lower()
+        if e["active"] and not (e.get("settings") or {}).get("paid_hourly"):
+            key = c.key(e["name"])
+            mine = [e.get("role")] + sorted((held.get(key) or {}).keys())
+            if any(is_owner_role(r) for r in mine) and not c.is_salaried(e["name"]):
+                c.salaried.add(key)
+                c.salaried_style.add(key)
+    for e in _people:
+        key = c.key(e["name"])
         if e["active"]:
             c.roster_names.append(e["name"])
             c.active.add(key)
@@ -1664,18 +1784,16 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         if not chosen:
             chosen = sorted(closing_families(c, _closing_history(restaurant_id, c)))
             c.closer_roles_basis = "history" if chosen else "all"
-        _closers_by_role(c, _people, get_leader_flags(restaurant_id, db_path) or {}, chosen)
+        _flags = get_leader_flags(restaurant_id, db_path) or {}
+        # A closer flag under a spelling nobody on the roster goes by is
+        # named (D-8); one under an alias is the person's (_closers_by_role
+        # matches by c.key).
+        for _n, _v in _flags.items():
+            if _v:
+                _file_under(c, "closers", _n)
+        _closers_by_role(c, _people, _flags, chosen)
     except Exception as exc:
         _input_problem(c, "closers", exc)
-    # An Owner role is salaried-style unless the owner marked them paid by
-    # the hour (E-12): no overtime line, the salaried weekly cap.
-    for e in _people:
-        if e["active"] and not (e.get("settings") or {}).get("paid_hourly"):
-            key = e["name"].strip().lower()
-            mine = [e.get("role")] + sorted((held.get(_ss_key(e["name"])) or {}).keys())
-            if any(is_owner_role(r) for r in mine) and not c.is_salaried(e["name"]):
-                c.salaried.add(" ".join(str(e["name"]).lower().split()))
-                c.salaried_style.add(key)
     c.role_requirements = {str(k).strip().lower(): {cert_key(x) for x in (v or []) if str(x).strip()}
                            for k, v in (_load_json(getattr(restaurant, "role_requirements_json", None), {}) or {}).items() if k}
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
@@ -1698,6 +1816,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         if fam:
             c.close_mins[fam] = max(int(v), c.close_mins.get(fam, 0))
 
+    _note_parts = []                      # (key, name, text, noted, expires): every note, for D-34
     # weekday availability + free-text notes. A weekday blocked for good is
     # a weekday rule; one blocked only between two dates ("Fridays until
     # 12/15", day_bounds — employee audit M5) blocks the dates of this week
@@ -1705,9 +1824,9 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         from models import availability_day_bounds, availability_blocked_dates
         for a in get_staff_availability(restaurant_id, db_path) or []:
-            key = (a.get("employee_name") or "").strip().lower()
-            if not key:
+            if not (a.get("employee_name") or "").strip():
                 continue
+            key = _file_under(c, "availability", a.get("employee_name"))
             blocked = set(_load_json(a.get("unavailable_days"), []))
             avail = _load_json(a.get("available_days"), [])
             if avail:
@@ -1722,25 +1841,66 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 for d in availability_blocked_dates(a, c.week_dates):
                     c.blocked_dates.setdefault(key, {}).setdefault(d, LABELS["unavailable_day"])
             if (a.get("notes") or "").strip():
-                c.notes[key] = a["notes"].strip()
+                c.notes[key] = (c.notes.get(key, "") + " " + a["notes"].strip()).strip()
+                _note_parts.append((key, a.get("employee_name"), a["notes"].strip(),
+                                    str(a.get("updated_at") or "")[:10] or None, None))
     except Exception as exc:
         _input_problem(c, "availability", exc)
     try:
         for n in get_staff_notes(restaurant_id, db_path) or []:
-            key = (n.get("employee_name") or "").strip().lower()
+            if not (n.get("employee_name") or "").strip():
+                continue
+            key = _file_under(c, "scheduling notes", n.get("employee_name"))
             if key and n.get("notes"):
                 c.notes[key] = (c.notes.get(key, "") + " " + n["notes"]).strip()
+                for part in (n.get("parts") or [{"text": n["notes"]}]):
+                    if part.get("ended") or not str(part.get("text") or "").strip():
+                        continue
+                    _note_parts.append((key, n.get("employee_name"), str(part["text"]).strip(),
+                                        part.get("noted"), part.get("expires")))
     except Exception as exc:
         _input_problem(c, "staff notes", exc)
+    # Every note nobody has confirmed as a hold, read by the hold reader
+    # (schedule audit 10/3/26 D-34): the days it names are kept clear by the
+    # fill passes (Constraints.fillable) — "Ana can't close Fridays" was
+    # told to the model and nothing stopped a backstop from putting her on
+    # a Friday close. c.notes stays the model's text.
+    try:
+        _note_cautions(c, restaurant_id, _note_parts, db_path)
+    except Exception as exc:
+        _input_problem(c, "scheduling notes", exc)
 
     # time off: approved blocks, pending is a warning
     if c.week_dates:
         try:
             import time_off as _to
-            for name, days in (_to.approved_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path=db_path) or {}).items():
-                c.blocked_dates.setdefault(name.strip().lower(), {}).update({d: LABELS["approved_time_off"] for d in days})
+            # Part of a day off (D-39) blocks that part only; the rest of the
+            # day stays workable.
+            for name, by_date in (_to.approved_parts_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1],
+                                                               db_path=db_path) or {}).items():
+                key = _file_under(c, "time off", name, "approved time off on " + ", ".join(
+                    _mdy_safe(d) for d in sorted(by_date)))
+                for d, parts in by_date.items():
+                    for p in parts:
+                        c.blocked_parts.setdefault(key, {}).setdefault(d, []).append(
+                            dict(p, reason=f"{LABELS['approved_time_off']} ({p.get('words') or 'part of the day'})"))
+                if key not in c.display and c.display:
+                    c.input_problems.append({"source": "time off", "name": name,
+                                             "error": "approved time off (" + ", ".join(_mdy_safe(d) for d in sorted(by_date))
+                                                      + ") matches nobody on the roster — check the spelling"})
+            for name, days in (_to.approved_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path=db_path,
+                                                      whole_days_only=True) or {}).items():
+                key = _file_under(c, "time off", name, "approved time off " + ", ".join(_mdy_safe(d) for d in days))
+                c.blocked_dates.setdefault(key, {}).update({d: LABELS["approved_time_off"] for d in days})
+                if key not in c.display and c.display:
+                    # A legal block typed under a name nobody on the roster
+                    # goes by holds for nobody: the gate names it (D-8).
+                    c.input_problems.append({"source": "time off", "name": name,
+                                             "error": f"approved time off ({', '.join(_mdy_safe(d) for d in days)}) "
+                                                      "matches nobody on the roster — check the spelling"})
             for name, days in (_pending_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1], db_path) or {}).items():
-                c.pending_off.setdefault(name.strip().lower(), set()).update(days)
+                key = _file_under(c, "time off", name, "asked for " + ", ".join(_mdy_safe(d) for d in days) + " off")
+                c.pending_off.setdefault(key, set()).update(days)
         except Exception as exc:
             _input_problem(c, "time off", exc)
 
@@ -1776,12 +1936,157 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _floors_on_job_codes(c)
     except Exception as exc:
         _input_problem(c, "role floors", exc)
+    # Who has stopped working (schedule audit 10/3/26 E-3, D-17): no shift in
+    # staff_settings.DORMANT_WEEKS weeks, not hand-added since, nothing on
+    # file saying they are still here. Still on the roster — a row the owner
+    # writes for them is legal — but never chosen by a fill (fillable), left
+    # off the model's roster and the open-shift broadcast. Never dormant:
+    # anyone on a published shift in those weeks (dormant_people), managers
+    # of any kind — a floor manager, a department's, an owner, a lead, by
+    # the roles they hold or have worked, or on a published week as one —
+    # salaried people, and anyone with standing shifts, an acting-manager
+    # date or a training: managers barely punch. The LAST step, so every
+    # one of those facts is read first.
+    try:
+        import staff_settings as _ss
+        exempt = (set(c.managers) | set(c.salaried) | set(c.standing_shifts or {})
+                  | set(c.acting_managers or {}) | set(c.trainees or {}))
+        exempt |= {k for k, roles in (c.known_roles or {}).items()
+                   if any(manager_role_kind(r) for r in roles or ())}
+        dormant = _ss.dormant_people(restaurant_id, people=_people, exempt=exempt, db_path=db_path)
+        for e in _people:
+            k = c.key(e["name"])
+            if k in c.active and _ss.name_key(e["name"]) in dormant:
+                c.dormant[k] = dormant[_ss.name_key(e["name"])]
+    except Exception as exc:
+        _input_problem(c, "who has stopped working", exc)
     return c
 
 
-def _ss_key(name) -> str:
-    """staff_settings.name_key, inlined (the people stores key by it)."""
-    return " ".join(str(name or "").split()).casefold()
+def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
+    """c.aliases, c.linked and c.display from the roster (people.
+    identity_index). A failure costs the aliases, never the generation: the
+    plain fold still keys everyone, and the review says so."""
+    c.display = {}
+    for e in people_rows or []:
+        n = str(e.get("name") or "").strip()
+        if n:
+            c.display.setdefault(" ".join(n.split()).lower(), " ".join(n.split()))
+    if not c.display:
+        return
+    try:
+        import people
+        idx = people.identity_index(restaurant_id, list(c.display.values()),
+                                    db_path=None if db_path == DB_PATH else db_path)
+        c.aliases = dict(idx.get("key_of") or {})
+        c.linked = dict(idx.get("linked") or {})
+    except Exception as exc:
+        _input_problem(c, "who is who on the roster", exc)
+
+
+def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:
+    """The key a per-person fact is filed under (c.key), and — when the
+    name matches nobody on the roster, active or deactivated — a line in
+    c.unmatched for the review (D-8): a fact under a spelling nobody goes
+    by applies to nobody, and the owner is told rather than left to find
+    out on the floor."""
+    key = c.key(name)
+    if key and c.display and key not in c.display:
+        shown = " ".join(str(name or "").split())
+        if not any(u["source"] == source and u["name"] == shown for u in c.unmatched):
+            entry = {"source": source, "name": shown,
+                     "detail": f"{shown}: {detail or source} — matches nobody on the roster"}
+            try:
+                import people
+                maybe = people.similar_on_roster(shown, list(c.display.values()))
+            except Exception:
+                maybe = []
+            if maybe:
+                entry["suggestion"] = maybe[0]
+                entry["detail"] += f" (is it {maybe[0]}?)"
+            c.unmatched.append(entry)
+    return key
+
+
+def _note_cautions(c: "Constraints", restaurant_id, note_parts, db_path=None):
+    """c.note_caution from every note part not confirmed as a hold
+    (person_note_holds.caution): {key: {"days", "dates", "parts", "text"}}.
+    Two notes on one person keep the fills off both; a lunch-or-dinner
+    allowance (parts) stands only when every note on that person names the
+    same one — otherwise the whole day is kept clear."""
+    if not note_parts:
+        return
+    import person_note_holds as _pnh
+    try:
+        from models import _restaurant_today
+        today = _restaurant_today(restaurant_id)
+    except Exception:
+        today = None
+    held = set()
+    for h in _pnh.holds(restaurant_id, db_path=db_path, include_ended=True):
+        held.add((c.key(h["employee_name"]), _pnh._key(h["part_text"])))
+    for key, name, text, noted, expires in note_parts:
+        if (key, _pnh._key(text)) in held:
+            continue                      # confirmed: a hard hold (apply_holds), not a caution
+        got = _pnh.caution(text, noted=noted, expires=expires, week_dates=c.week_dates, today=today)
+        if not got:
+            continue
+        cur = c.note_caution.get(key)
+        if cur is None:
+            c.note_caution[key] = {"days": set(got["days"]), "dates": set(got["dates"]),
+                                   "parts": set(got.get("parts") or ()), "text": text}
+            continue
+        same = cur.get("parts") and cur["parts"] == set(got.get("parts") or ())
+        cur["days"] |= set(got["days"])
+        cur["dates"] |= set(got["dates"])
+        cur["parts"] = cur["parts"] if same else set()
+        if text.lower() not in str(cur.get("text") or "").lower():
+            cur["text"] = (str(cur.get("text") or "") + "; " + text).strip("; ")
+
+
+def _salaried_keys(c: "Constraints", restaurant, db_path=None) -> set:
+    """The keys of the salaried people (models.salaried_staff) through
+    people's identity (D-7): each entry's own spelling, and the roster key
+    of the one person any of its spellings means. A salaried name that
+    matches nobody on the roster is named in c.unmatched — the model is
+    never told about a salaried person the roster check would refuse."""
+    from models import salaried_staff, salaried_name_key
+    staff = salaried_staff(restaurant)
+    if not staff:
+        return set()
+    out = set()
+    try:
+        import people
+        spelled = people.spellings(c.restaurant_id, [s_["name"] for s_ in staff],
+                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        spelled = {}
+    for s_ in staff:
+        own = salaried_name_key(s_["name"])
+        out.add(own)
+        keys = {c.key(k) for k in (spelled.get(s_["name"]) or {own})} | {c.key(s_["name"])}
+        on = {k for k in keys if k in c.display}
+        out |= on
+        if not on:
+            _file_under(c, "salaried staff", s_["name"], "salaried")
+    return out
+
+
+def _by_person_key(c: "Constraints", d: dict, keep=max) -> dict:
+    """{person key: {role: date}} from a map kept by any spelling (held and
+    worked roles — F1's _roles_on_file, by name_key): every spelling of one
+    person filed under their one key (c.key, D-8), two dates for one role
+    combined by `keep` (the earliest since a role was held, the latest it
+    was worked)."""
+    out = {}
+    for k, roles in (d or {}).items():
+        mine = out.setdefault(c.key(k), {})
+        for role, when in (roles or {}).items():
+            if role in mine and mine[role] and when:
+                mine[role] = keep(mine[role], when)
+            else:
+                mine[role] = mine.get(role) or when
+    return out
 
 
 def _roles_on_file(c, restaurant_id, db_path):
@@ -1828,12 +2133,14 @@ def _closers_by_role(c, people, flags, chosen):
     owner chose which roles have closers, only those. Only people on the
     roster count; a flag set through view-as does not (get_leader_flags,
     L-9)."""
-    flagged = {_ss_key(n) for n, v in (flags or {}).items() if v}
+    # Matched through people's identity (D-8): a flag kept under an alias
+    # or an old spelling is the person's.
+    flagged = {c.key(n) for n, v in (flags or {}).items() if v}
     keep = {c.family(x) for x in chosen or () if c.family(x)}
     for e in people:
-        if not e.get("active") or _ss_key(e["name"]) not in flagged:
+        if not e.get("active") or c.key(e["name"]) not in flagged:
             continue
-        key = e["name"].strip().lower()
+        key = c.key(e["name"])
         c.closer_flags.add(key)
         st = e.get("settings") or {}
         fams = {c.family(x) for x in (st.get("closes_for") or []) if c.family(x)} or \
@@ -1934,8 +2241,6 @@ def _floors_on_job_codes(c):
         if not moved:
             out[role] = spec
     c.role_floors = {k: v for k, v in out.items() if v.get("morning") or v.get("night") or v.get("days")}
-
-
 def _input_problem(c: "Constraints", source: str, exc, name: str = None):
     """Record a source or a person's settings the rules could not read
     (schedule audit 10/3/26 P-1): kept on the Constraints for the review and
@@ -1956,12 +2261,13 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     """One roster person's settings onto the Constraints (build_constraints'
     per-person step, each person on their own — see P-1 there). `held` and
     `worked` are every person's held and worked roles (_roles_on_file)."""
-    key = e["name"].strip().lower()
-    nk = _ss.name_key(e["name"])
+    # Filed under the person's one key (c.key, D-8): `held`, `worked` and
+    # `expired` are kept by it too (build_constraints).
+    key = c.key(e["name"])
     st = e.get("settings") or {}
     roster_role = " ".join(str(e.get("role") or "").split())
-    mine_held = sorted((held or {}).get(nk) or {})
-    mine_worked = (worked or {}).get(nk) or {}
+    mine_held = sorted((held or {}).get(key) or {})
+    mine_worked = (worked or {}).get(key) or {}
     # Every role they can be scheduled in (D-15): the roster's, the ones
     # they hold (trained, promoted, the POS job list), the ones worked here.
     for r in [roster_role, *mine_held, *mine_worked]:
@@ -1974,6 +2280,15 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
         c.hours_limits[key] = (st.get("min_hours"), st.get("max_hours"))
     if st.get("employment_type"):
         c.employment[key] = st["employment_type"]
+    # Full-time with no minimum of their own: the restaurant's full-time
+    # line is their minimum (D-41). Never for a salaried person — their
+    # pay does not follow their hours.
+    ft = c.compliance.get("full_time_min_hours")
+    if st.get("employment_type") == "full" and st.get("min_hours") is None and ft and key not in c.salaried:
+        mx = st.get("max_hours")
+        if mx is None or float(mx) >= float(ft):
+            c.hours_limits[key] = (float(ft), mx)
+            c.full_time_default.add(key)
     if st.get("daypart_availability"):
         c.daypart_avail[key] = dict(st["daypart_availability"])
     if st.get("is_minor") or st.get("minor_age_band"):
@@ -1989,7 +2304,7 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
         if win:
             c.time_windows[key] = win
     if st.get("certifications"):
-        gone = expired.get(nk, set())
+        gone = expired.get(key, set())
         c.certifications[key] = {cert_key(x) for x in st["certifications"] if str(x).strip()
                                  and cert_key(x) not in gone}
         # A closer is a person the owner marked to close (stays until
@@ -2057,8 +2372,17 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
 #   * a staffing rule it cannot read is named in the review, so the owner
 #     checks the draft against it — never silently dropped.
 #
-# Only a rule the whole team may read (audience "team", as the schedule
-# prompt reads memory): an owner-only line never surfaces in a shared review.
+# Every account holder's rule constrains the draft — an owner-only one too
+# (schedule audit 10/3/26 D-38: "never schedule Ana with Ben", kept private,
+# reached neither the prompt nor the checks). An owner-only rule's WORDS
+# never surface where the team reads: its floor reads like any floor, its
+# check names no text, an unreadable one is kept off the shared review
+# (owner_rules_unchecked_private), and a private pairing is scored and
+# solved against but never printed (pairs_with_rules' "private").
+#
+# A rule about two people — "never schedule Ana with Ben", "keep Ana and Ben
+# apart", "always pair Ana with Ben" — is a pairing (parse_pair_rule), the
+# same "avoid"/"prefer" the owner's staff_pairs hold (owner_pairs).
 
 _RULE_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 # ("day", "am" and "pm" are not here: "every day" is not lunch, and "I am"
@@ -2203,14 +2527,19 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
     week."""
     import owner_memory
     import memory_context
-    facts = owner_memory.facts_for(restaurant_id, viewer=memory_context.team_viewer("schedule"),
-                                   surface="schedule", kinds=list(owner_memory.RULE_KINDS),
-                                   db_path=None if db_path == DB_PATH else db_path)
-    roles = set()
+    db = None if db_path == DB_PATH else db_path
+    facts = owner_memory.facts_for(restaurant_id, viewer=None, surface="schedule",
+                                   kinds=list(owner_memory.RULE_KINDS), db_path=db)
+    # Which of them the whole team may read; the rest are owner-only (D-38).
+    team = {(f.get("id"), f.get("from_location")) for f in owner_memory.facts_for(
+        restaurant_id, viewer=memory_context.team_viewer("schedule"), surface="schedule",
+        kinds=list(owner_memory.RULE_KINDS), db_path=db)}
+    roles, names = set(), []
     try:
         import staff_settings as _ss
-        roles |= {str(e.get("role") or "").strip() for e in _ss.roster(restaurant_id, db_path=db_path)
-                  if e.get("role")}
+        _everyone = _ss.roster(restaurant_id, db_path=db_path)
+        roles |= {str(e.get("role") or "").strip() for e in _everyone if e.get("role")}
+        names = [e["name"] for e in _everyone]
     except Exception:
         pass
     roles |= {str(r).strip() for r in (c.role_floors or {})}
@@ -2221,11 +2550,24 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
     for f in facts:
         if not owner_memory.is_owner_rule(f):
             continue
+        private = (f.get("id"), f.get("from_location")) not in team
+        text = " ".join(str(f.get("fact") or "").split())
+        pair = parse_pair_rule(text, names, aliases=c.aliases, display=c.display)
+        if pair is not None:
+            if pair.get("days"):
+                # A pairing on some days only: the pairings have no day, so
+                # it is named for the owner to check rather than held all
+                # week or not at all.
+                (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
+            else:
+                c.owner_pairs.append(dict(pair, private=private))
+            continue
         rule = parse_owner_rule(f.get("fact"), roles, c.role_families)
         if rule is None:
             if _is_staffing_rule(f):
-                c.owner_rules_unchecked.append(" ".join(str(f.get("fact") or "").split()))
+                (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
             continue
+        rule["private"] = private
         c.owner_rules.append(rule)
         if not rule["daypart"]:
             rule["reads_as"] = rule_reads_as(rule)
@@ -2248,7 +2590,105 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
         for day in rule["days"] or DAYS:
             if floor_for(c.role_floors, key, day, rule["daypart"]) < rule["min"]:
                 spec.setdefault("days", {}).setdefault(day, {})[rule["daypart"]] = rule["min"]
-                c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
+                if private:
+                    # Held like any floor; its words are the owner's alone.
+                    c.rule_floor_sources.pop((key.strip().lower(), day, rule["daypart"]), None)
+                else:
+                    c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
+
+
+def parse_pair_rule(text: str, names, aliases=None, display=None) -> dict:
+    """{"kind": "avoid"|"prefer", "a", "b", "days", "text"} for a rule about
+    two people on the roster ("never schedule Ana with Ben", "keep Ana and
+    Ben apart", "Ana and Ben shouldn't be on together", "always pair Ana
+    with Ben"), or None. Each person is named by a roster spelling, a
+    spelling people's identity knows for them (`aliases`/`display`, from
+    Constraints), or a first name only one person on the roster has. Two
+    people named and a word that puts them on together (with, together,
+    alongside, apart, separate, away from, same shift) are needed — "Ana and
+    Ben never work Sundays" is about Sundays, not a pairing."""
+    import re as _re
+    orig = " " + " ".join(str(text or "").replace("’", "'").split()) + " "
+    low = orig.lower()
+    if not low.strip():
+        return None
+    if len(low) != len(orig):
+        orig = low                                   # a character whose case changes its length
+    spell = {}                                       # spelling -> roster display name
+    firsts = {}
+    for n in names or []:
+        n = " ".join(str(n or "").split())
+        if not n:
+            continue
+        spell[n.lower()] = n
+        first = n.split()[0].lower().strip(".,")
+        if len(first) >= 2:
+            firsts.setdefault(first, set()).add(n)
+    for k, rk in (aliases or {}).items():
+        who = (display or {}).get(rk)
+        if who and len(k) >= 3:
+            spell.setdefault(k, who)
+    first_only = set()
+    for f, ns in firsts.items():
+        if len(ns) == 1 and f not in spell:
+            spell[f] = next(iter(ns))
+            first_only.add(f)
+    found = []                                       # (start, end, display)
+    for sp in sorted(spell, key=len, reverse=True):
+        for m in _re.finditer(r"(?<![a-z])" + _re.escape(sp) + r"(?![a-z])", low):
+            if any(not (m.end() <= s0 or m.start() >= e0) for s0, e0, _n in found):
+                continue
+            if sp in first_only and not orig[m.start()].isupper():
+                continue                             # "will", "may": a word, not Will or May
+            found.append((m.start(), m.end(), spell[sp]))
+    people_ = []
+    for _s0, _e0, who in sorted(found):
+        if who not in people_:
+            people_.append(who)
+    if len(people_) != 2:
+        return None
+    marked = low
+    for s0, e0, who in sorted(found, reverse=True):
+        marked = marked[:s0] + (" persona " if who == people_[0] else " personb ") + marked[e0:]
+    together = _re.search(r"\b(with|together|alongside|apart|separate|separated|away from|same shift|on at once|"
+                          r"split up)\b", marked)
+    if not together:
+        return None
+    neg = _re.search(r"\b(never|don'?t|do not|not|no|shouldn'?t|should not|can'?t|cannot|won'?t|apart|separate|"
+                     r"separated|away from|split up|avoid)\b", marked)
+    pos = _re.search(r"\b(always|pair|together|best with|works? well|keep)\b", marked)
+    if neg:
+        kind = "avoid"
+    elif pos:
+        kind = "prefer"
+    else:
+        return None
+    return {"kind": kind, "a": people_[0], "b": people_[1], "days": _rule_days(marked),
+            "text": " ".join(str(text).split())}
+
+
+def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
+    """The owner's pairings (staff_settings.pair_sets: {"prefer", "avoid"}
+    of frozensets of lowercase names) with the pairings their rules state
+    (c.owner_pairs, D-38) added, and "private": the ones stated in an
+    owner-only rule — scored and solved against, never printed where the
+    team reads (the prompt's PAIRINGS block, the scorer's sentences)."""
+    def _one(pair):
+        # Each member under the roster's spelling of the person it means
+        # (D-8): a pairing kept under "Mike" holds for the roster's "Michael".
+        if c is None or not getattr(c, "display", None):
+            return pair
+        return frozenset(c.key(x) for x in pair)
+    out = {k: {q for q in (_one(p) for p in ((pairs or {}).get(k) or ())) if len(q) == 2}
+           for k in ("prefer", "avoid", "private")}
+    for p in (getattr(c, "owner_pairs", None) or []) if c is not None else []:
+        pair = frozenset((p["a"].lower(), p["b"].lower()))
+        out.setdefault(p["kind"], set()).add(pair)
+        if p.get("private"):
+            out["private"].add(pair)
+    if not out["private"]:
+        out.pop("private")
+    return out
 
 
 def _pending_in_window(restaurant_id, start, end, db_path):
@@ -2268,69 +2708,235 @@ def _pending_in_window(restaurant_id, start, end, db_path):
     return {k: sorted(set(v)) for k, v in out.items()}
 
 
+# How far either side of the week the tail reaches: a close the night before
+# or a Monday open after (rest), a run of days that started last week (days
+# in a row), and every payroll week the generated week touches (a payroll
+# week is 7 days, so it never reaches further than this).
+TAIL_DAYS = 7
+
+_LIVE_PUBLISHED = ("published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM "
+                   "schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND "
+                   "nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND "
+                   "nw.id > schedule_history.id)")
+
+
 def _published_tail(c: Constraints, restaurant_id, db_path):
-    """Rows from the last PUBLISHED schedule here (and at sibling sites)
-    that fall in a payroll bucket this week touches or in the seven days
-    before it — the hours count toward the ceiling, the rows toward rest,
-    and a sibling's date blocks the person here."""
-    from schedule_versions import rows_from_csv
+    """The shifts around this week its rules must see — per person in
+    c.base_rows (rest, overlap, days in a row) and per payroll week in
+    c.base_hours (hours toward the ceiling) — over TAIL_DAYS either side:
+
+      1. this site's live published weeks that overlap that window, every
+         one of them (schedule audit 10/3/26 E-11: "the two newest by id"
+         returned next week and this week once both were published, and
+         last week — the one the rest rule, the run and Simple EJ's Wed-Sun
+         payroll hours need — dropped out);
+      2. for dates no published week covers, the draft in force of that
+         week, each row labelled a draft (E-10: generating two weeks ahead
+         double-booked hours a draft already gave);
+      3. for past dates neither covers, the punches (shift_facts — D-22:
+         with no published week, a Sunday close then a Monday open and a
+         run begun last week were invisible), labelled punches;
+      4. the organisation's other sites (E-26: org_sibling_ids — the
+         organisation, not a matching owner email, so locations onboarded
+         under their GMs' emails see each other), their live
+         published weeks, each row matched to this site's person through
+         people's identity at both sites and kept as a row of the tail: it
+         is checked by overlap and rest like any other (D-40 — a lunch at
+         one site no longer bars dinner at the other), and its hours count
+         toward the payroll week.
+
+    Every row carries this site's spelling of the person (c.key/display),
+    and `_source` / `_site` / `_week` say where it came from."""
     if not c.week_dates:
         return
+    from schedule_versions import rows_from_csv
     buckets = {c.bucket(d) for d in c.week_dates}
-    first = datetime.strptime(c.week_dates[0], "%Y-%m-%d")
-    window_start = (first - timedelta(days=7)).strftime("%Y-%m-%d")
+    first = datetime.strptime(min(c.week_dates), "%Y-%m-%d")
+    last = datetime.strptime(max(c.week_dates), "%Y-%m-%d")
+    lo = (first - timedelta(days=TAIL_DAYS)).strftime("%Y-%m-%d")
+    hi = (last + timedelta(days=TAIL_DAYS)).strftime("%Y-%m-%d")
+    week_set = set(c.week_dates)
     conn = get_conn(db_path)
     try:
-        me = conn.execute("SELECT location_group, owner_email FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        own = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                           "AND week_end >= ? ORDER BY id DESC LIMIT 2", (restaurant_id, window_start)).fetchall()
-        sibs = []
-        group = ((me["location_group"] if me else "") or "").strip()
-        if group:
-            # Every live published sibling week that overlaps the window,
-            # not just the sibling's newest: once a sibling published next
-            # week, this week's shifts there dropped out and a claim or swap
-            # here could double-book someone across sites (employee audit
-            # LG-20).
-            week_end = max(c.week_dates)
-            for s in conn.execute("SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
-                                  "WHERE location_group=? AND owner_email=? AND id<>?", (group, me["owner_email"], restaurant_id)).fetchall():
-                for row in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                                        "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
-                                        (s["id"], window_start, week_end)).fetchall():
-                    sibs.append((s["label"], row["schedule_csv"]))
+        published = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+            + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
+            (restaurant_id, lo, hi)).fetchall()
+        drafts = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+            "published_at IS NULL AND superseded_by IS NULL AND substr(week_end,1,10) >= ? "
+            "AND substr(week_start,1,10) <= ? ORDER BY id DESC", (restaurant_id, lo, hi)).fetchall()
     finally:
         conn.close()
+
+    def _dates(w):
+        try:
+            a = datetime.strptime(str(w["week_start"] or "")[:10], "%Y-%m-%d")
+            b = datetime.strptime(str(w["week_end"] or w["week_start"] or "")[:10], "%Y-%m-%d")
+        except ValueError:
+            return set()
+        return {(a + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((b - a).days + 1)}
+    # The week being built is never its own tail: its stored copies (the
+    # live published week, its draft) are what the caller's rows replace —
+    # a rescore of an edit that removed Sunday would read the stored Sunday
+    # back as "last week".
+    published = [w for w in published if not (_dates(w) & week_set)]
+    drafts = [w for w in drafts if not (_dates(w) & week_set)]
+    covered = set()
+    for w in published:
+        covered |= _dates(w)
     seen = set()
-    for row in own:
-        for r in rows_from_csv(row["schedule_csv"]):
-            key = r["employee"].strip().lower()
-            sig = (key, r["date"], r["shift_start"])
-            if sig in seen or r["date"] in c.week_dates:
+
+    def _take(r, source, site=None, week=None, key=None):
+        k = key or c.key(r.get("employee"))
+        d = r.get("date") or ""
+        if not k or not d or d in week_set:
+            return
+        sig = (site or "", k, d, r.get("shift_start"))
+        if sig in seen:
+            return
+        seen.add(sig)
+        row = dict(r, employee=c.display.get(k, r.get("employee")))
+        if source != "published":
+            row["_source"] = source
+        if site:
+            row["_site"] = site
+        if week:
+            row["_week"] = week
+        if lo <= d <= hi:
+            c.base_rows.setdefault(k, []).append(row)
+        b = c.bucket(d)
+        if b in buckets:
+            c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
+
+    for w in published:
+        for r in rows_from_csv(w["schedule_csv"]):
+            _take(r, "published")
+    # The draft in force of a week nothing published covers — its newest
+    # unsent, unsuperseded generation — never this week's own draft.
+    drafted = set()
+    for w in drafts:
+        ws = str(w["week_start"] or "")[:10]
+        span = _dates(w)
+        if ws in drafted or not (span - covered):
+            continue
+        drafted.add(ws)
+        for r in rows_from_csv(w["schedule_csv"]):
+            if (r.get("date") or "") not in covered:
+                _take(r, "draft", week=ws)
+        covered |= span
+    # The time clock for past dates nothing else covers (D-22).
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.now().strftime("%Y-%m-%d")
+    gap_days = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, TAIL_DAYS + 1))
+                      if d not in covered and d < today)
+    if gap_days:
+        try:
+            import shift_facts
+            for r in shift_facts.person_rows(restaurant_id, since=gap_days[0], until=gap_days[-1],
+                                             db_path=None if db_path == DB_PATH else db_path):
+                if (r.get("date") or "")[:10] in gap_days:
+                    hours = r.get("actual_hours") if r.get("actual_hours") not in (None, "") else r.get("scheduled_hours")
+                    _take(dict(r, date=str(r["date"])[:10], scheduled_hours=hours if hours is not None else ""),
+                          "punches")
+        except Exception as exc:
+            _input_problem(c, "last week's punches", exc)
+    # The organisation's other sites (E-26, D-40).
+    for sib_id, label, sib_rows in _sibling_weeks(restaurant_id, lo, hi, db_path):
+        names = sorted({(r.get("employee") or "").strip() for r in sib_rows} - {""})
+        try:
+            import people
+            spelled = people.spellings(sib_id, names, db_path=None if db_path == DB_PATH else db_path)
+        except Exception:
+            spelled = {}
+        for r in sib_rows:
+            n = (r.get("employee") or "").strip()
+            mine = {c.key(sp) for sp in (spelled.get(n) or {_fold_name(n)})} & set(c.display)
+            if len(mine) > 1:
+                continue                  # two people here answer to that spelling: never guessed
+            k = next(iter(mine)) if mine else c.key(n)
+            if (r.get("date") or "") in week_set:
+                # On a date being built, it is still a row of the tail: kept
+                # for overlap and rest, never a whole-date block (D-40).
+                row = dict(r, employee=c.display.get(k, n), _site=label)
+                sig = (label, k, row["date"], row.get("shift_start"))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                c.base_rows.setdefault(k, []).append(row)
+                b = c.bucket(row["date"])
+                if b in buckets:
+                    c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
+            else:
+                _take(r, "published", site=label, key=k)
+
+
+def _fold_name(name) -> str:
+    return " ".join(str(name or "").split()).lower()
+
+
+def org_sibling_ids(restaurant_id, db_path=DB_PATH) -> list:
+    """The other locations of this one's organisation (schedule audit
+    10/3/26 E-26): every location sharing its organization_id — the
+    organisation, one account's, is the owner check, so locations onboarded
+    under their GMs' emails are siblings once linked to it — else, for a
+    location linked to none, the same group under the same owner email (the
+    old rule; a group name alone is never enough: two unrelated "Syrup"s).
+    Read from the column itself: the Restaurant object carries no
+    organization_id."""
+    conn = get_conn(db_path)
+    try:
+        me = conn.execute("SELECT organization_id, location_group, owner_email FROM restaurants WHERE id=?",
+                          (restaurant_id,)).fetchone()
+        if not me:
+            return []
+        if me["organization_id"]:
+            rows = conn.execute("SELECT id FROM restaurants WHERE organization_id=? AND id<>?",
+                                (me["organization_id"], restaurant_id)).fetchall()
+        elif (me["location_group"] or "").strip():
+            rows = conn.execute("SELECT id FROM restaurants WHERE TRIM(location_group)=? "
+                                "AND LOWER(TRIM(COALESCE(owner_email,'')))=? AND id<>?",
+                                (me["location_group"].strip(), (me["owner_email"] or "").strip().lower(),
+                                 restaurant_id)).fetchall()
+        else:
+            rows = []
+    finally:
+        conn.close()
+    return sorted(r["id"] for r in rows)
+
+
+def _sibling_weeks(restaurant_id, lo, hi, db_path):
+    """[(site id, label, rows)] — the live published rows in [lo, hi] at
+    every other location of this one's organisation (org_sibling_ids —
+    E-26), one entry per site."""
+    try:
+        ids = org_sibling_ids(restaurant_id, db_path)
+    except Exception:
+        ids = []
+    if not ids:
+        return []
+    from schedule_versions import rows_from_csv
+    out = []
+    conn = get_conn(db_path)
+    try:
+        for sid in ids:
+            meta = conn.execute("SELECT COALESCE(location_name, name) AS label FROM restaurants WHERE id=?",
+                                (sid,)).fetchone()
+            if not meta:
                 continue
-            seen.add(sig)
-            if r["date"] >= window_start:
-                c.base_rows.setdefault(key, []).append(r)
-            b = c.bucket(r["date"])
-            if b in buckets:
-                c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
-    sib_seen = set()
-    for label, csv_text in sibs:
-        for r in rows_from_csv(csv_text):
-            key = r["employee"].strip().lower()
-            sig = (label, key, r["date"], r["shift_start"])
-            if sig in sib_seen:
-                continue
-            sib_seen.add(sig)
-            if r["date"] in c.week_dates:
-                c.blocked_dates.setdefault(key, {}).setdefault(r["date"], f"already scheduled at {label}")
-            elif r["date"] >= window_start:
-                # A close at the other site the night before is still a close
-                # for the rest rule here.
-                c.base_rows.setdefault(key, []).append(r)
-            b = c.bucket(r["date"])
-            if b in buckets:
-                c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
+            rows = []
+            for w in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+                                  + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? "
+                                  "ORDER BY id DESC", (sid, lo, hi)).fetchall():
+                rows += [r for r in rows_from_csv(w["schedule_csv"]) if lo <= (r.get("date") or "") <= hi]
+            if rows:
+                out.append((sid, meta["label"], rows))
+    finally:
+        conn.close()
+    return out
 
 
 # ── the violation sweep ────────────────────────────────────────────────────
@@ -2347,10 +2953,14 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
     from shift_quality import present_dayparts as _present
     for i, r in enumerate(rows or []):
         name = (r.get("employee") or "").strip()
-        key = name.lower()
+        # One person, one key: every spelling that is them (people's
+        # identity), and a roster person an open "same person?" question
+        # joins to them, share one week here — overlaps, rest, hours, days
+        # in a row (schedule audit 10/3/26 D-8, E-25).
+        key = c.key(name)
         if not key:
             continue
-        by_person.setdefault(key, []).append((i, r))
+        by_person.setdefault(c.sweep_key(name), []).append((i, r))
         # Availability is judged on every daypart the shift covers, not its
         # start: a "mornings only" person on 2:30-11:30pm was never flagged.
         ok, why = True, ""
@@ -2366,7 +2976,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                 kind = ("note_unavailable" if str(why).startswith("your note:") else
                         "elsewhere" if "another location" in why or "scheduled at" in why else "approved_time_off")
             out.append(_v(kind, i, r, why))
-        slot = (key, r.get("date"), r.get("shift_start"))
+        slot = (c.sweep_key(name), r.get("date"), r.get("shift_start"))
         if slot in seen_slots:
             out.append(_v("double_booked", i, r, LABELS["double_booked"]))
         seen_slots.add(slot)
@@ -2402,7 +3012,10 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
             out.append(_v("pending_time_off", i, r, LABELS["pending_time_off"]))
         ok, why = c.window_ok(name, r.get("date", ""), r.get("shift_start", ""), r.get("shift_end", ""))
         if not ok:
-            out.append(_v("outside_window", i, r, why))
+            # Part of a day off is time off, or a held note — not a window.
+            kind = ("approved_time_off" if str(why).startswith(LABELS["approved_time_off"]) else
+                    "note_unavailable" if str(why).startswith("your note:") else "outside_window")
+            out.append(_v(kind, i, r, why))
         ok, why = c.cert_ok(name, r.get("role", ""))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
@@ -2468,7 +3081,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         for (d, part), items in sorted(slots.items()):
             if part == "unknown":
                 continue
-            if not any((r.get("employee") or "").strip().lower() in c.keyholders for _, r in items):
+            if not any(c.key(r.get("employee")) in c.keyholders for _, r in items):
                 i0, r0 = items[0]
                 out.append(_v("no_manager_on_duty", i0, r0, f"{LABELS['no_manager_on_duty']} ({part})"))
 
@@ -2507,13 +3120,27 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
     # per-person rules: overlap, rest, hours, days off
     for key, items in by_person.items():
         items.sort(key=lambda ir: (ir[1].get("date", ""), start_minutes(ir[1]) or 0))
+        # The keys that are this person: their own, and any roster person an
+        # open "same person?" question joins to them (E-25).
+        members = {c.key(r.get("employee")) for _, r in items} | {key}
+        if c.linked:
+            members |= {k for k, g in c.linked.items() if g == key}
+        tail_rows = [r for m in sorted(members) for r in (c.base_rows.get(m) or [])]
+        # Read for the group: a minor among the names an open question
+        # joins holds the whole group to a minor's limits.
+        minor_key = next((m for m in sorted(members) if m in c.minors), None)
         # hours by payroll bucket, including what is already published
-        per_bucket = dict(c.base_hours.get(key) or {})
+        per_bucket = {}
+        for m in members:
+            for b, h in (c.base_hours.get(m) or {}).items():
+                per_bucket[b] = per_bucket.get(b, 0.0) + h
         for i, r in items:
             b = c.bucket(r.get("date", "")) if r.get("date") else ""
             per_bucket[b] = per_bucket.get(b, 0.0) + row_hours(r)
         name = items[0][1].get("employee")
-        mx = c.max_hours(name)
+        # Two names an open question joins are held to the stricter limit.
+        mx = min((c.max_hours(n) for n in {(r.get("employee") or "").strip() for _, r in items}),
+                 default=c.max_hours(name))
         for b, total in per_bucket.items():
             if mx and total > mx + 0.05 and b:
                 for i, r in items:
@@ -2549,7 +3176,9 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         if mn:
             this_week = sum(row_hours(r) for _, r in items)
             if this_week + 0.05 < mn:
-                out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h",
+                said = (f"{this_week:g}h this week — full-time, at least {mn:g}h unless you set their own minimum"
+                        if c.key(name) in c.full_time_default else f"{this_week:g}h this week, wants at least {mn:g}h")
+                out.append(_v("under_min_hours", items[0][0], items[0][1], said,
                               severity=round(mn - this_week, 2)))
         # The day's hours, every leg of it (schedule audit 10/3/26 E-6): a
         # 16-17 host on 10am-3pm and 4-9pm works ten hours, and a server on
@@ -2557,13 +3186,14 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         # at a time, neither was flagged, while the price summed the day.
         # Counted in time order, so the leg that crosses the cap carries the
         # flag (moving or cutting it fixes the day); each flag's severity is
-        # the day's excess so far, and the breach is the day's worst.
+        # the day's excess so far, and the breach is the day's worst. Two
+        # names an open "same person?" question joins share one day (E-25).
         dot = None if c.is_salaried(name) else c.compliance.get("daily_ot_hours")
         days = {}
         for i, r in items:
             days.setdefault(r.get("date") or "", []).append((i, r))
         for d, legs in days.items():
-            mcap, mtext = minor_daily_cap(c, key, d) if key in c.minors else (None, None)
+            mcap, mtext = minor_daily_cap(c, minor_key, d) if minor_key else (None, None)
             run = 0.0
             for i, r in legs:
                 run += row_hours(r)
@@ -2577,15 +3207,15 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         # a minor's age band: the week caps (school week vs out of school),
         # counted in date order so the shift that crosses the cap is the one
         # flagged — moving it fixes the breach
-        if key in c.minors:
-            band = c.minor_bands.get(key)
+        if minor_key:
+            band = c.minor_bands.get(minor_key)
             br = minor_rules(band, c.jurisdiction)
             if not band:
                 out.append(_v("minor_age_unknown", items[0][0], items[0][1],
                               f"{name} is marked a minor with no age band — set 14-15 or 16-17 so the age limits are checked"))
             if br.get("max_weekly_school_week"):
                 week_tot = {}
-                for r in (c.base_rows.get(key) or []):
+                for r in tail_rows:
                     d = r.get("date") or ""
                     try:
                         wk = (_as_date(d) - timedelta(days=_as_date(d).weekday())).isoformat()
@@ -2608,24 +3238,42 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         # rest and overlap, against this week's other shifts and the published tail
         spans = [(i, r, *shift_span(r, c.tz)) for i, r in items]
         spans = [(i, r, s, e) for i, r, s, e in spans if s]
-        tail = [(None, r, *shift_span(r, c.tz)) for r in (c.base_rows.get(key) or [])]
+        tail = [(None, r, *shift_span(r, c.tz)) for r in tail_rows]
         tail = [(i, r, s, e) for i, r, s, e in tail if s]
         need = float(c.compliance.get("min_rest_hours") or 0)
-        allspans = sorted(spans + tail, key=lambda t: t[2])
-        for a in range(1, len(allspans)):
-            i_prev, r_prev, s_prev, e_prev = allspans[a - 1]
-            i_cur, r_cur, s_cur, e_cur = allspans[a]
-            if i_cur is None:
-                continue
-            if s_cur < e_prev:
-                if r_cur.get("shift_start") != r_prev.get("shift_start") or r_cur.get("date") != r_prev.get("date"):
-                    out.append(_v("overlap", i_cur, r_cur, f"overlaps their {r_prev.get('shift_start')}–{r_prev.get('shift_end')} on {r_prev.get('date')}"))
-                continue
-            gap = (s_cur - e_prev).total_seconds() / 3600
-            # Same date = a double shift, not a rest breach (see rest_ok).
-            if need and gap < need - 0.01 and r_cur.get("date") != r_prev.get("date"):
-                out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since their previous shift, the rule is {need:g}h",
-                              severity=round(need - gap, 2)))
+        allspans = sorted(spans + tail, key=lambda t: (t[2], t[3]))
+        # Each span against the one with the latest end so far: an overlap
+        # inside a long shift, and a tail row AFTER a row of this week (next
+        # week's published Monday open, a sibling's dinner after lunch here),
+        # were never compared — only the later-starting row of a pair was
+        # checked, and only when it was this week's. A breach is charged to
+        # the row of this week in the pair.
+        reach = None
+        for cur in allspans:
+            i_cur, r_cur, s_cur, e_cur = cur
+            if reach is not None and not (reach[0] is None and i_cur is None):
+                i_p, r_p, _s_p, e_p = reach
+                own_i, own_r, other = (i_cur, r_cur, r_p) if i_cur is not None else (i_p, r_p, r_cur)
+                if s_cur < e_p:
+                    # A tail row (another site's, a draft's) at the same start
+                    # is still another shift; only this week's own duplicate
+                    # is the double booking flagged above.
+                    if (i_p is None or i_cur is None or r_cur.get("shift_start") != r_p.get("shift_start")
+                            or r_cur.get("date") != r_p.get("date")):
+                        out.append(_v("overlap", own_i, own_r, f"overlaps {_whose(other, own_r)}"
+                                      f"{other.get('shift_start')}–{other.get('shift_end')} on "
+                                      f"{_mdy_safe(other.get('date'))}{_tail_note(other)}{_maybe_same(other, own_r)}"))
+                else:
+                    gap = (s_cur - e_p).total_seconds() / 3600
+                    # Same date = a double shift, not a rest breach (see rest_ok).
+                    if need and gap < need - 0.01 and r_cur.get("date") != r_p.get("date"):
+                        said = ("since " + _whose(other, own_r, "previous shift") if own_r is r_cur
+                                else "before " + _whose(other, own_r, "next shift"))
+                        out.append(_v("rest_gap", own_i, own_r, f"{gap:.1f}h {said}{_tail_note(other)}, "
+                                                                 f"the rule is {need:g}h{_maybe_same(other, own_r)}",
+                                      severity=round(need - gap, 2)))
+            if reach is None or e_cur > reach[3]:
+                reach = cur
         # too many days in a row — the published tail counts, so a Saturday
         # and Sunday already sent plus Monday to Friday here reads as seven.
         # Every run past the rule that this week's rows are part of counts:
@@ -2635,7 +3283,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         max_run = c.compliance.get("max_consecutive_days")
         if max_run:
             worked_dates = {r.get("date") for _, r in items if r.get("date")}
-            worked_dates |= {r.get("date") for r in (c.base_rows.get(key) or []) if r.get("date")}
+            worked_dates |= {r.get("date") for r in tail_rows if r.get("date")}
             mine_dates = {r.get("date") for _, r in items}
             over = [run for run in _date_runs(worked_dates)
                     if len(run) > int(max_run) and set(run) & mine_dates]
@@ -2668,6 +3316,46 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                     out.append(_v("days_off", items[0][0], items[0][1],
                                   f"{len(off)} day{'s' if len(off) != 1 else ''} off, longest run {best} — the rule is {int(req)} together"))
     return out
+
+
+def _mdy_safe(iso) -> str:
+    """An owner-facing date (M/D/YY), or the text as given when it is not one."""
+    try:
+        from time_utils import mdy
+        return mdy(iso) or str(iso or "")
+    except Exception:
+        return str(iso or "")
+
+
+def _whose(prev: dict, cur: dict, what: str = "") -> str:
+    """"their " — or "Kim T.'s " when the other row is under a name an open
+    "same person?" question joins to this one (E-25)."""
+    a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
+    if a and b and a.lower() != b.lower():
+        return f"{a}'s {what + ' ' if what else ''}"
+    return f"their {what + ' ' if what else ''}"
+
+
+def _maybe_same(prev: dict, cur: dict) -> str:
+    """Why another name's shift counts against this one (E-25), or ""."""
+    a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
+    if a and b and a.lower() != b.lower():
+        return f" — {a} may be the same person as {b}: answer it on the Team page"
+    return ""
+
+
+def _tail_note(r: dict) -> str:
+    """Where a row of the tail comes from, when it is not this site's
+    published week: another location, an unsent draft, the time clock."""
+    bits = []
+    if r.get("_site"):
+        bits.append(f" at {r['_site']}")
+    src = r.get("_source")
+    if src == "draft":
+        bits.append(" (in the unsent draft of that week)")
+    elif src == "punches":
+        bits.append(" (clocked, from punches)")
+    return "".join(bits)
 
 
 def close_minutes(c: Constraints, day: str):
@@ -2817,7 +3505,7 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                 need = floor_for(c.role_floors, role, day, part)
                 if need <= 0:
                     continue
-                on = {(r.get("employee") or "").strip().lower() for _i, r in mine if part in _present(r)}
+                on = {c.key(r.get("employee")) for _i, r in mine if part in _present(r)}
                 if len(on) < need:
                     i0, r0 = (mine or counted or items)[0]
                     word = "lunch/day" if part == "morning" else "dinner/night"
@@ -2838,13 +3526,16 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
             else:
                 mine = [(i, r) for i, r in counted if c.family(r.get("role")) == rule.get("family")]
             part = rule.get("daypart")
-            on = {(r.get("employee") or "").strip().lower() for _i, r in mine if not part or part in _present(r)}
+            on = {c.key(r.get("employee")) for _i, r in mine if not part or part in _present(r)}
             if len(on) < rule["min"]:
                 i0, r0 = (mine or counted or items)[0]
+                # An owner-only rule's words stay the owner's (D-38).
+                said = ("below a staffing rule you set" if rule.get("private")
+                        else f"your rule: “{rule['text'][:120]}”")
                 out.append(_v("owner_rule", i0, r0,
                               f"{len(on)} {rule['role']} on {day}"
                               + (f" at {'lunch/day' if part == 'morning' else 'dinner/night'}" if part else "")
-                              + f" — your rule: \u201c{rule['text'][:120]}\u201d",
+                              + f" — {said}",
                               floor_role=rule.get("family") or role_low, severity=rule["min"] - len(on),
                               day_level=True))
         ends_all = [(end_minutes(r), i, r) for i, r in items]
@@ -2885,7 +3576,8 @@ def _family_label(c, fam) -> str:
 
 
 def _display_name(c, key) -> str:
-    return next((n for n in (c.roster_names or []) if n.strip().lower() == key), key)
+    """How the roster spells the person filed under `key` (c.key)."""
+    return (c.display or {}).get(key) or next((n for n in (c.roster_names or []) if c.key(n) == key), key)
 
 
 def _closer_rule_runs(c, fam, d) -> bool:
@@ -2924,7 +3616,7 @@ def _closer_breaches(c, d, day, items, close_at, close_known) -> list:
                           close_role=fam, day_level=True))
             continue
         need = close_at + int((c.close_mins or {}).get(fam, 0) or 0)
-        on = [(e, i, r) for e, _s, i, r in mine if (r.get("employee") or "").strip().lower() in closers]
+        on = [(e, i, r) for e, _s, i, r in mine if c.key(r.get("employee")) in closers]
         best = max((e for e, _i, _r in on), default=None)
         if best is not None and best >= need - 15 and e_last <= best + 15:
             continue
@@ -2954,17 +3646,17 @@ def _trainee_breaches(c, day, items) -> list:
     if not c.trainees:
         return out
     for i, r in items:
-        key = (r.get("employee") or "").strip().lower()
+        key = c.key(r.get("employee"))
         t = c.trainees.get(key)
         if not t or not c.training_row(r) or is_training_role(r.get("role")):
             continue
         sp = _span(r)
         if not sp:
             continue
-        trainer = (t.get("trainer") or "").strip().lower()
+        trainer = c.key(t.get("trainer")) if (t.get("trainer") or "").strip() else ""
         fam = c.family(t.get("target_role"))
         mentors = [_span(x) for _j, x in items if x is not r and (
-            ((x.get("employee") or "").strip().lower() == trainer) if trainer else
+            (c.key(x.get("employee")) == trainer) if trainer else
             (c.family(x.get("role")) == fam and not c.training_row(x)))]
         covered = sum(max(0, min(sp[1], m[1]) - max(sp[0], m[0])) for m in _merge([m for m in mentors if m]))
         if covered * 2 >= sp[1] - sp[0]:
@@ -3443,7 +4135,7 @@ def _trainee_prompt_lines(c) -> list:
     out = []
     for key, t in sorted(c.trainees.items()):
         who = _display_name(c, key)
-        trainer = _display_name(c, t["trainer"].strip().lower()) if t.get("trainer") else None
+        trainer = _display_name(c, c.key(t["trainer"])) if (t.get("trainer") or "").strip() else None
         out.append(f"  {who}: training as {t['target_role']}" + (f" until {_iso_day(t['until'])}" if t.get("until") else "")
                    + (f" with {trainer}" if trainer else "") + f" — schedule their {t['target_role']} shifts only "
                    f"alongside {trainer or 'a strong ' + t['target_role']}; a training shift does not count toward "
@@ -3456,7 +4148,7 @@ def _minor_band_lines(c) -> list:
     once per band — who is in which band is in each person's ROSTER line."""
     out = []
     comp = c.compliance
-    bands = sorted({c.minor_bands.get(n.lower()) or "" for n in (c.roster_names or []) if n.lower() in c.minors})
+    bands = sorted({c.minor_bands.get(c.key(n)) or "" for n in (c.roster_names or []) if c.key(n) in c.minors})
     for band in bands:
         br = minor_rules(band or None, c.jurisdiction)
         if br.get("earliest_start"):
@@ -3484,8 +4176,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     comp = c.compliance
     lines = []
     if c.managers:
-        _mg = ", ".join(sorted(f"{n} ({c.managers.get(n.strip().lower()) or 'manager'})" for n in (c.roster_names or [])
-                               if n.strip().lower() in c.managers))
+        _mg = ", ".join(sorted(f"{n} ({c.managers.get(c.key(n)) or 'manager'})" for n in (c.roster_names or [])
+                               if c.key(n) in c.managers))
         # The same rule PRIORITIES 1a states, in the same rank: it used to
         # call itself "above every other rule" — above the availability and
         # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
@@ -3656,7 +4348,7 @@ def person_facts(c: Constraints, names=None) -> dict:
         name = str(name or "").strip()
         if not name:
             continue
-        key = name.lower()
+        key = c.key(name)
         lim = c.hours_limits.get(key) or (None, None)
         salaried = c.is_salaried(name)
         f = {"manager": c.managers.get(key), "acting": sorted(c.acting_managers.get(key) or ()),
@@ -3664,7 +4356,7 @@ def person_facts(c: Constraints, names=None) -> dict:
              "min": float(lim[0]) if lim[0] else None,
              "max": float(c.max_hours(name)) if c.max_hours(name) else None,
              "ot": None if salaried else float(overtime_line(c, name) or _OT),
-             "employment": c.employment.get(key), "full_time_default": key in (getattr(c, "full_time_default", None) or ()),
+             "employment": c.employment.get(key), "full_time_default": key in c.full_time_default,
              "minor": (c.minor_bands.get(key) or "minor") if key in c.minors else None}
         carried = []
         base = c.base_hours.get(key) or {}
@@ -3700,7 +4392,7 @@ def person_facts(c: Constraints, names=None) -> dict:
         f["time_off"], f["note_off"], f["unavailable_dates"] = time_off, note_off, other_off
         f["asked_off"] = sorted(d for d in (c.pending_off.get(key) or ()) if d in (c.week_dates or [d]))
         parts = []
-        for d, ps in sorted((getattr(c, "blocked_parts", None) or {}).get(key, {}).items()):
+        for d, ps in sorted((c.blocked_parts.get(key) or {}).items()):
             for p in ps or []:
                 if p.get("daypart"):
                     off = "no lunch/day shift" if p["daypart"] == "morning" else "no dinner/night shift"
@@ -3780,7 +4472,7 @@ def overtime_line(c: "Constraints", name: str, line: float = None) -> float:
         return c.salaried_limit(name)
     ot = float(line or OVERTIME_THRESHOLD_HOURS)
     mx = c.max_hours(name)
-    lim = c.hours_limits.get((name or "").strip().lower())
+    lim = c.hours_limits.get(c.key(name))
     if lim and lim[1] and float(lim[1]) > ot:
         return mx
     return min(mx, ot) if mx else ot
@@ -4302,7 +4994,7 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
             last_e = max((e for e, _i, _r in mine), default=need)
             target = max(need, last_e)
             closers = c.closers_by_role.get(fam) or set()
-            cands = sorted(((e, i, r) for e, i, r in mine if (r.get("employee") or "").strip().lower() in closers
+            cands = sorted(((e, i, r) for e, i, r in mine if c.key(r.get("employee")) in closers
                             and not r.get("_pinned") and e >= target - 3 * 60 and e < target - 0.5),
                            key=lambda t: -t[0])
             for e, i, r in cands:

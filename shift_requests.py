@@ -1621,8 +1621,23 @@ def _tell_managers(restaurant_id, title, body, db_path, req=None):
         print(f"[shift_requests] manager notice failed rid={restaurant_id}: {e!r}")
 
 
+# How far back an open-shift notice counts toward a person's turn in the
+# rotation (_who_could_take).
+OPEN_SHIFT_ROTATION_DAYS = 30
+
+
 def _who_could_take(restaurant_id, req, db_path) -> list:
-    """Active roster members in the shift's role who could legally take it."""
+    """Active roster members in the shift's role who could legally take it,
+    at most OPEN_SHIFT_NOTICE_LIMIT, in turn (schedule audit 10/3/26 E-3).
+
+    The roster was walked alphabetically and the walk stopped at the 25th
+    legal taker: whoever left in June was told about every open shift, and
+    people late in the alphabet never were. Now everyone legal is found and
+    the notice goes round: fewest open-shift notices in the last
+    OPEN_SHIFT_ROTATION_DAYS days first, then the fewest hours that payroll
+    week (the most room), then whoever was told longest ago. Nobody who has
+    stopped working (Constraints.dormant) and nobody whose own unconfirmed
+    note rules out that day (note_caution) is told — Constraints.fillable."""
     try:
         from schedule_versions import rows_from_csv
         import schedule_engine as _se
@@ -1638,21 +1653,58 @@ def _who_could_take(restaurant_id, req, db_path) -> list:
             return []
         dates = sorted({r["date"] for r in rows if r.get("date")})
         c = _rules.build_constraints(restaurant_id, dates, [datetime.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
-        out = []
+        row = rows[idx]
+        day = row.get("date") or ""
+        asker = c.key(req.get("employee_name") or "")
+        legal = []
         for e in staff_settings.roster(restaurant_id, db_path=db_path):
             n = e["name"]
-            if n.strip().lower() == (req["employee_name"] or "").strip().lower():
+            if asker and c.key(n) == asker:
                 continue
-            if not _role_ok(restaurant_id, rows, rows[idx], n, db_path)[0]:
+            if not c.fillable(n, day, daypart=_rules.daypart_of(row.get("shift_start") or ""))[0] \
+                    or not c.can_work(n, day)[0]:
+                continue
+            if not _role_ok(restaurant_id, rows, row, n, db_path)[0]:
                 continue
             if _se.replacement_is_legal(restaurant_id, rows, idx, n, constraints=c)[0]:
-                out.append(n)
-            if len(out) >= OPEN_SHIFT_NOTICE_LIMIT:
-                break
-        return out
+                legal.append(n)
+        told = _recent_notices(restaurant_id, db_path, c)
+        bucket = c.bucket(day) if day else ""
+
+        def _turn(n):
+            k = c.key(n)
+            hours = sum(_rules.row_hours(r) for r in rows if c.key(r.get("employee")) == k
+                        and r.get("date") and c.bucket(r["date"]) == bucket)
+            hours += float((c.base_hours.get(k) or {}).get(bucket, 0.0) or 0.0)
+            count, last = told.get(k, (0, ""))
+            return (count, round(hours, 2), last, n.lower())
+        return sorted(legal, key=_turn)[:OPEN_SHIFT_NOTICE_LIMIT]
     except Exception as e:
         print(f"[shift_requests] could not list who can take rid={restaurant_id}: {e!r}")
         return []
+
+
+def _recent_notices(restaurant_id, db_path, c=None) -> dict:
+    """{person key: (open-shift notices in the last OPEN_SHIFT_ROTATION_DAYS
+    days, when the newest was)} from who each open shift was told
+    (told_json) — the open-shift broadcast's rotation."""
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT told_json, created_at FROM shift_change_requests WHERE restaurant_id=? "
+                            "AND told_json IS NOT NULL AND created_at >= datetime('now', ?)",
+                            (restaurant_id, f"-{int(OPEN_SHIFT_ROTATION_DAYS)} days")).fetchall()
+    except Exception as e:
+        print(f"[shift_requests] open-shift rotation unread rid={restaurant_id}: {e!r}")
+        rows = []
+    finally:
+        conn.close()
+    for r in rows:
+        for n in _told({"told_json": r["told_json"]}):
+            k = c.key(n) if c is not None else " ".join(n.split()).lower()
+            count, last = out.get(k, (0, ""))
+            out[k] = (count + 1, max(last, str(r["created_at"] or "")))
+    return out
 
 
 def _remember_told(restaurant_id, req, names, db_path):

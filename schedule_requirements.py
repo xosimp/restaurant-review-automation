@@ -599,21 +599,50 @@ def usual_pattern_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHA
             continue
         parts = _parts_label(p.get("dayparts") or [])
         groups.setdefault((days, parts), []).append(n)
-    if not groups:
-        return ""
-    lines, used, dropped = [], 0, 0
-    for (days, parts), people in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        line = f"  {days}{', ' + parts if parts else ''}: " + ", ".join(sorted(people))
-        if used + len(line) > cap:
-            dropped += len(people)
+    out = ""
+    if groups:
+        lines, used, dropped = [], 0, 0
+        for (days, parts), people in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            line = f"  {days}{', ' + parts if parts else ''}: " + ", ".join(sorted(people))
+            if used + len(line) > cap:
+                dropped += len(people)
+                continue
+            lines.append(line)
+            used += len(line) + 1
+        if dropped:
+            lines.append(f"  ({dropped} more people not listed.)")
+        out = ("\n\nUSUAL PATTERN — the weekdays and dayparts each person has worked here. Schedule stability "
+               "is scored: a person on a weekday and daypart they usually work counts as familiar. Keep people "
+               "on their pattern unless a higher priority needs the move:\n" + "\n".join(lines))
+    return out + usual_hours_block(prior_pattern, names, cap=cap)
+
+
+def usual_hours_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHAR_CAP) -> str:
+    """Each regular's usual hours a week and start times (models.
+    usual_pattern avg_hours / starts — schedule audit 10/3/26 D-37): a
+    32h-a-week regular cut to 12h was a change nothing said. Most hours
+    first, within `cap` characters."""
+    rows = []
+    for n in names or []:
+        p = (prior_pattern or {}).get(n) or {}
+        if not p.get("avg_hours"):
             continue
-        lines.append(line)
-        used += len(line) + 1
-    if dropped:
-        lines.append(f"  ({dropped} more people not listed.)")
-    return ("\n\nUSUAL PATTERN — the weekdays and dayparts each person has worked here. Schedule stability "
-            "is scored: a person on a weekday and daypart they usually work counts as familiar. Keep people "
-            "on their pattern unless a higher priority needs the move:\n" + "\n".join(lines))
+        st = p.get("starts") or {}
+        when = "/".join(st[k] for k in ("morning", "night") if st.get(k))
+        rows.append((-float(p["avg_hours"]), n, f"{n} ~{float(p['avg_hours']):g}h" + (f" (starts {when})" if when else "")))
+    if not rows:
+        return ""
+    bits, used, dropped = [], 0, 0
+    for _h, _n, text in sorted(rows):
+        if used + len(text) > cap:
+            dropped += 1
+            continue
+        bits.append(text)
+        used += len(text) + 2
+    line = "  " + ", ".join(bits) + (f" ({dropped} more not listed.)" if dropped else "")
+    return ("\n\nUSUAL HOURS — about how many hours a week each regular has worked over their recent weeks, and "
+            "when they usually start. Keep a regular near their usual hours and start unless demand, the budget "
+            "or a rule needs otherwise; schedule stability is scored against it:\n" + line)
 
 
 def _row_parts(row: dict) -> set:
