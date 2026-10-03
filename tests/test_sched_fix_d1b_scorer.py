@@ -159,6 +159,18 @@ def test_sq15_a_relevelled_built_in_takes_its_levels_bars_and_an_owner_profile_n
     assert sat.demand == "low" and sat.min_quality == 75 and sat.floors == {"coverage": 60}
 
 
+def test_sq15_an_owner_profile_saved_from_a_built_in_keeps_its_own_bars():
+    """The editor round-trips a built-in's source text; once saved it is the
+    owner's, never re-levelled into another level's bars or tuned over."""
+    builtin = next(p for p in sq.BUILTIN_PROFILES if p.key == "weekday_dinner")
+    saved = sq.profile_from_dict(dict(sq.profile_to_dict(builtin), source="your sales history"))
+    assert saved.builtin is False
+    mine = sq.profiles_from_config([saved], demand_by_day={"Thursday": 30},
+                                   tuning={"weekday_dinner": {"min_quality": 60}})
+    p = sq.profile_for_shift("Thursday", "night", mine, {"Thursday": 30}, lift_pct=40)
+    assert p.demand == "peak" and p.min_quality == 70 and not p.requires_leader
+
+
 # ── SQ-17: a rule fewer people can meet is capped, not set aside ──────────
 
 RULE = {"role": "Bartender", "days": ["Saturday"], "daypart": "night", "count": 2, "min_score": 5}
@@ -303,6 +315,13 @@ def test_sq27_four_of_the_busiest_shifts_every_week_is_fatigue():
     out = week_dim(sq.score_rows(rows, profiles=BUSY, typical_headcount=ANY, load_ledger=ledger), "fatigue")
     assert "Fav" in out["facts"]["strained"]
     assert out["facts"]["sustained_busy"] == [{"name": "Fav", "average": 4.0, "weeks": 4}]
+
+
+def test_sq27_weeks_further_back_than_the_window_are_not_week_after_week():
+    rows = [row(d, "Fav", "Server") for d in (THU, FRI, SAT, SUN)] + [row(d, "Al", "Server") for d in (MON, TUE)]
+    stale = {"Fav": [_ledger_week(w, 24, NIGHTS4) for w in ("2026-08-10", "2026-08-17", "2026-08-24")]}
+    out = week_dim(sq.score_rows(rows, profiles=BUSY, typical_headcount=ANY, load_ledger=stale), "fatigue")
+    assert out["facts"]["sustained_busy"] == [] and "Fav" not in out["facts"]["strained"]
 
 
 def test_sq27_hours_past_the_ceiling_week_after_week_unless_this_is_the_lighter_week():

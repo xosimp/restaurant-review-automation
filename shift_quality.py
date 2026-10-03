@@ -174,6 +174,11 @@ class ShiftProfile:
     # ({"min_quality", "floors"}, restaurants.quality_tuning_json): applied
     # over the built-in's own bars, and kept when its demand level moves.
     tuning: dict = field(default_factory=dict)
+    # One of the engine's own (BUILTIN_PROFILES, or the catch-all
+    # profiles_from_config adds), never one the owner saved — whatever its
+    # source text says (the editor round-trips a built-in's). Only these
+    # follow a demand level and take tuning (SQ-15, SQ-22).
+    builtin: bool = False
 
     def matches(self, day: str, daypart: str) -> bool:
         if self.days and (day or "").strip().lower() not in {
@@ -197,23 +202,23 @@ class ShiftProfile:
 # because guessing that every restaurant's Friday is busy is exactly the
 # kind of invented fact this codebase keeps having to remove.
 BUILTIN_PROFILES = [
-    ShiftProfile(key="default", label="Standard shift", demand="normal", min_quality=70),
+    ShiftProfile(key="default", label="Standard shift", demand="normal", min_quality=70, builtin=True),
     ShiftProfile(key="weekday_lunch", label="Weekday lunch", daypart="morning",
                  days=["Monday", "Tuesday", "Wednesday", "Thursday"],
                  demand="low", min_quality=65, training_allowed=True,
-                 experience_mix=0.3, priority=1),
+                 experience_mix=0.3, priority=1, builtin=True),
     ShiftProfile(key="weekday_dinner", label="Weekday dinner", daypart="night",
                  days=["Monday", "Tuesday", "Wednesday", "Thursday"],
-                 demand="normal", min_quality=70, experience_mix=0.4, priority=1),
+                 demand="normal", min_quality=70, experience_mix=0.4, priority=1, builtin=True),
     ShiftProfile(key="friday_dinner", label="Friday dinner", daypart="night",
                  days=["Friday"], demand="high", min_quality=78,
-                 requires_leader=True, experience_mix=0.5, priority=2),
+                 requires_leader=True, experience_mix=0.5, priority=2, builtin=True),
     ShiftProfile(key="saturday_dinner", label="Saturday dinner", daypart="night",
                  days=["Saturday"], demand="peak", min_quality=82,
-                 requires_leader=True, experience_mix=0.6, priority=2),
+                 requires_leader=True, experience_mix=0.6, priority=2, builtin=True),
     ShiftProfile(key="brunch", label="Weekend brunch", daypart="morning",
                  days=["Saturday", "Sunday"], demand="high", min_quality=75,
-                 experience_mix=0.45, priority=2),
+                 experience_mix=0.45, priority=2, builtin=True),
 ]
 
 
@@ -349,6 +354,9 @@ class ShiftContext:
     # restaurant's profiles call busy, to read those weeks with.
     load_ledger: dict = field(default_factory=dict)
     busy_slots: set = field(default_factory=set)
+    # The first date of the week being scored: only the published weeks
+    # right before it count as "week after week" (SQ-27).
+    week_start: str = ""
     # What overtime costs (SQ-25): {"line", "bucket_of": {date: payroll
     # week}, "published": {lower: {week: hours}}, "rates", "default_rate",
     # "rules"} — the overtime forecast's own inputs; {} when not supplied.
@@ -1268,11 +1276,21 @@ def _is_busy(entry: dict) -> bool:
 
 
 def _past_load(ctx: ShiftContext, name: str) -> tuple:
-    """([busy shifts], [hours]) per published week before this one, oldest
-    first, from the load ledger — busy read with this restaurant's own
-    profiles (busy_slots), as this week's shifts are."""
+    """([busy shifts], [hours]) per published week in the SUSTAINED_WINDOW
+    before this one, oldest first, from the load ledger — busy read with
+    this restaurant's own profiles (busy_slots), as this week's shifts are.
+    A week further back than the window is not "week after week"."""
+    cutoff = ""
+    if ctx.week_start:
+        try:
+            cutoff = (datetime.strptime(ctx.week_start, "%Y-%m-%d")
+                      - timedelta(weeks=SUSTAINED_WINDOW - 1)).strftime("%Y-%m-%d")
+        except ValueError:
+            cutoff = ""
     busy, hours = [], []
     for w in (ctx.load_ledger or {}).get(name) or []:
+        if cutoff and str(w.get("week") or "") < cutoff:
+            continue
         busy.append(sum(1 for s in (w.get("slots") or []) if tuple(s) in (ctx.busy_slots or set())))
         try:
             hours.append(float(w.get("hours") or 0))
@@ -3463,19 +3481,11 @@ def profile_for_shift(day: str, part: str, profiles: list = None, demand_by_day:
     if lift_pct is not None:
         bumped = demand_from_pct(lift_pct)
         if bumped and DEMAND_RANK[bumped] > DEMAND_RANK.get(profile.demand, 1):
-            synthesized = profile.source in SYNTHESIZED_SOURCES
             profile = _clone(profile)
             profile.demand = bumped
-            if synthesized:
-                _follow_level(profile)
+            _follow_level(profile)
             profile.source = "what you told us about this date"
     return profile
-
-
-# Where a profile no owner configured comes from (the built-ins, re-levelled
-# or not, and the catch-all carrying the restaurant-wide targets). Only these
-# follow a demand level; a profile the owner set is left as they set it.
-SYNTHESIZED_SOURCES = ("default", "your sales history", "your overall targets")
 
 # The built-in profile whose bars each demand level carries: a quiet weekday
 # lunch, a weekday dinner, Friday and Saturday dinner.
@@ -3493,8 +3503,8 @@ def _follow_level(profile: ShiftProfile) -> None:
     peak night's 82 and its leader; and a Thursday busier than any Friday
     was held to a quiet dinner's 70. Tuning applied to the profile
     (calibration, SQ-22) stays on top. In place; a profile an owner
-    configured is never passed here."""
-    if profile.source not in SYNTHESIZED_SOURCES:
+    configured is left exactly as they set it."""
+    if not profile.builtin:
         return
     src = next((b for b in BUILTIN_PROFILES if b.key == _LEVEL_PROFILE.get(profile.demand)), None)
     if src is None:
@@ -3671,6 +3681,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
                    if isinstance(p, dict) and isinstance(p.get("learned"), dict)}
     ceilings = {name_key(k): float(v) for k, v in (signals.get("hours_ceilings") or {}).items() if v}
     load_ledger = signals.get("load_ledger") or {}
+    week_start = min(day_rows_by_date) if day_rows_by_date else ""
     busy_slots = set()
     if load_ledger:
         for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
@@ -3750,6 +3761,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             learned_preferences=learned or {},
             load_ledger=load_ledger,
             busy_slots=busy_slots,
+            week_start=week_start,
             overtime=signals.get("overtime") or {},
         ))
     return contexts
@@ -4802,14 +4814,14 @@ def profiles_from_config(stored: list = None, default_strength: dict = None,
         profiles.append(ShiftProfile(
             key="default", label="Standard shift",
             min_strength=dict(default_strength or {}),
-            source="your overall targets", per_day_demand=bool(demand_by_day)))
+            source="your overall targets", per_day_demand=bool(demand_by_day), builtin=True))
     # Calibration applied to a profile no owner configured (SQ-22): its bar
     # and floors, kept over the built-in's own and over any level its demand
     # settles at (_follow_level). A profile the owner configured carries its
     # own numbers — an applied calibration writes those into it instead.
     for profile in profiles:
         t = (tuning or {}).get(profile.key)
-        if t and profile.source in SYNTHESIZED_SOURCES:
+        if t and profile.builtin:
             profile.tuning = dict(t)
             _apply_tuning(profile)
     return profiles
@@ -4825,7 +4837,7 @@ def _clone(profile: ShiftProfile) -> ShiftProfile:
         leader_min_score=profile.leader_min_score, experience_mix=profile.experience_mix,
         training_allowed=profile.training_allowed, weights=dict(profile.weights or {}),
         priority=profile.priority, source=profile.source,
-        per_day_demand=profile.per_day_demand,
+        per_day_demand=profile.per_day_demand, builtin=profile.builtin,
         floors=dict(profile.floors or {}),
         tuning={k: (dict(v) if isinstance(v, dict) else v) for k, v in (profile.tuning or {}).items()},
     )
