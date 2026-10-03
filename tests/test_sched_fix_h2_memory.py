@@ -834,7 +834,8 @@ def test_the_generation_routes_its_learned_blocks_through_the_one_budget():
     import schedule_engine
     src = inspect.getsource(schedule_engine._build_schedule_result)
     assert "_smem.prompt_lines(" in src and "budget_chars=_smem.LEARNED_PROMPT_BUDGET_CHARS" in src
-    assembled = src[src.index("extra_blocks = ("):src.index("_gen_kwargs = dict(")]
+    assembled = src[src.index("rules_block = _rules.prompt_block("):src.index("_gen_kwargs = dict(")]
+    assert "+ learned_blk" in assembled
     for raw in ("_versions.prompt_block(", "_reliability_block(", "_intel.outcome_block(", "_intel.rotation_block(",
                 "_could_hold_block(", "_intel.preferences_block("):
         assert raw not in assembled, f"{raw} still concatenated outside the budget"
