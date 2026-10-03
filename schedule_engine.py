@@ -234,13 +234,16 @@ def _soft_fail(what, exc, restaurant_id):
         print(f"[schedule] could not record that failure: {_cx}")
 
 
-def _build_schedule_result(restaurant_id, week_start=None, focus=None):
+def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None):
     """Shared logic for both schedule endpoints.
 
     focus — named weaknesses of the previous draft (a list of strings), for
     a regeneration of chosen dates; rendered into the prompt as "THE
     PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON" (schedule_requirements
-    .focus_block). None for an ordinary generation."""
+    .focus_block). None for an ordinary generation.
+    dates, prior_rows — a redo of some days: the dates being rewritten and
+    the rows of the days the owner keeps. The manager plan covers only
+    those dates, with the kept rows' hours, rest and runs counted."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
                        generate_optimized_schedule, get_hourly_rate,
                        build_demand_forecast)
@@ -540,7 +543,26 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
                           + _mem.text)
     except Exception as _sfx:
         _soft_fail('memory_context', _sfx, restaurant_id)
-    extra_blocks = (_rules.prompt_block(constraints)
+    # The managers' shifts, planned before the model writes anything
+    # (schedule audit 10/3/26 PR-1, P-8, D-4, D-5, PR-32). Erik's first week
+    # had no manager on any day: managers barely punch, so the history the
+    # draft copies never asked for one, and the backstop then patched gaps
+    # with 4h blocks shaped to them. Each trading day is covered from the
+    # first person on to the last one out with real opener and closer
+    # shifts — standing shifts first, then availability and every legal
+    # limit, the days each usually works (published weeks and punches),
+    # then a fair split — handed to the model as fixed rows. A plan that
+    # cannot be made costs the plan, never the draft: the backstop
+    # (cover_manager_gaps) still runs, and PRIORITIES 1a still states the rule.
+    import schedule_skeleton as _skeleton
+    try:
+        manager_plan = _skeleton.plan_for_generation(
+            restaurant_id, constraints, next_week_dates, shifts=shifts,
+            roster_roles={n: r for n, r in roster_pairs}, dates=dates, prior_rows=prior_rows)
+    except Exception as _sfx:
+        _soft_fail('manager_plan', _sfx, restaurant_id)
+        manager_plan = _skeleton.failed_plan(constraints, _sfx)
+    extra_blocks = (_rules.prompt_block(constraints, manager_plan=manager_plan)
                     + _signals.prompt_block(signals_by_date, next_week_dates)
                     + _pairs_block(pairs, roster_pairs)
                     + _reliability_block(reliability)
@@ -606,8 +628,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         section_cap_roles=sorted(constraints.foh_roles or {"server"}),
         open_times=constraints.open_times or {},
         close_times=constraints.close_times or {},
+        # The manager plan: fixed rows under PRIORITIES 1a, merged into the
+        # answer by code (schedule_skeleton).
+        pinned_rows=manager_plan.get("rows") or None,
+        manager_plan=manager_plan,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    result["manager_plan"] = manager_plan
     result["rotation_plan"] = learning["rotation"]
     result["splh_objective"] = learning["splh_objective"]
     result["starting_headcount"] = learning["starting_payload"]
@@ -917,11 +944,16 @@ def _rows_by_date(csv_text: str) -> dict:
     """Rows per date — counting only rows the job's parser will keep. A row
     with no times (3-5 columns) used to count as the day written, then be
     dropped by the parser, so a day could go missing past the retry and a
-    week of such rows was saved empty (SCHED-42)."""
+    week of such rows was saved empty (SCHED-42). A planned manager row
+    (schedule_skeleton) is not the model writing the day: a day carrying
+    only those still counts as missing."""
+    import schedule_skeleton as _skel
     out = {}
     for line in (csv_text or "").split("\n")[1:]:
         cols = [c.strip().strip('"').strip() for c in line.split(",", 7)]
         if len(cols) < 6 or not cols[0] or not cols[2]:
+            continue
+        if len(cols) == 8 and _skel.is_plan_note(cols[7]):
             continue
         if _rules.parse_minutes(cols[4]) is None and _rules.parse_minutes(cols[3]) is None:
             continue          # no start time where one belongs (nor one column left of it)
@@ -3050,8 +3082,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _base = _gshd(int(base_history_id), restaurant_id) or {}
             _pinned = [r for r in _versions.rows_from_csv(_base.get("schedule_csv") or "") if r.get("date") not in set(dates)]
             week_start = week_start or _base.get("week_start")
-        result = (_build_schedule_result(restaurant_id, week_start=week_start, focus=list(focus))
-                  if focus else _build_schedule_result(restaurant_id, week_start=week_start))
+        _build_kw = {"focus": list(focus)} if focus else {}
+        if _pinned:
+            # The manager plan of a redo covers only its days, with the kept
+            # days' rows counted for hours, rest and runs (schedule_skeleton).
+            _build_kw.update(dates=sorted(set(dates)), prior_rows=_pinned)
+        result = _build_schedule_result(restaurant_id, week_start=week_start, **_build_kw)
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.
@@ -3083,6 +3119,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         try:
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
+            # The planned manager rows of the dates this run planned come
+            # from the plan itself (restore_pinned, below), never through
+            # this parser: its close cap would re-time a manager staying
+            # until the last role's after-close stay, and a planned row must
+            # not make an unreadable answer look like a week (SCHED-42).
+            import schedule_skeleton as _skeleton
+            _mplan = result.get("manager_plan") or {}
+            _plan_dates = set(_mplan.get("dates") or ())
+            if _plan_dates:
+                _csv_lines = _csv_lines[:1] + [ln for ln in _csv_lines[1:]
+                                               if not (ln.split(",", 1)[0].strip() in _plan_dates
+                                                       and _skeleton.is_plan_line(ln))]
             print(f"[schedule] csv lines={len(_csv_lines)} first3={_csv_lines[:3]}")
             # A malformed row from the model used to be skipped in silence, so
             # a garbled response produced a SHORT schedule rather than an
@@ -3201,6 +3249,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 raise ScheduleGenerationError(
                     "The generated schedule came back in a form we couldn't read, so nothing was saved. "
                     "Try generating again.")
+            # Every planned manager row, exactly as planned and carrying
+            # "_pinned" (schedule audit 10/3/26 PR-1, PR-32): no pass after
+            # this removes, re-times or re-assigns it (the pinned-row
+            # contract), and none lands on a day the generation accepted as
+            # closed. A redo restores only the days it rewrote.
+            _plan_rows = [r for r in (_mplan.get("rows") or [])
+                          if _editable is None or r.get("date") in _editable]
+            if _plan_rows:
+                preview_rows = _skeleton.restore_pinned(preview_rows, _plan_rows,
+                                                        closed=result.get("closed_dates") or ())
+                hours_scheduled = _safe_hours_sum(preview_rows)
 
             _constraints = result.get("constraints")
             if _constraints is None:
@@ -3565,6 +3624,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["review"]["lines"].append(
                     f"Your rule \u201c{_txt[:120]}\u201d isn't one Cavnar AI can check automatically — check this "
                     f"draft against it")
+            # The manager plan, said (schedule audit 10/3/26 D-5, PR-1): why
+            # a stretch has no manager, the owner's question when the
+            # managers' days are unknown, a standing shift that could not be
+            # used. Kept with the review so a reopened week still asks.
+            result["review"]["lines"].extend(
+                _skeleton.review_lines(_mplan, gaps=_rules.manager_gaps(preview_rows, _constraints)))
+            result["review"]["manager_plan"] = {
+                "question": _mplan.get("question"), "unknown_pattern": list(_mplan.get("unknown_pattern") or []),
+                "uncovered": _skeleton.payload(_mplan)["uncovered"]}
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
@@ -4009,6 +4077,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             splh_report=result.get("splh_report") or {},
             starting_headcount=result.get("starting_headcount") or {"available": False},
             gate=result.get("gate") or {"ran": False},
+            # The managers' shifts planned before the draft (schedule_skeleton):
+            # each with why, each date's manager window, the stretches nobody
+            # could legally cover, and the owner's question about managers
+            # whose days are unknown.
+            manager_plan=_skeleton.payload(result.get("manager_plan")),
         )
         _q_now = (result.get("quality") or {}).get("score")
         if _fallback:

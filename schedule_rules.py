@@ -2180,17 +2180,31 @@ def summarize(viols: list) -> dict:
             "hard_rows": sorted({v["index"] for v in hard})}
 
 
-def prompt_block(c: Constraints) -> str:
+def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     """The rules, as the model should read them — the same facts the code
-    will check afterwards, so the draft has every chance to be right."""
+    will check afterwards, so the draft has every chance to be right.
+    `manager_plan` (schedule_skeleton.plan_manager_coverage) — when the
+    managers' shifts were planned, the manager line points at them."""
     comp = c.compliance
     lines = []
     if c.managers:
         _mg = ", ".join(sorted(f"{n} ({c.managers.get(n.strip().lower()) or 'manager'})" for n in (c.roster_names or [])
                                if n.strip().lower() in c.managers))
-        lines.append("- NON-NEGOTIABLE, above every other rule: at every minute anybody is on the schedule, at least ONE "
-                     f"manager is on too. The managers: {_mg}. Every trading day has a manager from the first shift's "
-                     "start to the last shift's end — overlap them so there is never a gap, not even a few minutes.")
+        _names = {n.strip().lower(): n for n in (c.roster_names or [])}
+        _acting = "; ".join(f"{_names.get(k, k)} on " + ", ".join(sorted(d for d in v if d in (c.week_dates or v)))
+                            for k, v in sorted((c.acting_managers or {}).items())
+                            if k not in c.managers and any(d in (c.week_dates or v) for d in v))
+        # The same rule PRIORITIES 1a states, in the same rank: it used to
+        # call itself "above every other rule" — above the availability and
+        # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
+        lines.append("- NON-NEGOTIABLE — PRIORITIES 1a, the owner's highest staffing rule: at every minute anybody is "
+                     f"on the schedule, at least ONE manager is on too. The managers: {_mg}."
+                     + (f" Standing in as the manager, on those dates only: {_acting}." if _acting else "")
+                     + " It gives way only to a manager's own availability, time off and legal limits. Every trading "
+                       "day has a manager from the first shift's start to the last shift's end — overlap them so "
+                       "there is never a gap, not even a few minutes."
+                     + (" Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed."
+                        if (manager_plan or {}).get("rows") else ""))
     if c.closed_dates:
         _pretty = ", ".join(datetime.strptime(d, "%Y-%m-%d").strftime("%A %-m/%-d") for d in sorted(c.closed_dates))
         lines.append(f"- The restaurant is CLOSED on {_pretty}. Write no shifts at all on those dates.")

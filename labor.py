@@ -3436,7 +3436,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  hourly_profile: dict = None,
                                  section_cap_roles: list = None,
                                  open_times: dict = None,
-                                 close_times: dict = None) -> dict:
+                                 close_times: dict = None,
+                                 pinned_rows: list = None,
+                                 manager_plan: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -3470,6 +3472,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     .focus_block).
     structured    — ask for JSON against SCHEDULE_SCHEMA; falls back to the
                     CSV text contract if the API refuses the format.
+    pinned_rows   — the managers' shifts planned before the call
+                    (schedule_skeleton.plan_manager_coverage, "_pinned":
+                    "manager_plan"): shown as MANAGER COVERAGE — ALREADY
+                    SCHEDULED under PRIORITIES 1a, and merged into the answer
+                    by code — a model row over one is dropped.
+    manager_plan  — the plan they came from: each date's manager window, the
+                    stretches nobody can legally cover and the managers to
+                    name in PRIORITIES 1a.
     """
     # Every argument, exactly as called — the CSV fallback below re-calls
     # with these. It used to re-list them by hand and dropped week_start, the
@@ -4111,17 +4121,40 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         section_cap=section_count or 0,
         cap_roles=section_cap_roles or None,
     ))
+    # The managers' shifts are planned in code before this call (schedule
+    # audit 10/3/26 PR-1, P-8, D-4, PR-32): the table's numbers come from
+    # punches, where managers rarely appear (Erik 1, Jim 0), so a manager
+    # role line in it is never what decides manager coverage — said under
+    # the table so the two cannot contradict each other.
+    import schedule_skeleton as _skel
+    _pins = [dict(r) for r in (pinned_rows or []) if r.get("date")]
+    if _pins and _requirements_block:
+        _requirements_block += _skel.requirements_note()
+    _manager_block = _skel.prompt_block(_pins, plan=manager_plan, dates=_gen_dates)
+    _manager_priority = _skel.priority_line(_pins, plan=manager_plan, dates=_gen_dates)
     _names_here = [n for n, _r in employees if n]
     _experience_block = _req.experience_block(tenure, _names_here, leader_flags, experienced)
     _pattern_block = _req.usual_pattern_block(prior_pattern, _names_here)
     _focus_block = _req.focus_block(focus)
     _presence_rule = _req.presence_rule()
+    # A manager every minute is the owner's highest rule (owner, 10/2/26). It
+    # sat 70% of the way down the prompt, named in no PRIORITIES item, and
+    # called itself "above every other rule" — above the availability and
+    # time off item 1 ranks first, so the model read two different top rules
+    # (schedule audit 10/3/26 PR-1). It opens item 1 now as 1a, saying what
+    # it gives way to: a manager's own availability, time off and legal
+    # limits — the rest of item 1 is 1b.
+    _hard_items = ("employee availability and approved time off, STAFF CONSTRAINTS, closed dates, the rules the "
+                   "schedule is checked against with each person's limits and windows, and the restaurant's hours "
+                   "and shift rules (open, close and arrival times).\n")
     _priority_block = (
         "\n\nPRIORITIES — the one ranked order for every conflict in this prompt. A higher item always wins over "
         "a lower one; a block below that sounds absolute still sits at its rank here:\n"
-        "  1. Hard constraints — never broken for anything below: employee availability and approved time off, "
-        "STAFF CONSTRAINTS, closed dates, the rules the schedule is checked against with each person's limits and "
-        "windows, and the restaurant's hours and shift rules (open, close and arrival times).\n"
+        + ("  1. Hard constraints — never broken for anything below:\n"
+           f"     1a. {_manager_priority}\n"
+           "     1b. " + _hard_items[0].upper() + _hard_items[1:]
+           if _manager_priority else
+           "  1. Hard constraints — never broken for anything below: " + _hard_items) +
         "  2. SHIFT REQUIREMENTS — the people each role needs on each shift, with the owner's staffing floors as "
         "the hard minimum inside them. Fill them from the people with the most room first: nobody goes past "
         "40 hours in the payroll week while a teammate in the same role has room. Overtime is a cost the owner "
@@ -4178,7 +4211,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     except Exception:
         _sched_now = datetime.now(ZoneInfo('America/Chicago'))
     _sched_window_line = labor_window_line(analysis, _sched_now)[0]
-    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}
+    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}{_manager_block}
 
 CONTEXT:
 {_sched_window_line}
@@ -4347,6 +4380,25 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     if week_slice:
         _keep = set(_gen_dates)
         _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip() in _keep]
+    # The planned manager rows join the answer by code, not by trust (PR-1,
+    # PR-32): a row the model wrote for a planned manager on that date that
+    # duplicates or overlaps their planned shift is dropped — the plan wins —
+    # and the planned rows for this call's dates are added. A department's
+    # call adds only the managers on its own roster. Kept apart from the
+    # parse above (schedule_skeleton.merge_pinned) so the parse can change
+    # without touching it.
+    _pin_dropped, _pins_here = [], []
+    if _pins:
+        _pin_people = {str(n).strip().lower() for n, _r in employees if n} if roster else None
+        _pins_here = [p for p in _pins if p["date"] in set(_gen_dates)
+                      and (_pin_people is None or str(p.get("employee") or "").strip().lower() in _pin_people)]
+        _data_rows, _pin_dropped = _skel.merge_pinned_lines(_data_rows, _pins_here)
+        if _pin_dropped:
+            import ai_utils as _ai_pin
+            _ai_pin.record_quality_event(
+                "labor_schedule", "item_dropped", restaurant_id=restaurant_id, action="labor_schedule",
+                n=len(_pin_dropped),
+                detail=f"{len(_pin_dropped)} model row(s) over a planned manager shift dropped")
     csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
     print(f"[schedule] data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
 
@@ -4388,7 +4440,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
                      "" if NO_DEMAND_MARKER in _demand_block else _demand_block,
                      "\n".join(_w_lines) if weather_forecast else "",
                      _prior_schedule_block, _headcount_block, _requirements_block, _noshows_block,
-                     _pattern_block],
+                     _pattern_block, _manager_block],
         role_floors=role_floors, role_minimums=_role_minimums_dict(role_minimums_json),
         keyholders=[n for n, v in (leader_flags or {}).items() if v],
         registry_state=_ready_sched.get("data_state"))
@@ -4404,6 +4456,10 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "structured": bool(_parsed_json),
         "generation_seconds": _seconds,
         "generated_dates": _gen_dates,
+        # The planned manager rows this call's CSV carries, and the model's
+        # rows the merge dropped for writing over one.
+        "pinned_rows": _pins_here,
+        "pinned_dropped": _pin_dropped,
         "week_dates": week_dates,
         "week_days": week_days,
         "projected_revenue": projected_revenue,
