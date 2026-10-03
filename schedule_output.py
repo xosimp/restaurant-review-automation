@@ -673,10 +673,14 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
     prompt_text = json.dumps(req.get("messages") or [], default=str)
     names = guest_names_in(prompt_text)
     req = _scrub(encode(req), names)
-    enc_inputs = _scrub(encode(dict(inputs or {})), names) if inputs is not None else None
+    enc_inputs = encode(dict(inputs or {})) if inputs is not None else None
     shared = None
     if isinstance(enc_inputs, dict):
+        # The shift history and the labor analysis are the restaurant's own
+        # shift records and figures — no guest's words — kept as they are
+        # (scrubbing six thousand rows cost most of a second for nothing).
         shared = {k: enc_inputs.pop(k) for k in SHARED_INPUTS if k in enc_inputs}
+        enc_inputs = _scrub(enc_inputs, names)
     conn = get_conn(db_path)
     try:
         if shared and generation_id and conn.execute(

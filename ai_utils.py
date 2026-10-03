@@ -1703,6 +1703,10 @@ _MODEL_PRICING = {
     "claude-sonnet-5": (2.00, 10.00),
     # invoices.py reads prices off photos with the most capable model.
     "claude-opus-5": (5.00, 25.00),
+    # The week's schedule (schedule audit 10/3/26), and the budget tier its
+    # evaluation runs against (scripts/schedule_model_eval.py).
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     # Perplexity sonar, per million tokens. Audit #7 found this vendor was
     # entirely outside the ledger and the budget — the $10/day and
     # $1,500/month ceilings bound Claude only, while AI visibility could fire
@@ -2657,6 +2661,8 @@ AI_TRACE_ACTION_CHARS = {
 def _trace_caps(action):
     """(prompt chars, output chars) an action's trace keeps."""
     return AI_TRACE_ACTION_CHARS.get(action or "", (AI_TRACE_PROMPT_CHARS, AI_TRACE_OUTPUT_CHARS))
+
+
 # The ai_calls rows themselves (hashes, ids, stop reason) — as long as the
 # ledger rows they belong to.
 AI_CALLS_RETAIN_DAYS = int(os.getenv("AI_CALLS_RETAIN_DAYS", "120"))

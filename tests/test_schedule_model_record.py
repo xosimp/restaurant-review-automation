@@ -326,3 +326,12 @@ def test_schedule_eval_shows_the_calls_behind_a_week_and_scores_the_models_own_a
     assert out["calls"][0]["model"] == "claude-opus-5-5" and out["calls"][0]["rows"] == 2
     assert out["calls"][0]["tokens_per_row"] == 1500.0
     assert out["model_answer"]["hard_before"] == 0 and out["model_answer"]["manager_minutes_before"] == 0
+
+
+def test_the_security_doc_names_the_record_and_its_redaction():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    text = open(os.path.join(root, "docs", "ops", "SECURITY.md"), encoding="utf-8").read()
+    assert "`schedule_model_calls` keeps every schedule generation call's full request" in text
+    assert "180 days" in text.split("**Schedule call record**", 1)[1].split("\n", 1)[0]
+    assert ops._RETENTION_DAYS["schedule_model_calls"] == 180

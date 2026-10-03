@@ -4463,7 +4463,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
                               rows=0, **_rec)
         _category = getattr(getattr(msg, "stop_details", None), "category", None)
         import ai_utils as _ai_r
-        _ai_r.record_quality_event("labor_schedule", "refused", restaurant_id=restaurant_id, action="labor_schedule",
+        _ai_r.record_quality_event("labor_schedule", "model_refused", restaurant_id=restaurant_id,
+                                   action="labor_schedule",
                                    detail=f"the schedule call was declined (stop_reason refusal, category "
                                           f"{_category or 'none'})")
         from schedule_engine import ScheduleGenerationError
@@ -4489,8 +4490,10 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         summary_bullets = [_re_sched.sub(r'\*+', '', b).strip() for b in _parse["summary"]]
         summary_bullets = [b for b in summary_bullets if b]
         if not _parse["parsed"] and not _truncated:
-            from ai_utils import mark_outcome as _mark_out
-            _mark_out(msg, "unparseable", reason="not the schema's JSON")
+            import ai_utils as _ai_u
+            _ai_u.mark_outcome(msg, "unparseable", reason="not the schema's JSON")
+            _ai_u.record_quality_event("labor_schedule", "unparseable", restaurant_id=restaurant_id,
+                                       action="labor_schedule", detail="the schedule answer was not the schema's JSON")
     else:
         if "---SUMMARY---" in raw:
             _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
