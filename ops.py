@@ -1490,6 +1490,7 @@ EXPECTED_JOBS = jobs_registry.expected_hours()
 HEARTBEAT_ALERT_MINUTES = jobs_registry.HEARTBEAT_STALE_MINUTES
 # One out-of-band alert per this many minutes, however many requests see it.
 PLATFORM_ALERT_COOLDOWN_MINUTES = 60
+PLATFORM_WARN_COOLDOWN_MINUTES = 24 * 60
 
 
 def jobs_overdue(now=None, db_path=None) -> list:
@@ -1574,6 +1575,19 @@ def _dsr_missing(db_path=None):
         return []
 
 
+def _has_urgent(out, state, write_ok=True) -> bool:
+    """Whether check_platform_sla's problems include one that cannot wait a
+    day: the scheduler dead or stuck, a job past its SLA, the volume almost
+    full, the database refusing writes."""
+    hb = out.get("heartbeat_minutes")
+    disk = out.get("disk") or {}
+    return bool((hb is not None and hb > HEARTBEAT_ALERT_MINUTES)
+                or state.get("wedged") or state.get("loop_stalled")
+                or out.get("jobs_overdue")
+                or disk.get("state") == "critical"
+                or not write_ok)
+
+
 def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     """The scheduler's watchdog, run from a REQUEST thread: {heartbeat_minutes,
     loop_minutes, running_job, jobs_overdue, disk, write_ok, backup,
@@ -1637,6 +1651,11 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             log.warning(f"messaging health unavailable to the platform check: {e}")
 
     problems = []
+    # Kinds that can wait a day: a volume filling (not full), a stale
+    # backup, a late DSR, a messaging channel. Anything else is urgent.
+    # 10/3/26: "Volume filling up - 239 MB free" texted Will every hour
+    # for a day because every problem shared one 60-minute cooldown.
+    warn_kinds = set()
     hb = out["heartbeat_minutes"]
     if hb is not None and hb > HEARTBEAT_ALERT_MINUTES:
         problems.append(f"Scheduler heartbeat is {int(hb)} minutes old — nothing scheduled is running.")
@@ -1650,17 +1669,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"{j['job']}: no successful run in {j['hours_since']:g}h (expected within {j['max_hours']}h)")
     disk = out["disk"] or {}
     if disk.get("state") in ("low", "critical"):
+        if disk["state"] == "low":
+            warn_kinds.add("disk_low")
         problems.append(f"Volume {'almost full' if disk['state'] == 'critical' else 'filling up'} — "
                         f"{disk.get('free_mb', '?')} MB free ({disk.get('pct_free', '?')}%).")
     if not out["write_ok"]:
         problems.append(f"The database refuses writes: {write_err or 'write probe failed'}.")
     b = out["backup"] or {}
     if b.get("state") in ("stale", "failed", "no_offsite"):
+        warn_kinds.add("backup")
         problems.append(b.get("summary") or "The nightly backup is not healthy.")
     if out["dsr_missing"]:
+        warn_kinds.add("dsr_missing")
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
                         f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+    if out["messaging"]:
+        warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])
     out["problems"] = problems
     if not problems or not send:
@@ -1671,7 +1696,15 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             return out
     except Exception:
         return out
-    res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    # An urgent problem pages hourly. Only warnings: once a day for the same
+    # set, sooner when a new kind joins it (the key names the set).
+    urgent = _has_urgent(out, state, write_ok=out["write_ok"])
+    if urgent:
+        res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    else:
+        res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
+                            "Cavnar AI: the platform needs you", problems,
+                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES)
     out["alerted"] = bool(res.get("sent"))
     return out
 
