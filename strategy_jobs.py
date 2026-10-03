@@ -2190,49 +2190,52 @@ def _coverage_constraints(r, day, due, db_path=DB_PATH):
 
 
 def _gap_covers(r, day, people, on_today, away, taken, c, db_path=DB_PATH) -> list:
-    """Covers for each gap, earliest first: someone on today whose shift ends
-    as it begins (labor_replacements.stay_on), then someone off today
+    """Covers for each gap, earliest gap first: someone on today whose shift
+    ends as it begins (labor_replacements.stay_on), else someone off today
     (for_gap) — never a name already suggested for another gap (`taken`, the
-    open issue's own) or anyone in `away` (missing, or let off today).
-    Returned round-robin (every gap's first choice before any second), each
-    naming the gap it is for: [{"name", "score", "kind", "how", "for",
-    "shift_start"}]."""
+    open issue's own) or anyone in `away` (missing, or let off today). Dealt
+    a round at a time — every gap its first cover before any gap its second
+    — so the first gap cannot take every good name. Each names the gap it is
+    for: [{"name", "score", "kind", "how", "for", "shift_start"}]."""
     import labor_replacements
     import ops
     used = [n for n in taken if n]
     on_names = [x.get("employee") for x in on_today if x.get("employee")]
-    per_gap = []
+    gaps = []
     for m in people:
         listed = m.get("listed_as") or m["employee"]
-        gap = {"employee": listed, "role": m.get("role"), "shift_start": m.get("shift_start"),
-               "date": day.isoformat()}
-        mine = []
         try:
             rows, idx = labor_replacements.gap_week(r.id, day, {"employee": listed,
                                                                "shift_start": m.get("shift_start")}, db_path)
-            mine += labor_replacements.stay_on(r.id, gap, on_today, exclude=used + list(away), db_path=db_path,
-                                               limit=COVERS_PER_GAP, constraints=c, rows=rows, index=idx)
         except Exception as fe:
-            ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id} stay on")
-        used += [f["name"] for f in mine]
-        if len(mine) < COVERS_PER_GAP:
-            try:
-                fits = labor_replacements.for_gap(r.id, m.get("role"), day.strftime("%A"),
-                                                  exclude=set(on_names) | set(away) | set(used), db_path=db_path,
-                                                  limit=COVERS_PER_GAP - len(mine), on_date=day.isoformat(),
-                                                  shift={"employee": listed, "shift_start": m.get("shift_start")},
-                                                  constraints=c) or []
-            except Exception as fe:
-                ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
-                fits = []
-            mine += [dict(f, kind="off") for f in fits]
-            used += [f["name"] for f in fits]
-        per_gap.append([{"name": f["name"], "score": f.get("score"), "kind": f.get("kind") or "off",
-                         "how": f.get("how"), "for": m["employee"], "shift_start": m.get("shift_start")}
-                        for f in mine])
+            ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id} week")
+            rows, idx = None, None
+        gaps.append((m, listed, rows, idx))
     out = []
-    for i in range(COVERS_PER_GAP):
-        out += [lst[i] for lst in per_gap if i < len(lst)]
+    for _round in range(COVERS_PER_GAP):
+        for m, listed, rows, idx in gaps:
+            pick = []
+            try:
+                pick = labor_replacements.stay_on(
+                    r.id, {"employee": listed, "role": m.get("role"), "shift_start": m.get("shift_start"),
+                           "date": day.isoformat()},
+                    on_today, exclude=used + list(away), db_path=db_path, limit=1, constraints=c, rows=rows,
+                    index=idx)
+            except Exception as fe:
+                ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id} stay on")
+            if not pick:
+                try:
+                    pick = [dict(f, kind="off") for f in labor_replacements.for_gap(
+                        r.id, m.get("role"), day.strftime("%A"), exclude=set(on_names) | set(away) | set(used),
+                        db_path=db_path, limit=1, on_date=day.isoformat(),
+                        shift={"employee": listed, "shift_start": m.get("shift_start")}, constraints=c) or []]
+                except Exception as fe:
+                    ops.capture(fe, job="coverage_replacements", context=f"restaurant_id={r.id}")
+                    pick = []
+            for f in pick[:1]:
+                used.append(f["name"])
+                out.append({"name": f["name"], "score": f.get("score"), "kind": f.get("kind") or "off",
+                            "how": f.get("how"), "for": m["employee"], "shift_start": m.get("shift_start")})
     return out
 
 
