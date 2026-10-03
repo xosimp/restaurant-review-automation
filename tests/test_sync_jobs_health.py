@@ -864,3 +864,31 @@ def test_the_platform_alert_push_type_is_registered():
     assert push.module_of("platform_alert") == "home"
     assert push.PRIORITY["platform_alert"] == push.P1_ACT_NOW
     assert "platform_alert" in push.ACTIONABLE_TYPES
+
+
+def test_a_filling_volume_alone_pages_once_a_day_not_every_hour(tmpdb, monkeypatch):
+    """10/3/26: 'Volume filling up - 239 MB free' texted Will hourly for a day."""
+    import scheduler, status_manager
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
+    monkeypatch.setattr(status_manager, "scheduler_heartbeat_age_minutes", lambda: 2.0)
+    monkeypatch.setattr(status_manager, "scheduler_state", lambda *a, **k: {"beat_age_minutes": 2.0})
+    monkeypatch.setattr(ops, "jobs_overdue", lambda **k: [])
+    monkeypatch.setattr(ops, "backup_status", lambda **k: {"state": "ok"})
+    monkeypatch.setattr(ops, "_dsr_missing", lambda **k: [])
+    low = {"state": "low", "free_mb": 239, "pct_free": 55.2}
+    monkeypatch.setattr(status_manager, "disk_state", lambda *a, **k: dict(low))
+    sent = []
+    monkeypatch.setattr(ops, "alert_will", lambda subject, lines: sent.append(lines) or True)
+    assert ops.check_platform_sla()["alerted"] is True
+    assert ops.check_platform_sla()["alerted"] is False
+    # Past the hourly cooldown, a warning alone still waits a day.
+    ops._page_memory.clear()
+    from models import get_conn
+    c = get_conn(); c.execute("UPDATE job_period_claims SET claimed_at=datetime('now','-2 hours') "
+                              "WHERE job_key LIKE 'cooldown:platform_sla%'"); c.commit(); c.close()
+    assert ops.check_platform_sla()["alerted"] is False, "a warning pages once a day"
+    # The volume almost full is urgent: it pages despite the day's warning.
+    monkeypatch.setattr(status_manager, "disk_state", lambda *a, **k: {"state": "critical", "free_mb": 40,
+                                                                         "pct_free": 9.0})
+    assert ops.check_platform_sla()["alerted"] is True
+    assert len(sent) == 2
