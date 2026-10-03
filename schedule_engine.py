@@ -2610,6 +2610,11 @@ def _quality_signals(restaurant_id, result, **extra):
             role = (rule.get("role") or "").strip().lower()
 
             def _in_role(n):
+                # By role family and every role the person holds or worked
+                # (Constraints.holds — D-13, D-15): a roster "Bartender PM"
+                # can meet a "Bartender AM" rule's lunch.
+                if c is not None and getattr(c, "known_roles", None):
+                    return c.holds(n, rule.get("role"))
                 return (not roles or (roles.get(n) or "").strip().lower() == role
                         or role in {str(x).strip().lower() for x in (cross.get(n) or [])})
             if rule.get("attribute"):

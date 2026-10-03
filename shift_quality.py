@@ -699,11 +699,10 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
         need = int(rule.get("count") or 1)
         min_score = rule.get("min_score")
         attribute = (rule.get("attribute") or "").strip()
-        pool = []
-        for r, names in on_role.items():
-            if r.strip().lower() == role.lower():
-                pool = names
-                break
+        # Everybody on the shift in the rule's role FAMILY: a Bartender PM
+        # covering lunch is a bartender for a "Bartender AM" rule — the AM
+        # in the code names the half of the day (schedule audit 10/3/26 D-13).
+        pool = [n for r, names in on_role.items() if role_family(r) == role_family(role) for n in names]
         # Three ways a rule can be answered, in the order an operator would
         # think of them: a named capability, a minimum score, or simply
         # being on the shift. The capability branch is what makes "every

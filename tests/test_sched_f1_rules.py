@@ -331,6 +331,19 @@ def test_cross_training_counts_roles_not_job_codes():
     assert not any("Training" in roles for roles in p["typical_headcount"].values())
 
 
+def test_a_bartender_pm_covering_lunch_meets_a_bartender_am_leader_rule():
+    import inspect
+    import schedule_engine
+    import shift_quality as sq
+    rows = [_row(0, "Sam", "Bartender PM", "11:00am", "4:00pm", 5), _row(0, "Ann", "Server AM", "11:00am", "4:00pm", 5)]
+    rule = {"role": "Bartender AM", "min_score": 5, "count": 1, "daypart": "morning"}
+    res = sq.score_rows(rows, scores={"Sam": 5, "Ann": 3}, leader_rules=[rule])
+    lunch = next(s for s in res["shifts"] if s["date"] == WEEK[0] and s["daypart"] == "morning")
+    lead = next(d for d in lunch["dimensions"] if d["key"] == "leadership")
+    assert lead["score"] == 100, lead
+    assert "return c.holds(n, rule.get(\"role\"))" in inspect.getsource(schedule_engine._quality_signals)
+
+
 def test_one_stays_after_close_setting_per_role_by_family():
     rid = _rid(close_times_json='{"Friday": "11:00pm"}', role_close_buffer_json='{"Bartender": 30}')
     models.add_manual_team_member(rid, "Lee", role="Bartender PM")
