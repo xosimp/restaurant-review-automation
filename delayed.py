@@ -353,6 +353,24 @@ def _execute(action, row, aid, db_path):
 
 # ── handlers ────────────────────────────────────────────────────────────────
 
+def queued_actor(payload) -> dict:
+    """Who a queued schedule send runs as. The automation actor either way —
+    the account log names Cavnar AI as what ran it — but a person's own Send
+    that waited out the undo window (payload `manual`) carries whose decision
+    it was (`authority`, `queued_by`, stored when it was queued), so the
+    published version is theirs; the unattended auto-publish carries none
+    and is stamped 'system' (schedule_versions.authority_of — schedule audit
+    10/3/26 L-7: it used to be 'delegate', and the acceptance trend, the edit
+    predictor and the experiment readout read a week nobody looked at as a
+    manager keeping every row). A manual row queued before the authority was
+    stored is a person's decision of unknown standing: 'delegate'."""
+    p = payload or {}
+    if not (p.get("manual") or "acknowledge" in p) or p.get("automatic"):
+        return AUTOMATION_ACTOR
+    auth = p.get("authority") if p.get("authority") in ("principal", "delegate", "admin") else "delegate"
+    return dict(AUTOMATION_ACTOR, on_behalf_of={"authority": auth, "username": p.get("queued_by")})
+
+
 def _run_schedule_publish(restaurant_id, payload, db_path):
     """Publish the queued week — unless it was edited after it was queued.
     The queue-time checks (unedited, unpublished) are two hours old when
@@ -383,7 +401,7 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
         acknowledge = True if ack else []      # a person's publish, queued before keys were stored
     else:
         acknowledge = False                    # auto-publish: nothing acknowledged, unattended
-    out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
+    out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
                                      acknowledge=acknowledge)
     if out.get("needs_ack"):
         _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path)
@@ -412,7 +430,7 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
             return {"ok": False, "error": "The week was changed again after it was queued, so the changes were "
                                           "not sent. Send them from the Labor tab when it's ready."}
     ack = payload.get("acknowledge")
-    out, _status = send_schedule_changes(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
+    out, _status = send_schedule_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
                                          acknowledge=ack if isinstance(ack, list) else [])
     if out.get("needs_ack"):
         held = out.get("new_blockers") or out.get("blockers") or []

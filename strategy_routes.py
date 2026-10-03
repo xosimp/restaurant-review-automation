@@ -2744,7 +2744,21 @@ def _do_schedule_apply_fixes(u):
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
     from schedule_engine import present_quality
     present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
+    # Cavnar AI's changes, flagged on the rows the owner may save (schedule
+    # audit 10/3/26 L-5): a save that keeps them is never the manager's
+    # habit, and credits trust in apply fixes instead — the proposal is a
+    # recommendation, implemented by the save that keeps it.
+    import schedule_versions as _svf
+    fixed_rows, gone = _svf.stamp_cavnar(rows, fixed_rows, "apply_fixes", flagged_rows=_body().get("rows"))
+    if out["fixes"]:
+        import rec_ledger as _rl
+        from datetime import datetime as _dt
+        _rl.present(_rid(u), _rl.rec_key("apply_fixes", f"{_body().get('history_id') or 'draft'}:"
+                                                        f"{_dt.utcnow().strftime('%Y%m%d%H%M%S')}"),
+                    "schedule", "schedule_review", kind="apply_fixes",
+                    title=f"{len(out['fixes'])} fixes from Apply fixes", user_id=u.get("id"), cavnar_completes=True)
     return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
+            "cavnar_removed": gone,
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
 
@@ -2821,7 +2835,13 @@ def _do_schedule_optimize(u):
         _rl.present(_rid(u), rec_key, "schedule", "schedule_review", kind="optimizer",
                     title=f"{len(summary['changes'])} changes from Improve with Cavnar AI", user_id=u.get("id"),
                     cavnar_completes=True)
-    return {"ok": True, "rows": res["rows"], "optimizer": summary, "rec_key": rec_key,
+    # Each row Cavnar AI changed carries origin / origin_sig, and the rows it
+    # took out come back as `cavnar_removed` for the save's `cavnar_changes`
+    # (L-5): a save that keeps them is trust in Improve, never the manager's
+    # habit.
+    import schedule_versions as _svo
+    out_rows, gone = _svo.stamp_cavnar(rows, res["rows"], "optimize", flagged_rows=body.get("rows"))
+    return {"ok": True, "rows": out_rows, "optimizer": summary, "rec_key": rec_key, "cavnar_removed": gone,
             "quality": quality, "what_if": what_if}, 200
 
 
@@ -3424,17 +3444,26 @@ def _keyholders(rid) -> bool:
 
 def _do_learned_patterns(u):
     """What the draft has learned from the manager's edits, with the
-    owner's say: each one can be dismissed or restored."""
+    owner's say: each one can be dismissed or restored. Each live pattern
+    carries its denominator (schedule audit 10/3/26 L-6: `opportunities`,
+    `rate`, `confidence`) and is `active` only at two weeks or more and at
+    least PATTERN_MIN_RATE of the weeks it could have been made in; a
+    dismissal an admin made through view-as is `dismissed_by_admin` and does
+    not count until the account holder adopts it (L-10)."""
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see this.")
     import schedule_versions as _sv
     import schedule_intel as _si
+    from permissions import answer_authority
     rid = _rid(u)
     dismissed = _si.dismissed_patterns(rid)
+    by_admin = _si.admin_dismissed_patterns(rid)
     out = []
-    for p in _sv.learned_patterns(rid, min_repeats=1):
+    for p in _sv.learned_patterns(rid, min_repeats=1, min_rate=0):
         key = _si.pattern_key(p)
-        out.append({**p, "key": key, "active": p["times"] >= 2 and key not in dismissed, "dismissed": key in dismissed})
+        strong = p["times"] >= 2 and (p.get("rate") or 0) >= _sv.PATTERN_MIN_RATE
+        out.append({**p, "key": key, "active": strong and key not in dismissed, "dismissed": key in dismissed,
+                    "dismissed_by_admin": key in by_admin and key not in dismissed})
     # What the draft keeps after the manager stopped correcting it, with
     # who taught it, when it was learned and last kept, and whether it can
     # become the person's rule (memory audit 9/29/26, standing_patterns);
@@ -3444,11 +3473,28 @@ def _do_learned_patterns(u):
         conflicts = _sv.patterns_for_draft(rid)[1]
     except Exception:
         standing, conflicts = [], []
+    try:
+        pending = _sv.admin_saves_pending(rid)
+    except Exception:
+        pending = {"versions": 0, "weeks": 0, "answers": 0}
     return {"ok": True, "patterns": out, "standing": standing, "conflicts": conflicts,
+            # An admin's (view-as) saves and dismissals no learner counts
+            # until the account holder says they are theirs (L-8, L-10).
+            "admin_saves": pending, "admin_dismissals": len(by_admin),
+            "can_adopt": answer_authority(u) == "principal",
             "can_edit": _may_draft(u)}, 200
 
 
+# The kinds whose "make it a rule" is a staffing rule — a role floor or a
+# role start/end time — the owner's to set, as note rules are (L-33).
+_STAFFING_RULE_KINDS = ("headcount_add", "headcount_cut", "retime_start", "retime_end")
+
+
 def _do_learned_pattern_set(u):
+    """{key, dismissed?: bool} dismisses or restores a pattern (with whose
+    word it is — L-10); {key, rule: true} makes it a rule (L-33); {key,
+    keep: true|false} answers a standing pattern — keep it (a hand
+    confirmation, any re-test ended) or let it go (L-30)."""
     if not _may_draft(u):
         return _forbidden("Your login can view labor but not change what the draft learns.")
     import schedule_intel as _si
@@ -3457,18 +3503,88 @@ def _do_learned_pattern_set(u):
     if not key:
         return {"ok": False, "error": "key required"}, 400
     if b.get("rule"):
-        # "Make it a rule": the person's own availability, with its author.
+        if key.split("|", 1)[0] in _STAFFING_RULE_KINDS and not _principal(u):
+            return _forbidden("Only the account owner can turn a learned habit into a staffing rule.")
+        # "Make it a rule": the person's own availability, a role floor or a
+        # role time rule, with its author.
         import schedule_versions as _sv
         try:
             out = _sv.make_rule(_rid(u), key, user=u)
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         return {"ok": True, "key": key, **{k: v for k, v in out.items() if k != "ok"}}, 200
+    if "keep" in b:
+        import schedule_versions as _sv
+        try:
+            out = _sv.confirm_standing(_rid(u), key, user=u, keep=bool(b.get("keep")))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return out, 200
     if b.get("dismissed", True):
-        _si.dismiss_pattern(_rid(u), key, actor=_who(u))
+        _si.dismiss_pattern(_rid(u), key, actor=_who(u), authority=_answer_authority(u))
     else:
         _si.restore_pattern(_rid(u), key)
-    return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True))}, 200
+    return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True)),
+            "counted": _answer_authority(u) != "admin"}, 200
+
+
+def _do_learned_patterns_adopt(u):
+    """The account holder counts the pattern dismissals an admin made
+    through view-as or support as their own (schedule audit 10/3/26 L-10,
+    mirroring the ratings' adopt)."""
+    from models import CapabilityError
+    import schedule_intel as _si
+    from client_api import log_account_event
+    try:
+        n = _si.adopt_admin_dismissals(_rid(u), u)
+    except CapabilityError as ce:
+        return _forbidden(ce.args[0] if ce.args else "Not allowed.")
+    log_account_event(_rid(u), "pattern_dismissals_adopted", current_user=u,
+                      detail=f"{n} dismissals made through support now count as the owner's")
+    return {"ok": True, "adopted": n}, 200
+
+
+def _do_schedule_adopt_admin_saves(u):
+    """{history_id?} — the account holder counts the schedule edits an admin
+    made through view-as or support (and the one-tap answers given with
+    them) as their own, so they teach the draft (schedule audit 10/3/26 L-8,
+    mirroring the ratings' adopt). All weeks, or the one week named."""
+    from models import CapabilityError
+    import schedule_versions as _sv
+    from client_api import log_account_event
+    b = _body()
+    try:
+        hid = int(b["history_id"]) if b.get("history_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "history_id must be a number."}, 400
+    try:
+        out = _sv.adopt_admin_saves(_rid(u), u, history_id=hid)
+    except CapabilityError as ce:
+        return _forbidden(ce.args[0] if ce.args else "Not allowed.")
+    log_account_event(_rid(u), "schedule_saves_adopted", current_user=u,
+                      detail=f"{out['versions']} schedule saves and {out['answers']} answers made through support "
+                             f"now count as the owner's")
+    return {"ok": True, **out}, 200
+
+
+def _do_schedule_edit_why(u):
+    """{history_id, key, answer: always | this_week | call_off} — the
+    owner's one tap on a "why" a save asked (schedule audit 10/3/26 L-35)."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not change the schedule.")
+    import schedule_learning as _sl
+    b = _body()
+    try:
+        hid = int(b.get("history_id") or 0)
+    except (TypeError, ValueError):
+        hid = 0
+    if not hid or not b.get("key"):
+        return {"ok": False, "error": "history_id and key required"}, 400
+    try:
+        out = _sl.answer_edit_question(_rid(u), hid, str(b.get("key")), str(b.get("answer") or ""), user=u)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return out, 200
 
 
 # ── scheduling notes, dated (memory audit 9/29/26, staff_notes) ─────────────
@@ -5860,6 +5976,19 @@ def _do_publish_check(u):
         unsent = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
         names = unsent
     summary = people.reach_summary(people.reach(rid, names))
+    # The rows the manager's own record says they are likely to change,
+    # before staff are told (schedule audit 10/3/26 L-15) — only once the
+    # edit predictor's backtest is right PREDICT_ACTIONABLE_HIT_RATE of the
+    # time; otherwise `ready` false with the reason. Never on a week sent.
+    likely = None
+    if not row["published_at"]:
+        try:
+            import schedule_learning as _sl_l
+            import schedule_versions as _sv_l
+            likely = _sl_l.likely_to_change(rid, _sv_l.rows_from_csv(row["schedule_csv"] or ""))
+        except Exception as _lx:
+            import ops
+            ops.capture(_lx, job="likely_to_change", context=f"restaurant_id={rid}")
     from permissions import has_permission, SCHEDULE_PUBLISH
     # `blocker_items` carries each blocker's key: the client sends back
     # `acknowledge: [keys it showed]`, so a blocker that appears between
@@ -5870,7 +5999,7 @@ def _do_publish_check(u):
             # What is worth a look but never holds the send (SQ-29: the
             # quality verdict), and the week's hours split by pay (E-7).
             "notes": review.get("notes") or [], "hours": review.get("hours"),
-            "unsent_changes": unsent,
+            "unsent_changes": unsent, "likely_to_change": likely,
             "texts_available": people.staff_sms_ready(),
             "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
 
@@ -6326,6 +6455,9 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/cancel", ["POST"], _do_shift_request_cancel, "shift_request_cancel"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
+    ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),
+    ("/labor/schedule/adopt-admin-saves", ["POST"], _do_schedule_adopt_admin_saves, "schedule_adopt_admin_saves"),
+    ("/labor/schedule/edit-why", ["POST"], _do_schedule_edit_why, "schedule_edit_why"),
     ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),
     ("/labor/staff-notes", ["POST"], _do_staff_note_add, "staff_note_add"),
     ("/labor/staff-notes/<int:note_id>", ["POST"], _do_staff_note_update, "staff_note_update"),

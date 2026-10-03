@@ -184,6 +184,8 @@ _DERIVED = {
     "rec_delivery.py": "open on a delivered push — the request's login",
     "schedule_engine.py": "schedule apply (request) or nightly draft (system)",
     "schedule_intel.py": "schedule outcome check — a job (system)",
+    "schedule_learning.py": "capture_save — called only by the schedule save route, after its commit (the request's "
+                            "login; an admin's save credits nothing)",
     "schedule_versions.py": "schedule save on the caller's connection — implemented_on derives",
     "staffing_signals.py": "record_published — only the client_api schedule publish route (request's login)",
     "strategy_routes.py": "strategy routes — the request's login",
