@@ -834,11 +834,14 @@ class Constraints:
     # Who closes for which role (D-9: a closer is chosen to close for their
     # role, the last of it to leave): {family lower: set(person lower)}.
     closers_by_role: dict = field(default_factory=dict)
-    # People in training (D-16): {lower: {"target_role", "trainer", "until"}}.
+    # People in training (D-16): {lower: {"target_role", "trainer", "from",
+    # "until"}} — training_row() says which of their rows are training.
     trainees: dict = field(default_factory=dict)
     # A salaried person's weekly cap when they set none of their own (E-17:
     # the gap filler loaded a salaried owner to 66h against an 84h cap).
-    # None keeps SALARIED_HOURS_CAP.
+    # build_constraints sets restaurants.salaried_cap, else
+    # SALARIED_CAP_DEFAULT (55); None (a Constraints built by hand) keeps
+    # SALARIED_HOURS_CAP.
     salaried_cap: float = None
     # People on the roster who have not worked in weeks (E-3, D-17):
     # {lower: last worked iso date}. Still on the roster — a row the owner
