@@ -369,6 +369,18 @@ def test_a_salaried_person_has_a_weekly_cap_code_never_passes():
     assert not ok and "55h weekly cap" in why
 
 
+def test_a_salaried_week_is_rebalanced_only_past_the_owners_own_limit():
+    c = _c(roster_names=["Erik", "Bo"], active={"erik", "bo"}, salaried={"erik"})
+    rows = [_row(i, "Erik", "10:00am", "10:00pm", "Bartender") for i in range(5)]       # 60h, nobody set a limit
+    rows += [_row(0, "Bo", "10:00am", "2:00pm", "Bartender")]
+    roles = {"Erik": "Bartender", "Bo": "Bartender"}
+    assert not sr.rebalance_overtime(rows, c, roster_roles=roles)["moves"], "a model's long owner week stays his"
+    c.hours_limits["erik"] = (None, 50)
+    out = sr.rebalance_overtime(rows, c, roster_roles=roles)
+    assert out["moves"] and out["moves"][0]["to"] == "Bo" and "inside the 50h you set for them" in out["moves"][0]["reason"]
+    assert _hours(out["rows"], "Erik") <= 50
+
+
 def test_the_gap_filler_ranks_by_fatigue_and_hours_not_salaried_first():
     c = _c(roster_names=["Erik", "Andrew", "Ann"], active={"erik", "andrew", "ann"}, salaried={"erik"},
            managers={"erik": "Owner", "andrew": "Manager FOH"})

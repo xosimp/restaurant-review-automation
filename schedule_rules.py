@@ -2929,7 +2929,9 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
         return "overtime" if e["kind"] == "overtime" else "minor"
 
     def _why(e):
-        return "no overtime" if e["kind"] == "overtime" else f"a minor's {e['limit']:g}h week"
+        if e["kind"] != "overtime":
+            return f"a minor's {e['limit']:g}h week"
+        return f"inside the {e['limit']:g}h you set for them" if e.get("salaried") else "no overtime"
 
     def mine(e):
         idx = [i for i, r in enumerate(rep.rows) if _low(r.get("employee")) == e["low"] and in_period(e, r) and free(r)]
@@ -2948,11 +2950,15 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
             k = (low, c.bucket(r["date"]))
             totals[k] = totals.get(k, 0.0) + row_hours(r)
     for (low, b), h in totals.items():
-        if c.is_salaried(name_of(low)):
-            continue          # no overtime is owed on a salaried week; their cap binds what code adds
-        lim = overtime_line(c, name_of(low), line)
+        # No overtime is owed on a salaried week: their line here is the hard
+        # maximum (the owner's limit for them), never the default cap code
+        # holds its own additions to — a model's 60h week for an owner who
+        # works the floor is not moved onto paid hours.
+        lim = (c.max_hours(name_of(low)) if c.is_salaried(name_of(low))
+               else overtime_line(c, name_of(low), line))
         if b and lim and h > lim + 0.05:
-            entries.append({"kind": "overtime", "low": low, "key": b, "limit": lim, "excess": h - lim})
+            entries.append({"kind": "overtime", "low": low, "key": b, "limit": lim, "excess": h - lim,
+                            "salaried": c.is_salaried(name_of(low))})
     for low in sorted(c.minors or ()):
         br = minor_rules(c.minor_bands.get(low), c.jurisdiction)
         if not br.get("max_weekly_school_week"):
@@ -2992,10 +2998,9 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
                 rep.take(trial, after)
                 h = row_hours(r)
                 when = f"{r.get('day') or _weekday_of(r.get('date'))} {r.get('shift_start')}–{r.get('shift_end')}"
-                moves.append({"index": i, "from": name, "to": nm, "hours": h,
-                              "kind": "overtime" if e["kind"] == "overtime" else "minor",
+                moves.append({"index": i, "from": name, "to": nm, "hours": h, "kind": _kind(e),
                               "reason": (f"{name} would have run {was:g}h this payroll week; {nm} had room "
-                                         f"({had:g}h) — no overtime." if e["kind"] == "overtime" else
+                                         f"({had:g}h) — {_why(e)}." if e["kind"] == "overtime" else
                                          f"{name} is a minor: {was:g}h in the week is past the {e['limit']:g}h cap; "
                                          f"{nm} takes {when}.")})
                 return True
