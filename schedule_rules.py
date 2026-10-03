@@ -1617,16 +1617,22 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                 i0, r0 = items[0]
                 out.append(_v("no_manager_on_duty", i0, r0, f"{LABELS['no_manager_on_duty']} ({part})"))
 
-    # more front-of-house on the floor at once than there are sections
+    # more front-of-house on the floor at once than there are sections. A
+    # shift past midnight ends on the next day's clock (12:30am is 24:30,
+    # end_minutes): skipping every row whose end read as before its start
+    # left Friday and Saturday at a 2am close — exactly the nights a cap
+    # matters — unchecked (schedule audit 10/3/26 E-19). The roles count by
+    # family, so "Server AM" and "Server PM" are servers (D-13).
     if c.section_cap and not person_only:
+        counted = {c.family(x) for x in (c.foh_roles or ()) if str(x).strip()} or {"server"}
         by_date = {}
         for i, r in enumerate(rows or []):
-            if (r.get("role") or "").strip().lower() in c.foh_roles and r.get("date"):
+            if r.get("date") and c.family(r.get("role")) in counted:
                 by_date.setdefault(r["date"], []).append((i, r))
         for d, items in by_date.items():
             events = []
             for i, r in items:
-                s_, e_ = parse_minutes(r.get("shift_start", "")), parse_minutes(r.get("shift_end", ""))
+                s_, e_ = parse_minutes(r.get("shift_start", "")), end_minutes(r)
                 if s_ is not None and e_ is not None and e_ > s_:
                     events.append((s_, 1, i)); events.append((e_, -1, i))
             events.sort(key=lambda ev: (ev[0], ev[1]))

@@ -2128,6 +2128,10 @@ def _do_compliance_get(u):
             # (schedule_rules over_section_cap). Moved here from the admin
             # page, its only editor until 9/30/26.
             "section_count": int(getattr(r, "section_count", 0) or 0) or None,
+            # Dayparts whose floors for the section-counted roles add up to
+            # more people than there are sections — no draft can hold both,
+            # so the rules screen says so (schedule audit 10/3/26 P-29).
+            "floor_cap_conflicts": _floor_cap_conflicts(r),
             # "Never cut a role below N people": the cut floor for a role
             # with no floor of its own (schedule_rules.cut_floor), 1..10.
             "cut_floor_default": _sr.cut_floor_default(r), "cut_floor_max": _sr.CUT_FLOOR_MAX,
@@ -2276,7 +2280,25 @@ def _do_compliance_set(u):
     if not out:
         return {"ok": False, "error": "Send rules, role_floors, or a setting."}, 400
     log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail=", ".join(out))
+    if {"role_floors", "section_count", "foh_roles"} & set(out):
+        # The floors and the section count as they now stand: a conflict the
+        # save created (or cleared) is said at once (P-29).
+        from models import get_restaurant as _gr_fc
+        out["floor_cap_conflicts"] = _floor_cap_conflicts(_gr_fc(_rid(u)))
     return {"ok": True, **out}, 200
+
+
+def _floor_cap_conflicts(r) -> list:
+    """schedule_engine.floor_cap_conflicts for the restaurant's saved floors,
+    section count and front-of-house roles; [] when none or unreadable."""
+    import schedule_engine as _se_fc
+    import schedule_rules as _sr_fc
+    try:
+        return _se_fc.floor_cap_conflicts(_sr_fc.role_floors(r), getattr(r, "section_count", 0),
+                                          _sr_fc._load_json(getattr(r, "foh_roles_json", None), []) or ["Server"])
+    except Exception as exc:
+        print(f"[schedule rules] floor/section check failed: {exc}")
+        return []
 
 
 def _do_schedule_versions(u, history_id):

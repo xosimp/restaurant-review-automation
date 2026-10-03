@@ -98,30 +98,41 @@ def test_pizza_cook_coverage_still_uses_a_candidate_without_notes(monkeypatch):
 
 
 def test_top_up_hours_gap_skips_the_only_candidate_when_they_have_notes(monkeypatch):
-    # Jamie L. is the only Server with hours left this week; Wednesday is
-    # under its target and needs another server. With a "closes only,
-    # never mornings" note on file, the top-up must not add them rather
-    # than silently ignoring the note.
+    # Jamie L. is the only other Server; Thursday dinner needs two servers
+    # (its SHIFT REQUIREMENTS row — what "thin" is measured against since
+    # schedule audit 10/3/26 P-20) and has one. With a "closes only, never
+    # mornings" note on file, the top-up must not add them rather than
+    # silently ignoring the note.
     preview_rows = [{
         "date": "2026-08-26", "day": "Wednesday", "employee": "Jamie L.",
         "role": "Server", "shift_start": "5:00pm", "shift_end": "10:00pm",
         "scheduled_hours": "5", "notes": "closer",
     }, {
-        "date": "2026-08-27", "day": "Thursday", "employee": "Jamie L.",
+        "date": "2026-08-27", "day": "Thursday", "employee": "Pat K.",
         "role": "Server", "shift_start": "5:00pm", "shift_end": "10:00pm",
         "scheduled_hours": "5", "notes": "closer",
     }]
-    monkeypatch.setattr(models, "get_staff_availability", lambda restaurant_id: [
-        {"employee_name": "Jamie L.", "available_days": '["Wednesday", "Thursday"]',
-         "unavailable_days": "[]", "notes": "closes only, never mornings"},
-    ])
+    need = [{"date": "2026-08-27", "day": "Thursday", "daypart": "night",
+             "roles": [{"role": "Server", "required": 2, "floor": 0, "typical": 2}]}]
+    week = ["2026-08-26", "2026-08-27"]
 
-    result_rows, hours_added, added_dates = client_api._top_up_hours_gap(
-        preview_rows, daily_target_hours={"2026-08-26": 20.0, "2026-08-27": 5.0},
-        hours_budget=100.0, hours_scheduled=10.0, restaurant_id=1,
-        close_times={}, role_buffers={},
-    )
+    def _run(note):
+        monkeypatch.setattr(models, "get_staff_availability", lambda restaurant_id: [
+            {"employee_name": "Jamie L.", "available_days": '["Wednesday", "Thursday"]',
+             "unavailable_days": "[]", "notes": note},
+        ])
+        return client_api._top_up_hours_gap(
+            [dict(r) for r in preview_rows], daily_target_hours={"2026-08-26": 5.0, "2026-08-27": 20.0},
+            hours_budget=100.0, hours_scheduled=10.0, restaurant_id=1,
+            close_times={}, role_buffers={}, constraints=_plain_constraints(week, ["Wednesday", "Thursday"]),
+            requirements=need,
+        )
 
+    result_rows, hours_added, added_dates = _run("closes only, never mornings")
     assert hours_added == 0.0
     assert added_dates == {}
     assert len(result_rows) == 2  # nothing new added
+    # the note is what stopped it: without one, Jamie fills Thursday
+    result_rows, hours_added, added_dates = _run("")
+    assert added_dates == {"2026-08-27": 1}
+    assert result_rows[-1]["employee"] == "Jamie L." and "top-up" in result_rows[-1]["notes"]

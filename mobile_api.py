@@ -7664,6 +7664,10 @@ def mobile_schedule_replacements(current_user):
         dates = sorted({r.get("date") for r in rows if r.get("date")})
         from datetime import datetime as _dtr
         c = _sr.build_constraints(rid, dates, [_dtr.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
+        # The week as it stands is swept once and availability read once for
+        # every candidate (schedule audit 10/3/26 P-40): each check used to
+        # re-sweep the unchanged week and re-read the table per person.
+        prepared = _se.prepare_replacements(rid, rows, constraints=c)
         role_low = (target.get("role") or "").strip().lower()
         roster = {e["name"].strip().lower(): (e["name"], e.get("role")) for e in _ss.roster(rid)}
         for r in rows:
@@ -7681,7 +7685,7 @@ def mobile_schedule_replacements(current_user):
                 known.discard("")
                 if known and role_low not in known:
                     continue
-            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c)
+            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c, prepared=prepared)
             if not ok:
                 continue
             out.append({"name": name, "role": their_role or target.get("role"),

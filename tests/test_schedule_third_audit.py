@@ -128,10 +128,19 @@ def _no_avail(monkeypatch):
     monkeypatch.setattr(models, "get_staff_availability", lambda r, *a, **k: [])
 
 
+def _need(dates, n, part="night", role="Server"):
+    """SHIFT REQUIREMENTS rows: `n` of `role` on `part` of each date. "Thin"
+    is measured against these since schedule audit 10/3/26 P-20 — no longer
+    against the draft's own average."""
+    return [{"date": d, "day": DAYS[WEEK.index(d)], "daypart": part,
+             "roles": [{"role": role, "required": n, "floor": 0, "typical": n}]} for d in dates]
+
+
 def test_top_up_never_fills_a_day_the_model_left_empty(monkeypatch):
     _no_avail(monkeypatch)
     rows = [_row(d, n, "4:00pm", "10:00pm") for d in WEEK[:5] for n in ("Ana", "Bob", "Cy")]      # nothing Sat/Sun
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 280.0, 90.0, 1, {}, {}, constraints=_c())
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 280.0, 90.0, 1, {}, {}, constraints=_c(),
+                                             requirements=_need(WEEK, 3))
     assert dates == {} and added == 0
 
 
@@ -140,10 +149,14 @@ def test_top_up_thinks_in_dayparts_and_copies_that_dayparts_times(monkeypatch):
     rows = []
     for d in WEEK[:6]:
         rows += [_row(d, n, "11:00am", "3:00pm", hours=4) for n in ("Ana", "Bob")]                 # two lunch servers
-        rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Cy", "Dee", "Eve")]           # three dinner servers
+        # three dinner servers; Dee and Eve are off Wednesday, so a Sunday
+        # dinner is not anybody's seventh day in a row (P-2)
+        rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Cy", "Dee", "Eve") if d != WEEK[2] or n == "Cy"]
     rows += [_row(WEEK[6], "Ana", "11:00am", "3:00pm", hours=4), _row(WEEK[6], "Bob", "11:00am", "3:00pm", hours=4),
              _row(WEEK[6], "Cy", "4:00pm", "9:00pm", hours=5)]                                    # Sunday dinner is thin
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 200.0, 1, {}, {}, constraints=_c())
+    need = _need([WEEK[6]], 3) + _need([WEEK[6]], 2, part="morning")
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 200.0, 1, {}, {}, constraints=_c(),
+                                             requirements=need)
     new = [r for r in out if r["date"] == WEEK[6] and r not in rows]
     assert new and all(r["shift_start"] == "4:00pm" for r in new)          # dinner rows, not morning clones
     assert all(r["employee"] in ("Dee", "Eve") for r in new)
@@ -155,7 +168,10 @@ def test_top_up_is_capped_at_a_quarter_of_the_days_target(monkeypatch):
     for d in WEEK[:6]:
         rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Ana", "Bob", "Cy", "Dee", "Eve", "Fay")]
     rows += [_row(WEEK[6], "Ana", "4:00pm", "9:00pm", hours=5)]                                    # Sunday: 1 of 6
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 185.0, 1, {}, {}, constraints=_c())
+    # Servers with no shift yet: everyone else would be on a seventh day (P-2)
+    c = _c(roster_roles={"Gus": "Server", "Hal": "Server", "Ivy": "Server", "Jo": "Server", "Kit": "Server"})
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 185.0, 1, {}, {}, constraints=c,
+                                             requirements=_need([WEEK[6]], 6))
     sunday_added = sum(float(r["scheduled_hours"]) for r in out if r["date"] == WEEK[6] and r not in rows)
     assert 0 < sunday_added <= 10.0                                          # 25% of 40h, not the five missing shifts
 
