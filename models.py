@@ -5481,6 +5481,33 @@ def _cross_source_copy(conn, r: "Review"):
     return None
 
 
+def _places_author_row(conn, r: "Review"):
+    """The stored Places row that is this same guest's review on the same
+    listing, under an older key, or None.
+
+    Places keys a review google_<time>_<author profile URL>, and the time is
+    the review's own: when the guest edits it, Google sends a new time, so
+    the edit arrived as a second review — "SIP" twice at Simple EJ's, the
+    same words six hours apart (owner, 10/2/26). Google allows one review
+    per account per place, so one profile URL is one review here. Only a
+    profile URL is trusted; a display name is not unique."""
+    ext = r.external_id or ""
+    if r.platform != "google" or r.review_name or not ext.startswith("google_"):
+        return None
+    parts = ext.split("_", 2)
+    suffix = parts[2] if len(parts) == 3 else ""
+    if not suffix.startswith("http"):
+        return None
+    for row in conn.execute(
+            "SELECT id, external_id FROM reviews WHERE restaurant_id=? AND platform='google' "
+            "AND review_name IS NULL AND deleted_at IS NULL AND external_id != ? AND external_id LIKE ? "
+            "ORDER BY id", (r.restaurant_id, ext, "google_%" + suffix)).fetchall():
+        p = (row["external_id"] or "").split("_", 2)
+        if len(p) == 3 and p[2] == suffix:
+            return row
+    return None
+
+
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
                  downgrades: list = None, rejected: list = None) -> tuple[int, list]:
     """Upsert reviews; skip ones this restaurant already has.
@@ -5530,6 +5557,27 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH,
             twin = _cross_source_copy(conn, r)
         except Exception:
             twin = None
+        # The same guest's Places review under its older key (an edit moves
+        # the time in the key): the stored row takes the new key and the
+        # edit, never a second row.
+        if twin is None:
+            try:
+                prior = _places_author_row(conn, r)
+            except Exception:
+                prior = None
+            if prior is not None:
+                already_had += 1
+                conn.execute("UPDATE reviews SET external_id=? WHERE id=?", (r.external_id, prior["id"]))
+                try:
+                    _changed, _downgraded = _apply_review_edit(conn, r)
+                    if _changed:
+                        edited += 1
+                    if _downgraded and downgrades is not None:
+                        downgrades.append(r)
+                except Exception as _pe:
+                    unexpected.append((r.external_id, f"edit failed: {_pe}"))
+                r.id = prior["id"]
+                continue
         if twin is not None:
             already_had += 1
             if r.review_name and not twin["review_name"]:

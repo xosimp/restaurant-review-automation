@@ -68,7 +68,7 @@ def test_send_to_suppliers_sits_inside_suppliers():
     sup = _between('<details class="hb-results fc2-work" id="fc2-work-suppliers" hidden>',
                    '<details class="hb-results fc2-work" id="fc2-work-recipes" hidden>')
     assert 'id="fc2-order-send-d"' in sup and 'id="so-body"' in sup
-    orders = _between('<div class="fc2-sec" id="fc2-orders">', '<div class="lb2-sig lb2-sig-2">')
+    orders = _between('<div class="fc2-sec" id="fc2-orders">', '<div class="lb2-sig lb2-sig-2 fc2-stock-sig">')
     assert 'id="fc2-order-send-d"' not in orders
     # A deep link opens every fold around its section; the order nav both.
     nav = _between("function cavNavSection(p) {", "function cavNavIsPlace(p)")

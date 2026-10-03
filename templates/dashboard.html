@@ -9347,7 +9347,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-basis{font-size:13.5px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
 .rv2-basis .sep{opacity:.5}
 /* Answered reviews fall below one divider (density round #33). */
-.rv2-answered-div{margin:22px 0 4px;padding-top:12px;border-top:1px solid var(--hb-line);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.rv2-answered-div{margin:22px 0 4px;padding-top:12px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
 /* Scheduling sits under the post it schedules (friction #41). */
 .mkt-sched-inline{margin-top:12px;max-width:440px;padding:16px 18px;border:1px solid var(--paper3);border-radius:12px;background:var(--surface)}
 /* Collapsed section under the work (friction #11, #20; DS §12 "Collapsed
@@ -9370,10 +9370,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 #panel-reviews .draft-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
 #panel-reviews .response-editor textarea{width:100%;padding:10px 12px;border:1px solid var(--hb-line);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--hb-field);resize:vertical;min-height:90px;outline:none}
 #panel-reviews .response-editor textarea:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.14)}
-.rv2-status{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px}
+/* A finished state reads as a fact, not a button (owner, 10/2/26: "✓ Approved"
+   in a filled pill looked clickable): coloured words, no fill, no edge. */
+.rv2-status{font-size:12px;font-weight:700;padding:0;border-radius:0;cursor:default;user-select:none}
 /* Answered outside Cavnar AI (10/2/26): the reply someone made on Google. */
 .rv2-elsewhere-n{font-size:12.5px;color:var(--ink3)}
-.rv2-status.live{background:var(--blue-bg);color:var(--blue)}.rv2-status.ok{background:var(--green-bg);color:var(--hb-good)}.rv2-status.bad{background:var(--red-bg);color:var(--hb-bad)}
+.rv2-status.live{background:none;color:var(--blue)}.rv2-status.ok{background:none;color:var(--hb-good)}.rv2-status.bad{background:none;color:var(--hb-bad)}
 .rv2-empty{padding:40px 0;text-align:center;color:var(--ink3);font-size:13px}
 .rv2-empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px;font-weight:600}
 @media (max-width:1000px){.rv2-sig{grid-template-columns:1fr}.rv2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.rv2-sg:last-child{border-bottom:none;margin-bottom:0}}
@@ -10914,7 +10916,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* No rule above the Staffing review disclosure (owner, 9/26/26). */
 #lb2-money-all{border-top:none}
 /* Details and the Staffing review sit closer to the card above (9/26/26). */
-#lb2-details,#lb2-money-all{margin-top:14px}
+#lb2-money-all{margin-top:14px}
+.lb2-sig-2.fc2-stock-sig{margin-top:48px}
+#lb2-details{margin-top:30px}
 /* Inside the Staffing review disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
@@ -11014,30 +11018,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div id="lb2-wait-people" class="ac-rows" data-nav="labor/people"></div>
   </section>
 
-  {# Team inbox (employee audit fix B5, staff_comms): what staff say from
-     the app - running late, a message to the manager on duty - and the
-     announcements you send them, each with who has tapped Got it. One
-     quiet disclosure like Team & rules; its summary carries the unread
-     count. Loads when Labor shows it (lb2InboxLoad). #}
-  <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
-    <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
-    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
-    <div id="lb2-inbox-late" class="ac-rows" hidden></div>
-    <div class="hb-kicker" style="margin-top:18px">Messages</div>
-    <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
-    <div class="hb-kicker" style="margin-top:26px">Announcements</div>
-    <div class="lb2-form" id="lb2-ann-form">
-      <div class="ac-field w"><label for="lb2-ann-title">Title</label><input class="ac-input" id="lb2-ann-title" type="text" maxlength="120" placeholder="Closing at 9 tonight"></div>
-      <div class="ac-field"><label for="lb2-ann-aud">To</label><select class="ac-select" id="lb2-ann-aud" onchange="lb2AnnAudience()"><option value="all">Everyone</option><option value="role">One role</option><option value="shift_date">One day's schedule</option></select></div>
-      <div class="ac-field" id="lb2-ann-role-f" hidden><label for="lb2-ann-role">Role</label><select class="ac-select" id="lb2-ann-role"></select></div>
-      <div class="ac-field" id="lb2-ann-date-f" hidden><label for="lb2-ann-date">Day</label><input class="ac-input is-empty" id="lb2-ann-date" type="date" oninput="cavDateEmpty(this)"></div>
-      <div class="ac-field"><label for="lb2-ann-pri">Priority</label><select class="ac-select" id="lb2-ann-pri"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></div>
-      <div class="ac-field"><label for="lb2-ann-exp">Last day <small>optional</small></label><input class="ac-input is-empty" id="lb2-ann-exp" type="date" oninput="cavDateEmpty(this)"></div>
-    </div>
-    <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
-    <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
-    <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
-  </details>
 
   {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
      in the Studio's Staffing review (#lb2-money-all), and the Staffing board
@@ -11060,6 +11040,23 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div class="diag" id="lb2-diag" hidden></div>
   <section class="hb-card bm-card" data-bm-module="labor" hidden aria-label="How you compare"></section>
 
+  <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
+       with a headline count, an ember mark and the thing you do about it —
+       time off is answered here, covers are entered here. -->
+  <div class="lb2-ops" id="lb2-ops">
+    <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
+      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
+      <div id="lb2-timeoff-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
+      <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
+    </section>
+    <section class="lb2-op" id="lb2-covers" aria-label="Covers">
+      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
+      <div id="lb2-covers-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
+      <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
+      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
+    </section>
+  </div>
+  {# Details and the Team inbox sit under Time off and Covers (owner, 10/2/26). #}
   {# Proof under the read (density round #26, #44): where the labor
      dollars go by role, and how the percentage is measured against the
      target and the industry mark - collapsed, one summary line. #}
@@ -11090,22 +11087,30 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cap"><span>{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}the gap in the header is weekly × 52 ÷ 12 from a {{ _days }}-day window — available, not captured · {% endif %}overtime at 0.5× on hours over 40</span></div></div>
   </div>
   </details>
-  <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
-       with a headline count, an ember mark and the thing you do about it —
-       time off is answered here, covers are entered here. -->
-  <div class="lb2-ops" id="lb2-ops">
-    <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
-      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
-      <div id="lb2-timeoff-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
-      <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
-    </section>
-    <section class="lb2-op" id="lb2-covers" aria-label="Covers">
-      <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
-      <div id="lb2-covers-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
-      <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
-      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
-    </section>
-  </div>
+  {# Team inbox (employee audit fix B5, staff_comms): what staff say from
+     the app - running late, a message to the manager on duty - and the
+     announcements you send them, each with who has tapped Got it. One
+     quiet disclosure like Team & rules; its summary carries the unread
+     count. Loads when Labor shows it (lb2InboxLoad). #}
+  <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
+    <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
+    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
+    <div id="lb2-inbox-late" class="ac-rows" hidden></div>
+    <div class="hb-kicker" style="margin-top:18px">Messages</div>
+    <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
+    <div class="hb-kicker" style="margin-top:26px">Announcements</div>
+    <div class="lb2-form" id="lb2-ann-form">
+      <div class="ac-field w"><label for="lb2-ann-title">Title</label><input class="ac-input" id="lb2-ann-title" type="text" maxlength="120" placeholder="Closing at 9 tonight"></div>
+      <div class="ac-field"><label for="lb2-ann-aud">To</label><select class="ac-select" id="lb2-ann-aud" onchange="lb2AnnAudience()"><option value="all">Everyone</option><option value="role">One role</option><option value="shift_date">One day's schedule</option></select></div>
+      <div class="ac-field" id="lb2-ann-role-f" hidden><label for="lb2-ann-role">Role</label><select class="ac-select" id="lb2-ann-role"></select></div>
+      <div class="ac-field" id="lb2-ann-date-f" hidden><label for="lb2-ann-date">Day</label><input class="ac-input is-empty" id="lb2-ann-date" type="date" oninput="cavDateEmpty(this)"></div>
+      <div class="ac-field"><label for="lb2-ann-pri">Priority</label><select class="ac-select" id="lb2-ann-pri"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></div>
+      <div class="ac-field"><label for="lb2-ann-exp">Last day <small>optional</small></label><input class="ac-input is-empty" id="lb2-ann-exp" type="date" oninput="cavDateEmpty(this)"></div>
+    </div>
+    <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
+    <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
+    <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
+  </details>
   <div id="lb2-cov-modal" class="lb2-cov-modal" style="display:none" aria-labelledby="lb2-cov-modal-t">
     <div class="box">
       <button type="button" class="cbtn cbtn-close" aria-label="Close" onclick="cModal.close('lb2-cov-modal')">&#x2715;</button>
@@ -12663,8 +12668,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   </div>
 
   {# Biggest waste items and Cash sitting over par sit under the order
-     (owner, 9/26/26): what to buy first, then what the shelves hold. #}
-  <div class="lb2-sig lb2-sig-2">
+     (owner, 9/26/26): what to buy first, then what the shelves hold —
+     with room between them and the order above (10/2/26). #}
+  <div class="lb2-sig lb2-sig-2 fc2-stock-sig">
     <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost, largest first</span></div></div>
