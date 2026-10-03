@@ -565,7 +565,7 @@ def close_times_missing(c) -> list:
     return out
 
 
-def setup_review(c, leader_status=None) -> dict:
+def setup_review(c, leader_status=None, omit=()) -> dict:
     """{"items": [{kind, text, line, ...}], "lines": [text]} — the setup a
     week was drafted against, for the generation's review: who counts as
     the manager (to confirm), who was left out, who stands in, the managers
@@ -573,7 +573,9 @@ def setup_review(c, leader_status=None) -> dict:
     with no close time, leader rules that judge nobody, how each of the
     owner's staffing rules is checked, who is training, and who is
     salaried-style. `line` False keeps an item out of the review's lines
-    (shown where the payload puts it)."""
+    (shown where the payload puts it); `omit` drops kinds another part of
+    the review already says (the manager plan's own "which days do the
+    managers work?" question, say)."""
     items = []
     ms = manager_status(c.restaurant_id, c=c)
     items.append({"kind": "managers", "text": ms["line"], "line": False, "managers": ms["managers"]})
@@ -624,4 +626,5 @@ def setup_review(c, leader_status=None) -> dict:
         items.append({"kind": "owner_salaried", "line": True,
                       "text": f"{who} is scheduled as an owner — no overtime line, up to {cap:g}h a week. Mark them "
                               "paid hourly in Team if they're on the clock."})
+    items = [i for i in items if i["kind"] not in set(omit or ())]
     return {"items": items, "lines": [i["text"] for i in items if i.get("line")]}
