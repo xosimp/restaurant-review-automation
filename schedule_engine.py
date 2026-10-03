@@ -223,6 +223,24 @@ def _no_shift_data_message(restaurant_id, restaurant=None):
             "this restaurant has its own shifts on file.")
 
 
+def _prompt_experienced(marked, tenure, constraints, roster_pairs) -> list:
+    """The names the prompt lists as experienced (schedule_requirements.
+    experience_block): the owner's marks and — where experience is judged
+    at all, by the scorer's own rule (shift_quality.experience_judged) —
+    the managers, anyone standing in as one and the salaried people on the
+    roster (schedule audit 10/3/26 D-6). Tenure is the punch count, so an
+    owner who never clocks in (1 shift on file) was listed as "still
+    developing — put each of them on with an experienced hand, never two of
+    them together". A history too short to judge anybody stays unclaimed,
+    as the scorer leaves it."""
+    import shift_quality as _sq
+    marked = sorted({n for n in (marked or []) if n})
+    if constraints is None or not _sq.experience_judged(tenure, marked):
+        return marked
+    defaults = _sq.experienced_by_default(constraints.managers, constraints.acting_managers, constraints.salaried)
+    return sorted(set(marked) | {n for n, _r in (roster_pairs or []) if _sq.name_key(n) in defaults})
+
+
 def _quality_tuning(restaurant_id) -> dict:
     """The calibration the owner applied to the built-in profiles
     (models.get_quality_tuning, SQ-22), or {} — a failed read is said."""
@@ -529,18 +547,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     except Exception as _sfx:
         _soft_fail('people["experienced"]', _sfx, restaurant_id)
         _people["experienced"] = []
-    # Managers and salaried people are experienced by default (schedule
-    # audit 10/3/26 D-6): tenure is the punch count, so an owner who never
-    # clocks in (1 shift on file) was listed as "still developing — put each
-    # of them on with an experienced hand, never two of them together".
-    # Added only where experience is judged at all, as the scorer does — a
-    # history too short to judge anybody stays unclaimed.
     try:
-        if _sq.experience_judged(_people["tenure"], _people["experienced"]):
-            _defaults = _sq.experienced_by_default(constraints.managers, constraints.acting_managers,
-                                                   constraints.salaried)
-            _people["experienced"] = sorted(set(_people["experienced"])
-                                            | {n for n, _r in roster_pairs if _sq.name_key(n) in _defaults})
+        _people["experienced"] = _prompt_experienced(_people["experienced"], _people["tenure"], constraints,
+                                                     roster_pairs)
     except Exception as _sfx:
         _soft_fail('people["experienced"] defaults', _sfx, restaurant_id)
     # What the rest of the product knows about the nights being drafted
