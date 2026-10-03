@@ -2071,7 +2071,8 @@ def _peak_server_overlap(day_rows: list) -> tuple:
 
 def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict,
                               max_overlap: int = None, roles=None, scorer_for=None, constraints=None,
-                              floors: dict = None, only_dates=None, report: dict = None) -> tuple:
+                              floors: dict = None, only_dates=None, report: dict = None,
+                              requirements=None) -> tuple:
     """Deterministic backstop for the "never more than N servers at once"
     hard cap already stated in hours_notes.
 
@@ -2124,7 +2125,9 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     named once in `report["conflicts"]` ([{date, day, at, on, cap, held_by:
     [{kind: "floor", role, daypart, floor} | {kind: "rule", label}]}]) — a
     floor above the section count is the owner's to resolve in settings
-    (floor_cap_conflicts). The sweep runs past midnight (E-19).
+    (floor_cap_conflicts). The sweep runs past midnight (E-19). Among the
+    legal cuts, one that leaves no role further under its shift requirement
+    (`requirements`, already held under the section count) goes first.
     """
     try:
         _cap = int(max_overlap) if max_overlap and int(max_overlap) > 0 else 0
@@ -2140,6 +2143,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     fams = getattr(c, "role_families", None) if c is not None else None
     counted = {_family(x, fams) for x in (roles or ()) if str(x).strip()} or {"server"}
     floors = floors if floors is not None else ((getattr(c, "role_floors", None) or {}) if c is not None else {})
+    index = requirement_index(requirements, c) if requirements else {}
     scorer = scorer_for(preview_rows) if scorer_for else None
     by_date: dict = {}
     for r in preview_rows:
@@ -2207,9 +2211,12 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 if sp and sp[0] <= peak_time < sp[1]:
                     active.append(r)
 
+            def _keeps_requirement(r, cut):
+                after = [x for x in preview_rows if x is not r] + ([cut] if cut is not None else [])
+                return not requirement_regressions(preview_rows, after, index, date, c)
             ranked = sorted((r for r in active if not _pinned(r)), key=_priority)
             want = FILL_SCORE_CANDIDATES if scorer is not None else 1
-            legal, held = [], []
+            legal, spare, held = [], [], []
             for r in ranked:
                 if legal and (_priority(r)[:2] != _priority(legal[0][0])[:2] or len(legal) >= want):
                     break
@@ -2217,10 +2224,14 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 if cut is False:
                     continue
                 ok, why = _cut_ok(r, cut, date, day_name)
-                if ok:
+                if not ok:
+                    if why not in held:
+                        held.append(why)
+                elif index and not _keeps_requirement(r, cut):
+                    spare.append((r, cut))     # legal, but leaves a role short: only if nothing else is
+                else:
                     legal.append((r, cut))
-                elif why not in held:
-                    held.append(why)
+            legal = legal or spare[:want]
             if not legal:
                 # Nothing at the peak may be cut: the night stays over the
                 # cap, and the owner is told what holds it there.
@@ -3651,7 +3662,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 max_overlap=getattr(_restaurant_for_sched, 'section_count', None),
                 roles=getattr(_constraints, "foh_roles", None), scorer_for=_scorer_for,
                 constraints=_constraints, floors=_constraints.role_floors, only_dates=_editable,
-                report=_cap_report,
+                report=_cap_report, requirements=_reqs,
             )
             # Nights the cap could not be met without going under a floor or
             # breaking a rule: named once in the review (P-29).

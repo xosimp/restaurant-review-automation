@@ -651,3 +651,19 @@ def test_the_job_trims_to_the_requirement_and_says_the_conflict_once(db, monkeyp
     assert sum(1 for x in lines if x.startswith("The trim stopped")) == 1
     assert "needs 3 servers" in lines[1]
     assert res["review"]["budget_conflict"]["held"]["requirement"]
+
+
+def test_the_cap_trim_prefers_a_cut_that_keeps_the_requirement():
+    # four servers and the night's one bartender against four sections: the
+    # bartender starts last, but the night needs one; a server is spare
+    rows = [_row(SAT, n, "Server", "5:00pm", "10:00pm") for n in ("Ana", "Bob", "Cy", "Dee")]
+    rows.append(_row(SAT, "Bea", "Bartender", "6:00pm", "11:00pm"))
+    roles = {"server", "bartender"}
+    out, n, _d = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=4, roles=roles)
+    assert "Bea" not in {r["employee"] for r in out}          # by its own order: last in, first cut
+    reqs = [{"date": SAT, "day": "Saturday", "daypart": "night",
+             "roles": [{"role": "Server", "required": 3}, {"role": "Bartender", "required": 1}]}]
+    out, n, _d = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=4, roles=roles,
+                                             requirements=reqs)
+    assert n == 1 and any(r["employee"] == "Bea" and r["shift_end"] == "11:00pm" for r in out)
+    assert se._peak_server_overlap(out)[0] == 4
