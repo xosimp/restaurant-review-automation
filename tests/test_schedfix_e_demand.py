@@ -176,12 +176,19 @@ def test_a_busy_dates_extra_hours_land_on_that_date():
     assert "Halloween: +40%" in busy["daily_targets_text"]
 
 
-def test_a_closed_date_takes_no_hours_and_none_of_the_weeks_sales():
-    dd = {d: {"ratio": 1.0, "projected_sales": 10000.0} for d in WEEK}
-    dd["2026-10-08"] = {"ratio": 0.0, "projected_sales": 0.0, "closed": True}
+def test_a_closed_date_takes_no_hours_and_none_of_the_weeks_sales(db_path):
+    # The shape schedule_economics.date_demand gives a closed date: no sales
+    # of its own, its weekday's typical night kept.
+    rid = models.create_restaurant(models.Restaurant(name="Closed Co", owner_email="c@x.test"), db_path=db_path)
+    for k in range(1, 29):
+        d = date(2026, 10, 3) - timedelta(days=k)
+        _exec("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, total_hours, labor_pct) "
+              "VALUES (?,?,?,?,?,?)", (rid, d.isoformat(), d.strftime("%A"), 10000.0, 60.0, 30.0))
+    dd = econ.date_demand(rid, WEEK, closed_dates={"2026-10-08"}, today=date(2026, 10, 3), db_path=db_path)
+    assert dd["2026-10-08"]["closed"] and dd["2026-10-08"]["projected_sales"] == 0.0
+    assert dd["2026-10-08"]["typical_sales"] == 10000.0
     plan = labor.week_hours_plan({"by_day": _by_day()}, WEEK, labor_target=30.0, hourly_rate=20.0,
-                                 projected_revenue_override=70000, closed_dates={"2026-10-08"},
-                                 date_demand={**dd, "2026-10-08": {"ratio": 1.0, "projected_sales": 10000.0}})
+                                 projected_revenue_override=70000, closed_dates={"2026-10-08"}, date_demand=dd)
     assert "2026-10-08" not in plan["daily_target_hours"] and len(plan["daily_target_hours"]) == 6
     assert plan["projected_revenue"] == 60000.0 and plan["budget_basis"]["closed_share"] == round(1 / 7, 3)
     assert "Closed: 2026-10-08" in plan["daily_targets_text"]

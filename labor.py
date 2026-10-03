@@ -3678,7 +3678,11 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     # so a projection that never counted it loses nothing.
     closed_share = 0.0
     if projected_revenue and closed:
-        weights = {d: float((demand.get(d) or {}).get("projected_sales") or 0) for d in week_dates}
+        # A closed date weighs what a typical night of its weekday sells —
+        # the night the projection counted it as; an open date its own
+        # projected sales.
+        weights = {d: float((demand.get(d) or {}).get("typical_sales" if d in closed else "projected_sales") or 0)
+                   for d in week_dates}
         whole = sum(weights.values())
         if whole > 0:
             closed_share = sum(v for d, v in weights.items() if d in closed) / whole

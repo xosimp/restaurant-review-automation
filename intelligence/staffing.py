@@ -247,7 +247,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                               "nothing is borrowed."}
     prof = categories.profile_for(restaurant) if restaurant is not None else None
     if not prof or not prof.get("confirmed"):
-        return {"available": False, "own_history": False,
+        return {"available": False, "own_history": own_history,
                 "reason": "No restaurant profile is confirmed yet, so there is no group of similar restaurants to "
                           "borrow a starting headcount from. Confirm it under Account → Restaurant profile and the "
                           "first draft can start from theirs."}
@@ -293,7 +293,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
             cohort, label = rung, cohort_label(rung)
             break
     if not ratios:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar ai', '').replace(' on cavnar', '')}) "
                            f"from at least {privacy.MIN_ORGS} separate owners have their staffing measured yet, so no "
                            f"starting headcount is borrowed — the first draft works from your floors alone.")}
@@ -301,7 +301,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                                             "n": min(r["n"] for r in ratios), "ratios": ratios})
     sales, basis = _own_sales_by_weekday(restaurant_id, restaurant, db_path)
     if not sales:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": ("Similar restaurants' staffing is on file, but it is measured per $1k of sales and this "
                            "restaurant has no sales of its own on file yet to scale it by — connect the POS or set a "
                            "revenue target.")}
@@ -319,7 +319,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
             headcount.setdefault((wd, r["daypart"]), {})[role] = people
             by_slot.append({"day": wd, "daypart": r["daypart"], "role": role, "people": people})
     if not headcount:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": "Similar restaurants' ratios, scaled to your sales, come to under one person per shift — nothing borrowed."}
     fams = sorted({r["role_family"] for r in ratios if r["role_family"] in roles})
     which = (" for " + ", ".join(FAMILY_LABELS.get(f, f) for f in fams)
