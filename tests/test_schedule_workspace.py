@@ -255,3 +255,10 @@ def test_overstaffed_is_the_ember_again():
     assert ".lb2-tint{--tc:var(--ember);" in s and ".sb-lane{--tc:var(--ember)}" in s
     ios = open(os.path.join(ROOT, "ios/CavnarAI/CavnarAI/Features/Labor/StaffingBoardSection.swift"), encoding="utf-8").read()
     assert "case .over: return .cavnarEmber" in ios
+
+
+def test_a_person_with_no_hours_reads_no_shifts_not_0h():
+    """At 12px the number face's round 0 beside an h read as the word "Oh"
+    (Will, 10/2/26): a row with no hours this week says so in words."""
+    s = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html")).read()
+    assert "(q.hrs > 0 ? '<span class=\"hb-num\">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts')" in s

@@ -24294,7 +24294,7 @@ function swRenderGrid() {
       var q = g[j], ot = q.hrs > ceil;
       var sc = _swScore(q.name), dots = '';
       if (sc) { dots = '<span class="r" title="' + _escAttr('Operational score ' + sc + ' of 5') + '">'; for (var di = 1; di <= 5; di++) dots += '<i' + (di <= sc ? ' class="on"' : '') + '></i>'; dots += '</span>'; }
-      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '"><span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
+      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + dots + '</span><span class="h' + (ot ? ' ot' : '') + '">' + (q.hrs > 0 ? '<span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts') + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
       for (k = 0; k < days.length; k++) {
         var list = (q.cells[days[k]] || []).slice().sort(function (a, b) { return (_schedMinutes(_schedRows[a].shift_start) || 0) - (_schedMinutes(_schedRows[b].shift_start) || 0); });
         h += '<div class="swg-c" data-swg-drop="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" data-swg-role="' + _escAttr(q.role) + '">';
