@@ -10859,9 +10859,13 @@ def salaried_staff(restaurant) -> list:
     return out
 
 
-def open_days_per_week(restaurant) -> int:
-    """The weekdays the restaurant trades, from its open/close times (7
-    when none are set)."""
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def trading_weekdays(restaurant) -> set:
+    """{"Monday", ...} — the weekdays the restaurant trades, from its
+    open/close times; all seven when none are set. open_days_per_week is
+    its size."""
     import json as _json
     days = set()
     for field in ("open_times_json", "close_times_json"):
@@ -10871,8 +10875,45 @@ def open_days_per_week(restaurant) -> int:
             d = {}
         if isinstance(d, dict):
             days |= {str(k).strip().lower() for k, v in d.items() if str(v or "").strip()}
-    n = len(days & {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
-    return n or 7
+    got = {w for w in _WEEKDAY_NAMES if w.lower() in days}
+    return got or set(_WEEKDAY_NAMES)
+
+
+def open_days_per_week(restaurant) -> int:
+    """The weekdays the restaurant trades, from its open/close times (7
+    when none are set)."""
+    return len(trading_weekdays(restaurant))
+
+
+def salaried_week_share(restaurant, week_dates, closed_dates=()) -> dict:
+    """{"cost", "people", "trading_days", "per_day"} — the salaried staff's
+    share of one drafted week: salaried_day_share on each of its trading
+    days (a weekday the restaurant trades, not a closed date), the same
+    basis the all-in labor % the target judges is built on. None with
+    nobody salaried.
+
+    The schedule's hourly hours budget is the all-in target less this
+    (schedule audit 10/3/26 D-1): sized against the whole 35% with the
+    salaries landing on top, Simple EJ's ran 41-45% all-in while "under
+    budget". Salaries are the owner's alone — a caller that serves a
+    non-owner shows the hourly budget without this figure."""
+    from datetime import datetime as _dt
+    share = salaried_day_share(restaurant)
+    if not share:
+        return None
+    trades = trading_weekdays(restaurant)
+    closed = {str(d)[:10] for d in (closed_dates or ())}
+    days = 0
+    for d in week_dates or ():
+        iso = str(d)[:10]
+        try:
+            wd = _dt.strptime(iso, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        if iso not in closed and wd in trades:
+            days += 1
+    return {"cost": round(float(share) * days, 2), "people": len(salaried_staff(restaurant)),
+            "trading_days": days, "per_day": round(float(share), 2)}
 
 
 def viewer_sees_salaries() -> bool:

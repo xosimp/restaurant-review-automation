@@ -119,9 +119,24 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
         revenue = _econ.projected_weekly_revenue(restaurant_id, week_dates=dates)
     except Exception as e:
         _soft_fail("forecast_preview revenue", e, restaurant_id)
-    plan = week_hours_plan(analysis, dates, target, rate, yoy_context=get_yoy_schedule_context(restaurant_id, dates),
-                           projected_revenue_override=revenue.get("value"), monthly_revenue_target=monthly)
     closed = _rules.closures(restaurant)
+    closed_here = _rules.closed_in(restaurant, dates)
+    # The same plan inputs the draft is given (_build_schedule_result): the
+    # salaried staff's share of the week comes off the all-in target (D-1),
+    # a closed date takes no hours (D-24), and the wage is the measured one
+    # with what of it is assumed said (D-2, E-24). Salaries are the owner's:
+    # anyone else sees the hourly budget without their dollars.
+    try:
+        from models import salaried_week_share, viewer_sees_salaries
+        salaried = salaried_week_share(restaurant, dates, closed_here)
+        show_salary = viewer_sees_salaries()
+    except Exception as e:
+        _soft_fail("forecast_preview salaries", e, restaurant_id)
+        salaried, show_salary = None, False
+    plan = week_hours_plan(analysis, dates, target, rate, yoy_context=get_yoy_schedule_context(restaurant_id, dates),
+                           projected_revenue_override=revenue.get("value"), monthly_revenue_target=monthly,
+                           salaried=salaried, closed_dates=closed_here, rate_basis=analysis.get("rate_basis"),
+                           show_salary=show_salary)
     days = []
     for d in dates:
         wd = _date_of(d).strftime("%A")
@@ -142,7 +157,12 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     out = {"ok": True, "week_start": dates[0], "days": days, "projected_revenue": plan["projected_revenue"],
            "projected_revenue_source": source, "hours_budget": plan["hours_budget"],
            "labor_budget_dollars": plan["labor_budget_dollars"], "labor_target": target,
-           "hourly_rate": round(float(rate or 0), 2)}
+           "hourly_rate": round(float(rate or 0), 2),
+           # What the budget is (all-in target less the salaried share, or
+           # the whole target), the wage's basis and its caveat, and why a
+           # day's target moved (D-1, D-2, E-24, D-24).
+           "budget_basis": plan.get("budget_basis"), "daily_target_basis": plan.get("daily_target_basis"),
+           "daily_target_reasons": plan.get("daily_target_reasons") or {}}
     out["labor_target_label"] = tgt.get("label")
     try:
         out["demand_data_through"] = _demand_data_through(restaurant_id)
@@ -293,6 +313,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
 
     # Revenue override from restaurant target (takes priority over YoY sum)
     monthly_rev_target = float(getattr(restaurant, 'monthly_revenue_target', 0) or 0)
+
+    # The salaried staff's share of this week: the target counts salaries,
+    # so the hourly hours budget is the target's dollars less it (schedule
+    # audit 10/3/26 D-1). Computed in a background job, kept out of the
+    # prompt and the stored result (salaries are the owner's alone).
+    salaried_week = None
+    try:
+        from models import salaried_week_share
+        salaried_week = salaried_week_share(restaurant, next_week_dates, constraints.closed_dates)
+    except Exception as _sfx:
+        _soft_fail('salaried_week', _sfx, restaurant_id)
+        salaried_week = None
 
     # YoY context — same day last year
     yoy_ctx = get_yoy_schedule_context(restaurant_id, next_week_dates)
@@ -606,6 +638,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         section_cap_roles=sorted(constraints.foh_roles or {"server"}),
         open_times=constraints.open_times or {},
         close_times=constraints.close_times or {},
+        salaried_week=salaried_week,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["rotation_plan"] = learning["rotation"]
