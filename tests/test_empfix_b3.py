@@ -525,7 +525,12 @@ def test_the_sibling_conflict_check_reads_every_overlapping_published_week(db):
     _publish(db, sib, [(W1[2], "Dana", "Server", "4:00pm", "11:00pm", 7)])
     _publish(db, sib, [(W2[2], "Dana", "Server", "4:00pm", "11:00pm", 7)], dates=W2)   # next week, published later
     c = schedule_rules.build_constraints(rid, W1, [_day(d) for d in W1])
-    assert W1[2] in (c.blocked_dates.get("dana") or {})
+    # Read as a row of the tail, checked by overlap and rest — no longer a
+    # whole-date block (schedule audit 10/3/26 D-40).
+    assert W1[2] in [r["date"] for r in c.base_rows.get("dana") or []]
+    clash = {"date": W1[2], "day": _day(W1[2]), "employee": "Dana", "role": "Server", "shift_start": "5:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "5", "notes": ""}
+    assert not c.can_add(clash, [])[0]
 
 
 # ── M6: time off ───────────────────────────────────────────────────────────

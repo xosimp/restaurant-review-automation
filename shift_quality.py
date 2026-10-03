@@ -554,14 +554,35 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
     else:
         res.strengths.append("Every required position is filled.")
-    # Somebody already working another site in this group tonight is not
-    # coverage here, whatever the row says.
+    # Somebody already working another site in this group at the same time
+    # is not coverage here, whatever the row says. A shift there that ends
+    # before this one starts (lunch there, dinner here) is not a clash
+    # (schedule audit 10/3/26 D-40); one without times is read as the date.
     for name in ctx.people:
+        mine = [r for r in ctx.rows if (r.get("employee") or "").strip() == name]
         for entry in (ctx.elsewhere.get(name) or []):
-            if entry.get("date") == ctx.date:
-                res.weaknesses.append(
-                    f"{name} is also on the schedule at {entry['location']} on this date.")
-                res.score = min(res.score, 60)
+            if entry.get("date") != ctx.date:
+                continue
+            es, ee = _end_minutes(entry.get("shift_start")), _end_minutes(entry.get("shift_end"))
+            if es >= 0 and ee >= 0 and mine:
+                if ee <= es:
+                    ee += 24 * 60
+                clash = False
+                for r in mine:
+                    rs, re_ = _end_minutes(r.get("shift_start")), _end_minutes(r.get("shift_end"))
+                    if rs < 0 or re_ < 0:
+                        clash = True
+                        break
+                    if re_ <= rs:
+                        re_ += 24 * 60
+                    if rs < ee and es < re_:
+                        clash = True
+                        break
+                if not clash:
+                    continue
+            res.weaknesses.append(
+                f"{name} is also on the schedule at {entry['location']} at the same time.")
+            res.score = min(res.score, 60)
     for clash in ctx.role_conflicts:
         res.weaknesses.append(
             f"{clash['name']} is down for {' and '.join(role_words(r) for r in clash['roles'])} "

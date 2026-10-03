@@ -2499,6 +2499,11 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
                 csv_text = (detail or {}).get("schedule_csv") or ""
                 if csv_text:
                     break
+        if not csv_text and before:
+            # Nothing published or drafted next to it: what the time clock
+            # kept for those days (shift_facts — schedule audit 10/3/26
+            # D-22), so a run that began last week still counts at the seam.
+            return _prior_week_from_punches(restaurant_id, before, days_back)
         if not csv_text:
             return {}
         out = {}
@@ -2528,6 +2533,35 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
         return out
     except Exception:
         return {}
+
+
+def _prior_week_from_punches(restaurant_id, before, days_back=7) -> dict:
+    """_prior_week_assignments from punches: {name: [{date, daypart, day,
+    demand, source: "punches"}]} for the `days_back` days before `before`."""
+    import shift_quality as _sq
+    import shift_facts as _sf
+    from datetime import datetime as _dt, timedelta as _tdp
+    try:
+        start = (_dt.strptime(before, "%Y-%m-%d") - _tdp(days=days_back)).strftime("%Y-%m-%d")
+        end = (_dt.strptime(before, "%Y-%m-%d") - _tdp(days=1)).strftime("%Y-%m-%d")
+        rows = _sf.person_rows(restaurant_id, since=start, until=end) or []
+    except Exception as _px:
+        print(f"[schedule] punches for the seam unavailable for {restaurant_id}: {_px!r}")
+        return {}
+    out = {}
+    for r in rows:
+        date, name = str(r.get("date") or "")[:10], (r.get("employee") or "").strip()
+        if not (date and name) or not (start <= date <= end):
+            continue
+        part = _sq.daypart_of(r.get("shift_start") or "")
+        bucket = out.setdefault(name, [])
+        if not any(e["date"] == date and e["daypart"] == part for e in bucket):
+            bucket.append({"date": date, "daypart": part, "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
+                           "demand": "normal", "source": "punches"})
+    for name, bucket in out.items():
+        bucket.sort(key=lambda e: e["date"])
+        out[name] = bucket[-days_back:]
+    return out
 
 
 def _quality_signals(restaurant_id, result, **extra):

@@ -1747,6 +1747,23 @@ def link_name(restaurant_id, name, db_path=None):
     return pid, (row["display_name"] if row else " ".join(str(name or "").split()))
 
 
+def who_is(restaurant_id, spellings_, db_path=None) -> dict:
+    """{spelling: display name of the one live person it means here, or
+    None} — exactly (their own spelling or an alias); a spelling two people
+    answer to means nobody. One read for many spellings (a sibling site's
+    names matched to this site's people, models.sibling_location_shifts)."""
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+    finally:
+        conn.close()
+    out = {}
+    for sp in spellings_ or []:
+        cands = idx.for_key(_nk(sp))
+        out[sp] = idx.people[next(iter(cands))]["display_name"] if len(cands) == 1 else None
+    return out
+
+
 def similar_on_roster(name, roster_names) -> list:
     """Roster spellings that might be the same person as `name` (similar):
     a suggestion to put to the owner — never applied."""

@@ -9277,57 +9277,81 @@ def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int =
 
 def sibling_location_shifts(restaurant_id: int, dates: list,
                             db_path: str = DB_PATH) -> dict:
-    """{employee_name: [{date, location}]} from the OTHER sites in this group.
+    """{employee_name: [{date, location, shift_start, shift_end}]} from the
+    OTHER sites of this one's organisation.
 
-    Employees are keyed by name per restaurant, which is correct isolation
-    and means a person working two sites of the same group has two unrelated
-    records — and nothing anywhere notices when both sites schedule them on
-    the same night. Scores are deliberately NOT merged: two locations may
-    rate the same person differently and both be right. Only the collision
-    is reported, because only the collision is a fact rather than a judgement.
+    Employees are kept per restaurant, which is correct isolation and means
+    a person working two sites of the same group has two records — matched
+    here through people's identity at both sites (a sibling's "Mike Smith"
+    is this site's "Michael Smith" when either site knows the spelling for
+    him; schedule audit 10/3/26 E-26), and keyed by this site's spelling.
+    Scores are deliberately NOT merged: two locations may rate the same
+    person differently and both be right. Only the collision is reported,
+    and with its times, so a lunch there and a dinner here are not one
+    (D-40).
 
-    Scoped to restaurants sharing this one's location_group AND owner_email,
-    which is how the rest of the codebase defines that tenancy boundary.
-    """
+    The organisation is schedule_rules.org_sibling_ids — its
+    organization_id, else the group under its owner (E-26: the owner-email
+    match alone kept locations onboarded under their GMs' emails apart). Every live
+    published week at a sibling touching `dates` counts (only the newest
+    used to, so a sibling's next week hid this one); a draft there is not a
+    commitment (the same rule schedule_rules._published_tail keeps)."""
     if not dates:
         return {}
+    try:
+        import schedule_rules
+        ids = schedule_rules.org_sibling_ids(restaurant_id, db_path=db_path)
+    except Exception:
+        ids = []
+    if not ids:
+        return {}
+    wanted = set(dates)
+    lo, hi = min(wanted), max(wanted)
     conn = get_conn(db_path)
     try:
-        me = conn.execute("SELECT location_group, owner_email, location_name "
-                          "FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        group = ((me["location_group"] if me else "") or "").strip()
-        if not group:
-            return {}
-        siblings = conn.execute(
-            "SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
-            "WHERE location_group=? AND owner_email=? AND id<>?",
-            (group, me["owner_email"], restaurant_id)).fetchall()
-        if not siblings:
-            return {}
-        out = {}
-        wanted = set(dates)
-        for sib in siblings:
-            # Only a PUBLISHED week at the sibling counts — a draft there is
-            # not a commitment (the same rule schedule_rules._published_tail keeps).
-            _ensure_history_columns(conn)
-            row = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                "ORDER BY id DESC LIMIT 1", (sib["id"],)).fetchone()
-            for line in ((row["schedule_csv"] if row else "") or "").split("\n")[1:]:
-                parts = [p.strip() for p in line.split(",", 7)]
-                if len(parts) < 3:
-                    continue
-                date, name = parts[0], parts[2]
-                if date in wanted and name:
-                    entries = out.setdefault(name, [])
-                    if not any(e["date"] == date and e["location"] == sib["label"]
-                               for e in entries):
-                        entries.append({"date": date, "location": sib["label"]})
-        return out
+        _ensure_history_columns(conn)
+        found = []
+        for sid in ids:
+            meta = conn.execute("SELECT COALESCE(location_name, name) AS label FROM restaurants WHERE id=?",
+                                (sid,)).fetchone()
+            if not meta:
+                continue
+            for row in conn.execute(
+                    "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+                    "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ?", (sid, lo, hi)).fetchall():
+                from schedule_versions import rows_from_csv
+                for r in rows_from_csv(row["schedule_csv"] or ""):
+                    if r.get("date") in wanted and (r.get("employee") or "").strip():
+                        found.append((sid, meta["label"], r))
     except Exception:
         return {}
     finally:
         conn.close()
+    out = {}
+    by_site = {}
+    for sid, _label, r in found:
+        by_site.setdefault(sid, set()).add(r["employee"].strip())
+    here = {}
+    try:
+        import people
+        db = None if db_path == DB_PATH else db_path
+        for sid, names in by_site.items():
+            spelled = people.spellings(sid, sorted(names), db_path=db)
+            for n in names:
+                means = people.who_is(restaurant_id, sorted(spelled.get(n) or {n}), db_path=db)
+                mine = {v for v in means.values() if v}
+                here[(sid, n)] = next(iter(mine)) if len(mine) == 1 else n
+    except Exception:
+        here = {}
+    for sid, label, r in found:
+        n = r["employee"].strip()
+        who = here.get((sid, n), n)
+        entries = out.setdefault(who, [])
+        entry = {"date": r["date"], "location": label, "shift_start": r.get("shift_start") or "",
+                 "shift_end": r.get("shift_end") or ""}
+        if entry not in entries:
+            entries.append(entry)
+    return out
 
 
 def get_unavailability_map(restaurant_id: int, db_path: str = DB_PATH, week_dates=None) -> dict:

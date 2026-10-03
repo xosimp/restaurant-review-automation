@@ -1829,69 +1829,229 @@ def _pending_in_window(restaurant_id, start, end, db_path):
     return {k: sorted(set(v)) for k, v in out.items()}
 
 
+# How far either side of the week the tail reaches: a close the night before
+# or a Monday open after (rest), a run of days that started last week (days
+# in a row), and every payroll week the generated week touches (a payroll
+# week is 7 days, so it never reaches further than this).
+TAIL_DAYS = 7
+
+_LIVE_PUBLISHED = ("published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM "
+                   "schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND "
+                   "nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND "
+                   "nw.id > schedule_history.id)")
+
+
 def _published_tail(c: Constraints, restaurant_id, db_path):
-    """Rows from the last PUBLISHED schedule here (and at sibling sites)
-    that fall in a payroll bucket this week touches or in the seven days
-    before it — the hours count toward the ceiling, the rows toward rest,
-    and a sibling's date blocks the person here."""
-    from schedule_versions import rows_from_csv
+    """The shifts around this week its rules must see — per person in
+    c.base_rows (rest, overlap, days in a row) and per payroll week in
+    c.base_hours (hours toward the ceiling) — over TAIL_DAYS either side:
+
+      1. this site's live published weeks that overlap that window, every
+         one of them (schedule audit 10/3/26 E-11: "the two newest by id"
+         returned next week and this week once both were published, and
+         last week — the one the rest rule, the run and Simple EJ's Wed-Sun
+         payroll hours need — dropped out);
+      2. for dates no published week covers, the draft in force of that
+         week, each row labelled a draft (E-10: generating two weeks ahead
+         double-booked hours a draft already gave);
+      3. for past dates neither covers, the punches (shift_facts — D-22:
+         with no published week, a Sunday close then a Monday open and a
+         run begun last week were invisible), labelled punches;
+      4. the organisation's other sites (E-26: preferences.org_location_ids
+         — the organisation, not a matching owner email, so locations
+         onboarded under their GMs' emails see each other), their live
+         published weeks, each row matched to this site's person through
+         people's identity at both sites and kept as a row of the tail: it
+         is checked by overlap and rest like any other (D-40 — a lunch at
+         one site no longer bars dinner at the other), and its hours count
+         toward the payroll week.
+
+    Every row carries this site's spelling of the person (c.key/display),
+    and `_source` / `_site` / `_week` say where it came from."""
     if not c.week_dates:
         return
+    from schedule_versions import rows_from_csv
     buckets = {c.bucket(d) for d in c.week_dates}
-    first = datetime.strptime(c.week_dates[0], "%Y-%m-%d")
-    window_start = (first - timedelta(days=7)).strftime("%Y-%m-%d")
+    first = datetime.strptime(min(c.week_dates), "%Y-%m-%d")
+    last = datetime.strptime(max(c.week_dates), "%Y-%m-%d")
+    lo = (first - timedelta(days=TAIL_DAYS)).strftime("%Y-%m-%d")
+    hi = (last + timedelta(days=TAIL_DAYS)).strftime("%Y-%m-%d")
+    week_set = set(c.week_dates)
     conn = get_conn(db_path)
     try:
-        me = conn.execute("SELECT location_group, owner_email FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        own = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                           "AND week_end >= ? ORDER BY id DESC LIMIT 2", (restaurant_id, window_start)).fetchall()
-        sibs = []
-        group = ((me["location_group"] if me else "") or "").strip()
-        if group:
-            # Every live published sibling week that overlaps the window,
-            # not just the sibling's newest: once a sibling published next
-            # week, this week's shifts there dropped out and a claim or swap
-            # here could double-book someone across sites (employee audit
-            # LG-20).
-            week_end = max(c.week_dates)
-            for s in conn.execute("SELECT id, COALESCE(location_name, name) AS label FROM restaurants "
-                                  "WHERE location_group=? AND owner_email=? AND id<>?", (group, me["owner_email"], restaurant_id)).fetchall():
-                for row in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                                        "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
-                                        (s["id"], window_start, week_end)).fetchall():
-                    sibs.append((s["label"], row["schedule_csv"]))
+        published = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+            + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
+            (restaurant_id, lo, hi)).fetchall()
+        drafts = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+            "published_at IS NULL AND superseded_by IS NULL AND substr(week_end,1,10) >= ? "
+            "AND substr(week_start,1,10) <= ? ORDER BY id DESC", (restaurant_id, lo, hi)).fetchall()
     finally:
         conn.close()
+
+    def _dates(w):
+        try:
+            a = datetime.strptime(str(w["week_start"] or "")[:10], "%Y-%m-%d")
+            b = datetime.strptime(str(w["week_end"] or w["week_start"] or "")[:10], "%Y-%m-%d")
+        except ValueError:
+            return set()
+        return {(a + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((b - a).days + 1)}
+    covered = set()
+    for w in published:
+        covered |= _dates(w)
     seen = set()
-    for row in own:
-        for r in rows_from_csv(row["schedule_csv"]):
-            key = r["employee"].strip().lower()
-            sig = (key, r["date"], r["shift_start"])
-            if sig in seen or r["date"] in c.week_dates:
+
+    def _take(r, source, site=None, week=None, key=None):
+        k = key or c.key(r.get("employee"))
+        d = r.get("date") or ""
+        if not k or not d or d in week_set:
+            return
+        sig = (site or "", k, d, r.get("shift_start"))
+        if sig in seen:
+            return
+        seen.add(sig)
+        row = dict(r, employee=c.display.get(k, r.get("employee")))
+        if source != "published":
+            row["_source"] = source
+        if site:
+            row["_site"] = site
+        if week:
+            row["_week"] = week
+        if lo <= d <= hi:
+            c.base_rows.setdefault(k, []).append(row)
+        b = c.bucket(d)
+        if b in buckets:
+            c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
+
+    for w in published:
+        for r in rows_from_csv(w["schedule_csv"]):
+            _take(r, "published")
+    # The draft in force of a week nothing published covers — its newest
+    # unsent, unsuperseded generation — never this week's own draft.
+    drafted = set()
+    for w in drafts:
+        ws = str(w["week_start"] or "")[:10]
+        span = _dates(w)
+        if ws in drafted or not (span - covered - week_set):
+            continue
+        drafted.add(ws)
+        for r in rows_from_csv(w["schedule_csv"]):
+            if (r.get("date") or "") not in covered:
+                _take(r, "draft", week=ws)
+        covered |= span
+    # The time clock for past dates nothing else covers (D-22).
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.now().strftime("%Y-%m-%d")
+    gap_days = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, TAIL_DAYS + 1))
+                      if d not in covered and d < today)
+    if gap_days:
+        try:
+            import shift_facts
+            for r in shift_facts.person_rows(restaurant_id, since=gap_days[0], until=gap_days[-1],
+                                             db_path=None if db_path == DB_PATH else db_path):
+                if (r.get("date") or "")[:10] in gap_days:
+                    hours = r.get("actual_hours") if r.get("actual_hours") not in (None, "") else r.get("scheduled_hours")
+                    _take(dict(r, date=str(r["date"])[:10], scheduled_hours=hours if hours is not None else ""),
+                          "punches")
+        except Exception as exc:
+            _input_problem(c, "last week's punches", exc)
+    # The organisation's other sites (E-26, D-40).
+    for sib_id, label, sib_rows in _sibling_weeks(restaurant_id, lo, hi, db_path):
+        names = sorted({(r.get("employee") or "").strip() for r in sib_rows} - {""})
+        try:
+            import people
+            spelled = people.spellings(sib_id, names, db_path=None if db_path == DB_PATH else db_path)
+        except Exception:
+            spelled = {}
+        for r in sib_rows:
+            n = (r.get("employee") or "").strip()
+            mine = {c.key(sp) for sp in (spelled.get(n) or {_fold_name(n)})} & set(c.display)
+            if len(mine) > 1:
+                continue                  # two people here answer to that spelling: never guessed
+            k = next(iter(mine)) if mine else c.key(n)
+            if (r.get("date") or "") in week_set:
+                # On a date being built, it is still a row of the tail: kept
+                # for overlap and rest, never a whole-date block (D-40).
+                row = dict(r, employee=c.display.get(k, n), _site=label)
+                sig = (label, k, row["date"], row.get("shift_start"))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                c.base_rows.setdefault(k, []).append(row)
+                b = c.bucket(row["date"])
+                if b in buckets:
+                    c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
+            else:
+                _take(r, "published", site=label, key=k)
+
+
+def _fold_name(name) -> str:
+    return " ".join(str(name or "").split()).lower()
+
+
+def org_sibling_ids(restaurant_id, db_path=DB_PATH) -> list:
+    """The other locations of this one's organisation (schedule audit
+    10/3/26 E-26): every location sharing its organization_id — the
+    organisation, one account's, is the owner check, so locations onboarded
+    under their GMs' emails are siblings once linked to it — else, for a
+    location linked to none, the same group under the same owner email (the
+    old rule; a group name alone is never enough: two unrelated "Syrup"s).
+    Read from the column itself: the Restaurant object carries no
+    organization_id."""
+    conn = get_conn(db_path)
+    try:
+        me = conn.execute("SELECT organization_id, location_group, owner_email FROM restaurants WHERE id=?",
+                          (restaurant_id,)).fetchone()
+        if not me:
+            return []
+        if me["organization_id"]:
+            rows = conn.execute("SELECT id FROM restaurants WHERE organization_id=? AND id<>?",
+                                (me["organization_id"], restaurant_id)).fetchall()
+        elif (me["location_group"] or "").strip():
+            rows = conn.execute("SELECT id FROM restaurants WHERE TRIM(location_group)=? "
+                                "AND LOWER(TRIM(COALESCE(owner_email,'')))=? AND id<>?",
+                                (me["location_group"].strip(), (me["owner_email"] or "").strip().lower(),
+                                 restaurant_id)).fetchall()
+        else:
+            rows = []
+    finally:
+        conn.close()
+    return sorted(r["id"] for r in rows)
+
+
+def _sibling_weeks(restaurant_id, lo, hi, db_path):
+    """[(site id, label, rows)] — the live published rows in [lo, hi] at
+    every other location of this one's organisation (org_sibling_ids —
+    E-26), one entry per site."""
+    try:
+        ids = org_sibling_ids(restaurant_id, db_path)
+    except Exception:
+        ids = []
+    if not ids:
+        return []
+    from schedule_versions import rows_from_csv
+    out = []
+    conn = get_conn(db_path)
+    try:
+        for sid in ids:
+            meta = conn.execute("SELECT COALESCE(location_name, name) AS label FROM restaurants WHERE id=?",
+                                (sid,)).fetchone()
+            if not meta:
                 continue
-            seen.add(sig)
-            if r["date"] >= window_start:
-                c.base_rows.setdefault(key, []).append(r)
-            b = c.bucket(r["date"])
-            if b in buckets:
-                c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
-    sib_seen = set()
-    for label, csv_text in sibs:
-        for r in rows_from_csv(csv_text):
-            key = r["employee"].strip().lower()
-            sig = (label, key, r["date"], r["shift_start"])
-            if sig in sib_seen:
-                continue
-            sib_seen.add(sig)
-            if r["date"] in c.week_dates:
-                c.blocked_dates.setdefault(key, {}).setdefault(r["date"], f"already scheduled at {label}")
-            elif r["date"] >= window_start:
-                # A close at the other site the night before is still a close
-                # for the rest rule here.
-                c.base_rows.setdefault(key, []).append(r)
-            b = c.bucket(r["date"])
-            if b in buckets:
-                c.base_hours.setdefault(key, {})[b] = c.base_hours.get(key, {}).get(b, 0.0) + row_hours(r)
+            rows = []
+            for w in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+                                  + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? "
+                                  "ORDER BY id DESC", (sid, lo, hi)).fetchall():
+                rows += [r for r in rows_from_csv(w["schedule_csv"]) if lo <= (r.get("date") or "") <= hi]
+            if rows:
+                out.append((sid, meta["label"], rows))
+    finally:
+        conn.close()
+    return out
 
 
 # ── the violation sweep ────────────────────────────────────────────────────
@@ -2139,28 +2299,39 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         tail = [(None, r, *shift_span(r, c.tz)) for r in tail_rows]
         tail = [(i, r, s, e) for i, r, s, e in tail if s]
         need = float(c.compliance.get("min_rest_hours") or 0)
-        allspans = sorted(spans + tail, key=lambda t: t[2])
-        for a in range(1, len(allspans)):
-            i_prev, r_prev, s_prev, e_prev = allspans[a - 1]
-            i_cur, r_cur, s_cur, e_cur = allspans[a]
-            if i_cur is None:
-                continue
-            if s_cur < e_prev:
-                # A tail row (another site's, a draft's) at the same start is
-                # still another shift; only this week's own duplicate is the
-                # double booking flagged above.
-                if (i_prev is None or r_cur.get("shift_start") != r_prev.get("shift_start")
-                        or r_cur.get("date") != r_prev.get("date")):
-                    out.append(_v("overlap", i_cur, r_cur, f"overlaps {_whose(r_prev, r_cur)}"
-                                  f"{r_prev.get('shift_start')}–{r_prev.get('shift_end')} on "
-                                  f"{_mdy_safe(r_prev.get('date'))}{_tail_note(r_prev)}"))
-                continue
-            gap = (s_cur - e_prev).total_seconds() / 3600
-            # Same date = a double shift, not a rest breach (see rest_ok).
-            if need and gap < need - 0.01 and r_cur.get("date") != r_prev.get("date"):
-                out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since {_whose(r_prev, r_cur, 'previous shift')}"
-                                                         f"{_tail_note(r_prev)}, the rule is {need:g}h",
-                              severity=round(need - gap, 2)))
+        allspans = sorted(spans + tail, key=lambda t: (t[2], t[3]))
+        # Each span against the one with the latest end so far: an overlap
+        # inside a long shift, and a tail row AFTER a row of this week (next
+        # week's published Monday open, a sibling's dinner after lunch here),
+        # were never compared — only the later-starting row of a pair was
+        # checked, and only when it was this week's. A breach is charged to
+        # the row of this week in the pair.
+        reach = None
+        for cur in allspans:
+            i_cur, r_cur, s_cur, e_cur = cur
+            if reach is not None and not (reach[0] is None and i_cur is None):
+                i_p, r_p, _s_p, e_p = reach
+                own_i, own_r, other = (i_cur, r_cur, r_p) if i_cur is not None else (i_p, r_p, r_cur)
+                if s_cur < e_p:
+                    # A tail row (another site's, a draft's) at the same start
+                    # is still another shift; only this week's own duplicate
+                    # is the double booking flagged above.
+                    if (i_p is None or i_cur is None or r_cur.get("shift_start") != r_p.get("shift_start")
+                            or r_cur.get("date") != r_p.get("date")):
+                        out.append(_v("overlap", own_i, own_r, f"overlaps {_whose(other, own_r)}"
+                                      f"{other.get('shift_start')}–{other.get('shift_end')} on "
+                                      f"{_mdy_safe(other.get('date'))}{_tail_note(other)}"))
+                else:
+                    gap = (s_cur - e_p).total_seconds() / 3600
+                    # Same date = a double shift, not a rest breach (see rest_ok).
+                    if need and gap < need - 0.01 and r_cur.get("date") != r_p.get("date"):
+                        said = ("since " + _whose(other, own_r, "previous shift") if own_r is r_cur
+                                else "before " + _whose(other, own_r, "next shift"))
+                        out.append(_v("rest_gap", own_i, own_r, f"{gap:.1f}h {said}{_tail_note(other)}, "
+                                                                 f"the rule is {need:g}h",
+                                      severity=round(need - gap, 2)))
+            if reach is None or e_cur > reach[3]:
+                reach = cur
         # too many days in a row — the published tail counts, so a Saturday
         # and Sunday already sent plus Monday to Friday here reads as seven
         max_run = c.compliance.get("max_consecutive_days")
