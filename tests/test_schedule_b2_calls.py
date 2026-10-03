@@ -926,3 +926,24 @@ def test_an_auto_draft_with_unwritten_days_is_announced_as_partly_drafted(db, mo
     strategy_jobs._draft_one(r, db, _SE, lambda k: None, period="2026-10-01")
     assert fired and fired[0][0] == "Next week's schedule is partly drafted"
     assert "1 day couldn't be written" in fired[0][1]
+
+
+def test_a_read_once_admin_value_is_still_removed_after_its_first_read(db, monkeypatch):
+    """finish_async_job writes only a pending job now (P-22); the console's
+    read-once scrub of a finished job's result has its own door."""
+    import admin_routes
+    auth.init_auth(db_path=db)
+    hq = create_restaurant(Restaurant(name="Cavnar AI Admin", owner_email="will@cavnar.test"), db_path=db)
+    uid = auth.create_user(hq, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db)
+    app = Flask(__name__, template_folder="../templates")
+    app.secret_key = "b2"
+    app.register_blueprint(admin_routes.admin_bp)
+    c = app.test_client()
+    c.set_cookie("session_token", auth.create_session(uid, password_verified_at=True, db_path=db))
+    ops.start_async_job("seed-9", "admin_review_account", 0)
+    ops.finish_async_job("seed-9", "done", {"ok": True, "password_once": "abcde-FGHJK", "_scrub": ["password_once"]})
+    first = c.get("/admin/api/admin-jobs/seed-9")
+    assert first.status_code == 200 and first.get_json().get("password_once") == "abcde-FGHJK"
+    again = c.get("/admin/api/admin-jobs/seed-9")
+    assert "abcde" not in again.get_data(as_text=True)
+    assert ops.read_async_job("seed-9")["status"] == "done"

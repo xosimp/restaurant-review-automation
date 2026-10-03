@@ -1120,6 +1120,23 @@ def finish_async_job(job_id, status, result):
         log.error(f"finish_async_job({job_id}) failed: {e}")
 
 
+def rewrite_async_result(job_id, result) -> None:
+    """Replace a FINISHED job's stored result, keeping its status — the
+    admin console removing a read-once value (the review account's new
+    password) after its first read. finish_async_job writes only a pending
+    job now (P-22), so this rewrite has its own door."""
+    import json
+    try:
+        payload = json.dumps(result)
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET result_json=? WHERE job_id=? AND status<>'pending'",
+                     (payload, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"rewrite_async_result({job_id}) failed: {e}")
+
+
 def set_async_job_deadline(job_id, deadline_ts) -> None:
     """Record the wall-clock time (a time.time() value) by which a job will
     have finished or failed (schedule audit 10/3/26 P-22). Past it, plus
