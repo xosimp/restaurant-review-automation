@@ -24,6 +24,8 @@ from datetime import date, timedelta
 import pytest
 from flask import Flask
 
+import client_api  # noqa: F401  (imported before the fixture redirects every bound get_conn)
+import delayed  # noqa: F401
 import models
 import schedule_intel
 import schedule_learning as sl
@@ -985,6 +987,23 @@ def test_just_this_week_keeps_the_change_out_of_the_habits():
         _v(rid, hid, "published", _crew(mon, WITHOUT_BOB))
     assert not _bob_off(rid), "a one-off the owner named was learned as a habit"
     assert sum(1 for w in sl.learning_weeks(rid) if w["excluded"]["answered"]) == 1
+
+
+def test_a_one_off_stays_a_one_off_after_a_rename():
+    import people
+    rid = _rid()
+    for w in (2, 1):
+        mon = _monday(w)
+        hid = _hist(rid, mon, _crew(mon, EVERYONE), published=True)
+        _v(rid, hid, "generated", _crew(mon, EVERYONE), by="Cavnar AI", auth="system")
+        q = _save(rid, hid, _crew(mon, WITHOUT_BOB))["why_questions"]
+        sl.answer_edit_question(rid, hid, q[0]["key"], "this_week", user={"id": 1, "role": "owner"})
+        _v(rid, hid, "published", _crew(mon, WITHOUT_BOB))
+    people.stamp_person_ids(rid)
+    people.rename_person(rid, people.person_id_for(rid, "Bob"), "Bob Smith")
+    assert not [p for p in sv.learned_patterns(rid) if p["kind"] == "moved_off"], \
+        "a rename turned the owner's one-offs back into a habit"
+    assert all(w["excluded"]["answered"] == 1 for w in sl.learning_weeks(rid))
 
 
 def test_a_call_off_goes_to_attendance():

@@ -1047,6 +1047,10 @@ class _WeekData:
                 "redo_dates": back["redo_dates"] | redo, "chain": back["chain"] + [hid]}
 
     def answered_keys(self, chain) -> set:
+        """The row keys of the changes the owner called a one-off (this week
+        only, a call-off), names read as the person they mean now — the
+        rows are, so a rename in between does not unmatch them."""
+        lower = {str(k).strip().lower(): str(v).strip().lower() for k, v in (self.canon or {}).items()}
         out = set()
         for hid in chain:
             for a in self.answers.get(hid) or []:
@@ -1055,9 +1059,10 @@ class _WeekData:
                 if (a.get("authority") or "") == "admin" and not a.get("adopted_at"):
                     continue
                 try:
-                    out |= {tuple(str(k).split("|")[:3]) for k in json.loads(a.get("keys_json") or "[]")}
+                    keys = [str(k).split("|") for k in json.loads(a.get("keys_json") or "[]")]
                 except (TypeError, ValueError):
                     continue
+                out |= {(k[0], lower.get(k[1], k[1]), k[2]) for k in keys if len(k) >= 3}
         return out
 
 
