@@ -4774,25 +4774,25 @@ def mobile_labor_team(current_user):
                            note=None if team else
                                 "Upload your shifts CSV under Account, or add your team by "
                                 "hand below, and they'll appear here to rate."), 200
-        shifts = load_shifts_for_restaurant(rid)
-        # Most recent role each person worked, and how many shifts — enough
-        # to order the list usefully without inventing a roster.
+        # The one roster (staff_settings.roster): each person once however
+        # the POS spells them, their role the one they worked most over
+        # their last eight weeks — this screen kept the newest punch's role,
+        # so one host pickup made a bartender a Host here (schedule audit
+        # 10/3/26 D-17) — and who has stopped working, with when (E-3).
+        _everyone = _ss_team.roster(rid, include_inactive=True)
+        try:
+            _dormant = _ss_team.dormant_people(rid, people=_everyone)
+        except Exception as _dx:
+            print(f"[team] dormancy unavailable for {rid}: {_dx!r}")
+            _dormant = {}
         seen = {}
-        for sh in shifts:
-            n = (sh.get("employee") or "").strip()
-            if not n or _ss_team.name_key(n) in _gone:
+        for e in _everyone:
+            if not e.get("active", True) or _ss_team.name_key(e["name"]) in _gone:
                 continue
-            e = seen.setdefault(n, {"name": n, "role": None, "shifts": 0, "last": ""})
-            e["shifts"] += 1
-            d = sh.get("date") or ""
-            if d >= e["last"]:
-                e["last"] = d
-                e["role"] = (sh.get("role") or "").strip() or e["role"]
-
-        shift_names = set(seen.keys())
-        for m in manual:
-            if m["name"] not in seen:
-                seen[m["name"]] = {"name": m["name"], "role": m["role"], "shifts": 0, "last": ""}
+            seen[e["name"]] = {"name": e["name"], "role": e.get("role"), "shifts": e.get("shifts") or 0,
+                               "last": e.get("last_worked") or "", "is_manual": bool(e.get("is_manual")),
+                               **_ss_team.dormancy_fields(e, _dormant)}
+        shift_names = {n for n, e in seen.items() if not e["is_manual"]}
 
         caps = get_capabilities(rid)
         team = []
@@ -4801,6 +4801,8 @@ def mobile_labor_team(current_user):
             closer = (caps.get(n) or {}).get("can_close") or {}
             team.append({
                 "name": n, "role": e["role"], "shifts": e["shifts"],
+                "dormant": e["dormant"], "last_worked_label": e["last_worked_label"],
+                "dormant_text": e["dormant_text"],
                 "score": c.get("score"),
                 # Authorized to close. A fact about a person that owes
                 # nothing to their rating, and the only way a leadership

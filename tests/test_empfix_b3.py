@@ -484,7 +484,9 @@ def test_withdraw_and_decline_tell_the_people_waiting(db, told):
     told["staff"].clear()
     assert srq.withdraw(rid, req["id"], "Ana")
     gone = next(n for n in told["staff"] if n["subject"].startswith("Open shift gone"))
-    assert gone["to"] == offered_to
+    # The same people, whatever order: the open-shift notice goes round in
+    # turn now (schedule audit 10/3/26 E-3), the "gone" one by name.
+    assert sorted(gone["to"]) == sorted(offered_to)
     swap = srq.request_swap(rid, "Ana", W1[2], "11:00am", "Ben", W1[3], "11:00am", now=NOW)
     told["managers"].clear()
     srq.respond_swap(rid, swap["id"], "Ben", False, now=NOW)

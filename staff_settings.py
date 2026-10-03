@@ -612,7 +612,7 @@ def dormant_people(restaurant_id, people=None, exempt=(), today=None, db_path=DB
             continue                      # hand-added (back) after their last shift
         st = e.get("settings") or {}
         if str(st.get("updated_at") or "")[:10] >= cutoff or st.get("floor_manager") is True \
-                or st.get("standing_shifts"):
+                or st.get("standing_shifts") or "manager" in (st.get("certifications") or []):
             continue
         if k in lately:
             continue
@@ -624,6 +624,18 @@ def dormant_people(restaurant_id, people=None, exempt=(), today=None, db_path=DB
             pass
         out[k] = last
     return out
+
+
+def dormancy_fields(entry, dormant: dict) -> dict:
+    """{dormant, last_worked_label, dormant_text} for one roster entry —
+    what the team page shows beside a person who has stopped working:
+    "Not worked since 8/14/26 — deactivate?" (E-3). Marking them still here
+    (any settings save, e.g. active=true) keeps them for DORMANT_WEEKS more."""
+    from time_utils import mdy
+    last = entry.get("last_worked") or ""
+    gone = name_key(entry.get("name")) in (dormant or {})
+    return {"dormant": gone, "last_worked_label": mdy(last) if last else None,
+            "dormant_text": f"Not worked since {mdy(last)} — deactivate?" if gone and last else None}
 
 
 def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:

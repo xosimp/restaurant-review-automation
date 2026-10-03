@@ -1290,6 +1290,24 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         person_note_holds.apply_holds(c, restaurant_id, db_path=db_path)
     except Exception as exc:
         _input_problem(c, "scheduling note holds", exc)
+    # Who has stopped working (schedule audit 10/3/26 E-3, D-17): no shift in
+    # staff_settings.DORMANT_WEEKS weeks, not hand-added since, nothing on
+    # file saying they are still here. Still on the roster — a row the owner
+    # writes for them is legal — but never chosen by a fill (fillable), left
+    # off the model's roster and the open-shift broadcast. Managers,
+    # salaried people and anyone with standing shifts or an acting-manager
+    # date never are: they barely punch.
+    try:
+        import staff_settings as _ss
+        exempt = (set(c.managers) | set(c.salaried) | set(c.standing_shifts or {})
+                  | set(c.acting_managers or {}) | set(c.trainees or {}))
+        dormant = _ss.dormant_people(restaurant_id, people=_people, exempt=exempt, db_path=db_path)
+        for e in _people:
+            k = e["name"].strip().lower()
+            if k in c.active and _ss.name_key(e["name"]) in dormant:
+                c.dormant[k] = dormant[_ss.name_key(e["name"])]
+    except Exception as exc:
+        _input_problem(c, "who has stopped working", exc)
     return c
 
 

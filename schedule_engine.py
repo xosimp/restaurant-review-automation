@@ -289,7 +289,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # review panel and the publish gate.
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
     roster_rows = _staff.roster(restaurant_id)
-    roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows]
+    # Somebody with no shift in weeks is not offered to the model (schedule
+    # audit 10/3/26 E-3): the departed manager "Dana" was drafted onto a
+    # Wednesday close. They stay on the roster — a row the owner writes for
+    # them is legal — and the review names who was left off and since when.
+    _dormant = {e["name"]: constraints.dormant[constraints.key(e["name"])] for e in roster_rows
+                if constraints.key(e["name"]) in (constraints.dormant or {})}
+    roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows if e["name"] not in _dormant]
 
     # Revenue override from restaurant target (takes priority over YoY sum)
     monthly_rev_target = float(getattr(restaurant, 'monthly_revenue_target', 0) or 0)
@@ -647,6 +653,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     if roster_pairs:
         result["roster"] = sorted(n for n, _r in roster_pairs)
     result["roster_roles"] = {n: r for n, r in roster_pairs}
+    result["dormant"] = _dormant
     result["pairs"] = pairs
     result["reliability"] = reliability
     result["learned_patterns"] = learned
@@ -3661,6 +3668,14 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
             _not = [n for n in (result.get("roster") or []) if n and n.strip().lower() not in _on]
             result["not_scheduled"] = _not
+            _gone = result.get("dormant") or {}
+            if _gone:
+                from time_utils import mdy as _mdy_gone
+                _gl = sorted(_gone.items(), key=lambda kv: kv[1], reverse=True)
+                result["review"]["lines"].append(
+                    f"Left off this draft — no shift in {_staff.DORMANT_WEEKS}+ weeks: "
+                    + ", ".join(f"{n} (last {_mdy_gone(d)})" for n, d in _gl[:6]) + ("…" if len(_gl) > 6 else "")
+                    + ". Deactivate anyone who has left, or mark them still here on the Team page.")
             if _not:
                 _full = [n for n in _not if (_constraints.employment.get(n.lower()) == "full")]
                 result["review"]["lines"].append(

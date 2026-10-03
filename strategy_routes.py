@@ -1652,9 +1652,17 @@ def _do_roster_get(u):
     except Exception:
         rel = {}
     out = []
-    for e in _ss.roster(rid, include_inactive=True):
+    _everyone = _ss.roster(rid, include_inactive=True)
+    try:
+        # Who has stopped working (schedule audit 10/3/26 E-3): "Not worked
+        # since 8/14/26 — deactivate?" beside them.
+        _dormant = _ss.dormant_people(rid, people=_everyone)
+    except Exception as _dx:
+        print(f"[roster] dormancy unavailable for {rid}: {_dx!r}")
+        _dormant = {}
+    for e in _everyone:
         out.append({**e, "score": scores.get(e["name"]), "can_close": bool(closers.get(e["name"])),
-                    "reliability": rel.get(e["name"])})
+                    "reliability": rel.get(e["name"]), **_ss.dormancy_fields(e, _dormant)})
     suggested = []
     try:
         import schedule_intel as _si
