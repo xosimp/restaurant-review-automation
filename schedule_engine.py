@@ -5650,13 +5650,13 @@ class RepairContext:
         self.trim_ok = (result.get("budget_basis") or {}).get("trim_ok") is not False
         self.section_count = getattr(restaurant, "section_count", None) if restaurant is not None else None
         self.rainy = set()
-        for w in (result.get("weather_forecast") or []):
+        for _w in (result.get("weather_forecast") or []):
             # A stale forecast copy never trims a shift for rain (re-audit B3#6).
-            if w.get("stale"):
+            if _w.get("stale"):
                 continue
             try:
-                if int(w.get("precip_pct") or 0) >= 60:
-                    self.rainy.add(w.get("date"))
+                if int(_w.get("precip_pct") or 0) >= 60:
+                    self.rainy.add(_w.get("date"))
             except (TypeError, ValueError):
                 pass
         self.scorer_for = _pass_scorer(restaurant_id, result, self.signals, self.weights) \
@@ -6324,9 +6324,10 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
 def _take_new_time_off(c, fresh) -> list:
     """Into `c`, what `fresh` (the same week's rules read again) says about
     who can work that `c` did not: approved time off, whole days and parts
-    of days, pending requests and deactivations — never taking a fact away
-    (a request cancelled meanwhile stays the stricter reading until the next
-    check). Returns [{name, dates}] of the newly approved days off."""
+    of days, pending requests, a weekday or daypart marked unavailable, and
+    deactivations — never taking a fact away (a request cancelled meanwhile
+    stays the stricter reading until the next check). Returns [{name,
+    dates}] of the newly approved days off."""
     week = set(c.week_dates or [])
     display = getattr(c, "display", None) or {}
     newly = []
@@ -6356,6 +6357,16 @@ def _take_new_time_off(c, fresh) -> list:
         add = {d for d in (ds or ()) if d in week and d not in (blocked.get(key) or {})}
         if add:
             c.pending_off.setdefault(key, set()).update(add)
+    for key, days in (getattr(fresh, "unavailable_days", None) or {}).items():
+        if days:
+            c.unavailable_days[key] = set(c.unavailable_days.get(key) or ()) | set(days)
+    parts = {"any": {"morning", "night"}, "morning": {"morning"}, "night": {"night"}, "off": set()}
+    for key, by_day in (getattr(fresh, "daypart_avail", None) or {}).items():
+        mine = c.daypart_avail.setdefault(key, {})
+        for day, now in (by_day or {}).items():
+            # The narrower of the two readings: a daypart free in both.
+            both = parts.get(mine.get(day, "any"), parts["any"]) & parts.get(now, parts["any"])
+            mine[day] = next((k for k, v in parts.items() if v == both), "any")
     gone = set(getattr(fresh, "inactive", None) or ()) - set(c.inactive or ())
     if gone:
         c.inactive = set(c.inactive or ()) | gone

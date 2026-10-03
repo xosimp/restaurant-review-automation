@@ -492,10 +492,16 @@ def test_the_rules_are_read_again_and_only_take_in_who_can_work():
            pending_off={"ana": {FRI}})
     fresh = _c(blocked_dates={"ana": {FRI: "on approved time off"}, "bo": {MON: "on approved time off"}},
                pending_off={}, inactive={"bo"})
+    c.daypart_avail = {"ana": {"Monday": "morning"}}
+    fresh.unavailable_days = {"ana": {"Sunday"}}
+    fresh.daypart_avail = {"ana": {"Monday": "night", "Tuesday": "morning"}}
     newly = se._take_new_time_off(c, fresh)
     assert newly == [{"name": "Ana", "dates": [FRI]}]
     assert c.blocked_dates["ana"] == {FRI: "on approved time off"} and FRI not in c.pending_off["ana"]
     assert "bo" in c.inactive and "bo" not in c.active
+    # Availability marked meanwhile is taken in at its narrower reading.
+    assert c.unavailable_days["ana"] == {"Sunday"}
+    assert c.daypart_avail["ana"] == {"Monday": "off", "Tuesday": "morning"}
 
 
 # ══ P-43 / SQ-20: the quality gate ═════════════════════════════════════════
