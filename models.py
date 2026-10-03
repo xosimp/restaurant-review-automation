@@ -7878,6 +7878,20 @@ def init_schedule_versions(db_path: str = DB_PATH):
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 raise
+    # Whose each changed row is, and an admin's save the owner counted as
+    # theirs (schedule audit 10/3/26 L-5, L-8): row_origins_json is
+    # {"cavnar": {"date|employee|start": source}} for the rows this save's
+    # change came from Cavnar AI (apply-fixes, Improve, the overtime move);
+    # adopted_by / adopted_at mark an admin's (view-as) save the account
+    # holder adopted — the learners then read it as the owner's.
+    _sv_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
+    for _col in ("row_origins_json", "adopted_by", "adopted_at"):
+        if _col not in _sv_cols:
+            try:
+                conn.execute(f"ALTER TABLE schedule_versions ADD COLUMN {_col} TEXT")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 

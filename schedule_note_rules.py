@@ -71,6 +71,14 @@ def init_note_rules(db_path=DB_PATH):
             # The other sentences the same rule was confirmed from (re-audit
             # 10/2/26: a second sentence with the same rule showed as unmade).
             conn.execute("ALTER TABLE schedule_note_rules ADD COLUMN more_sources TEXT")
+        # A rule about WHEN a role starts or ends, not how many (schedule
+        # audit 10/3/26 L-33: "make it a rule" for a start the manager keeps
+        # setting): kind 'floor' (the minimum above, every row before this),
+        # 'start' or 'end' with at_time ("4:30pm"); min_people is 0 for a
+        # time rule.
+        for _col, _decl in (("kind", "TEXT NOT NULL DEFAULT 'floor'"), ("at_time", "TEXT")):
+            if _col not in cols:
+                conn.execute(f"ALTER TABLE schedule_note_rules ADD COLUMN {_col} {_decl}")
         conn.commit()
     finally:
         conn.close()
@@ -476,8 +484,12 @@ def _monday(iso):
     return d - timedelta(days=d.weekday())
 
 
+TIME_KINDS = ("start", "end")
+
+
 def words_for(rule) -> str:
-    """"at least 2 Line Cook at lunch and dinner, Fridays · every week"."""
+    """"at least 2 Line Cook at lunch and dinner, Fridays · every week" —
+    or, for a time rule, "Server at dinner start at 4:30pm, Fri · every week"."""
     from time_utils import mdy
     parts = rule.get("dayparts") or list(DAYPARTS)
     when = " and ".join(DAYPART_WORDS[p] for p in DAYPARTS if p in parts)
@@ -490,11 +502,14 @@ def words_for(rule) -> str:
         on = ", ".join(d[:3] for d in DAYS if d in days)
     scope = ("every week" if rule.get("scope") == "every"
              else f"the week of {mdy(rule.get('week_start'))} only")
+    if (rule.get("kind") or "floor") in TIME_KINDS:
+        return f"{rule['role']} at {when} {rule['kind']} at {rule.get('at_time')}, {on} · {scope}"
     return f"at least {rule['min_people']} {rule['role']} at {when}, {on} · {scope}"
 
 
 def _row(r):
     d = dict(r)
+    d["kind"] = d.get("kind") or "floor"
     d["dayparts"] = [p for p in json.loads(d.get("dayparts") or "[]") if p in DAYPARTS] or list(DAYPARTS)
     d["days"] = [x for x in json.loads(d["days"]) if x in DAYS] if d.get("days") else None
     try:
@@ -582,6 +597,8 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
     # The same rule twice (a double click, a second save) is the one rule
     # already in force — never a duplicate the sentence can't account for.
     for r in note_rules(restaurant_id, include_past=True, db_path=db_path):
+        if r.get("kind", "floor") != "floor":
+            continue
         if (r["scope"], r.get("week_start"), r["role"].lower(), r["min_people"], r["dayparts"], r["days"]) == \
                 (scope, mon, match.lower(), n, parts, day_list):
             src = " ".join(str(source_text or "").split())[:SOURCE_MAX]
@@ -605,6 +622,61 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
         conn.commit()
         rid = cur.lastrowid
         row = conn.execute("SELECT * FROM schedule_note_rules WHERE id=?", (rid,)).fetchone()
+    finally:
+        conn.close()
+    return _row(row)
+
+
+def add_time_rule(restaurant_id, role, kind, at_time, daypart, days=None, source_text=None, user=None,
+                  db_path=DB_PATH) -> dict:
+    """Store one confirmed START or END rule for a role on a daypart (every
+    week): "Servers start Friday dinner at 4:30pm". From then on the draft
+    is built to it (schedule_rules.apply_role_times), the model is told it
+    (schedule_rules.prompt_block) and a row off it is a `role_time` breach
+    that names the rule (schedule audit 10/3/26 L-33). Raises ValueError
+    with the owner's words."""
+    if kind not in TIME_KINDS:
+        raise ValueError("A time rule is a start or an end.")
+    roles = restaurant_roles(restaurant_id, db_path=db_path)
+    match = next((r for r in roles if r.lower() == str(role or "").strip().lower()), None)
+    if not match:
+        raise ValueError("Pick one of your roles for this rule.")
+    if daypart not in DAYPARTS:
+        raise ValueError("Pick lunch or dinner.")
+    from schedule_rules import parse_minutes, _fmt_minutes
+    m = parse_minutes(str(at_time or ""))
+    if m is None:
+        raise ValueError("That time isn't one we can read — try 4:30pm.")
+    at = _fmt_minutes(m)
+    bad = [str(d) for d in (days or []) if str(d) not in DAYS]
+    if bad:
+        raise ValueError(f"{bad[0]} isn't a day — use Monday to Sunday.")
+    day_list = [d for d in DAYS if d in (days or [])] or None
+    who = None
+    if user:
+        who = user.get("email") or user.get("username") or (f"user {user.get('id')}" if user.get("id") else None)
+    have = note_rules(restaurant_id, include_past=True, db_path=db_path)
+    for r in have:
+        if (r.get("kind"), r["role"].lower(), r["dayparts"], r["days"], r.get("at_time")) == \
+                (kind, match.lower(), [daypart], day_list, at) and r["scope"] == "every":
+            return dict(r, existing=True)
+    conn = get_conn(db_path)
+    try:
+        # One time per role, edge, daypart and day: a newer rule replaces the
+        # one it contradicts (the owner changed their mind), never sits beside it.
+        for r in have:
+            if r.get("kind") == kind and r["role"].lower() == match.lower() and r["dayparts"] == [daypart] \
+                    and r["days"] == day_list and r["scope"] == "every":
+                conn.execute("UPDATE schedule_note_rules SET removed_at=datetime('now'), removed_by=? WHERE id=?",
+                             (who, r["id"]))
+        cur = conn.execute(
+            "INSERT INTO schedule_note_rules (restaurant_id, scope, week_start, role, min_people, dayparts, days, "
+            "source_text, created_by, kind, at_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, "every", None, match, 0, json.dumps([daypart]),
+             json.dumps(day_list) if day_list else None,
+             " ".join(str(source_text or "").split())[:SOURCE_MAX] or None, who, kind, at))
+        conn.commit()
+        row = conn.execute("SELECT * FROM schedule_note_rules WHERE id=?", (cur.lastrowid,)).fetchone()
     finally:
         conn.close()
     return _row(row)
@@ -670,6 +742,24 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
             if r["role"].lower() not in roles:
                 c.owner_rules_unchecked.append(
                     f"{r.get('source_text') or r['words']} — nobody on the roster is a {r['role']} now")
+                continue
+            if r.get("kind") in TIME_KINDS:
+                # A start or end the owner made a rule (L-33): the draft is
+                # built to it and checked against it (Constraints.role_times).
+                from schedule_rules import parse_minutes
+                at = parse_minutes(r.get("at_time") or "")
+                if at is None:
+                    continue
+                times = getattr(c, "role_times", None)
+                if times is None:
+                    continue
+                for day in (r["days"] or DAYS):
+                    for part in r["dayparts"]:
+                        if not _trades(c, day, part):
+                            continue
+                        spec = times.setdefault((r["role"].strip().lower(), day, part), {})
+                        spec[r["kind"]] = at
+                        spec.setdefault("source", {})[r["kind"]] = r.get("source_text") or r["words"]
                 continue
             key = next((x for x in c.role_floors if x.strip().lower() == r["role"].lower()), r["role"])
             spec = c.role_floors.setdefault(key, {"morning": 0, "night": 0, "days": {}})

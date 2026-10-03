@@ -3368,6 +3368,22 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                       f"{len(_ot['left'])} still over ({_ot['sweeps']} checks)")
             except Exception as _otx:
                 print(f"[schedule] overtime pass failed: {_otx}")
+            # The owner's start/end rules for a role (schedule audit 10/3/26
+            # L-33 — a retime the manager kept making, made a rule): every row
+            # of that role on that daypart is retimed to it where that is
+            # legal and makes nothing above quality worse. Last, so no fill,
+            # stagger or trim moves it again.
+            try:
+                _rt = _rules.apply_role_times(preview_rows, _constraints, editable=_editable)
+                if _rt["retimed"]:
+                    preview_rows = _rt["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _rt["retimed"]:
+                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
+                                          "to": _x["to"], "kind": "role_time", "reason": _x["reason"]})
+                result["role_times"] = {"retimed": len(_rt["retimed"]), "left": _rt["left"]}
+            except Exception as _rtx:
+                print(f"[schedule] role time rules not applied: {_rtx}")
             def _price_week(_rows):
                 try:
                     from models import get_role_rates as _grr

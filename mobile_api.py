@@ -3250,9 +3250,39 @@ def mobile_generate_schedule(current_user):
     # The owner who pressed Generate is the actor on every model call the job
     # makes (the thread has no request to read it from, #148).
     from ai_utils import attributed as _ai_attributed
+    # The owner throwing a draft away is the strongest "no" there is, and it
+    # used to teach nothing (schedule audit 10/3/26 L-26): "redo these days"
+    # is kept with the owner's optional reason (a chip and their words —
+    # reason_chip / reason, reason_text / whats_wrong), and a whole week
+    # generated over a draft never sent is kept as that draft discarded —
+    # the draft in force read before the job can replace it.
+    _discarded = None
+    if not dates:
+        try:
+            import schedule_versions as _sv_open
+            from schedule_engine import _week_monday
+            from time_utils import restaurant_now_by_id
+            _discarded = _sv_open.open_draft_for_week(
+                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start).strftime("%Y-%m-%d"))
+        except Exception as _odx:
+            _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
     t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid),
                          kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
     t.start()
+    try:
+        import schedule_versions as _sv_rej
+        _chip = body.get("reason_chip") or body.get("reason")
+        _words = body.get("reason_text") or body.get("whats_wrong")
+        _chip = _chip if isinstance(_chip, str) else None
+        _words = _words if isinstance(_words, str) else None
+        if dates and base_history_id:
+            _sv_rej.record_rejection(rid, int(base_history_id), "redo_days", dates=dates, reason_chip=_chip,
+                                     reason_text=_words, user=current_user)
+        elif _discarded:
+            _sv_rej.record_rejection(rid, _discarded, "draft_discarded", reason_chip=_chip, reason_text=_words,
+                                     user=current_user)
+    except Exception as _rjx:
+        _ops.capture(_rjx, job="schedule_rejection", context=f"restaurant_id={rid}")
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
 
 
@@ -7525,11 +7555,26 @@ def mobile_score_schedule(current_user):
             # cannot be written leaves the week as it was (SCHED-19).
             from models import get_conn as _gc2
             conn2 = _gc2()
+            _step, _was_published, _new_version = None, False, None
             try:
                 conn2.execute("BEGIN IMMEDIATE")
-                _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                             expected_version=(sent if latest else None),
-                             saved_authority=_sv.authority_of(current_user))
+                # Whose each changed row is (schedule audit 10/3/26 L-5): the
+                # client's `origin` flag on a row Cavnar AI handed back
+                # (apply fixes, Improve, the overtime move — with its
+                # `origin_sig`), `cavnar_changes` for rows Cavnar AI took out,
+                # and Cavnar AI's own note tags; and whether the week was
+                # already with staff (a change to it is a reaction, L-4).
+                _prev = _sv.latest_rows(conn2, hid)
+                _step = _sv.step_origins(_prev, _sv.rows_from_csv(csv_text), raw_rows,
+                                         data.get("cavnar_changes") if isinstance(data.get("cavnar_changes"), list)
+                                         else None)
+                _pub = conn2.execute("SELECT published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                     (hid, rid)).fetchone()
+                _was_published = bool(_pub and _pub[0])
+                _new_version = _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
+                                            expected_version=(sent if latest else None),
+                                            saved_authority=_sv.authority_of(current_user),
+                                            row_origins=_step["stored"])
                 conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
                               (json.dumps(review) if review else None, hid, rid))
                 conn2.commit()
@@ -7549,6 +7594,20 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
+            # What the save teaches, now it is stored (schedule audit
+            # 10/3/26): Cavnar AI's kept changes credit that move's trust and
+            # are never the manager's habit (L-5); a change to a week staff
+            # have is a reaction (L-4); in the first weeks a big change asks
+            # a one-tap why (L-35, `why_questions`).
+            try:
+                import schedule_learning as _sl_cap
+                _captured = _sl_cap.capture_save(rid, saved, _new_version, _step or {}, user=current_user,
+                                                 published=_was_published)
+                _why = _captured.get("why_questions") or []
+            except Exception as _cx:
+                import ops as _ops_cap
+                _ops_cap.capture(_cx, job="schedule_save_capture", context=f"restaurant_id={rid} history={saved}")
+                _why = []
             # A week staff were already sent: nobody is told from a save.
             # The save records the edit; the people whose shifts differ
             # from what they were last told come back as `unsent_changes`,
@@ -7586,6 +7645,11 @@ def mobile_score_schedule(current_user):
                        # never sent). Nobody has been told yet.
                        unsent_changes=locals().get("_resp_unsent"),
                        late_change_warning=locals().get("_late_warning"),
+                       # The one-tap "why" for a big change in the first weeks
+                       # (L-35): [{key, kind, text, options: [{answer, label}],
+                       # date, employee, role, daypart}] — answered at
+                       # POST labor/schedule/edit-why.
+                       why_questions=locals().get("_why") or [],
                        capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500

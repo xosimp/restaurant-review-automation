@@ -58,7 +58,7 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "no_manager"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
-                  "owner_rule", "no_manager_roster"})
+                  "owner_rule", "no_manager_roster", "role_time"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -93,6 +93,7 @@ LABELS = {
     "owner_rule": "fewer on than a standing rule the owner set",
     "no_manager": "no manager on the floor",
     "no_manager_roster": "nobody on the roster is a manager or owner",
+    "role_time": "starts or ends off a time rule you set for the role",
 }
 
 
@@ -837,6 +838,11 @@ class Constraints:
     # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
     # The model is told it; the fill passes keep off those days.
     note_caution: dict = field(default_factory=dict)
+    # When a role starts or ends on a daypart, by the owner's rule (L-33 —
+    # a retime the manager kept making, made a rule; schedule_note_rules
+    # kind start/end): {(role lower, weekday, daypart): {"start": minutes,
+    # "end": minutes, "source": {"start"|"end": the rule's words}}}.
+    role_times: dict = field(default_factory=dict)
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -1594,6 +1600,12 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                 out.append(_v("ends_before_role_close", i_last, r_last,
                               f"last {r_last.get('role')} ends {r_last.get('shift_end')}, the rule is until {_fmt_minutes(need % (24 * 60))}"))
 
+    # a start or end the owner made a rule for a role on a daypart (schedule
+    # audit 10/3/26 L-33): soft — the draft is built to it
+    # (apply_role_times); a row off it is worth a look, never a blocker.
+    if getattr(c, "role_times", None) and not person_only:
+        out.extend(_role_time_violations(rows, c))
+
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
     # whenever the roster has one, and somebody is on at close.
@@ -1800,6 +1812,98 @@ def end_minutes(row):
     if s is not None and e <= s:
         return e + 24 * 60
     return e
+
+
+def role_time_for(c, row) -> dict:
+    """The owner's start/end rule for this row's role on its weekday and
+    daypart (Constraints.role_times, L-33), or {}."""
+    times = getattr(c, "role_times", None) or {}
+    if not times:
+        return {}
+    role = (row.get("role") or "").strip().lower()
+    return times.get((role, _weekday_of(row.get("date") or ""), daypart_of(row.get("shift_start", "")))) or {}
+
+
+def _role_time_violations(rows: list, c: Constraints) -> list:
+    """A row of a role whose start or end is off the owner's time rule for
+    that weekday and daypart (schedule audit 10/3/26 L-33), naming the rule."""
+    out = []
+    for i, r in enumerate(rows or []):
+        if not (r.get("employee") or "").strip():
+            continue
+        spec = role_time_for(c, r)
+        for edge, col in (("start", "shift_start"), ("end", "shift_end")):
+            want, have = spec.get(edge), parse_minutes(r.get(col, ""))
+            if want is None or have is None or have % (24 * 60) == want % (24 * 60):
+                continue
+            src = (spec.get("source") or {}).get(edge)
+            out.append(_v("role_time", i, r,
+                          f"{r.get('role')} {edge}s {r.get(col)} here — your rule is {_fmt_minutes(want)}"
+                          + (f" (“{str(src)[:120]}”)" if src else ""),
+                          edge=edge, severity=round(abs((have - want) % (24 * 60)) / 60.0, 2)))
+    return out
+
+
+# A rule never makes a shift shorter than this (a 4:30pm start on a shift
+# the draft ended at 5pm is the draft's problem to fix, not a 30-minute row).
+ROLE_TIME_MIN_MINUTES = 120
+
+
+def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
+    """Retime each row of a role to the owner's start/end rule for its
+    weekday and daypart (schedule audit 10/3/26 L-33 — a retime the manager
+    kept making, made a rule) where that is legal: never a row the owner or
+    the manager plan pinned (`_pinned`), never a date outside `editable` (a
+    partial redo keeps the owner's days), only when the person can work the
+    new times (Constraints.can_add) and the change makes no tier above
+    quality worse (regressions up to TIER_BUDGET, soft breaches included —
+    a manager's coverage, a floor, overtime and the budget all outrank a
+    start time). {rows, retimed: [{index, employee, date, from, to,
+    reason}], left: [{index, employee, date, reason}]}."""
+    out_rows = [dict(r) for r in rows or []]
+    retimed, left = [], []
+    if not getattr(c, "role_times", None):
+        return {"rows": out_rows, "retimed": retimed, "left": left}
+    for i in range(len(out_rows)):
+        r = out_rows[i]
+        if not (r.get("employee") or "").strip() or r.get("_pinned"):
+            continue
+        if editable is not None and r.get("date") not in editable:
+            continue
+        spec = role_time_for(c, r)
+        if not spec:
+            continue
+        s0, e0 = parse_minutes(r.get("shift_start", "")), parse_minutes(r.get("shift_end", ""))
+        if s0 is None or e0 is None:
+            continue
+        s1 = spec["start"] if spec.get("start") is not None else s0
+        e1 = spec["end"] if spec.get("end") is not None else e0
+        if s1 % (24 * 60) == s0 % (24 * 60) and e1 % (24 * 60) == e0 % (24 * 60):
+            continue
+        span = (e1 - s1) % (24 * 60)
+        if span < ROLE_TIME_MIN_MINUTES:
+            left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
+                         "reason": f"the rule would leave a {span / 60:g}h shift"})
+            continue
+        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)),
+                   scheduled_hours=f"{span / 60:g}")
+        trial = out_rows[:i] + [new] + out_rows[i + 1:]
+        ok, why = c.can_add(new, trial)
+        if ok:
+            worse = regressions(breach_profile(out_rows, c), breach_profile(trial, c), upto=TIER_BUDGET,
+                                hard_only=False)
+            if worse:
+                ok, why = False, worse[0]["label"]
+        if not ok:
+            left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"), "reason": why})
+            continue
+        src = (spec.get("source") or {}).get("start" if spec.get("start") is not None else "end")
+        retimed.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
+                        "from": f"{r.get('shift_start')}–{r.get('shift_end')}",
+                        "to": f"{new['shift_start']}–{new['shift_end']}",
+                        "reason": "your rule" + (f": “{str(src)[:120]}”" if src else "")})
+        out_rows = trial
+    return {"rows": out_rows, "retimed": retimed, "left": left}
 
 
 def _coverage_violations(rows: list, c: Constraints) -> list:
@@ -2016,7 +2120,10 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "no_manager": TIER_MANAGER,
                **{k: TIER_COVERAGE for k in COVERAGE_KINDS},
                "daily_ot": TIER_OVERTIME,
-               "under_min_hours": TIER_MIN_HOURS}
+               "under_min_hours": TIER_MIN_HOURS,
+               # the owner's start/end rule for a role (L-33): below every
+               # tier that keeps people legal, managed, covered and paid right
+               "role_time": TIER_QUALITY}
 
 
 def _iso_week(d) -> str:
@@ -2305,6 +2412,19 @@ def prompt_block(c: Constraints) -> str:
             floors.append(f"  {role}: at least " + ", ".join(base) + (f" — {days}" if days else ""))
     if floors:
         block += "\n\nSTAFFING FLOORS BY ROLE AND DAYPART (never below these, whatever the hours ceiling says):\n" + "\n".join(floors)
+    # The owner's start and end rules (schedule audit 10/3/26 L-33): the
+    # code retimes the draft to them afterwards, so the model is told them.
+    times = []
+    for (role, day, part), spec in sorted((getattr(c, "role_times", None) or {}).items(),
+                                          key=lambda kv: (kv[0][0], DAYS.index(kv[0][1]) if kv[0][1] in DAYS else 7,
+                                                          kv[0][2])):
+        bits = [f"{edge} at {_fmt_minutes(spec[edge])}" for edge in ("start", "end") if spec.get(edge) is not None]
+        if bits:
+            times.append(f"  {role.title()} on {day} {'lunch/day' if part == 'morning' else 'dinner/night'}: "
+                         + " and ".join(bits))
+    if times:
+        block += "\n\nSTARTS AND ENDS BY ROLE (the owner's rules — every shift of that role on that daypart):\n" \
+                 + "\n".join(times)
     return block
 
 

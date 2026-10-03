@@ -2121,6 +2121,12 @@ _RETENTION_DAYS = {
     # dismissed; a year is plenty to know which kinds an owner ignores
     # (SCHED-27).
     "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
+    # The owner's redos and discarded drafts, and the one-tap "why" for a
+    # big edit in the first weeks (schedule audit 10/3/26 L-26, L-35): the
+    # learners read 24 weeks (schedule_versions.LEARN_DAYS); a year and a
+    # month keeps last year's same weeks.
+    "schedule_rejections": int(os.getenv("RETAIN_SCHED_REJECTIONS_DAYS", "400")),
+    "schedule_edit_answers": int(os.getenv("RETAIN_SCHED_EDIT_ANSWERS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2297,6 +2303,7 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
+    "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2359,6 +2366,8 @@ _RETENTION_FLOOR_DAYS = {
     "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
     "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
     "schedule_recommendation_events": 180, "job_period_claims": 35, "alert_holds": 7,
+    # The schedule learners read 24 weeks of redos and answers (L-26, L-35).
+    "schedule_rejections": 168, "schedule_edit_answers": 168,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2470,7 +2479,14 @@ _RETENTION_READERS = {
                           # every food-cost reader's loader — the seasonal re-check
                           # (outcomes.expected_for → metrics → cogs) included
                           ("waste_trend.load_waste_history", None, "inventory_summary_weeks")),
-    "schedule_versions": (("schedule_learning.edited_weeks", 56, None),),
+    # Every schedule learner reads a week through schedule_versions.
+    # learning_weeks: 24 weeks, weighted by half-life (schedule audit
+    # 10/3/26 L-27), inside the intermediate versions' floor.
+    "schedule_versions": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.edited_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
+    "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
@@ -2547,8 +2563,8 @@ VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
 REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
 # The prunes that are not one table's rows by one stamp, with the same
-# floor rule: {name: (current days, floor)}. The schedule learner reads the
-# last 8 weeks of edits (schedule_learning.EDIT_WEEKS); the waste trend,
+# floor rule: {name: (current days, floor)}. The schedule learners read the
+# last 24 weeks of edits (schedule_versions.LEARN_DAYS); the waste trend,
 # price trends and food cost % bucket inventory by ISO week; the seasonal
 # baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
 # and the seasonal re-check further, from the weekly summary.
@@ -2556,7 +2572,9 @@ def _special_retention():
     return {
         "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
         "inventory_daily_detail": (INVENTORY_DAILY_DAYS, 28),
-        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 60),
+        # The learners read 24 weeks of a week's saves (schedule_versions.
+        # LEARN_DAYS, 168 — schedule audit 10/3/26 L-27); they used to read 8.
+        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 168),
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
         "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),

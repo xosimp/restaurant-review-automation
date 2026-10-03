@@ -10866,10 +10866,20 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         finally:
             conn.close()
         import schedule_versions as _sv
+        _pub_auth = _sv.authority_of(actor)
         _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
-                   saved_authority=_sv.authority_of(actor))
+                   saved_authority=_pub_auth)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # What the week's first publish says, into the observation log: every
+    # change from the original draft by origin (the manager's, Cavnar AI's
+    # kept ones, an admin's), and whether a person sent it (schedule audit
+    # 10/3/26 L-4, L-5, L-7). Never blocks the publish.
+    try:
+        import schedule_versions as _sv_obs
+        _sv_obs.observe_publish(rid, schedule_id, authority=locals().get("_pub_auth"), editor=actor_name)
+    except Exception as _obx:
+        _ops.capture(_obx, job="schedule_publish_observe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # The reviews' and the nightly reports' "+1" asks this week carries,
     # recorded as implemented under it — the loop from a complaint to the
     # person added and what the complaints did next (re-audit CROSSMODULE-10).
@@ -11090,6 +11100,12 @@ def _publish_schedule_request(current_user):
         # What the person acknowledged, by key: when the window ends the
         # gate runs again, and a blocker that was not on this list holds the
         # publish (NS5 H3) — an "OK" to one list is not an OK to another.
+        # Whose Send it is rides with it: when the window ends the week is
+        # published as this person's decision, not the automation's
+        # (delayed.queued_actor — schedule audit 10/3/26 L-7).
+        from permissions import answer_authority as _aa_q
+        _by = {"authority": _aa_q(current_user),
+               "queued_by": (current_user.get("username") or current_user.get("email") or "")[:120]}
         if changes:
             import schedule_versions as _sv_q
             newest = _sv_q.newest_version(rid, row["id"])
@@ -11097,13 +11113,13 @@ def _publish_schedule_request(current_user):
                                    {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
                                     # The version the person saw: an edit in the
                                     # window voids the send (delayed.py).
-                                    "version": newest[0]["version"] if newest else None},
+                                    "version": newest[0]["version"] if newest else None, **_by},
                                    delay, actor=current_user,
                                    label=f"Sending the changes to the week of {_mdy_pub(row['week_start'])} "
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked},
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_by},
                                    delay, actor=current_user,
                                    label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],

@@ -152,8 +152,13 @@ def test_two_reversals_far_apart_do_not_retire_a_long_kept_pattern():
     conn.close()
     schedule_versions.refresh_standing_patterns(rid)
     row = _bob_off(rid)
-    assert row["status"] == "active", "two reversals 17 weeks apart retired it"
-    assert row["times_overridden"] == 1
+    # Not retired by the reversals. Taught 29 weeks ago and never confirmed
+    # by hand since, it is re-tested now (schedule audit 10/3/26 L-30: a
+    # pattern the draft merely carried used to stand forever) — the next
+    # draft leaves it out once; it is not retired.
+    assert row["status"] in ("active", "retest") and row["status"] != "retired", \
+        "two reversals 17 weeks apart retired it"
+    assert row["times_overridden"] == 1 and row["retired_reason"] is None
 
 
 # ── QUALITY-14: what confirms a pattern ─────────────────────────────────────
