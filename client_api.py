@@ -10640,6 +10640,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         hard = [v for v in viols if v["hard"] and v["kind"] != "over_max_hours"] + \
                [v for v in viols if v["kind"] == "over_max_hours"][:1]
         for v in sorted(hard, key=lambda x: (x.get("date") or "", x.get("employee") or "")):
+            # A breach about a day is named on the day, never charged to
+            # whoever's row it is pinned to (schedule_rules.breach_text, E-13).
+            if v.get("day_level"):
+                add(f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}",
+                    _sr.breach_text(v))
+                continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             add(f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}",
                 f"{v['employee']} — {where}: {v['detail']}")

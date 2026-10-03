@@ -7609,7 +7609,9 @@ def _mark_review_rows(rows, violations):
     blocker reads both). Only when the sweep ran; without it nothing moves."""
     if violations is None:
         return
-    still = {v["index"] for v in violations if v.get("hard") and v.get("index") is not None}
+    # A breach about a day (no manager on, a floor short) marks no row: it
+    # is pinned to one only so consumers have an index (E-13).
+    still = {v["index"] for v in violations if v.get("hard") and not v.get("day_level") and v.get("index") is not None}
     for i, r in enumerate(rows):
         if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()

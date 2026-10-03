@@ -1180,7 +1180,7 @@ _TIME_FIELD_RE = re.compile(r'^\d{1,2}:\d{2}\s*(am|pm)$', re.IGNORECASE)
 _WEEKDAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 
 
-def _reconcile_scheduled_hours(row):
+def _reconcile_scheduled_hours(row, tz=None):
     """Recompute scheduled_hours from the row's own shift times.
 
     The model writes this column itself, and nothing checked it: _row_is_sane
@@ -1192,9 +1192,15 @@ def _reconcile_scheduled_hours(row):
 
     Times are the source of truth: they are what a manager reads off the
     printed schedule and what the staff actually work. An overnight shift
-    (end before start) is treated as crossing midnight. Returns the
-    correction size in hours, or 0.0 when the row was already right or its
-    times can't be parsed.
+    (end before start) is treated as crossing midnight. With `tz` (the
+    restaurant's zone) the hours are the real ones: a 5pm-2am close on the
+    night the clocks go back is 10 hours worked, not the 9 the wall clock
+    reads, and the hours, the overtime line and the cost all count it
+    (schedule audit 10/3/26 E-23 — Halloween 10/31/26, Simple EJ's 2am
+    close); the row says so in its notes and carries `dst_hours`. Returns
+    the model's own arithmetic error in hours (wall-clock against what it
+    wrote, never the clock change), or 0.0 when the row was already right or
+    its times can't be parsed.
     """
     start = _parse_time_to_minutes(row.get("shift_start", ""))
     end = _parse_time_to_minutes(row.get("shift_end", ""))
@@ -1203,7 +1209,13 @@ def _reconcile_scheduled_hours(row):
     span = end - start
     if span < 0:
         span += 24 * 60          # closing shift running past midnight
-    correct = round(span / 60, 1)
+    wall = round(span / 60, 1)
+    correct = wall
+    clock = 0.0
+    if tz:
+        real = _rules.span_hours(row, tz) if row.get("date") else 0.0
+        if real and abs(real - wall) >= 0.1:
+            correct, clock = round(real, 1), round(real - wall, 1)
     raw_hours = (row.get("scheduled_hours") or "").strip() if isinstance(row.get("scheduled_hours"), str) \
         else row.get("scheduled_hours")
     if raw_hours in (None, ""):
@@ -1213,13 +1225,22 @@ def _reconcile_scheduled_hours(row):
             stated = round(float(raw_hours), 1)
         except (ValueError, TypeError):
             stated = None
+    if clock:
+        row["dst_hours"] = clock
+        note = (row.get("notes") or "").strip()
+        text = ("includes the extra hour when the clocks go back" if clock > 0
+                else "an hour shorter: the clocks go forward")
+        if text not in note:
+            row["notes"] = f"{note} ({text})".strip() if note else f"({text})"
     if stated is None:
         row["scheduled_hours"] = str(correct)
         return 0.0
-    drift = round(correct - stated, 1)
-    if abs(drift) < 0.1:
+    drift = round(wall - stated, 1)
+    if abs(drift) < 0.1 and not clock:
         return 0.0          # already right — leave the row exactly as written
     row["scheduled_hours"] = str(correct)
+    if abs(drift) < 0.1:
+        return 0.0          # the model counted the wall clock right; the clock change is ours to add
     row["hours_corrected_from"] = str(stated)
     return drift
 
@@ -3621,8 +3642,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
 
                 # Times win over the model's own arithmetic — see
-                # _reconcile_scheduled_hours.
-                _drift = _reconcile_scheduled_hours(_row)
+                # _reconcile_scheduled_hours — in real hours, so the night
+                # the clocks go back counts its extra hour (E-23).
+                _drift = _reconcile_scheduled_hours(
+                    _row, tz=(getattr(_restaurant_for_sched, "timezone", None) or "").strip() or None)
                 if abs(_drift) >= 0.1:
                     _hours_drift_total += abs(_drift)
                     _hours_drift_rows += 1
@@ -3811,10 +3834,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     hours_scheduled = _safe_hours_sum(preview_rows)
                     for _m in _ot["moves"]:
                         _ot_fixes.append({"index": _m["index"], "from": _m["from"], "to": _m["to"],
-                                          "kind": "overtime", "reason": _m["reason"]})
+                                          "kind": _m.get("kind") or "overtime", "reason": _m["reason"]})
                     for _t in _ot["trims"]:
                         _ot_fixes.append({"index": _t["index"], "from": _t["employee"] + " " + _t["was"],
-                                          "to": _t["now"], "kind": "overtime", "reason": _t["reason"]})
+                                          "to": _t["now"], "kind": _t.get("kind") or "overtime", "reason": _t["reason"]})
                 # A night nobody who can lock up is on to close: a keyholder
                 # already on runs on to it, inside the same overtime line.
                 _co = _rules.close_out_gaps(preview_rows, _constraints, editable=_editable)
@@ -3835,7 +3858,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         _ot_fixes.append({"index": _x["index"], "from": _x["from"] or "no manager",
                                           "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
                 result["manager_coverage"] = {"extended": len(_mg["extended"]), "added": len(_mg["added"]),
-                                              "left": _mg["left"]}
+                                              "left": _mg["left"], "shortfall": _mg.get("shortfall")}
                 # A minor past their limit is cut to it; a run of days past
                 # the rule hands one of its shifts to a teammate (10/2/26:
                 # both stayed hard flags in Erik's first week).
@@ -3851,6 +3874,31 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                       f"{len(_ot['left'])} still over ({_ot['sweeps']} checks)")
             except Exception as _otx:
                 print(f"[schedule] overtime pass failed: {_otx}")
+            # Somebody under the minimum hours the owner set gets legal shifts
+            # in their roles — from a teammate above their own target, or
+            # added inside the hours budget — after overtime, the manager rule
+            # and the person repairs, never undoing any of them (schedule
+            # audit 10/3/26 P-4: a full-time cook set to 40-45h got 7h).
+            try:
+                _mh = _rules.fill_min_hours(preview_rows, _constraints,
+                                            roster_roles=result.get("roster_roles") or {}, editable=_editable,
+                                            hours_budget=float(result.get("hours_budget") or 0) or None)
+                if _mh["moves"] or _mh["added"]:
+                    preview_rows = _mh["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _mh["moves"]:
+                        _ot_fixes.append({"index": _x["index"], "from": _x["from"], "to": _x["to"],
+                                          "kind": "min_hours", "reason": _x["reason"]})
+                    for _x in _mh["added"]:
+                        _ot_fixes.append({"index": _x["index"], "from": "", "to": _x["employee"],
+                                          "kind": "min_hours", "reason": _x["reason"]})
+                result["min_hours"] = {"moved": len(_mh["moves"]), "added": len(_mh["added"]), "left": _mh["left"]}
+            except Exception as _mhx:
+                print(f"[schedule] minimum-hours pass failed: {_mhx}")
+                try:
+                    _ops.capture(_mhx, job="schedule_min_hours", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
             def _price_week(_rows):
                 try:
                     from models import get_role_rates as _grr
@@ -3889,12 +3937,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # for the owner and never counted as coverage.
             _viols = _rules.violations(preview_rows, _constraints)
             _fixes, _unfixed = list(_ot_fixes), []
-            _hard = [v for v in _viols if v["hard"]
+            # A breach about a day (no manager on, a floor short) is no row's
+            # to fix by changing its person: it stays a day-level item in the
+            # review, never an "unfixed" line on whoever's row it is pinned to
+            # (schedule audit 10/3/26 E-13).
+            _hard = [v for v in _viols if v["hard"] and not v.get("day_level")
                      and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
             # A missed run of days off is fixed here too (one of the person's
             # shifts to a legal teammate, least score cost); which rows may
-            # move is limited to the editable days inside apply_fixes.
-            _days_off = [v for v in _rules.fixable(_viols) if not v["hard"]]
+            # move is limited to the editable days inside apply_fixes. The
+            # other soft fixable breach, under_min_hours, has its own pass
+            # (fill_min_hours, above).
+            _days_off = [v for v in _rules.fixable(_viols) if not v["hard"] and v["kind"] == "days_off"]
             if _hard or _days_off:
                 try:
                     _sig, _w = _quality_signals(restaurant_id, result)
@@ -4037,6 +4091,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _mc["extended"] = _mc.get("extended", 0) + len(_mg2["extended"])
                 _mc["added"] = _mc.get("added", 0) + len(_mg2["added"])
                 _mc["left"] = _mg2["left"]
+                _mc["shortfall"] = _mg2.get("shortfall")
             except Exception as _mgx:
                 print(f"[schedule] manager coverage pass failed: {_mgx}")
             # #47: the solver's changes lead "what Cavnar changed" (web and iOS read optimizer.changes).
@@ -4044,7 +4099,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 import schedule_solver as _solver_m
                 result["optimizer"] = _solver_m.merge_into_optimizer(result.get("optimizer"), result["solver"])
             for _v in _viols:
-                if not _v["hard"]:
+                # A breach about a DAY (no manager on, a floor short) is shown
+                # on the day (review.hard_days), never as "needs review" on
+                # whichever row it is pinned to (schedule audit 10/3/26 E-13).
+                if not _v["hard"] or _v.get("day_level"):
                     continue
                 _r = preview_rows[_v["index"]]
                 _r["needs_review"] = True
@@ -4072,6 +4130,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"]["manager_plan"] = {
                 "question": _mplan.get("question"), "unknown_pattern": list(_mplan.get("unknown_pattern") or []),
                 "uncovered": _skeleton.payload(_mplan)["uncovered"]}
+            # Why the manager rule could not be met, once for the week (each
+            # day's stretch is already its own day-level line), and who is
+            # still under the minimum hours set for them, with why (E-12,
+            # E-13, P-4). Not "⚠" lines: the breaches themselves are.
+            _short = ((result.get("manager_coverage") or {}).get("shortfall") or {}).get("text")
+            if _short:
+                result["review"]["lines"].append(_short)
+            for _x in ((result.get("min_hours") or {}).get("left") or [])[:4]:
+                result["review"]["lines"].append(
+                    f"{_x['employee']} is {_x['short_by']:g}h under the {_x['min']:g}h minimum you set — {_x['reason']}")
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
@@ -4535,6 +4603,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # could legally cover, and the owner's question about managers
             # whose days are unknown.
             manager_plan=_skeleton.payload(result.get("manager_plan")),
+            # The manager rule's backstop: what it covered, each stretch it
+            # could not with why each manager could not, and the week's
+            # shortfall (E-12, E-13); and who is still under their minimum
+            # hours (P-4).
+            manager_coverage=result.get("manager_coverage") or {"extended": 0, "added": 0, "left": []},
+            min_hours=result.get("min_hours") or {"moved": 0, "added": 0, "left": []},
         )
         _q_now = (result.get("quality") or {}).get("score")
         if _fallback:
@@ -4717,8 +4791,19 @@ def _rules_for_swaps(c) -> dict:
     base = {}
     for name, per in (c.base_hours or {}).items():
         base[name] = sum(h for b, h in per.items() if b in buckets)
+    # Each person's weekly maximum as the rules compute it (max_hours: their
+    # own maximum above the ceiling allows them the hours, P-12), and for a
+    # salaried person the weekly cap code holds them to (salaried_limit,
+    # E-17) — one answer for the sweep and every swap.
+    names = set(c.roster_names or []) | set(c.hours_limits or {}) | set(c.salaried or ())
+    caps = {}
+    for n in names:
+        try:
+            caps[str(n).strip().lower()] = float(c.salaried_limit(n) if c.is_salaried(n) else c.max_hours(n))
+        except (TypeError, ValueError):
+            continue
     return {
-        "blocked_dates": c.blocked_dates, "daypart_avail": c.daypart_avail,
+        "blocked_dates": c.blocked_dates, "daypart_avail": c.daypart_avail, "caps": caps,
         "hours_limits": c.hours_limits, "base_hours": base, "base_rows": c.base_rows,
         "weekly_ceiling": c.compliance.get("weekly_hours_ceiling"),
         "min_rest_hours": c.compliance.get("min_rest_hours"),
