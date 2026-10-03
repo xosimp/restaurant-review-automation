@@ -1654,8 +1654,9 @@ def _closers_by_role(c, people, flags, chosen):
 
 
 # A role "closes here" when its last person out reached the close (or, with
-# no close on file, the day's last shift) on at least half the days it
-# worked in the last weeks of punches — and on enough days to say so.
+# no close on file, the day's last shift) — within the closer rule's own 15
+# minutes — on at least half the days it worked in the last weeks of
+# punches, and on enough days to say so.
 CLOSING_ROLE_WEEKS = 8
 CLOSING_ROLE_SHARE = 0.5
 CLOSING_ROLE_MIN_DAYS = 3
@@ -1689,7 +1690,7 @@ def closing_families(c, rows) -> set:
         close = close_minutes(c, _weekday_of(d))
         last = close if close is not None else by_day[d]
         worked[fam] = worked.get(fam, 0) + 1
-        if e >= last - 30:
+        if e >= last - 15:
             closed[fam] = closed.get(fam, 0) + 1
     return {f for f, n in worked.items()
             if n >= CLOSING_ROLE_MIN_DAYS and closed.get(f, 0) >= CLOSING_ROLE_SHARE * n}
