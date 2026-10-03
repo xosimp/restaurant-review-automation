@@ -284,12 +284,8 @@ _CAVNAR_NOTE_TAGS = (
 )
 
 
-def row_key(r) -> tuple:
-    """(date, lower name, start) — the identity a change is keyed on."""
-    return _key(r)
-
-
 def key_str(k) -> str:
+    """A row key (date, lower name, start) as stored: "date|name|start"."""
     return "|".join(str(x or "") for x in k)
 
 
