@@ -6080,7 +6080,14 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         pool |= {(r.get("employee") or "").strip() for r in rows
                  if role_family(r.get("role"), families) == role_family(row.get("role"), families)}
         pool.discard("")
-        candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
+        if c is not None:
+            # The week's rules decide the hours (can_add below: the overtime
+            # line, then the maximum) — the swap index's cap is only the
+            # caller's copy of them, the ceiling when none was passed.
+            candidates = [n for n in sorted(pool) if n != cur and (n.lower(), row.get("date")) not in index.working
+                          and index.person_fits(n, row)]
+        else:
+            candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
         target = None
         if c is not None:
             target = _rules.breach_id(v)

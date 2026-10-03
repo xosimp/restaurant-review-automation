@@ -469,6 +469,20 @@ class _State:
         self.roster_roles = {_low(n): self.family(r) for n, r in roster_roles.items() if r}
         self.pinned = {i for i, r in enumerate(rows) if r.get("_pinned")}
         self._without = {}
+        self.pricing = pricing_inputs(signals, inputs, constraints)
+
+    def rate(self, name, role) -> float:
+        """What an hour of `name` in `role` costs (labor.person_rate_book's
+        order: their own rate, the role's, the role's typical, the blended);
+        0 for somebody salaried, and for everybody with no rate on file."""
+        p = self.pricing
+        if not p:
+            return 0.0
+        if sq.name_key(name) in {sq.name_key(n) for n in p["salaried"]}:
+            return 0.0
+        role = str(role or "").strip().lower()
+        return float(p["person_rates"].get(" ".join(str(name or "").lower().split())) or p["rates"].get(role)
+                     or p["role_typical"].get(role) or p["blended"] or 0.0)
 
     def family(self, role) -> str:
         return sq.role_family(role, self.families)
@@ -684,7 +698,10 @@ def _moves_for(problem, state: _State) -> list:
                     return
                 start, end = _fmt(ts), _fmt(te)
         people = state.people_for(role) or sorted(state.pool.get(role.strip().lower(), ()))
-        pool = sorted(people, key=lambda n: (-(prefer(n) if prefer else 0), state.index.total_hours(n.lower()), n))
+        # Of people who buy the same, the one who costs less is tried first
+        # (P-32): a move this good is taken without trying the rest.
+        pool = sorted(people, key=lambda n: (-(prefer(n) if prefer else 0), state.rate(n, role),
+                                             state.index.total_hours(n.lower()), n))
         for name in pool:
             row = _new_row(date, name, role, start, end, why)
             if state.can_add(name, row):
@@ -707,7 +724,7 @@ def _moves_for(problem, state: _State) -> list:
         role = (row.get("role") or "").strip()
         cur = (row.get("employee") or "").strip()
         found = 0
-        order = rank or (lambda n: (state.index.total_hours(n.lower()), n))
+        order = rank or (lambda n: (state.rate(n, role), state.index.total_hours(n.lower()), n))
         for name in sorted(state.people_for(role) or state.pool.get(role.lower(), ()), key=order):
             if name == cur or not predicate(name):
                 continue
