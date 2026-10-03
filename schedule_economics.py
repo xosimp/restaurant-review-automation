@@ -817,7 +817,7 @@ def _dp_label(part):
     return {"morning": "lunch", "night": "dinner", "late": "late night"}.get(part, part)
 
 
-def _hourly_target_pct(restaurant_id, labor_target_pct, days_with_sales, sales_total, db_path=DB_PATH):
+def _hourly_target_pct(restaurant_id, target_pct, days_with_sales, sales_total, db_path=DB_PATH):
     """(hourly target %, salaried?) — the labor target the HOURLY record is
     judged against: the owner's target counts salaries (9/30/26), and
     labor_daily_history is hourly, so the salaried staff's share of the
@@ -831,8 +831,8 @@ def _hourly_target_pct(restaurant_id, labor_target_pct, days_with_sales, sales_t
     except Exception:
         share = 0.0
     if share <= 0 or not sales_total or not days_with_sales:
-        return float(labor_target_pct), False
-    return float(labor_target_pct) - share * days_with_sales / float(sales_total) * 100.0, True
+        return float(target_pct), False
+    return float(target_pct) - share * days_with_sales / float(sales_total) * 100.0, True
 
 
 def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, weeks: int = 8, db_path=DB_PATH,
@@ -901,10 +901,10 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             labor_target_pct = labor_target_for(get_restaurant(restaurant_id))
         except Exception:
             labor_target_pct = None
+    tgt = float(labor_target_pct) if labor_target_pct else None      # the owner's (all-in) target
     hourly_target, with_salaries = (None, False)
-    if labor_target_pct:
-        hourly_target, with_salaries = _hourly_target_pct(restaurant_id, labor_target_pct, days_n, sales_total,
-                                                          db_path=db_path)
+    if tgt:
+        hourly_target, with_salaries = _hourly_target_pct(restaurant_id, tgt, days_n, sales_total, db_path=db_path)
     scale, capped = 1.0, False
     if hist_pct and hourly_target is not None:
         if hourly_target <= 0:
@@ -917,15 +917,15 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
     by_day = {wd: parts for wd, parts in by_day.items() if parts}
     hold = {wd: {p: round(1.0 / scale, 3) for p in parts} for wd, parts in by_day.items()} if scale > 1 else {}
     targets = {}
-    target_words = (f"your {float(labor_target_pct):g}% labor target with the salaried staff's pay counted"
-                    if with_salaries else f"your {float(labor_target_pct or 0):g}% labor target")
+    target_words = (f"your {float(tgt or 0):g}% labor target with the salaried staff's pay counted"
+                    if with_salaries else f"your {float(tgt or 0):g}% labor target")
     for part, (s, h, _n) in have.items():
         hist = s / h
         if scale > 1:
             src = (f"your own recent pace on each day's {_dp_label(part)}, raised {int(round((scale - 1) * 100))}% to meet "
                    f"{target_words} ({'your hourly labor has' if with_salaries else 'you have'} run {hist_pct:.1f}%"
                    + ("; the raise is capped at double your own pace" if capped else "") + ")")
-        elif hist_pct and labor_target_pct:
+        elif hist_pct and tgt:
             src = f"your own recent pace on each day's {_dp_label(part)} — already inside {target_words}"
         else:
             src = f"your own recent pace on each day's {_dp_label(part)} over the last {weeks} weeks"
@@ -937,7 +937,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
                   f"({', '.join(wd[:3] for wd in unmeasured)}) have no measured lunch/dinner sales split yet, so "
                   "they carry no daypart target")
     return {"available": True, "by_day": by_day, "targets": targets, "daypart_sales": daypart_sales, "hold": hold,
-            "labor_target_pct": float(labor_target_pct) if labor_target_pct else None,
+            "labor_target_pct": tgt,
             "history_labor_pct": round(hist_pct, 1) if hist_pct else None, "scale": round(scale, 3),
             "with_salaries": with_salaries, "basis": basis, "split_unmeasured": unmeasured,
             # The split is never assumed any more (L-25); kept False for readers of the old field.
