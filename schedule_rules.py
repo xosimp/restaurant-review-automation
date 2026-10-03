@@ -1930,32 +1930,25 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
                 out.append(_v("rest_gap", i_cur, r_cur, f"{gap:.1f}h since their previous shift, the rule is {need:g}h",
                               severity=round(need - gap, 2)))
         # too many days in a row — the published tail counts, so a Saturday
-        # and Sunday already sent plus Monday to Friday here reads as seven
+        # and Sunday already sent plus Monday to Friday here reads as seven.
+        # Every run past the rule that this week's rows are part of counts:
+        # the severity is the days past it summed over them, so splitting a
+        # nine-day run into two of four is progress the repair can see
+        # (schedule audit 10/3/26 P-30), and the flag names the longest.
         max_run = c.compliance.get("max_consecutive_days")
         if max_run:
             worked_dates = {r.get("date") for _, r in items if r.get("date")}
             worked_dates |= {r.get("date") for r in (c.base_rows.get(key) or []) if r.get("date")}
-            try:
-                ordered = sorted(datetime.strptime(d, "%Y-%m-%d") for d in worked_dates)
-            except (TypeError, ValueError):
-                ordered = []
-            run, run_dates = [], []
-            best_run = []
-            for d in ordered:
-                if run and (d - run[-1]).days == 1:
-                    run.append(d)
-                else:
-                    run = [d]
-                if len(run) > len(best_run):
-                    best_run = list(run)
-            if len(best_run) > int(max_run):
-                run_iso = {d.strftime("%Y-%m-%d") for d in best_run}
-                week_rows = [(i, r) for i, r in items if r.get("date") in run_iso]
-                if week_rows:
-                    i_last, r_last = week_rows[-1]
-                    out.append(_v("long_run", i_last, r_last,
-                                  f"{len(best_run)} days in a row — the rule is at most {int(max_run)}",
-                                  severity=len(best_run) - int(max_run)))
+            mine_dates = {r.get("date") for _, r in items}
+            over = [run for run in _date_runs(worked_dates)
+                    if len(run) > int(max_run) and set(run) & mine_dates]
+            if over:
+                best = max(over, key=len)
+                week_rows = [(i, r) for i, r in items if r.get("date") in set(best)]
+                i_last, r_last = week_rows[-1]
+                out.append(_v("long_run", i_last, r_last,
+                              f"{len(best)} days in a row — the rule is at most {int(max_run)}",
+                              severity=sum(len(run) - int(max_run) for run in over)))
         # consecutive days off inside the generated week
         req = c.compliance.get("part_time_days_off") if c.employment.get(key) == "part" else c.compliance.get("min_consecutive_days_off")
         if req and c.week_dates:
@@ -2244,6 +2237,22 @@ def _iso_week(d) -> str:
         return (x - timedelta(days=x.weekday())).isoformat()
     except (TypeError, ValueError):
         return str(d or "")
+
+
+def _date_runs(dates) -> list:
+    """Every run of consecutive dates (iso strings) in `dates`, each earliest
+    first, the runs in date order."""
+    try:
+        ordered = sorted({datetime.strptime(str(d)[:10], "%Y-%m-%d") for d in dates if d})
+    except (TypeError, ValueError):
+        return []
+    runs = []
+    for d in ordered:
+        if runs and (d - runs[-1][-1]).days == 1:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+    return [[d.strftime("%Y-%m-%d") for d in run] for run in runs]
 
 
 def breach_id(v) -> tuple:
@@ -3184,32 +3193,9 @@ PERSON_FIX_MAX_SWEEPS = 300
 _MINOR_KINDS = ("minor_late", "minor_early", "minor_hours", "minor_week_hours")
 
 
-def _longest_run_len(dates) -> int:
-    try:
-        ordered = sorted({datetime.strptime(d, "%Y-%m-%d") for d in dates if d})
-    except (TypeError, ValueError):
-        return 0
-    best = run = 0
-    prev = None
-    for d in ordered:
-        run = run + 1 if prev is not None and (d - prev).days == 1 else 1
-        best = max(best, run)
-        prev = d
-    return best
-
-
-def _best_run(dates) -> list:
-    """The longest run of consecutive dates (iso strings), earliest first."""
-    try:
-        ordered = sorted({datetime.strptime(d, "%Y-%m-%d") for d in dates if d})
-    except (TypeError, ValueError):
-        return []
-    best, run = [], []
-    for d in ordered:
-        run = run + [d] if run and (d - run[-1]).days == 1 else [d]
-        if len(run) > len(best):
-            best = list(run)
-    return [d.strftime("%Y-%m-%d") for d in best]
+def _run_excess(dates, max_run: int) -> int:
+    """Days past the run rule, summed over every run in `dates`."""
+    return sum(max(0, len(run) - max_run) for run in _date_runs(dates))
 
 
 def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None, editable=None,
@@ -3390,14 +3376,18 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
             bid = breach_id(v)
             worked = {r.get("date") for r in rep.rows if _low(r.get("employee")) == low and r.get("date")}
             worked |= {r.get("date") for r in (c.base_rows.get(low) or []) if r.get("date")}
-            run = _best_run(worked)
-            by_date = {}
+            by_date, middle = {}, {}
             for i, r in enumerate(rep.rows):
-                if _low(r.get("employee")) == low and r.get("date") in run:
+                if _low(r.get("employee")) == low and r.get("date"):
                     by_date.setdefault(r["date"], []).append(i)
-            mid = (len(run) - 1) / 2.0
-            days = [d for d in run if d in by_date and d not in stuck and all(free(rep.rows[i]) for i in by_date[d])]
-            days.sort(key=lambda d: (_longest_run_len(worked - {d}), abs(run.index(d) - mid), d))
+            for run in _date_runs(worked):
+                if len(run) > max_run:
+                    for k, dd in enumerate(run):
+                        middle[dd] = abs(k - (len(run) - 1) / 2.0)
+            days = [d for d in middle if d in by_date and d not in stuck and all(free(rep.rows[i]) for i in by_date[d])]
+            # the day that leaves the fewest days past the rule, the middle of
+            # its run first (it splits the run in two)
+            days.sort(key=lambda d: (_run_excess(worked - {d}, max_run), middle[d], d))
             done = False
             for d in days:
                 if rep.spent:
@@ -3434,7 +3424,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                     for i, nm in plan:
                         r = rep.rows[i]
                         fixes.append({"index": i, "from": who, "to": nm, "kind": "long_run",
-                                      "reason": (f"{who} was on {len(run)} days in a row (the rule is at most "
+                                      "reason": (f"{who} was on {v['detail'].split(' —')[0]} (the rule is at most "
                                                  f"{max_run}); {nm} takes {_weekday_of(d)} "
                                                  f"{r.get('shift_start')}–{r.get('shift_end')}.")})
                     done = True
@@ -3518,8 +3508,11 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
         length = min(max(ge - gs, shortest_m), max_shift_m)
         lo, hi = gs, gs + length
         if hi > day_hi:
+            # Never past the last person out: the shift ends with the day and
+            # starts earlier — before anyone else when the owner's shortest
+            # shift is longer than the day left.
             hi = max(cover_end, day_hi)
-            lo = min(gs, max(day_lo, hi - length))
+            lo = min(gs, hi - length)
         for s, e in avoid:
             if lo < e <= gs:
                 lo = e
