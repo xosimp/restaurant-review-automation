@@ -98,6 +98,13 @@ def role_family(role, families=None) -> str:
     return " ".join(w for w in cleaned if w) or low
 
 
+def name_key(name) -> str:
+    """One spelling of a person's name for every comparison: case and
+    spacing ignored — the key Constraints.salaried and models.
+    salaried_name_key use ("erik  baylis" is "Erik Baylis")."""
+    return " ".join(str(name or "").lower().split())
+
+
 # Demand levels, weakest to strongest. Profiles name one of these; the
 # engine also derives one from the restaurant's own sales history when a
 # profile does not pin it.
@@ -150,6 +157,14 @@ class ShiftProfile:
     # taking the busiest of them made a quiet Sunday dinner a "peak" shift
     # whenever Saturday was one (profiles_from_config).
     per_day_demand: bool = False
+    # Critical-dimension floors set for this profile ({dimension key: floor}),
+    # over the dimension's own (schedule audit 10/3/26 SQ-22/SQ-23): written
+    # by the owner on their own profile, or by an applied calibration.
+    floors: dict = field(default_factory=dict)
+    # What an applied calibration set on a profile no owner configured
+    # ({"min_quality", "floors"}, restaurants.quality_tuning_json): applied
+    # over the built-in's own bars, and kept when its demand level moves.
+    tuning: dict = field(default_factory=dict)
 
     def matches(self, day: str, daypart: str) -> bool:
         if self.days and (day or "").strip().lower() not in {
@@ -289,6 +304,46 @@ class ShiftContext:
     splh_target: float | None = None
     expected_sales: float | None = None
     daypart_hours: float = 0.0
+    # ── people the hourly measures and the defaults treat differently ──
+    # (schedule audit 10/3/26 D-3, D-6) Salaried people (name_key): paid the
+    # same whatever the hours, so their rows are not spent from the hourly
+    # day and daypart targets (day_hours, daypart_hours leave them out) and
+    # the 40h ceiling is not theirs.
+    salaried: set = field(default_factory=set)
+    # Each person's weekly hours ceiling as the rules hold it (Constraints.
+    # max_hours: their own limit, a salaried person's cap, else the
+    # restaurant's ceiling) — {name_key: hours}. Fatigue reads it first.
+    hours_ceilings: dict = field(default_factory=dict)
+    # The roster's managers ({lower: role}) and who stands in as one on
+    # given dates ({lower: set(iso)}) — Constraints.managers / acting_managers.
+    managers: dict = field(default_factory=dict)
+    acting_managers: dict = field(default_factory=dict)
+    # Experienced by default whatever the shift history shows: managers
+    # (acting ones too) and salaried people — lowercase (D-6).
+    experienced_default: set = field(default_factory=set)
+    # The restaurant's role families ({role lower: family}), the roles each
+    # person holds beyond their roster role ({lower: set(role lower)}) and
+    # each roster person's role ({name: role}) — cross-training and the
+    # training mentor read people by family, not by job code (SQ-9, SQ-10).
+    role_families: dict = field(default_factory=dict)
+    held_roles: dict = field(default_factory=dict)
+    roster_roles: dict = field(default_factory=dict)
+    # Kitchen stations (kitchen_stations.normalise), {} when none (SQ-26).
+    stations: dict = field(default_factory=dict)
+    # What staff showed they want by what they drop and claim (schedule_
+    # intel.behaviour_preferences): {name: {"avoid": [(day, daypart)],
+    # "prefer": [...], "weight"}} — counted below a stated preference (L-19).
+    learned_preferences: dict = field(default_factory=dict)
+    # The last published weeks, per person, oldest first: {name: [{"week",
+    # "hours", "slots": [(day, daypart)], "role"}]} — fatigue and fairness
+    # across weeks (SQ-27). busy_slots: the (weekday, daypart) shifts this
+    # restaurant's profiles call busy, to read those weeks with.
+    load_ledger: dict = field(default_factory=dict)
+    busy_slots: set = field(default_factory=set)
+    # What overtime costs (SQ-25): {"line", "bucket_of": {date: payroll
+    # week}, "published": {lower: {week: hours}}, "rates", "default_rate",
+    # "rules"} — the overtime forecast's own inputs; {} when not supplied.
+    overtime: dict = field(default_factory=dict)
 
     # ── Derived views every dimension wants ────────────────────────────
     @property
@@ -358,6 +413,31 @@ class ShiftContext:
         names = self.people if names is None else names
         return [n for n in names if self.scores.get(n) is None]
 
+    def manages(self, name) -> bool:
+        """A manager, or standing in as one on this shift's date — the
+        reading Constraints.manages gives."""
+        key = (name or "").strip().lower()
+        return key in self.managers or bool(self.date) and self.date in (self.acting_managers.get(key) or ())
+
+    def is_salaried(self, name) -> bool:
+        return bool(self.salaried) and name_key(name) in self.salaried
+
+    def ceiling_for(self, name):
+        """The weekly hours ceiling fatigue holds `name` to: the rules' own
+        (hours_ceilings), else their own limit, else — for an hourly person
+        — the restaurant's ceiling. A salaried person with neither has none
+        here: they owe no overtime and the 40h line is not theirs (D-3)."""
+        if self.hours_ceilings:
+            c = self.hours_ceilings.get(name_key(name))
+            if c:
+                return float(c)
+        lim = (self.hours_limits or {}).get(name)
+        if lim and lim[1]:
+            return float(lim[1])
+        if self.is_salaried(name):
+            return None
+        return float(self.weekly_ceiling) if self.weekly_ceiling else None
+
 
 @dataclass
 class DimensionResult:
@@ -391,7 +471,7 @@ DIMENSION_LABELS = {
     "training_balance": "Training balance", "reliability": "Reliability",
     "pairings": "Pairings", "fatigue": "Fatigue", "fairness": "Fairness",
     "preferences": "Staff preferences", "stability": "Schedule stability",
-    "cross_training": "Cross-training",
+    "cross_training": "Cross-training", "overtime": "Overtime", "stations": "Kitchen stations",
 }
 
 
@@ -417,6 +497,14 @@ DEFAULT_WEIGHTS = {
     # hour from a slow lunch to a busy dinner is seen. Withdraws without
     # sales.
     "splh": 5,
+    # The overtime premium the week runs up (schedule audit 10/3/26 SQ-25):
+    # judged once for the week, as fatigue is — overtime is a payroll-week
+    # fact. It was priced only in the review, so no pass that chose between
+    # options could see it.
+    "overtime": 8,
+    # Every kitchen station a daypart needs held by a cook trained on it
+    # (SQ-26). Withdraws for a restaurant that has set no stations.
+    "stations": 10,
 }
 
 
@@ -809,6 +897,29 @@ EXPERIENCE_MIN_MARKED = 3
 DEVELOPING_SHIFTS = 6
 
 
+def experience_judged(tenure: dict, marked=None) -> bool:
+    """Whether experience can be judged at all: somebody on file has
+    EXPERIENCE_SHIFTS, or the owner has marked EXPERIENCE_MIN_MARKED people.
+    People experienced only by default (managers, salaried) never count
+    toward it — they say nothing about the rest of the team."""
+    marks = {str(n).strip().lower() for n in (marked or ()) if n}
+    return (max((int(v or 0) for v in (tenure or {}).values()), default=0) >= EXPERIENCE_SHIFTS
+            or len(marks) >= EXPERIENCE_MIN_MARKED)
+
+
+def experienced_by_default(managers=None, acting_managers=None, salaried=None) -> set:
+    """Lowercase names experienced whatever the shift history shows: the
+    managers (and anyone standing in as one) and the salaried people
+    (schedule audit 10/3/26 D-6). Tenure is the punch count; somebody who
+    never clocks in — an owner, a salaried manager — had 1 or 2 shifts on
+    file and read as still developing."""
+    out = {name_key(n) for n in (managers or {})}
+    out |= {name_key(n) for n in (acting_managers or {})}
+    out |= {name_key(n) for n in (salaried or ())}
+    out.discard("")
+    return out
+
+
 def dim_experience_balance(ctx: ShiftContext) -> DimensionResult | None:
     """Enough hands who have done this before.
 
@@ -831,20 +942,27 @@ def dim_experience_balance(ctx: ShiftContext) -> DimensionResult | None:
     # a person; only the owner's marks do. One mark is not a classification
     # of the team — it turned everybody unmarked into a known beginner and
     # dropped the week the moment the first person was marked — so short-
-    # history scoring waits until the owner has marked a few.
-    if max((int(v or 0) for v in ctx.tenure.values()), default=0) < EXPERIENCE_SHIFTS \
-            and len(flagged) < EXPERIENCE_MIN_MARKED:
+    # history scoring waits until the owner has marked a few. (The managers
+    # and salaried people experienced by default below say nothing about
+    # anybody else, so they never turn it on.)
+    if not experience_judged(ctx.tenure, flagged):
         ctx.notes.append(
             f"Experience was not judged — the shift history on file is too short for anybody to have "
             f"{EXPERIENCE_SHIFTS} shifts yet. Mark at least {EXPERIENCE_MIN_MARKED} experienced staff to turn it on sooner.")
         return None
+    # Managers (acting ones too) and salaried people are experienced by
+    # default (schedule audit 10/3/26 D-6): tenure is the punch count, and
+    # an owner who never clocks in had 1 shift on file — Erik read as
+    # "still developing" and the owner's shifts as inexperienced.
+    by_default = {name_key(n) for n in (ctx.experienced_default or set()) if n}
     people = ctx.people
-    known = [n for n in people if n in ctx.tenure or n.lower() in flagged]
+    known = [n for n in people if n in ctx.tenure or n.lower() in flagged or name_key(n) in by_default]
     if not known:
         return None
 
     def _veteran(n):
-        return n.lower() in flagged or int(ctx.tenure.get(n) or 0) >= EXPERIENCE_SHIFTS
+        return (n.lower() in flagged or name_key(n) in by_default
+                or int(ctx.tenure.get(n) or 0) >= EXPERIENCE_SHIFTS)
 
     veterans = [n for n in known if _veteran(n)]
     rookies = [n for n in known if not _veteran(n) and int(ctx.tenure.get(n) or 0) < DEVELOPING_SHIFTS]
@@ -857,6 +975,8 @@ def dim_experience_balance(ctx: ShiftContext) -> DimensionResult | None:
         weight=DEFAULT_WEIGHTS["experience_balance"],
         facts={"veterans": veterans, "rookies": rookies,
                "experienced_share": round(have, 2), "target_share": want,
+               "by_default": [n for n in veterans if name_key(n) in by_default
+                              and n.lower() not in flagged and int(ctx.tenure.get(n) or 0) < EXPERIENCE_SHIFTS],
                "unknown_tenure": [n for n in people if n not in known]},
     )
     if have >= want:
@@ -877,6 +997,57 @@ def dim_experience_balance(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
+def _families_of(ctx: ShiftContext, name: str) -> set:
+    """The role families `name` can work: the roles their history shows
+    (cross_trained), the roles they hold beyond their roster role
+    (held_roles — trained, promoted) and their roster role. "Server AM" and
+    "Server PM" are one family, so working both is not cross-training
+    (schedule audit 10/3/26 SQ-10)."""
+    roles = list(ctx.cross_trained.get(name) or [])
+    roles += list(ctx.held_roles.get((name or "").strip().lower()) or ())
+    if ctx.roster_roles.get(name):
+        roles.append(ctx.roster_roles[name])
+    return {f for f in (role_family(r, ctx.role_families) for r in roles) if f}
+
+
+def _family_requirements(ctx: ShiftContext) -> dict:
+    """{family: people this shift needs} — coverage's own requirement
+    (shift_role_requirements), per role family."""
+    try:
+        reqs = shift_role_requirements(ctx.typical_headcount, ctx.role_floors, ctx.role_minimums,
+                                       ctx.profile.critical_positions) or {}
+    except Exception:
+        return {}
+    out = {}
+    for role, (n, _src) in reqs.items():
+        fam = role_family(role, ctx.role_families)
+        out[fam] = max(out.get(fam, 0), int(n or 0))
+    return out
+
+
+def _mentor_for(ctx: ShiftContext, weak: str, fam: str, names: list, bar: float, one_person: bool) -> tuple:
+    """(mentor, how) for a developing person on this shift, or (None, None):
+    somebody in the same role family `bar` or above; else somebody else on
+    the floor who also works that station and clears the bar (cross-trained
+    or holding the role); else, at a one-person station only, the manager on
+    the floor — the one backstop a station built for one person can have."""
+    def _best(pool):
+        pool = [n for n in pool if n != weak and (ctx.scores.get(n) or 0) >= bar]
+        return max(pool, key=lambda n: (ctx.scores.get(n) or 0, n)) if pool else None
+    same = _best(ctx.rated(names))
+    if same:
+        return same, "same_role"
+    others = [n for n in ctx.rated(ctx.people) if n not in names and fam in _families_of(ctx, n)]
+    cross = _best(others)
+    if cross:
+        return cross, "cross_role"
+    if one_person:
+        managers = sorted(n for n in ctx.people if n != weak and ctx.manages(n))
+        if managers:
+            return managers[0], "manager"
+    return None, None
+
+
 def dim_training_balance(ctx: ShiftContext) -> DimensionResult | None:
     """Is anybody weak left holding a station alone?
 
@@ -887,25 +1058,46 @@ def dim_training_balance(ctx: ShiftContext) -> DimensionResult | None:
     """
     if not ctx.scores:
         return None
-    on_role = ctx.by_role
+    # One station per role family: "Server AM" and "Server PM" on the same
+    # shift are one station, and a mentor in either counts for both.
+    by_family, shown = {}, {}
+    for role, names in ctx.by_role.items():
+        fam = role_family(role, ctx.role_families)
+        by_family.setdefault(fam, []).extend(names)
+        shown.setdefault(fam, role)
+    need = _family_requirements(ctx)
     checked = isolated = mentored = 0
-    isolated_names, mentored_pairs = [], []
+    isolated_names, mentored_pairs, mentors, solo = [], [], [], []
 
-    for role, names in on_role.items():
+    for fam, names in by_family.items():
+        role = shown[fam]
         rated = ctx.rated(names)
         if not rated:
             continue
         weak = [n for n in rated if (ctx.scores.get(n) or 0) <= 2]
         if not weak:
             continue
+        # A one-person station — the shift needs one of the role (or, with no
+        # requirement on file, runs one) — can never have a second person in
+        # the role beside the weak one, so a lone dishwasher rated 2 scored
+        # training 0 on every shift they worked, however the week was built
+        # (schedule audit 10/3/26 SQ-9).
+        one_person = int(need.get(fam, len(names)) or 0) <= 1
+        if one_person:
+            solo.append(role)
         checked += len(weak)
-        strongest = max((ctx.scores.get(n) or 0) for n in rated)
         for w in weak:
-            # A mentor is somebody two full points clear in the same role.
-            if strongest >= (ctx.scores.get(w) or 0) + 2:
+            mentor, how = _mentor_for(ctx, w, fam, names, (ctx.scores.get(w) or 0) + 2, one_person)
+            if mentor:
                 mentored += 1
-                mentor = max(rated, key=lambda n: ctx.scores.get(n) or 0)
-                mentored_pairs.append(f"{w} with {mentor} on {role_words(role)}")
+                mentors.append({"name": w, "mentor": mentor, "how": how, "role": role})
+                if how == "same_role":
+                    mentored_pairs.append(f"{w} with {mentor} on {role_words(role)}")
+                elif how == "cross_role":
+                    mentored_pairs.append(f"{w} with {mentor}, who also works {role_words(role)}")
+                else:
+                    mentored_pairs.append(f"{w} on {role_words(role)}, a one-person station, with {mentor} "
+                                          "managing the floor")
             else:
                 isolated += 1
                 isolated_names.append(f"{w} on {role_words(role)}")
@@ -917,7 +1109,8 @@ def dim_training_balance(ctx: ShiftContext) -> DimensionResult | None:
         key="training_balance", label="Training balance", score=score,
         weight=DEFAULT_WEIGHTS["training_balance"],
         facts={"developing": checked, "mentored": mentored, "isolated": isolated,
-               "pairs": mentored_pairs, "isolated_names": isolated_names},
+               "pairs": mentored_pairs, "isolated_names": isolated_names,
+               "mentors": mentors, "one_person_stations": solo},
     )
     if mentored:
         res.strengths.append("Paired " + "; ".join(mentored_pairs[:2]) + ".")
@@ -1047,43 +1240,88 @@ HARD_SHIFT_CEILING = 4
 CONSECUTIVE_DAY_CEILING = 6
 
 
-def _fatigue_findings(names, week_assignments: dict, max_shift_hours=None, weekly_ceiling=None,
-                      hours_limits: dict = None) -> tuple:
-    """(overloaded, long_runs, long_shifts, heavy_weeks) for `names`, from
-    their assignments across the whole week (the previous week's tail
-    included, so a run over the boundary is seen)."""
-    overloaded, long_runs, long_shifts, heavy_weeks = [], [], [], []
+# Fatigue across weeks (schedule audit 10/3/26 SQ-27): one week was all it
+# judged, so somebody carrying four of the busiest shifts — one under the
+# weekly ceiling — every week for two months, or averaging past their hours
+# ceiling week after week, never read as strained. The last published weeks
+# (load_ledger) are read with this one: over the latest SUSTAINED_WINDOW
+# weeks, this one included and with at least SUSTAINED_MIN_WEEKS on record,
+# an average at the busy-shift ceiling or past the hours ceiling is strain —
+# unless this week is the relief (under the ceiling, or under RELIEF_SHARE
+# of the hours one), which is never what the schedule is blamed for.
+SUSTAINED_WINDOW = 4
+SUSTAINED_MIN_WEEKS = 3
+RELIEF_SHARE = 0.9
+
+
+def _is_busy(entry: dict) -> bool:
+    return DEMAND_RANK.get(entry.get("demand") or "normal", 1) >= DEMAND_RANK[HARD_DEMAND]
+
+
+def _past_load(ctx: ShiftContext, name: str) -> tuple:
+    """([busy shifts], [hours]) per published week before this one, oldest
+    first, from the load ledger — busy read with this restaurant's own
+    profiles (busy_slots), as this week's shifts are."""
+    busy, hours = [], []
+    for w in (ctx.load_ledger or {}).get(name) or []:
+        busy.append(sum(1 for s in (w.get("slots") or []) if tuple(s) in (ctx.busy_slots or set())))
+        try:
+            hours.append(float(w.get("hours") or 0))
+        except (TypeError, ValueError):
+            hours.append(0.0)
+    return busy, hours
+
+
+def _fatigue_findings(names, ctx: ShiftContext) -> dict:
+    """{overloaded, long_runs, long_shifts, heavy_weeks, sustained_busy,
+    sustained_hours} for `names`. The week's counts are this week's shifts
+    only; the run of days counts the previous week's tail (so a run over the
+    boundary is seen), and the sustained measures read the published weeks
+    before it (SQ-27). Each person's hours ceiling is their own (ShiftContext.
+    ceiling_for): a salaried manager at 55h is not over a 40h line that was
+    never theirs (D-3)."""
+    out = {k: [] for k in ("overloaded", "long_runs", "long_shifts", "heavy_weeks",
+                           "sustained_busy", "sustained_hours")}
     for name in names:
-        assignments = week_assignments.get(name) or []
-        hard = sum(1 for a in assignments
-                   if DEMAND_RANK.get(a.get("demand", "normal"), 1) >= DEMAND_RANK[HARD_DEMAND])
+        assignments = ctx.week_assignments.get(name) or []
+        mine = [a for a in assignments if not a.get("prior")]
+        hard = sum(1 for a in mine if _is_busy(a))
         if hard > HARD_SHIFT_CEILING:
-            overloaded.append((name, hard))
+            out["overloaded"].append((name, hard))
         run = _longest_run(sorted({a.get("date") for a in assignments if a.get("date")}))
         if run > CONSECUTIVE_DAY_CEILING:
-            long_runs.append((name, run))
+            out["long_runs"].append((name, run))
         # Hours, not only days: a 13-hour double and a 46-hour week are
         # both fatigue the day count never sees.
-        if max_shift_hours:
-            longest = max((a.get("hours") or 0) for a in assignments) if assignments else 0
-            if longest > float(max_shift_hours) + 0.01:
-                long_shifts.append((name, longest))
-        total = sum((a.get("hours") or 0) for a in assignments)
-        ceiling = None
-        lim = (hours_limits or {}).get(name)
-        if lim and lim[1]:
-            ceiling = float(lim[1])
-        elif weekly_ceiling:
-            ceiling = float(weekly_ceiling)
+        if ctx.max_shift_hours:
+            longest = max((a.get("hours") or 0) for a in mine) if mine else 0
+            if longest > float(ctx.max_shift_hours) + 0.01:
+                out["long_shifts"].append((name, longest))
+        total = sum((a.get("hours") or 0) for a in mine)
+        ceiling = ctx.ceiling_for(name)
         if ceiling and total > ceiling + 0.05:
-            heavy_weeks.append((name, round(total, 1), ceiling))
-    return overloaded, long_runs, long_shifts, heavy_weeks
+            out["heavy_weeks"].append((name, round(total, 1), ceiling))
+        past_busy, past_hours = _past_load(ctx, name)
+        if past_busy:
+            window = (past_busy + [hard])[-SUSTAINED_WINDOW:]
+            avg = sum(window) / float(len(window))
+            if len(window) >= SUSTAINED_MIN_WEEKS and hard >= HARD_SHIFT_CEILING and avg >= HARD_SHIFT_CEILING:
+                out["sustained_busy"].append((name, round(avg, 1), len(window)))
+        if past_hours and ceiling:
+            window = (past_hours + [total])[-SUSTAINED_WINDOW:]
+            avg = sum(window) / float(len(window))
+            if len(window) >= SUSTAINED_MIN_WEEKS and total >= ceiling * RELIEF_SHARE and avg > ceiling + 0.05:
+                out["sustained_hours"].append((name, round(avg, 1), len(window), ceiling))
+    return out
 
 
-def _fatigue_result(tracked: list, findings: tuple, scope: str = "shift") -> DimensionResult:
-    overloaded, long_runs, long_shifts, heavy_weeks = findings
+def _fatigue_result(tracked: list, findings: dict, scope: str = "shift") -> DimensionResult:
+    overloaded, long_runs = findings["overloaded"], findings["long_runs"]
+    long_shifts, heavy_weeks = findings["long_shifts"], findings["heavy_weeks"]
+    sustained_busy, sustained_hours = findings["sustained_busy"], findings["sustained_hours"]
     strained = sorted({n for n, _ in overloaded} | {n for n, _ in long_runs}
-                      | {n for n, _ in long_shifts} | {n for n, _, _ in heavy_weeks})
+                      | {n for n, _ in long_shifts} | {n for n, _, _ in heavy_weeks}
+                      | {n for n, _, _ in sustained_busy} | {n for n, _, _, _ in sustained_hours})
     score = _pct(len(tracked) - len(strained), len(tracked))
     res = DimensionResult(
         key="fatigue", label="Fatigue", score=score,
@@ -1092,6 +1330,9 @@ def _fatigue_result(tracked: list, findings: tuple, scope: str = "shift") -> Dim
                "long_runs": [{"name": n, "days": d} for n, d in long_runs],
                "long_shifts": [{"name": n, "hours": h} for n, h in long_shifts],
                "heavy_weeks": [{"name": n, "hours": h, "ceiling": c} for n, h, c in heavy_weeks],
+               "sustained_busy": [{"name": n, "average": a, "weeks": w} for n, a, w in sustained_busy],
+               "sustained_hours": [{"name": n, "average": a, "weeks": w, "ceiling": c}
+                                   for n, a, w, c in sustained_hours],
                "tracked": len(tracked), "strained": strained, "scope": scope},
     )
     for name, hard in overloaded[:2]:
@@ -1103,6 +1344,12 @@ def _fatigue_result(tracked: list, findings: tuple, scope: str = "shift") -> Dim
         res.weaknesses.append(f"{name} has a {hours:g}-hour shift this week.")
     for name, hours, ceiling in heavy_weeks[:2]:
         res.weaknesses.append(f"{name} is at {hours:g}h against a {ceiling:g}h ceiling.")
+    for name, avg, weeks in sustained_busy[:2]:
+        res.weaknesses.append(f"{name} has averaged {avg:g} of the week's busiest shifts over the last "
+                              f"{weeks} weeks, this one included — give them a lighter week.")
+    for name, avg, weeks, ceiling in sustained_hours[:2]:
+        res.weaknesses.append(f"{name} has averaged {avg:g}h a week over the last {weeks} weeks, this one "
+                              f"included, against a {ceiling:g}h ceiling.")
     if not res.weaknesses:
         res.strengths.append("Nobody is carrying an unreasonable share of the hard shifts.")
     return res
@@ -1130,15 +1377,15 @@ def dim_fatigue(ctx: ShiftContext) -> DimensionResult | None:
     tracked = [n for n in ctx.people if n in ctx.week_assignments]
     if not tracked:
         return None
-    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx.week_assignments, ctx.max_shift_hours,
-                                                      ctx.weekly_ceiling, ctx.hours_limits))
+    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx))
 
 
 def week_fatigue(contexts: list) -> DimensionResult | None:
     """Fatigue judged once per person per week: of everybody working this
     week, how many are carrying too many busy shifts, too many days in a
-    row, an over-long shift or an over-ceiling week. None when the week has
-    nobody on it (and so nothing to judge)."""
+    row, an over-long shift or an over-ceiling week — this week, or week
+    after week across the published weeks before it (SQ-27). None when the
+    week has nobody on it (and so nothing to judge)."""
     if not contexts:
         return None
     ctx = contexts[0]
@@ -1151,8 +1398,7 @@ def week_fatigue(contexts: list) -> DimensionResult | None:
                      if any(not e.get("prior") for e in (ctx.week_assignments.get(n) or [])))
     if not tracked:
         return None
-    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx.week_assignments, ctx.max_shift_hours,
-                                                      ctx.weekly_ceiling, ctx.hours_limits), scope="week")
+    return _fatigue_result(tracked, _fatigue_findings(tracked, ctx), scope="week")
 
 
 def _longest_run(dates: list) -> int:
@@ -1180,13 +1426,68 @@ FAIRNESS_MIN_GROUP = 3
 _WEEKEND = ("friday", "saturday", "sunday")
 
 
-def _primary_role(entries: list) -> str:
+def _primary_role(entries: list, families: dict = None) -> str:
+    """The role family somebody works most of `entries` in — "Server AM"
+    and "Server PM" are one role to compare a share within."""
     counts = {}
     for e in entries:
-        r = (e.get("role") or "").strip().lower()
+        r = role_family(e.get("role") or "", families)
         if r:
             counts[r] = counts.get(r, 0) + 1
     return max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if counts else ""
+
+
+# The busiest shifts across the published weeks (schedule audit 10/3/26
+# SQ-27): somebody on a busy shift who has had this many more of them than
+# their share among their role over those weeks is carrying the load week
+# after week — a pattern no single week's comparison can see. Costs what the
+# weekend and close ledger does.
+LEDGER_BUSY_EXCESS = 3
+LEDGER_MIN_SHIFTS = 3
+LEDGER_PENALTY = 15
+
+
+def _busy_ledger(ctx: ShiftContext):
+    """The busiest-shift share across the published weeks for the people on
+    this shift, against their role family's rate over the same weeks: None
+    when nobody here could be compared (fewer than FAIRNESS_MIN_GROUP people
+    in their role with LEDGER_MIN_SHIFTS on record), else {"overloaded":
+    [...]} — empty when nobody is past their share."""
+    per = {}
+    for name, weeks in (ctx.load_ledger or {}).items():
+        slots = [tuple(s) for w in weeks for s in (w.get("slots") or [])]
+        if len(slots) < LEDGER_MIN_SHIFTS:
+            continue
+        roles = {}
+        for w in weeks:
+            fam = role_family(w.get("role") or "", ctx.role_families)
+            if fam:
+                roles[fam] = roles.get(fam, 0) + len(w.get("slots") or [])
+        fam = max(roles.items(), key=lambda kv: (kv[1], kv[0]))[0] if roles else ""
+        per[name] = (fam, len(slots), sum(1 for s in slots if s in (ctx.busy_slots or set())), len(weeks))
+    here = [n for n in ctx.people if n in per]
+    if not here:
+        return None
+    out, judged = [], False
+    for fam in sorted({per[n][0] for n in here}):
+        group = [n for n, v in per.items() if v[0] == fam]
+        if len(group) < FAIRNESS_MIN_GROUP:
+            continue
+        shifts = sum(per[n][1] for n in group)
+        busy = sum(per[n][2] for n in group)
+        if not shifts:
+            continue
+        judged = True
+        rate = busy / float(shifts)
+        for n in here:
+            if per[n][0] != fam:
+                continue
+            expected = per[n][1] * rate
+            excess = per[n][2] - expected
+            if excess > LEDGER_BUSY_EXCESS:
+                out.append({"name": n, "role": fam, "have": per[n][2], "share": round(expected, 1),
+                            "excess": round(excess, 1), "weeks": per[n][3]})
+    return {"overloaded": out} if judged else None
 
 
 def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
@@ -1233,19 +1534,26 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
                     or "night" in {p.strip().lower() for p in (pattern.get("dayparts") or [])})
         return True
 
-    week_dates = {e.get("date") for es in ctx.week_assignments.values() for e in es}
     by_role = {}
     for name, entries in ctx.week_assignments.items():
         # This week's shifts only: prior_week_assignments seeds the tail of
         # the last schedule for fatigue, and is not this week's share.
         mine = [e for e in entries if e.get("date") and not e.get("prior")]
         if len(mine) >= 2:
-            by_role.setdefault(_primary_role(mine), []).append((name, mine))
+            by_role.setdefault(_primary_role(mine, ctx.role_families), []).append((name, mine))
 
     worst, facts, lines = SCORE_MAX, {}, []
     on_here = {n.lower() for n in ctx.people}
+    # Whether anybody on this shift could be compared with anybody at all
+    # (schedule audit 10/3/26 SQ-11). A kind was written into the facts even
+    # when no role reached FAIRNESS_MIN_GROUP, and the dimension withdrew
+    # only when no kind was — so a two- or three-person week scored a
+    # phantom 100 that diluted the real problems. A kind now counts only when
+    # somebody on this shift sat in a group large enough to share it, and
+    # with no comparison anywhere the dimension withdraws.
+    compared = False
     for kind, label in kinds:
-        overloaded = []
+        overloaded, judged = [], False
         for role, members in by_role.items():
             group = [(n, es) for n, es in members if _eligible(kind, n, es)]
             if len(group) < FAIRNESS_MIN_GROUP:
@@ -1258,12 +1566,16 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
             for n, es in group:
                 if n.lower() not in on_here:
                     continue
+                judged = True
                 have = sum(1 for e in es if _is(kind, e))
                 expected = len(es) * rate
                 excess = have - expected
                 if excess > FAIRNESS_ALLOWANCE:
                     overloaded.append({"name": n, "role": role, "have": have,
                                        "share": round(expected, 1), "excess": round(excess, 1)})
+        if not judged:
+            continue
+        compared = True
         if overloaded:
             top = max(overloaded, key=lambda o: o["excess"])
             kind_score = max(0, int(round(SCORE_MAX - (top["excess"] - FAIRNESS_ALLOWANCE) * FAIRNESS_STEP)))
@@ -1279,8 +1591,8 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
     rot_lines, rot_good, rot_facts = _rotation_findings(ctx, {k for k, _l in kinds})
     if rot_facts:
         facts["rotation"] = rot_facts
-    if not any(k in facts for k, _ in kinds) and not rot_facts:
-        return None
+    if rot_facts or _rotation_covers(ctx, {k for k, _l in kinds}):
+        compared = True
     if rot_lines:
         lines.extend(rot_lines)
         worst = max(0, worst - ROTATION_PENALTY)
@@ -1296,6 +1608,7 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
             everyone = [n for n in ctx.ledger if ctx.ledger[n].get("shifts", 0) >= 3]
             if len(everyone) < 3 or not on:
                 continue
+            compared = True
             counts = {n: int(ctx.ledger[n].get(kind) or 0) for n in everyone}
             top, bottom = max(counts.values()), min(counts.values())
             most_here = [n for n in on if counts.get(n) == top]
@@ -1305,9 +1618,27 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
                              f"{label} of the last {wk} published weeks ({top} against {bottom}) and "
                              f"{'is' if len(most_here) == 1 else 'are'} on another here.")
                 facts["ledger"] = {"kind": kind, "most": most_here, "top": top, "bottom": bottom, "weeks": wk}
-                worst = max(0, worst - 15)
+                worst = max(0, worst - LEDGER_PENALTY)
                 break
 
+    # The busiest shifts across the published weeks (SQ-27): the rotation
+    # and the ledger above cover weekends and closes only, so the same
+    # people carrying every Friday and Saturday night for two months read
+    # as fair whenever one week's share looked even.
+    if any(k == "busiest" for k, _l in kinds) and ctx.load_ledger and ctx.busy_slots:
+        across = _busy_ledger(ctx)
+        if across is not None:
+            compared = True
+            facts["busy_ledger"] = across
+            if across["overloaded"]:
+                top = max(across["overloaded"], key=lambda o: o["excess"])
+                lines.append(f"{top['name']} has had {top['have']} of the busiest shifts over the last "
+                             f"{top['weeks']} published weeks — about {top['share']:g} would be their share "
+                             f"among {role_words(top['role'], 2, default='their role')} — and is on another here.")
+                worst = max(0, worst - LEDGER_PENALTY)
+
+    if not compared:
+        return None
     res = DimensionResult(key="fairness", label="Fairness", score=worst,
                           weight=DEFAULT_WEIGHTS["fairness"], facts=facts)
     res.weaknesses.extend(lines)
@@ -1321,6 +1652,16 @@ def dim_fairness(ctx: ShiftContext) -> DimensionResult | None:
 # Points a shift loses when it puts somebody due a weekend off, or resting
 # from closes, on it while the rotation's next person in that role is free.
 ROTATION_PENALTY = 15
+
+
+def _rotation_covers(ctx: ShiftContext, kinds: set) -> bool:
+    """Whether the rotation plan speaks for a role on this shift at all — a
+    weekend or a close judged against it, with or without a finding."""
+    plan = (ctx.rotation or {}).get("roles") or {}
+    if not plan or not kinds & {"weekend", "closing"}:
+        return False
+    keys = {str(r).strip().lower() for r in plan}
+    return any(role.strip().lower() in keys for role in ctx.by_role)
 
 
 def _rotation_findings(ctx: ShiftContext, kinds: set):
@@ -1429,35 +1770,86 @@ def dim_cross_training(ctx: ShiftContext) -> DimensionResult | None:
 
     A shift where every person can only do their own job has no answer to
     a no-show. One where half the floor can cover a second station does.
+
+    Stations are role FAMILIES (schedule audit 10/3/26 SQ-10): "flexible"
+    used to mean two role names in the history, so a server who worked
+    "Server AM" and "Server PM" read as cross-trained; now it means two
+    families among the roles they have worked, the roles they hold (trained,
+    promoted — people.held_roles) and their roster role. A role nobody who
+    works it can flex — no dishwasher on the roster can cover a second
+    station — is not judged at all: scoring it 0 on every shift was a fact
+    about training, not about this week's schedule.
     """
-    if not ctx.cross_trained:
+    if not ctx.cross_trained and not ctx.held_roles:
         return None
     people = ctx.people
     if not people:
         return None
-    flexible = [n for n in people if len(ctx.cross_trained.get(n) or []) > 1]
+    on_family, shown, raw_roles = {}, {}, {}
+    for role, names in ctx.by_role.items():
+        fam = role_family(role, ctx.role_families)
+        on_family.setdefault(fam, []).extend(names)
+        raw_roles.setdefault(fam, set()).add(role.strip())
+    for fam, raws in raw_roles.items():
+        shown[fam] = next(iter(raws)) if len(raws) == 1 else fam.title()
+    working_as = {n: role_family(r, ctx.role_families) for r, names in ctx.by_role.items() for n in names}
+
+    def _fams(n):
+        f = _families_of(ctx, n)
+        if n in working_as:
+            f.add(working_as[n])
+        return f
+
+    flexible = [n for n in people if len(_fams(n)) > 1]
+    # The families somebody who can flex works in — the roster, the history
+    # and the people here. A family no such person works is not judged.
+    everyone = set(ctx.cross_trained) | set(ctx.roster_roles) | set(people)
+    can_flex = set()
+    for n in everyone:
+        f = _fams(n)
+        if len(f) > 1:
+            can_flex |= f
+    for low, roles in (ctx.held_roles or {}).items():
+        f = {role_family(r, ctx.role_families) for r in roles or ()}
+        if not any((n or "").strip().lower() == low for n in everyone) and len(f) > 1:
+            can_flex |= f
+    owner_targets = {}
+    for r, v in (ctx.cross_training_targets or {}).items():
+        fam = role_family(r, ctx.role_families)
+        try:
+            owner_targets[fam] = max(float(owner_targets.get(fam, v)), float(v))
+        except (TypeError, ValueError):
+            continue
     # Judged role by role against that role's own target (the owner's, else
     # CROSS_TRAINING_DEFAULTS): a dish crew is not expected to flex the way
     # a bar is. A role whose target is 0 is not asked. Each role counts by
     # its headcount on the shift; past its target there is no extra credit.
-    per_role, total_w, total = {}, 0, 0.0
-    for role, names in ctx.by_role.items():
-        target = cross_training_target_for(role, ctx.cross_training_targets, ctx.cross_training_target)
+    per_role, total_w, total, unjudged = {}, 0, 0.0, []
+    for fam, names in on_family.items():
+        target = cross_training_target_for(fam, owner_targets, ctx.cross_training_target)
         if target <= 0 or not names:
             continue
-        flex = [n for n in names if len(ctx.cross_trained.get(n) or []) > 1]
+        if fam not in can_flex:
+            unjudged.append(shown[fam])
+            continue
+        flex = [n for n in names if len(_fams(n)) > 1]
         role_score = min(SCORE_MAX, int(round(len(flex) / float(len(names)) / target * 100)))
-        per_role[role] = {"flexible": len(flex), "on_shift": len(names), "target": round(target, 2),
-                          "score": role_score}
+        per_role[shown[fam]] = {"flexible": len(flex), "on_shift": len(names), "target": round(target, 2),
+                                "score": role_score}
         total += role_score * len(names)
         total_w += len(names)
     if not total_w:
+        if unjudged:
+            ctx.notes.append("Cross-training was not judged for " + ", ".join(role_words(r, 2) for r in sorted(unjudged))
+                             + " — nobody who works " + ("that role" if len(unjudged) == 1 else "those roles")
+                             + " can cover a second station yet.")
         return None
     score = int(round(total / total_w))
     res = DimensionResult(
         key="cross_training", label="Cross-training", score=score,
         weight=DEFAULT_WEIGHTS["cross_training"],
-        facts={"flexible": flexible, "on_shift": len(people), "by_role": per_role},
+        facts={"flexible": flexible, "on_shift": len(people), "by_role": per_role,
+               "not_judged": sorted(unjudged)},
     )
     if flexible:
         res.strengths.append(
@@ -1817,47 +2209,355 @@ def dim_pairings(ctx: ShiftContext) -> DimensionResult | None:
     return res
 
 
+PREFERENCE_HOURS_BAND = 0.2
+# What a preference staff showed by what they drop and claim (schedule_intel.
+# behaviour_preferences: two or more of the same slot) counts against one
+# they stated themselves (schedule audit 10/3/26 L-19): it reached only the
+# prompt, so somebody who dropped Sunday nights every time kept being handed
+# them by every pass that chose by the score.
+LEARNED_PREFERENCE_WEIGHT = 0.5
+
+
+def _parts_words(parts) -> str:
+    return " or ".join("days" if x == "morning" else "nights" for x in parts)
+
+
+def _slot_words(slot) -> str:
+    day, part = slot
+    return f"{day} {'day' if part == 'morning' else 'night'}"
+
+
+def _learned(lp: dict) -> tuple:
+    """(avoid slots, prefer slots, weight) of one person's learned preferences."""
+    def _slots(key):
+        return {tuple(s) for s in (lp.get(key) or []) if isinstance(s, (list, tuple)) and len(s) == 2}
+    try:
+        w = float(lp.get("weight") if lp.get("weight") is not None else LEARNED_PREFERENCE_WEIGHT)
+    except (TypeError, ValueError):
+        w = LEARNED_PREFERENCE_WEIGHT
+    return _slots("avoid"), _slots("prefer"), max(0.0, min(1.0, w))
+
+
 def dim_preferences(ctx: ShiftContext) -> DimensionResult | None:
-    """What people said they want, for the people on this shift: the
-    daypart they prefer, and a week near the hours they asked for (within
-    PREFERENCE_HOURS_BAND). Stated by staff in their own settings; never a
-    rule, weighted lightly, and silent for anybody who stated nothing."""
+    """What people want, for the people on ONE shift: the daypart they said
+    they prefer, and a slot they keep dropping or claiming (learned, at
+    LEARNED_PREFERENCE_WEIGHT of a stated preference). The week score judges
+    preferences once for the week (week_preferences, WEEK_LEVEL_DIMENSIONS);
+    this is kept for callers asking about one shift's people. The hours a
+    person asked for are a fact about their week and are judged only there."""
     prefs = ctx.preferences or {}
-    if not prefs:
+    learned = ctx.learned_preferences or {}
+    if not prefs and not learned:
         return None
-    checked = met = 0
+    checked = met = 0.0
     misses = []
     for name in ctx.people:
-        p = prefs.get(name)
-        if not p:
-            continue
-        parts = [x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")]
+        parts = [x for x in ((prefs.get(name) or {}).get("preferred_dayparts") or []) if x in ("morning", "night")]
         if parts:
             checked += 1
             if ctx.daypart in parts:
                 met += 1
             else:
-                misses.append(f"{name} prefers {' or '.join('days' if x == 'morning' else 'nights' for x in parts)}")
-        want = p.get("desired_hours")
-        if want:
-            checked += 1
-            have = sum((a.get("hours") or 0) for a in (ctx.week_assignments.get(name) or []) if not a.get("prior"))
-            if abs(have - float(want)) <= float(want) * PREFERENCE_HOURS_BAND:
-                met += 1
-            else:
-                misses.append(f"{name} asked for about {float(want):g}h and has {have:g}h")
+                misses.append(f"{name} prefers {_parts_words(parts)}")
+        if learned.get(name):
+            avoid, prefer, w = _learned(learned[name])
+            slot = (ctx.day, ctx.daypart)
+            if slot in avoid:
+                checked += w
+                misses.append(f"{name} keeps asking to drop {_slot_words(slot)}")
+            elif slot in prefer:
+                checked += w
+                met += w
     if not checked:
         return None
     res = DimensionResult(key="preferences", label="Staff preferences", score=_pct(met, checked),
-                          weight=DEFAULT_WEIGHTS["preferences"], facts={"checked": checked, "met": met, "misses": misses})
+                          weight=DEFAULT_WEIGHTS["preferences"],
+                          facts={"checked": round(checked, 2), "met": round(met, 2), "misses": misses})
     if misses:
         res.weaknesses.append("; ".join(misses[:2]) + ".")
     else:
-        res.strengths.append("Everybody here is on the shift and hours they asked for.")
+        res.strengths.append("Everybody here is on the shift they asked for.")
     return res
 
 
-PREFERENCE_HOURS_BAND = 0.2
+def week_preferences(contexts: list) -> DimensionResult | None:
+    """Staff preferences judged once for the week (schedule audit 10/3/26
+    SQ-24). For each person working it: each of their shifts on a daypart
+    they said they prefer, or not; their week against the hours they asked
+    for, within PREFERENCE_HOURS_BAND — ONCE, where it used to be charged
+    again on every shift they worked (a 30h-wanting server on five shifts
+    was five misses for one fact, more on a peak night, the same mistake
+    fatigue was moved off the shifts for); and each shift on a slot they keep
+    dropping, or claiming, at LEARNED_PREFERENCE_WEIGHT of a stated one
+    (L-19). Never a rule, weighted lightly, silent for anybody who has
+    neither stated nor shown a preference."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    prefs = ctx.preferences or {}
+    learned = ctx.learned_preferences or {}
+    if not prefs and not learned:
+        return None
+    working = set()
+    for c in contexts:
+        working.update(c.people)
+    checked = met = 0.0
+    misses, learned_misses, strained = [], [], set()
+    for name in sorted(working):
+        mine = [e for e in (ctx.week_assignments.get(name) or []) if e.get("date") and not e.get("prior")]
+        if not mine:
+            continue
+        p = prefs.get(name) or {}
+        parts = [x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")]
+        if parts:
+            judged = [e for e in mine if e.get("daypart") in ("morning", "night")]
+            off = [e for e in judged if e.get("daypart") not in parts]
+            checked += len(judged)
+            met += len(judged) - len(off)
+            if off:
+                misses.append(f"{name} prefers {_parts_words(parts)} and has {len(off)} of {len(judged)} "
+                              f"{_plural(len(judged), 'shift')} on {_parts_words([x for x in ('morning', 'night') if x not in parts])}")
+                strained.add(name)
+        try:
+            want = float(p.get("desired_hours")) if p.get("desired_hours") else None
+        except (TypeError, ValueError):
+            want = None
+        if want:
+            have = round(sum(float(e.get("hours") or 0) for e in mine), 1)
+            checked += 1
+            if abs(have - want) <= want * PREFERENCE_HOURS_BAND:
+                met += 1
+            else:
+                misses.append(f"{name} asked for about {want:g}h and has {have:g}h")
+                strained.add(name)
+        if learned.get(name):
+            avoid, prefer, w = _learned(learned[name])
+            for e in mine:
+                slot = (e.get("day"), e.get("daypart"))
+                if slot in avoid:
+                    checked += w
+                    learned_misses.append(f"{name} keeps asking to drop {_slot_words(slot)} and is on it")
+                    strained.add(name)
+                elif slot in prefer:
+                    checked += w
+                    met += w
+    if not checked:
+        return None
+    res = DimensionResult(key="preferences", label="Staff preferences", score=_pct(met, checked),
+                          weight=DEFAULT_WEIGHTS["preferences"],
+                          facts={"checked": round(checked, 2), "met": round(met, 2), "misses": misses,
+                                 "learned_misses": learned_misses, "learned_weight": LEARNED_PREFERENCE_WEIGHT,
+                                 "strained": sorted(strained), "scope": "week"})
+    lines = misses + learned_misses
+    if lines:
+        res.weaknesses.append("; ".join(lines[:2]) + ".")
+    else:
+        res.strengths.append("Everybody working this week is on the shifts and hours they asked for.")
+    return res
+
+
+# ── Overtime ───────────────────────────────────────────────────────────────
+
+# The overtime premium the week runs up, against the week's hourly pay
+# (schedule audit 10/3/26 SQ-25). Overtime pay starts past `line`
+# (labor.OVERTIME_THRESHOLD_HOURS, 40h) in the payroll week, the hours
+# already published in that payroll week included, and costs the half of
+# time-and-a-half — the overtime forecast's own premium. Each 1% of the
+# week's hourly pay spent on premium a same-role teammate with room could
+# have avoided costs OVERTIME_POINTS; overtime nobody else could take costs
+# UNAVOIDABLE_OVERTIME_SHARE of that — a real cost, but not a choice this
+# schedule made. Salaried people owe none.
+OVERTIME_PREMIUM = 0.5
+OVERTIME_POINTS = 25
+UNAVOIDABLE_OVERTIME_SHARE = 0.5
+
+
+def week_overtime(contexts: list) -> DimensionResult | None:
+    """The overtime premium the week runs up — judged once for the week, a
+    payroll-week fact. Withdraws without the overtime inputs (the engine
+    supplies them: the line, each date's payroll week, the hours already
+    published, the rates) or without any hourly hours to judge."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    ot = ctx.overtime or {}
+    try:
+        line = float(ot.get("line") or 0)
+    except (TypeError, ValueError):
+        line = 0.0
+    if line <= 0:
+        return None
+    bucket_of = ot.get("bucket_of") or {}
+    published = ot.get("published") or {}
+    raw_rates = ot.get("rates") or {}
+    rates = {}
+    for k, v in raw_rates.items():
+        try:
+            if k != "_default" and v:
+                rates[str(k).strip().lower()] = float(v)
+        except (TypeError, ValueError):
+            continue
+    try:
+        default_rate = float(ot.get("default_rate") or raw_rates.get("_default") or 0) or None
+    except (TypeError, ValueError):
+        default_rate = None
+    priced = bool(rates or default_rate)
+
+    def _rate(role):
+        r = rates.get((role or "").strip().lower())
+        return r if r else (default_rate or (None if priced else 1.0))
+
+    rows_by_date = {}
+    for c in contexts:
+        if c.date not in rows_by_date:
+            rows_by_date[c.date] = [r for r in (c.day_rows or c.rows) if not c._is_flagged(r)]
+    rows = [r for rs in rows_by_date.values() for r in rs if (r.get("employee") or "").strip()]
+    hours, role_hours, display, working = {}, {}, {}, set()
+    cost = 0.0
+    for r in rows:
+        n = r["employee"].strip()
+        working.add((name_key(n), r.get("date")))
+        if ctx.is_salaried(n):
+            continue
+        h = _row_hours(r)
+        key = (name_key(n), bucket_of.get(r.get("date"), ""))
+        hours[key] = hours.get(key, 0.0) + h
+        role = (r.get("role") or "").strip()
+        role_hours.setdefault(key, {})[role] = role_hours.get(key, {}).get(role, 0.0) + h
+        display[name_key(n)] = n
+        cost += h * (_rate(role) or 0.0)
+    if cost <= 0:
+        return None
+
+    def _published(k, b):
+        v = published.get(k) or published.get(display.get(k, k), 0) or 0
+        if isinstance(v, dict):
+            return float(v.get(b, 0) or 0)
+        return float(v)
+
+    def _total(k, b):
+        return hours.get((k, b), 0.0) + _published(k, b)
+
+    index = None
+    if ot.get("rules") is not None:
+        index = _SwapIndex(rows, ctx.availability or {}, {}, ot.get("rules") or {})
+    people_by_family = {}
+    for n, role in (ctx.roster_roles or {}).items():
+        people_by_family.setdefault(role_family(role, ctx.role_families), set()).add(n)
+    for r in rows:
+        people_by_family.setdefault(role_family(r.get("role"), ctx.role_families), set()).add(r["employee"].strip())
+
+    def _teammate(k, b, role):
+        """Somebody hourly in the same role family with room under the line
+        for one of this person's shifts in that payroll week."""
+        mine = sorted((r for r in rows if name_key(r["employee"]) == k and bucket_of.get(r.get("date"), "") == b),
+                      key=lambda r: _row_hours(r))
+        fam = role_family(role, ctx.role_families)
+        for r in mine:
+            for other in sorted(people_by_family.get(fam) or ()):
+                ok = name_key(other)
+                if ok == k or ctx.is_salaried(other) or (ok, r.get("date")) in working:
+                    continue
+                cap = ctx.ceiling_for(other)
+                room = min(line, cap) if cap else line
+                if _total(ok, b) + _row_hours(r) > room + 0.05:
+                    continue
+                if _unavailable(ctx.availability or {}, other, _day_name(r.get("date"), r.get("day", ""))):
+                    continue
+                if index is not None and not index.person_fits(other, r):
+                    continue
+                return other
+        return None
+
+    over = []
+    for (k, b), h in sorted(hours.items()):
+        total = _total(k, b)
+        ot_hours = round(total - line, 2)
+        if ot_hours <= 0.05:
+            continue
+        role = max(role_hours[(k, b)].items(), key=lambda kv: (kv[1], kv[0]))[0]
+        rate = _rate(role) or 0.0
+        teammate = _teammate(k, b, role)
+        over.append({"name": display.get(k, k), "bucket": b, "hours": round(total, 1),
+                     "published_hours": round(_published(k, b), 1), "overtime_hours": round(ot_hours, 1),
+                     "premium": round(ot_hours * rate * OVERTIME_PREMIUM, 2), "role": role,
+                     "avoidable": bool(teammate), "teammate": teammate})
+    weighted = sum(o["premium"] * (1.0 if o["avoidable"] else UNAVOIDABLE_OVERTIME_SHARE) for o in over)
+    share = weighted / cost * 100.0
+    score = max(0, int(round(SCORE_MAX - OVERTIME_POINTS * share)))
+    res = DimensionResult(
+        key="overtime", label="Overtime", score=score, weight=DEFAULT_WEIGHTS["overtime"],
+        facts={"people": over, "line": line, "priced": priced,
+               "premium": round(sum(o["premium"] for o in over), 2) if priced else None,
+               "premium_hours": round(sum(o["overtime_hours"] for o in over) * OVERTIME_PREMIUM, 2),
+               "week_pay": round(cost, 2) if priced else None, "share_pct": round(share, 2),
+               "strained": sorted(o["name"] for o in over), "scope": "week"})
+    if not over:
+        res.strengths.append(f"Nobody is scheduled past {line:g}h in a payroll week.")
+        return res
+    from time_utils import mdy
+    for o in sorted(over, key=lambda o: (-o["premium"], -o["overtime_hours"], o["name"]))[:2]:
+        when = f" in the payroll week of {mdy(o['bucket'])}" if o["bucket"] else ""
+        cost_words = (f" — about ${o['premium']:,.0f} of overtime premium" if priced and o["premium"]
+                      else f" — {o['overtime_hours'] * OVERTIME_PREMIUM:g}h of pay at the overtime premium")
+        tail = (f"; {o['teammate']} has room in the same role for one of their shifts." if o["avoidable"]
+                else "; nobody else in the role has room to take a shift.")
+        res.weaknesses.append(f"{o['name']} is {o['overtime_hours']:g}h into overtime{when}{cost_words}{tail}")
+    return res
+
+
+# ── Kitchen stations ───────────────────────────────────────────────────────
+
+# Under this share of a daypart's required stations held by a trained cook,
+# the shift is capped — a grill nobody on the line can work is a kitchen
+# that cannot run its menu, whatever else the shift has (SQ-26).
+STATIONS_FLOOR = 70
+
+
+def dim_stations(ctx: ShiftContext) -> DimensionResult | None:
+    """Is every kitchen station this daypart needs held by a cook trained on
+    it? (schedule audit 10/3/26 SQ-26.) The engine enforced stations
+    outside the score (schedule_engine._ensure_station_coverage), so a draft
+    the station pass could not finish scored as if its kitchen were whole.
+    Read exactly as that pass and the station report read it
+    (kitchen_stations: the needs for this weekday and daypart, the kitchen
+    rows on the floor for it, each cook matched to at most one station they
+    are trained on). Withdraws when the owner has set no stations, or none
+    is needed on this daypart."""
+    cfg = ctx.stations or {}
+    if not cfg or ctx.daypart not in ("morning", "night"):
+        return None
+    import kitchen_stations as _ks          # pure; the one matching of cooks to stations
+    need = _ks.required(cfg, ctx.day, ctx.daypart)
+    if not need:
+        return None
+    cooks = []
+    for r in (ctx.day_rows or ctx.rows):
+        n = (r.get("employee") or "").strip()
+        if (not n or ctx._is_flagged(r) or not _ks.is_kitchen(cfg, r.get("role"))
+                or ctx.daypart not in _ks.parts_of(r)):
+            continue
+        if n not in cooks:
+            cooks.append(n)
+    placed, unmet = _ks.assign(cooks, need, cfg)
+    filled = len(need) - len(unmet)
+    part = "lunch" if ctx.daypart == "morning" else "dinner"
+    res = DimensionResult(
+        key="stations", label="Kitchen stations", score=_pct(filled, len(need)),
+        weight=DEFAULT_WEIGHTS["stations"], floor=STATIONS_FLOOR,
+        facts={"required": list(need), "assigned": dict(placed), "gaps": list(unmet), "cooks": cooks})
+    for st in sorted(set(unmet), key=need.index):
+        trained = sorted(p for p, have in (cfg.get("skills") or {}).items() if st in (have or []))
+        off = [p for p in trained if p not in cooks]
+        res.weaknesses.append(
+            f"{st} has no trained cook on {ctx.day} {part}"
+            + (f" — {_names(off[:3])} {'is' if len(off) == 1 else 'are'} trained on it." if off
+               else " — nobody is marked trained on it yet."))
+    if not unmet:
+        res.strengths.append("Every station this shift needs has a trained cook: "
+                             + ", ".join(f"{st} ({c})" for c, st in sorted(placed.items(), key=lambda kv: need.index(kv[1])))
+                             + ".")
+    return res
 
 
 DIMENSIONS = {
@@ -1877,28 +2577,35 @@ DIMENSIONS = {
     "preferences": dim_preferences,
     "stability": dim_stability,
     "cross_training": dim_cross_training,
+    "overtime": week_overtime,          # a payroll-week fact: judged only for the week
+    "stations": dim_stations,
 }
 
 # Dimensions that are properties of the whole week, judged once per week in
 # evaluate_schedule and weighted once into the week score (week_score_raw),
 # never repeated on every shift. Still in DIMENSIONS so their weight is
 # editable and their key is known everywhere a dimension is listed.
+# Preferences (SQ-24) and overtime (SQ-25) are week facts the same way
+# fatigue is: a person's hours, their payroll week.
 WEEK_LEVEL_DIMENSIONS = {
     "fatigue": week_fatigue,
+    "preferences": week_preferences,
+    "overtime": week_overtime,
 }
 
 # What a customer sees today. The rest is computed, stored and available to
 # the explanation layer, but not put on screen yet — a manager reading
 # fourteen numbers is reading none of them.
 CUSTOMER_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "leadership",
-                       "training_balance", "labor_efficiency", "splh", "demand_match", "reliability")
+                       "training_balance", "labor_efficiency", "splh", "demand_match", "reliability",
+                       "stations")
 
 # At least one of these has to have data before a shift claims a score. The
 # rest are real dimensions and genuinely count, but none of them alone says
 # anything about whether the shift will actually run.
 SUBSTANTIVE_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "leadership",
                           "demand_match", "labor_efficiency", "splh", "experience_balance",
-                          "training_balance")
+                          "training_balance", "stations")
 
 
 # ── Scoring one shift ──────────────────────────────────────────────────────
@@ -1995,7 +2702,11 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     # The shift is not better than its worst critical part, full stop.
     capped_by = None
     for d in applied:
-        if d.floor is not None and d.score < d.floor and d.score < score:
+        # Level with the score counts too: a shift whose only reading is a
+        # coverage of 0 is held there by coverage. That used to be named
+        # only because a phantom fairness 100 (SQ-11) lifted the mean over
+        # it — without it the owner read "0 / 70" and no reason.
+        if d.floor is not None and d.score < d.floor and (d.score < score or (d.score == score and capped_by is None)):
             score = d.score
             capped_by = d.key
     score = max(0, min(SCORE_MAX, score))
@@ -2038,7 +2749,11 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
         "dimensions": [
             {"key": d.key, "label": d.label, "score": d.score, "weight": d.weight,
              "strengths": d.strengths, "weaknesses": d.weaknesses, "facts": d.facts,
-             "customer_facing": d.key in CUSTOMER_DIMENSIONS}
+             "customer_facing": d.key in CUSTOMER_DIMENSIONS,
+             # The floor this dimension was held to on this shift, kept with
+             # the stored score so calibration reads what applied
+             # (schedule_learning.calibrate_weights, SQ-22).
+             "floor": d.floor}
             for d in sorted(applied, key=lambda x: -x.weight)
         ],
         "not_applicable": sorted({s["key"] for s in skipped if s["key"] not in
@@ -2109,23 +2824,19 @@ def explain_assignment(row: dict, ctx: ShiftContext, applied: list = None) -> di
         # Only with enough history to know what "usually" means.
         bits.append(f"not a day they usually work")
         facts["usual"] = False
-    # tenure
+    # tenure — a manager or salaried person is experienced by default (D-6):
+    # their punch count is not how long they have run the place.
     t = ctx.tenure.get(name)
     if t is not None:
         if t >= EXPERIENCE_SHIFTS:
             bits.append(f"{t} shifts here")
-        elif t < DEVELOPING_SHIFTS:
+        elif t < DEVELOPING_SHIFTS and name_key(name) not in {name_key(n) for n in ctx.experienced_default or ()}:
             bits.append(f"still new ({t} shifts here)")
-    # hours this week and headroom
-    assignments = ctx.week_assignments.get(name) or []
+    # hours this week and headroom, against the person's own ceiling (D-3)
+    assignments = [a for a in (ctx.week_assignments.get(name) or []) if not a.get("prior")]
     total = round(sum((a.get("hours") or 0) for a in assignments), 1)
     if total:
-        ceiling = None
-        lim = (ctx.hours_limits or {}).get(name)
-        if lim and lim[1]:
-            ceiling = float(lim[1])
-        elif ctx.weekly_ceiling:
-            ceiling = float(ctx.weekly_ceiling)
+        ceiling = ctx.ceiling_for(name)
         if ceiling:
             room = round(ceiling - total, 1)
             bits.append(f"{total:g}h this week" + (f", {room:g}h under the {ceiling:g}h ceiling" if room >= 0 else f", {abs(room):g}h OVER the {ceiling:g}h ceiling"))
@@ -2502,6 +3213,11 @@ def confidence(shifts: list, signals: dict) -> dict:
     for label in signals.get("unmeetable_rules") or []:
         reasons.append(f"Nobody on the roster can meet the rule \u201c{label}\u201d, so it was set aside "
                        "rather than failing every shift it covers — rate someone to it, or change the rule.")
+    # A rule fewer people can meet than it asks for is kept and held to the
+    # people able (schedule audit 10/3/26 SQ-17), and says so.
+    for c in signals.get("capped_rules") or []:
+        reasons.append(f"Only {c['able']} on the roster can meet the rule “{c['label']}”, so each "
+                       f"shift it covers is held to {c['able']} — rate or mark more people for it, or change the rule.")
 
     unfixable = int(signals.get("unsatisfiable") or 0)
     if unfixable:
@@ -2707,21 +3423,88 @@ def profile_for_shift(day: str, part: str, profiles: list = None, demand_by_day:
     Most specific matching profile, then: a per-day-demand profile takes the
     level this restaurant's own sales give THAT weekday, and a date the
     owner flagged (an event) can only raise it. Shared by the scorer and
-    the generator's requirements table so the two never disagree."""
-    profile = resolve_profile(day, part, profiles if profiles is not None else BUILTIN_PROFILES)
+    the generator's requirements table so the two never disagree.
+
+    With no profile set (None) it is the built-in set re-levelled per
+    weekday from the restaurant's own sales (profile_set). A built-in
+    settled at another level takes that level's bars with it (_follow_level),
+    and then any tuning the owner applied to it (SQ-22)."""
+    profile = resolve_profile(day, part, profile_set(profiles, demand_by_day))
     if profile.per_day_demand and demand_by_day and demand_by_day.get(day) is not None:
         level = demand_from_pct(demand_by_day.get(day))
         if level and level != profile.demand:
             profile = _clone(profile)
             profile.demand = level
             profile.source = "your sales history"
+            _follow_level(profile)
     if lift_pct is not None:
         bumped = demand_from_pct(lift_pct)
         if bumped and DEMAND_RANK[bumped] > DEMAND_RANK.get(profile.demand, 1):
+            synthesized = profile.source in SYNTHESIZED_SOURCES
             profile = _clone(profile)
             profile.demand = bumped
+            if synthesized:
+                _follow_level(profile)
             profile.source = "what you told us about this date"
     return profile
+
+
+# Where a profile no owner configured comes from (the built-ins, re-levelled
+# or not, and the catch-all carrying the restaurant-wide targets). Only these
+# follow a demand level; a profile the owner set is left as they set it.
+SYNTHESIZED_SOURCES = ("default", "your sales history", "your overall targets")
+
+# The built-in profile whose bars each demand level carries: a quiet weekday
+# lunch, a weekday dinner, Friday and Saturday dinner.
+_LEVEL_PROFILE = {"low": "weekday_lunch", "normal": "weekday_dinner", "high": "friday_dinner",
+                  "peak": "saturday_dinner"}
+
+
+def _follow_level(profile: ShiftProfile) -> None:
+    """A built-in profile settled at another demand level takes that
+    level's bars — the quality bar, the leader requirement, the experience
+    mix, whether it may be a training shift — from the built-in that level
+    names (schedule audit 10/3/26 SQ-15). The demand was re-levelled from
+    the restaurant's own sales while the bars stayed with the guess, so a
+    Saturday 30% under an average day read "low" and was still held to the
+    peak night's 82 and its leader; and a Thursday busier than any Friday
+    was held to a quiet dinner's 70. Tuning applied to the profile
+    (calibration, SQ-22) stays on top. In place; a profile an owner
+    configured is never passed here."""
+    if profile.source not in SYNTHESIZED_SOURCES:
+        return
+    src = next((b for b in BUILTIN_PROFILES if b.key == _LEVEL_PROFILE.get(profile.demand)), None)
+    if src is None:
+        return
+    profile.min_quality = src.min_quality
+    profile.requires_leader = src.requires_leader
+    profile.experience_mix = src.experience_mix
+    profile.training_allowed = src.training_allowed
+    _apply_tuning(profile)
+
+
+def _apply_tuning(profile: ShiftProfile) -> None:
+    """The bar and floors calibration (or the owner) set for this profile,
+    over whatever it was settled to (SQ-22). In place."""
+    t = profile.tuning or {}
+    if t.get("min_quality") is not None:
+        profile.min_quality = int(_num(t.get("min_quality"), 0, 100, profile.min_quality))
+    if t.get("floors"):
+        profile.floors = dict(profile.floors or {})
+        profile.floors.update({k: int(_num(v, 0, 100, 0)) for k, v in t["floors"].items() if k in DIMENSIONS})
+
+
+def profile_set(profiles: list = None, demand_by_day: dict = None) -> list:
+    """The profiles a shift is judged against: the ones given, else the
+    built-in set — re-levelled per weekday from this restaurant's own sales
+    whenever they are known, exactly as profiles_from_config builds it
+    (schedule audit 10/3/26 SQ-15). A restaurant that had rated nobody and
+    saved no profile was judged on the built-ins' guesses with the sales
+    re-levelling off: a Saturday 30% under an average day was still "peak"
+    with an 82 bar, contradicting the built-ins' own promise."""
+    if profiles is not None:
+        return profiles
+    return profiles_from_config(None, demand_by_day=demand_by_day) if demand_by_day else BUILTIN_PROFILES
 
 
 def build_contexts(rows: list, profiles: list = None, **signals) -> list:
@@ -2735,10 +3518,19 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     A row belongs to every daypart it is on the floor for (present_dayparts),
     so a straight-through counts at lunch and at dinner; its hours and its
     place in the week's assignments are counted once, under its start.
+
+    A salaried person's hours are not the day's or the daypart's hours
+    (schedule audit 10/3/26 D-3): the day targets (labor.week_hours_plan)
+    and the sales-per-labor-hour history are hourly only, so every manager
+    row the manager-every-minute rule added read as "Xh over this day's
+    target" and as thin SPLH, and the passes trimmed exactly the coverage
+    the hard rule needs. They still work the shift — coverage, fatigue
+    (against their own ceiling) and everything else count them.
     """
-    profiles = profiles if profiles is not None else BUILTIN_PROFILES
     demand_by_day = signals.get("demand_by_day") or {}
+    profiles = profile_set(profiles, demand_by_day)
     demand_by_date = signals.get("demand_by_date") or {}
+    salaried = {name_key(n) for n in (signals.get("salaried") or ()) if str(n or "").strip()}
     buckets, primary, day_hours, part_hours = {}, {}, {}, {}
     for row in rows or []:
         name = (row.get("employee") or "").strip()
@@ -2749,6 +3541,8 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
         for part in parts:
             buckets.setdefault((date, part), []).append(row)
         primary.setdefault((date, parts[0]), []).append(row)
+        if name_key(name) in salaried:
+            continue
         day_hours[date] = day_hours.get(date, 0.0) + _row_hours(row)
         part_hours[(date, parts[0])] = part_hours.get((date, parts[0]), 0.0) + _row_hours(row)
 
@@ -2771,10 +3565,17 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     # PREVIOUS schedule, because a run of nine days looks like five when the
     # engine can only see inside its own seven-day box — and the week
     # boundary is exactly where that matters. Those seeded entries carry
-    # "prior" so fairness does not count them as this week's share.
+    # "prior" so fairness does not count them as this week's share. Their
+    # demand is read from the same profiles as this week's shifts (SQ-27:
+    # every tail day was written "normal", so a busy Saturday before the
+    # week began read as quiet to anything that asked).
     week_assignments = {}
     for name, entries in (signals.get("prior_week_assignments") or {}).items():
-        week_assignments.setdefault(name, []).extend(dict(e, prior=True) for e in entries)
+        for e in entries:
+            e = dict(e, prior=True)
+            if not e.get("demand") and e.get("day") and e.get("daypart"):
+                e["demand"] = profile_for_shift(e["day"], e["daypart"], profiles, demand_by_day).demand
+            week_assignments.setdefault(name, []).append(e)
     for (date, part), shift_rows in primary.items():
         day = _day_name(date)
         demand = _profile(date, day, part).demand
@@ -2833,6 +3634,26 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
 
     splh_targets = signals.get("splh_targets") or {}
     daypart_sales = signals.get("daypart_sales") or {}
+    # The people facts every context shares (schedule audit 10/3/26, D1b).
+    managers = signals.get("managers") or {}
+    acting = signals.get("acting_managers") or {}
+    by_default = signals.get("experienced_default")
+    if by_default is None:
+        by_default = experienced_by_default(managers, acting, salaried)
+    by_default = set(by_default or ())
+    learned = signals.get("learned_preferences")
+    if learned is None:
+        # Merged into the preferences as each person's "learned" entry.
+        learned = {n: p["learned"] for n, p in (signals.get("preferences") or {}).items()
+                   if isinstance(p, dict) and isinstance(p.get("learned"), dict)}
+    ceilings = {name_key(k): float(v) for k, v in (signals.get("hours_ceilings") or {}).items() if v}
+    load_ledger = signals.get("load_ledger") or {}
+    busy_slots = set()
+    if load_ledger:
+        for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
+            for p in ("morning", "night"):
+                if _is_busy({"demand": profile_for_shift(d, p, profiles, demand_by_day).demand}):
+                    busy_slots.add((d, p))
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
@@ -2894,6 +3715,19 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             splh_target=(splh_targets.get(day) or {}).get(part),
             expected_sales=expected or None,
             daypart_hours=part_hours.get((date, part), 0.0),
+            salaried=salaried,
+            hours_ceilings=ceilings,
+            managers=managers,
+            acting_managers=acting,
+            experienced_default=by_default,
+            role_families=signals.get("role_families") or {},
+            held_roles=signals.get("held_roles") or {},
+            roster_roles=signals.get("roster_roles") or {},
+            stations=signals.get("stations") or {},
+            learned_preferences=learned or {},
+            load_ledger=load_ledger,
+            busy_slots=busy_slots,
+            overtime=signals.get("overtime") or {},
         ))
     return contexts
 
@@ -2906,51 +3740,108 @@ def _rule_label(rule: dict) -> str:
                else f" scoring {float(rule['min_score']):g} or above"))
 
 
-def _unmeetable_rules(rows: list, signals: dict) -> dict:
-    """{id(rule): label} for leader rules nobody on the roster can meet.
+def roster_leader_rules(rules: list, scores: dict = None, flags: dict = None, people_roles: dict = None,
+                        families: dict = None) -> tuple:
+    """(kept, set_aside, capped): the leader rules this roster can be held
+    to. A rule asking for a capability — a minimum score, or authorized to
+    close — is held to the people in its role family who have it: nobody
+    able, it is set aside (named, never failing every shift it covers); fewer
+    able than it asks for, it is KEPT with its count capped at the people
+    able (`count` the capped number, `asked_count` the owner's) and named in
+    `capped` ({label, asked, able}). The unmeetable check used to set aside
+    the whole of "2 bartenders scoring 5" when one such bartender existed,
+    so the one who could be scheduled was never asked for at all (schedule
+    audit 10/3/26 SQ-17). A plain headcount rule is untouched.
 
-    The engine knows the roster and passes the rules it found unmeetable
-    (`unmeetable_leader_rules`). A caller that only says HOW MANY were
-    unmeetable (`unsatisfiable`) gets the rules that ask for a capability —
-    a minimum score, or authorized to close — nobody in that role this
-    week, or cross-trained into it, has. With neither, nothing is set aside:
-    a qualified person merely off this shift is a real miss."""
-    explicit = signals.get("unmeetable_leader_rules")
-    if explicit:
-        return {id(r): _rule_label(r) for r in (signals.get("leader_rules") or []) if r in explicit}
-    if not int(signals.get("unsatisfiable") or 0):
-        return {}
-    scores = signals.get("scores") or {}
-    flags = signals.get("leader_flags") or {}
-    if not scores and not flags:
-        return {}
-    cross = signals.get("cross_trained") or {}
-    by_role = {}
-    for r in rows or []:
-        n = (r.get("employee") or "").strip()
-        if n:
-            by_role.setdefault((r.get("role") or "").strip().lower(), set()).add(n)
-    for n, roles in cross.items():
-        for role in roles or []:
-            by_role.setdefault(str(role).strip().lower(), set()).add(n)
-    out = {}
-    for rule in signals.get("leader_rules") or []:
-        role = (rule.get("role") or "").strip().lower()
+    people_roles: {name: roles they can work} (roster role, the roles their
+    history shows, the roles they hold); None counts everybody rated or
+    flagged for every role. Roles compare by family ("Bartender AM" and
+    "Bartender PM" are one), names by name_key."""
+    lscores = {name_key(k): v for k, v in (scores or {}).items() if v is not None}
+    lflags = {name_key(k) for k, v in (flags or {}).items() if v}
+    pools = None
+    if people_roles is not None:
+        pools = {}
+        for n, roles in people_roles.items():
+            for r in roles or ():
+                fam = role_family(r, families)
+                if fam:
+                    pools.setdefault(fam, set()).add(name_key(n))
+    kept, aside, capped = [], [], []
+    for rule in rules or []:
+        role = (rule.get("role") or "").strip()
         attribute = (rule.get("attribute") or "").strip()
         min_score = rule.get("min_score")
         if not role or (not attribute and min_score is None):
+            kept.append(rule)
             continue
-        pool = by_role.get(role, set())
+        pool = pools.get(role_family(role, families), set()) if pools is not None else set(lscores) | lflags
         if attribute:
-            ok = any(flags.get(n) for n in pool)
+            able = sorted(n for n in pool if n in lflags)
         else:
             try:
-                ok = any((scores.get(n) or 0) >= float(min_score) for n in pool)
+                bar = float(min_score)
             except (TypeError, ValueError):
+                kept.append(rule)
                 continue
-        if not ok:
-            out[id(rule)] = _rule_label(rule)
-    return out
+            able = sorted(n for n in pool if float(lscores.get(n) or 0) >= bar)
+        try:
+            count = max(1, int(rule.get("count") or 1))
+        except (TypeError, ValueError):
+            count = 1
+        if not able:
+            aside.append(rule)
+        elif len(able) < count:
+            kept.append(dict(rule, count=len(able), asked_count=count))
+            capped.append({"label": _rule_label(rule), "asked": count, "able": len(able)})
+        else:
+            kept.append(rule)
+    return kept, aside, capped
+
+
+def _rules_for_roster(rows: list, signals: dict) -> tuple:
+    """(signals, set-aside rules, capped rules) — the leader rules the week
+    is judged on (roster_leader_rules).
+
+    The engine knows the roster: it passes the rules already capped, the
+    ones nobody can meet (`unmeetable_leader_rules`, set aside here) and the
+    capped ones (`capped_leader_rules`). A caller that only says HOW MANY
+    were unmeetable (`unsatisfiable`) has the rules judged against the
+    people in each role this week, or cross-trained into it — capped the same
+    way. With neither, nothing is set aside: a qualified person merely off
+    this shift is a real miss."""
+    rules = list(signals.get("leader_rules") or [])
+    capped = list(signals.get("capped_leader_rules") or [])
+    explicit = signals.get("unmeetable_leader_rules")
+    if explicit:
+        aside = list(explicit)
+        kept = [r for r in rules if r not in explicit]
+    elif int(signals.get("unsatisfiable") or 0) and (signals.get("scores") or signals.get("leader_flags")):
+        people_roles = {}
+        for r in rows or []:
+            n = (r.get("employee") or "").strip()
+            if n and (r.get("role") or "").strip():
+                people_roles.setdefault(n, set()).add(r["role"].strip())
+        for n, roles in (signals.get("cross_trained") or {}).items():
+            people_roles.setdefault(n, set()).update(str(x) for x in roles or [] if str(x).strip())
+        kept, aside, more = roster_leader_rules(rules, signals.get("scores"), signals.get("leader_flags"),
+                                                people_roles, signals.get("role_families"))
+        capped += more
+    else:
+        return signals, [], capped
+    if kept != rules:
+        signals = dict(signals)
+        signals["leader_rules"] = kept
+    return signals, aside, capped
+
+
+def _unmeetable_rules(rows: list, signals: dict) -> dict:
+    """{id(rule): label} for the rules in signals["leader_rules"] nobody on
+    the roster can meet — the set-aside half of _rules_for_roster, for a
+    caller that only removes rules (schedule_solver._build_groups). The
+    capped half is in _rules_for_roster."""
+    _sig, aside, _capped = _rules_for_roster(rows, signals)
+    return {id(r): _rule_label(r) for r in (signals.get("leader_rules") or []) if r in aside}
 
 
 def score_rows(rows: list, profiles: list = None, weights: dict = None,
@@ -2965,11 +3856,10 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
     # bartender is a 4, the rule asks for a 5) is not something this week can
     # fix: failing it capped every matching shift and made the week "weak",
     # a publish blocker no schedule could clear (SCHED-30). It is set aside
-    # and named once, in the confidence reasons.
-    unmeetable = _unmeetable_rules(rows, signals)
-    if unmeetable:
-        signals = dict(signals)
-        signals["leader_rules"] = [r for r in (signals.get("leader_rules") or []) if id(r) not in unmeetable]
+    # and named once, in the confidence reasons; a rule only some of the
+    # roster can meet is held to the people able, and named too (SQ-17).
+    signals, aside, capped = _rules_for_roster(rows, signals)
+    unmeetable = sorted({_rule_label(r) for r in aside})
     contexts = build_contexts(rows, profiles=profiles, **signals)
     people = {(r.get("employee") or "").strip() for r in rows or []}
     people.discard("")
@@ -2988,7 +3878,8 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "dropped_rows": signals.get("dropped_rows"),
         "constrained_people": len(signals.get("availability") or {}),
         "unsatisfiable": signals.get("unsatisfiable"),
-        "unmeetable_rules": sorted(set(unmeetable.values())),
+        "unmeetable_rules": unmeetable,
+        "capped_rules": capped,
     }
     result = evaluate_schedule(contexts, weights=weights, signals=conf_signals)
     result["people"] = sorted(people)
@@ -3025,10 +3916,7 @@ class LocalScorer:
     taken as they are when it is built."""
 
     def __init__(self, rows: list, profiles: list = None, weights: dict = None, **signals):
-        unmeetable = _unmeetable_rules(rows, signals)
-        if unmeetable:
-            signals = dict(signals)
-            signals["leader_rules"] = [r for r in (signals.get("leader_rules") or []) if id(r) not in unmeetable]
+        signals, _aside, _capped = _rules_for_roster(rows, signals)
         import time as _time
         self.profiles = profiles
         self.weights = weights
@@ -3842,7 +4730,7 @@ def demand_from_pct(vs_average_pct) -> str | None:
 
 def profiles_from_config(stored: list = None, default_strength: dict = None,
                          default_leader_rules: list = None,
-                         demand_by_day: dict = None) -> list:
+                         demand_by_day: dict = None, tuning: dict = None) -> list:
     """The profile set the engine should judge this restaurant against.
 
     Three layers, narrowest last:
@@ -3892,6 +4780,15 @@ def profiles_from_config(stored: list = None, default_strength: dict = None,
             key="default", label="Standard shift",
             min_strength=dict(default_strength or {}),
             source="your overall targets", per_day_demand=bool(demand_by_day)))
+    # Calibration applied to a profile no owner configured (SQ-22): its bar
+    # and floors, kept over the built-in's own and over any level its demand
+    # settles at (_follow_level). A profile the owner configured carries its
+    # own numbers — an applied calibration writes those into it instead.
+    for profile in profiles:
+        t = (tuning or {}).get(profile.key)
+        if t and profile.source in SYNTHESIZED_SOURCES:
+            profile.tuning = dict(t)
+            _apply_tuning(profile)
     return profiles
 
 
@@ -3906,6 +4803,8 @@ def _clone(profile: ShiftProfile) -> ShiftProfile:
         training_allowed=profile.training_allowed, weights=dict(profile.weights or {}),
         priority=profile.priority, source=profile.source,
         per_day_demand=profile.per_day_demand,
+        floors=dict(profile.floors or {}),
+        tuning={k: (dict(v) if isinstance(v, dict) else v) for k, v in (profile.tuning or {}).items()},
     )
 
 
@@ -3959,6 +4858,8 @@ def profile_from_dict(data: dict) -> ShiftProfile:
                  for k, v in (data.get("weights") or {}).items() if k in DIMENSIONS},
         priority=int(_num(data.get("priority"), 0, 99, 0)),
         source=str(data.get("source") or "restaurant"),
+        floors={str(k): int(_num(v, 0, 100, 0)) for k, v in (data.get("floors") or {}).items()
+                if k in DIMENSIONS and _num(v, 0, 100, None) is not None},
     )
 
 
@@ -3974,4 +4875,5 @@ def profile_to_dict(profile: ShiftProfile) -> dict:
             "experience_mix": profile.experience_mix,
             "training_allowed": profile.training_allowed,
             "weights": dict(profile.weights or {}), "priority": profile.priority,
-            "source": profile.source}
+            "source": profile.source, "floors": dict(profile.floors or {}),
+            "tuned": dict(profile.tuning or {})}

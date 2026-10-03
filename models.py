@@ -395,6 +395,10 @@ class Restaurant:
     # Per-restaurant weighting of the Shift Quality dimensions. Empty means
     # the engine's own defaults, which is what almost every restaurant wants.
     quality_weights_json: Optional[str]   = None
+    # A calibration the owner applied to a built-in shift profile's bar and
+    # floors ({profile key: {"min_quality", "floors"}}) — schedule audit
+    # 10/3/26 SQ-22; shift_quality.profiles_from_config(tuning=...).
+    quality_tuning_json: Optional[str]    = None
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
     latitude: Optional[float]            = None   # geocoded once from google_place_id, cached
     longitude: Optional[float]           = None
@@ -1228,6 +1232,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_strength_json", "TEXT"),
         ("restaurants", "shift_leader_rules_json", "TEXT"),
         ("restaurants", "quality_weights_json", "TEXT"),
+        ("restaurants", "quality_tuning_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
         ("restaurants", "latitude", "REAL"),
         ("restaurants", "longitude", "REAL"),
@@ -4684,7 +4689,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -5548,6 +5553,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
         shift_leader_rules_json=row["shift_leader_rules_json"] if "shift_leader_rules_json" in row.keys() else None,
         quality_weights_json=row["quality_weights_json"] if "quality_weights_json" in row.keys() else None,
+        quality_tuning_json=row["quality_tuning_json"] if "quality_tuning_json" in row.keys() else None,
         sched_notes=row["sched_notes"]                if "sched_notes" in row.keys() else None,
         latitude=row["latitude"]                       if "latitude" in row.keys() else None,
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
@@ -7663,7 +7669,7 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
             profiles = (0, "")
         rest = conn.execute(
             "SELECT COALESCE(role_strength_json,'') || COALESCE(shift_leader_rules_json,'') "
-            "|| COALESCE(quality_weights_json,'') FROM restaurants WHERE id=?",
+            "|| COALESCE(quality_weights_json,'') || COALESCE(quality_tuning_json,'') FROM restaurants WHERE id=?",
             (restaurant_id,)).fetchone()
     finally:
         conn.close()
@@ -8960,6 +8966,23 @@ def get_quality_weights(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 if isinstance(v, (int, float)) and float(v) >= 0}
     except Exception:
         return {}
+
+
+def get_quality_tuning(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{profile key: {"min_quality": n, "floors": {dimension: n}}} — the
+    calibration an owner applied to a built-in shift profile (schedule
+    audit 10/3/26 SQ-22). Empty when none; a malformed blob reads as none,
+    and the engine bounds every number (shift_quality._apply_tuning)."""
+    import json as _j
+    r = get_restaurant(restaurant_id, db_path)
+    raw = getattr(r, "quality_tuning_json", None) if r else None
+    if not raw:
+        return {}
+    try:
+        parsed = _j.loads(raw) or {}
+    except Exception:
+        return {}
+    return {str(k): dict(v) for k, v in parsed.items() if isinstance(v, dict)} if isinstance(parsed, dict) else {}
 
 
 # ── Signals the Shift Quality Engine reads about people ────────────────────

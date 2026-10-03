@@ -206,13 +206,17 @@ def test_the_busiest_measured_hour_needs_most_of_the_usual_crew():
 
 
 def test_stated_preferences_are_scored_lightly_and_only_when_stated():
+    """Judged once for the week now (schedule audit 10/3/26 SQ-24), not on
+    each shift: the week-level measure, silent when nobody stated anything."""
     rows = [row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
     kw = dict(profiles=[sq.ShiftProfile()], typical_headcount={("Saturday", "night"): {"Server": 2}})
     none = sq.score_rows(rows, **kw)
-    assert "preferences" in none["shifts"][0]["not_applicable"]
+    assert not any(d["key"] == "preferences" for d in none["week_dimensions"])
     out = sq.score_rows(rows, preferences={"Ann": {"preferred_dayparts": ["morning"]}}, **kw)
-    pref = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "preferences")
+    assert not any(d["key"] == "preferences" for s in out["shifts"] for d in s["dimensions"])
+    pref = next(d for d in out["week_dimensions"] if d["key"] == "preferences")
     assert pref["score"] == 0 and "Ann prefers days" in pref["weaknesses"][0]
+    assert pref["weight"] == sq.DEFAULT_WEIGHTS["preferences"]
 
 
 def test_a_row_the_manager_keeps_removing_is_flagged():

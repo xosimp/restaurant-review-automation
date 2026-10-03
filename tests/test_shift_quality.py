@@ -889,10 +889,15 @@ def test_the_weekly_score_weights_a_peak_shift_above_a_quiet_one():
                 + [lunch(MON, n, "Cook") for n in mon_pair])
 
     scores = {"S1": 5, "S2": 5, "W1": 1, "W2": 1}
+    # Strength alone, so both weak shifts are exactly its 20: the pair used
+    # to land on 20 only because a phantom fairness 100 lifted the Saturday
+    # mean over the strength cap (schedule audit 10/3/26 SQ-11), and the
+    # demand-match bar differs by demand level on purpose.
+    only_strength = {"demand_match": 0, "training_balance": 0}
     weak_saturday = sq.score_rows(week(("W1", "W2"), ("S1", "S2")),
-                                  profiles=setup, scores=scores)
+                                  profiles=setup, scores=scores, weights=only_strength)
     weak_monday = sq.score_rows(week(("S1", "S2"), ("W1", "W2")),
-                                profiles=setup, scores=scores)
+                                profiles=setup, scores=scores, weights=only_strength)
     # Both weeks contain exactly one 100 and one 20; only the demand differs.
     assert sorted(s["score"] for s in weak_saturday["shifts"]) == \
            sorted(s["score"] for s in weak_monday["shifts"])
@@ -1275,8 +1280,11 @@ def test_the_fairness_wording_names_the_shifts_rather_than_calling_them_premium(
     """"Premium shift" is scheduling jargon. An owner reading this should
     not have to ask which shifts it means."""
     rows = [row(d, "Favourite", "Server") for d in (THU, FRI, SAT, SUN)]
+    # Three servers with a comparable week, so a share can be judged at all:
+    # with only two the old code printed this line off a phantom 100
+    # (schedule audit 10/3/26 SQ-11).
     rows += [row(MON, "Ignored", "Server"), row(TUE, "Ignored", "Server"),
-             row(MON, "Third", "Server")]
+             row(MON, "Third", "Server"), row(TUE, "Third", "Server")]
     setup = [sq.ShiftProfile(key="nights", demand="peak", daypart="night",
                              label="Nights", source="restaurant"),
              sq.ShiftProfile(key="days", demand="low", daypart="morning",
