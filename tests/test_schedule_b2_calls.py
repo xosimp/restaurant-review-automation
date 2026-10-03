@@ -961,3 +961,17 @@ def test_a_failure_around_the_job_on_the_pool_still_closes_it(db, monkeypatch):
     se.submit_generation("pool-fail", rid).result(10)
     job = ops.read_async_job("pool-fail", restaurant_id=rid)
     assert job["status"] == "error" and "problem on our side" in job["result"]["error"]
+
+
+def test_the_finished_payload_says_chunked_as_the_bool_both_clients_read(db, monkeypatch):
+    """The phone decodes `chunked` as Bool and failed on the call count it
+    used to be (Swift's JSONDecoder refuses 1 for a Bool); the web showed
+    "generated in parts" for a one-call week (!!1)."""
+    rid = _restaurant(db)
+    base = {"ok": True, "schedule_csv": _csv([_line(WEEK[0], "Ana")]), "week_dates": WEEK, "week_days": DAYS,
+            "summary": [], "hours_budget": 0, "daily_target_hours": {}, "labor_target": 30, "chunked": 1}
+    monkeypatch.setattr(se, "_build_schedule_result", lambda r, week_start=None: dict(base))
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, s, r: finished.update(status=s, result=r))
+    se._run_schedule_job("one-call", rid)
+    assert finished["result"]["chunked"] is False and finished["result"]["calls"] == 1

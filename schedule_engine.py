@@ -4692,7 +4692,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             pending_time_off=result.get("pending_time_off") or {},
             narrative=result.get("narrative") or [],
             generation_seconds=result.get("generation_seconds"),
-            chunked=result.get("chunked") or 1,
+            # Whether the week took more than one model call — a bool, as both
+            # clients read it (the phone decodes Bool and failed on the count
+            # this used to be); the count itself is `calls`.
+            chunked=int(result.get("chunked") or 1) > 1,
+            calls=int(result.get("chunked") or 1),
             roster=result.get("roster") or [],
             dropped_rows=len(_dropped_rows),
             dropped_row_note=(
