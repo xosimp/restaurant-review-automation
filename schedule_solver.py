@@ -778,10 +778,24 @@ class Problem:
         import schedule_optimizer as _opt
         # week points per dollar, in the solver's units (× the week's demand weight)
         self.per_dollar = (_opt.LABOR_POINTS_PER_PCT * 100.0 / dollars * self.sigma_dw) if dollars > 0 else 0.0
-        # A broken memory costs LEARNED_MISS_POINTS of the learned-patterns
-        # measure per unit of its weight (shift_quality.week_learned): what
-        # that is in the solver's units.
-        self.k_miss = self.week_unit("learned") * sq.LEARNED_MISS_POINTS if self.mem else 0.0
+        # What a unit of broken memory weight costs the learned-patterns
+        # measure (shift_quality.learned_score: geometric), at the draft's
+        # own level — its slope there — in the solver's units.
+        self.k_miss = 0.0
+        if self.mem:
+            import schedule_memory as _smem
+            try:
+                ot_line = float((self.signals.get("overtime") or {}).get("line") or 0) or None
+            except (TypeError, ValueError):
+                ot_line = None
+            try:
+                lost = sum(float(x.get("weight") or 0) for x in _smem.misses(
+                    [r for r in self.rows if (r.get("employee") or "").strip()], self.mem,
+                    families=self.families or None, line=ot_line))
+            except Exception:
+                lost = 0.0
+            keep = 1 - sq.LEARNED_MISS_POINTS / 100.0
+            self.k_miss = self.week_unit("learned") * 100.0 * keep ** lost * -math.log(keep)
         self.k_likely = _opt.LIKELY_EDIT_SHIFT_POINTS
         # The items each week-level measure counts, as the draft has them —
         # what one item is worth of the measure.

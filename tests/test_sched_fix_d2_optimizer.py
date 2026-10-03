@@ -369,7 +369,10 @@ def test_the_score_says_what_the_week_breaks_of_the_scheduling_memory():
     assert "learned" not in {d["key"] for d in plain["week_dimensions"]}
     q = sq.score_rows(rows, **dict(sig, learned=[_memory("moved_off", "Bob")]))
     week = {d["key"]: d for d in q["week_dimensions"]}
-    assert week["learned"]["score"] == 100 - sq.LEARNED_MISS_POINTS * 0.8
+    assert week["learned"]["score"] == sq.learned_score(0.8) == 79
+    assert sq.learned_score(0) == 100 and sq.learned_score(1) == 75
+    # never a flat floor: one row put right of a habit missed on many still shows
+    assert sq.learned_score(4.0) > sq.learned_score(4.8) > sq.learned_score(9.5) > 0
     assert week["learned"]["weaknesses"] == ["Bob is on Tuesday dinner; your managers keep taking them off it."]
     assert q["raw_score"] < plain["raw_score"]
     kept = sq.score_rows([row(TUE, "Cy", "4:00pm", "10:00pm"), row(MON, "Bob", "4:00pm", "10:00pm")],

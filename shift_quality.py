@@ -3195,13 +3195,15 @@ def week_overtime(contexts: list) -> DimensionResult | None:
 
 # ── What the restaurant's scheduling has learned (L-3, D-35) ───────────────
 
-# Points of the measure one broken memory costs at full confidence: a slot
-# memory at 0.8 is 20 of them — about 1.7 points of a fourteen-shift week at
-# the default weight, several times what a leader on one weekday dinner
-# earns it, so a move or a fill that puts "Bob back on Tuesday dinner" for
-# the generic reasons no longer wins; only a real fix (a shift short, a
-# station nobody can work) still outweighs what the managers keep doing.
-# Floored at 0.
+# Points of the measure one broken memory costs at full confidence, from a
+# week that breaks none: a slot memory at 0.8 is about 20 of them — some 1.7
+# points of a fourteen-shift week at the default weight, several times what a
+# leader on one weekday dinner earns it, so a move or a fill that puts "Bob
+# back on Tuesday dinner" for the generic reasons no longer wins; only a real
+# fix (a shift short, a station nobody can work) still outweighs what the
+# managers keep doing. Each further unit of broken weight costs the same
+# share of what is left (geometric, never a flat floor): a role's start time
+# missed on six rows still shows each row put right.
 LEARNED_MISS_POINTS = 25
 _MEALS = {"morning": "lunch", "night": "dinner"}
 
@@ -3237,6 +3239,13 @@ def _learned_line(m: dict, miss: dict) -> str:
     return str(miss.get("text") or "")
 
 
+def learned_score(lost: float) -> int:
+    """The learned-patterns measure for `lost` units of broken memory weight
+    (schedule_memory.misses' weights): SCORE_MAX less LEARNED_MISS_POINTS of
+    what is left per unit."""
+    return int(round(SCORE_MAX * (1 - LEARNED_MISS_POINTS / 100.0) ** max(0.0, float(lost or 0))))
+
+
 def week_learned(contexts: list) -> DimensionResult | None:
     """What this restaurant's scheduling has learned and the week breaks
     (schedule audit 10/3/26 L-3, D-35): the active memories the passes are
@@ -3244,8 +3253,9 @@ def week_learned(contexts: list) -> DimensionResult | None:
     the managers keep taking off a slot or putting on one, the role's usual
     opener or closer, a team whose shifts together run well, somebody who
     habitually runs past their shift, closes that run late), each broken one
-    costing LEARNED_MISS_POINTS at its weight (schedule_memory.misses — the
-    meaning of every kind lives there, once). Judged once for the week. The
+    costing LEARNED_MISS_POINTS of what is left at its weight (learned_score;
+    schedule_memory.misses — the meaning of every kind lives there, once).
+    Judged once for the week. The
     patterns reached only the prompt, so a fill, the trim, the solver or the
     optimizer put back the edit the manager kept making, and the score said
     nothing. None without an active memory."""
@@ -3285,7 +3295,7 @@ def week_learned(contexts: list) -> DimensionResult | None:
                                  "role": r.get("role") or "", "daypart": present_dayparts(r)[0]} for r in rs],
                        "text": _learned_line(m, x) if x.get("kind") != "ot_risk" else str(x.get("text") or "")})
     lost = sum(x["weight"] for x in misses)
-    score = max(0, int(round(SCORE_MAX - LEARNED_MISS_POINTS * lost)))
+    score = learned_score(lost)
     res = DimensionResult(key="learned", label=DIMENSION_LABELS["learned"], score=score,
                           weight=DEFAULT_WEIGHTS["learned"],
                           facts={"memories": len(learned), "broken": len(misses), "misses": misses,
