@@ -15,7 +15,7 @@ WEEK = [(date(2026, 10, 5) + timedelta(days=i)).isoformat() for i in range(7)]  
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
-def row(d, emp, start, end, role, notes=""):
+def row(d, emp, start, end, role="Server", notes=""):
     r = {"date": d, "day": sr._weekday_of(d), "employee": emp, "role": role,
          "shift_start": start, "shift_end": end, "notes": notes}
     r["scheduled_hours"] = sr.hours_text(sr.span_hours(r))

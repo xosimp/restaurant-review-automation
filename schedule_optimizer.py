@@ -94,17 +94,21 @@ LEARNED_WORSE_MAX = 1.5
 # nothing: the search finishes the draft's quality, it never trades the
 # score for a cheaper week (the budget trim and labor efficiency own that).
 LABOR_POINTS_PER_PCT = 0.5
-# What breaking an active memory of the restaurant's scheduling costs a move
-# (schedule audit 10/3/26 L-3, D-35): week points per memory at full
-# confidence; a memory the owner made a rule ("hard") many times that. A
-# move that puts Bob back on the Tuesday dinner the manager keeps taking him
-# off has to buy more than this — a small score gain never does.
-LEARNED_POINTS = 1.0
+# What breaking an active memory of the restaurant's scheduling costs
+# (schedule audit 10/3/26 L-3, D-35): points of the SHIFT it is broken on at
+# full confidence — a quarter of that shift — weighed into the week as the
+# shift is (its demand weight over the week's); a memory the owner made a
+# rule ("hard") many times that. The manager taking Bob off Tuesday dinner
+# week after week is stronger evidence than the generic reasons the score
+# would put him back for (a leader on a weekday dinner is worth 7.5 points
+# of it): a move or an answer that puts him back has to buy more than this,
+# and only fixing what is actually broken ever does.
+LEARNED_SHIFT_POINTS = 25.0
 LEARNED_HARD_FACTOR = 6.0
 # A row the edit predictor says the manager will change (schedule_learning.
 # likely_edit_signals, when the engine passes signals["likely_edits"]):
-# week points per unit of its weight for keeping it as it is.
-LIKELY_EDIT_POINTS = 0.5
+# points of its shift per unit of its weight for keeping it as it is.
+LIKELY_EDIT_SHIFT_POINTS = 10.0
 # The what-if's swaps and replacements tried in a round once the weak
 # dimensions have no improving move left (P-33).
 WHAT_IF_CANDIDATES = 40
@@ -327,7 +331,7 @@ def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.
         if over > 0:
             v -= LABOR_POINTS_PER_PCT * over / base_dollars * 100.0
     if items or likely:
-        v -= learned_cost(rows, items or [], likely, families)
+        v -= learned_cost(rows, items or [], likely, families, quality=quality)
     return v
 
 
@@ -344,8 +348,8 @@ def _slots(rows: list) -> dict:
 
 
 def learned_breaks(rows: list, items: list, families: dict = None) -> list:
-    """[(item, date, text)] — each learned fact `rows` break, once per
-    shift it breaks it on."""
+    """[(item, date, daypart, text)] — each learned fact `rows` break, once
+    per shift it breaks it on."""
     if not items:
         return []
     slots = _slots(rows)
@@ -360,9 +364,9 @@ def learned_breaks(rows: list, items: list, families: dict = None) -> list:
                     on = {_low(r.get("employee")) for r in rs}
                     a, b = who in on, it["other"] in on
                     if kind == "avoid" and a and b:
-                        out.append((it, d, f"{it['person'].title()} and {it['other'].title()} are on together"))
+                        out.append((it, d, part, f"{it['person'].title()} and {it['other'].title()} are on together"))
                     elif kind == "prefer" and a != b:
-                        out.append((it, d, f"{it['person'].title()} and {it['other'].title()} are split"))
+                        out.append((it, d, part, f"{it['person'].title()} and {it['other'].title()} are split"))
             continue
         parts = [it["daypart"]] if it["daypart"] else ["morning", "night"]
         for part in parts:
@@ -370,13 +374,13 @@ def learned_breaks(rows: list, items: list, families: dict = None) -> list:
                 mine = [r for r in rs if _low(r.get("employee")) == who]
                 if kind == "off":
                     if mine:
-                        out.append((it, d, f"{mine[0].get('employee')} is on {it['day']} "
-                                           f"{'lunch' if part == 'morning' else 'dinner'}"))
+                        out.append((it, d, part, f"{mine[0].get('employee')} is on {it['day']} "
+                                                 f"{'lunch' if part == 'morning' else 'dinner'}"))
                     continue
                 if kind == "on":
                     if not mine:
-                        out.append((it, d, f"{who.title()} is not on {it['day']} "
-                                           f"{'lunch' if part == 'morning' else 'dinner'}"))
+                        out.append((it, d, part, f"{who.title()} is not on {it['day']} "
+                                                 f"{'lunch' if part == 'morning' else 'dinner'}"))
                     continue
                 fam = sq.role_family(it["role"], families) if it["role"] else None
                 pool = [r for r in rs if fam is None or sq.role_family(r.get("role"), families) == fam]
@@ -391,25 +395,49 @@ def learned_breaks(rows: list, items: list, families: dict = None) -> list:
                     edge = max(sp[1] for sp, _r in spans)
                     at = [r for sp, r in spans if sp[1] == edge]
                 if not any(_low(r.get("employee")) == who for r in at):
-                    out.append((it, d, f"{who.title()} is not the {kind} on {it['day']}"))
+                    out.append((it, d, part, f"{who.title()} is not the {kind} on {it['day']}"))
     return out
 
 
-def learned_cost(rows: list, items: list, likely: list = None, families: dict = None) -> float:
-    """Week points `rows` give up against the scheduling memory: LEARNED_POINTS
-    per broken fact at its weight, plus LIKELY_EDIT_POINTS per unit of
-    weight of each row kept that the edit predictor expects the manager to
-    change."""
-    pts = sum(LEARNED_POINTS * it["weight"] for it, _d, _t in learned_breaks(rows, items, families))
+def _demand_shares(rows: list, quality: dict = None):
+    """({(date, daypart): demand weight}, the week's total) — from the
+    scored shifts when given, else every shift on the rows at weight 1."""
+    dw = {}
+    for s in (quality or {}).get("shifts") or []:
+        if s.get("scored"):
+            dw[(s.get("date"), s.get("daypart"))] = sq.DEMAND_WEIGHT.get((s.get("profile") or {}).get("demand"), 1.0)
+    if not dw:
+        for r in rows or []:
+            if r.get("date") and (r.get("employee") or "").strip():
+                for part in sq.present_dayparts(r):
+                    dw[(r["date"], part)] = 1.0
+    return dw, (sum(dw.values()) or 1.0)
+
+
+def learned_cost(rows: list, items: list, likely: list = None, families: dict = None, quality: dict = None) -> float:
+    """Week points `rows` give up against the scheduling memory: for each
+    fact broken on a shift, LEARNED_SHIFT_POINTS of that shift at the fact's
+    weight; for each row kept that the edit predictor expects the manager to
+    change, LIKELY_EDIT_SHIFT_POINTS of its shift per unit of its weight —
+    each shift weighed into the week by its demand (the week score is the
+    demand-weighted mean of its shifts)."""
+    dw, total = _demand_shares(rows, quality)
+    pts = 0.0
+    for it, d, part, _t in learned_breaks(rows, items, families):
+        pts += LEARNED_SHIFT_POINTS * it["weight"] * dw.get((d, part), 1.0) / total
     if likely:
-        here = {(_low(r.get("employee")), r.get("date") or "", r.get("shift_start") or "") for r in rows or []}
+        here = {}
+        for r in rows or []:
+            k = (_low(r.get("employee")), r.get("date") or "", r.get("shift_start") or "")
+            here[k] = sq.present_dayparts(r)[0]
         for f in likely:
             try:
                 w = float(f.get("weight") or 0)
             except (TypeError, ValueError):
                 w = 0.0
-            if w > 0 and (_low(f.get("employee")), f.get("date") or "", f.get("shift_start") or "") in here:
-                pts += LIKELY_EDIT_POINTS * w
+            k = (_low(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")
+            if w > 0 and k in here:
+                pts += LIKELY_EDIT_SHIFT_POINTS * w * dw.get((k[1], here[k]), 1.0) / total
     return pts
 
 
@@ -470,9 +498,9 @@ def _learned_problems(rows: list, items: list, quality: dict, families: dict = N
     for s in (quality or {}).get("shifts") or []:
         shifts.setdefault(s.get("date"), []).append(s)
     out = []
-    for it, d, text in breaks:
+    for it, d, part, text in breaks:
         for s in shifts.get(d) or []:
-            if it["daypart"] and s.get("daypart") != it["daypart"]:
+            if s.get("daypart") != part:
                 continue
             out.append((150.0 * it["weight"], s, {"key": "learned", "score": 0, "weight": 0,
                                                     "facts": {"item": it, "text": text}}))

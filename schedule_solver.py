@@ -153,9 +153,9 @@ K_HARD = 0.1              # per busy shift they already have
 K_DAYS_OFF = 25.0         # fewer consecutive days off than the rule, for somebody the draft already had short
 K_DAYS_OFF_NEW = 1000.0   # ...for somebody the draft (after the fix pass) gave their run: never worth it
 K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at toward their minimum: never worth it
-# What the scheduling memory and the edit predictor cost, in week points
-# (schedule_optimizer.LEARNED_POINTS, LIKELY_EDIT_POINTS — the same weights
-# the repair loop holds a move to), spread over the week's demand weight.
+# What the scheduling memory and the edit predictor cost: points of the
+# shift a fact is broken on (schedule_optimizer.LEARNED_SHIFT_POINTS,
+# LIKELY_EDIT_SHIFT_POINTS — the weights the repair loop holds a move to).
 
 
 def _ordinal(date):
@@ -454,6 +454,14 @@ class Problem:
         self.person_rates = {" ".join(str(k).lower().split()): float(v) for k, v in (ot.get("person_rates") or {}).items()
                              if _num(v)}
         self.role_typical = {str(k).strip().lower(): float(v) for k, v in (ot.get("role_typical") or {}).items() if _num(v)}
+        # Overtime pay starts past this line in a payroll week (labor.
+        # OVERTIME_THRESHOLD_HOURS, the scorer's week_overtime line) — an
+        # owner's higher maximum allows a person the hours, it does not make
+        # them cost less.
+        try:
+            self.ot_threshold = float(ot.get("line") or sq.WEEKLY_HOURS_CEILING)
+        except (TypeError, ValueError):
+            self.ot_threshold = sq.WEEKLY_HOURS_CEILING
         blended = ot.get("default_rate") or (ot.get("rates") or {}).get("_default")
         self.blended = float(blended) if _num(blended) else (sum(self.rates.values()) / len(self.rates) if self.rates else 0.0)
         self.priced = bool(self.rates or self.person_rates or self.blended)
@@ -715,8 +723,10 @@ class Problem:
         import schedule_optimizer as _opt
         # week points per dollar, in the solver's units (× the week's demand weight)
         self.per_dollar = (_opt.LABOR_POINTS_PER_PCT * 100.0 / dollars * self.sigma_dw) if dollars > 0 else 0.0
-        self.k_learned = _opt.LEARNED_POINTS * self.sigma_dw
-        self.k_likely = _opt.LIKELY_EDIT_POINTS * self.sigma_dw
+        # A memory broken on a shift costs LEARNED_SHIFT_POINTS of that shift
+        # (× its demand weight below), the repair loop's own weight.
+        self.k_learned = _opt.LEARNED_SHIFT_POINTS
+        self.k_likely = _opt.LIKELY_EDIT_SHIFT_POINTS
         # The items each week-level measure counts, as the draft has them —
         # what one item is worth of the measure.
         self.n_pref = max(1, sum(1 for u in self.units if u.draft is not None
@@ -1428,16 +1438,16 @@ class Problem:
             if it["daypart"] and all(it["daypart"] != x for _d, x in u.parts):
                 continue
             if it["kind"] == "off" and it["person"] == low:
-                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"]
+                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
             elif it["kind"] in ("opener", "closer") and it["person"] != low and \
                     ("opens" if it["kind"] == "opener" else "closes") in u.edges and \
                     (not it["role"] or self.family(it["role"]) in u.fams):
-                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"]
+                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
         if self.likely:
             for r in u.rows:
                 w = self.likely.get((low, r.get("date") or "", r.get("shift_start") or ""))
                 if w:
-                    out["likely_edit"] = out.get("likely_edit", 0.0) + self.k_likely * w
+                    out["likely_edit"] = out.get("likely_edit", 0.0) + self.k_likely * w * u.dw
         drafted = self.sym_draft[u.sym] if u.sym is not None else ({u.draft} if u.draft is not None else set())
         if p not in drafted:
             out["change"] = K_CHANGE
@@ -1660,11 +1670,11 @@ class Problem:
             cost = 0.0
             for it in g["learned"]:
                 if it["kind"] == "on" and it["person"] not in on:
-                    cost += self.k_learned * it["weight"]
+                    cost += self.k_learned * it["weight"] * dw
                 elif it["kind"] == "avoid" and it["person"] in on and it["other"] in on:
-                    cost += self.k_learned * it["weight"]
+                    cost += self.k_learned * it["weight"] * dw
                 elif it["kind"] == "prefer" and (it["person"] in on) != (it["other"] in on):
-                    cost += self.k_learned * it["weight"]
+                    cost += self.k_learned * it["weight"] * dw
             if cost:
                 out["learned"] = cost
         return out
@@ -1696,7 +1706,7 @@ class Problem:
         # anybody's hours under their line past what the draft gave them),
         # and the hours somebody habitually runs past their shift (L-16).
         if not self.salaried[p]:
-            line = self.line[p] - self.overrun.get(p, 0.0)
+            line = self.ot_threshold - self.overrun.get(p, 0.0)
             have = st.hours[p].get(u.bucket, 0.0)
             ot = max(0.0, have + u.hours - line) - max(0.0, have - line)
             if ot > 0:
