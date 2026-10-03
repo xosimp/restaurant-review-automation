@@ -404,12 +404,22 @@ def _clocked(monkeypatch):
                 shifts.append({"employee": name, "date": w[k], "scheduled_hours": "6", "actual_hours": "0" if missed else "6"})
     shifts.append({"employee": "Cy", "date": _week(0)[5], "scheduled_hours": "6", "actual_hours": ""})   # no clock reading
     monkeypatch.setattr(models, "_cached_shifts", lambda r: shifts)
+    # Attendance is recency-weighted (staff_settings.recency_weight): the
+    # day it is read on is pinned before these shifts, so each weighs 1
+    # whenever the suite runs.
+    import datetime as dt
+    import staff_settings
+    monkeypatch.setattr(staff_settings, "_today", lambda rid: dt.date(2026, 10, 3))
 
 
 def test_attendance_is_read_per_weekday_with_a_sample_floor(db_path, rid, monkeypatch):
     _clocked(monkeypatch)
     att = sl.attendance_by_weekday(rid, db_path=db_path)
-    assert att["Ana"]["Saturday"] == {"shifts": 4, "no_shows": 2, "no_show_rate": 0.5}
+    # The one weighted reader (schedule audit 10/3/26 L-17/L-18): these
+    # shifts are dated ahead of today, so each weighs 1; the call-out rate
+    # rides beside the no-show rate.
+    assert att["Ana"]["Saturday"] == {"shifts": 4, "no_shows": 2, "no_show_rate": 0.5,
+                                      "absence_rate": 0.5, "call_out_rate": 0.0}
     assert att["Ana"]["Monday"]["no_show_rate"] == 0.0 and att["Bob"]["Saturday"]["no_show_rate"] == 0.0
     assert "Cy" not in att
     assert sl.attendance_by_weekday(rid, min_shifts=5, db_path=db_path) == {}

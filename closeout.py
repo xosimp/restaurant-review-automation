@@ -282,9 +282,11 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
     "influence": str|None, "sources": {field: sentence}}.
 
     callouts  — tonight's "hasn't clocked in" issues still open: the
-                coverage check (intraday.coverage_gaps) opened one per person
-                on the published schedule who never arrived. A late arrival
-                closes theirs, so it is not suggested.
+                coverage check (intraday.coverage_gaps) opened one per role
+                for the people on the published schedule who never arrived
+                (issues.coverage_people reads each). A late arrival is marked
+                arrived on it, so it is not suggested; nor is a gap a
+                teammate took from the issue.
     influence — tonight's dated events (demand_signals) and the holiday, if
                 tonight is one — never a followed game from the catalog,
                 covers booked or a scheduled post. A kept suggestion is read
@@ -299,14 +301,17 @@ def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         try:
-            rows = conn.execute("SELECT source_key FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
+            rows = conn.execute("SELECT source_key, status, resolution_note, meta_json FROM ops_issues "
+                                "WHERE restaurant_id=? AND kind='coverage' "
                                 "AND status!='resolved' AND source_key LIKE ? ORDER BY id",
                                 (restaurant_id, f"coverage:{day}:%")).fetchall()
         except Exception:
             rows = []
     finally:
         conn.close()
-    keys = [r["source_key"].split(":", 2)[2] for r in rows if (r["source_key"] or "").count(":") >= 2]
+    import issues as _issues
+    keys = [_ss.name_key(p["employee"]) for r in rows for p in _issues.coverage_people(r)
+            if p.get("status") == "missing"]
     if keys:
         try:
             names = {_ss.name_key(e["name"]): e["name"]

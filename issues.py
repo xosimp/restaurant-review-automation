@@ -1059,59 +1059,325 @@ def auto_close(restaurant_id, db_path=DB_PATH):
 _LATE_CLAUSE = re.compile(r" They said(?: at [^ ]+)? they'd be about \d+ minutes late\.")
 
 
+# ── coverage issues: one per business date and role ─────────────────────────
+#
+# The live clock-in check (strategy_jobs.run_coverage_check) opened one
+# high-severity issue per missing person, keyed by the CALENDAR date it ran
+# on. After midnight on a 2am close the same person got a second issue keyed
+# to the next day, a late arrival after midnight never closed the first (so
+# the nightly attendance read called them a no-show), and a mass call-off was
+# a burst of texts, each naming the same two covers (schedule audit 10/3/26
+# E-4, E-31). One issue now holds a role's gaps on a BUSINESS date —
+# source_key "coverage:<business date>:@<role>", with "#2", "#3" when a
+# manager closed one and somebody else goes missing later that night. Its
+# meta lists everyone it was opened for (`people`), each with a status:
+#
+#   missing   on the published week, past the grace, no clock-in
+#   arrived   clocked in since; the check closes the issue once nobody is
+#             missing (and the attendance record reads them as late)
+#   covered   somebody took the shift from the issue ("Ask Zed to cover")
+#
+# and the cover suggestions (`covers`), de-duplicated across the gaps, each
+# naming the gap it is for. Title and detail are written from the meta
+# (coverage_texts), so an arrival, a cover or a running-late note rewrites
+# them. An issue from before ("coverage:<calendar date>:<name>", one person)
+# is still read by every reader through coverage_people.
+COVERAGE_GROUP_MARK = "@"
+AUTO_ARRIVED_NOTE = "Closed automatically: they clocked in."
+
+
+def _role_key(role) -> str:
+    return " ".join(str(role or "").lower().split()) or "staff"
+
+
+def coverage_key(business_date, role, seq=1) -> str:
+    """The source_key of a role's coverage issue on a business date."""
+    key = f"coverage:{str(business_date)[:10]}:{COVERAGE_GROUP_MARK}{_role_key(role)}"
+    return key if int(seq or 1) <= 1 else f"{key}#{int(seq)}"
+
+
+def is_group_coverage(source_key) -> bool:
+    parts = str(source_key or "").split(":", 2)
+    return len(parts) == 3 and parts[2].startswith(COVERAGE_GROUP_MARK)
+
+
+def _issue_meta(issue) -> dict:
+    meta = issue.get("meta") if hasattr(issue, "get") else None
+    if isinstance(meta, dict):
+        return meta
+    import json as _json
+    try:
+        raw = issue["meta_json"]
+    except (KeyError, IndexError, TypeError):
+        raw = None
+    try:
+        return _json.loads(raw or "null") or {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def coverage_people(issue) -> list:
+    """Everyone a coverage issue is about, whichever shape it has:
+    [{"employee", "role", "shift_start", "shift_end", "minutes_late",
+    "status", "business_date", "asked_off", "notice_minutes", ...}].
+
+    A person-keyed issue (before 10/3/26) is one person: "arrived" when the
+    check closed it at their clock-in, "closed" when anyone else resolved
+    it, else "missing" — and its date is the CALENDAR date it was opened on
+    (`calendar_keyed`), which after midnight is the next morning."""
+    def _get(k):
+        try:
+            return issue[k]
+        except (KeyError, IndexError, TypeError):
+            return None
+    key = str(_get("source_key") or "")
+    parts = key.split(":", 2)
+    meta = _issue_meta(issue)
+    day = str(meta.get("business_date") or (parts[1] if len(parts) >= 2 else ""))[:10]
+    if is_group_coverage(key):
+        return [dict(p, business_date=day) for p in (meta.get("people") or [])
+                if isinstance(p, dict) and str(p.get("employee") or "").strip()]
+    name = meta.get("missing") or (parts[2] if len(parts) == 3 else "")
+    if not str(name or "").strip():
+        return []
+    note = str(_get("resolution_note") or "")
+    status = ("arrived" if note.startswith(AUTO_ARRIVED_NOTE.rstrip(".")) else
+              "missing" if _get("status") != "resolved" else "closed")
+    return [{"employee": name, "role": meta.get("role"), "shift_start": meta.get("shift_start") or "",
+             "status": status, "business_date": day, "calendar_keyed": not meta.get("business_date")}]
+
+
+def _cover_for(c) -> str:
+    who, start = c.get("for"), c.get("shift_start")
+    if not who:
+        return ""
+    return f" for {who}'s {start}" if start else f" for {who}"
+
+
+def coverage_texts(meta) -> tuple:
+    """(title, detail) of a role's coverage issue, from its meta — one
+    person reads as before ("Ana B. hasn't clocked in"), several as one
+    line ("3 of 6 servers haven't clocked in") with each gap and the cover
+    suggested for it."""
+    from shift_quality import role_words
+    people = [p for p in (meta.get("people") or []) if isinstance(p, dict) and p.get("employee")]
+    missing = [p for p in people if p.get("status") == "missing"]
+    role = (meta.get("role") or "").strip()
+    on = meta.get("scheduled_in_role")
+    shown = missing or people
+    covers = [c for c in (meta.get("covers") or []) if isinstance(c, dict) and c.get("name")]
+    if len(shown) == 1:
+        p = shown[0]
+        title = f"{p['employee']} hasn't clocked in"
+        detail = (f"Scheduled {p.get('shift_start') or 'today'}" + (f" as {p['role']}" if p.get("role") else "")
+                  + f" — {int(p.get('minutes_late') or 0)} minutes ago, with no clock-in on the POS."
+                  + (p.get("hold") or ""))
+        if p.get("asked_off"):
+            detail += " They had asked to drop this shift and it wasn't approved."
+    else:
+        n = len(shown)
+        words = role_words(role or "staff", n)
+        title = (f"{n} of {on} {words} haven't clocked in" if isinstance(on, int) and on >= n
+                 else f"{n} {words} haven't clocked in")
+        bits = []
+        for p in shown:
+            bit = (f"{p['employee']} — {p.get('shift_start') or 'today'}, {int(p.get('minutes_late') or 0)} minutes "
+                   "late, no clock-in on the POS.") + (p.get("hold") or "")
+            if p.get("asked_off"):
+                bit += " They had asked to drop it and it wasn't approved."
+            bits.append(bit)
+        detail = " ".join(bits)
+    back = [p["employee"] for p in people if p.get("status") == "arrived"]
+    if back and missing:
+        detail += f" Since arrived: {', '.join(back)}."
+    taken = [f"{p['employee']}'s {p.get('shift_start') or 'shift'} by {p.get('covered_by') or 'a teammate'}"
+             for p in people if p.get("status") == "covered"]
+    if taken:
+        detail += f" Covered: {'; '.join(taken)}."
+    gaps = {(p["employee"], p.get("shift_start")) for p in missing}
+    open_covers = [c for c in covers if not c.get("for") or (c.get("for"), c.get("shift_start")) in gaps]
+    if open_covers:
+        parts = []
+        for c in open_covers:
+            score = f" ({c['score']:.1f})" if isinstance(c.get("score"), (int, float)) else ""
+            how = f" — {c['how']}" if c.get("how") else ""
+            parts.append(f"{c['name']}{score}{_cover_for(c) if len(shown) > 1 else ''}{how}")
+        detail += " Free today and best placed to cover: " + ", ".join(parts) + "."
+    return title[:200], detail[:2000]
+
+
+def coverage_issues_for(restaurant_id, business_date, db_path=DB_PATH) -> list:
+    """Every coverage issue about one business date, oldest first — the
+    role issues, and a person-keyed one from before keyed to that date."""
+    day = str(business_date)[:10]
+    prefix = f"coverage:{day}:"
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
+                            "AND substr(source_key, 1, ?) = ? ORDER BY id",
+                            (restaurant_id, len(prefix), prefix)).fetchall()
+    finally:
+        conn.close()
+    return [_public(r) for r in rows]
+
+
+def update_coverage(restaurant_id, issue_id, change, renotify=False, db_path=DB_PATH):
+    """Rewrite a role coverage issue's meta through `change(meta) -> bool`
+    (False: nothing changed), and its title and detail from it, inside one
+    write transaction — the check, an arrival, an ask and a cover all edit
+    the same meta, and a read-then-write lost each other's changes. With
+    `renotify` (somebody new went missing on it) the assignee is texted the
+    new title, once, even if they had acknowledged the first. Returns the
+    issue, or None when it is gone or `change` changed nothing."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM ops_issues WHERE id=? AND restaurant_id=? AND kind='coverage'",
+                           (issue_id, restaurant_id)).fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        meta = _issue_meta(row)
+        if not change(meta):
+            conn.rollback()
+            return None
+        title, detail = coverage_texts(meta)
+        conn.execute("UPDATE ops_issues SET meta_json=?, title=?, detail=? WHERE id=? AND restaurant_id=?",
+                     (_json.dumps(meta)[:4000], title, detail, issue_id, restaurant_id))
+        if renotify and row["status"] != "resolved":
+            conn.execute("UPDATE ops_issues SET status='open', acknowledged_at=NULL, notified_at=NULL, "
+                         "notify_attempts=0, notify_error=NULL, notify_next_at=NULL WHERE id=? "
+                         "AND notify_failed_at IS NULL", (issue_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if renotify:
+        try:
+            _notify(issue_id, db_path=db_path)
+        except Exception as e:
+            print(f"[issues] coverage re-text failed for issue {issue_id}: {e}")
+    return get_issue(restaurant_id, issue_id, db_path)
+
+
+def mark_coverage_covered(restaurant_id, issue_id, employee, by, db_path=DB_PATH):
+    """Somebody took a missing person's shift from the issue (an accepted
+    "Ask Zed to cover" offer): that gap is covered, and the issue closes once
+    nobody on it is still missing. A person-keyed issue closes outright, as
+    before. Returns the issue."""
+    import staff_settings as _ss
+    issue = get_issue(restaurant_id, issue_id, db_path)
+    if not issue or issue.get("kind") != "coverage":
+        return None
+    note = f"{by} took the shift in the app."
+    if not is_group_coverage(issue.get("source_key")):
+        _resolve(restaurant_id, issue_id, note, db_path)
+        return get_issue(restaurant_id, issue_id, db_path)
+    want = _ss.name_key(employee)
+    left = []
+
+    def _cover(meta):
+        hit = False
+        for p in meta.get("people") or []:
+            if isinstance(p, dict) and _ss.name_key(p.get("employee")) == want and p.get("status") == "missing":
+                p["status"], p["covered_by"] = "covered", by
+                hit = True
+        left.extend(p for p in meta.get("people") or [] if isinstance(p, dict) and p.get("status") == "missing")
+        return hit
+    update_coverage(restaurant_id, issue_id, _cover, db_path=db_path)
+    if not left:
+        _resolve(restaurant_id, issue_id, note, db_path)
+    return get_issue(restaurant_id, issue_id, db_path)
+
+
 def note_running_late(restaurant_id, day_isos, name_keys, sentence, db_path=DB_PATH) -> int:
     """The employee said they're running late after their "hasn't clocked in"
     issue had already opened (staff_comms.report_late): the open issue says
     so — `sentence` (staff_comms.hold_sentence) in place of any earlier ETA,
     right after the clock-in line — so the manager reading it knows before
     calling round for a cover. The clock-in check still closes it when they
-    punch (resolve_coverage). Returns issues annotated."""
-    keys = [f"coverage:{d}:{k}" for d in sorted({str(x)[:10] for x in day_isos if x})
-            for k in sorted({k for k in name_keys if k})]
-    if not keys or not (sentence or "").strip():
+    punch (resolve_coverage). A role issue keeps the sentence on the person
+    (`hold`) and is rewritten from its meta. Returns issues annotated."""
+    import staff_settings as _ss
+    days = sorted({str(x)[:10] for x in day_isos if x})
+    keys = {_ss.name_key(k) for k in name_keys if k}
+    if not days or not keys or not (sentence or "").strip():
         return 0
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute(f"SELECT id, detail FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
-                            f"AND status!='resolved' AND source_key IN ({','.join('?' * len(keys))})",
-                            (restaurant_id, *keys)).fetchall()
-        n = 0
-        for r in rows:
-            detail = _LATE_CLAUSE.sub("", r["detail"] or "")
+    n = 0
+    for day in days:
+        for issue in coverage_issues_for(restaurant_id, day, db_path=db_path):
+            if issue.get("status") == "resolved":
+                continue
+            if is_group_coverage(issue.get("source_key")):
+                def _hold(meta):
+                    hit = False
+                    for p in meta.get("people") or []:
+                        if (isinstance(p, dict) and p.get("status") == "missing"
+                                and _ss.name_key(p.get("employee")) in keys):
+                            p["hold"] = sentence
+                            hit = True
+                    return hit
+                if update_coverage(restaurant_id, issue["id"], _hold, db_path=db_path):
+                    n += 1
+                continue
+            if _ss.name_key(str(issue.get("source_key") or "").split(":", 2)[2]) not in keys:
+                continue
+            detail = _LATE_CLAUSE.sub("", issue.get("detail") or "")
             anchor = "with no clock-in on the POS."
             if anchor in detail:
                 detail = detail.replace(anchor, anchor + sentence, 1)
             else:
                 detail = (detail + sentence).strip()
-            conn.execute("UPDATE ops_issues SET detail=? WHERE id=? AND restaurant_id=?",
-                         (detail[:2000], r["id"], restaurant_id))
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE ops_issues SET detail=? WHERE id=? AND restaurant_id=?",
+                             (detail[:2000], issue["id"], restaurant_id))
+                conn.commit()
+            finally:
+                conn.close()
             n += 1
-        conn.commit()
-    finally:
-        conn.close()
     return n
 
 
 def resolve_coverage(restaurant_id, day_iso, arrived_keys, db_path=DB_PATH):
-    """Close today's "hasn't clocked in" issues for the people who since
-    have. `arrived_keys` are staff_settings.name_key()s of everyone clocked
-    in (aliases already resolved). Returns the names closed."""
+    """The business date's "hasn't clocked in" issues, for the people who
+    since have: a person-keyed issue closes; on a role issue they are marked
+    arrived, and it closes once nobody on it is still missing (otherwise its
+    text says who still is). `arrived_keys` are staff_settings.name_key()s of
+    everyone clocked in (aliases already resolved). Returns the names
+    closed."""
     if not arrived_keys:
         return []
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute("SELECT id, source_key, title FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
-                            "AND status!='resolved' AND source_key LIKE ?",
-                            (restaurant_id, f"coverage:{day_iso}:%")).fetchall()
-    finally:
-        conn.close()
     import staff_settings as _ss
     closed = []
-    for row in rows:
-        who = row["source_key"].split(":", 2)[2]
-        if _ss.name_key(who) in arrived_keys:
-            _resolve(restaurant_id, row["id"], "Closed automatically: they clocked in.", db_path)
-            closed.append(who)
+    for issue in coverage_issues_for(restaurant_id, day_iso, db_path=db_path):
+        if issue.get("status") == "resolved":
+            continue
+        if not is_group_coverage(issue.get("source_key")):
+            who = str(issue.get("source_key") or "").split(":", 2)[2]
+            if _ss.name_key(who) in arrived_keys:
+                _resolve(restaurant_id, issue["id"], AUTO_ARRIVED_NOTE, db_path)
+                closed.append(who)
+            continue
+        came, left = [], []
+
+        def _arrive(meta):
+            stamp = _now()
+            for p in meta.get("people") or []:
+                if not isinstance(p, dict):
+                    continue
+                if p.get("status") == "missing" and _ss.name_key(p.get("employee")) in arrived_keys:
+                    p["status"], p["arrived_at"] = "arrived", stamp
+                    came.append(p["employee"])
+            left.extend(p for p in meta.get("people") or [] if isinstance(p, dict) and p.get("status") == "missing")
+            return bool(came)
+        update_coverage(restaurant_id, issue["id"], _arrive, db_path=db_path)
+        closed += came
+        if came and not left:
+            _resolve(restaurant_id, issue["id"], AUTO_ARRIVED_NOTE, db_path)
     return closed
 
 

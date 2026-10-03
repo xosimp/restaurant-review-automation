@@ -12,9 +12,14 @@ three Saturdays and next week's draft put her alone on Saturday bar.
 
 `attendance_events` is one row per scheduled shift somebody watched: the
 person, the date, the scheduled start, the OUTCOME — on_time, late,
-no_show, called_out, left_early, covered — minutes late, who covered, and
-where it was seen. Its writers, strongest first (a weaker one never
-overwrites a stronger one's outcome):
+no_show, called_out, left_early, covered, excused — minutes late, who
+covered, how much notice a call-out gave (notice_minutes), and where it was
+seen. `excused` is a drop a manager approved that nobody claimed (schedule
+audit 10/3/26 E-5): the person was let off the shift before it started, so
+it is not a shift they owed. A call-out carries the notice it gave when the
+shift requests show it — the person asked to drop the shift at a known time
+and it was never approved (L-18). Its writers, strongest first (a weaker
+one never overwrites a stronger one's outcome):
 
   manual               the owner or a manager correcting it
   closeout_confirmed   a closer's "who didn't make it", matched exactly to
@@ -33,10 +38,13 @@ overwrites a stronger one's outcome):
 
 Readers — reliability (staff_settings.reliability), attendance by weekday
 and standby days (schedule_learning), the schedule prompt's no-show block
-and the Shift Quality reliability dimension — read `reliability_events`:
-these outcomes, plus the shifts from a source that carried a real schedule
-(an upload with scheduled and actual hours). A person nobody watched is
-absent — unknown — never "reliable".
+and the Shift Quality reliability dimension — all go through ONE weighted
+reader, staff_settings.attendance_events / weighted_attendance (schedule
+audit 10/3/26 L-17: they used three windows and two decays), which reads
+`reliability_events`: these outcomes, plus the shifts from a source that
+carried a real schedule (an upload with scheduled and actual hours). A
+person nobody watched is absent — unknown — never "reliable". An excused or
+covered shift is not one the person owed, so no reader counts it.
 
 Retention: raw events 2 years (ops._RETENTION_DAYS "attendance_events"),
 then quarterly per person in person_quarters (shift_facts.rollup_quarters),
@@ -50,8 +58,15 @@ import models as _models_mod
 
 log = logging.getLogger(__name__)
 
-OUTCOMES = ("on_time", "late", "no_show", "called_out", "left_early", "covered")
+OUTCOMES = ("on_time", "late", "no_show", "called_out", "left_early", "covered", "excused")
 MISSES = ("no_show", "called_out")
+# Not a shift the person owed: somebody else took it, or a manager let them
+# off it before it started (E-5). Every reader leaves these out of the shifts
+# it counts — worked, missed or late.
+NOT_OWED = ("covered", "excused")
+# Outcomes read off a clock-in time, so they say whether the person was
+# late (D-44: lateness is measured only on these).
+TIMED = ("on_time", "late", "left_early")
 # Who may overwrite whom: a stronger source's outcome stands.
 SOURCE_RANK = {"manual": 4, "closeout_confirmed": 3, "coverage_check": 2, "schedule_vs_punch_join": 1,
                # The person's own word before anyone saw them arrive.
@@ -94,10 +109,16 @@ def init_attendance(db_path=None):
             source          TEXT    NOT NULL,
             history_id      INTEGER,
             note            TEXT,
+            notice_minutes  INTEGER,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, employee_key, business_date, shift_start)
         )""")
+        # How far ahead a call-out told the restaurant (schedule audit
+        # 10/3/26 L-18): added to a table created before it, here at boot.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(attendance_events)")}
+        if "notice_minutes" not in have:
+            conn.execute("ALTER TABLE attendance_events ADD COLUMN notice_minutes INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_attendance_person ON attendance_events"
                      "(restaurant_id, employee_key, business_date)")
         # ops.prune_ledgers deletes by business_date (the retention registry).
@@ -118,10 +139,12 @@ def _minutes(value):
 
 
 def record(restaurant_id, name, business_date, outcome, source, shift_start="", minutes_late=None,
-           covered_by=None, role=None, history_id=None, note=None, person_id=None, db_path=None) -> bool:
+           covered_by=None, role=None, history_id=None, note=None, person_id=None, notice_minutes=None,
+           db_path=None) -> bool:
     """One watched shift's outcome. A weaker source never overwrites a
     stronger one's outcome (SOURCE_RANK); agreeing, it may fill in what the
-    stronger one did not know (minutes late). Returns whether it wrote."""
+    stronger one did not know (minutes late, a call-out's notice). Returns
+    whether it wrote."""
     if outcome not in OUTCOMES or source not in SOURCE_RANK:
         raise ValueError(f"attendance: {outcome!r} from {source!r}")
     key = _nk(name)
@@ -139,30 +162,37 @@ def record(restaurant_id, name, business_date, outcome, source, shift_start="", 
             # the person) — one row for the night, not two.
             cur = conn.execute("SELECT * FROM attendance_events WHERE restaurant_id=? AND employee_key=? AND "
                                "business_date=? AND shift_start=''", (restaurant_id, key, day)).fetchone()
+        notice = None if notice_minutes is None else max(0, int(notice_minutes))
         if cur is not None:
             mine, theirs = SOURCE_RANK[source], SOURCE_RANK.get(cur["source"], 0)
             if mine < theirs:
+                fill = {}
                 if (cur["outcome"] == outcome and cur["minutes_late"] is None and minutes_late is not None
                         and source != "self_report"):
-                    conn.execute("UPDATE attendance_events SET minutes_late=?, updated_at=datetime('now') WHERE id=?",
-                                 (int(minutes_late), cur["id"]))
+                    fill["minutes_late"] = int(minutes_late)
+                if cur["outcome"] == outcome and cur["notice_minutes"] is None and notice is not None:
+                    fill["notice_minutes"] = notice
+                if fill:
+                    conn.execute(f"UPDATE attendance_events SET {', '.join(k + '=?' for k in fill)}, "
+                                 "updated_at=datetime('now') WHERE id=?", (*fill.values(), cur["id"]))
                     conn.commit()
                     return True
                 conn.rollback()
                 return False
             conn.execute("UPDATE attendance_events SET outcome=?, source=?, minutes_late=COALESCE(?, minutes_late), "
                          "covered_by=COALESCE(?, covered_by), role=COALESCE(?, role), history_id=COALESCE(?, history_id), "
-                         "note=COALESCE(?, note), person_id=COALESCE(?, person_id), shift_start=CASE WHEN "
+                         "note=COALESCE(?, note), person_id=COALESCE(?, person_id), "
+                         "notice_minutes=COALESCE(?, notice_minutes), shift_start=CASE WHEN "
                          "shift_start='' THEN ? ELSE shift_start END, employee_name=?, updated_at=datetime('now') "
                          "WHERE id=?",
                          (outcome, source, minutes_late, covered_by, role, history_id, (note or "")[:300] or None,
-                          person_id, start, " ".join(str(name).split()), cur["id"]))
+                          person_id, notice, start, " ".join(str(name).split()), cur["id"]))
         else:
             conn.execute("INSERT INTO attendance_events (restaurant_id, person_id, employee_name, employee_key, "
-                         "business_date, shift_start, role, outcome, minutes_late, covered_by, source, history_id, note) "
-                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         "business_date, shift_start, role, outcome, minutes_late, covered_by, source, history_id, note, "
+                         "notice_minutes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (restaurant_id, person_id, " ".join(str(name).split()), key, day, start, role, outcome,
-                          minutes_late, covered_by, source, history_id, (note or "")[:300] or None))
+                          minutes_late, covered_by, source, history_id, (note or "")[:300] or None, notice))
         conn.commit()
         return True
     except Exception:
@@ -219,22 +249,33 @@ def _person_ids(restaurant_id, names, db_path=None) -> dict:
     return {n: got.get(_nk(n)) for n in names}
 
 
-def _covered_by(restaurant_id, name, day, start, db_path=None):
-    """Who took the shift, when a drop or swap was covered, else None."""
-    conn = get_conn(db_path)
+def _releases(restaurant_id, day, restaurant=None, db_path=None) -> list:
+    """shift_requests.shift_release for `day`: what the requests say about a
+    shift its holder did not work (covered, excused, called out with notice).
+    [] when they cannot be read — the shift is then judged on the punches
+    alone, as before."""
     try:
-        rows = conn.execute("SELECT employee_name, replacement_name, shift_start FROM shift_change_requests "
-                            "WHERE restaurant_id=? AND date=? AND status='covered'",
-                            (restaurant_id, str(day)[:10])).fetchall()
-    except Exception:
-        rows = []
-    finally:
-        conn.close()
-    for r in rows:
-        if _nk(r["employee_name"]) == _nk(name) and (not start or not r["shift_start"]
-                                                    or _minutes(r["shift_start"]) == _minutes(start)):
-            return r["replacement_name"] or "someone"
-    return None
+        import shift_requests
+        return shift_requests.shift_release(restaurant_id, str(day)[:10], restaurant=restaurant,
+                                            db_path=db_path or _models_mod.DB_PATH)
+    except Exception as e:
+        log.warning("attendance: shift requests unreadable rid=%s day=%s: %s", restaurant_id, day, e)
+        return []
+
+
+def _unworked(releases, name, start):
+    """(outcome, covered_by, notice_minutes) for a published shift with no
+    punch: covered when somebody took it, excused when a manager let them
+    off it (an approved drop nobody claimed — schedule audit 10/3/26 E-5),
+    called_out when they asked off and it was never approved (with the
+    notice they gave — L-18), else a no-show."""
+    import shift_requests
+    hit = shift_requests.released_for(releases, name, start)
+    if not hit:
+        return "no_show", None, None
+    if hit["outcome"] == "covered":
+        return "covered", hit.get("replacement") or "someone", None
+    return hit["outcome"], None, hit.get("notice_minutes")
 
 
 def pos_day_final(restaurant_id, day, db_path=None) -> bool:
@@ -316,8 +357,10 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
     (pos_day_final). Each scheduled shift: a punch for its person that day
     → on_time, late (LATE_AFTER_MINUTES past the expected clock-in, the
     start less the role's clock_in_leads) or left_early (LEFT_EARLY_HOURS
-    short); none → covered when a drop or swap was covered, else no_show.
-    A salaried person doesn't clock in and is not judged.
+    short); none → what the shift requests say (_unworked: covered,
+    excused for a drop a manager approved, called_out with its notice for
+    one asked and never approved), else no_show. A salaried person doesn't
+    clock in and is not judged.
     Source schedule_vs_punch_join, the weakest: the live check and a
     closer's word stand over it. Returns {watched, recorded}."""
     rows, hid = _published_rows(restaurant_id, day, db_path)
@@ -334,6 +377,7 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
         from models import salaried_name_key
         rows = [r for r in rows if salaried_name_key(r["employee"]) not in sal]
     pids = _person_ids(restaurant_id, [r["employee"] for r in rows], db_path)
+    releases = None
     n = 0
     for r in rows:
         name, start = r["employee"], (r.get("shift_start") or "").strip()
@@ -341,7 +385,7 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
         sched_start, sched_end = _minutes(start), _minutes(r.get("shift_end"))
         # When they were due to clock in: the start less their role's lead.
         due_in = None if sched_start is None else sched_start - leads.get((r.get("role") or "").strip().lower(), 0)
-        outcome, late, covered = None, None, None
+        outcome, late, covered, notice = None, None, None, None
         if mine:
             # The punch nearest the scheduled start is this shift's.
             best = min(mine, key=lambda p: abs((_minutes(p.get("shift_start")) or 0) - (sched_start or 0)))
@@ -353,26 +397,38 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
                   and out_m > (in_m or 0)):
                 outcome = "left_early"
         else:
-            covered = _covered_by(restaurant_id, name, day, start, db_path)
-            outcome = "covered" if covered else "no_show"
+            if releases is None:
+                releases = _releases(restaurant_id, day, restaurant=restaurant, db_path=db_path)
+            outcome, covered, notice = _unworked(releases, name, start)
         if record(restaurant_id, name, day, outcome, "schedule_vs_punch_join", shift_start=start, minutes_late=late,
-                  covered_by=covered, role=r.get("role"), history_id=hid, person_id=pids.get(name), db_path=db_path):
+                  covered_by=covered, role=r.get("role"), history_id=hid, person_id=pids.get(name),
+                  notice_minutes=notice, db_path=db_path):
             n += 1
     return {"watched": True, "recorded": n}
 
 
 def from_coverage_issues(restaurant_id, today=None, days=JOIN_DAYS, db_path=None) -> int:
-    """What the live clock-in check saw, recorded per person: an issue it
-    closed because they clocked in → late; one still open once the night is
-    over → no_show. A manager closing the issue says nothing about whether
-    they came (dsr.block_labor's rule), so that is left to the join and the
-    closer. Returns outcomes written."""
-    from time_utils import restaurant_now_by_id
-    try:
-        now_local = restaurant_now_by_id(restaurant_id, naive=True)
-    except Exception:
-        now_local = datetime.now()
-    today = today or now_local.date()
+    """What the live clock-in check saw, recorded per person: somebody it
+    saw clock in after their issue opened → late; somebody still missing on
+    an issue still open once the night is over → no_show — or called_out
+    with the notice they gave, when they had asked to drop the shift and
+    nobody approved it (L-18). A manager closing the issue, or a teammate
+    taking the shift from it, says nothing about whether they came
+    (dsr.block_labor's rule), so that is left to the join and the closer.
+
+    "Today" is the restaurant's business date (schedule audit 10/3/26 E-4):
+    at 1am on a 2am close, tonight's issue is not over yet. A role issue
+    (issues.coverage_people) is read person by person. Returns outcomes
+    written."""
+    import issues
+    from time_utils import business_date
+    if today is None:
+        try:
+            r_ = _models_mod.get_restaurant(restaurant_id, db_path or _models_mod.DB_PATH)
+            from time_utils import restaurant_now
+            today = business_date(r_, restaurant_now(r_, naive=True))
+        except Exception:
+            today = date.today()
     since = (today - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
@@ -388,29 +444,30 @@ def from_coverage_issues(restaurant_id, today=None, days=JOIN_DAYS, db_path=None
         parts = (r["source_key"] or "").split(":", 2)
         if len(parts) < 3:
             continue
-        day = parts[1]
-        try:
-            meta = json.loads(r["meta_json"] or "null") or {}
-        except (TypeError, ValueError):
-            meta = {}
-        name = meta.get("missing") or parts[2]
-        start = meta.get("shift_start") or ""
-        if (r["resolution_note"] or "").startswith("Closed automatically: they clocked in"):
-            outcome = "late"
-        elif r["status"] != "resolved" and day < today.isoformat():
-            outcome = "no_show"
-        else:
-            continue
-        if record(restaurant_id, name, day, outcome, "coverage_check", shift_start=start, role=meta.get("role"),
-                  note="seen by the live clock-in check", db_path=db_path):
-            n += 1
+        for p in issues.coverage_people(r):
+            day = p.get("business_date") or parts[1]
+            notice = None
+            if p.get("status") == "arrived":
+                outcome = "late"
+            elif p.get("status") == "missing" and r["status"] != "resolved" and day < today.isoformat():
+                outcome = "called_out" if p.get("asked_off") else "no_show"
+                notice = p.get("notice_minutes") if p.get("asked_off") else None
+            else:
+                continue
+            if record(restaurant_id, p["employee"], day, outcome, "coverage_check",
+                      shift_start=p.get("shift_start") or "", role=p.get("role"),
+                      note="seen by the live clock-in check", notice_minutes=notice, db_path=db_path):
+                n += 1
     return n
 
 
 def from_closeout(restaurant_id, business_date, callouts_text, db_path=None) -> list:
     """A closer's "who didn't make it", CONFIRMED: each name in it that is
     exactly someone on that night's published schedule (their spelling or
-    an alias — never a guess from a first name) → called_out. Returns the
+    an alias — never a guess from a first name) → called_out, with the
+    notice they gave when the shift requests show they asked off ahead
+    (L-18); somebody a manager had already let off the shift (an approved
+    drop nobody claimed) → excused, never a call-out (E-5). Returns the
     names recorded."""
     import re
     text = str(callouts_text or "").strip()
@@ -419,6 +476,7 @@ def from_closeout(restaurant_id, business_date, callouts_text, db_path=None) -> 
     rows, hid = _published_rows(restaurant_id, business_date, db_path)
     if not rows:
         return []
+    releases = _releases(restaurant_id, business_date, db_path=db_path)
     by_key = {}
     for r in rows:
         by_key.setdefault(_nk(r["employee"]), r)
@@ -441,9 +499,15 @@ def from_closeout(restaurant_id, business_date, callouts_text, db_path=None) -> 
         row = by_key.get(key)
         if not row:
             continue
-        if record(restaurant_id, row["employee"], business_date, "called_out", "closeout_confirmed",
-                  shift_start=(row.get("shift_start") or "").strip(), role=row.get("role"), history_id=hid,
-                  note=f"the close-out: {phrase[:120]}", db_path=db_path):
+        start = (row.get("shift_start") or "").strip()
+        outcome, covered, notice = _unworked(releases, row["employee"], start)
+        if outcome == "covered":
+            continue                       # their shift was somebody else's tonight
+        if outcome == "no_show":
+            outcome = "called_out"         # the closer's word: they didn't make it
+        if record(restaurant_id, row["employee"], business_date, outcome, "closeout_confirmed",
+                  shift_start=start, role=row.get("role"), history_id=hid,
+                  note=f"the close-out: {phrase[:120]}", notice_minutes=notice, db_path=db_path):
             done.append(row["employee"])
     return done
 
@@ -468,17 +532,27 @@ def events(restaurant_id, since=None, until=None, db_path=None) -> list:
         conn.close()
 
 
-def reliability_events(restaurant_id, since=None, db_path=None) -> list:
+def reliability_events(restaurant_id, since=None, db_path=None, detail=False) -> list:
     """[(name, iso_date, outcome)] — every shift somebody watched: the
     recorded outcomes, and the shifts from a source that carried a REAL
     schedule (an upload with scheduled and actual hours: actual 0 is a
     no-show, 1.5h short a short shift). A POS row whose schedule was its
-    actual hours copied says nothing about attendance and is never read."""
+    actual hours copied says nothing about attendance and is never read.
+
+    `detail`: [(name, iso_date, outcome, extra)] instead, `extra` being
+    {"notice_minutes": n or None, "timed": bool} — how far ahead a call-out
+    told the restaurant (L-18) and whether the outcome was read off a
+    clock-in time, so lateness can be judged on it (D-44). The one weighted
+    reader (staff_settings.attendance_events) reads this form."""
     import shift_facts
     out, seen = [], set()
     for e in events(restaurant_id, since=since, db_path=db_path):
-        out.append((e["employee_name"], e["business_date"],
-                    "short" if e["outcome"] == "left_early" else e["outcome"]))
+        outcome = "short" if e["outcome"] == "left_early" else e["outcome"]
+        if detail:
+            out.append((e["employee_name"], e["business_date"], outcome,
+                        {"notice_minutes": e.get("notice_minutes"), "timed": e["outcome"] in TIMED}))
+        else:
+            out.append((e["employee_name"], e["business_date"], outcome))
         seen.add((e["employee_key"], e["business_date"]))
     for r in shift_facts.person_rows(restaurant_id, since=since, db_path=db_path):
         if not r.get("schedule_known"):
@@ -496,8 +570,8 @@ def reliability_events(restaurant_id, since=None, db_path=None) -> list:
             continue
         if sched <= 0:
             continue
-        out.append((name, day, "no_show" if actual == 0 else ("short" if sched - actual >= LEFT_EARLY_HOURS
-                                                              else "worked")))
+        outcome = "no_show" if actual == 0 else ("short" if sched - actual >= LEFT_EARLY_HOURS else "worked")
+        out.append((name, day, outcome, {"notice_minutes": None, "timed": False}) if detail else (name, day, outcome))
     return out
 
 
@@ -516,8 +590,10 @@ def summary_lines(restaurant_id, today=None, db_path=None, limit=6) -> list:
     schedule's own RELIABILITY block."""
     today = today or date.today()
     since = (today - timedelta(weeks=12)).isoformat()
+    # A shift somebody else took, or one a manager let them off (E-5), was
+    # not theirs to work or miss.
     evs = [e for e in reliability_events(restaurant_id, since=since, db_path=db_path)
-           if str(e[1])[:10] <= today.isoformat()]
+           if str(e[1])[:10] <= today.isoformat() and e[2] not in NOT_OWED]
     if not evs:
         return []
     by = {}

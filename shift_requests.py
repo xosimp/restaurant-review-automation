@@ -528,6 +528,103 @@ def live_request_by_shift(restaurant_id, employee_name, db_path=DB_PATH) -> dict
             for r in rows}
 
 
+# ── what the requests say about a shift its holder did not work ─────────────
+
+def _local_stamp(stamp, restaurant):
+    """A stored UTC stamp (datetime('now') / utcnow) as the restaurant's naive
+    local wall clock — the clock a shift's start is written in — or None."""
+    try:
+        from time_utils import parse_stamp, restaurant_tz
+        dt = parse_stamp(stamp)
+        return dt.astimezone(restaurant_tz(restaurant)).replace(tzinfo=None) if dt else None
+    except Exception:
+        return None
+
+
+def shift_release(restaurant_id, day, db_path=DB_PATH, restaurant=None) -> list:
+    """What the requests on `day` say about the shifts their holders did not
+    work — the one reading the live clock-in check (intraday.coverage_gaps)
+    and the attendance record share (schedule audit 10/3/26 E-5, L-18).
+    [{"employee", "shift_start", "outcome", "notice_minutes", "replacement",
+    "request_id", "status", "kind"}], newest request first:
+
+      covered     somebody took the shift (a drop, swap or posted shift that
+                  was claimed or offered and accepted) — `replacement`;
+      excused     a manager let the holder off it before it started: a drop
+                  they approved that nobody claimed (status open, or expired
+                  once the shift passed with the approval on it), or the
+                  holder's shift a manager put on the open board before it
+                  began. decide() only ever set 'open', so the dropper stayed
+                  on the published week, and the live check and the nightly
+                  join called an approved call-off a no-show;
+      called_out  the holder asked to drop it and it was never approved
+                  (still pending, expired unanswered, or denied): they told
+                  the restaurant `notice_minutes` before the start, so a miss
+                  is a call-out with that notice, not an unannounced no-show.
+
+    Withdrawn and cancelled requests, a swap that never went through, and a
+    shift a manager posted AFTER it started (the coverage issue's "Ask Ana
+    to cover" — the holder was already missing) say nothing about the
+    holder."""
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+    if restaurant is None:
+        try:
+            restaurant = _models.get_restaurant(restaurant_id, db_path or _models.DB_PATH)
+        except Exception:
+            restaurant = None
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, kind, status, employee_name, shift_start, shift_end, replacement_name, decided_at, "
+            "created_at FROM shift_change_requests WHERE restaurant_id=? AND date=? "
+            "AND status IN ('covered','open','expired','pending','denied') ORDER BY id DESC",
+            (restaurant_id, iso)).fetchall()]
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        holder = " ".join(str(r.get("employee_name") or "").split())
+        if not holder:
+            continue                       # an extra shift nobody held
+        kind, status = (r.get("kind") or "drop"), r.get("status")
+        start_at, _end = shift_span(iso, r.get("shift_start"), r.get("shift_end"))
+        item = {"employee": holder, "shift_start": (r.get("shift_start") or "").strip(), "outcome": None,
+                "notice_minutes": None, "replacement": None, "request_id": r["id"], "status": status, "kind": kind}
+        if status == "covered":
+            item.update(outcome="covered", replacement=(r.get("replacement_name") or "").strip() or "someone")
+        elif kind == "drop" and status in ("open", "expired") and r.get("decided_at"):
+            item["outcome"] = "excused"
+        elif kind == "post" and status in ("open", "expired"):
+            posted = _local_stamp(r.get("decided_at") or r.get("created_at"), restaurant)
+            if posted is not None and start_at is not None and posted < start_at:
+                item["outcome"] = "excused"
+        elif kind == "drop" and (status in ("pending", "denied") or (status == "expired" and not r.get("decided_at"))):
+            asked = _local_stamp(r.get("created_at"), restaurant)
+            item["outcome"] = "called_out"
+            if asked is not None and start_at is not None:
+                item["notice_minutes"] = max(0, int((start_at - asked).total_seconds() // 60))
+        if item["outcome"]:
+            out.append(item)
+    return out
+
+
+def released_for(releases, name, shift_start):
+    """The shift_release entry for one person's shift, matched on their name
+    (case and spacing ignored) and the start (as minutes, "5:00pm" ==
+    "5pm"); an entry without a start matches any of theirs. None when the
+    requests say nothing about it."""
+    from schedule_rules import parse_minutes
+    key = _key(name)
+    want = parse_minutes(shift_start or "")
+    for e in releases or ():
+        if _key(e.get("employee")) != key:
+            continue
+        got = parse_minutes(e.get("shift_start") or "")
+        if want is None or got is None or got == want:
+            return e
+    return None
+
+
 def _get(conn, request_id):
     row = conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (int(request_id),)).fetchone()
     return dict(row) if row else None
@@ -560,7 +657,14 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     swap already traded, is refused rather than opened as a phantom (LG-10);
     and a shift already started can't be opened or swapped (LG-07/08) — a
     named cover may still be made until it ends. `note` reaches the
-    employee with the answer (COM-14)."""
+    employee with the answer (COM-14).
+
+    An approved drop stays 'open' on the board until someone claims it, and
+    the dropper stays on the published week's row — but the approval is
+    what lets them off it: the live clock-in check and the attendance record
+    read it as excused, never a no-show (shift_release, schedule audit
+    10/3/26 E-5). decided_at is that approval's mark, kept when the open
+    shift later expires."""
     who = (decided_by or "").strip()[:120] or None
     note = _clean(note)
     conn = get_conn(db_path)
@@ -1273,7 +1377,10 @@ def respond_offer(restaurant_id, offer_id, name, accept, db_path=DB_PATH, now=No
 
 def _cover_answer(restaurant_id, offer, accepted, db_path):
     """An offer made from a coverage issue answers that issue: the answer is
-    kept on its ask, and a yes resolves it. Never raises."""
+    kept on its ask, and a yes covers that gap — the issue closes once
+    nobody on it is still missing (a role's issue can hold several gaps,
+    schedule audit 10/3/26 E-31; one person's closes outright). Never
+    raises."""
     if not offer.get("issue_id"):
         return
     try:
@@ -1282,8 +1389,14 @@ def _cover_answer(restaurant_id, offer, accepted, db_path):
                                    db_path=db_path or _models.DB_PATH)
         if accepted:
             import issues
-            issues.resolve(restaurant_id, int(offer["issue_id"]),
-                           note=f"{offer['name']} took the shift in the app.", db_path=db_path or _models.DB_PATH)
+            conn = get_conn(db_path)
+            try:
+                req = conn.execute("SELECT employee_name FROM shift_change_requests WHERE id=?",
+                                   (int(offer["request_id"]),)).fetchone()
+            finally:
+                conn.close()
+            issues.mark_coverage_covered(restaurant_id, int(offer["issue_id"]), (req["employee_name"] if req else ""),
+                                         offer["name"], db_path=db_path or _models.DB_PATH)
     except Exception as e:
         print(f"[shift_requests] cover answer not kept rid={restaurant_id}: {e!r}")
 
