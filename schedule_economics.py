@@ -89,7 +89,7 @@ def _daypart(r):
 
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
                 base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None,
-                salaried=None, person_rates=None, role_typical=None) -> dict:
+                salaried=None, person_rates=None, role_typical=None, rounded: bool = True) -> dict:
     """Dollars for the week with every overtime hour at the multiplier.
 
     Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
@@ -111,7 +111,10 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     person_rates / role_typical (labor.person_rate_book): what each person
     is paid an hour, and a role's typical rate. A drafted cook's shift costs
     his own $22, not the $26 blended rate a role with no rate set fell to;
-    the owner's role rate still beats the typical one."""
+    the owner's role rate still beats the typical one.
+
+    rounded False keeps the cents: the optimizer and the solver weigh a
+    half-hour move by what it costs (schedule audit 10/3/26 P-32)."""
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
@@ -161,6 +164,9 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
             premium += ot * rate * (multiplier - 1.0)
             ot_hours += ot
             so_far[key] = have + weekly_part
+    if not rounded:
+        return {"straight": straight, "overtime_premium": premium, "overtime_hours": ot_hours,
+                "total": straight + premium, "multiplier": multiplier}
     return {"straight": round(straight, 0), "overtime_premium": round(premium, 0), "overtime_hours": round(ot_hours, 1),
             "total": round(straight + premium, 0), "multiplier": multiplier}
 

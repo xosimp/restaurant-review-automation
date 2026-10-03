@@ -2290,17 +2290,27 @@ SLOT_MINUTES = 30
 DAYPART_CUTOVER = 15 * 60
 
 
+@lru_cache(maxsize=4096)
+def _clock(raw: str):
+    """(hour, minute) of a normalised clock string ("4:30pm", "16:30"), or
+    None. Remembered: the scorer reads the same few dozen times a thousand
+    times a week score, and strptime was most of a score's cost (schedule
+    audit 10/3/26 P-38)."""
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(raw, fmt)
+            return t.hour, t.minute
+        except ValueError:
+            continue
+    return None
+
+
 def _slot_minutes(value: str):
     raw = (value or "").strip().lower().replace(" ", "")
     if not raw:
         return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+    hm = _clock(raw)
+    return hm[0] * 60 + hm[1] if hm else None
 
 
 def _row_span(row: dict):
@@ -4115,22 +4125,25 @@ def daypart_of(shift_start: str) -> str:
     raw = (shift_start or "").strip().lower().replace(" ", "")
     if not raw:
         return "unknown"
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            hour = datetime.strptime(raw, fmt).hour
-        except ValueError:
-            continue
-        # A start in the small hours is the night it belongs to — the row's
-        # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
-        # schedule audit 10/3/26 E-32), never the next morning; from 4am it
-        # is early prep for the morning (schedule_rules._night_offset).
-        return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
-    return "unknown"
+    hm = _clock(raw)
+    if hm is None:
+        return "unknown"
+    hour = hm[0]
+    # A start in the small hours is the night it belongs to — the row's
+    # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
+    # schedule audit 10/3/26 E-32), never the next morning; from 4am it
+    # is early prep for the morning (schedule_rules._night_offset).
+    return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
+
+
+@lru_cache(maxsize=1024)
+def _weekday_name(date_str: str) -> str:
+    return datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
 
 
 def _day_name(date_str: str, fallback: str = "") -> str:
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+        return _weekday_name(date_str)
     except (ValueError, TypeError):
         return fallback or ""
 
@@ -4146,14 +4159,11 @@ def _end_minutes(value: str) -> int:
     raw = (value or "").strip().lower().replace(" ", "")
     if not raw:
         return -1
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            minutes = t.hour * 60 + t.minute
-            return minutes + 1440 if t.hour < 5 else minutes
-        except ValueError:
-            continue
-    return -1
+    hm = _clock(raw)
+    if hm is None:
+        return -1
+    minutes = hm[0] * 60 + hm[1]
+    return minutes + 1440 if hm[0] < 5 else minutes
 
 
 def _row_hours(row: dict) -> float:
