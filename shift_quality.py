@@ -2403,7 +2403,10 @@ def week_overtime(contexts: list) -> DimensionResult | None:
     """The overtime premium the week runs up — judged once for the week, a
     payroll-week fact. Withdraws without the overtime inputs (the engine
     supplies them: the line, each date's payroll week, the hours already
-    published, the rates) or without any hourly hours to judge."""
+    published, the rates, a daily line where daily overtime applies) or
+    without any hourly hours to judge. Counted the way the week is priced
+    (schedule_economics.priced_cost): the hours past `daily_line` in a day
+    are overtime, and do not also count toward the weekly line."""
     if not contexts:
         return None
     ctx = contexts[0]
@@ -2465,6 +2468,39 @@ def week_overtime(contexts: list) -> DimensionResult | None:
     def _total(k, b):
         return hours.get((k, b), 0.0) + _published(k, b)
 
+    try:
+        daily_line = float(ot.get("daily_line") or 0)
+    except (TypeError, ValueError):
+        daily_line = 0.0
+    # Overtime hours and premium per (person, payroll week), shift by shift
+    # in order, as priced_cost prices them.
+    ot_hours_of, premium_of = {}, {}
+    by_person = {}
+    for r in rows:
+        n = r["employee"].strip()
+        if ctx.is_salaried(n):
+            continue
+        by_person.setdefault(name_key(n), []).append(
+            (r.get("date") or "", _slot_minutes(r.get("shift_start")) or 0, _row_hours(r), (r.get("role") or "").strip()))
+    for k, items in by_person.items():
+        so_far, day_used = {}, {}
+        for d, _s, h, role in sorted(items):
+            b = bucket_of.get(d, "")
+            if b not in so_far:
+                so_far[b] = _published(k, b)
+            daily_ot = 0.0
+            if daily_line > 0:
+                used = day_used.get(d, 0.0)
+                daily_ot = max(0.0, h - max(0.0, daily_line - used))
+                day_used[d] = used + h
+            weekly_part = h - daily_ot
+            reg = min(weekly_part, max(0.0, line - so_far[b]))
+            extra = daily_ot + (weekly_part - reg)
+            so_far[b] += weekly_part
+            if extra > 0:
+                ot_hours_of[(k, b)] = ot_hours_of.get((k, b), 0.0) + extra
+                premium_of[(k, b)] = premium_of.get((k, b), 0.0) + extra * (_rate(role) or 0.0) * OVERTIME_PREMIUM
+
     # The cheap half of the swap index's legality (_SwapIndex.person_fits):
     # approved time off, a pending request, the day or daypart they can't
     # work, a deactivated name. Enough to tell avoidable overtime from the
@@ -2512,16 +2548,14 @@ def week_overtime(contexts: list) -> DimensionResult | None:
 
     over = []
     for (k, b), h in sorted(hours.items()):
-        total = _total(k, b)
-        ot_hours = round(total - line, 2)
+        ot_hours = ot_hours_of.get((k, b), 0.0)
         if ot_hours <= 0.05:
             continue
         role = max(role_hours[(k, b)].items(), key=lambda kv: (kv[1], kv[0]))[0]
-        rate = _rate(role) or 0.0
         teammate = _teammate(k, b, role)
-        over.append({"name": display.get(k, k), "bucket": b, "hours": round(total, 1),
+        over.append({"name": display.get(k, k), "bucket": b, "hours": round(_total(k, b), 1),
                      "published_hours": round(_published(k, b), 1), "overtime_hours": round(ot_hours, 1),
-                     "premium": round(ot_hours * rate * OVERTIME_PREMIUM, 2), "role": role,
+                     "premium": round(premium_of.get((k, b), 0.0), 2), "role": role,
                      "avoidable": bool(teammate), "teammate": teammate})
     weighted = sum(o["premium"] * (1.0 if o["avoidable"] else UNAVOIDABLE_OVERTIME_SHARE) for o in over)
     share = weighted / cost * 100.0

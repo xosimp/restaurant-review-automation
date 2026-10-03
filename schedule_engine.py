@@ -2736,10 +2736,11 @@ def _learned_preferences_signal(raw: dict) -> dict:
 def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
     """What the scorer's overtime measure reads (schedule audit 10/3/26
     SQ-25) — the overtime forecast's own inputs: the line overtime pay
-    starts past (labor.OVERTIME_THRESHOLD_HOURS), each date's payroll week,
-    the hours already published in those payroll weeks, and the rates the
-    forecast prices its moves at (models.get_role_rates, the restaurant's
-    hourly rate). {} without the week's constraints."""
+    starts past (labor.OVERTIME_THRESHOLD_HOURS), the daily line where the
+    rules set daily overtime, each date's payroll week, the hours already
+    published in those payroll weeks, and the rates the forecast prices its
+    moves at (models.get_role_rates, the restaurant's hourly rate). {}
+    without the week's constraints."""
     if c is None:
         return {}
     rates, default = {}, None
@@ -2750,6 +2751,7 @@ def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
     except Exception as _rx:
         _soft_fail("overtime rates", _rx, restaurant_id)
     return {"line": _labor_ot_line(),
+            "daily_line": (c.compliance or {}).get("daily_ot_hours") or None,
             "bucket_of": {d: c.bucket(d) for d in (c.week_dates or [])},
             "published": {k: dict(v or {}) for k, v in (c.base_hours or {}).items()},
             "rates": rates, "default_rate": default, "rules": rules or {}}

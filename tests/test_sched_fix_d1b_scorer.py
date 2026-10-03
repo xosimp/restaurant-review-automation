@@ -264,6 +264,15 @@ def test_sq25_a_teammate_who_cannot_work_those_days_is_not_room_and_costs_less()
     assert 100 > stuck["score"] > avoidable["score"]
 
 
+def test_sq25_daily_overtime_is_counted_where_it_applies_and_not_twice():
+    rows = [row(MON, "Ana", "Server", "10:00am", "10:00pm", 12), row(TUE, "Ana", "Server", hours=6)]
+    plain = week_dim(sq.score_rows(rows, overtime=OT, **OT_KW), "overtime")
+    assert plain["facts"]["people"] == [] and plain["score"] == 100
+    daily = week_dim(sq.score_rows(rows, overtime=dict(OT, daily_line=8), **OT_KW), "overtime")
+    who = daily["facts"]["people"][0]
+    assert (who["name"], who["overtime_hours"], who["premium"]) == ("Ana", 4.0, 40.0)
+
+
 def test_sq25_the_passes_scorer_sees_the_overtime():
     """The optimizer and the fill passes choose by LocalScorer: handing
     Ana's Friday to Bo, who has room, must now read as the better week."""
