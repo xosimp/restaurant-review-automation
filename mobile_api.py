@@ -7861,7 +7861,8 @@ def mobile_schedule_sections_save(current_user):
             return jsonify(ok=True, sections=set_foh_sections(rid, data.get("sections"))), 200
         section = set_shift_section(rid, data.get("date"), data.get("employee"), data.get("shift_start"),
                                     data.get("section"),
-                                    updated_by=current_user.get("username") or current_user.get("email"))
+                                    updated_by=current_user.get("username") or current_user.get("email"),
+                                    user=current_user)
         return jsonify(ok=True, section=section, sections=foh_sections(rid)), 200
     except SectionInputError as e:
         return jsonify(ok=False, error=e.user_message), 400
