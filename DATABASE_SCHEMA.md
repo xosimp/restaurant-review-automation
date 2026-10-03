@@ -192,7 +192,7 @@ Each has a `restaurant_id`, so `delete_restaurant` removes its rows; each is mad
 - `staff_notices` (`staff_reminders`): the reminder claims and the texts held overnight — `kind` (`shift_reminder` | `task_reminder` | `held_text`), `claim_key` UNIQUE (one per person + shift or line + kind; a held text's own id), `employee_name` (name-keyed: in `people.NAME_STORES`, so a rename moves a held text), `purpose` (the consent scope a held text needs), `title`, `body`, `meta_json`, `release_at` (UTC, the next 8am), `state` (`claimed` → `sent` | `failed`; `held` → `sending` → `sent` | `failed` | `dropped`), `channel`. A reminder is marked `sent` only on delivery. Pruned by its own job after 30 days (never a held or sending row).
 
 ### `shift_profiles`
-Demand-level profiles (low/normal/high/peak) per daypart, used by the Shift Quality Engine's demand-match dimension.
+Demand-level profiles (low/normal/high/peak) per daypart, used by the Shift Quality Engine's demand-match dimension. `config_json` holds the profile as `shift_quality.profile_to_dict` writes it — since 10/3/26 including `floors` (its own critical floors over `shift_quality.CRITICAL_FLOORS`, 0-100, 0 = never caps; no migration: a profile without the key reads the defaults).
 
 ### Overstaffed days / overtime
 Computed on read from `labor_daily_history` + shift data, not a table — see `labor.py`.

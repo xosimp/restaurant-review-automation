@@ -97,11 +97,13 @@ def test_nobody_in_the_role_is_told_apart_from_nobody_qualified():
     assert lead["facts"]["misses"][0]["why"] == "nobody_on"
     assert lead["weaknesses"][0].startswith("No bartender on this shift"), lead["weaknesses"]
 
-    weak_bar = empty_bar + [row(MON, "Sam", "Bartender")]
+    weak_bar = empty_bar + [row(MON, "Sam", "Bartender PM")]
     out = sq.score_rows(weak_bar, profiles=STD, scores={"Dana": 4, "Lee": 4, "Sam": 3},
                         typical_headcount={("Monday", "night"): {"Bartender": 1, "Server": 2}}, leader_rules=[BAR5])
     lead = dim(shift_of(out, MON), "leadership")
     assert lead["facts"]["misses"][0]["why"] == "not_qualified"
+    # The job codes the role's people work under, for a pass that swaps one.
+    assert lead["facts"]["misses"][0]["roles"] == ["Bartender PM"]
     assert lead["weaknesses"][0].startswith("Needs 1 bartender scoring 5 or above, found 0. On this shift: Sam (3)")
 
 
@@ -369,6 +371,57 @@ def test_a_breach_lands_on_the_shift_it_is_about():
     assert shift_of(out, SAT, "morning")["capped_by"] is None
 
 
+def test_hours_over_for_the_week_land_on_the_shift_that_tips_it_not_every_shift():
+    """over_max_hours names every row of the person's payroll week; capping
+    each would hold the whole week at 50 for one person's extra hours."""
+    rows = [row(d, "Ann", "Server") for d in (THU, FRI, SAT)] + [row(d, "Bob", "Server") for d in (THU, FRI, SAT)]
+    viols = [{"kind": "over_max_hours", "date": d, "employee": "Ann", "shift_start": "5:00pm", "hard": True,
+              "bucket": THU, "detail": "48h in the payroll week — over 40h"} for d in (THU, FRI, SAT)]
+    out = sq.score_rows(rows, profiles=STD, scores={"Ann": 4, "Bob": 4},
+                        typical_headcount={(day, "night"): {"Server": 2} for day in ("Thursday", "Friday", "Saturday")},
+                        hard_breaches=viols)
+    capped = [s["day"] for s in out["shifts"] if s["capped_by"] == "hard_rules"]
+    assert capped == ["Saturday"], capped
+
+
+def test_a_breach_found_on_other_rows_does_not_cap_these():
+    """A pass's trial moved the row the breach was about: a stale cap would
+    hide what the move fixed."""
+    gone = {"kind": "rest_gap", "date": SAT, "employee": "Zed", "shift_start": "5:00pm", "hard": True,
+            "detail": "8.0h since their previous shift, the rule is 10h"}
+    assert _clean_saturday(hard_breaches=[gone])["score"] == 100
+
+
+def test_a_breach_id_tuple_lands_as_its_violation_would():
+    out = _clean_saturday(hard_breaches=[("coverage_floor", SAT, "host", "morning")])
+    assert shift_of(out, SAT, "morning")["capped_by"] == "hard_rules" and shift_of(out, SAT)["capped_by"] is None
+    out = _clean_saturday(hard_breaches=[("no_manager", SAT)])
+    assert shift_of(out, SAT, "morning")["capped_by"] == shift_of(out, SAT)["capped_by"] == "hard_rules"
+
+
+def test_the_engines_breach_map_lands_and_a_changed_date_takes_none_of_it():
+    """schedule_engine.hard_breach_map's shape: breaches by date with their
+    dayparts, and each date's row signature — a pass that changed a date's
+    rows must not be held by breaches found on the old ones."""
+    rows = [lunch(SAT, "Lu", "Server"), row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
+    gap = {"id": ["no_manager", SAT], "kind": "no_manager", "label": "no manager on the floor",
+           "detail": "no manager on Saturday from 5:00pm to 6:00pm", "employee": None, "dayparts": ["night"],
+           "day_level": True, "no_show": False, "minutes": 60}
+    swept = [r for r in rows if r["date"] == SAT]
+    fresh = {"by_date": {SAT: [gap]}, "week": [], "rows_sig": {SAT: sq.LocalScorer._signature(swept)}}
+    night = shift_of(_clean_saturday(hard_breaches=fresh), SAT)
+    assert night["capped_by"] == "hard_rules" and "5:00pm to 6:00pm" in night["held_by"]["text"]
+    stale = dict(fresh, rows_sig={SAT: sq.LocalScorer._signature(swept[:2])})
+    assert _clean_saturday(hard_breaches=stale)["score"] == 100
+    over = {"id": ["over_max_hours", "ann", THU], "kind": "over_max_hours", "employee": "Ann",
+            "dayparts": ["night"], "detail": "48h in the payroll week — over 40h"}
+    weekly = {"by_date": {d: [dict(over)] for d in (THU, FRI, SAT)}, "week": [], "rows_sig": {}}
+    rows = [row(d, n, "Server") for d in (THU, FRI, SAT) for n in ("Ann", "Bob")]
+    out = sq.score_rows(rows, profiles=STD, scores={"Ann": 4, "Bob": 4}, hard_breaches=weekly,
+                        typical_headcount={(day, "night"): {"Server": 2} for day in ("Thursday", "Friday", "Saturday")})
+    assert [s["day"] for s in out["shifts"] if s["capped_by"] == "hard_rules"] == ["Saturday"]
+
+
 def test_a_soft_flag_is_not_a_cap():
     soft = {"kind": "under_min_hours", "date": SAT, "employee": "Ann", "shift_start": "5:00pm", "hard": False}
     assert _clean_saturday(hard_breaches=[soft])["score"] == 100
@@ -409,11 +462,22 @@ def test_a_profile_can_set_its_own_floor():
 
 
 def test_profile_floors_are_bounded_and_round_trip():
-    p = sq.profile_from_dict({"key": "x", "floors": {"coverage": 50, "leadership": 999,
-                                                     "operational_strength": -5, "fairness": 30}})
-    assert p.floors == {"coverage": 50, "leadership": 100, "operational_strength": 0}
+    p = sq.profile_from_dict({"key": "x", "floors": {"coverage": 50, "leadership": 999, "operational_strength": -5,
+                                                     "fairness": 30, "not_a_dimension": 40, "splh": "x"}})
+    assert p.floors == {"coverage": 50, "leadership": 100, "operational_strength": 0, "fairness": 30}
     assert sq.profile_to_dict(sq.profile_from_dict(sq.profile_to_dict(p)))["floors"] == p.floors
     assert sq.profile_from_dict({"key": "y"}).floor("coverage") == sq.CRITICAL_FLOORS["coverage"]
+    assert p.floor("operational_strength") is None, "0 is no floor"
+
+
+def test_a_profile_floor_on_any_dimension_caps_at_its_score():
+    """Calibration (or the owner) may set a floor on a dimension that has
+    none by default; it then holds the shift like a critical one."""
+    rows = [row(SAT, "A", "Cook"), row(SAT, "B", "Cook", hours=20)]
+    prof = sq.ShiftProfile(key="std", floors={"labor_efficiency": 90}, source="restaurant")
+    shift = shift_of(sq.score_rows(rows, profiles=[prof], role_minimums={"Cook": 2},
+                                   daily_target_hours={SAT: 10}), SAT)
+    assert shift["capped_by"] == "labor_efficiency" and dim(shift, "labor_efficiency")["floor"] == 90
 
 
 # ── SQ-28: why a shift scored low, and what would raise it ─────────────────

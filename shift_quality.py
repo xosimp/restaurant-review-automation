@@ -171,7 +171,8 @@ class ShiftProfile:
     # whenever Saturday was one (profiles_from_config).
     per_day_demand: bool = False
     # {dimension: floor} over CRITICAL_FLOORS for the shifts this profile
-    # governs (SQ-23). Only the critical dimensions take one; 0 = never caps.
+    # governs (SQ-23): the owner's own, or what an applied calibration set.
+    # A floor on any dimension caps the shift at its score; 0 = never caps.
     floors: dict = field(default_factory=dict)
 
     def floor(self, key: str):
@@ -799,6 +800,9 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
 
     people = ctx.people
     on_family = ctx.by_family
+    codes = {}
+    for r, names in ctx.by_role.items():
+        codes.setdefault(ctx.family(r), set()).add(r)
     satisfied, missed, unanswerable = [], [], []
 
     # A requirement phrased in scores cannot be judged by a restaurant that
@@ -869,7 +873,9 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
                            "role": role, "count": need, "min_score": min_score,
                            "attribute": attribute or None, "on": len(pool),
                            "why": "nobody_on" if not pool else ("not_qualified" if not qualified else "short"),
-                           "credit": round(credit, 2)})
+                           "credit": round(credit, 2),
+                           # The job codes the role's people here work under.
+                           "roles": sorted(codes.get(ctx.family(role)) or ())})
 
     # The profile's own softer requirement: a manager on the floor (an
     # acting one on their dates), or anybody authorized to close or
@@ -983,7 +989,7 @@ def role_runs(typical_headcount: dict = None, role_floors: dict = None, role_min
     profiles = profiles if profiles is not None else BUILTIN_PROFILES
     out = {}
     for day in _WEEKDAYS:
-        for part in ("morning", "night"):
+        for part in CORE_WINDOWS:          # every daypart the scorer buckets shifts into
             profile = resolve_profile(day, part, profiles)
             reqs = shift_role_requirements((typical_headcount or {}).get((day, part)) or {},
                                            _floors_for(role_floors, day, part), role_minimums,
@@ -2311,6 +2317,11 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
             # setting only half works and in the more surprising direction.
             skipped.append({"key": key, "reason": "weighted to zero"})
             continue
+        # A floor this shift's profile sets for the dimension — the owner's,
+        # or what an applied calibration tuned — over its default; 0 is no
+        # floor (SQ-23). The critical dimensions read it themselves too.
+        if key in (getattr(ctx.profile, "floors", None) or {}):
+            result.floor = ctx.profile.floor(key)
         applied.append(result)
 
     # Under the day's hour target is only a problem if the floor is thin.
@@ -2566,8 +2577,9 @@ def _profile_facts(profile: ShiftProfile) -> dict:
     return {"key": profile.key, "label": profile.label, "demand": profile.demand,
             "min_quality": profile.min_quality, "training_allowed": profile.training_allowed,
             "source": profile.source,
-            # The floors this shift's critical dimensions cap it at (SQ-23).
-            "floors": {k: profile.floor(k) if hasattr(profile, "floor") else v for k, v in CRITICAL_FLOORS.items()}}
+            # The floors this shift's dimensions cap it at (SQ-23).
+            "floors": {k: (profile.floor(k) if hasattr(profile, "floor") else CRITICAL_FLOORS.get(k))
+                       for k in sorted(set(CRITICAL_FLOORS) | set(getattr(profile, "floors", None) or {}))}}
 
 
 def _headline(ctx: ShiftContext, score: int) -> str:
@@ -3280,7 +3292,7 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
     profiles = profiles if profiles is not None else BUILTIN_PROFILES
     out = {}
     for day in _WEEKDAYS:
-        for part in ("morning", "night"):
+        for part in CORE_WINDOWS:          # every daypart the scorer buckets shifts into
             profile = resolve_profile(day, part, profiles)
             targets = {r: float(v) for r, v in (profile.min_strength or {}).items() if v}
             if not targets:
@@ -3352,7 +3364,9 @@ def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
     close, no closer); the shifts its row is on the floor for (a person's
     own breach); the person's latest shift that payroll week (hours over,
     a run too long); else every shift of its date. A soft flag
-    (hard False) never lands."""
+    (hard False) never lands, and neither does a person's breach whose row
+    is not in `rows` — it was found on other rows (a pass's trial moved
+    it), and a stale cap would hide what the move fixed."""
     rows_by_date = {}
     for r in rows or []:
         if (r.get("date") or "").strip():
@@ -3366,6 +3380,8 @@ def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
             if not any(x["label"] == label for x in items):
                 items.append({"kind": kind, "label": label})
 
+    if isinstance(breaches, dict):
+        return _place_breach_map(breaches, rows_by_date, closes_on, put, out)
     for v in breaches or []:
         if isinstance(v, (tuple, list)):
             v = _breach_from_id(v)
@@ -3401,7 +3417,8 @@ def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
             row = next((r for r in rows_by_date.get(date, [])
                         if (r.get("employee") or "").strip().lower() == emp
                         and (r.get("shift_start") or "") == v.get("shift_start")), None)
-            put(date, present_dayparts(row) if row else [daypart_of(v.get("shift_start"))], kind, label)
+            if row is not None:
+                put(date, present_dayparts(row), kind, label)
         elif emp:
             parts = sorted({p for r in rows_by_date.get(date, [])
                             if (r.get("employee") or "").strip().lower() == emp for p in present_dayparts(r)})
@@ -3412,7 +3429,50 @@ def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
         row = next((r for r in rows_by_date.get(date, [])
                     if (r.get("employee") or "").strip().lower() == (v.get("employee") or "").strip().lower()
                     and (r.get("shift_start") or "") == v.get("shift_start")), None)
-        put(date, present_dayparts(row) if row else [daypart_of(v.get("shift_start"))], v.get("kind"), label)
+        if row is not None:
+            put(date, present_dayparts(row), v.get("kind"), label)
+    return out
+
+
+def _place_breach_map(m: dict, rows_by_date: dict, closes_on: dict, put, out: dict) -> dict:
+    """place_breaches for the engine's own shape (schedule_engine
+    .hard_breach_map): {"by_date": {date: [{id, kind, label, detail,
+    employee, dayparts, day_level, ...}]}, "week": [...], "rows_sig":
+    {date: LocalScorer signature of the rows swept}}. A date whose rows are
+    not the ones swept (a pass's trial changed them) takes none of its
+    breaches: they were found on other rows. A person's week-long breach
+    lands on their latest shift; one about no date, on every shift."""
+    sigs = m.get("rows_sig") or {}
+    latest = {}
+    for date, items in (m.get("by_date") or {}).items():
+        date = str(date or "").strip()
+        if not date:
+            continue
+        mine = [r for r in rows_by_date.get(date, []) if (r.get("employee") or "").strip()]
+        if date in sigs and sigs[date] != LocalScorer._signature(mine):
+            continue
+        for b in items or []:
+            if not isinstance(b, dict) or b.get("hard") is False:
+                continue
+            kind = b.get("kind") or ""
+            label = str(b.get("detail") or b.get("label") or kind.replace("_", " ") or "a hard rule").strip()
+            parts = [p for p in (b.get("dayparts") or []) if p]
+            if kind in _CLOSE_BREACHES and not parts:
+                closing = (closes_on.get(date) or (None, None))[1]
+                parts = [closing] if closing else []
+            if kind in _PERSON_WEEK_BREACHES and b.get("employee"):
+                key = tuple(b.get("id") or (kind, (b.get("employee") or "").strip().lower()))
+                if key not in latest or date > latest[key][0]:
+                    latest[key] = (date, parts, kind, label)
+                continue
+            put(date, parts or None, kind, label)
+    for date, parts, kind, label in latest.values():
+        put(date, parts or None, kind, label)
+    for b in m.get("week") or []:
+        if isinstance(b, dict) and b.get("hard") is not False:
+            label = str(b.get("detail") or b.get("label") or b.get("kind") or "a hard rule").strip()
+            for date in rows_by_date:
+                put(date, None, b.get("kind") or "", label)
     return out
 
 
@@ -4698,10 +4758,10 @@ def profile_from_dict(data: dict) -> ShiftProfile:
                  for k, v in (data.get("weights") or {}).items() if k in DIMENSIONS},
         priority=int(_num(data.get("priority"), 0, 99, 0)),
         source=str(data.get("source") or "restaurant"),
-        # Only the critical dimensions take a floor, 0-100; 0 = never caps.
-        floors={str(k): int(_num(v, 0, 100, CRITICAL_FLOORS[str(k)]))
+        # A floor for any dimension, 0-100; 0 = never caps (SQ-23).
+        floors={str(k): int(_num(v, 0, 100, 0))
                 for k, v in (data.get("floors") if isinstance(data.get("floors"), dict) else {}).items()
-                if str(k) in CRITICAL_FLOORS},
+                if str(k) in DIMENSIONS and _num(v, 0, 100, None) is not None},
     )
 
 
