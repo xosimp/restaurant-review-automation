@@ -3341,6 +3341,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     for _x in _co["extended"]:
                         _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
                                           "to": _x["to"], "kind": "close", "reason": _x["reason"]})
+                # A manager on the floor every minute anyone is (owner,
+                # 10/2/26 — the highest rule): each stretch without one gets
+                # a manager, by extending one already on or adding one.
+                _mg = _rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)
+                if _mg["extended"] or _mg["added"]:
+                    preview_rows = _mg["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _mg["extended"] + _mg["added"]:
+                        _ot_fixes.append({"index": _x["index"], "from": _x["from"] or "no manager",
+                                          "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
+                result["manager_coverage"] = {"extended": len(_mg["extended"]), "added": len(_mg["added"]),
+                                              "left": _mg["left"]}
                 result["overtime_rebalance"] = {"over_before": _ot["over_before"], "moved": len(_ot["moves"]),
                                                 "trimmed": len(_ot["trims"]), "left": _ot["left"]}
                 print(f"[schedule] overtime pass: {len(_ot['moves'])} moved, {len(_ot['trims'])} trimmed, "
@@ -3500,6 +3512,26 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _ops.capture(_ox, job="schedule_optimizer", context=f"restaurant_id={restaurant_id}")
                 except Exception:
                     pass
+            # The manager rule once more on the finished rows: the fix pass,
+            # the solver and the optimizer are refused a move that opens a
+            # new gap, but a gap one of them could not close is closed here,
+            # and the violations are read again from the rows the owner sees.
+            try:
+                _mg2 = _rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)
+                if _mg2["extended"] or _mg2["added"]:
+                    preview_rows = _mg2["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _mg2["extended"] + _mg2["added"]:
+                        _fixes.append({"index": _x["index"], "from": _x["from"] or "no manager",
+                                       "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
+                    _viols = _rules.violations(preview_rows, _constraints)
+                    _price_week(preview_rows)
+                _mc = result.setdefault("manager_coverage", {"extended": 0, "added": 0, "left": []})
+                _mc["extended"] = _mc.get("extended", 0) + len(_mg2["extended"])
+                _mc["added"] = _mc.get("added", 0) + len(_mg2["added"])
+                _mc["left"] = _mg2["left"]
+            except Exception as _mgx:
+                print(f"[schedule] manager coverage pass failed: {_mgx}")
             # #47: the solver's changes lead "what Cavnar changed" (web and iOS read optimizer.changes).
             if (result.get("solver") or {}).get("ran"):
                 import schedule_solver as _solver_m
@@ -4065,7 +4097,8 @@ def _rows_to_csv_text(rows: list) -> str:
 
 # Hard flags about the shift's staffing rather than the person on it: one the
 # week already had on a shift is not a newcomer's to answer for.
-_STAFFING_GAPS = frozenset({"no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
+_STAFFING_GAPS = frozenset({"no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
+                            "no_manager"})
 
 
 def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, constraints=None):

@@ -51,10 +51,11 @@ NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", 
 NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailable"})
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
-                            "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close"})
+                            "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
+                            "no_manager"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
-                  "owner_rule"})
+                  "owner_rule", "no_manager_roster"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -87,6 +88,8 @@ LABELS = {
     "nobody_at_close": "nobody scheduled until close",
     "notice_short": "less notice than the schedule notice rule",
     "owner_rule": "fewer on than a standing rule the owner set",
+    "no_manager": "no manager on the floor",
+    "no_manager_roster": "nobody on the roster is a manager or owner",
 }
 
 
@@ -764,6 +767,10 @@ class Constraints:
     certifications: dict = field(default_factory=dict)     # {lower: set(cert)}
     role_requirements: dict = field(default_factory=dict)  # {role lower: set(cert)}
     keyholders: set = field(default_factory=set)           # lower: can close, or holds a manager/keyholder cert
+    # A manager or owner role on the roster, or the manager certification:
+    # nobody is on the floor for a minute without one of them (owner,
+    # 10/2/26 — the highest rule there is). {lower: their roster role}.
+    managers: dict = field(default_factory=dict)
     preferred: dict = field(default_factory=dict)          # {name: {"preferred_dayparts": [...], "desired_hours": n}}
     foh_roles: set = field(default_factory=lambda: {"server"})
     patio_roles: set = field(default_factory=set)
@@ -983,6 +990,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             else:
                 c.inactive.add(key)
             st = e.get("settings") or {}
+            if e["active"] and is_manager_role(e.get("role")):
+                c.managers[key] = (e.get("role") or "").strip()
             if st.get("min_hours") is not None or st.get("max_hours") is not None:
                 c.hours_limits[key] = (st.get("min_hours"), st.get("max_hours"))
             if st.get("employment_type"):
@@ -1007,6 +1016,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                                          and cert_key(x) not in gone}
                 if c.certifications[key] & {"manager", "keyholder"}:
                     c.keyholders.add(key)
+                if "manager" in c.certifications[key] and e["active"]:
+                    c.managers.setdefault(key, (e.get("role") or "").strip())
             if st.get("preferred_dayparts") or st.get("desired_hours"):
                 c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
                                           "desired_hours": st.get("desired_hours")}
@@ -1423,6 +1434,8 @@ def violations(rows: list, c: Constraints) -> list:
     # (NS5 M8): the role floors are hard, a keyholder stays until close
     # whenever the roster has one, and somebody is on at close.
     out.extend(_coverage_violations(rows, c))
+    # a manager on the floor every minute anyone is (owner, 10/2/26)
+    out.extend(_manager_violations(rows, c))
 
     # every open daypart needs a manager or keyholder, when the owner says so
     if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
@@ -1685,6 +1698,118 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
     return out
 
 
+# ── a manager on the floor every minute anyone is (owner, 10/2/26) ─────────
+#
+# "There can be ZERO shifts without ONE manager. Always." — Erik's first
+# generated week had no manager and neither owner on any day. A manager is
+# a roster person whose role is a manager or owner role, or who holds the
+# manager certification; the person counts, whatever role their row is in.
+# A minute with somebody on and no manager on is a hard breach: it holds
+# the publish, and every pass that changes rows is refused one that makes a
+# new one. cover_manager_gaps is the deterministic backstop that fills them.
+
+import re as _re_mgr
+_MANAGER_ROLE = _re_mgr.compile(r"\b(manager|mgr|gm|general manager|owner|supervisor)\b", _re_mgr.I)
+
+
+def is_manager_role(role) -> bool:
+    return bool(_MANAGER_ROLE.search(str(role or "")))
+
+
+def _span(r):
+    s, e = parse_minutes(r.get("shift_start", "")), end_minutes(r)
+    if s is None or e is None or e <= s:
+        return None
+    return s, e
+
+
+def _merge(spans):
+    out = []
+    for s, e in sorted(spans):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def _uncovered(need, have):
+    """The parts of the merged spans `need` that the merged spans `have`
+    leave open."""
+    gaps = []
+    for s, e in need:
+        cur = s
+        for hs, he in have:
+            if he <= cur or hs >= e:
+                continue
+            if hs > cur:
+                gaps.append((cur, hs))
+            cur = max(cur, he)
+            if cur >= e:
+                break
+        if cur < e:
+            gaps.append((cur, e))
+    return gaps
+
+
+def manager_gaps(rows: list, c: "Constraints", dates=None) -> dict:
+    """{date: [(start_min, end_min, row_index)]} — each stretch somebody is
+    on and no manager is, pinned to the first row on at its start. Empty
+    when the roster has no manager (no_manager_roster says so instead)."""
+    if not c.managers:
+        return {}
+    by_date = {}
+    for i, r in enumerate(rows or []):
+        d = r.get("date")
+        if not d or not (r.get("employee") or "").strip() or d in (c.closed_dates or set()):
+            continue
+        if dates is not None and d not in dates:
+            continue
+        sp = _span(r)
+        if sp:
+            by_date.setdefault(d, []).append((sp, i, r))
+    out = {}
+    for d, items in sorted(by_date.items()):
+        staffed = _merge([sp for sp, _i, _r in items])
+        mgr = _merge([sp for sp, _i, r in items
+                      if (r.get("employee") or "").strip().lower() in c.managers
+                      and c.can_work(r.get("employee"), d)[0]])
+        gaps = [(s, e) for s, e in _uncovered(staffed, mgr) if e - s > 0]
+        if not gaps:
+            continue
+        pinned = []
+        for gs, ge in gaps:
+            on = sorted((sp[0], i) for sp, i, _r in items if sp[0] <= gs < sp[1])
+            pinned.append((gs, ge, on[0][1] if on else items[0][1]))
+        out[d] = pinned
+    return out
+
+
+def _manager_violations(rows: list, c: "Constraints") -> list:
+    out = []
+    staffed = [(i, r) for i, r in enumerate(rows or []) if r.get("date") and (r.get("employee") or "").strip()
+               and r.get("date") not in (c.closed_dates or set())]
+    if not staffed:
+        return out
+    if not c.managers:
+        if not c.roster_names:
+            return out        # no roster read (a bare rule check): nothing to say who manages
+        i0, r0 = staffed[0]
+        out.append(_v("no_manager_roster", i0, r0,
+                      "nobody on the roster has a manager or owner role, so no shift can have a manager on — "
+                      "give your managers their role in Team"))
+        return out
+    for d, gaps in manager_gaps(rows, c).items():
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            day = d
+        for gs, ge, idx in gaps:
+            out.append(_v("no_manager", idx, rows[idx],
+                          f"no manager on {day} from {_fmt_minutes(gs % (24 * 60))} to {_fmt_minutes(ge % (24 * 60))}"))
+    return out
+
+
 def _v(kind, index, row, detail):
     return {"kind": kind, "index": index, "employee": row.get("employee"), "date": row.get("date"),
             "day": row.get("day"), "shift_start": row.get("shift_start"), "role": row.get("role"),
@@ -1739,6 +1864,12 @@ def prompt_block(c: Constraints) -> str:
     will check afterwards, so the draft has every chance to be right."""
     comp = c.compliance
     lines = []
+    if c.managers:
+        _mg = ", ".join(sorted(f"{n} ({c.managers.get(n.strip().lower()) or 'manager'})" for n in (c.roster_names or [])
+                               if n.strip().lower() in c.managers))
+        lines.append("- NON-NEGOTIABLE, above every other rule: at every minute anybody is on the schedule, at least ONE "
+                     f"manager is on too. The managers: {_mg}. Every trading day has a manager from the first shift's "
+                     "start to the last shift's end — overlap them so there is never a gap, not even a few minutes.")
     if c.closed_dates:
         _pretty = ", ".join(datetime.strptime(d, "%Y-%m-%d").strftime("%A %-m/%-d") for d in sorted(c.closed_dates))
         lines.append(f"- The restaurant is CLOSED on {_pretty}. Write no shifts at all on those dates.")
@@ -2106,3 +2237,142 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
             hours[k] = hours.get(k, 0.0) + add
             break
     return {"rows": rows, "extended": extended}
+
+
+MANAGER_MIN_SHIFT_MIN = 4 * 60
+
+
+def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
+                       max_sweeps: int = 120) -> dict:
+    """The backstop for "never a minute without a manager" (owner, 10/2/26):
+    each stretch somebody is on and no manager is gets a manager — a
+    manager already on that day runs on (or starts earlier) to cover it,
+    else one who can work that day gets a shift of at least four hours over
+    it. Salaried managers first (their hours cost nothing more), then the
+    fewest hours this week. A change is kept only when it adds no other
+    hard breach; a stretch nobody can legally cover is returned in `left`
+    and stays a hard flag on the week. Returns {rows, extended, added, left}."""
+    rows = [dict(r) for r in rows]
+    extended, added, left = [], [], []
+    if not c.managers:
+        return {"rows": rows, "extended": extended, "added": added, "left": left}
+    display = {n.strip().lower(): n for n in (c.roster_names or [])}
+    max_shift = float(c.compliance.get("max_shift_hours") or DEFAULTS.get("max_shift_hours") or 12)
+    hours = {}
+    for r in rows:
+        low = (r.get("employee") or "").strip().lower()
+        if low and r.get("date"):
+            k = (low, c.bucket(r["date"]))
+            hours[k] = hours.get(k, 0.0) + row_hours(r)
+    for low, per in (c.base_hours or {}).items():
+        for b, h in (per or {}).items():
+            hours[(low, b)] = hours.get((low, b), 0.0) + float(h or 0)
+
+    def _others(keys):
+        return {k for k in keys if k[1] != "no_manager"}
+
+    def _gap_count(rs, d):
+        # minutes with nobody managing — a partial cover (a day longer than
+        # one shift) is progress, and the next pass covers the rest
+        return sum(ge - gs for gs, ge, _i in (manager_gaps(rs, c, dates={d}).get(d) or []))
+
+    base = _hard_keys(rows, c)
+    sweeps = 0
+    for d in sorted(manager_gaps(rows, c).keys()):
+        if editable is not None and d not in editable:
+            continue
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        skipped = set()
+        while sweeps < max_sweeps:
+            gaps = [g for g in (manager_gaps(rows, c, dates={d}).get(d) or []) if (g[0], g[1]) not in skipped]
+            if not gaps:
+                break
+            gs, ge, _pin = gaps[0]
+            before = _gap_count(rows, d)
+            spans = [sp for sp in (_span(r) for r in rows if r.get("date") == d and (r.get("employee") or "").strip()) if sp]
+            day_lo, day_hi = min(s for s, _e in spans), max(e for _s, e in spans)
+            done = None
+            # 1. a manager already on that day runs on, or comes in earlier
+            for i, r in enumerate(rows):
+                low = (r.get("employee") or "").strip().lower()
+                if r.get("date") != d or low not in c.managers or not c.can_work(r.get("employee"), d)[0]:
+                    continue
+                sp = _span(r)
+                if not sp:
+                    continue
+                s0, e0 = sp
+                if gs - 3 * 60 <= e0 <= gs:
+                    ns, ne = s0, min(ge, s0 + int(max_shift * 60))
+                elif ge <= s0 <= ge + 3 * 60:
+                    ns, ne = max(gs, e0 - int(max_shift * 60)), e0
+                else:
+                    continue
+                if ne - ns <= e0 - s0:
+                    continue
+                name = (r.get("employee") or "").strip()
+                k = (low, c.bucket(d))
+                add = ((ne - ns) - (e0 - s0)) / 60.0
+                if hours.get(k, 0.0) + add > overtime_line(c, name, line) + 0.05:
+                    continue
+                trial = [dict(x) for x in rows]
+                trial[i]["shift_start"] = _fmt_minutes(ns % (24 * 60))
+                trial[i]["shift_end"] = _fmt_minutes(ne % (24 * 60))
+                trial[i]["scheduled_hours"] = str(round((ne - ns) / 60.0, 2)).rstrip("0").rstrip(".")
+                sweeps += 1
+                keys = _hard_keys(trial, c)
+                if _others(keys) - _others(base) or _gap_count(trial, d) >= before:
+                    continue
+                done = ("extended", i, name, f"{r.get('shift_start')}–{r.get('shift_end')}",
+                        f"{trial[i]['shift_start']}–{trial[i]['shift_end']}", trial, keys, k, add)
+                break
+            # 2. a manager who can work that day comes in for it
+            if done is None:
+                lo_s, hi_e = gs, max(ge, gs + MANAGER_MIN_SHIFT_MIN)
+                if hi_e > day_hi:
+                    hi_e = max(ge, day_hi)
+                    lo_s = max(day_lo, min(gs, hi_e - MANAGER_MIN_SHIFT_MIN))
+                hi_e = min(hi_e, lo_s + int(max_shift * 60))
+                start_s, end_s = _fmt_minutes(lo_s % (24 * 60)), _fmt_minutes(hi_e % (24 * 60))
+                on_day = {(r.get("employee") or "").strip().lower() for r in rows if r.get("date") == d}
+                cands = []
+                for low, role in c.managers.items():
+                    name = display.get(low)
+                    if not name or low in on_day:
+                        continue
+                    if not c.can_work(name, d, daypart_of(start_s))[0] or not c.window_ok(name, d, start_s, end_s)[0]:
+                        continue
+                    k = (low, c.bucket(d))
+                    add = (hi_e - lo_s) / 60.0
+                    if hours.get(k, 0.0) + add > overtime_line(c, name, line) + 0.05:
+                        continue
+                    cands.append((0 if c.is_salaried(name) else 1, hours.get(k, 0.0), name, role, k, add))
+                tmpl = next((r for r in rows if r.get("date") == d), rows[0] if rows else {})
+                for _sal, _h, name, role, k, add in sorted(cands):
+                    row = {key: "" for key in tmpl}
+                    row.update({"date": d, "day": tmpl.get("day") or day, "employee": name,
+                                "role": role or "Manager", "shift_start": start_s, "shift_end": end_s,
+                                "scheduled_hours": str(round(add, 2)).rstrip("0").rstrip("."),
+                                "notes": "Cavnar AI: a manager on the floor every minute anyone is"})
+                    trial = [dict(x) for x in rows] + [row]
+                    sweeps += 1
+                    keys = _hard_keys(trial, c)
+                    if _others(keys) - _others(base) or _gap_count(trial, d) >= before:
+                        continue
+                    done = ("added", len(trial) - 1, name, "", f"{start_s}–{end_s}", trial, keys, k, add)
+                    break
+            if done is None:
+                skipped.add((gs, ge))
+                left.append({"date": d, "day": day, "from": _fmt_minutes(gs % (24 * 60)),
+                             "to": _fmt_minutes(ge % (24 * 60))})
+                continue
+            kind, idx, name, was, now, trial, keys, k, add = done
+            rows, base = trial, keys
+            hours[k] = hours.get(k, 0.0) + add
+            entry = {"index": idx, "employee": name, "day": day, "from": was, "to": now, "kind": "manager",
+                     "reason": (f"No manager was on {day} {_fmt_minutes(gs % (24 * 60))}–{_fmt_minutes(ge % (24 * 60))}: "
+                                + (f"{name} stays on to cover it." if kind == "extended" else f"added {name} {now}."))}
+            (extended if kind == "extended" else added).append(entry)
+    return {"rows": rows, "extended": extended, "added": added, "left": left}
