@@ -3470,9 +3470,9 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
 #   * a manager off that day comes in, for a shift as long as the stretch,
 #     or the owner's shortest shift when they set one (E-16: a 1h gap no
 #     longer buys a 4h shift);
-# where "a manager" includes somebody standing in as the manager on that
-# date (acting_managers, E-13). Candidates are ranked by fatigue — days in
-# a row — then hours this payroll week, never "salaried first" (E-17); a
+# and somebody standing in as the manager on that date (acting_managers,
+# E-13) covers what no manager can. Candidates are ranked by fatigue — days
+# in a row — then hours this payroll week, never "salaried first" (E-17); a
 # salaried person is never taken past their weekly cap (salaried_limit),
 # and an hourly one past their overtime line only when no manager could
 # cover the stretch inside it (the manager rule outranks overtime; it yields
