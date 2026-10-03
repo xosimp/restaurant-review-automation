@@ -1623,7 +1623,8 @@ def identity_index(restaurant_id, names, db_path=None) -> dict:
     until the owner answers, the rules' sweep reads them as one person —
     overlaps, rest, hours, days in a row (E-25). Each maps to its group's
     first key. Roster names that are one person already are linked too.
-    Never raises into a caller that has no people tables: {} maps."""
+    Raises when the identity tables can't be read; every caller catches
+    it and keys by the plain fold."""
     out = {"key_of": {}, "linked": {}, "questions": []}
     names = [n for n in (names or []) if str(n or "").strip()]
     if not names:

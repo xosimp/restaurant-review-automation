@@ -1863,9 +1863,9 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
       3. for past dates neither covers, the punches (shift_facts — D-22:
          with no published week, a Sunday close then a Monday open and a
          run begun last week were invisible), labelled punches;
-      4. the organisation's other sites (E-26: preferences.org_location_ids
-         — the organisation, not a matching owner email, so locations
-         onboarded under their GMs' emails see each other), their live
+      4. the organisation's other sites (E-26: org_sibling_ids — the
+         organisation, not a matching owner email, so locations onboarded
+         under their GMs' emails see each other), their live
          published weeks, each row matched to this site's person through
          people's identity at both sites and kept as a row of the tail: it
          is checked by overlap and rest like any other (D-40 — a lunch at

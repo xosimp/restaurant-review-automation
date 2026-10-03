@@ -3875,8 +3875,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             import time_off as _to
             # Whole days here; part of a day off ("until 4pm", D-39) is in the
             # rules' PER-PERSON block, with the rest of that day workable.
-            for _emp, _days in sorted(_to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1],
-                                                             whole_days_only=True).items()):
+            # Each under the spelling the roster uses (people's identity, D-8).
+            _offs = _to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1], whole_days_only=True)
+            try:
+                import people as _people_to
+                _canon = _people_to.canonical_names(restaurant_id, list(_offs))
+            except Exception:
+                _canon = {}
+            for _emp, _days in sorted(((_canon.get(e) or e), d) for e, d in _offs.items()):
                 _named = ", ".join(f"{_d} ({datetime.strptime(_d, '%Y-%m-%d').strftime('%A')})" for _d in _days)
                 _time_off_lines.append(f"  {_emp}: APPROVED TIME OFF on {_named} — do not schedule")
         except Exception:

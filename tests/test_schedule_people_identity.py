@@ -257,3 +257,33 @@ def test_a_pairing_kept_under_an_old_spelling_holds_for_the_person():
     c = sr.build_constraints(rid, WEEK, DAYS)
     pairs = sr.pairs_with_rules(staff_settings.pair_sets(rid), c)
     assert frozenset({"michael smith", "ana b."}) in pairs["avoid"]
+
+
+def test_the_prompt_is_told_each_fact_under_the_roster_spelling(monkeypatch):
+    rid = _rid()
+    _renamed(rid)
+    conn = models.get_conn()
+    try:
+        conn.execute("INSERT INTO staff_availability (restaurant_id, employee_name, available_days, unavailable_days) "
+                     "VALUES (?,?,?,?)", (rid, "Mike Smith", "[]", json.dumps(["Tuesday"])))
+        conn.commit()
+    finally:
+        conn.close()
+    models.set_capability(rid, "Mike Smith", "overall", score=4)
+    import datetime as _dt
+    import time_utils
+    import weather
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda r, **k: {"is_live": True, "blended_rate": 20.0})
+    monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: _dt.datetime(2026, 10, 1, 9, 0))
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+    captured = {}
+
+    def fake_parts(analysis, shifts, roster_pairs, kwargs):
+        captured.update(kwargs)
+        return {"schedule_csv": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n",
+                "narrative": [], "summary": []}
+    monkeypatch.setattr(schedule_engine, "_generate_in_parts", fake_parts)
+    schedule_engine._build_schedule_result(rid)
+    assert [a["employee_name"] for a in captured["staff_availability"]] == ["Michael Smith"]
+    assert captured["operational_scores"] == {"Michael Smith": 4}

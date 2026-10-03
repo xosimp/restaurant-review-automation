@@ -558,6 +558,30 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
                           + _mem.text)
     except Exception as _sfx:
         _soft_fail('memory_context', _sfx, restaurant_id)
+    # One person, one key in the prompt too (schedule audit 10/3/26 D-8):
+    # availability, notes, ratings, tenure, closers, usual patterns,
+    # reliability and preferences kept under an alias or an old POS spelling
+    # are told to the model under the roster's spelling of the person —
+    # the model was handed "Mike Smith: NOT available Tuesday" beside a
+    # roster that says "Michael Smith".
+    try:
+        _disp = _identity_view(restaurant_id, [n for n, _r in roster_pairs], constraints)
+        _op_scores = _rekey(_op_scores, _disp, "first") if _op_scores else _op_scores
+        _role_scores = _rekey(_role_scores, _disp, "first") if _role_scores else _role_scores
+        for _pk, _how in (("tenure", "max"), ("leader_flags", "any"), ("prior_pattern", "first")):
+            if _people.get(_pk):
+                _people[_pk] = _rekey(_people[_pk], _disp, _how)
+        _people["experienced"] = sorted({_disp(n) or n for n in (_people.get("experienced") or [])})
+        reliability = _rekey(reliability, _disp, "first") if reliability else reliability
+        stated_prefs = _rekey(stated_prefs, _disp, "first") if stated_prefs else stated_prefs
+        learned_prefs = _rekey(learned_prefs, _disp, "first") if learned_prefs else learned_prefs
+        staff_availability = [dict(a, employee_name=_disp(a.get("employee_name")) or a.get("employee_name"))
+                              for a in (staff_availability or [])]
+        if staff_notes:
+            staff_notes = [dict(n, employee_name=_disp(n.get("employee_name")) or n.get("employee_name"))
+                           for n in staff_notes]
+    except Exception as _sfx:
+        _soft_fail('identity', _sfx, restaurant_id)
     extra_blocks = (_rules.prompt_block(constraints)
                     + _signals.prompt_block(signals_by_date, next_week_dates)
                     + _pairs_block(pairs, roster_pairs)
@@ -2760,6 +2784,7 @@ def _learning_signals(restaurant_id, result) -> dict:
 # re-keyed to the roster's spelling of the person it means (D-8) — and how
 # two entries landing on one person combine.
 _PERSON_SIGNALS = {"scores": "first", "role_scores": "first", "leader_flags": "any", "tenure": "max",
+                   "cross_trained": "union",
                    "prior_pattern": "first", "availability": "union", "preferences": "first",
                    "reliability": "first", "prior_week_assignments": "concat", "elsewhere": "concat",
                    "constraints": "join", "ledger": "first", "hours_limits": "first"}
@@ -3744,8 +3769,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # A regular left with no shift at all (D-37): their usual week,
             # said beside the name — "Ana (usually ~32h)".
             _pp = result.get("prior_pattern") or {}
+            _wk = list(getattr(_constraints, "week_dates", None) or [])
+
+            def _away_all_week(n):
+                _b = (getattr(_constraints, "blocked_dates", None) or {}).get(_constraints.key(n)
+                                                                               if hasattr(_constraints, "key")
+                                                                               else n.lower()) or {}
+                return bool(_wk) and all(d in _b for d in _wk)
             _reg = [(n, (_pp.get(n) or {}).get("avg_hours")) for n in _not
-                    if float((_pp.get(n) or {}).get("avg_hours") or 0) >= 16]
+                    if float((_pp.get(n) or {}).get("avg_hours") or 0) >= 16 and not _away_all_week(n)]
             result["regulars_not_scheduled"] = [{"name": n, "usual_hours": h} for n, h in _reg]
             if _reg:
                 result["review"]["lines"].append(
