@@ -200,18 +200,28 @@ def test_year_over_year_still_prefers_the_exact_52_week_match(db_path):
     assert row["yoy_sales"] == 999.0
 
 
-def test_year_over_year_falls_back_to_the_earliest_day_with_data(db_path):
+def test_year_over_year_falls_back_only_to_the_same_weekday(db_path):
+    """The ±3-day fallback read a Monday from last year's Saturday (schedule
+    audit 10/3/26 D-28): only the same weekday a week either side stands in,
+    and the row says it is a stand-in."""
     rid = create_restaurant(Restaurant(name="Fallback Co", owner_email="fb@x.com"), db_path=db_path)
     conn = get_conn(db_path)
-    # Nothing on 2025-09-22 itself; two days inside the window.
+    # Nothing on 2025-09-22 (the Monday 52 weeks back); a Saturday and a
+    # Wednesday inside the old ±3-day window.
     for d in ("2025-09-20", "2025-09-24"):
         conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, sales, labor_pct, "
                      "labor_cost, total_hours) VALUES (?,?,?,?,?,?)", (rid, d, 50.0, 30.0, 15.0, 5.0))
     conn.commit()
-    conn.close()
-
     row = models.get_yoy_schedule_context(rid, ["2026-09-21"], db_path=db_path)[0]
-    assert row["yoy_date"] == "2025-09-20", "walks the window in offset order, earliest first"
+    assert row["yoy_date"] is None and row["yoy_sales"] is None, "another weekday never stands in"
+    # The Monday a week later (51 weeks back) does, marked as a substitute.
+    conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, sales, labor_pct, "
+                 "labor_cost, total_hours) VALUES (?,?,?,?,?,?)", (rid, "2025-09-29", 70.0, 30.0, 21.0, 7.0))
+    conn.commit()
+    conn.close()
+    row = models.get_yoy_schedule_context(rid, ["2026-09-21"], db_path=db_path)[0]
+    assert row["yoy_date"] == "2025-09-29" and row["yoy_dow"] == "Monday"
+    assert row["yoy_substituted"] is True and row["yoy_match"] == "same_weekday_shift"
 
 
 # ── P0-3: a failed geocode is cached, not re-billed ───────────────────────

@@ -289,6 +289,18 @@ class ShiftContext:
     splh_target: float | None = None
     expected_sales: float | None = None
     daypart_hours: float = 0.0
+    # Why this shift's required numbers moved off its usual crew (the
+    # date's measured demand, the sales-per-labor-hour hold) — the
+    # requirements table's reasons (schedule audit 10/3/26 P-19).
+    requirement_reasons: list = field(default_factory=list)
+    # ── the late segment (D-32): on a night closing past 11pm, the window
+    # from 10pm to close, the people it usually runs, its usual sales, its
+    # sales-per-labor-hour target and the hours this draft puts in it.
+    late_window: tuple | None = None
+    late_required: dict = field(default_factory=dict)
+    late_expected_sales: float | None = None
+    late_splh_target: float | None = None
+    late_hours: float = 0.0
 
     # ── Derived views every dimension wants ────────────────────────────
     @property
@@ -1035,7 +1047,35 @@ def dim_splh(ctx: ShiftContext) -> DimensionResult | None:
     else:
         res.weaknesses.append(f"${splh:,.0f} of sales per labor hour against a ${float(ctx.splh_target):,.0f} {part} target — "
                               f"about {ctx.daypart_hours - need_hours:.0f}h more than the usual sales here carry.")
+    _late_splh(ctx, res)
     return res
+
+
+def _late_splh(ctx: ShiftContext, res: DimensionResult) -> None:
+    """The late segment's own sales per labor hour on a night closing past
+    11pm (schedule audit 10/3/26 D-32), in place: a strength or weakness
+    line, `facts["late"]`, and the night's score blended with the late
+    window's by its share of the night's hours (at most half). Nothing
+    without a late target, late sales or late hours."""
+    if ctx.daypart != "night" or not ctx.late_window:
+        return
+    t, s, h = ctx.late_splh_target, ctx.late_expected_sales, float(ctx.late_hours or 0)
+    if not t or t <= 0 or not s or s <= 0 or h <= 0:
+        return
+    splh = s / h
+    ratio = splh / float(t)
+    late_score = SCORE_MAX if ratio >= 1 - SPLH_TOLERANCE else max(0, int(round(SCORE_MAX - (1 - SPLH_TOLERANCE - ratio) * SPLH_STEP)))
+    share = min(0.5, h / max(float(ctx.daypart_hours or 0), h))
+    res.score = int(round(res.score * (1 - share) + late_score * share))
+    res.facts["late"] = {"splh": round(splh, 0), "target": round(float(t), 0), "expected_sales": round(s, 0),
+                         "hours": round(h, 1), "hours_at_target": round(s / float(t), 1), "ratio": round(ratio, 2),
+                         "window": [_fmt_minutes(ctx.late_window[0]), _fmt_minutes(ctx.late_window[1])]}
+    when = f"from {_fmt_minutes(ctx.late_window[0])} to close"
+    if ratio >= 1 - SPLH_TOLERANCE:
+        res.strengths.append(f"Late night ({when}): ${splh:,.0f} of sales per labor hour against a ${float(t):,.0f} target.")
+    else:
+        res.weaknesses.append(f"Late night ({when}): ${splh:,.0f} of sales per labor hour against a ${float(t):,.0f} "
+                              f"target — about {h - s / float(t):.0f}h more than late sales usually carry.")
 
 
 # A shift at this demand level or above is a hard one to work, and is what
@@ -1550,7 +1590,8 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
                     if n and (not runs_here or r.strip().lower() in runs_here)}
         source = "your role minimums"
     has_curve = bool(ctx.demand_curve and ctx.typical_headcount)
-    if not required and not has_curve:
+    has_late = bool(ctx.daypart == "night" and ctx.late_window and ctx.late_required)
+    if not required and not has_curve and not has_late:
         return None
     rows = ctx.day_rows or ctx.rows
     spans = []
@@ -1596,6 +1637,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     # owner's floors hold under it and the section cap over it. Without a
     # curve this is the floors alone, exactly as before.
     curve_needs = _half_hour_requirement(ctx, lo, hi)
+    # The late segment's own usual crew over its window, 10pm to close
+    # (schedule audit 10/3/26 D-32): a 2am-close bar was judged on its dinner.
+    late_needs = _late_requirement(ctx, slots) if has_late else {}
     peak_slot = None
     if curve_needs:
         from staffing_curve import half_hour_shares as _hhs
@@ -1604,6 +1648,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     for t in slots:
         here = dict(required)
         for role, n in (curve_needs.get(t) or {}).items():
+            match = next((r for r in here if r.strip().lower() == role.strip().lower()), role)
+            here[match] = max(int(here.get(match) or 0), int(n))
+        for role, n in (late_needs.get(t) or {}).items():
             match = next((r for r in here if r.strip().lower() == role.strip().lower()), role)
             here[match] = max(int(here.get(match) or 0), int(n))
         here, _over = _capped(ctx, here)
@@ -1617,14 +1664,17 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
             if on >= need:
                 covered += 1
                 continue
-            from_curve = need > int(required.get(role) or 0)
+            from_late = need > int(required.get(role) or 0) and int((late_needs.get(t) or {}).get(role) or 0) >= need \
+                and need > int((curve_needs.get(t) or {}).get(role) or 0)
+            from_curve = need > int(required.get(role) or 0) and not from_late
             if t == peak_slot and from_curve:
                 peak_gaps.append({"role": role, "need": need, "on": on, "at": _fmt_minutes(t),
                                   "worst_minute": t})
             g = gaps.setdefault(role, {"short_slots": 0, "worst": None, "worst_on": None, "need": need,
-                                       "from_curve": False})
+                                       "from_curve": False, "from_late": False})
             g["short_slots"] += 1
             g["from_curve"] = g["from_curve"] or from_curve
+            g["from_late"] = g.get("from_late") or from_late
             if g["worst"] is None or on < g["worst_on"] or (on == g["worst_on"] and need > g["need"]):
                 g["worst"], g["worst_on"], g["need"] = t, on, need
     if not total:
@@ -1657,6 +1707,13 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
         if not g["short_slots"] or (role in peak_roles and g["short_slots"] == 1):
             continue
         need = g["need"]
+        if g.get("from_late") and not g["from_curve"]:
+            res.weaknesses.append(
+                f"{role} is under the {need} usually on late at night ({_fmt_minutes(ctx.late_window[0])} to "
+                f"{_fmt_minutes(ctx.late_window[1])}) for {g['short_slots'] * SLOT_MINUTES // 60}h"
+                f"{(g['short_slots'] * SLOT_MINUTES % 60) and ' 30m' or ''} — {g['worst_on']} on at "
+                f"{_fmt_minutes(g['worst'])}.")
+            continue
         if g["from_curve"]:
             res.weaknesses.append(
                 f"{role} is under what your sales curve needs for {g['short_slots'] * SLOT_MINUTES // 60}h"
@@ -1681,6 +1738,18 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
             res.weaknesses.append(
                 f"Sales peak around {_fmt_minutes(int(peak_hour) * 60)} with {on_peak} on, while the day tops out at {on_max} on.")
     return res
+
+
+def _late_requirement(ctx: ShiftContext, slots) -> dict:
+    """{minute: {role: people}} for the half-hour slots that fall in the
+    late segment: the late row's people (the requirements table's,
+    demand-scaled like every other row) at every half hour from 10pm to
+    close (D-32). {} without a late window or crew."""
+    if not ctx.late_window or not ctx.late_required:
+        return {}
+    a, b = ctx.late_window
+    need = {r: int(n) for r, n in ctx.late_required.items() if int(n or 0) > 0}
+    return {t: dict(need) for t in slots or () if a <= t < b} if need else {}
 
 
 # Share of a role's usual daypart headcount that should overlap the
@@ -2663,6 +2732,43 @@ def _row_hours(row: dict) -> float:
 CORE_WINDOWS = {"morning": (11 * 60, 14 * 60 + 30), "night": (17 * 60 + 30, 20 * 60 + 30)}
 PRESENCE_MIN_OVERLAP = 60
 
+# The late segment (schedule audit 10/3/26 D-32): late-night service, from
+# 10pm to close, on a day that closes past 11pm. Not a third daypart — a
+# shift on the floor then is still the night's (availability, floors,
+# fairness and the week's assignments read morning and night) — but a
+# window of the night with its own usual crew, demand and sales per labor
+# hour: Simple EJ's 2am-close Friday bar was judged on its dinner alone.
+LATE_WINDOW_START = 22 * 60
+LATE_CLOSE_AFTER = 23 * 60
+
+
+def late_window(close_minutes):
+    """(start, close) minutes of the late segment for a day closing at
+    `close_minutes` (a small-hours close may be given as minutes past that
+    midnight or past 24h), or None when the close is not past 11pm."""
+    if close_minutes is None:
+        return None
+    try:
+        c = int(close_minutes)
+    except (TypeError, ValueError):
+        return None
+    if c < 5 * 60:
+        c += 24 * 60
+    return (LATE_WINDOW_START, c) if c > LATE_CLOSE_AFTER else None
+
+
+def late_minutes(row: dict, window) -> int:
+    """Minutes a row is on the floor inside the late `window` (start, end) —
+    0 outside it or when its times cannot be read."""
+    if not window:
+        return 0
+    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+    if s is None or e is None:
+        return 0
+    if e <= s:
+        e += 24 * 60
+    return max(0, min(e, window[1]) - max(s, window[0]))
+
 
 def present_dayparts(row: dict) -> list:
     """The dayparts a row is on the floor for: each whose core service
@@ -2819,7 +2925,8 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
         for part in ("morning", "night"):
             if (date, part) in buckets:
                 continue
-            runs = any(n for n in (typical_all.get((day, part)) or {}).values())
+            runs = any(n for n in ((signals.get("requirements_by_date") or {}).get((date, part))
+                                   or typical_all.get((day, part)) or {}).values())
             if not runs:
                 for spec in role_floors_all.values():
                     dspec = (spec.get("days") or {}).get(day) or {}
@@ -2833,6 +2940,12 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
 
     splh_targets = signals.get("splh_targets") or {}
     daypart_sales = signals.get("daypart_sales") or {}
+    # The week's demand-scaled requirements ({(date, daypart): {role:
+    # people}}, schedule_requirements.requirements_map) — what the model was
+    # told each shift needs, judged here instead of the weekday's usual crew
+    # wherever the draft carries them (schedule audit 10/3/26 P-19).
+    req_by_date = signals.get("requirements_by_date") or {}
+    req_reasons = signals.get("requirement_reasons") or {}
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
@@ -2852,6 +2965,9 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             n = dspec.get(part) if part in dspec else spec.get(part)
             if n:
                 floors_here[role] = int(n)
+        # The late segment rides on the night of a date closing past 11pm.
+        late = _late_facts(date, day, part, close_times, req_by_date, day_rows_by_date.get(date, []),
+                           splh_targets, daypart_sales, demand_by_date)
         contexts.append(ShiftContext(
             date=date, day=day, daypart=part, rows=shift_rows,
             profile=profile,
@@ -2874,7 +2990,9 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             leader_flags=signals.get("leader_flags") or {},
             leader_rules=signals.get("leader_rules") or [],
             cross_trained=signals.get("cross_trained") or {},
-            typical_headcount=(signals.get("typical_headcount") or {}).get((day, part), {}),
+            typical_headcount=(req_by_date.get((date, part))
+                               or (signals.get("typical_headcount") or {}).get((day, part), {})),
+            requirement_reasons=list(req_reasons.get((date, part)) or []),
             role_minimums=signals.get("role_minimums") or {},
             demand_pct=demand_by_day.get(day),
             target_hours=targets.get(date),
@@ -2894,8 +3012,33 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             splh_target=(splh_targets.get(day) or {}).get(part),
             expected_sales=expected or None,
             daypart_hours=part_hours.get((date, part), 0.0),
+            **late,
         ))
     return contexts
+
+
+def _late_facts(date, day, part, close_times, req_by_date, day_rows, splh_targets, daypart_sales,
+                demand_by_date) -> dict:
+    """The late segment's ShiftContext fields for one night (D-32): its
+    window, the people it needs (the requirements table's late row), its
+    usual sales raised by the date's lift, its target and the hours the
+    draft puts in it. {} for a morning, or a night not closing past 11pm."""
+    if part != "night":
+        return {}
+    window = late_window(_slot_minutes((close_times or {}).get(day)) if (close_times or {}).get(day) else None)
+    if window is None:
+        return {}
+    sales = ((daypart_sales or {}).get(day) or {}).get("late")
+    if sales:
+        lift = ((demand_by_date or {}).get(date) or {}).get("lift_pct")
+        try:
+            sales = float(sales) * (1 + float(lift) / 100.0) if lift else float(sales)
+        except (TypeError, ValueError):
+            sales = float(sales)
+    hours = sum(late_minutes(r, window) for r in day_rows or [] if (r.get("employee") or "").strip()) / 60.0
+    return {"late_window": window, "late_required": dict(req_by_date.get((date, "late")) or {}),
+            "late_expected_sales": sales or None, "late_splh_target": ((splh_targets or {}).get(day) or {}).get("late"),
+            "late_hours": round(hours, 2)}
 
 
 def _rule_label(rule: dict) -> str:

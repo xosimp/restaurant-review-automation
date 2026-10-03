@@ -133,7 +133,8 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     except Exception as e:
         _soft_fail("forecast_preview salaries", e, restaurant_id)
         salaried, show_salary = None, False
-    plan = week_hours_plan(analysis, dates, target, rate, yoy_context=get_yoy_schedule_context(restaurant_id, dates),
+    plan = week_hours_plan(analysis, dates, target, rate,
+                           yoy_context=get_yoy_schedule_context(restaurant_id, dates, today=restaurant_now(restaurant).date()),
                            projected_revenue_override=revenue.get("value"), monthly_revenue_target=monthly,
                            salaried=salaried, closed_dates=closed_here, rate_basis=analysis.get("rate_basis"),
                            show_salary=show_salary)
@@ -281,6 +282,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # real signal and was already computed; only the two AI paths ignored it.
     if not analysis.get("is_live"):
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant))
+    # Sales that stopped weeks ago are not a forecast: the demand, the budget
+    # and every day's target would read them as current while the forecast
+    # quietly fell back. The generation refuses and says why (D-33).
+    freshness = _demand_data_through(restaurant_id, restaurant=restaurant)
+    if freshness.get("blocked"):
+        raise ScheduleGenerationError(freshness["message"])
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     from notify import labor_target_for as _labor_target_for
@@ -310,6 +317,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
     roster_rows = _staff.roster(restaurant_id)
     roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows]
+    # The staffing baseline the requirements, the score and the soft-ask
+    # check all read (labor.staffing_baseline): the punches less the
+    # salaried (D-4), the published weeks for the people who never punch
+    # (L-1), the late segment by the close times (D-32).
+    staffing = None
+    try:
+        from labor import staffing_baseline as _baseline
+        staffing = _baseline(restaurant_id, shifts=shifts, before=next_week_dates[0],
+                             close_times=constraints.close_times or {})
+    except Exception as _sfx:
+        _soft_fail('staffing_baseline', _sfx, restaurant_id)
+        staffing = None
 
     # Revenue override from restaurant target (takes priority over YoY sum)
     monthly_rev_target = float(getattr(restaurant, 'monthly_revenue_target', 0) or 0)
@@ -326,33 +345,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         _soft_fail('salaried_week', _sfx, restaurant_id)
         salaried_week = None
 
-    # YoY context — same day last year
-    yoy_ctx = get_yoy_schedule_context(restaurant_id, next_week_dates)
-
-    # Flag holiday matches in YoY context
-    try:
-        from marketing import get_upcoming_holidays as _guh_sched
-        import re as _re_h
-        _hol_str = _guh_sched(today)
-        if _hol_str:
-            _hol_this_week = {}
-            for chunk in _hol_str.split(", "):
-                m = _re_h.search(r'\((\w+ \d+)\)$', chunk)
-                if m:
-                    try:
-                        hdate = _holiday_on_or_after(m.group(1), today)
-                        for nd in next_week_dates:
-                            if hdate.strftime("%Y-%m-%d") == nd:
-                                _hol_this_week[nd] = chunk[:chunk.rfind("(")].strip()
-                    except Exception:
-                        pass
-            for row in yoy_ctx:
-                nd = row.get("next_week_date", "")
-                if nd in _hol_this_week:
-                    row["is_holiday"] = True
-                    row["holiday_name"] = _hol_this_week[nd]
-    except Exception:
-        pass
+    # YoY context — last year's night for each date: a holiday's own night
+    # last year, else the same weekday (never another one), moved by this
+    # year's trend; each row says which (models.get_yoy_schedule_context:
+    # schedule audit 10/3/26 E-8, D-28, D-29). The holiday flags come from
+    # the same calendar the lift is measured on; they were set here from the
+    # marketing calendar's 52-week date match, which labelled Christmas Eve
+    # "matched to Christmas Eve last year" over last Christmas Day's figures.
+    yoy_ctx = get_yoy_schedule_context(restaurant_id, next_week_dates, today=today.date())
 
     # Upcoming events for the schedule banner
     upcoming_events = []
@@ -470,18 +470,24 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # carried the weekends, what staff want, who could hold a station.
     import schedule_economics as _econ
     import schedule_intel as _intel
-    holiday = {}
+    holiday, date_demand = {}, {}
     try:
-        holiday = _merge_holiday_lift(restaurant_id, next_week_dates, signals_by_date)
+        holiday, date_demand = _merge_date_demand(restaurant_id, next_week_dates, signals_by_date,
+                                                  weather=weather_forecast, closed=constraints.closed_dates)
     except Exception as _hx:
-        print(f"[schedule] holiday lift unavailable: {_hx}")
-        holiday = {}
+        _soft_fail('date_demand', _hx, restaurant_id)
+        holiday, date_demand = {}, {}
     # The events block states only a lift this restaurant measured; the
     # prompt used to assert "20-40% higher covers" for any holiday (SCHED-33).
+    # Matched by the holiday's own name: the marketing calendar's carries a
+    # hint ("Christmas Eve — holiday dining"), so the measured lift never
+    # reached those holidays' lines (E-8). Each name reads its own night.
     for _ev in upcoming_events:
+        _evn = str(_ev.get("name") or "").split(" — ", 1)[0].strip()
         for _d, _h in holiday.items():
-            if _h.get("name") == _ev.get("name") and _h.get("lift_pct") is not None:
-                _ev["lift_pct"], _ev["based_on"] = _h["lift_pct"], _h.get("based_on")
+            _one = (_h.get("by_name") or {}).get(_evn) or (_h if _h.get("name") == _evn else None)
+            if _one and _one.get("lift_pct") is not None:
+                _ev["lift_pct"], _ev["based_on"] = _one["lift_pct"], _one.get("based_on")
     splh = {}
     try:
         splh = _econ.splh_by_daypart(restaurant_id)
@@ -503,7 +509,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # What schedule learning adds on top (schedule_learning_inputs): the
     # multi-week rotation, the sales-per-labor-hour objective, and for a
     # restaurant with no history of its own a borrowed starting headcount.
-    learning = schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, target)
+    learning = schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, target,
+                                        own_typical=(staffing or {}).get("typical_headcount"))
     stated_prefs, learned_prefs = {}, {}
     try:
         stated_prefs = _staff.stated_preferences(restaurant_id)
@@ -639,10 +646,20 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         open_times=constraints.open_times or {},
         close_times=constraints.close_times or {},
         salaried_week=salaried_week,
+        # Each date's demand, the sales-per-labor-hour hold, the asks with
+        # their reasons and the baseline: the requirement numbers are made
+        # here, in code (D-23, P-19, PR-7, L-1, D-32).
+        date_demand=date_demand or None,
+        splh_hold=(learning.get("splh_objective") or {}).get("hold") or None,
+        requirement_adjustments=_asks_as_adjustments(soft_reqs) or None,
+        staffing_patterns=staffing,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["rotation_plan"] = learning["rotation"]
     result["splh_objective"] = learning["splh_objective"]
+    # Each date's demand number and its reasons (D-23, D-24, D-30) — the
+    # Studio and the review say why a day moved.
+    result["date_demand"] = date_demand
     result["starting_headcount"] = learning["starting_payload"]
     result["holiday_lift"] = holiday
     result["splh_by_daypart"] = splh
@@ -668,10 +685,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         result["reservation_feed"] = _rf.status(restaurant)
     except Exception:
         result["reservation_feed"] = None
-    try:
-        result["demand_data_through"] = _demand_data_through(restaurant_id)
-    except Exception:
-        result["demand_data_through"] = None
+    # How current the sales behind this week are, for the banner and the
+    # summary (D-33): the read the gate above made.
+    result["demand_data_through"] = freshness
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     result["demand_by_day"] = _demand_by_day
     result["demand_by_date"] = signals_by_date
@@ -685,12 +701,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["learned_patterns"] = learned
     result["pattern_conflicts"] = pattern_conflicts
     result["soft_requirements"] = soft_reqs
-    try:
-        from labor import historical_patterns as _hp_soft
-        result["_soft_typical"] = {f"{d}|{p}": v for (d, p), v in
-                                   ((_hp_soft(shifts) or {}).get("typical_headcount") or {}).items()}
-    except Exception:
-        result["_soft_typical"] = {}
+    # The soft asks are judged against the same baseline the requirements
+    # were built from (staffing_baseline, L-1/D-4).
+    result["_soft_typical"] = {f"{d}|{p}": v for (d, p), v in
+                               ((staffing or {}).get("typical_headcount") or {}).items()}
     result["prior_published_rows"] = prior_published_rows
     result["weather_forecast"] = weather_forecast or []
     result["pending_time_off"] = {n: sorted(d) for n, d in constraints.pending_off.items()}
@@ -742,12 +756,38 @@ def _acceptable_missing(missing, trading_dates, roster_pairs, max_days) -> bool:
     return not rest
 
 
-def schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, labor_target) -> dict:
+def _asks_as_adjustments(soft_reqs) -> list:
+    """The reviews' and the nightly reports' staffing asks
+    (staffing_signals.soft_requirements) as requirement adjustments: +1 of
+    the asked role on that date and daypart, with the ask's reason, never
+    firm — folded into the number the model is given, never a shortfall the
+    score marks (schedule audit 10/3/26 PR-7)."""
+    from time_utils import mdy
+    out = []
+    for r in soft_reqs or []:
+        if not r.get("date") or not (r.get("role") or "").strip():
+            continue
+        if r.get("source") == "dsr":
+            why = (f"asked by the {mdy(r.get('report_date'))} nightly report" if r.get("report_date")
+                   else "asked by the nightly reports")
+        else:
+            why = "asked by the reviews diagnosis"
+        out.append({"date": str(r["date"])[:10], "daypart": r.get("daypart"), "role": r["role"],
+                    "delta": 1, "reason": why, "firm": False})
+    return out
+
+
+def schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, labor_target,
+                            own_typical=None) -> dict:
     """The learned inputs a draft is generated against, each failing alone:
     the rotation plan (schedule_intel.rotation_plan), the sales-per-labor-
-    hour objective (schedule_economics.splh_objective), and — only for a
-    restaurant with no history of its own — a starting headcount borrowed
-    from similar restaurants (intelligence.staffing), labelled borrowed."""
+    hour objective (schedule_economics.splh_objective), and — for each role
+    family the restaurant's own history (`own_typical`, the staffing
+    baseline) has no usual crew for — a starting headcount borrowed from
+    similar restaurants (intelligence.staffing), labelled borrowed. It was
+    all or nothing: a restaurant with any history borrowed nothing, so a
+    family its punches never show (Simple EJ's managers) had no prior at
+    all (schedule audit 10/3/26 L-2)."""
     import schedule_intel as _intel
     import schedule_economics as _econ
     roles = {n: r for n, r in (roster_pairs or []) if n}
@@ -763,7 +803,8 @@ def schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, sp
         _soft_fail('splh_objective', _sfx, restaurant_id)
     try:
         from intelligence import staffing as _staffing
-        start = _staffing.starting_headcount(restaurant_id, restaurant=restaurant, roster_roles=roles, shifts=shifts)
+        start = _staffing.starting_headcount(restaurant_id, restaurant=restaurant, roster_roles=roles, shifts=shifts,
+                                             own_typical=own_typical)
         out["starting_payload"] = _staffing.payload(start)
         if start.get("available"):
             out["borrowed_headcount"] = start["headcount"]
@@ -1076,12 +1117,31 @@ def _could_hold_block(could_hold: dict) -> str:
             "a legitimate cross-training option before adding headcount):\n" + "\n".join(lines))
 
 
-def _demand_data_through(restaurant_id) -> dict:
+# Sales older than this many TRADING days stop a generation (schedule audit
+# 10/3/26 D-33): the demand, the hours budget and every day's target would
+# be built on them as if current. demand.STALE_SAMPLE_DAYS is the same
+# horizon for a single forecast.
+DEMAND_STALE_BLOCK_DAYS = 14
+
+
+def _demand_data_through(restaurant_id, today=None, restaurant=None) -> dict:
     """When the daily sales the demand forecast reads were last written,
-    and whether that is recent enough to trust. Nothing on the screen said
-    the forecast was three months stale."""
-    from datetime import date as _date, datetime as _dt
+    and whether that is recent enough to trust: {"date", "days_ago",
+    "trading_days_ago", "blind", "stale", "blocked", "line", "message"}.
+
+    Read against the restaurant's own date — it was the server's UTC date,
+    a day ahead every evening (D-33). `stale`: sales stopped more than
+    DEMAND_STALE_BLOCK_DAYS trading days ago (a closed date or a closed
+    weekday the owner marked is not a missing day: a restaurant shut three
+    weeks for a refit is not stale the week it reopens). `blocked` is the
+    same — generation refuses with `message` rather than drafting a week on
+    a forecast that quietly fell back. `blind`: no sales on file at all, or
+    stale — the Studio and the draft say so (`line`). A restaurant that has
+    never had sales is blind but never blocked: there is nothing stale to
+    mislead it, and the draft says it has no demand to plan by."""
+    from datetime import date as _date, datetime as _dt, timedelta as _tdd
     from models import get_conn as _gc
+    from time_utils import mdy
     conn = _gc()
     try:
         # A day with a real sales figure: NULL is a missing figure, and rows
@@ -1093,14 +1153,53 @@ def _demand_data_through(restaurant_id) -> dict:
                            (restaurant_id,)).fetchone()
     finally:
         conn.close()
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            today = _date.today()
     last = row["d"] if row else None
     if not last:
-        return {"date": None, "days_ago": None, "blind": True}
+        return {"date": None, "days_ago": None, "trading_days_ago": None, "blind": True, "stale": False,
+                "blocked": False, "line": "No daily sales on file — this week has no demand forecast to plan by.",
+                "message": None}
     try:
-        days = (_date.today() - _dt.strptime(str(last)[:10], "%Y-%m-%d").date()).days
+        last_d = _dt.strptime(str(last)[:10], "%Y-%m-%d").date()
     except ValueError:
-        return {"date": last, "days_ago": None, "blind": True}
-    return {"date": str(last)[:10], "days_ago": days, "blind": days > 14}
+        return {"date": last, "days_ago": None, "trading_days_ago": None, "blind": True, "stale": False,
+                "blocked": False, "line": None, "message": None}
+    days = (today - last_d).days
+    # Days the restaurant trades between the last sales and yesterday.
+    closed_wd, closed_dates = set(), set()
+    try:
+        if restaurant is None:
+            from models import get_restaurant
+            restaurant = get_restaurant(restaurant_id)
+        cl = _rules.closures(restaurant) if restaurant is not None else {}
+        closed_wd = set(cl.get("closed_weekdays") or [])
+        closed_dates = set(cl.get("closed_dates") or [])
+    except Exception as _cx:
+        print(f"[schedule] closures unreadable for freshness, every day counts: {_cx}")
+    trading = 0
+    d = last_d + _tdd(days=1)
+    while d < today:
+        if d.strftime("%A") not in closed_wd and d.isoformat() not in closed_dates:
+            trading += 1
+        d += _tdd(days=1)
+    stale = trading > DEMAND_STALE_BLOCK_DAYS
+    out = {"date": last_d.isoformat(), "days_ago": days, "trading_days_ago": trading, "blind": stale,
+           "stale": stale, "blocked": stale,
+           "line": f"Sales on file through {mdy(last_d)} ({days} day{'s' if days != 1 else ''} ago).",
+           "message": None}
+    if stale:
+        out["line"] = (f"Sales on file end {mdy(last_d)}, {trading} trading days ago — the demand forecast, the "
+                       f"hours budget and each day's target would rest on them as if current.")
+        out["message"] = (f"Sales on file end {mdy(last_d)} — {trading} trading days with no sales since, so this "
+                          f"week's demand, hours budget and day targets can't be built honestly. Reconnect the POS "
+                          f"or upload recent sales, then generate. If the restaurant was closed, mark those dates "
+                          f"closed under Hours and try again.")
+    return out
 
 
 def _pairs_block(pairs: dict, roster_pairs: list) -> str:
@@ -2349,12 +2448,49 @@ def _merge_holiday_lift(restaurant_id, dates, signals_by_date: dict) -> dict:
     holiday = _econ.holiday_lift(restaurant_id, dates)
     for d, h in holiday.items():
         e = signals_by_date.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
-        label = h["name"] + (f" ({h['lift_pct']:+d}% here last year)" if h.get("lift_pct") is not None else "")
-        if label not in e.setdefault("labels", []):
-            e["labels"].append(label)
+        # Every holiday on the date is named, each with its own night last
+        # year; the date's lift is the strongest measured one — one number,
+        # never two holidays added (schedule audit 10/3/26 E-8, PR-8).
+        for name in (h.get("names") or [h["name"]]):
+            one = (h.get("by_name") or {}).get(name) or (h if name == h.get("name") else {})
+            label = name + (f" ({one['lift_pct']:+d}% here last year)" if one.get("lift_pct") is not None else "")
+            if label not in e.setdefault("labels", []):
+                e["labels"].append(label)
         if h.get("lift_pct") is not None:
             e["lift_pct"] = h["lift_pct"] if e.get("lift_pct") is None else max(e["lift_pct"], h["lift_pct"])
     return holiday
+
+
+def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None, closed=()) -> tuple:
+    """(holiday, date_demand): the holiday lift folded into the dated
+    signals (_merge_holiday_lift), then each date's ONE demand number
+    (schedule_economics.date_demand: the owner's budget for the night, the
+    dated facts, the forecast's measured effects, measured rain) written
+    back as that date's `lift_pct` — so the requirements table, the day
+    targets, the shift's demand level and its expected sales all read the
+    same figure, never a lift stated in one place and missing in another
+    (schedule audit 10/3/26 D-23, D-24, D-30, PR-8). The signal's own lift
+    is kept as `signal_lift_pct`, the reasons under `demand`. One
+    implementation for the generation and the live rescore."""
+    import schedule_economics as _econ
+    holiday = _merge_holiday_lift(restaurant_id, dates, signals_by_date)
+    dd = _econ.date_demand(restaurant_id, dates, signals_by_date, weather=weather, closed_dates=closed)
+    for d, x in dd.items():
+        if x.get("closed") or x.get("pct") is None:
+            continue
+        had = signals_by_date.get(d)
+        if not had and not x.get("pct"):
+            continue
+        e = signals_by_date.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
+        e["signal_lift_pct"] = e.get("lift_pct")
+        e["lift_pct"] = int(x["pct"]) if (x.get("pct") or e.get("lift_pct") is not None) else e.get("lift_pct")
+        for lab in x.get("labels") or []:
+            if lab and lab not in e.setdefault("labels", []):
+                e["labels"].append(lab)
+        e["demand"] = {"pct": x.get("pct"), "ratio": x.get("ratio"), "reasons": list(x.get("reasons") or []),
+                       "typical_sales": x.get("typical_sales"), "projected_sales": x.get("projected_sales"),
+                       "sources": list(x.get("sources") or [])}
+    return holiday, dd
 
 
 def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=None):
@@ -2398,10 +2534,13 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     try:
         # Through the request-scoped cache, like every other reader. Parsing
         # the whole history here and again in _quality_signals meant a single
-        # manager edit paid for two full passes over it.
-        patterns = historical_patterns(_cached_shifts(restaurant_id))
-        from labor import apply_learned_headcount
-        patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
+        # manager edit paid for two full passes over it. The same baseline
+        # the draft was built from (labor.staffing_baseline: the salaried
+        # out, the published weeks for those who never punch, the late
+        # segment — L-1, D-4, D-32).
+        from labor import staffing_baseline
+        _first = min((r.get("date") for r in (week_rows or []) if r.get("date")), default=None)
+        patterns = staffing_baseline(restaurant_id, shifts=_cached_shifts(restaurant_id), before=_first)
     except Exception:
         patterns = {"typical_headcount": {}, "cross_trained": {}}
 
@@ -2437,9 +2576,18 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["reliability"] = _staff.reliability(restaurant_id)
             out["demand_by_date"] = _signals.by_date(restaurant_id, dates)
             try:
-                _merge_holiday_lift(restaurant_id, dates, out["demand_by_date"])
+                # The same per-date demand the draft was written against: the
+                # weather is the copy already on file — a manager's edit never
+                # waits on the forecast service.
+                try:
+                    import weather as _wx
+                    _cached_wx = _wx.cached_forecast_for_week(restaurant, dates)
+                except Exception:
+                    _cached_wx = []
+                _h, out["date_demand"] = _merge_date_demand(restaurant_id, dates, out["demand_by_date"],
+                                                            weather=_cached_wx, closed=c.closed_dates)
             except Exception as _hx:
-                print(f"[schedule] live holiday lift unavailable: {_hx}")
+                print(f"[schedule] live date demand unavailable: {_hx}")
             # The same person at a sibling location that day, as generation
             # scores it.
             try:
@@ -2449,10 +2597,48 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 print(f"[schedule] live sibling shifts unavailable: {_ex}")
             out["prior_week_assignments"] = _prior_week_assignments(restaurant_id, before=dates[0])
             out["pending_time_off"] = {n: sorted(d) for n, d in c.pending_off.items()}
+            # The week's demand-scaled requirements, rebuilt from the same
+            # inputs through the same function the draft's table came from,
+            # so an edit is judged on the numbers the draft was written to
+            # (P-19). The sales-per-labor-hour objective is kept for the
+            # scorer's own targets (_learning_signals reads it).
+            try:
+                import schedule_economics as _econ_live
+                out["splh_objective"] = _econ_live.splh_objective(restaurant_id)
+            except Exception as _ox:
+                print(f"[schedule] live sales-per-labor-hour objective unavailable: {_ox}")
+                out["splh_objective"] = {"available": False}
+            try:
+                out["requirements"] = _live_requirements(
+                    dates, patterns, c, profiles, demand_by_day, out.get("demand_by_date") or {},
+                    out.get("role_minimums") or {}, out.get("date_demand") or {},
+                    (out.get("splh_objective") or {}).get("hold") or {}, leader_rules,
+                    bool(scores) or bool(out.get("leader_flags")))
+                import schedule_requirements as _req_live
+                out["requirements_by_date"] = _req_live.requirements_map(out["requirements"])
+            except Exception as _rqx:
+                print(f"[schedule] live requirements unavailable: {_rqx}")
     except Exception as _cx:
         print(f"[schedule] live constraints unavailable: {_cx}")
     out["learned_worse"] = learned_worse_levers(restaurant_id)
     return out
+
+
+def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_date, role_minimums,
+                       date_demand, splh_hold, leader_rules, leadership_known) -> list:
+    """SHIFT REQUIREMENTS for a stored week, every role, from the inputs a
+    live rescore holds — the draft's own inputs, through the one function
+    (schedule_requirements.shift_requirements)."""
+    import schedule_requirements as _req
+    return _req.shift_requirements(
+        sorted(dates), typical_headcount=(patterns or {}).get("typical_headcount") or {},
+        role_floors=c.role_floors or {}, profiles=profiles or None, demand_by_day=demand_by_day or None,
+        demand_by_date=demand_by_date or None, leader_rules=leader_rules or None,
+        leadership_known=leadership_known, role_minimums=role_minimums or None,
+        skip_dates=sorted(c.closed_dates or ()), open_times=c.open_times or None,
+        close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
+        cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
+        splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None)
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -2568,6 +2754,12 @@ def _quality_signals(restaurant_id, result, **extra):
         # {name: role} — who a fix or a repair may consider for a role,
         # beyond the people already scheduled in it this week.
         "roster_roles": result.get("roster_roles") or {},
+        # The week's demand-scaled requirements the model was given, firm
+        # numbers only, as {(date, daypart): {role: people}} — coverage is
+        # judged against them, not the weekday's usual crew (schedule audit
+        # 10/3/26 P-19); "late" keys carry the late segment (D-32).
+        "requirements_by_date": _requirements_signal(result.get("requirements_by_date")),
+        "requirement_reasons": _reasons_signal(result.get("requirements")),
     }
     c = result.get("constraints")
     if c is not None:
@@ -2685,6 +2877,26 @@ def _quality_signals(restaurant_id, result, **extra):
     return signals, weights
 
 
+def _requirements_signal(raw) -> dict:
+    """{(date, daypart): {role: people}} from a result's
+    "date|daypart"-keyed requirements (JSON-safe) or already tuple-keyed."""
+    out = {}
+    for k, v in (raw or {}).items():
+        key = tuple(k.split("|", 1)) if isinstance(k, str) else tuple(k)
+        if len(key) == 2 and isinstance(v, dict):
+            out[key] = dict(v)
+    return out
+
+
+def _reasons_signal(rows) -> dict:
+    """{(date, daypart): [reasons]} from the requirements rows."""
+    try:
+        import schedule_requirements as _req
+        return _req.requirement_reasons(rows or [])
+    except Exception:
+        return {}
+
+
 def _learning_signals(restaurant_id, result) -> dict:
     """{rotation, splh_targets, daypart_sales} for the scorer. Either one
     failing costs only its own dimension's part (each withdraws on {})."""
@@ -2704,7 +2916,7 @@ def _learning_signals(restaurant_id, result) -> dict:
             obj = _econ.splh_objective(restaurant_id)
         if obj and obj.get("available"):
             import schedule_economics as _econ_t
-            out["splh_targets"] = {wd: {p: _econ_t.splh_target_for(obj, wd, p) for p in ("morning", "night")
+            out["splh_targets"] = {wd: {p: _econ_t.splh_target_for(obj, wd, p) for p in _econ_t.SPLH_PARTS
                                         if _econ_t.splh_target_for(obj, wd, p)}
                                    for wd in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")}
             out["daypart_sales"] = obj.get("daypart_sales") or {}
@@ -4242,38 +4454,13 @@ def _safe_hourly_profile(restaurant_id) -> dict:
 
 
 def _hourly_profile(restaurant_id) -> dict:
-    """{weekday: {hour: share of the day's sales}} from the intraday
-    captures, when at least three same-weekday days were measured. Sales
-    captured hourly are cumulative, so the hour's own share is the step."""
-    from models import get_conn
-    conn = get_conn()
-    try:
-        rows = conn.execute("SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday "
-                            "WHERE restaurant_id=? AND business_date >= date('now', '-56 days') "
-                            "ORDER BY business_date, captured_hour", (restaurant_id,)).fetchall()
-    except Exception:
-        return {}
-    finally:
-        conn.close()
-    by_day = {}
-    for r in rows:
-        by_day.setdefault((r["weekday"], r["business_date"]), []).append((r["captured_hour"], float(r["net_sales"] or 0)))
-    per_weekday = {}
-    for (weekday, _date), pts in by_day.items():
-        pts.sort()
-        prev = 0.0
-        steps = {}
-        for h, cum in pts:
-            steps[h] = max(0.0, cum - prev)
-            prev = cum
-        total = sum(steps.values())
-        if total <= 0:
-            continue
-        per_weekday.setdefault(weekday, []).append({h: v / total for h, v in steps.items()})
-    out = {}
-    for weekday, days in per_weekday.items():
-        if len(days) < 3:
-            continue
-        hours = sorted({h for d in days for h in d})
-        out[weekday] = {h: round(sorted(d.get(h, 0.0) for d in days)[len(days) // 2], 4) for h in hours}
-    return out
+    """{weekday: {hour: share of the day's sales}}, measured on at least
+    three same-weekday days — schedule_economics.hourly_profile: the POS's
+    ticket archive by business date (the hour each ticket opened; an hour
+    after midnight is 24+), with the intraday captures and the nightly
+    report's hourly split for the dates the archive does not hold. It read
+    the intraday captures alone while the 90-day archive sat unread, so a
+    restaurant like Simple EJ's had no half-hour curve for weeks (schedule
+    audit 10/3/26 D-26)."""
+    import schedule_economics as _econ
+    return _econ.hourly_profile(restaurant_id)

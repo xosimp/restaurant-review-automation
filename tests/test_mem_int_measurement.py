@@ -97,6 +97,9 @@ CALLERS = {
     # the label's own measured figure — the one engine.headline judged it by
     # — and carries that figure's `applies` into effect_for's answer.
     ("event_intel/engine.py", "_label_effect"): "checks",
+    # Schedule audit 10/3/26 D-30: a near-term rainy date's demand moves by
+    # the restaurant's own measured rain effect, only once it `applies`.
+    ("schedule_economics.py", "_rain_effect"): "checks",
 }
 
 

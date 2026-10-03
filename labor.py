@@ -3222,7 +3222,7 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
 TYPICAL_WEEKS = 8
 
 
-def historical_patterns(shifts: list) -> dict:
+def historical_patterns(shifts: list, published_rows: list = None, salaried=None, close_times: dict = None) -> dict:
     """What this restaurant's own history says about how it staffs.
 
     Two signals the Shift Quality Engine needs and that only the shift data
@@ -3233,62 +3233,240 @@ def historical_patterns(shifts: list) -> dict:
     live-rescore path a manager hits after moving a shift needs the same
     numbers. Two hand-rolled versions of this is how the score on screen
     starts disagreeing with the score in the schedule.
+
+    salaried — salaried people (models.salaried_name_key): their punches
+        never count toward the usual crew. Managers barely punch (Erik 1,
+        Jim 0 at Simple EJ's), so their few punches made "Manager FOH"
+        typical near zero or random by weekday, while the budget already
+        left the same punches out (schedule audit 10/3/26 D-4).
+    published_rows — rows of the restaurant's published weeks (the
+        manager's final word). For the people who never punch — the
+        salaried, and anyone with no punch in the history — their published
+        shifts are the record of when they work, and a role's usual crew is
+        the larger of what the punches and what the published weeks show
+        (L-1): a salaried manager's role had no usual headcount at all,
+        which is how a first week drafted zero managers.
+    close_times — {weekday: close}: on a weekday closing past 11pm, the
+        people on the floor from 10pm to close are its late segment's usual
+        crew (`late_headcount`, D-32). Without a close on file a date's own
+        latest shift past 11pm stands for its close.
     """
     from collections import defaultdict as _dd
-    by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
-    dates_by_day = _dd(set)
+    from shift_quality import late_window, late_minutes, PRESENCE_MIN_OVERLAP
+    sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
+
+    def _key(name):
+        return " ".join(str(name or "").lower().split())
+
     roles_by_employee = _dd(set)
-
+    punch_rows = []
+    punched = set()
     for s in shifts or []:
-        date = (s.get("date") or "").strip()
-        role = (s.get("role") or "").strip()
         name = (s.get("employee") or "").strip()
+        role = (s.get("role") or "").strip()
         if name and role:
+            # Who can flex is a capability, read from every punch.
             roles_by_employee[name].add(role)
-        if not date:
+        if _key(name) in sal:
             continue
-        try:
-            day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-        except (ValueError, TypeError):
-            day = (s.get("day") or "").strip()
-        if not day:
-            continue
-        dates_by_day[day].add(date)
-        if name and role:
-            # Every daypart the shift was on the floor for, by the same rule
-            # the Shift Quality Engine counts a draft with
-            # (shift_quality.present_dayparts). Counted by start time alone,
-            # a restaurant that runs 11:30am-7pm servers had its dinner
-            # requirement set too low here and its draft's dinner read short
-            # there — the requirement and the measurement must agree.
-            for part in _present_dayparts(s):
-                by_role_date[day][part][role][date].add(name)
+        punch_rows.append(s)
+        if name:
+            punched.add(_key(name))
+    # A published week's rows count only for the people with no punch of
+    # their own — everyone else's hours are already in the punches.
+    pub_rows = [r for r in published_rows or []
+                if (r.get("employee") or "").strip()
+                and (_key(r.get("employee")) in sal or _key(r.get("employee")) not in punched)]
 
-    typical = {}
-    for day, parts in by_role_date.items():
-        # The most recent TYPICAL_WEEKS of this weekday, the newest counting
-        # most: a year of history averaged flat staffed next week like last
-        # winter, and a roster that grew in the spring read as short.
-        dates = sorted(dates_by_day[day])[-TYPICAL_WEEKS:]
-        weight = {d: i + 1 for i, d in enumerate(dates)}
-        total_w = float(sum(weight.values())) or 1.0
-        for part in ("morning", "night"):
+    def _count(rows):
+        by_role_date = _dd(lambda: _dd(lambda: _dd(lambda: _dd(set))))
+        dates_by_day = _dd(set)
+        late_by = _dd(lambda: _dd(lambda: _dd(set)))
+        latest = {}
+        for s in rows:
+            date_ = (s.get("date") or "").strip()[:10]
+            e = _late_end(s)
+            if date_ and e is not None:
+                latest[date_] = max(latest.get(date_, 0), e)
+        late_dates = _dd(set)
+        for s in rows:
+            date_ = (s.get("date") or "").strip()[:10]
+            role = (s.get("role") or "").strip()
+            name = (s.get("employee") or "").strip()
+            if not date_:
+                continue
+            try:
+                day = datetime.strptime(date_, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                day = (s.get("day") or "").strip()
+            if not day:
+                continue
+            dates_by_day[day].add(date_)
+            if name and role:
+                # Every daypart the shift was on the floor for, by the same rule
+                # the Shift Quality Engine counts a draft with
+                # (shift_quality.present_dayparts). Counted by start time alone,
+                # a restaurant that runs 11:30am-7pm servers had its dinner
+                # requirement set too low here and its draft's dinner read short
+                # there — the requirement and the measurement must agree.
+                for part in _present_dayparts(s):
+                    by_role_date[day][part][role][date_].add(name)
+                close_m = _close_m((close_times or {}).get(day))
+                window = late_window(close_m if close_m is not None else latest.get(date_))
+                if window:
+                    late_dates[day].add(date_)
+                    if late_minutes(s, window) >= min(PRESENCE_MIN_OVERLAP, window[1] - window[0]):
+                        late_by[day][role][date_].add(name)
+        return by_role_date, dates_by_day, late_by, late_dates
+
+    def _typical(by_role_date, dates_by_day):
+        typical = {}
+        for day, parts in by_role_date.items():
+            # The most recent TYPICAL_WEEKS of this weekday, the newest counting
+            # most: a year of history averaged flat staffed next week like last
+            # winter, and a roster that grew in the spring read as short.
+            dates = sorted(dates_by_day[day])[-TYPICAL_WEEKS:]
+            weight = {d: i + 1 for i, d in enumerate(dates)}
+            total_w = float(sum(weight.values())) or 1.0
+            for part in ("morning", "night"):
+                counts = {}
+                for role, per_date in parts.get(part, {}).items():
+                    # Averaged over every date this weekday ran, not only the
+                    # dates this role appeared — otherwise an occasional role
+                    # reads as a permanent one.
+                    n = int(math.floor(
+                        sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+                    if n:
+                        counts[role] = n
+                if counts:
+                    typical[(day, part)] = counts
+        return typical
+
+    def _late(late_by, late_dates):
+        out = {}
+        for day, per_role in late_by.items():
+            dates = sorted(late_dates[day])[-TYPICAL_WEEKS:]
+            weight = {d: i + 1 for i, d in enumerate(dates)}
+            total_w = float(sum(weight.values())) or 1.0
             counts = {}
-            for role, per_date in parts.get(part, {}).items():
-                # Averaged over every date this weekday ran, not only the
-                # dates this role appeared — otherwise an occasional role
-                # reads as a permanent one.
-                n = int(math.floor(
-                    sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+            for role, per_date in per_role.items():
+                n = int(math.floor(sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
                 if n:
                     counts[role] = n
             if counts:
-                typical[(day, part)] = counts
+                out[day] = counts
+        return out
+
+    p_by, p_dates, p_late, p_late_dates = _count(punch_rows)
+    typical = _typical(p_by, p_dates)
+    late = _late(p_late, p_late_dates)
+    published_typical = {}
+    if pub_rows:
+        b_by, b_dates, b_late, b_late_dates = _count(pub_rows)
+        published_typical = _typical(b_by, b_dates)
+        for key, roles in published_typical.items():
+            slot = typical.setdefault(key, {})
+            for role, n in roles.items():
+                match = next((r for r in slot if r.strip().lower() == role.strip().lower()), role)
+                slot[match] = max(int(slot.get(match, 0) or 0), int(n))
+        for day, roles in _late(b_late, b_late_dates).items():
+            slot = late.setdefault(day, {})
+            for role, n in roles.items():
+                match = next((r for r in slot if r.strip().lower() == role.strip().lower()), role)
+                slot[match] = max(int(slot.get(match, 0) or 0), int(n))
 
     return {
         "typical_headcount": typical,
         "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items() if len(r) > 1},
+        # From 10pm to close on a weekday that closes past 11pm (D-32).
+        "late_headcount": late,
+        # Where the published weeks set a role's usual crew (L-1), for the
+        # review to say: {(weekday, daypart): {role: people}}.
+        "published_headcount": published_typical,
     }
+
+
+def _close_m(value):
+    """A close time as minutes past its own day's midnight (a small-hours
+    close past 24h), or None."""
+    m = _clock_minutes(value)
+    if m is None:
+        return None
+    return m + 24 * 60 if m < 5 * 60 else m
+
+
+def _late_end(row):
+    """A row's end on its own date's clock (an end at or before the start
+    crosses midnight), or None."""
+    s, e = _clock_minutes(row.get("shift_start")), _clock_minutes(row.get("shift_end"))
+    if e is None:
+        return None
+    if s is not None and e <= s:
+        e += 24 * 60
+    return e
+
+
+def _clock_minutes(value):
+    raw = str(value or "").strip().lower().replace(" ", "")
+    if not raw:
+        return None
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(raw, fmt)
+            return t.hour * 60 + t.minute
+        except ValueError:
+            continue
+    return None
+
+
+def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL_WEEKS) -> list:
+    """The rows of the restaurant's published weeks — each week's latest
+    published version — starting in the `weeks` weeks before `before` (an
+    ISO date; default the restaurant's today). [] when none, or on any
+    failure (the baseline then reads the punches alone)."""
+    try:
+        import canonical_facts as _cf
+        from models import get_schedule_history_detail
+        from schedule_versions import rows_from_csv
+        if before is None:
+            from time_utils import restaurant_now_by_id
+            before = restaurant_now_by_id(restaurant_id).date().isoformat()
+        b = date.fromisoformat(str(before)[:10])
+        since = (b - timedelta(weeks=int(weeks))).isoformat()
+        rows = []
+        for w in _cf.published_weeks(restaurant_id, since):
+            if w["week_start"] >= b.isoformat():
+                continue
+            detail = get_schedule_history_detail(w["history_id"], restaurant_id) or {}
+            rows.extend(rows_from_csv(detail.get("schedule_csv") or ""))
+        return rows
+    except Exception as e:
+        print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
+        return []
+
+
+def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_times: dict = None) -> dict:
+    """historical_patterns as the schedule reads it — the ONE baseline the
+    draft's requirements, the score and the live rescore share: the punches
+    less the salaried (D-4), the published weeks for the people who never
+    punch (L-1), the late segment by the restaurant's close times (D-32),
+    and the manager's settled headcount adjustments on top
+    (apply_learned_headcount)."""
+    if shifts is None:
+        shifts = load_shifts_for_restaurant(restaurant_id) or []
+    salaried = set()
+    try:
+        from models import get_restaurant, salaried_staff, salaried_name_key, get_close_times
+        r = get_restaurant(restaurant_id)
+        salaried = {salaried_name_key(s["name"]) for s in salaried_staff(r)}
+        if close_times is None:
+            close_times = get_close_times(restaurant_id)
+    except Exception as e:
+        print(f"[labor] baseline settings unreadable for {restaurant_id}: {e}")
+    patterns = historical_patterns(shifts, published_rows=published_rows_for_baseline(restaurant_id, before),
+                                   salaried=salaried, close_times=close_times or {})
+    patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
+    return patterns
 
 
 def _quality_rules_block() -> str:
@@ -3581,9 +3759,11 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
         total_w = sum(weights.values())
         _scale = (hours_budget / total_w) if (_scaled and total_w > 0) else 1.0
         _day_lines = []
-        for _wd, _wdate in zip(week_days, week_dates):
-            if _wdate not in weights:
-                continue
+        for _wdate in sorted(weights):
+            try:
+                _wd = datetime.strptime(_wdate, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                _wd = ""
             _t = round(weights[_wdate] * _scale, 1)
             _daily_target_map[_wdate] = _t
             line = f"    {_wd} {_wdate}: {_t}h"
@@ -3829,9 +4009,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     import math as _math
     from collections import defaultdict as _dd
     from datetime import datetime as _dt2
-    _patterns = historical_patterns(shifts)
-    if restaurant_id:
-        _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
+    # The staffing baseline: the engine's (staffing_baseline — punches less
+    # the salaried, published weeks for the people who never punch, the late
+    # window; L-1, D-4, D-32) when it hands one over, else this history's.
+    if staffing_patterns:
+        _patterns = {k: (dict(v) if isinstance(v, dict) else v) for k, v in staffing_patterns.items()}
+    else:
+        _patterns = historical_patterns(shifts)
+        if restaurant_id:
+            _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
     _typical = _patterns.get("typical_headcount") or {}
     # A shift whose start time could not be read belongs to neither
     # daypart. Reported separately rather than folded into one of them, so
@@ -3936,7 +4122,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build year-over-year context block (the key intelligence)
     yoy_block = ""
     if yoy_context:
+        from time_utils import mdy as _mdy_yoy
         yoy_lines = []
+        _trend = next((r.get("yoy_trend") for r in yoy_context if r.get("yoy_trend")), None) or {}
         for row in yoy_context:
             dow_name = row.get("next_week_dow", "")
             nw_date  = row.get("next_week_date", "")
@@ -3944,25 +4132,43 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 # Last year's sales may come from an imported DSR workbook,
                 # which carries no labor or hours (models.
                 # get_yoy_schedule_context, memory audit 9/29/26): only what
-                # is on file is said, never "None% labor".
-                bits = [f"${row['yoy_sales']:,.0f} sales"]
+                # is on file is said, never "None% labor". Moved by this
+                # year's trend when one is measured (D-29).
+                _adj = row.get("yoy_sales_adjusted")
+                if _trend.get("applied") and _adj and abs(float(_adj) - float(row["yoy_sales"])) >= 1:
+                    bits = [f"${float(_adj):,.0f} sales at this year's pace (${row['yoy_sales']:,.0f} last year)"]
+                else:
+                    bits = [f"${row['yoy_sales']:,.0f} sales"]
                 if row.get("yoy_labor_pct") is not None:
                     bits.append(f"{row['yoy_labor_pct']}% labor")
                 if row.get("yoy_hours"):
                     bits.append(f"{row['yoy_hours']}h total hours")
                 src = {"import": " (your imported DSR workbook)", "dsr": " (that night's report)"}.get(
                     row.get("yoy_source"), "")
-                line = f"  {dow_name} {nw_date}: last year same day → " + ", ".join(bits) + src
-                # Flag if this day is a holiday match
-                if row.get("is_holiday"):
-                    line += f" ← USE THIS (matched to {row['holiday_name']} last year)"
+                # Which night last year it is, said as it is (E-8, D-28): a
+                # holiday reads last year's same holiday whatever weekday it
+                # fell on; otherwise the same weekday, or the same weekday a
+                # week off when that one has no figure.
+                _ly = f"{row.get('yoy_dow') or ''} {_mdy_yoy(row.get('yoy_date'))}".strip()
+                if row.get("holiday_matched"):
+                    which = f"last year's {row.get('holiday_name')} ({_ly})"
+                elif row.get("yoy_substituted"):
+                    which = f"last year's same weekday a week off ({_ly}; the exact one has no figure)"
+                else:
+                    which = f"last year same day ({_ly})"
+                line = f"  {dow_name} {nw_date}: {which} → " + ", ".join(bits) + src
+                if row.get("is_holiday") and not row.get("holiday_matched"):
+                    line += (f" — {row.get('holiday_name')} this year, but last year's {row.get('holiday_name')} "
+                             f"has no figure on file: this is an ordinary night, not the holiday")
                 yoy_lines.append(line)
             else:
                 yoy_lines.append(f"  {dow_name} {nw_date}: no historical data for this day last year")
         if yoy_lines:
-            yoy_block = ("\n\nYear-over-year same-day data (the primary demand projection — "
-                         "prefer this over recent averages; it controls for holidays and seasonality):\n"
-                         + "\n".join(yoy_lines))
+            yoy_block = ("\n\nYear-over-year data (context, secondary to the week's projection and the per-day "
+                         "targets, which already carry each date's measured demand"
+                         + (f"; last year's sales are moved by this year's trend — {_trend['basis']}"
+                            if _trend.get("applied") and _trend.get("basis") else "")
+                         + "):\n" + "\n".join(yoy_lines))
 
     # Build upcoming events block
     events_block = ""
@@ -4378,8 +4584,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if borrowed_headcount:
         from intelligence.staffing import merge_into_typical
         _req_typical, _borrowed_marks = merge_into_typical(_patterns.get("typical_headcount") or {}, borrowed_headcount)
-    _requirements_block = _req.requirements_block(_req.shift_requirements(
-        _gen_dates,
+    _req_inputs = dict(
         typical_headcount=_req_typical,
         borrowed=_borrowed_marks or None,
         role_floors=role_floors,
@@ -4390,7 +4595,6 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         leader_rules=leader_rules,
         leadership_known=bool(_scores or leader_flags),
         role_minimums=_role_minimums_dict(role_minimums_json),
-        roles=_can_work,
         skip_dates=closed_dates or (),
         # Half-hour needs across service from the measured sales curve, and
         # the section cap held over every requirement — the same shapes the
@@ -4400,7 +4604,20 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         close_times=close_times or None,
         section_cap=section_count or 0,
         cap_roles=section_cap_roles or None,
-    ))
+        # Each date's measured demand and the sales-per-labor-hour hold move
+        # the usual crew, the asks fold in with their reasons, and a late
+        # night carries its own row (D-23, P-19, PR-7, D-32, D-25).
+        date_demand=date_demand or None,
+        splh_hold=splh_hold or None,
+        adjustments=requirement_adjustments or None,
+        late_headcount=_patterns.get("late_headcount") or None,
+        standard_needs=(labor_standards or {}).get("needs") or None,
+    )
+    _requirements_block = _req.requirements_block(_req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs))
+    # The whole week's numbers, every role, from the same call with the same
+    # inputs: what the coverage score judges the draft against and what the
+    # fill passes fill to (P-19) — never a second reading of "typical".
+    _week_requirements = _req.shift_requirements(week_dates, roles=None, **_req_inputs)
     _names_here = [n for n, _r in employees if n]
     _experience_block = _req.experience_block(tenure, _names_here, leader_flags, experienced)
     _pattern_block = _req.usual_pattern_block(prior_pattern, _names_here)
@@ -4500,8 +4717,7 @@ Rows for a non-routine addition — a food runner, a second/extra staff member a
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
-- The YoY same-day data, when available, is what the per-day hour targets were built from; headcount per shift comes from the SHIFT REQUIREMENTS table
-- For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
+- The per-day hour targets come from this restaurant's own hours by weekday, moved by each date's measured demand (a holiday's or an event's lift included); last year's same-day figures are context, not a second target. Headcount per shift comes from the SHIFT REQUIREMENTS table, which already carries each date's demand — do not add a lift on top of it
 {_ceiling_line}{_hours_rule}
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
@@ -4714,6 +4930,12 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "budget_basis": _plan.get("budget_basis"),
         "daily_target_basis": _plan.get("daily_target_basis"),
         "daily_target_reasons": _plan.get("daily_target_reasons") or {},
+        # SHIFT REQUIREMENTS for the whole week, every role, as rows with
+        # their reasons, and as {"date|daypart": {role: people}} — the firm
+        # numbers (soft asks out) the score judges coverage against (D-23,
+        # P-19). "date|late" carries the late segment (D-32).
+        "requirements": _week_requirements,
+        "requirements_by_date": {f"{d}|{p}": v for (d, p), v in _req.requirements_map(_week_requirements).items()},
         # The staff list the prompt was actually built from, so the caller
         # can check the model's rows against it rather than trusting that
         # "use real employee names from the staff list" was obeyed.
@@ -4800,7 +5022,7 @@ def calculate_monthly_gap(analysis: dict) -> dict:
 
 # ── Sales-based demand forecast ────────────────────────────────────────────────
 
-def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = None) -> dict:
+def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = None, today=None) -> dict:
     """Per-weekday sales expectation from this restaurant's own recent history.
 
     The scheduler already knew what a typical WEEK looks like in headcount
@@ -4819,22 +5041,34 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     presenting a number built on two data points.
     """
     from models import get_conn as _gc
+    from canonical_facts import FINAL_SQL as _FINAL
+    # The window ends at the restaurant's own today: SQLite's date('now') is
+    # UTC, a day ahead every evening (schedule audit 10/3/26 D-33). Final
+    # nights only, as every other reader of the daily history.
+    if today is None:
+        try:
+            import demand as _dm
+            today = _dm.local_today(restaurant_id)
+        except Exception:
+            today = date.today()
+    since = (today - timedelta(days=int(weeks) * 7)).isoformat()
     try:
         conn = _gc(db_path) if db_path else _gc()
     except Exception:
         return {"ok": False, "reason": "no database"}
 
     try:
-        rows = conn.execute("""
-            SELECT day_of_week, sales FROM labor_daily_history
+        rows = conn.execute(f"""
+            SELECT date, day_of_week, sales FROM labor_daily_history
             WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0
-              AND date >= date('now', ?)
+              AND date >= ? AND date <= ? AND {_FINAL}
             ORDER BY date DESC
-        """, (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        """, (restaurant_id, since, today.isoformat())).fetchall()
     except Exception:
         return {"ok": False, "reason": "no history table"}
     finally:
         conn.close()
+    data_through = str(rows[0]["date"])[:10] if rows else None
 
     by_day = {}
     for r in rows:
@@ -4847,7 +5081,7 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     usable = {d: v for d, v in by_day.items() if len(v) >= 2}
     if len(usable) < 3:
         return {"ok": False, "reason": "not enough sales history yet",
-                "days_with_data": len(usable)}
+                "days_with_data": len(usable), "data_through": data_through}
 
     def _median(values):
         s = sorted(values)
@@ -4875,6 +5109,7 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
     return {
         "ok": True,
         "weeks": int(weeks),
+        "data_through": data_through,
         "overall_median": round(overall, 2),
         "days": days,
         "busiest": ranked[0]["day"],

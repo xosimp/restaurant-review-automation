@@ -587,6 +587,17 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
                     m = seen[0]
                     tail += (f"; the same kind of night measured {m['median_lift_pct']:+.0f}% here over "
                              f"{m['n']} past night{'s' if m['n'] != 1 else ''}")
+            # The date's one demand number (schedule_engine._merge_date_demand)
+            # differs from the signal's own lift when the owner's budget for
+            # the night, a measured forecast effect or measured rain moved it:
+            # the reasons say what made the figure, not the signal alone
+            # (schedule audit 10/3/26 D-23, D-30, PR-8).
+            dem = e.get("demand") or {}
+            if dem.get("reasons") and e.get("signal_lift_pct") != lift:
+                import ai_guard as _ag_dem
+                tail = (f" — expect about {abs(lift)}% {'more' if lift > 0 else 'less'} than a typical {day}"
+                        if lift else " — about a typical day")
+                tail += " (" + _ag_dem.wrap_untrusted("; ".join(dem["reasons"])) + ")"
         elif e.get("covers"):
             tail = f" — {e['covers']} covers booked"
         elif e.get("assumed"):
