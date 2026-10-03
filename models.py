@@ -4201,6 +4201,11 @@ def init_db(db_path: str = DB_PATH):
     # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
     from schedule_experiments import init_schedule_experiments
     init_schedule_experiments(db_path)
+    # Every schedule call's full input and answer, for replaying real weeks
+    # against another model, effort or prompt (schedule_output, schedule
+    # audit 10/3/26 PR-31).
+    from schedule_output import init_schedule_output
+    init_schedule_output(db_path)
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)

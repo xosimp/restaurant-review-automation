@@ -3171,8 +3171,8 @@ def _quality_rules_block() -> str:
         "  - Strength is about WHO works, never about adding people. It can never push "
         "you over the hours ceiling or below the minimum staffing floors.\n"
         "  - If you cannot clear a target with who is available, write the best schedule "
-        "you can and say so plainly in your summary — which shift, which target, and who "
-        "was missing. Never silently miss one.\n"
+        "you can. The finished week is checked against every target and the owner is shown "
+        "each one it misses, so never bend a higher-priority rule to hide one.\n"
     )
 
 
@@ -3220,30 +3220,18 @@ def format_profile_block(profiles: list = None) -> str:
             "  Where a shift matches no profile above, use the standard bar.\n")
 
 
-# The shape the model is asked to return. Rows keep the CSV column names so
-# everything downstream (repair, scoring, history, the staff link) reads one
-# format whether the response was JSON or the text fallback.
-SCHEDULE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "shifts": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "date": {"type": "string"}, "day": {"type": "string"}, "employee": {"type": "string"},
-                    "role": {"type": "string"}, "shift_start": {"type": "string"}, "shift_end": {"type": "string"},
-                    "scheduled_hours": {"type": "number"}, "notes": {"type": "string"},
-                },
-                "required": ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"],
-                "additionalProperties": False,
-            },
-        },
-        "summary": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["shifts", "summary"],
-    "additionalProperties": False,
-}
+# The shape the model is asked to return, with no enums — what a generation
+# falls back to when the API refuses its own schema. Each generation answers
+# against schedule_output.schedule_schema built for it: the roster, its
+# roles, the week's dates and the clock times as enums, rows grouped by
+# date with no weekday or hours column, a note from a fixed list (schedule
+# audit 10/3/26 PR-12, PR-13, P-35, PR-15). Every name, role, date and time
+# used to be a free string guarded by prose ("use these exact names",
+# "MUST be in 12-hour US format"), and each row repeated eight keys. The
+# parse (schedule_output.parse_answer) still hands the pipeline the CSV
+# rows it has always read.
+import schedule_output as _sched_out
+SCHEDULE_SCHEMA = _sched_out.schedule_schema()
 
 
 # Where Cavnar AI's own staffing questions start inside the notes handed to
@@ -3391,6 +3379,68 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
             "revenue_basis": revenue_basis}
 
 
+# The 400 the API answers when it will not take a structured-output schema:
+# it names the schema, the output format or the grammar compiled from it.
+# The old test — the word "format" anywhere in any error's text — matched
+# unrelated 400s and bought an extra paid CSV call (schedule audit 10/3/26
+# PR-28); an error about effort or thinking is never a format refusal.
+_FORMAT_REFUSAL = re.compile(r"output_config\.format|json_schema|output_format|\bschema\b|grammar", re.I)
+
+
+def _format_refused(exc) -> bool:
+    """Whether `exc` is the API refusing the structured-output contract: a
+    400 (anthropic.BadRequestError) whose message names the schema or the
+    output format."""
+    try:
+        import anthropic as _anthropic
+        if not isinstance(exc, _anthropic.BadRequestError):
+            return False
+    except ImportError:
+        return False
+    body = getattr(exc, "body", None)
+    err = (body or {}).get("error") if isinstance(body, dict) else None
+    text = " ".join(str(x) for x in ((err or {}).get("message"), getattr(exc, "message", None), str(exc)) if x)
+    return bool(_FORMAT_REFUSAL.search(text))
+
+
+def _usage_of(msg) -> dict:
+    """A message's token counts — thinking is inside output_tokens."""
+    u = getattr(msg, "usage", None)
+    return {"input_tokens": int(getattr(u, "input_tokens", 0) or 0),
+            "output_tokens": int(getattr(u, "output_tokens", 0) or 0),
+            "cache_read_tokens": int(getattr(u, "cache_read_input_tokens", 0) or 0),
+            "cache_write_tokens": int(getattr(u, "cache_creation_input_tokens", 0) or 0)}
+
+
+def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
+                          dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None):
+    """Store one schedule call's full input and answer (schedule audit
+    10/3/26 PR-31: the trace keeps 40k characters of a 55-70k prompt, so no
+    real week could be replayed). Returns the record id, or None. A failure
+    to store is captured, never the generation's failure."""
+    if not restaurant_id:
+        return None
+    try:
+        request = {k: v for k, v in (call or {}).items() if k not in ("restaurant_id", "action")}
+        oc = (call or {}).get("output_config") or {}
+        return _sched_out.record_call(
+            restaurant_id, request, inputs=call_args, answer=raw, generation_id=generation_id,
+            week_start=week_start, dates=dates,
+            ai_call_id=getattr(msg, "_cavnar_call_id", None) if msg is not None else None,
+            model=(call or {}).get("model"), effort=oc.get("effort"), contract=contract,
+            stop_reason=getattr(msg, "stop_reason", None) if msg is not None else None,
+            outcome=outcome, error=error, seconds=seconds, usage=_usage_of(msg) if msg is not None else None,
+            rows=rows, answer_chars=len(raw or "") if raw is not None else None)
+    except Exception as e:
+        print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
+        try:
+            import ops as _ops_rec
+            _ops_rec.capture(e, job="schedule_model_calls", context=f"restaurant_id={restaurant_id}")
+        except Exception as _cx:
+            print(f"[schedule] capture failed too: {_cx!r}")
+        return None
+
+
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
@@ -3436,7 +3486,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  hourly_profile: dict = None,
                                  section_cap_roles: list = None,
                                  open_times: dict = None,
-                                 close_times: dict = None) -> dict:
+                                 close_times: dict = None,
+                                 held_roles: dict = None,
+                                 generation_id: str = None,
+                                 instruction: str = None,
+                                 schema_enums: bool = True) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -3468,8 +3522,28 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     focus         — named weaknesses of the previous draft of these days,
                     for a regeneration of chosen dates (schedule_requirements
                     .focus_block).
-    structured    — ask for JSON against SCHEDULE_SCHEMA; falls back to the
-                    CSV text contract if the API refuses the format.
+    structured    — ask for JSON against the schema built for this
+                    generation (schedule_output.schedule_schema); when the
+                    API refuses that schema it is asked once more against
+                    the shape alone (schema_enums=False), and only then
+                    with the CSV text contract.
+    held_roles    — {person lower: roles they hold beyond their roster role}
+                    (Constraints.held_roles): rows may carry them.
+    generation_id — the generation this call belongs to: every call's full
+                    input and answer is stored under it (schedule_output.
+                    record_call) and linked to the saved week.
+    instruction   — what the owner asked for when requesting this draft
+                    (Ask Cavnar's generate_schedule, the generate route):
+                    their words, ranked with the ADDITIONAL SCHEDULING
+                    NOTES at priority 5.
+
+    Returns, beyond the week's figures: `schedule_csv` (the CSV rows the
+    pipeline reads), `truncated` (the answer stopped at max_tokens or the
+    context window — every complete row is kept; `complete_dates` are the
+    days written whole, `partial_dates` the one cut off), and `model_call`
+    (what the call cost: tokens, seconds, rows, tokens per row). A refusal
+    raises schedule_engine.ScheduleGenerationError with a sentence the owner
+    can read; it is never parsed and never retried as CSV.
     """
     # Every argument, exactly as called — the CSV fallback below re-calls
     # with these. It used to re-list them by hand and dropped week_start, the
@@ -3544,7 +3618,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _high_risk_days.append(f"{_dn} ({_rate}% of {_total} watched shifts missed)")
     if _high_risk_days:
         _noshows_block = (f"\n\nNO-SHOW RISK (from shifts somebody watched): {', '.join(_high_risk_days)}. "
-                          f"On these days, say in the summary that a standby should be on call — do not add "
+                          f"The owner is told which days want a standby on call (from attendance) — do not add "
                           f"a person beyond the requirements for it.")
 
     # Detect cross-trained employees from shift history (appear with 2+ distinct roles)
@@ -3968,7 +4042,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             )
         if _rule_lines:
             _strength_block += ("\nSHIFT LEADER REQUIREMENTS — priority 3. Meet each one; only a "
-                                "priority 1 or 2 item may stop you, and then say which in the summary:\n"
+                                "priority 1 or 2 item may stop you (the owner is shown any the finished week "
+                                "misses):\n"
                                 + "\n".join(_rule_lines) + "\n")
         _strength_block += _quality_rules_block()
 
@@ -4006,6 +4081,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                   "1-4 in the PRIORITIES list:\n" + _owner_notes.strip())
         if _findings.strip():
             _sched_notes_block += "\n\n" + SCHED_FINDINGS_HEADER + "\n" + _findings.strip()
+    # What the owner asked for with THIS draft — Ask Cavnar's
+    # generate_schedule ("…and give Maria no more than two closes") or the
+    # generate route's `instruction`. It used to have no way in: the Ask tool
+    # took no input at all, so the owner's words were lost on confirm
+    # (schedule audit 10/3/26 PR-19). The owner's own text, ranked with the
+    # notes above (priority 5); marker strings inside it are neutralised so
+    # it can never open or close a fence.
+    if instruction and str(instruction).strip():
+        from ai_guard import _neutralise_markers as _neut_ins
+        _sched_notes_block += ("\n\nTHE OWNER'S REQUEST FOR THIS DRAFT (said when asking for it — follow it with the "
+                               "ADDITIONAL SCHEDULING NOTES at priority 5; only priorities 1-4 may stop you):\n"
+                               + _neut_ins(" ".join(str(instruction).split())[:500]))
 
     # A labor target is a CEILING, not a quota. This block used to tell the
     # model that landing under budget meant "the historical staffing data
@@ -4056,8 +4143,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                      f"  If the schedule would put you OVER {hours_budget}h, trim hours no requirement needs first — "
                      f"over-long shifts, early starts, late stays past the closing stagger — taking them from the "
                      f"days furthest above their own per-day target. Never drop a shift below its SHIFT "
-                     f"REQUIREMENTS or the owner's staffing floors to reach the ceiling. Say in the summary which "
-                     f"days you trimmed, or by how much the requirements alone exceed the ceiling.\n"
+                     f"REQUIREMENTS or the owner's staffing floors to reach the ceiling. The owner is shown "
+                     f"how far the finished week lands over the ceiling.\n"
                      f"  The hours ceiling only ever removes hours; it never adds them.{_daily_targets}")
 
     # The dates to write rows for. A big roster is generated in parts; the
@@ -4149,16 +4236,55 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                              "rest and days off — the rules are checked across the whole week — and give closes, "
                              "weekend shifts and busy shifts to the people with fewer so far, so the week's share "
                              "stays fair):\n" + "\n".join(_prior_lines))
+    # The output contract (schedule audit 10/3/26 PR-11, PR-12, PR-13, PR-15):
+    # the schema this generation answers against — the roster, its roles,
+    # the week's dates and the clock times as enums, the same for every call
+    # of the generation — and the words that describe it. The summary is
+    # three bullets about decisions; what the week misses is worked out from
+    # the finished rows (schedule_output.unmet_items), so the model is not
+    # asked to report it.
+    _closed_set = set(closed_dates or ())
+    _worked_roles = {}
+    for _n, _r in employees:
+        _worked_roles[_n] = set(_emp_roles.get(_n, ())) | set((held_roles or {}).get(str(_n).strip().lower()) or ())
+    _schema = _sched_out.schedule_schema(
+        employees=[n for n, _r in employees],
+        roles=_sched_out.schema_roles(employees, _worked_roles),
+        dates=[d for d in week_dates if d not in _closed_set] or list(week_dates),
+        times=_sched_out.clock_values(_sched_out.stated_times(open_times, close_times, hours_notes)),
+    ) if schema_enums else _sched_out.schedule_schema()
+    _note_words = ", ".join(v for v in _sched_out.NOTE_VALUES if v)
+    _notes_rule = ("- Notes are printed on that employee's own schedule and read by them. Leave a shift's note "
+                   + ("out" if structured else "empty") + " unless one applies, and then write only one of: "
+                   + _note_words + ". Never put a rating or score, reliability or attendance, pay, performance, "
+                   "or anything about another person in a note.")
     if structured:
-        _output_spec = ("OUTPUT — JSON only, matching the schema you were given: `shifts` is every shift for the dates above "
-                        "(date YYYY-MM-DD, day, employee exactly as listed, role, shift_start and shift_end in 12-hour am/pm "
-                        "form like \"4:00pm\", scheduled_hours as a number, notes as one brief phrase), and `summary` is exactly "
-                        "three bullets.")
+        _output_spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date above "
+                        "that you staff: its `date` and its `shifts`, each shift's `employee` exactly as listed, its "
+                        "`role`, and its `start` and `end` from the schema's clock times (an end at or before the start "
+                        "runs past midnight) — the weekday and the hours are worked out from the date and the times, so "
+                        "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not "
+                        "use it to report what the week misses — every requirement, target, floor and request the "
+                        "finished week does not meet is checked in code and shown to the owner.")
+        _times_rule = ("- Times: `start` and `end` are clock times from the schema's list, 12-hour with am/pm "
+                       "(\"11:00am\", \"9:30pm\").")
     else:
         _output_spec = ("OUTPUT — your entire response must follow this structure with no text before the CSV:\n\n"
                         "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
                         "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(continue for every shift)\n---SUMMARY---\n"
                         "- bullet 1\n- bullet 2\n- bullet 3")
+        _times_rule = ("- IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "
+                       "\"11:00am\", \"4:00pm\", \"9:30pm\". Never use 24-hour/military time.")
+    # Column order only exists in the CSV contract; JSON keys cannot be
+    # scrambled (schedule audit 10/3/26 PR-14).
+    _column_order_rule = "" if structured else (
+        "\n\nRows for a non-routine addition — a food runner, a second/extra staff member added for volume, a role or "
+        "arrival time called out by a special rule above — are exactly where column order most often gets scrambled, "
+        "because they don't follow the same repeating pattern as the rest of the week. Before writing one of these rows, "
+        "slow down internally (without narrating it) and confirm you are about to write, in order: date, day, employee, "
+        "role, shift_start, shift_end, scheduled_hours, notes — a real weekday word in the day column and a real "
+        "person's name in the employee column, same as every other row. Never let a special role name or rule override "
+        "push into the day or employee position.")
 
     # One output rule, matching the contract actually requested: the JSON
     # schema, or the CSV text fallback. Both used to be stated at once.
@@ -4198,9 +4324,7 @@ Each summary bullet: one short clause, 10 words or fewer, plain language — the
 
 No emoji anywhere in the CSV notes or summary bullets — plain professional text only.
 
-{_format_rule}
-
-Rows for a non-routine addition — a food runner, a second/extra staff member added for volume, a role or arrival time called out by a special rule above — are exactly where column order most often gets scrambled, because they don't follow the same repeating pattern as the rest of the week. Before writing one of these rows, slow down internally (without narrating it) and confirm you are about to write, in order: date, day, employee, role, shift_start, shift_end, scheduled_hours, notes — a real weekday word in the day column and a real person's name in the employee column, same as every other row. Never let a special role name or rule override push into the day or employee position.
+{_format_rule}{_column_order_rule}
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
@@ -4218,7 +4342,7 @@ SERVER CLOSING STAGGER RULE (universal — applies to every restaurant, includin
 - When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee costs nothing extra and keeps headcount lean.
 
 NO-SHOW BUFFER:
-- On this restaurant's highest-volume days of the week (from the sales figures above; if there are none, the days TYPICAL HEADCOUNT staffs heaviest), note in the summary that a standby should be on-call if headcount is already at ceiling.
+- A standby for this restaurant's highest-volume days is recommended to the owner from its own attendance record; do not add a person to the schedule for it.
 
 ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - Follow the RESTAURANT HOURS & SHIFT RULES block above exactly. Those are the definitive rules for this restaurant.
@@ -4227,8 +4351,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 
 - Shifts per day: SHIFT REQUIREMENTS gives the number per role per shift, built from TYPICAL HEADCOUNT and the owner's floors (scale beyond it only for a high-volume YoY day or a flagged event, never to reach an hours figure). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
 - Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split. This is about shift LENGTH, not headcount — do not use it as a reason to cut the number of people working nights. Each daypart gets its own full number per SHIFT REQUIREMENTS (e.g. 6 people at night stays 6 people at night; splitting shift length doesn't mean splitting the 6 into 3 morning + 3 night), and that number counts everyone PRESENT for the daypart, not only the shifts that start in it. {_presence_rule} A shift that counts at dinner this way is ALREADY one of the night total's people — it counts toward the 6, it does not add to it; a shift that falls short of the dinner window does not count toward night at all. Before finalizing each day, count for each daypart every person who counts toward it by that rule and confirm the total — not just the rows that start in that daypart — matches the SHIFT REQUIREMENTS number.
-- Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
-- IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
+{_notes_rule}
+{_times_rule}{constraints}"""
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
@@ -4286,23 +4410,34 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         _call["thinking"] = {"type": "adaptive", "display": "summarized"}
         _oc["effort"] = SCHEDULE_EFFORT
     if structured:
-        _oc["format"] = {"type": "json_schema", "schema": SCHEDULE_SCHEMA}
+        _oc["format"] = {"type": "json_schema", "schema": _schema}
     if _oc:
         _call["output_config"] = _oc
+    _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
+    _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
         # streamed events, not the whole call.
         msg = create_with_retry(get_client(timeout=360.0), readiness=_ready_sched, **_call)
     except Exception as _e:
-        # A deployment whose SDK or model refuses the format contract gets
-        # the CSV text contract instead, once, rather than no schedule.
-        _msg = str(_e).lower()
-        if structured and ("output_config" in _msg or "json_schema" in _msg or "format" in _msg):
-            # The structured contract was refused; the CSV contract runs
-            # instead. A degraded path, so it leaves a trace (#140) beyond
-            # the failed call's error row.
+        _record_schedule_call(restaurant_id, _call, _call_args, None, None, outcome="error", error=_e,
+                              seconds=round(time.time() - _t0, 1), **_rec)
+        # The API refusing the structured contract — a 400 that names the
+        # schema or the output format, never any error that happens to say
+        # "format" (schedule audit 10/3/26 PR-28). The generation's own
+        # schema is asked once more as the shape alone (a roster too large
+        # for the API to compile into enums), and only then the CSV text
+        # contract. A degraded path, so each leaves a trace (#140) beyond
+        # the failed call's error row.
+        if structured and _format_refused(_e):
             import ai_utils as _ai_q
+            if schema_enums:
+                _ai_q.record_quality_event("labor_schedule", "fallback", restaurant_id=restaurant_id,
+                                           action="labor_schedule",
+                                           detail="the generation's schema was refused by the API; asked again "
+                                                  "against the shape without enums")
+                return generate_optimized_schedule(**dict(_call_args, schema_enums=False))
             _ai_q.record_quality_event("labor_schedule", "fallback", restaurant_id=restaurant_id,
                                        action="labor_schedule",
                                        detail="structured output refused by the API; the CSV contract was used")
@@ -4311,25 +4446,51 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     _seconds = round(time.time() - _t0, 1)
     raw = extract_text(msg).strip()
     _stop = getattr(msg, "stop_reason", None)
-    _truncated = _stop == "max_tokens"
+    # Cut short — at max_tokens, or at the context window — the answer is
+    # salvaged to its complete rows and the caller rewrites what is missing
+    # (schedule audit 10/3/26 PR-28, PR-30).
+    _truncated = _stop in ("max_tokens", "model_context_window_exceeded")
     print(f"[schedule] raw length={len(raw)} stop_reason={_stop} seconds={_seconds}")
     import re as _re_sched
+    if _stop == "refusal":
+        # The model declined (a safety check; stop_reason "refusal"). What
+        # came back need not match the schema and is not a week: it is never
+        # parsed, and never retried as CSV — the same request would be
+        # declined again, and every try is paid (PR-28, PR-30). It used to be
+        # read as an empty week and regenerated in parts until "wrote no
+        # shifts … twice".
+        _record_schedule_call(restaurant_id, _call, _call_args, raw, msg, outcome="refused", seconds=_seconds,
+                              rows=0, **_rec)
+        _category = getattr(getattr(msg, "stop_details", None), "category", None)
+        import ai_utils as _ai_r
+        _ai_r.record_quality_event("labor_schedule", "refused", restaurant_id=restaurant_id, action="labor_schedule",
+                                   detail=f"the schedule call was declined (stop_reason refusal, category "
+                                          f"{_category or 'none'})")
+        from schedule_engine import ScheduleGenerationError
+        _err = ScheduleGenerationError("Cavnar AI couldn't write this schedule: the AI model declined the request, "
+                                       "so nothing was saved. Try again — if it declines a second time, tell "
+                                       "will@cavnar.ai.")
+        _err.stop_reason, _err.category = "refusal", _category
+        raise _err
 
     _data_rows, summary_part = [], ""
-    _parsed_json = None
+    _parse = None
+    summary_bullets = []
     if structured:
-        try:
-            _parsed_json = json.loads(raw)
-        except Exception:
-            _parsed_json = None
-    if isinstance(_parsed_json, dict) and isinstance(_parsed_json.get("shifts"), list):
-        for _sh in _parsed_json["shifts"]:
-            if not isinstance(_sh, dict) or not str(_sh.get("employee") or "").strip():
-                continue
-            _vals = [str(_sh.get(k) if _sh.get(k) is not None else "").strip().replace(",", ";")
-                     for k in ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")]
-            _data_rows.append(",".join(_vals))
-        summary_part = "\n".join("- " + str(b) for b in (_parsed_json.get("summary") or []) if str(b).strip())
+        # Never read as CSV: an answer that is not the schema's JSON is
+        # salvaged to its complete rows or yields none (PR-28) — garbage
+        # lines from a truncated JSON answer used to become "rows".
+        _parse = _sched_out.parse_answer(raw, dates=_gen_dates)
+        _data_rows = _sched_out.csv_lines(_parse["rows"])
+        # A row the parse leaves out (a shift that starts and ends at the
+        # same time) is handed on as an unreadable line: the job counts it
+        # and names it to the owner, as it does a malformed CSV line.
+        _data_rows += ["(left out) " + str(d).replace(",", ";") for d in _parse["dropped"]]
+        summary_bullets = [_re_sched.sub(r'\*+', '', b).strip() for b in _parse["summary"]]
+        summary_bullets = [b for b in summary_bullets if b]
+        if not _parse["parsed"] and not _truncated:
+            from ai_utils import mark_outcome as _mark_out
+            _mark_out(msg, "unparseable", reason="not the schema's JSON")
     else:
         if "---SUMMARY---" in raw:
             _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
@@ -4343,11 +4504,37 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
             _low = _l.lower().replace(" ", "")
             if "date" in _low and "employee" in _low and "shift" in _low:
                 continue  # skip any accidental header repetition
+            # The notes column is printed on the employee's schedule: only
+            # one of the fixed notes survives (PR-15), here as in the JSON.
+            _cols = _l.split(",", 7)
+            if len(_cols) == 8:
+                _cols[7] = _sched_out.vocabulary_note(_cols[7])
+                _l = ",".join(_cols)
             _data_rows.append(_l)
-    if week_slice:
-        _keep = set(_gen_dates)
-        _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip() in _keep]
+        if week_slice:
+            _keep = set(_gen_dates)
+            _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip() in _keep]
+        for line in summary_part.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("- "):
+                line = line[2:].strip()
+            line = _re_sched.sub(r'\*+', '', line).strip()
+            if line:
+                summary_bullets.append(line)
     csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
+    _rows_written = len(_parse["rows"]) if _parse is not None else sum(1 for r in _data_rows if r.count(",") >= 5)
+    _outcome = ("truncated" if _truncated else
+                "unparseable" if (_parse is not None and not _parse["parsed"]) else "ok")
+    _rec_id = _record_schedule_call(restaurant_id, _call, _call_args, raw, msg, outcome=_outcome, seconds=_seconds,
+                                    rows=_rows_written, **_rec)
+    _usage = _usage_of(msg)
+    _model_call = {"id": _rec_id, "model": _model, "effort": _oc.get("effort"), "contract": _contract,
+                   "stop_reason": _stop, "seconds": _seconds, **_usage, "rows": _rows_written,
+                   "answer_chars": len(raw),
+                   # Every output token — thinking included — per row written:
+                   # what a call's max_tokens has to hold per row (P-35).
+                   "output_tokens_per_row": (round(_usage["output_tokens"] / _rows_written, 1)
+                                             if _rows_written and _usage["output_tokens"] else None)}
     print(f"[schedule] data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
 
     def _count_csv_hours(csv_text):
@@ -4366,15 +4553,6 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     actual_hours = _count_csv_hours(csv_clean)
     print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
 
-    # Parse summary bullets
-    summary_bullets = []
-    for line in summary_part.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("- "):
-            line = line[2:].strip()
-        line = _re_sched.sub(r'\*+', '', line).strip()
-        if line:
-            summary_bullets.append(line)
     # "Cavnar AI's note" reaches the page unread (R10, B5 #10), so each
     # bullet passes the digest's line checks: no figure or count the prompt
     # did not hold, no name outside it, no cause it does not state, no link
@@ -4401,7 +4579,17 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "narrative": summary_bullets[:3],
         "truncated": _truncated,
         "stop_reason": _stop,
-        "structured": bool(_parsed_json),
+        "structured": bool(_parse is not None and _parse["parsed"]),
+        # The days written whole and the one an answer cut short stopped
+        # inside (no rows: half a day is not a day written) — so the caller
+        # rewrites only what is missing.
+        "complete_dates": list(_parse["complete_dates"]) if _parse is not None else None,
+        "partial_dates": list(_parse["partial_dates"]) if _parse is not None else [],
+        "salvaged": bool(_parse is not None and _parse["salvaged"]),
+        # What the call cost and wrote (tokens, seconds, rows, tokens a row)
+        # and the id of its stored input (schedule_model_calls).
+        "model_call": _model_call,
+        "generation_id": generation_id,
         "generation_seconds": _seconds,
         "generated_dates": _gen_dates,
         "week_dates": week_dates,
@@ -4611,7 +4799,18 @@ def format_demand_block(forecast: dict) -> str:
 
 # ── Publishing a schedule to staff ─────────────────────────────────────────────
 
-_ENGINE_NOTE = re.compile(r"\s*[—\-–]?\s*NEEDS REVIEW:.*$|\s*[—\-–]?\s*Cavnar(?:\s+AI)?:.*$|\s*\(was [^)]*\)|(^|\s*[—\-–;]\s*)(added|trimmed|auto-capped)\b[^;]*", re.I)
+# Every mark a pass appends to the notes column for the owner: NEEDS REVIEW,
+# "Cavnar AI: …" (the optimizer, the solver, the manager pass), "(was Ana —
+# …)", and an addition, extension, trim or close-time cap — bare ("added —
+# coverage top-up") or appended in brackets ("closer (auto-capped to close
+# time)", "(extended — PAR hours top-up)", "(trimmed — over the 7-server
+# cap)"). The bracketed forms and "extended" used to reach the employee's
+# schedule (schedule audit 10/3/26 PR-15).
+_ENGINE_NOTE = re.compile(
+    r"\s*[—\-–]?\s*NEEDS REVIEW:.*$"
+    r"|\s*[—\-–]?\s*Cavnar(?:\s+AI)?:.*$"
+    r"|\s*\((?:was|added|extended|trimmed|auto-capped)\b[^)]*\)"
+    r"|(^|\s*[—\-–;]\s*)(?:added|extended|trimmed|auto-capped)\b[^;()]*", re.I)
 
 
 def staff_facing_note(note) -> str:
@@ -4619,7 +4818,9 @@ def staff_facing_note(note) -> str:
     NEEDS REVIEW, (was Ana — over her hours), added — coverage top-up,
     and the optimizer's "Cavnar: …" reasons (which name colleagues and the
     owner's strength ratings). None of that belongs on an employee's
-    schedule."""
+    schedule. What stays is the model's note, which is one of a fixed list
+    (schedule_output.NOTE_VALUES — the model is told the employee reads it),
+    "staggered start", and whatever the owner typed into the editor."""
     n = (note or "").strip()
     if not n:
         return ""

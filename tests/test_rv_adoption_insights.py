@@ -310,10 +310,12 @@ def test_the_prompts_instruction_text_is_never_a_cause_anchor():
 
 def test_the_generator_validates_its_note_against_the_owners_floors(monkeypatch):
     seen = {}
+    # The structured contract's answer: a structured call's text is never
+    # read as CSV (schedule audit 10/3/26 PR-28), so the bullets ride in the
+    # schema's `summary`.
+    answer = json.dumps({"days": [], "summary": ["Monday lunch down to one server.", "Kept Friday dinner staffed."]})
     monkeypatch.setattr(labor, "create_with_retry", lambda client, **k: seen.update(k) or types.SimpleNamespace(
-        content=[types.SimpleNamespace(text="date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
-                                            "---SUMMARY---\n- Monday lunch down to one server.\n"
-                                            "- Kept Friday dinner staffed.")], stop_reason="end_turn"))
+        content=[types.SimpleNamespace(text=answer)], stop_reason="end_turn"))
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: object(), raising=False)
     analysis = {"overall_labor_pct": 28.0, "overstaffed_days": [], "understaffed_days": [], "dow_summary": {},
                 "date_range": {"start": "2026-06-01", "end": "2026-06-14", "days": 14}}

@@ -2715,8 +2715,9 @@ TOOLS = [
                             "NOT for: a measurable target ('labor under 26% by December') — call set_goal, "
                             "which measures it and makes it the target the modules judge against; a date the "
                             "restaurant is closed — propose add_closed_date; a person who can't work a "
-                            "weekday — propose set_staff_unavailable. Those write the store the schedule "
-                            "actually obeys.\n"
+                            "weekday — propose set_staff_unavailable; a person who can work only part of a "
+                            "weekday ('can't close Sundays') — propose set_staff_hours. Those write the store "
+                            "the schedule actually obeys.\n"
                             "audience: 'team' when managers should know it too (most operational facts), "
                             "'principals' for anything private to the owner (personnel changes, pay, money, "
                             "selling), 'author' for a personal reminder.\n"
@@ -3784,8 +3785,22 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "generate_schedule",
-            "description": "Propose building an optimized schedule for next week. Takes a minute and replaces the current draft, so the owner confirms first.",
-            "input_schema": {"type": "object", "properties": {}},
+            # The week, the days and what the owner asked for ride on the
+            # card into the generation: the tool took no input at all, so
+            # "redo Friday with fewer servers" generated next week, whole,
+            # with the ask lost (schedule audit 10/3/26 PR-19).
+            "description": (
+                "Propose building the schedule for a week, or rewriting some days of that week's current draft. "
+                "Takes a minute and replaces the current draft, so the owner confirms first. week_start is any "
+                "date in the week wanted (leave it out for next week). dates rewrites only those days of the "
+                "week's draft and keeps every other day as it is. instruction carries what the owner asked for "
+                "with this draft, in their words ('Maria closes no more than twice', 'one fewer server Friday "
+                "lunch') — put every such ask in it, never drop one."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "week_start": {"type": "string", "description": "YYYY-MM-DD: any date in the week wanted."},
+                "dates": {"type": "array", "items": {"type": "string"},
+                          "description": "YYYY-MM-DD days of that week to rewrite; the rest of its draft is kept."},
+                "instruction": {"type": "string", "description": "What the owner asked for with this draft."}}},
         },
     },
     # Answering the team (Friction audit #18): the same decide routes the
@@ -3856,17 +3871,53 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "set_staff_unavailable",
+            # "Maria can't close Sundays" was this tool's own example, and it
+            # blocked Maria's whole Sunday — a hard rule that took her lunch
+            # shift too (schedule audit 10/3/26 PR-19). Part of a day is
+            # set_staff_hours.
             "description": (
-                "Propose recording that one person on the team cannot work certain weekdays, in the availability "
-                "the schedule draft treats as a hard rule. Use it instead of remember when the owner says someone "
-                "can't work a day ('Maria can't close Sundays' → Maria, Sunday). The name must be someone on the "
-                "roster; their other blocked days and notes are kept. Does NOT change anything — the owner "
-                "confirms first."),
+                "Propose recording that one person on the team cannot work certain weekdays AT ALL, in the "
+                "availability the schedule draft treats as a hard rule. Use it instead of remember when the owner "
+                "says someone can't work a whole day ('Maria can't work Sundays' → Maria, Sunday). Part of a day "
+                "is NOT this — 'Maria can't close Sundays' or 'Ben only does lunches on Fridays' is "
+                "set_staff_hours. The name must be someone on the roster; their other blocked days and notes are "
+                "kept. Does NOT change anything — the owner confirms first."),
             "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
                              "additionalProperties": False, "properties": {
                 "employee_name": {"type": "string"},
                 "weekdays": {"type": "array", "items": {"type": "string", "enum": [
                     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}}}},
+        },
+    },
+    # Part of a day (schedule audit 10/3/26 PR-19): the time window and the
+    # daypart availability the schedule already checks as hard rules
+    # (staff_settings.time_windows / daypart_availability), through the
+    # same staff-settings route the Team screen saves with.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/staff-settings", "mobile": "/mobile/api/labor/staff-settings", "method": "POST"},
+        "summary": "Limit {employee_name}'s hours on {weekdays}",
+        "module": "module_labor",
+        "spec": {
+            "name": "set_staff_hours",
+            "description": (
+                "Propose recording that one person on the team can work only PART of certain weekdays — not after "
+                "a time (latest), not before a time (earliest), or only one daypart (morning = lunch/day, night = "
+                "dinner/night) — in the settings the schedule draft treats as a hard rule. 'Maria can't close "
+                "Sundays' is this, not a day off: she can work Sunday, just not until close, so ask the owner by "
+                "what time she has to be done unless they said it, then propose latest. 'Ben only does lunches on "
+                "Fridays' → Friday, daypart morning. The name must be someone on the roster; their limits on other "
+                "days are kept. Does NOT change anything — the owner confirms first."),
+            "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
+                             "additionalProperties": False, "properties": {
+                "employee_name": {"type": "string"},
+                "weekdays": {"type": "array", "items": {"type": "string", "enum": [
+                    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}},
+                "latest": {"type": "string", "description": "The time they must be done by, e.g. 8:00pm."},
+                "earliest": {"type": "string", "description": "The time they can start from, e.g. 4:00pm."},
+                "daypart": {"type": "string", "enum": ["morning", "night"],
+                            "description": "morning = lunch/day shifts only; night = dinner/night shifts only."}}},
         },
     },
     {
@@ -4022,6 +4073,13 @@ def tool_allowed(name, restaurant):
         if user is not None:
             from permissions import is_principal
             if not is_principal(user):
+                return False
+    if name in _TEAM_SETTINGS_TOOLS:
+        # The staff-settings route saves for a login that manages the team.
+        user = getattr(restaurant, "_ask_dsr_user", None)
+        if user is not None and not user.get("is_admin"):
+            from permissions import has_permission, TEAM_RATE
+            if not has_permission(user, TEAM_RATE):
                 return False
     return True
 
@@ -4191,6 +4249,15 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
         out = {"action": name, "summary": summary_text, "route": tool_route, "body": body, "target": {},
                "fields_shown": fields_shown(body), "requires_confirmation": True}
         return out
+    if name == "generate_schedule":
+        # The week, the days to rewrite with the draft they belong to, and
+        # the owner's own words for the draft — every one on the card and in
+        # the body the route starts the generation with (PR-19).
+        body, summary_text, _why = _schedule_card(args, restaurant_id)
+        if body is None:
+            return None
+        return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
+                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -4347,10 +4414,20 @@ _FIELD_LABELS = {
     "employee_name": "Who",
     "unavailable_days": "Not available on",
     "notes": "Their notes (kept)",
+    "week_start": "Week of",
+    "dates": "Days to rewrite",
+    "history_id": "Draft #",
+    "instruction": "What you asked for",
+    "time_windows": "Hours they can work",
+    "daypart_availability": "Shifts they can work",
 }
 
 
-_CONSTRAINT_CARDS = ("add_closed_date", "set_staff_unavailable")
+_CONSTRAINT_CARDS = ("add_closed_date", "set_staff_unavailable", "set_staff_hours")
+# Write tools whose route needs the login to manage the team (TEAM_RATE):
+# a card a login could never confirm is not offered to it.
+_TEAM_SETTINGS_TOOLS = {"set_staff_hours"}
+_PART_WORDS = {"morning": "lunch/day", "night": "dinner/night"}
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
@@ -4404,6 +4481,8 @@ def _constraint_card(name, args, restaurant_id):
             except Exception:
                 pass
         return {"add": day.isoformat()}, f"Mark {day.strftime('%A')} {mdy(day)} as closed", None
+    if name == "set_staff_hours":
+        return _hours_card(args, restaurant_id)
     # set_staff_unavailable
     who = " ".join(str(args.get("employee_name") or "").split())
     days = [str(d).strip().capitalize() for d in (args.get("weekdays") or []) if str(d).strip()]
@@ -4434,6 +4513,142 @@ def _constraint_card(name, args, restaurant_id):
     if notes:
         body["notes"] = notes
     return body, f"Mark {canonical} as not available on {', '.join(sorted(set(days), key=_WEEKDAYS.index))}", None
+
+
+def _hours_card(args, restaurant_id):
+    """(body, summary, None) for set_staff_hours — a part-day limit on some
+    weekdays, merged into the person's stored time windows and daypart
+    availability (their other days kept: a whole-map save must never drop
+    what the owner set) — or (None, None, why)."""
+    import schedule_output as _so
+    from schedule_rules import parse_minutes, _OVERNIGHT_LATEST_BEFORE
+    who = " ".join(str(args.get("employee_name") or "").split())
+    days = sorted({str(d).strip().capitalize() for d in (args.get("weekdays") or []) if str(d).strip()}
+                  & set(_WEEKDAYS), key=_WEEKDAYS.index)
+    if not who or not days:
+        return None, None, "Name the person and the weekdays the limit is for."
+    latest_raw, earliest_raw = str(args.get("latest") or "").strip(), str(args.get("earliest") or "").strip()
+    latest = _so.canonical_time(latest_raw) if latest_raw else None
+    earliest = _so.canonical_time(earliest_raw) if earliest_raw else None
+    part = str(args.get("daypart") or "").strip().lower()
+    for raw, val in ((latest_raw, latest), (earliest_raw, earliest)):
+        if raw and not val:
+            return None, None, f"'{raw}' isn't a time — say it like 8:00pm."
+    if part and part not in _PART_WORDS:
+        return None, None, "The daypart is morning (lunch/day) or night (dinner/night)."
+    if not (latest or earliest or part):
+        return None, None, ("Say what part of the day they can work: the time they have to be done by, the time "
+                            "they can start from, or lunch/day or dinner/night only.")
+    if earliest and latest:
+        lo, hi = parse_minutes(earliest), parse_minutes(latest)
+        if lo >= hi and not (hi < _OVERNIGHT_LATEST_BEFORE < lo):
+            return None, None, f"From {earliest} to {latest} ends before it starts."
+    canonical, stored = who, {}
+    if restaurant_id is not None:
+        canonical = _roster_names(restaurant_id).get(who.lower())
+        if not canonical:
+            return None, None, (f"There is no {who} on the roster here. Check the name with read_shifts, or add them "
+                                "in Labor first.")
+        try:
+            import staff_settings as _ss
+            stored = _ss.for_name(restaurant_id, canonical) or {}
+        except Exception as e:
+            log.warning("ask_cavnar staff settings for rid=%s unavailable: %s", restaurant_id, e)
+            stored = {}
+    body, said = {"employee_name": (stored.get("employee_name") or canonical)}, []
+    if earliest or latest:
+        windows = {d: dict(w) for d, w in (stored.get("time_windows") or {}).items()}
+        for d in days:
+            w = {k: v for k, v in (windows.get(d) or {}).items() if k in ("earliest", "latest")}
+            if earliest:
+                w["earliest"] = earliest
+            if latest:
+                w["latest"] = latest
+            windows[d] = w
+        body["time_windows"] = windows
+        said.append(("from " + earliest if earliest else "") + (" " if earliest and latest else "")
+                    + ("done by " + latest if latest else ""))
+    if part:
+        dayparts = dict(stored.get("daypart_availability") or {})
+        if any(dayparts.get(d) == "off" for d in days):
+            return None, None, (f"{canonical} is marked off on {', '.join(d for d in days if dayparts.get(d) == 'off')} "
+                                "— change that in Labor first.")
+        dayparts.update({d: part for d in days})
+        body["daypart_availability"] = dayparts
+        said.append(f"{_PART_WORDS[part]} only")
+    return body, f"{canonical} on {', '.join(days)}: {', '.join(said)}", None
+
+
+def _week_draft_id(restaurant_id, monday_iso):
+    """The id of the week's current draft (the newest copy no later one
+    superseded), or None."""
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                           "AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
+                           (restaurant_id, monday_iso)).fetchone()
+        return int(row["id"]) if row else None
+    finally:
+        conn.close()
+
+
+def _schedule_card(args, restaurant_id):
+    """(body, summary, None) for generate_schedule — the week (any date in
+    it), the days of that week's current draft to rewrite (with the draft
+    they belong to, which the route requires), and what the owner asked for
+    — or (None, None, why). Schedule audit 10/3/26 PR-19."""
+    from datetime import date as _d, timedelta as _t
+    from time_utils import mdy
+    raw_week = str(args.get("week_start") or "").strip()[:10]
+    raw_dates = [str(x).strip()[:10] for x in (args.get("dates") or []) if str(x).strip()]
+    days = []
+    for x in raw_dates:
+        try:
+            days.append(_d.fromisoformat(x))
+        except ValueError:
+            return None, None, f"'{x}' isn't a date — give the days as YYYY-MM-DD."
+    monday = None
+    if raw_week:
+        try:
+            wk = _d.fromisoformat(raw_week)
+        except ValueError:
+            return None, None, "Give the week as a date in it, YYYY-MM-DD."
+        monday = wk - _t(days=wk.weekday())
+    elif days:
+        monday = days[0] - _t(days=days[0].weekday())
+    if monday is not None and restaurant_id is not None:
+        from schedule_engine import check_week_start
+        _ok, err = check_week_start(restaurant_id, monday.isoformat())
+        if err:
+            return None, None, err
+    body = {}
+    if monday is not None:
+        body["week_start"] = monday.isoformat()
+    if days:
+        outside = [x for x in days if not monday <= x <= monday + _t(days=6)]
+        if outside:
+            return None, None, (f"{', '.join(mdy(x) for x in outside)} isn't in the week of {mdy(monday)} — "
+                                "rewrite one week's days at a time.")
+        body["dates"] = sorted({x.isoformat() for x in days})
+        if restaurant_id is not None:
+            draft = _week_draft_id(restaurant_id, monday.isoformat())
+            if not draft:
+                return None, None, (f"There is no draft of the week of {mdy(monday)} to rewrite days of — "
+                                    "generate the whole week first.")
+            body["history_id"] = draft
+    instruction = " ".join(str(args.get("instruction") or "").split())[:500]
+    if instruction:
+        body["instruction"] = instruction
+    if days:
+        named = [f"{_d.fromisoformat(x).strftime('%a')} {mdy(x)}" for x in body["dates"]]
+        listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+        summary = f"Rewrite {listed} of the week of {mdy(monday)} — the other days stay as drafted"
+    elif monday is not None:
+        summary = f"Generate the schedule for the week of {mdy(monday)}"
+    else:
+        summary = "Generate next week's schedule"
+    return body, summary, None
 
 
 def _invoice_or_po(name, args, restaurant_id):
@@ -4529,6 +4744,8 @@ def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
     args = proposal_args(name, tool_input)
     if name in _CONSTRAINT_CARDS:
         return _constraint_card(name, args, restaurant_id)[2]
+    if name == "generate_schedule":
+        return _schedule_card(args, restaurant_id)[2]
     domains = None
     for k, v in args.items():
         if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):
@@ -4645,6 +4862,15 @@ def fields_shown(body) -> list:
                 val = (guest_marketing.SEGMENTS.get(str(v)) or {}).get("label") or val
             except Exception:
                 pass
+        if k == "time_windows" and isinstance(v, dict):
+            val = "; ".join(f"{d}: " + " ".join(x for x in ((f"from {w['earliest']}" if w.get("earliest") else ""),
+                                                             (f"until {w['latest']}" if w.get("latest") else "")) if x)
+                            for d, w in sorted(v.items(), key=lambda kv: _WEEKDAYS.index(kv[0])
+                                               if kv[0] in _WEEKDAYS else 9) if isinstance(w, dict))
+        if k == "daypart_availability" and isinstance(v, dict):
+            val = "; ".join(f"{d}: {_PART_WORDS.get(p, p)}" + (" only" if p in _PART_WORDS else "")
+                            for d, p in sorted(v.items(), key=lambda kv: _WEEKDAYS.index(kv[0])
+                                               if kv[0] in _WEEKDAYS else 9) if p != "any")
         out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
     return out
 

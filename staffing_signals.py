@@ -548,9 +548,13 @@ def soft_block(reqs) -> str:
         if r.get("confirm"):
             line += " (to confirm: " + _fence(r["confirm"]) + ")"
         lines.append(line)
+    # Which asks the week carries is read from its rows (applied) and shown
+    # to the owner with everything else the week misses (schedule_output.
+    # unmet_items) — not asked of a three-bullet summary (schedule audit
+    # 10/3/26 PR-11).
     return ("\n\nSOFT STAFFING REQUIREMENTS (from the reviews diagnosis and the nightly reports — add the person "
-            "where the hours budget and the rules allow, never over a hard constraint; in the summary, name each "
-            "one you applied and each you could not):\n" + "\n".join(lines))
+            "where the hours budget and the rules allow, never over a hard constraint; the owner is shown which "
+            "ones the finished week carries and which it does not):\n" + "\n".join(lines))
 
 
 def applied(reqs, rows, typical=None) -> list:

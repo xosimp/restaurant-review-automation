@@ -2263,6 +2263,10 @@ _RETENTION_DAYS = {
     # The website's daily figures (web_analytics): two years, so a year-on-year
     # comparison stays possible.
     "web_analytics_daily": int(os.getenv("RETAIN_WEB_ANALYTICS_DAYS", "800")),
+    # Every schedule call's full input and answer (schedule_output, schedule
+    # audit 10/3/26 PR-31): half a year of real weeks to replay a model,
+    # effort or prompt change against (scripts/schedule_model_eval.py).
+    "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "180")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2297,6 +2301,7 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
+    "schedule_model_calls": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2399,6 +2404,9 @@ _RETENTION_FLOOR_DAYS = {
     # the model-confidence check read a year; Ask reads up to 180 days of
     # reads. Every closed quarter is summarised first (the rollup below).
     "ai_reads": 365, "ai_claims": 365,
+    # The schedule-call record: the measured tokens a row reads 60 days, and
+    # a replay wants a quarter of real weeks at the least.
+    "schedule_model_calls": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2501,6 +2509,9 @@ _RETENTION_READERS = {
                   ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
     # The after-shift pulse: the owner's summary reads 90 days at most.
     "staff_shift_pulse": (("staff_insights.pulse_summary", 90, None),),
+    # What a schedule row really costs in output tokens (P-35), from the
+    # last 60 days of calls.
+    "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so

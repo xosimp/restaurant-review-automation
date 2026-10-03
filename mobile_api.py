@@ -3241,6 +3241,11 @@ def mobile_generate_schedule(current_user):
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
+    # What the owner asked for with this draft, in their words — Ask Cavnar's
+    # generate_schedule card posts it (schedule audit 10/3/26 PR-19). It
+    # reaches every model call of the generation, ranked with the Studio
+    # notes (priority 5).
+    instruction = " ".join(str(body.get("instruction") or "").split())[:500] or None
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
     job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
@@ -3250,8 +3255,10 @@ def mobile_generate_schedule(current_user):
     # The owner who pressed Generate is the actor on every model call the job
     # makes (the thread has no request to read it from, #148).
     from ai_utils import attributed as _ai_attributed
-    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid),
-                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
+    _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
+    if instruction:
+        _job_kw["instruction"] = instruction
+    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid), kwargs=_job_kw, daemon=True)
     t.start()
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
 

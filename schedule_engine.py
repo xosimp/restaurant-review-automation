@@ -234,18 +234,23 @@ def _soft_fail(what, exc, restaurant_id):
         print(f"[schedule] could not record that failure: {_cx}")
 
 
-def _build_schedule_result(restaurant_id, week_start=None, focus=None):
+def _build_schedule_result(restaurant_id, week_start=None, focus=None, instruction=None):
     """Shared logic for both schedule endpoints.
 
     focus — named weaknesses of the previous draft (a list of strings), for
     a regeneration of chosen dates; rendered into the prompt as "THE
     PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON" (schedule_requirements
-    .focus_block). None for an ordinary generation."""
+    .focus_block). None for an ordinary generation.
+    instruction — what the owner asked for with this draft (Ask Cavnar's
+    generate_schedule, the generate route's `instruction`), handed to every
+    model call of the generation (schedule audit 10/3/26 PR-19)."""
     from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
                        generate_optimized_schedule, get_hourly_rate,
                        build_demand_forecast)
     from models import get_restaurant, get_staff_notes, get_yoy_schedule_context
     from datetime import datetime as _dt, timedelta as _td
+    import uuid as _uuid_gen
+    _generation_id = _uuid_gen.uuid4().hex
 
     restaurant = get_restaurant(restaurant_id)
     shifts = load_shifts_for_restaurant(restaurant_id)
@@ -606,8 +611,17 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         section_cap_roles=sorted(constraints.foh_roles or {"server"}),
         open_times=constraints.open_times or {},
         close_times=constraints.close_times or {},
+        # The roles each person holds beyond their roster role: the output
+        # schema lets their rows carry them (schedule audit 10/3/26 PR-12).
+        held_roles={k: sorted(v) for k, v in (getattr(constraints, "held_roles", None) or {}).items()} or None,
+        # One id for every model call this generation makes: each call's
+        # full input and answer is stored under it and keyed to the saved
+        # week (schedule_output.record_call / link_calls, PR-31).
+        generation_id=_generation_id,
+        instruction=instruction or None,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    result["generation_id"] = _generation_id
     result["rotation_plan"] = learning["rotation"]
     result["splh_objective"] = learning["splh_objective"]
     result["starting_headcount"] = learning["starting_payload"]
@@ -3034,12 +3048,13 @@ def sq_demand_rank(shift: dict) -> int:
 
 
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
-                      focus=None, gate=True, _fallback=None):
+                      focus=None, gate=True, _fallback=None, instruction=None):
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
     automatic regeneration of a draft's weakest days (_quality_gate) — never
-    on a redo the owner asked for, which must touch only the days they chose."""
+    on a redo the owner asked for, which must touch only the days they chose.
+    instruction is what the owner asked for with this draft (PR-19)."""
     if dates and not focus:
         gate = False
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
@@ -3050,8 +3065,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _base = _gshd(int(base_history_id), restaurant_id) or {}
             _pinned = [r for r in _versions.rows_from_csv(_base.get("schedule_csv") or "") if r.get("date") not in set(dates)]
             week_start = week_start or _base.get("week_start")
-        result = (_build_schedule_result(restaurant_id, week_start=week_start, focus=list(focus))
-                  if focus else _build_schedule_result(restaurant_id, week_start=week_start))
+        _build_kw = {"week_start": week_start}
+        if focus:
+            _build_kw["focus"] = list(focus)
+        if instruction:
+            _build_kw["instruction"] = instruction
+        result = _build_schedule_result(restaurant_id, **_build_kw)
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.
@@ -3851,6 +3870,26 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         except Exception as _sax:
             print(f"[schedule] soft requirement check skipped: {_sax}")
             result.pop("_soft_typical", None)
+        # Everything the finished week does not meet — a manager minute, a
+        # floor, a closer, a target or leader rule, an ask, a minimum, the
+        # ceiling — read from the rows the owner sees (schedule audit
+        # 10/3/26 PR-11). Eleven prompt instructions used to ask the model
+        # to say these in a summary of three ten-word bullets, two per
+        # slice, about its own draft before any repair; what was promised
+        # was silently dropped. Computed from the week's final sweep and
+        # score (rule_violations, quality), so it is saved with the review.
+        try:
+            import schedule_output as _so_unmet
+            if isinstance(result.get("review"), dict):
+                result["review"]["unmet"] = _so_unmet.unmet_items(
+                    preview_rows, constraints=result.get("constraints"),
+                    violations=result.get("rule_violations"), quality=result.get("quality"),
+                    soft_requirements=result.get("soft_requirements"), hours_budget=result.get("hours_budget"),
+                    station_gaps=(result.get("stations") or {}).get("gaps"),
+                    owner_rules_unchecked=result["review"].get("owner_rules_unchecked"))
+        except Exception as _ux:
+            print(f"[schedule] unmet list failed: {_ux}")
+            _ops.capture(_ux, job="schedule_unmet", context=f"restaurant_id={restaurant_id}")
         _history_id = None
         try:
             from models import save_schedule_history
@@ -3869,6 +3908,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                          "labor_budget_dollars": result.get("labor_budget_dollars"),
                                          "daily_target_hours": result.get("daily_target_hours") or {},
                                          "demand_data_through": result.get("demand_data_through")})
+            # Every model call this generation made — its full input and
+            # answer — keyed to the week it produced, so the week can be
+            # replayed against another model, effort or prompt (schedule
+            # audit 10/3/26 PR-31, scripts/schedule_model_eval.py).
+            try:
+                import schedule_output as _so_link
+                _so_link.link_calls(restaurant_id, _history_id, result.get("generation_id"))
+            except Exception as _lx:
+                print(f"[schedule] model calls not linked to history {_history_id}: {_lx}")
+                _ops.capture(_lx, job="schedule_model_calls", context=f"restaurant_id={restaurant_id}")
             # A whole week built discharges "next week's schedule isn't
             # built"; a partial redo of a few days does not.
             if _history_id and not _pinned:
@@ -4039,7 +4088,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         base_history_id=_history_id, focus=_gate["focus"], gate=False,
                         _fallback={"score": _q_now, "history_id": _history_id, "dates": _gate["dates"],
                                    "quality": result.get("quality") or {},
-                                   "payload": dict(_payload, gate={"ran": True, **_gate})})
+                                   "payload": dict(_payload, gate={"ran": True, **_gate})},
+                        instruction=instruction)
             except Exception as _gx:
                 print(f"[schedule] quality gate failed: {_gx}")
         if focus:
