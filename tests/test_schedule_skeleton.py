@@ -75,12 +75,12 @@ def _on(plan, d, name):
     return [r for r in plan["rows"] if r["date"] == d and r["employee"] == name]
 
 
-def _hist(name, weekday_idx, start, end, weeks=3, published=True):
+def _hist(name, weekday_idx, start, end, weeks=3, published=True, role="Manager FOH"):
     out = []
     for w in range(1, weeks + 1):
         for i in weekday_idx:
             d = (dt.date(2026, 10, 5) - dt.timedelta(weeks=w) + dt.timedelta(days=i)).isoformat()
-            out.append({"date": d, "employee": name, "role": "x", "shift_start": start, "shift_end": end,
+            out.append({"date": d, "employee": name, "role": role, "shift_start": start, "shift_end": end,
                         "_source": "published" if published else "punch"})
     return out
 
@@ -196,13 +196,16 @@ def test_time_off_unavailable_days_and_hour_windows_are_kept():
 
 
 def test_usual_days_and_hours_come_from_published_weeks_and_punches():
-    hist = (_hist("Jim", [1], "4:00pm", "10:00pm") + _hist("Jim", [3], "5:00pm", "12:00am")
+    hist = (_hist("Jim", [1], "4:00pm", "10:00pm") + _hist("Jim", [3], "5:00pm", "12:00am", role="Bartender PM")
             + _hist("Andrew", [0, 2], "10:30", "17:00", published=False))
     plan = sk.plan_manager_coverage(_c(role_buffers={}), WEEK, history=hist)
     jim_tue, jim_thu = _on(plan, "2026-10-06", "Jim"), _on(plan, "2026-10-08", "Jim")
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_tue] == [("4:00pm", "10:00pm", "usual")]
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_thu] == [("5:00pm", "12:00am", "usual")]
     assert "usually works Tuesdays (3 of the last 3 weeks" in jim_tue[0]["_pin_reason"]
+    # In the role they usually work that day: Jim bartends Thursdays and is
+    # still the manager on the floor (the rule counts the person).
+    assert jim_tue[0]["role"] == "Manager FOH" and jim_thu[0]["role"] == "Bartender PM"
     for d in ("2026-10-05", "2026-10-07"):
         assert [(r["shift_start"], r["shift_end"]) for r in _on(plan, d, "Andrew")] == [("10:30am", "5:00pm")]
     assert plan["unknown_pattern"] == ["Erik", "Anthony"]
@@ -274,6 +277,18 @@ def test_the_fair_split_ranks_by_room_not_salaried_first():
     even = sk.plan_manager_coverage(_c(managers={"anthony": "Manager FOH", "andrew": "Manager FOH"},
                                        close_times={d: "9:00pm" for d in DAYS}), WEEK)
     assert abs(even["hours"]["Anthony"] - even["hours"]["Andrew"]) <= 10
+
+
+def test_a_morning_person_is_not_handed_every_opener_up_to_the_overtime_line():
+    """The half of the day somebody mostly works only breaks a near-tie in
+    load: Andrew's morning punches gave him every opener (40h) while the
+    salaried managers sat at 24-31h."""
+    hist = _hist("Andrew", [0, 2], "10:30", "17:00", published=False)
+    plan = sk.plan_manager_coverage(_c(), WEEK, history=hist)
+    days = {r["date"] for r in plan["rows"] if r["employee"] == "Andrew"}
+    assert {"2026-10-05", "2026-10-07"} <= days            # his usual Mondays and Wednesdays
+    assert len(days) <= 4 and plan["hours"]["Andrew"] <= 30
+    assert max(plan["hours"].values()) - min(plan["hours"].values()) <= 14
 
 
 def test_an_acting_manager_covers_only_the_dates_every_manager_is_blocked():

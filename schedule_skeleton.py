@@ -285,7 +285,7 @@ def usual_shifts(history, names) -> dict:
             dt = datetime.strptime(d, "%Y-%m-%d")
         except ValueError:
             continue
-        p = per.setdefault(key, {"weeks": set(), "dates": {}})
+        p = per.setdefault(key, {"weeks": set(), "dates": {}, "roles": {}})
         p["weeks"].add(dt.strftime("%G-%V"))
         sp = _span(r)
         cur = p["dates"].get(d)
@@ -293,14 +293,20 @@ def usual_shifts(history, names) -> dict:
             p["dates"][d] = (min(cur[0], sp[0]), max(cur[1], sp[1])) if cur else sp
         else:
             p["dates"].setdefault(d, None)
+        role = (r.get("role") or "").strip()
+        if role:
+            p["roles"].setdefault(d, {})
+            p["roles"][d][role] = p["roles"][d].get(role, 0) + 1
     out = {}
     for key, p in per.items():
         n_weeks = len(p["weeks"])
         by_day, parts = {}, {"morning": 0, "night": 0}
         for d, sp in p["dates"].items():
             dt = datetime.strptime(d, "%Y-%m-%d")
-            slot = by_day.setdefault(dt.strftime("%A"), {"weeks": set(), "spans": []})
+            slot = by_day.setdefault(dt.strftime("%A"), {"weeks": set(), "spans": [], "roles": {}})
             slot["weeks"].add(dt.strftime("%G-%V"))
+            for role, n in (p["roles"].get(d) or {}).items():
+                slot["roles"][role] = slot["roles"].get(role, 0) + n
             if sp:
                 slot["spans"].append(sp)
                 parts["night" if sp[0] >= 15 * 60 else "morning"] += 1
@@ -309,9 +315,13 @@ def usual_shifts(history, names) -> dict:
             k = len(slot["weeks"])
             if n_weeks < USUAL_MIN_WEEKS or k < USUAL_MIN_WEEKS or k < USUAL_SHARE * n_weeks or not slot["spans"]:
                 continue
+            # The role they usually work that day in (a manager who
+            # bartends Tuesdays is pinned as the bartender — still the
+            # manager on the floor, the rule counts the person).
+            role = max(sorted(slot["roles"]), key=lambda x: slot["roles"][x]) if slot["roles"] else None
             days[wd] = {"start": _down(_median([a for a, _b in slot["spans"]])),
                         "end": _up(_median([b for _a, b in slot["spans"]])),
-                        "weeks": k, "share": round(k / float(n_weeks), 2)}
+                        "weeks": k, "share": round(k / float(n_weeks), 2), "role": role}
         out[key] = {"weeks": n_weeks, "days": days, "parts": parts}
     return out
 
@@ -564,7 +574,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
             if not _rules._uncovered([(s, e)], coverage(d)):
                 continue                    # somebody planned already covers those hours
             n = (usual.get(key) or {}).get("weeks") or 0
-            row = make_row(key, d, s, e, role_of(key), "usual",
+            row = make_row(key, d, s, e, u.get("role") or role_of(key), "usual",
                            f"{name_of(key)} usually works {wd}s ({u['weeks']} of the last {n} weeks on file)"
                            + (" (acting manager this date)" if is_acting else ""))
             if legal(row)[0]:
@@ -640,15 +650,17 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                 uniq.append(x)
         return uniq
 
-    def fit(key, d, kind):
-        u = usual.get(key) or {}
-        f = 2 if _weekday(d) in (u.get("days") or {}) else 0
-        parts = u.get("parts") or {}
+    def usual_day(key, d):
+        return 1 if _weekday(d) in ((usual.get(key) or {}).get("days") or {}) else 0
+
+    def likes_part(key, kind):
+        """1 when the leg is the half of the day they mostly work (openers
+        for a morning person) — a tie-breaker between people about as far
+        from their caps, never a reason to load one person up."""
+        parts = (usual.get(key) or {}).get("parts") or {}
         likes = ("night" if parts.get("night", 0) > parts.get("morning", 0) else
                  "morning" if parts.get("morning", 0) > parts.get("night", 0) else None)
-        if (kind == "closer" and likes == "night") or (kind == "opener" and likes == "morning"):
-            f += 1
-        return f
+        return 1 if (kind == "closer" and likes == "night") or (kind == "opener" and likes == "morning") else 0
 
     def best_new(d, leg, gap, S, E, tried):
         kind = "closer" if leg[1] >= E else "opener" if leg[0] <= S else "middle"
@@ -672,7 +684,12 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                     continue
                 cap = _week_cap(c, name_of(key), line) or 1.0
                 load = (hours_in(key, c.bucket(d)) + (e - s) / 60.0) / cap
-                rank = (is_acting, not full, -covered, -fit(key, d, kind), round(load, 4), days_on(key), key)
+                # A day they usually work first; then the fair split — the
+                # share of their own cap the week would have used, in tenths
+                # (so the half of the day they prefer can break a near-tie),
+                # then days already worked.
+                rank = (is_acting, not full, -covered, -usual_day(key, d), round(load, 1),
+                        -likes_part(key, kind), round(load, 4), days_on(key), key)
                 if best is None or rank < best[0]:
                     best = (rank, row)
                 break
