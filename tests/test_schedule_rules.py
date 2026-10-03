@@ -70,12 +70,15 @@ def test_daypart_of_splits_at_three_pm():
 
 # ── hours ceilings ──────────────────────────────────────────────────────
 
-def test_max_hours_is_the_lower_of_the_persons_cap_and_the_ceiling():
+def test_max_hours_is_the_persons_own_maximum_else_the_ceiling():
     c = _c(hours_limits={"ana": (None, 30)}, compliance={**sr.DEFAULTS, "weekly_hours_ceiling": 40})
     assert c.max_hours("Ana") == 30
     assert c.max_hours("Bob") == 40
+    # A maximum the owner set above the ceiling is the owner allowing that
+    # person the hours — it used to be silently capped back to 40 (schedule
+    # audit 10/3/26 P-12, D-18).
     c.hours_limits["bob"] = (None, 50)
-    assert c.max_hours("Bob") == 40
+    assert c.max_hours("Bob") == 50
 
 
 def test_published_tail_counts_toward_the_payroll_week():

@@ -81,13 +81,20 @@ def test_can_add_refuses_a_minor_past_their_end_a_seventh_day_and_overtime():
     ok, why = c.can_add(_row("Cook", "Cook", "8:00am", "1:00pm", date="2026-10-09", hours=5),
                         long + [_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-08", hours=10)])
     assert not ok and "over 40h" in why
-    # an owner-set maximum above the ceiling is still checked against the
-    # overtime line by default
+    # an owner-set maximum above the ceiling allows the person those hours,
+    # overtime included (P-12): 45h is inside a 50h maximum either way
     c.hours_limits["cook"] = (None, 50)
     ok, why = c.can_add(_row("Cook", "Cook", "8:00am", "1:00pm", date="2026-10-09", hours=5),
                         long + [_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-08", hours=10)],
                         overtime=False)
-    assert not ok                  # the ceiling still caps a 50h maximum today (P-12 changes this)
+    assert ok
+    assert sr.overtime_line(c, "Cook") == 50
+    ok, why = c.can_add(_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-09", hours=10),
+                        long + [_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-08", hours=10)])
+    assert ok                      # 50h: the owner's own maximum
+    ok, why = c.can_add(_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-09", hours=10),
+                        long + [_row("Cook", "Cook", "8:00am", "7:00pm", date="2026-10-08", hours=11)])
+    assert not ok                  # 51h: past it
 
 
 def test_can_add_sums_a_split_minor_day():

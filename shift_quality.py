@@ -43,6 +43,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from time_utils import BUSINESS_DAY_START_HOUR
+
 # The scale every dimension reports on. Percentages, because "Coverage 100%"
 # is a sentence an owner can act on and "Coverage 1.0" is not.
 SCORE_MAX = 100
@@ -391,7 +393,7 @@ DIMENSION_LABELS = {
     "training_balance": "Training balance", "reliability": "Reliability",
     "pairings": "Pairings", "fatigue": "Fatigue", "fairness": "Fairness",
     "preferences": "Staff preferences", "stability": "Schedule stability",
-    "cross_training": "Cross-training",
+    "cross_training": "Cross-training", "min_hours": "Minimum hours",
 }
 
 
@@ -417,6 +419,9 @@ DEFAULT_WEIGHTS = {
     # hour from a slow lunch to a busy dinner is seen. Withdraws without
     # sales.
     "splh": 5,
+    # The hours the owner set as people's minimums, given (week_min_hours,
+    # P-4). Judged once for the week; withdraws when nobody has a minimum.
+    "min_hours": 4,
 }
 
 
@@ -1155,6 +1160,56 @@ def week_fatigue(contexts: list) -> DimensionResult | None:
                                                       ctx.weekly_ceiling, ctx.hours_limits), scope="week")
 
 
+def week_min_hours(contexts: list) -> DimensionResult | None:
+    """Minimum hours, judged once for the week: of the hours the owner set as
+    each person's minimum (hours_limits), the share the week gives them —
+    counted in hours, so a cook set to 40h on 7h is 7 of 40 and every shift
+    moved to them scores, not only the one that reaches it. Nothing in the
+    score read a minimum, so the optimizer, the solver's judge and the fix
+    pass were blind to Erik's full-time cook on 7h of 40-45h (schedule audit
+    10/3/26 P-4). Somebody with a minimum and no shift counts too. None when
+    nobody has a minimum."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    limits = {n: lim for n, lim in (ctx.hours_limits or {}).items() if n and lim and lim[0]}
+    if not limits:
+        return None
+    by_low = {}
+    for name, entries in (ctx.week_assignments or {}).items():
+        by_low.setdefault((name or "").strip().lower(), []).extend(e for e in entries or () if not e.get("prior"))
+    want = got = 0.0
+    short = []
+    for name, lim in sorted(limits.items()):
+        try:
+            need = float(lim[0])
+        except (TypeError, ValueError):
+            continue
+        have = sum((e.get("hours") or 0) for e in by_low.get(name.strip().lower(), []))
+        want += need
+        got += min(have, need)
+        if have + 0.05 < need:
+            short.append((name, round(have, 1), need))
+    if want <= 0:
+        return None
+    res = DimensionResult(key="min_hours", label=DIMENSION_LABELS["min_hours"], score=_pct(got, want),
+                          weight=DEFAULT_WEIGHTS["min_hours"],
+                          facts={"people": len(limits), "hours_owed": round(want, 1), "hours_given": round(got, 1),
+                                 "short": [{"name": n, "hours": h, "min": m} for n, h, m in short]})
+    for name, have, need in short[:2]:
+        res.weaknesses.append(f"{name} has {have:g}h of the {need:g}h minimum you set.")
+    if not short:
+        res.strengths.append("Everybody with a minimum is at it.")
+    return res
+
+
+def dim_min_hours(ctx: ShiftContext) -> DimensionResult | None:
+    """The minimum-hours measure for one shift's context — a property of the
+    WEEK, judged once in evaluate_schedule (WEEK_LEVEL_DIMENSIONS); kept for
+    callers that ask about one shift's people directly."""
+    return week_min_hours([ctx])
+
+
 def _longest_run(dates: list) -> int:
     """Longest streak of consecutive calendar days in a sorted date list."""
     best = run = 0
@@ -1877,6 +1932,7 @@ DIMENSIONS = {
     "preferences": dim_preferences,
     "stability": dim_stability,
     "cross_training": dim_cross_training,
+    "min_hours": dim_min_hours,
 }
 
 # Dimensions that are properties of the whole week, judged once per week in
@@ -1885,6 +1941,7 @@ DIMENSIONS = {
 # editable and their key is known everywhere a dimension is listed.
 WEEK_LEVEL_DIMENSIONS = {
     "fatigue": week_fatigue,
+    "min_hours": week_min_hours,
 }
 
 # What a customer sees today. The rest is computed, stored and available to
@@ -2614,9 +2671,13 @@ def daypart_of(shift_start: str) -> str:
         return "unknown"
     for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
         try:
-            return "night" if datetime.strptime(raw, fmt).hour >= 15 else "morning"
+            hour = datetime.strptime(raw, fmt).hour
         except ValueError:
             continue
+        # A start in the small hours is the night it belongs to — the row's
+        # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
+        # schedule audit 10/3/26 E-32), never the next morning.
+        return "night" if hour >= 15 or hour < BUSINESS_DAY_START_HOUR else "morning"
     return "unknown"
 
 
@@ -3126,7 +3187,10 @@ def _unavailable(availability: dict, name: str, day: str) -> bool:
 
 
 def _span(row):
-    """(start, end) minutes from the row's date midnight; end may pass 1440."""
+    """(start, end) datetimes on the row's date; an end before the start
+    crosses midnight, and a start in the small hours is that night's
+    (schedule_rules.shift_span, E-32), so a swap's rest and overlap checks
+    read a 12:30am porter the way the rule sweep does."""
     try:
         base = datetime.strptime(row.get("date", ""), "%Y-%m-%d")
     except (ValueError, TypeError):
@@ -3134,8 +3198,9 @@ def _span(row):
     s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
     if s is None or e is None:
         return None, None
-    start = base + timedelta(minutes=s)
-    end = base + timedelta(minutes=e if e > s else e + 24 * 60)
+    night = 24 * 60 if s < BUSINESS_DAY_START_HOUR * 60 else 0
+    start = base + timedelta(minutes=s + night)
+    end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
     return start, end
 
 
@@ -3163,6 +3228,12 @@ class _SwapIndex:
         self.blocked = {k.lower(): v for k, v in (rules.get("blocked_dates") or {}).items()}
         self.daypart_avail = {k.lower(): v for k, v in (rules.get("daypart_avail") or {}).items()}
         self.limits = {k.lower(): v for k, v in (rules.get("hours_limits") or {}).items()}
+        self.caps = {}
+        for k, v in (rules.get("caps") or {}).items():
+            try:
+                self.caps[str(k).strip().lower()] = float(v)
+            except (TypeError, ValueError):
+                continue
         self.base_hours = {k.lower(): float(v or 0) for k, v in (rules.get("base_hours") or {}).items()}
         self.ceiling = float(rules.get("weekly_ceiling") or WEEKLY_HOURS_CEILING)
         self.min_rest = float(rules.get("min_rest_hours") or 0)
@@ -3202,9 +3273,15 @@ class _SwapIndex:
                     self.spans_by_person.setdefault(name.lower(), []).append((None, s, e))
 
     def cap(self, name_low: str) -> float:
+        """The person's weekly maximum — the one schedule_rules computes
+        (rules["caps"], Constraints.max_hours) when the caller passed it; else
+        their own maximum when set, even above the ceiling (the owner allowing
+        them the hours, P-12), else the ceiling."""
+        if name_low in self.caps:
+            return self.caps[name_low]
         lim = self.limits.get(name_low)
         if lim and lim[1]:
-            return min(float(lim[1]), self.ceiling)
+            return float(lim[1])
         return self.ceiling
 
     def total_hours(self, name_low: str) -> float:
@@ -3507,11 +3584,14 @@ def _describe_replacement(row: dict, name: str, before: dict, after: dict, gain:
 
 # Breaches another person on the same shift can clear. A shift that is too
 # long, or a shift with no manager on it, is about the SHIFT, not who works
-# it: swapping the person "fixed" nothing and cost them the shift.
+# it: swapping the person "fixed" nothing and cost them the shift. A minor
+# over their age band's weekly cap or starting before its earliest start is
+# cleared by an adult on the shift that crosses it (schedule audit 10/3/26
+# P-5, E-27: both stayed hard flags every week, never tried).
 PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                             "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere",
                             "outside_window", "missing_cert", "over_max_hours", "rest_gap",
-                            "minor_late", "minor_hours", "long_run"})
+                            "minor_late", "minor_hours", "long_run", "minor_week_hours", "minor_early"})
 
 
 def apply_fixes(rows: list, violations: list, profiles: list = None, weights: dict = None,
