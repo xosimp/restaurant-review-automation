@@ -711,7 +711,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     from notify import labor_target_for as _labor_target_for
     target   = _labor_target_for(restaurant)
     owner    = restaurant.owner_name if restaurant else None
-    staff_notes = get_staff_notes(restaurant_id) or None
+    staff_notes = frozen_read(("staff_notes", restaurant_id), lambda: get_staff_notes(restaurant_id)) or None
 
     # Employee availability
     # The table is created at boot (init_db); no DDL on a generation.
@@ -5662,6 +5662,10 @@ class RepairContext:
         self.scorer_for = _pass_scorer(restaurant_id, result, self.signals, self.weights) \
             if signals is not None else None
         self.started = time.monotonic()
+        # Seconds each search has spent across the loop's cycles: the
+        # optimizer gets its own budget once per generation, however many
+        # cycles it runs in (the old single pass's latency, P-24).
+        self.search_spent = {}
         # Why a row nobody could take was left (apply_fixes), by person,
         # date and kind — the final review's `unfixed` reads it.
         self.unfixed_why = {}
@@ -6024,15 +6028,22 @@ def _stage_optimizer(rows, x):
     if not x.searches:
         return {"rows": rows}
     import schedule_optimizer as _opt
+    # One search budget for the generation, spread over the cycles it runs
+    # in: a later cycle continues the search where the first stopped.
+    budget = _opt.DEFAULT_SECONDS - x.search_spent.get("optimizer", 0.0)
+    if budget < REPAIR_MIN_SEARCH_SECONDS:
+        return {"rows": rows}
     viols = _rules.violations(rows, x.c)
     x.result["flagged_rows"] = _flagged_rows(viols)
     x.result["pending_time_off"] = x.result.get("pending_time_off") or {
         n: sorted(d) for n, d in (getattr(x.c, "pending_off", None) or {}).items()}
     sig = dict(x.signals, flagged=x.result["flagged_rows"])
+    t0 = time.monotonic()
     res = _opt.optimize(rows, x.result, signals=sig, weights=x.weights, constraints=x.c,
                         hours_budget=(x.budget or 0) if x.trim_on else None,
                         max_server_overlap=x.section_count, only_dates=x.editable,
-                        max_seconds=max(0.5, min(_opt.DEFAULT_SECONDS, x.search_seconds())))
+                        max_seconds=max(0.5, min(budget, x.search_seconds())))
+    x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
     if res.get("changes"):
         print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
               f"({len(res['changes'])} changes, {res['seconds']}s)")
@@ -6508,7 +6519,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
 
     Run inside generation_scope (submit_generation, the auto-draft) it has
     one wall clock (P-22): its model calls stop in time for the rest of the
-    job, and a job its poll has already declared dead saves nothing."""
+    job, and a job its poll has already declared dead saves nothing.
+
+    After the model: the rows parsed (each with a stable id, P-15), the
+    rules read again (P-41), one frozen context (P-36), the ranked repair
+    loop (repair_week — P-47, E-18), then one sweep, the review and the score
+    of the rows that are saved (P-11), every stage timed (P-24) and every
+    stage that failed said (P-3, P-17)."""
     if dates and not focus:
         gate = False
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
@@ -6563,7 +6580,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["redo"] = {"dates": sorted(set(dates)), "base_history_id": int(base_history_id),
                               "by": "gate" if focus else "owner"}
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
-        _raw_notes = _gsn_sched(restaurant_id) or []
+        _raw_notes = frozen_read(("staff_notes", restaurant_id), lambda: _gsn_sched(restaurant_id)) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
         _close_times = _gct_sched(restaurant_id)
         _role_close_buffers = _grcb_sched(restaurant_id)
