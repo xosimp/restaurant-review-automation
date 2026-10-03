@@ -33,6 +33,17 @@ import pytest
 import activity, covers, decisions, delayed, demand_signals, goals, issues, metrics, outcomes  # noqa: E401,F401
 import push, schedule_economics, schedule_intel, schedule_versions, shift_requests, staff_schedule  # noqa: E401,F401
 import staff_settings, strategy_jobs, time_off, labor_replacements  # noqa: E401,F401
+# Every module the generation imports lazily, imported here before any
+# fixture patches models.get_conn: one first imported mid-test would bind the
+# test's redirect and keep it after the test (a later file then reads a
+# deleted database).
+import analyser, ask_cavnar, benchmark_registry, business_intelligence, clover, cogs  # noqa: E401,F401
+import command_center, credentials, data_freshness, data_health, demand, food_cost_intelligence  # noqa: E401,F401
+import forecast_log, home_brief, inventory, inventory_ledger, kitchen_stations, marketing  # noqa: E401,F401
+import marketing_signals, morning_brief, ordering, owner_memory, permissions, pos, pos_health  # noqa: E401,F401
+import rec_trust, reservation_feeds, review_intelligence, rpower, schedule_learning  # noqa: E401,F401
+import schedule_optimizer, schedule_solver, square, staffing_curve, staffing_signals, toast  # noqa: E401,F401
+import waste_trend, weather  # noqa: E401,F401
 from flask import Flask
 
 import ai_utils
@@ -832,3 +843,86 @@ def test_the_docs_no_longer_describe_retired_or_missing_things():
     src = _read("schedule_engine.py") + _read("client_api.py")
     assert "never trimmed into a thinner week" not in src
     assert "A week the model wrote past it is not\n    # trimmed" not in src
+
+
+# ── the quality gate rewrites only its dates, inside the job's time ─────────
+
+def _gate_harness(monkeypatch, db, answers, calls):
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(labor, "generate_optimized_schedule", _gen(answers, calls))
+    gates = [{"dates": [WEEK[5]], "focus": ["Saturday 2026-10-10 dinner: 2 servers short"],
+              "reason": "1 busy day still had a staffing hole after repair"}]
+    monkeypatch.setattr(se, "_quality_gate", lambda result: gates.pop(0) if gates else None)
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, s, r: finished.update(status=s, result=r))
+    return rid, finished
+
+
+def test_the_quality_gate_rewrites_only_its_dates_with_the_rest_of_the_week_in_view(db, monkeypatch):
+    calls = []
+    rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls)
+    monkeypatch.setattr(se, "_gate_local", lambda quality, dates: 50.0 if "Bo" in json.dumps(quality) else 10.0)
+    se._run_schedule_job("gate-job", rid)
+    assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
+    assert sorted({r["date"] for r in calls[1]["prior"]}) == sorted(set(WEEK) - {WEEK[5]})
+    assert "THE REST OF THIS WEEK IS KEPT" in calls[1]["kwargs"]["extra_blocks"]
+    assert calls[1]["kwargs"]["focus"] == ["Saturday 2026-10-10 dinner: 2 servers short"]
+    assert finished["status"] == "done" and finished["result"]["redo"]["by"] == "gate"
+
+
+def test_the_quality_gate_is_skipped_when_the_job_has_no_time_left_for_it(db, monkeypatch):
+    calls = []
+    rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK]], calls)
+    with se.generation_scope("gate-late") as clock:
+        clock.deadline = time.time() + se.SCHEDULE_POST_MODEL_SECONDS + se.GATE_MIN_MODEL_SECONDS - 30
+        clock.started = clock.deadline - se.SCHEDULE_JOB_MIN_SECONDS
+        se._run_schedule_job("gate-late", rid)
+    assert len(calls) == 1 and finished["status"] == "done"
+    assert finished["result"]["gate"] == {"ran": False}
+
+
+# ── pinned rows (the manager plan's) travel as fixed context, joined once ───
+
+def test_pinned_rows_are_shown_as_fixed_and_never_written_twice(monkeypatch):
+    _pin_week(monkeypatch)
+    calls = []
+    pinned = [{"date": WEEK[5], "day": "Saturday", "employee": "Mo", "role": "Manager", "shift_start": "10:00am",
+               "shift_end": "6:00pm", "scheduled_hours": "8", "_pinned": "manager_plan"}]
+    monkeypatch.setattr(labor, "generate_optimized_schedule", _gen([
+        [_line(d, "Ana") for d in WEEK] + [_line(WEEK[5], "Mo", "11:00am", "7:00pm", 8, "Manager")]], calls))
+    out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Mo", "Manager")],
+                                {"tz_name": None, "pinned_rows": pinned})
+    assert "FIXED SHIFTS ON THESE DATES" in calls[0]["kwargs"]["extra_blocks"]
+    assert "Saturday 2026-10-10: Mo (Manager) 10:00am to 6:00pm" in calls[0]["kwargs"]["extra_blocks"]
+    assert [r["employee"] for r in calls[0]["prior"]] == ["Mo"]
+    assert ",Mo," not in out["schedule_csv"]                            # the model's clashing copy dropped
+    assert out["pinned_rows"] == pinned and out["slices"][0]["pinned_dropped"] == 1
+
+
+def test_expected_rows_never_plans_a_partial_first_week_below_the_roster():
+    shifts = [{"date": "2026-09-30"}] * 12 + [{"date": "2026-10-01"}] * 12        # a feed's first two days
+    roster = [(f"P{i}", "Server") for i in range(20)]
+    assert se._expected_rows(shifts, roster) == 70
+    full = [{"date": d} for d in ("2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25")
+            for _ in range(10)]
+    assert se._expected_rows(full, roster) == 50                        # a real week is taken as it is
+
+
+def test_an_auto_draft_with_unwritten_days_is_announced_as_partly_drafted(db, monkeypatch):
+    import morning_brief
+    import notify
+    rid = _restaurant(db, module_labor=1)
+    r = models.get_restaurant(rid)
+    monkeypatch.setattr(morning_brief, "recipients", lambda *a, **k: [{"id": 9, "role": "client", "grants": ()}])
+    monkeypatch.setattr(notify, "briefing_allowed", lambda *a, **k: True)
+    fired = []
+    monkeypatch.setattr(push, "fire_push", lambda rid_, kind, title, body, **k: fired.append((title, body)))
+
+    class _SE:
+        @staticmethod
+        def _run_schedule_job(job_id, rid_):
+            ops.finish_async_job(job_id, "done", {"ok": True, "partial": True, "unwritten_dates": [
+                {"date": WEEK[6], "day": "Sunday", "why": "provider"}]})
+    strategy_jobs._draft_one(r, db, _SE, lambda k: None, period="2026-10-01")
+    assert fired and fired[0][0] == "Next week's schedule is partly drafted"
+    assert "1 day couldn't be written" in fired[0][1]

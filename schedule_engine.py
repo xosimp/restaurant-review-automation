@@ -203,21 +203,29 @@ def _labor_ot_line() -> float:
 
 def _expected_rows(shifts, roster_pairs) -> int:
     """How many shift rows a week here usually has: the busiest of the last
-    four full weeks in the history, else three and a half a head."""
+    four weeks in the history, else three and a half a head. A busiest week
+    with shifts on fewer than five days — a new POS feed's first, partial
+    week — is never taken below three and a half a head: it planned calls
+    too small for the week (schedule audit 10/3/26 E-28). The calls are
+    re-split when an answer is cut anyway; this keeps that the exception."""
+    from datetime import datetime as _d
+    per_head = int(len(roster_pairs or []) * 3.5)
     try:
-        by_week = {}
+        by_week, days = {}, {}
         for sh in shifts or []:
             d = (sh.get("date") or "")[:10]
             if len(d) == 10:
-                from datetime import datetime as _d
-                dt = _d.strptime(d, "%Y-%m-%d")
-                by_week[(dt.isocalendar()[0], dt.isocalendar()[1])] = by_week.get((dt.isocalendar()[0], dt.isocalendar()[1]), 0) + 1
-        weeks = sorted(by_week.items())[-4:]
+                wk = _d.strptime(d, "%Y-%m-%d").isocalendar()[:2]
+                by_week[wk] = by_week.get(wk, 0) + 1
+                days.setdefault(wk, set()).add(d)
+        weeks = sorted(by_week)[-4:]
         if weeks:
-            return max(n for _, n in weeks)
-    except Exception:
-        pass
-    return int(len(roster_pairs or []) * 3.5)
+            busiest = max(weeks, key=lambda w: by_week[w])
+            n = by_week[busiest]
+            return max(n, per_head) if len(days[busiest]) < 5 else n
+    except Exception as _ex:
+        print(f"[schedule] expected rows unread, planning from the roster: {_ex}")
+    return per_head
 
 
 def _week_monday(today, week_start=None):
@@ -3787,7 +3795,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # Rows planned before the call (a manager plan's pinned rows) were
         # shown to every call as fixed and never written by the model; they
         # join the week here, once.
-        _pins = [r for r in (result.get("pinned_rows") or []) if r.get("date")]
+        _pins = [r for r in (result.get("pinned_rows") or []) if r.get("date")
+                 and (not redo or r.get("date") in set(result.get("regenerated_dates") or []))]
         if _pins:
             _have = {tuple(ln.split(",")[:6]) for ln in result["schedule_csv"].split("\n")[1:]}
             _add = [",".join(str(r.get(c, "") or "").replace(",", ";") for c in _COLS_PINNED) for r in _pins]

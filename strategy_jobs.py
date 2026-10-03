@@ -1309,10 +1309,16 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         # included — the case this audience exists to prevent (F2-11).
         if not audience:
             return
-        push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
-                       "Review it and publish when it looks right — nothing has gone to "
-                       "your staff yet.", data={}, db_path=db_path,
-                       user_ids=audience)
+        # A week with days the generation could not write is saved with the
+        # rest kept (schedule audit 10/3/26 P-34) — said here too, never
+        # announced as a finished draft.
+        gaps = ((state.get("result") or {}).get("unwritten_dates") or []) if isinstance(state.get("result"), dict) else []
+        body = ("Review it and publish when it looks right — nothing has gone to your staff yet." if not gaps else
+                f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
+                f"{'it' if len(gaps) == 1 else 'them'} before you publish. Nothing has gone to your staff yet.")
+        push.fire_push(r.id, "schedule_drafted",
+                       "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
+                       body, data={}, db_path=db_path, user_ids=audience)
     except Exception as e:
         ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
 
