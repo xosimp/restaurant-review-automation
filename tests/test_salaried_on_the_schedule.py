@@ -75,8 +75,16 @@ def test_the_constraints_and_prompt_know_who_is_salaried(db_path, monkeypatch):
     rid = models.create_restaurant(models.Restaurant(name="Sal Co", owner_email="s@x.test", module_labor=1),
                                    db_path=db_path)
     models.update_restaurant(rid, {"salaried_staff_json": json.dumps([{"name": "Erik Baylis", "annual": 150000},
-                                                                      {"name": "Jim", "annual": 150000}])},
+                                                                      {"name": "Jim", "annual": 150000},
+                                                                      {"name": "Gabriel Huerta", "annual": 90000}])},
                              db_path=db_path)
+    # Erik and Jim are on the roster; Gabriel is on no roster (Simple EJ's,
+    # schedule audit 10/3/26 D-7) — the prompt names only the people the
+    # roster check would let the model use, and the review names Gabriel.
+    for n in ("Erik Baylis", "Jim"):
+        models.add_manual_team_member(rid, n, role="Manager FOH", db_path=db_path)
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
-    assert c.salaried == {"erik baylis", "jim"} and c.is_salaried("ERIK  Baylis")
+    assert {"erik baylis", "jim"} <= c.salaried and c.is_salaried("ERIK  Baylis")
     assert "Salaried (the same pay whatever the hours): Erik Baylis, Jim" in sr.prompt_block(c)
+    assert "Gabriel" not in sr.prompt_block(c)
+    assert [u["name"] for u in c.unmatched if u["source"] == "salaried staff"] == ["Gabriel Huerta"]

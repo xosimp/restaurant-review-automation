@@ -8059,6 +8059,19 @@ def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
     return [{"name": r["employee_name"], "role": r["role"]} for r in rows]
 
 
+def manual_team_added(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{name: when they were hand-added} — someone added (back) after their
+    last shift is not dormant (staff_settings.dormant_people, schedule audit
+    10/3/26 E-3)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT employee_name, created_at FROM manual_team_members WHERE restaurant_id=?",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return {r["employee_name"]: r["created_at"] for r in rows}
+
+
 def get_role_strength_thresholds(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{role: minimum combined score}. Empty when unconfigured."""
     import json as _j
@@ -10830,6 +10843,18 @@ def person_rates(restaurant) -> dict:
         key = salaried_name_key(name)
         if key and PERSON_RATE_BOUNDS[0] <= rate <= PERSON_RATE_BOUNDS[1]:
             out[key] = round(rate, 2)
+    # Every spelling of the person a rate is for (people's identity —
+    # schedule audit 10/3/26 D-8): a rate typed "Mike" prices the punches
+    # the POS files under "Michael". A spelling with a rate of its own keeps it.
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if out and rid is not None:
+        try:
+            import people
+            for name, spelled in people.spellings(rid, list(out)).items():
+                for k in spelled:
+                    out.setdefault(salaried_name_key(k), out[name])
+        except Exception:
+            pass
     return out
 
 
@@ -10855,7 +10880,83 @@ def salaried_staff(restaurant) -> list:
         except (AttributeError, TypeError, ValueError):
             continue
         if name and 0 < annual <= SALARY_MAX:
-            out.append({"name": name, "annual": round(annual, 2)})
+            entry = {"name": name, "annual": round(annual, 2)}
+            # The person the entry was linked to when it was saved (people,
+            # schedule audit 10/3/26 D-7) — the name follows them on a rename.
+            try:
+                if row.get("person_id") is not None:
+                    entry["person_id"] = int(row["person_id"])
+            except (TypeError, ValueError):
+                pass
+            out.append(entry)
+    return out
+
+
+def salaried_keys(restaurant, db_path=None) -> set:
+    """Every spelling (salaried_name_key) that is one of the salaried people
+    — the entry's own name and, through people's identity, every spelling
+    of the person it means or was linked to (schedule audit 10/3/26 D-7).
+    "Gabriel Huerta" salaried and punching as "Gabe Huerta" was held to
+    overtime, spent from the hourly budget and judged for no-shows. Every
+    matcher of punches to salaried people reads this."""
+    staff = salaried_staff(restaurant)
+    keys = {salaried_name_key(x["name"]) for x in staff}
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if not staff or rid is None:
+        return keys
+    try:
+        import people
+        db = None if db_path in (None, DB_PATH) else db_path
+        for spelled in people.spellings(rid, [x["name"] for x in staff], db_path=db).values():
+            keys |= {salaried_name_key(k) for k in spelled}
+        ids = [x["person_id"] for x in staff if x.get("person_id") is not None]
+        if ids:
+            keys |= {salaried_name_key(k) for k in people.spellings_of_ids(rid, ids, db_path=db)}
+    except Exception:
+        pass
+    return keys
+
+
+def salaried_matches(restaurant, roster_names=None, db_path=None) -> list:
+    """[{name, annual, matched, suggestion, warning}] — each salaried entry
+    and the roster person it is (people's identity), for the settings card
+    (schedule audit 10/3/26 D-7): a salaried name that matches nobody on the
+    roster can't be placed by the schedule, and their punches under another
+    spelling would be costed by the hour — the owner is told, with a
+    similar roster name to check when there is one. Never guessed."""
+    staff = salaried_staff(restaurant)
+    if not staff:
+        return []
+    rid = getattr(restaurant, "id", None) if restaurant is not None else None
+    if roster_names is None:
+        try:
+            import staff_settings as _ss
+            roster_names = [e["name"] for e in _ss.roster(rid, include_inactive=True)] if rid else []
+        except Exception:
+            roster_names = []
+    folded = {" ".join(str(n).split()).lower(): n for n in roster_names or [] if n}
+    try:
+        import people
+        spelled = people.spellings(rid, [x["name"] for x in staff],
+                                   db_path=None if db_path in (None, DB_PATH) else db_path) if rid else {}
+    except Exception:
+        spelled = {}
+    out = []
+    for x in staff:
+        keys = (spelled.get(x["name"]) or set()) | {" ".join(x["name"].split()).lower()}
+        matched = next((folded[k] for k in sorted(keys) if k in folded), None)
+        entry = dict(x, matched=matched, suggestion=None, warning=None)
+        if not matched:
+            try:
+                import people
+                maybe = people.similar_on_roster(x["name"], list(folded.values()))
+            except Exception:
+                maybe = []
+            entry["suggestion"] = maybe[0] if maybe else None
+            entry["warning"] = (f"{x['name']} matches nobody on your roster, so the schedule can't place them "
+                                "and a punch under another spelling is paid by the hour"
+                                + (f" — is it {maybe[0]}?" if maybe else " — check the spelling against your POS."))
+        out.append(entry)
     return out
 
 

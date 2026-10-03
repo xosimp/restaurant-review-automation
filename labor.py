@@ -586,10 +586,13 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
 
 
 def _without_salaried(restaurant_id, shifts):
-    """(the shifts less the salaried people's punches, their hours)."""
+    """(the shifts less the salaried people's punches, their hours). Every
+    spelling of a salaried person counts (models.salaried_keys — people's
+    identity): punches as "Gabe Huerta" for a salaried "Gabriel Huerta"
+    stayed in the hourly analysis (schedule audit 10/3/26 D-7)."""
     try:
-        from models import get_restaurant, salaried_staff, salaried_name_key
-        names = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+        from models import get_restaurant, salaried_keys, salaried_name_key
+        names = salaried_keys(get_restaurant(restaurant_id))
     except Exception:
         names = set()
     if not names:

@@ -380,7 +380,10 @@ def apply_holds(c, restaurant_id, db_path=DB_PATH):
         for h in holds(restaurant_id, db_path=db_path, include_ended=True):
             if (h.get("end") and h["end"] < first) or (h.get("start") and h["start"] > last):
                 continue
-            key = h["employee_key"]
+            # Filed under the person's one key (Constraints.key — people's
+            # identity): a hold kept under "Mike" holds for the roster's
+            # "Michael" (schedule audit 10/3/26 D-8).
+            key = c.key(h["employee_name"]) if hasattr(c, "key") else h["employee_key"]
             reason = "your note: " + h["part_text"][:120]
             inside = all((not h.get("start") or d >= h["start"]) and (not h.get("end") or d <= h["end"])
                          for d in c.week_dates)

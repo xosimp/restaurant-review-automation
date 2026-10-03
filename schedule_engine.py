@@ -2635,7 +2635,7 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["preferences"] = _staff.stated_preferences(restaurant_id)
     except Exception:
         signals["preferences"] = {}
-    _reconcile_to_roster(signals)
+    _reconcile_to_roster(signals, c, restaurant_id)
     try:
         weights = get_quality_weights(restaurant_id)
     except Exception:
@@ -2646,6 +2646,10 @@ def _quality_signals(restaurant_id, result, **extra):
             signals["constraints"] = {n["employee_name"]: n["notes"]
                                       for n in (_gsn(restaurant_id) or [])
                                       if n.get("employee_name")}
+            if signals["constraints"] and signals.get("roster"):
+                # Under the roster's spelling, like every other signal (D-8).
+                signals["constraints"] = _rekey(signals["constraints"],
+                                                _identity_view(restaurant_id, signals["roster"], c), "join")
         except Exception:
             signals["constraints"] = {}
     signals.update(extra)
@@ -2680,16 +2684,92 @@ def _learning_signals(restaurant_id, result) -> dict:
     return out
 
 
-def _reconcile_to_roster(signals: dict) -> None:
-    """Ratings and closer flags for people who are not on the roster (seed
-    leftovers, staff who left) must not judge this week: fourteen such
-    ratings once put a fully staffed Saturday at 0 while the confidence
-    panel said nobody was rated. With a roster on file, only its names'
-    facts are scored; without one, everything stands."""
-    roster = {str(n).strip().lower() for n in (signals.get("roster") or []) if n}
+# The per-person signals the scorer and the solver read by name: each is
+# re-keyed to the roster's spelling of the person it means (D-8) — and how
+# two entries landing on one person combine.
+_PERSON_SIGNALS = {"scores": "first", "role_scores": "first", "leader_flags": "any", "tenure": "max",
+                   "prior_pattern": "first", "availability": "union", "preferences": "first",
+                   "reliability": "first", "prior_week_assignments": "concat", "elsewhere": "concat",
+                   "constraints": "join", "ledger": "first", "hours_limits": "first"}
+
+
+def _identity_view(restaurant_id, roster, c=None):
+    """name -> the roster's spelling of the one person it means (people's
+    identity, the same keys the Constraints file every fact under), or None
+    for a name nobody on the roster goes by."""
+    if c is not None and getattr(c, "display", None):
+        return lambda n: c.display.get(c.key(n))
+    names = [n for n in (roster or []) if n]
+    folded = {" ".join(str(n).split()).lower(): n for n in names}
+    key_of = {}
+    try:
+        import people as _people_id
+        key_of = (_people_id.identity_index(restaurant_id, names) or {}).get("key_of") or {}
+    except Exception as _ix:
+        print(f"[schedule] identity unavailable for {restaurant_id}: {_ix!r}")
+
+    def _display(n):
+        k = " ".join(str(n or "").split()).lower()
+        k = key_of.get(k, key_of.get(k.casefold(), k))
+        return folded.get(k)
+    return _display
+
+
+def _rekey(d: dict, display, how: str) -> dict:
+    """`d` ({name: value}) with every name a roster person goes by filed
+    under the roster's spelling; two entries on one person combined by
+    `how` (the roster's own spelling first). Names nobody on the roster
+    goes by keep their key."""
+    out, own = {}, set()
+    for n in sorted(d, key=lambda x: str(x)):
+        v = d[n]
+        who = display(n) or n
+        exact = str(n).strip() == str(who).strip()
+        if who not in out:
+            out[who] = v
+        elif how == "max":
+            try:
+                out[who] = max(out[who], v)
+            except TypeError:
+                pass
+        elif how == "any":
+            out[who] = bool(out[who]) or bool(v)
+        elif how == "union":
+            out[who] = set(out[who] or ()) | set(v or ())
+        elif how == "concat":
+            out[who] = list(out[who] or []) + [x for x in (v or []) if x not in (out[who] or [])]
+        elif how == "join":
+            out[who] = "; ".join(x for x in (str(out[who] or "").strip(), str(v or "").strip()) if x)
+        elif exact and who not in own:
+            out[who] = v                   # "first": the roster's own spelling wins
+        if exact:
+            own.add(who)
+    return out
+
+
+def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
+    """Every per-person signal is filed under the roster's spelling of the
+    person it means (people's identity, schedule audit 10/3/26 D-8): a
+    rating kept under "Mike" scores the roster's "Michael", tenure and the
+    usual pattern under an old POS spelling count, a note under a nickname
+    reaches the swap search. Then ratings and closer flags for people who
+    are not on the roster (seed leftovers, staff who left) must not judge
+    this week: fourteen such ratings once put a fully staffed Saturday at 0
+    while the confidence panel said nobody was rated. With a roster on
+    file, only its names' facts are scored; without one, everything
+    stands."""
+    roster_names = [n for n in (signals.get("roster") or []) if n]
+    roster = {str(n).strip().lower() for n in roster_names}
     if not roster:
         return
-    for key in ("scores", "leader_flags"):
+    display = _identity_view(restaurant_id, roster_names, c)
+    for key, how in _PERSON_SIGNALS.items():
+        d = signals.get(key)
+        if isinstance(d, dict) and d:
+            signals[key] = _rekey(d, display, how)
+    if signals.get("experienced"):
+        signals["experienced"] = {display(n) or n for n in signals["experienced"]}
+    for key in ("scores", "leader_flags", "role_scores"):
         d = signals.get(key) or {}
         if isinstance(d, dict):
             signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
@@ -3565,6 +3645,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["review"]["lines"].append(
                     f"Your rule \u201c{_txt[:120]}\u201d isn't one Cavnar AI can check automatically — check this "
                     f"draft against it")
+            # A fact filed under a name nobody on the roster goes by — time
+            # off, availability, a note, a station skill, a salaried entry —
+            # applies to nobody (schedule audit 10/3/26 D-8): named here,
+            # with a similar roster name to check when there is one.
+            _unm = list(getattr(_constraints, "unmatched", None) or [])
+            result["review"]["unmatched_names"] = _unm
+            if _unm:
+                result["review"]["lines"].append(
+                    f"{len(_unm)} fact{'s' if len(_unm) != 1 else ''} on file name{'' if len(_unm) != 1 else 's'} "
+                    f"nobody on the roster, so {'they apply' if len(_unm) != 1 else 'it applies'} to nobody: "
+                    + "; ".join(u["detail"] for u in _unm[:3]) + ("…" if len(_unm) > 3 else ""))
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
@@ -3576,7 +3667,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     f"{len(_not)} on the roster have no shift this week: " + ", ".join(_not[:8]) + ("…" if len(_not) > 8 else "")
                     + (f" — {len(_full)} of them full-time" if _full else ""))
             _roster_low = {n.strip().lower() for n in (result.get("roster") or [])}
-            _off = sorted(n for n in (result.get("operational_scores") or {}) if n.strip().lower() not in _roster_low) if _roster_low else []
+            # A rating under another spelling of a roster person is theirs
+            # (people's identity, D-8) — not a rating that judges nobody.
+            _known = (lambda n: _constraints.key(n) in _constraints.display) if getattr(_constraints, "display", None) \
+                else (lambda n: n.strip().lower() in _roster_low)
+            _off = sorted(n for n in (result.get("operational_scores") or {}) if not _known(n)) if _roster_low else []
             result["ratings_off_roster"] = _off
             # The section cap against what this restaurant's own history
             # runs: every requirement is held to the cap, and where the

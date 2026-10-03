@@ -1591,6 +1591,168 @@ def canonical_key(restaurant_id, name, db_path=None) -> str:
     return _nk(canonical_names(restaurant_id, [name], db_path=db_path).get(name) or name)
 
 
+# ── one key per person for the schedule's rules (schedule audit 10/3/26) ─────
+#
+# The rules keyed every per-person fact — availability, time off, a note, a
+# rating, a station skill, a salaried entry — by the name as typed, so a
+# spelling this module knows for someone (an alias, the name before a POS
+# rename, an owner's "Mike" for the roster's "Michael") matched nobody: a
+# legal time-off block stopped applying with no error (D-8), a salaried
+# manager punching as "Gabe" was held to overtime (D-7), and "Kim T." and
+# "Kimberly Tran" were checked as two people (E-25). identity_index maps
+# every spelling of each roster person to the roster's own spelling;
+# spellings() gives every spelling of the one person a name means.
+
+def fold(name) -> str:
+    """A name the way the schedule's rules key it (schedule_rules.
+    Constraints.key): spacing collapsed, lower case."""
+    return " ".join(str(name or "").split()).lower()
+
+
+def identity_index(restaurant_id, names, db_path=None) -> dict:
+    """{"key_of": {spelling: roster key}, "linked": {roster key: group key},
+    "questions": [{"a", "b", "reason"}]} for the roster `names` (as
+    staff_settings.roster spells them).
+
+    key_of — every spelling of the one live person each roster name means
+    (their display name, every alias, every name before a rename or a
+    merge), folded, to that roster name's fold. A spelling two roster
+    people answer to maps to neither — never guessed.
+    linked — roster people an OPEN "same person?" question joins (kind
+    same_person; a same_name question is two people the POS told apart):
+    until the owner answers, the rules' sweep reads them as one person —
+    overlaps, rest, hours, days in a row (E-25). Each maps to its group's
+    first key. Roster names that are one person already are linked too.
+    Never raises into a caller that has no people tables: {} maps."""
+    out = {"key_of": {}, "linked": {}, "questions": []}
+    names = [n for n in (names or []) if str(n or "").strip()]
+    if not names:
+        return out
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+        try:
+            open_q = conn.execute("SELECT person_a, person_b, reason FROM person_questions WHERE restaurant_id=? "
+                                  "AND status='open' AND kind='same_person'", (restaurant_id,)).fetchall()
+        except Exception:
+            open_q = []
+    finally:
+        conn.close()
+    roster_of = {}                      # pid -> [roster folds]
+    for n in names:
+        cands = idx.for_key(_nk(n))
+        if len(cands) == 1:
+            roster_of.setdefault(next(iter(cands)), []).append(fold(n))
+    parent = {}
+
+    def _find(k):
+        while parent.get(k, k) != k:
+            k = parent[k]
+        return k
+
+    def _join(a, b):
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            lo, hi = sorted((ra, rb))
+            parent[hi] = lo
+    owner = {}                          # spelling -> roster fold (None: two roster people answer to it)
+    for pid, folds in roster_of.items():
+        for f in folds[1:]:
+            _join(folds[0], f)          # one person under two roster spellings
+        spellings_ = set(idx.keys_of(pid)) | {fold(idx.people[pid]["display_name"])}
+        for s in spellings_:
+            s = fold(s)
+            if s in owner and owner[s] != folds[0]:
+                owner[s] = None
+            else:
+                owner.setdefault(s, folds[0])
+    roster_folds = {fold(n) for n in names}
+    for s, f in owner.items():
+        if f is not None and s not in roster_folds:
+            out["key_of"][s] = f
+    for q in open_q:
+        a, b = idx.live(q["person_a"]), idx.live(q["person_b"])
+        if a is None or b is None or a == b or a not in roster_of or b not in roster_of:
+            continue
+        _join(roster_of[a][0], roster_of[b][0])
+        out["questions"].append({"a": idx.people[a]["display_name"], "b": idx.people[b]["display_name"],
+                                 "reason": q["reason"]})
+    for k in list(parent):
+        rep = _find(k)
+        out["linked"][k] = rep
+        out["linked"][rep] = rep
+    return out
+
+
+def spellings(restaurant_id, names, db_path=None) -> dict:
+    """{name: {every folded spelling of the one live person it means}} —
+    the name's own fold always among them; a name that means nobody, or two
+    people, is just itself. For a list kept by name outside the people
+    stores (the salaried staff, per-person pay rates): "Gabe Huerta" on a
+    punch is the "Gabriel Huerta" an entry was linked to (D-7)."""
+    out = {n: {fold(n)} for n in (names or []) if str(n or "").strip()}
+    if not out:
+        return out
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+    finally:
+        conn.close()
+    for n in out:
+        cands = idx.for_key(_nk(n))
+        if len(cands) == 1:
+            pid = next(iter(cands))
+            out[n] |= {fold(k) for k in idx.keys_of(pid)} | {fold(idx.people[pid]["display_name"])}
+    return out
+
+
+def spellings_of_ids(restaurant_id, person_ids, db_path=None) -> set:
+    """Every folded spelling of the live people `person_ids` are (a merged
+    id follows its merge) — for an entry linked to a person when it was
+    saved (models.salaried_staff person_id)."""
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+    finally:
+        conn.close()
+    out = set()
+    for pid in person_ids or []:
+        try:
+            live = idx.live(int(pid))
+        except (TypeError, ValueError):
+            continue
+        if live is not None:
+            out |= {fold(k) for k in idx.keys_of(live)} | {fold(idx.people[live]["display_name"])}
+    return out
+
+
+def link_name(restaurant_id, name, db_path=None):
+    """(person_id, display name) of the one live person `name` means — its
+    own spelling or an alias, exactly — or (None, name). For a list the
+    owner keeps by name outside the people stores (the salaried staff): the
+    entry is saved under the spelling every store uses, with the person's
+    id, so a rename or merge carries it (D-7). Never a guess: a similar
+    name is a suggestion (similar_on_roster), not a link."""
+    try:
+        pid = person_id_for(restaurant_id, name, db_path=db_path, create=False)
+    except Exception:
+        pid = None
+    if pid is None:
+        return None, " ".join(str(name or "").split())
+    conn = _conn(db_path)
+    try:
+        row = conn.execute("SELECT display_name FROM people WHERE id=?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    return pid, (row["display_name"] if row else " ".join(str(name or "").split()))
+
+
+def similar_on_roster(name, roster_names) -> list:
+    """Roster spellings that might be the same person as `name` (similar):
+    a suggestion to put to the owner — never applied."""
+    return [r for r in (roster_names or []) if r and fold(r) != fold(name) and similar(name, r)]
+
+
 # ── re-pointing every store: merge and rename ───────────────────────────────
 
 def _store_rows(conn, rid, store, col, keys, pid):

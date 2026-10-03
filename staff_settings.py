@@ -405,49 +405,144 @@ def _sync_portal_access(restaurant_id, name, active, db_path=DB_PATH):
 
 # ── the roster ─────────────────────────────────────────────────────────────
 
-def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
-    """[{name, role, shifts, last_worked, is_manual, active, settings}].
+# A person's roster role (schedule audit 10/3/26 D-17): the role they worked
+# most over their last ROLE_WEEKS weeks of shifts — "most recent role wins"
+# turned a bartender into a Host for one host pickup, and with the role went
+# their manager status, leader rules and section caps.
+ROLE_WEEKS = 8
 
-    Shift history ∪ hand-added names, each once; the most recent role wins;
-    a deactivated person is left out unless asked for. This is the one list
+
+def _person_index(restaurant_id, db_path=DB_PATH):
+    """{spelling name_key: (person name_key, display name)} for every
+    spelling people's identity knows here (people.identity), or {} when the
+    identity tables can't be read — the roster then keys by spelling, as it
+    always did."""
+    try:
+        import people as _people
+        conn = _people._conn(None if db_path == DB_PATH else db_path)
+        try:
+            idx = _people._Index(conn, restaurant_id)
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    out = {}
+    for k in list(idx.by_key):
+        live = idx.for_key(k)
+        if len(live) == 1:
+            p = idx.people[next(iter(live))]
+            out[k] = (p["name_key"], p["display_name"])
+    return out
+
+
+def _main_role(worked, last) -> str:
+    """The role worked most in the ROLE_WEEKS weeks up to `last` (their
+    newest shift); a tie goes to the role worked most recently."""
+    from datetime import date, timedelta
+    try:
+        since = (date.fromisoformat(str(last)[:10]) - timedelta(weeks=ROLE_WEEKS)).isoformat()
+    except (TypeError, ValueError):
+        since = ""
+    tally = {}
+    for d, role in worked:
+        if role and (not since or d > since):
+            n, newest = tally.get(role, (0, ""))
+            tally[role] = (n + 1, max(newest, d))
+    if not tally:
+        newest = max(worked, default=("", None))
+        return newest[1]
+    return max(tally.items(), key=lambda kv: (kv[1][0], kv[1][1], kv[0]))[0]
+
+
+def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
+    """[{name, role, shifts, last_worked, is_manual, added_at, active,
+    settings, recent_roles}].
+
+    Shift history ∪ hand-added names, each person once — however the POS,
+    the hand-added list or a settings row spells them (people's identity,
+    schedule audit 10/3/26 D-8); the role is the one they worked most over
+    their last ROLE_WEEKS weeks (D-17), unless the owner recorded a primary
+    role; `recent_roles` every role in those weeks, most worked first; a
+    deactivated person is left out unless asked for. This is the one list
     the generator, the roster check, the replacement pickers and the team
     screen should all read.
     """
     from models import get_manual_team_members, _cached_shifts
-    # Keyed by name_key: one person however their name was typed in the
-    # POS, the hand-added list or a settings row (MOD-EMP-2). The display
-    # name is the spelling on their most recent shift.
-    seen = {}
+    # Keyed by the person: one entry however their name was typed (MOD-EMP-2
+    # folded case and spacing; people's identity folds an alias, an old
+    # spelling, a POS rename). The display name is the person's own
+    # (people.display_name — the spelling every store is kept under), else
+    # the spelling on their most recent shift.
+    ident = _person_index(restaurant_id, db_path)
+
+    def _who(n):
+        hit = ident.get(name_key(n))
+        return hit if hit else (name_key(n), None)
+    seen, worked = {}, {}
     try:
         for sh in _cached_shifts(restaurant_id):
             n = " ".join(str(sh.get("employee") or "").split())
             if not n:
                 continue
-            e = seen.setdefault(name_key(n), {"name": n, "role": None, "shifts": 0, "last_worked": "", "is_manual": False})
+            k, display = _who(n)
+            e = seen.setdefault(k, {"name": display or n, "role": None, "shifts": 0, "last_worked": "",
+                                    "is_manual": False, "added_at": None})
             e["shifts"] += 1
-            d = sh.get("date") or ""
+            d = str(sh.get("date") or "")[:10]
+            role = (sh.get("role") or "").strip()
+            worked.setdefault(k, []).append((d, role))
             if d >= e["last_worked"]:
                 e["last_worked"] = d
-                e["name"] = n
-                e["role"] = (sh.get("role") or "").strip() or e["role"]
+                if not display:
+                    e["name"] = n
     except Exception:
         pass
+    for k, e in seen.items():
+        e["role"] = _main_role(worked.get(k) or [], e["last_worked"])
+        since = ""
+        try:
+            from datetime import date as _d, timedelta as _td
+            since = (_d.fromisoformat(e["last_worked"]) - _td(weeks=ROLE_WEEKS)).isoformat()
+        except (TypeError, ValueError):
+            pass
+        counts = {}
+        for d, role in worked.get(k) or []:
+            if role and d > since:
+                counts[role] = counts.get(role, 0) + 1
+        e["recent_roles"] = [r for r, _n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    try:
+        from models import manual_team_added
+        added = manual_team_added(restaurant_id, db_path=db_path)
+    except Exception:
+        added = {}
     try:
         for m in get_manual_team_members(restaurant_id, db_path=db_path):
             n = " ".join(str(m.get("name") or "").split())
-            if n and name_key(n) not in seen:
-                seen[name_key(n)] = {"name": n, "role": m.get("role"), "shifts": 0, "last_worked": "", "is_manual": True}
-            elif n and m.get("role") and not seen[name_key(n)]["role"]:
-                seen[name_key(n)]["role"] = m["role"]
+            if not n:
+                continue
+            k, display = _who(n)
+            if k not in seen:
+                seen[k] = {"name": display or n, "role": m.get("role"), "shifts": 0, "last_worked": "",
+                           "is_manual": True, "added_at": added.get(m.get("name")), "recent_roles": []}
+            else:
+                seen[k]["added_at"] = added.get(m.get("name"))
+                if m.get("role") and not seen[k]["role"]:
+                    seen[k]["role"] = m["role"]
     except Exception:
         pass
-    settings = {name_key(n): st for n, st in get_all(restaurant_id, db_path=db_path).items()}
+    # A settings row kept under another spelling of the person is theirs; the
+    # row under their own spelling wins when there are two.
+    settings = {}
+    for n, st in get_all(restaurant_id, db_path=db_path).items():
+        k, _display = _who(n)
+        if k not in settings or name_key(n) == k:
+            settings[k] = st
     # A promotion the owner recorded (people.add_role, primary) is the
     # person's role from its date — before, a role came only from the shifts
     # someone had already worked (memory audit 9/29/26, uncaptured).
     try:
         import people as _people
-        primary = {r["key"]: r["role"] for r in _people.held_roles(restaurant_id) if r["primary"]}
+        primary = {_who(r["name"])[0]: r["role"] for r in _people.held_roles(restaurant_id) if r["primary"]}
     except Exception:
         primary = {}
     out = []
@@ -460,6 +555,116 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
             e = {**e, "role": primary[k]}
         out.append({**e, "active": bool(active), "settings": st})
     out.sort(key=lambda e: (not e["active"], e["name"].lower()))
+    return out
+
+
+# ── who stopped working (schedule audit 10/3/26 E-3, D-17) ──────────────────
+#
+# Everyone in three years of shift history stayed on the roster until the
+# owner deactivated them, and every fill-in pass sorted candidates by fewest
+# hours — so the server who left in June was the first one picked, and the
+# open-shift broadcast pinged her. A person with no shift in DORMANT_WEEKS
+# weeks is DORMANT: still on the roster (a row the owner writes for them is
+# legal), never chosen by code, left off the model's roster, not told about
+# open shifts, and offered to the owner as "not worked since M/D/YY —
+# deactivate?". Never dormant: somebody hand-added after their last shift
+# (or never on a shift — a new hire), anybody the owner or they themselves
+# touched lately (availability, settings, time off ahead, a published shift
+# ahead), and whoever the caller exempts — salaried people and managers,
+# who barely punch (Erik 1 punch, Jim 0 at Simple EJ's).
+DORMANT_WEEKS = 6
+
+
+def dormant_people(restaurant_id, people=None, exempt=(), today=None, db_path=DB_PATH) -> dict:
+    """{name_key: last worked iso} for the roster people (`people`, a
+    roster(include_inactive=True) list; read when None) who are dormant.
+    `exempt`: name_keys never dormant (the caller's managers, salaried
+    people, standing shifts). The weeks are counted back from the newest
+    shift on file when the history stops short of today — a restaurant
+    whose uploads stopped is not a restaurant whose staff all quit."""
+    from datetime import date as _date, timedelta as _td
+    people = list(people if people is not None else roster(restaurant_id, db_path=db_path, include_inactive=True))
+    today = today or _today(restaurant_id)
+    edge = max((e.get("last_worked") or "" for e in people), default="")
+    ref = min(today.isoformat(), edge) if edge else today.isoformat()
+    try:
+        cutoff = (_date.fromisoformat(ref) - _td(weeks=DORMANT_WEEKS)).isoformat()
+    except ValueError:
+        return {}
+    exempt = {name_key(x) for x in (exempt or ())}
+    lately = _touched_since(restaurant_id, cutoff, today, db_path)
+    try:
+        from models import salaried_keys as _sal_keys, get_restaurant as _gr
+        exempt |= {name_key(k) for k in _sal_keys(_gr(restaurant_id, db_path) if db_path != DB_PATH
+                                                  else _gr(restaurant_id), db_path=db_path)}
+    except Exception:
+        pass
+    out = {}
+    for e in people:
+        k = name_key(e.get("name"))
+        last = e.get("last_worked") or ""
+        if not k or not e.get("active", True) or k in exempt:
+            continue
+        if not last or last >= cutoff:
+            continue                      # never on a shift (hand-added), or worked lately
+        added = str(e.get("added_at") or "")[:10]
+        if added and added >= last:
+            continue                      # hand-added (back) after their last shift
+        st = e.get("settings") or {}
+        if str(st.get("updated_at") or "")[:10] >= cutoff or st.get("floor_manager") is True \
+                or st.get("standing_shifts"):
+            continue
+        if k in lately:
+            continue
+        try:
+            from schedule_rules import is_manager_role
+            if any(is_manager_role(r) for r in [e.get("role")] + list(e.get("recent_roles") or [])):
+                continue
+        except Exception:
+            pass
+        out[k] = last
+    return out
+
+
+def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
+    """name_keys with something on file that says they are still here: an
+    availability row updated since `cutoff`, time off still ahead, or a
+    shift on a live published week from `cutoff` on."""
+    out = set()
+    conn = get_conn(db_path)
+    try:
+        try:
+            for r in conn.execute("SELECT employee_name FROM staff_availability WHERE restaurant_id=? "
+                                  "AND substr(updated_at,1,10) >= ?", (restaurant_id, cutoff)).fetchall():
+                out.add(name_key(r["employee_name"]))
+        except Exception:
+            pass
+        try:
+            for r in conn.execute("SELECT employee_name FROM staff_time_off WHERE restaurant_id=? AND status IN "
+                                  "('pending','approved') AND end_date >= ?",
+                                  (restaurant_id, today.isoformat())).fetchall():
+                out.add(name_key(r["employee_name"]))
+        except Exception:
+            pass
+        try:
+            weeks = conn.execute(
+                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
+                "AND superseded_by IS NULL AND substr(week_end,1,10) >= ?", (restaurant_id, cutoff)).fetchall()
+        except Exception:
+            weeks = []
+    finally:
+        conn.close()
+    if weeks:
+        from schedule_versions import rows_from_csv
+        for w in weeks:
+            for r in rows_from_csv(w["schedule_csv"]):
+                if (r.get("date") or "") >= cutoff:
+                    out.add(name_key(r.get("employee")))
+    try:
+        ident = _person_index(restaurant_id, db_path)
+        out |= {ident[k][0] for k in list(out) if k in ident}
+    except Exception:
+        pass
     return out
 
 

@@ -5519,8 +5519,13 @@ def _targets_payload(rid):
     import staff_settings as _ss
     from models import get_restaurant, weekly_revenue_target
     r = get_restaurant(rid)
-    from models import salaried_staff, open_days_per_week
+    from models import salaried_staff, open_days_per_week, salaried_matches
     _sal, _od = salaried_staff(r), open_days_per_week(r)
+    try:
+        _sal_matched = salaried_matches(r)
+    except Exception as _sx:
+        print(f"[targets] salaried roster match unavailable for {rid}: {_sx!r}")
+        _sal_matched = [dict(x, matched=None, suggestion=None, warning=None) for x in _sal]
     try:
         rates = {k: float(v) for k, v in (_json.loads(r.role_rates_json or "{}") or {}).items() if k != "_default"}
     except Exception:
@@ -5600,7 +5605,12 @@ def _targets_payload(rid):
             # Salaried people (models.salaried_staff): costed by salary beside
             # hourly labor, never by the hour. The owner's alone (_do_targets_get);
             # `names` fills the add box so a name matches the punches exactly.
-            "salaried": [dict(x, per_day=round(x["annual"] / 52.0 / _od, 2)) for x in _sal],
+            "salaried": [dict(x, per_day=round(x["annual"] / 52.0 / _od, 2)) for x in _sal_matched],
+            # A salaried name that matches nobody on the roster (schedule
+            # audit 10/3/26 D-7 — Gabriel Huerta at Simple EJ's): each with
+            # the owner-facing sentence, and a similar roster name to check.
+            "salaried_warnings": [{"name": x["name"], "suggestion": x.get("suggestion"), "text": x["warning"]}
+                                  for x in _sal_matched if x.get("warning")],
             "salaried_names": sorted(set(names), key=str.lower),
             # The standing notes every schedule draft's prompt carries
             # (labor.py ADDITIONAL SCHEDULING NOTES), set from the schedule
@@ -5673,6 +5683,7 @@ def _do_targets_get(u):
     if not _principal(u):
         # Salaries are named people's pay: the owner's alone.
         t["salaried"], t["salaried_names"], t["salaried_roles"] = [], [], []
+        t["salaried_warnings"] = []
     return {"ok": True, "targets": t, "can_edit": _principal(u), "sees_pay": _sees_pay(u)}, 200
 
 
@@ -5771,8 +5782,18 @@ def _do_targets_set(u):
                 return {"ok": False, "error": "Give the person's name as it appears on your POS."}, 400
             if not 1000 <= annual <= SALARY_MAX:
                 return {"ok": False, "error": "An annual salary is between $1,000 and $2,000,000."}, 400
-            key = salaried_name_key(name)
-            staff = [x for x in staff if salaried_name_key(x["name"]) != key] + [{"name": name, "annual": round(annual, 2)}]
+            # Linked to the person the name means, exactly (people's
+            # identity — an alias, an old spelling): saved under the spelling
+            # every store uses, with their id, so it holds for the punches
+            # and follows a rename (schedule audit 10/3/26 D-7). A name that
+            # means nobody is kept as typed and the card warns about it.
+            import people as _people_sal
+            pid, linked_name = _people_sal.link_name(_rid(u), name)
+            entry = {"name": linked_name or name, "annual": round(annual, 2)}
+            if pid is not None:
+                entry["person_id"] = pid
+            keys = {salaried_name_key(name), salaried_name_key(entry["name"])}
+            staff = [x for x in staff if salaried_name_key(x["name"]) not in keys] + [entry]
         upd["salaried_staff_json"] = _json.dumps(staff) if staff else None
     if "sched_notes" in b:
         # The owner's own words to the schedule drafter: plain text, control
