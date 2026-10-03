@@ -503,19 +503,21 @@ def _ticket_days(conn, restaurant_id, start, end) -> dict:
     ticket opened on its business day's clock. Cancelled tickets are out."""
     out = {}
     try:
+        # Summed by the hour in SQL: a busy restaurant's eight weeks are tens
+        # of thousands of tickets, read on every live rescore.
         rows = conn.execute(
-            "SELECT business_date, opened_at, net_sales FROM pos_tickets WHERE restaurant_id=? AND business_date>=? "
-            "AND business_date<? AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL",
+            "SELECT business_date, substr(replace(opened_at, ' ', 'T'), 1, 13) AS hk, SUM(net_sales) AS net "
+            "FROM pos_tickets WHERE restaurant_id=? AND business_date>=? AND business_date<? "
+            "AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL GROUP BY business_date, hk",
             (restaurant_id, start, end)).fetchall()
     except Exception:
         return {}
     for r in rows:
         bd = str(r["business_date"])[:10]
-        stamp = str(r["opened_at"] or "").replace(" ", "T")
         try:
-            opened = datetime.strptime(stamp[:16], "%Y-%m-%dT%H:%M")
+            opened = datetime.strptime(str(r["hk"] or ""), "%Y-%m-%dT%H")
             hour = opened.hour + 24 * max(0, (opened.date() - date.fromisoformat(bd)).days)
-            net = float(r["net_sales"] or 0)
+            net = float(r["net"] or 0)
         except (TypeError, ValueError):
             continue
         day = out.setdefault(bd, {})

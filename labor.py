@@ -4051,7 +4051,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # people. historical_patterns leaves these out, so they are counted here.
     _unknown = _dd(lambda: _dd(lambda: _dd(set)))
     _dow_date_sets = _dd(set)
+    # The salaried never count toward a usual crew here either (D-4).
+    _sal_keys = set()
+    if restaurant_id:
+        try:
+            from models import get_restaurant as _gr_sk, salaried_staff as _ss_sk, salaried_name_key as _snk
+            _sal_keys = {_snk(x["name"]) for x in _ss_sk(_gr_sk(restaurant_id))}
+        except Exception:
+            _sal_keys = set()
     for s in shifts:
+        if _sal_keys and " ".join(str(s.get("employee") or "").lower().split()) in _sal_keys:
+            continue
         _date = (s.get("date") or "").strip()
         _dn = ""
         try:

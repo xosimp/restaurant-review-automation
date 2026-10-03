@@ -96,25 +96,26 @@ def _work_by_date(restaurant_id, start, end, db_path=DB_PATH) -> dict:
     tickets), `tickets` every ticket the line fires."""
     conn = get_conn(db_path)
     try:
+        # Summed by the hour in SQL, not read ticket by ticket.
         rows = conn.execute(
-            "SELECT business_date, opened_at, guest_count, is_bar FROM pos_tickets WHERE restaurant_id=? "
-            "AND business_date>=? AND business_date<? AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL",
-            (restaurant_id, start, end)).fetchall()
+            "SELECT business_date, substr(replace(opened_at, ' ', 'T'), 1, 13) || ':00' AS hk, "
+            "SUM(CASE WHEN COALESCE(is_bar,0)=0 THEN guest_count ELSE 0 END) AS guests, COUNT(*) AS tickets, "
+            "SUM(CASE WHEN COALESCE(is_bar,0)=1 THEN 1 ELSE 0 END) AS bar FROM pos_tickets WHERE restaurant_id=? "
+            "AND business_date>=? AND business_date<? AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL "
+            "GROUP BY business_date, hk", (restaurant_id, start, end)).fetchall()
     except Exception:
         return {}
     finally:
         conn.close()
     out = {}
     for r in rows:
-        part = _part_of_ticket(r["opened_at"], r["business_date"])
+        part = _part_of_ticket(r["hk"], r["business_date"])
         if not part:
             continue
         e = out.setdefault((str(r["business_date"])[:10], part), {"guests": 0, "tickets": 0, "bar tickets": 0})
-        e["tickets"] += 1
-        if int(r["is_bar"] or 0):
-            e["bar tickets"] += 1          # the bar's own guests are the bartenders' work
-        else:
-            e["guests"] += int(r["guest_count"] or 0)
+        e["tickets"] += int(r["tickets"] or 0)
+        e["bar tickets"] += int(r["bar"] or 0)          # the bar's own guests are the bartenders' work
+        e["guests"] += int(r["guests"] or 0)
     return out
 
 
