@@ -511,11 +511,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # restaurant with no history of its own a borrowed starting headcount.
     learning = schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, splh, target)
     stated_prefs, learned_prefs = {}, {}
+    # Read on their own: the learned slots now bind the scorer and the
+    # solver too (L-19), and a failed stated read used to drop them silently.
     try:
         stated_prefs = _staff.stated_preferences(restaurant_id)
+    except Exception as _sfx:
+        _soft_fail('stated_preferences', _sfx, restaurant_id)
+    try:
         learned_prefs = _intel.behaviour_preferences(restaurant_id)
-    except Exception:
-        pass
+    except Exception as _sfx:
+        _soft_fail('learned_preferences', _sfx, restaurant_id)
     could_hold = {}
     try:
         could_hold = _intel.could_hold(_intel.mentoring(restaurant_id))
