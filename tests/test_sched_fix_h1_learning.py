@@ -420,10 +420,22 @@ def test_an_unattended_week_neither_keeps_nor_reverses_a_standing_pattern():
 
 
 def test_the_experiment_readout_reads_acceptance_from_looked_at_weeks_only():
-    import inspect
-    import schedule_experiments
-    src = inspect.getsource(schedule_experiments.readout)
-    assert 'if r["history_id"] in accepted]' in src and "published.add(" in src
+    """Three published weeks on one arm, one of them sent by the automatic
+    publish: its acceptance is left out of the A/B readout, its outcome and
+    quality are not."""
+    import schedule_experiments as sx
+    rid = _rid(name="R0 Grill")
+    exp = sx.EXPERIMENTS[0]
+    for k, auth in enumerate(("principal", "principal", "system")):
+        mon = date(2026, 1, 5) + timedelta(weeks=k)
+        rows = [_row(mon, f"P{i}") for i in range(10)]
+        hid = _week(rid, mon, rows, rows, pub_auth=auth)
+        _sql("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, issues, labor_pct) "
+             "VALUES (?,?,?,?,?,?,?)", rid, hid, mon.isoformat(), "night", 50, 0, 30.0)
+        sx.record(rid, hid, [{"experiment": exp["key"], "arm": "model", "pinned": False}], 80)
+    arm = next(a for a in sx.readout()["experiments"][0]["arms"] if a["arm"] == "model")
+    assert arm["acceptance"]["n"] == 2, "a week nobody looked at counted as accepted"
+    assert arm["issues"]["n"] == 3 and arm["quality"]["n"] == 3 and arm["restaurants"] == 1
 
 
 # ══ L-8: an admin's change is taken out of the week, not the week out ═════

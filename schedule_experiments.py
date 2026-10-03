@@ -644,10 +644,12 @@ def readout(db_path=DB_PATH) -> dict:
             # restaurant: its acceptance, its outcomes and the quality it
             # was generated with — never every regeneration's.
             pub = _capped([r for r in live if r["history_id"] in published])
+            # The acceptance series is capped on its own weeks: a restaurant's
+            # newest weeks sent unattended must not crowd out its looked-at ones.
+            looked = _capped([r for r in live if r["history_id"] in accepted])
             outs = [(r["restaurant_id"], outcomes[r["history_id"]]) for r in pub if r["history_id"] in outcomes]
             series[a["key"]] = {
-                "acceptance": [(r["restaurant_id"], accepted[r["history_id"]]) for r in pub
-                               if r["history_id"] in accepted],
+                "acceptance": [(r["restaurant_id"], accepted[r["history_id"]]) for r in looked],
                 "quality": [(r["restaurant_id"], r["quality_score"]) for r in pub],
                 "issues": [(rid, o["issues"]) for rid, o in outs],
                 "labor_pct": [(rid, o["labor_pct"]) for rid, o in outs]}
@@ -656,7 +658,7 @@ def readout(db_path=DB_PATH) -> dict:
                 "generated": len(live), "pinned": sum(1 for r in mine if r["arm"] == a["key"] and r["pinned"]),
                 # The restaurants a verdict on acceptance rests on: those
                 # with a week somebody looked at (L-7).
-                "restaurants": len({r["restaurant_id"] for r in pub if r["history_id"] in accepted}),
+                "restaurants": len({r["restaurant_id"] for r in looked}),
                 "acceptance": cluster_mean_ci(series[a["key"]]["acceptance"], 0.0, 1.0),
                 "quality": cluster_mean_ci(series[a["key"]]["quality"], 0.0, 100.0),
                 "issues": cluster_mean_ci(series[a["key"]]["issues"], 0.0),
