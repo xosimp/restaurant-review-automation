@@ -170,6 +170,19 @@ def test_am_pm_job_codes_answer_a_rule_for_their_role():
     assert dim(shift_of(out, SAT), "leadership")["score"] == 100
 
 
+def test_a_rule_or_target_on_an_am_or_pm_job_keeps_to_its_half_of_the_day():
+    rows = [lunch(SAT, "Ann", "Host AM"), row(SAT, "Bea", "Host PM")]
+    rule = {"role": "Host AM", "days": ["Saturday"], "min_score": 5}
+    out = sq.score_rows(rows, profiles=STD, scores={"Ann": 5, "Bea": 3}, leader_rules=[rule],
+                        role_minimums={"Host": 1})
+    assert dim(shift_of(out, SAT, "morning"), "leadership")["score"] == 100
+    assert dim(shift_of(out, SAT), "leadership") is None
+    prof = [sq.ShiftProfile(key="std", min_strength={"Host PM": 4}, source="restaurant")]
+    out = sq.score_rows(rows, profiles=prof, scores={"Ann": 2, "Bea": 3}, role_minimums={"Host": 1})
+    assert dim(shift_of(out, SAT, "morning"), "operational_strength") is None
+    assert dim(shift_of(out, SAT), "operational_strength")["facts"]["shortfalls"][0]["strength"] == 3
+
+
 # ── SQ-3 / SQ-4 / SQ-5: strength per person, over the rated share ─────────
 
 SERVER8 = [sq.ShiftProfile(key="std", min_strength={"Server": 8}, source="restaurant")]
@@ -399,20 +412,27 @@ def test_a_breach_id_tuple_lands_as_its_violation_would():
     assert shift_of(out, SAT, "morning")["capped_by"] == shift_of(out, SAT)["capped_by"] == "hard_rules"
 
 
-def test_the_engines_breach_map_lands_and_a_changed_date_takes_none_of_it():
+def test_the_engines_breach_map_lands_and_holds_where_a_pass_changed_the_rows():
     """schedule_engine.hard_breach_map's shape: breaches by date with their
-    dayparts, and each date's row signature — a pass that changed a date's
-    rows must not be held by breaches found on the old ones."""
-    rows = [lunch(SAT, "Lu", "Server"), row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
+    dayparts. Scored on rows a pass changed (the what-if's swaps), a day's
+    breach still holds — dropping it credited any change on a capped day
+    with lifting the cap — and a person's breach goes with the person."""
     gap = {"id": ["no_manager", SAT], "kind": "no_manager", "label": "no manager on the floor",
            "detail": "no manager on Saturday from 5:00pm to 6:00pm", "employee": None, "dayparts": ["night"],
            "day_level": True, "no_show": False, "minutes": 60}
-    swept = [r for r in rows if r["date"] == SAT]
-    fresh = {"by_date": {SAT: [gap]}, "week": [], "rows_sig": {SAT: sq.LocalScorer._signature(swept)}}
-    night = shift_of(_clean_saturday(hard_breaches=fresh), SAT)
+    rest = {"id": ["rest_gap", SAT, "ann"], "kind": "rest_gap", "employee": "Ann", "dayparts": ["night"],
+            "detail": "8.0h since their previous shift, the rule is 10h", "day_level": False}
+    swept = [lunch(SAT, "Lu", "Server"), row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
+    m = {"by_date": {SAT: [gap]}, "week": [], "rows_sig": {SAT: sq.LocalScorer._signature(swept)}}
+    night = shift_of(_clean_saturday(hard_breaches=m), SAT)
     assert night["capped_by"] == "hard_rules" and "5:00pm to 6:00pm" in night["held_by"]["text"]
-    stale = dict(fresh, rows_sig={SAT: sq.LocalScorer._signature(swept[:2])})
-    assert _clean_saturday(hard_breaches=stale)["score"] == 100
+    swapped = [lunch(SAT, "Lu", "Server"), row(SAT, "Cy", "Server"), row(SAT, "Bob", "Server")]
+    kw = dict(profiles=STD, scores={"Lu": 4, "Cy": 4, "Bob": 4},
+              typical_headcount={("Saturday", "morning"): {"Server": 1}, ("Saturday", "night"): {"Server": 2}})
+    held = sq.score_rows(swapped, hard_breaches=m, **kw)
+    assert shift_of(held, SAT)["capped_by"] == "hard_rules", "a swap did not bring a manager"
+    gone = sq.score_rows(swapped, hard_breaches={"by_date": {SAT: [rest]}, "week": [], "rows_sig": {}}, **kw)
+    assert shift_of(gone, SAT)["capped_by"] is None, "Ann's own breach left with her"
     over = {"id": ["over_max_hours", "ann", THU], "kind": "over_max_hours", "employee": "Ann",
             "dayparts": ["night"], "detail": "48h in the payroll week — over 40h"}
     weekly = {"by_date": {d: [dict(over)] for d in (THU, FRI, SAT)}, "week": [], "rows_sig": {}}

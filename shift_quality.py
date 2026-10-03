@@ -100,6 +100,19 @@ def role_family(role, families=None) -> str:
     return " ".join(w for w in cleaned if w) or low
 
 
+def job_code_daypart(role):
+    """'morning' for a job code named "... AM", 'night' for "... PM", else
+    None: a rule or a target on an AM or PM job keeps to its own half of
+    the day (owner, 10/2/26 — "Host AM" at dinner is nobody's). The same
+    reading as models.leader_rule_daypart, here for the pure layer."""
+    words = str(role or "").strip().lower().split()
+    if words and words[-1] == "am":
+        return "morning"
+    if words and words[-1] == "pm":
+        return "night"
+    return None
+
+
 # Demand levels, weakest to strongest. Profiles name one of these; the
 # engine also derives one from the restaurant's own sales history when a
 # profile does not pin it.
@@ -718,6 +731,10 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
     ratios, shorts, mets = [], [], []
     unrated_by_role = {}
     for role, target in targets.items():
+        # A target on an AM or PM job is that half of the day's, judged on
+        # the role's people whichever code they punch under.
+        if job_code_daypart(role) not in (None, ctx.daypart):
+            continue
         fam = ctx.family(role)
         people = on.get(fam) or []
         if not people:
@@ -962,7 +979,7 @@ def leader_rule_applies(rule: dict, day: str, daypart: str, is_closing=None,
     days = {d.strip().lower() for d in (rule.get("days") or []) if d}
     if days and (day or "").strip().lower() not in days:
         return False
-    part = (rule.get("daypart") or "").strip().lower()
+    part = (rule.get("daypart") or "").strip().lower() or job_code_daypart(role)
     if part:
         return part == (daypart or "").strip().lower()
     where = (runs or {}).get(role_family(role, families))
@@ -3312,6 +3329,8 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
                 entry[0] += int(n or 0)
                 entry[1].add(reqs[r][1])
             for role, target in targets.items():
+                if job_code_daypart(role) not in (None, part):
+                    continue
                 n, sources = by_family.get(role_family(role, families), (0, set()))
                 key = (role_family(role, families), target)
                 if n > (out.get(key) or (0, ""))[0]:
@@ -3352,25 +3371,38 @@ _CLOSE_BREACHES = frozenset({"nobody_at_close", "keyholder_until_close"})
 _PERSON_WEEK_BREACHES = frozenset({"over_max_hours", "minor_week_hours", "long_run"})
 
 
+# Breaches about a day — its floors, its manager, its close — not about one
+# person's row, whoever the sweep pinned them to.
+_DAY_BREACHES = frozenset({"no_manager", "coverage_floor", "keyholder_until_close", "nobody_at_close",
+                           "owner_rule", "no_manager_on_duty", "ends_before_role_close"})
+
+
 def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
     """{(date, daypart): [{kind, label}]} — each hard breach the rule sweep
     found (signals["hard_breaches"]), on the shift it is about (SQ-14).
+    "*" as the daypart is every shift of that date.
 
-    A breach is a violation dict as schedule_rules.violations returns it
-    (kind, date, employee, shift_start, detail, hard, and per kind daypart,
-    gap_start/gap_end, bucket/week), or a schedule_rules.breach_id tuple. It
-    lands on: its daypart (a floor short); the dayparts its minutes cross
-    (no manager from 2:45 to 3:15pm is both); the closing shift (nobody at
-    close, no closer); the shifts its row is on the floor for (a person's
-    own breach); the person's latest shift that payroll week (hours over,
-    a run too long); else every shift of its date. A soft flag
-    (hard False) never lands, and neither does a person's breach whose row
-    is not in `rows` — it was found on other rows (a pass's trial moved
-    it), and a stale cap would hide what the move fixed."""
+    `breaches` is the engine's map (schedule_engine.hard_breach_map:
+    {"by_date": {date: [breach]}, "week": [breach]}), or a list of
+    violation dicts as schedule_rules.violations returns them, or of
+    schedule_rules.breach_id tuples. A day's breach (a floor short, no
+    manager, nobody at close) lands on its daypart — the dayparts its
+    unmanaged minutes cross, the closing shift for a close — else every
+    shift of its date. A person's own breach lands on the shifts they work
+    that date (the row it names when it is still there); a week-long one
+    (hours over, a run too long) on their latest. A soft flag never lands.
+
+    Scoring rows other than the ones swept (a pass's trial, the what-if's
+    swaps): a person's breach whose person no longer works that date is gone
+    with them and does not land; a day's breach stays. Dropping a whole
+    changed date instead credited ANY change on a capped day with lifting
+    the cap — a what-if "better arrangement" the owner would read that fixed
+    nothing; the score of the finished rows is always swept fresh."""
     rows_by_date = {}
     for r in rows or []:
-        if (r.get("date") or "").strip():
-            rows_by_date.setdefault(r["date"].strip(), []).append(r)
+        d = (r.get("date") or "").strip()
+        if d and (r.get("employee") or "").strip():
+            rows_by_date.setdefault(d, []).append(r)
     closes_on = closes_on or {}
     out, latest = {}, {}
 
@@ -3380,100 +3412,71 @@ def place_breaches(breaches, rows: list, closes_on: dict = None) -> dict:
             if not any(x["label"] == label for x in items):
                 items.append({"kind": kind, "label": label})
 
+    for b in _breach_items(breaches, rows_by_date):
+        date, kind, label, emp = b["date"], b["kind"], b["label"], b["employee"]
+        if emp:
+            mine = [r for r in rows_by_date.get(date, []) if (r.get("employee") or "").strip().lower() == emp]
+            if not mine:
+                continue
+            exact = [r for r in mine if b["shift_start"] and (r.get("shift_start") or "") == b["shift_start"]]
+            parts = sorted({p for r in (exact or mine) for p in present_dayparts(r) if p != "unknown"}) or None
+            if kind in _PERSON_WEEK_BREACHES:
+                when = (date, _slot_minutes(b["shift_start"]) or 0)
+                if b["week_key"] not in latest or when > latest[b["week_key"]][0]:
+                    latest[b["week_key"]] = (when, date, parts, kind, label)
+                continue
+            put(date, parts, kind, label)
+            continue
+        parts = b["parts"]
+        if not parts and kind in _CLOSE_BREACHES:
+            closing = (closes_on.get(date) or (None, None))[1]
+            parts = [closing] if closing else None
+        put(date, parts, kind, label)
+    for _when, date, parts, kind, label in latest.values():
+        put(date, parts, kind, label)
+    return out
+
+
+def _breach_items(breaches, rows_by_date: dict):
+    """Each hard breach as {date, kind, label, employee (lower; None for a
+    day's), shift_start, parts (None: not known), week_key} — from any of
+    the shapes place_breaches takes. A breach about no date (the engine
+    map's "week") stands on every date with rows."""
     if isinstance(breaches, dict):
-        return _place_breach_map(breaches, rows_by_date, closes_on, put, out)
-    for v in breaches or []:
+        raw = [dict(b, date=b.get("date") or d) for d, items in (breaches.get("by_date") or {}).items()
+               for b in (items or []) if isinstance(b, dict)]
+        raw += [dict(b, date=d) for b in (breaches.get("week") or []) if isinstance(b, dict) for d in rows_by_date]
+    else:
+        raw = list(breaches or [])
+    for v in raw:
         if isinstance(v, (tuple, list)):
             v = _breach_from_id(v)
         if not isinstance(v, dict) or v.get("hard") is False:
             continue
         date = str(v.get("date") or "").strip()
+        if not date:
+            continue
         kind = v.get("kind") or ""
-        if not date:
-            continue
-        label = str(v.get("detail") or v.get("label") or kind.replace("_", " ") or "a hard rule").strip()
         emp = (v.get("employee") or "").strip().lower()
-        part = (v.get("daypart") or "").strip().lower()
-        if kind in _PERSON_WEEK_BREACHES and emp and v.get("shift_start"):
-            key = (kind, emp, v.get("bucket") or v.get("week") or "")
-            when = (date, _slot_minutes(v.get("shift_start")) or 0)
-            if key not in latest or when > latest[key][0]:
-                latest[key] = (when, v, label)
-            continue
-        if part in ("morning", "night"):
-            put(date, [part], kind, label)
-        elif v.get("gap_start") is not None and v.get("gap_end") is not None:
-            try:
-                gs, ge = int(v["gap_start"]), int(v["gap_end"])
-            except (TypeError, ValueError):
-                put(date, None, kind, label)
-                continue
-            parts = (["morning"] if gs < DAYPART_CUTOVER else []) + (["night"] if ge > DAYPART_CUTOVER else [])
-            put(date, parts, kind, label)
-        elif kind in _CLOSE_BREACHES:
-            closing = (closes_on.get(date) or (None, None))[1]
-            put(date, [closing] if closing else None, kind, label)
-        elif v.get("shift_start"):
-            row = next((r for r in rows_by_date.get(date, [])
-                        if (r.get("employee") or "").strip().lower() == emp
-                        and (r.get("shift_start") or "") == v.get("shift_start")), None)
-            if row is not None:
-                put(date, present_dayparts(row), kind, label)
-        elif emp:
-            parts = sorted({p for r in rows_by_date.get(date, [])
-                            if (r.get("employee") or "").strip().lower() == emp for p in present_dayparts(r)})
-            put(date, parts or None, kind, label)
-        else:
-            put(date, None, kind, label)
-    for (_k, _e, _b), ((date, _m), v, label) in latest.items():
-        row = next((r for r in rows_by_date.get(date, [])
-                    if (r.get("employee") or "").strip().lower() == (v.get("employee") or "").strip().lower()
-                    and (r.get("shift_start") or "") == v.get("shift_start")), None)
-        if row is not None:
-            put(date, present_dayparts(row), v.get("kind"), label)
-    return out
-
-
-def _place_breach_map(m: dict, rows_by_date: dict, closes_on: dict, put, out: dict) -> dict:
-    """place_breaches for the engine's own shape (schedule_engine
-    .hard_breach_map): {"by_date": {date: [{id, kind, label, detail,
-    employee, dayparts, day_level, ...}]}, "week": [...], "rows_sig":
-    {date: LocalScorer signature of the rows swept}}. A date whose rows are
-    not the ones swept (a pass's trial changed them) takes none of its
-    breaches: they were found on other rows. A person's week-long breach
-    lands on their latest shift; one about no date, on every shift."""
-    sigs = m.get("rows_sig") or {}
-    latest = {}
-    for date, items in (m.get("by_date") or {}).items():
-        date = str(date or "").strip()
-        if not date:
-            continue
-        mine = [r for r in rows_by_date.get(date, []) if (r.get("employee") or "").strip()]
-        if date in sigs and sigs[date] != LocalScorer._signature(mine):
-            continue
-        for b in items or []:
-            if not isinstance(b, dict) or b.get("hard") is False:
-                continue
-            kind = b.get("kind") or ""
-            label = str(b.get("detail") or b.get("label") or kind.replace("_", " ") or "a hard rule").strip()
-            parts = [p for p in (b.get("dayparts") or []) if p]
-            if kind in _CLOSE_BREACHES and not parts:
-                closing = (closes_on.get(date) or (None, None))[1]
-                parts = [closing] if closing else []
-            if kind in _PERSON_WEEK_BREACHES and b.get("employee"):
-                key = tuple(b.get("id") or (kind, (b.get("employee") or "").strip().lower()))
-                if key not in latest or date > latest[key][0]:
-                    latest[key] = (date, parts, kind, label)
-                continue
-            put(date, parts or None, kind, label)
-    for date, parts, kind, label in latest.values():
-        put(date, parts or None, kind, label)
-    for b in m.get("week") or []:
-        if isinstance(b, dict) and b.get("hard") is not False:
-            label = str(b.get("detail") or b.get("label") or b.get("kind") or "a hard rule").strip()
-            for date in rows_by_date:
-                put(date, None, b.get("kind") or "", label)
-    return out
+        if v.get("day_level") or kind in _DAY_BREACHES:
+            emp = ""
+        parts = [p for p in (v.get("dayparts") or []) if p] or None
+        if not parts:
+            part = (v.get("daypart") or "").strip().lower()
+            if part in CORE_WINDOWS:
+                parts = [part]
+            elif v.get("gap_start") is not None and v.get("gap_end") is not None:
+                try:
+                    gs, ge = int(v["gap_start"]), int(v["gap_end"])
+                    parts = (["morning"] if gs < DAYPART_CUTOVER else []) + (["night"] if ge > DAYPART_CUTOVER else [])
+                except (TypeError, ValueError):
+                    parts = None
+            elif kind == "no_manager_on_duty" and v.get("shift_start"):
+                parts = [daypart_of(v.get("shift_start"))]
+        yield {"date": date, "kind": kind,
+               "label": str(v.get("detail") or v.get("label") or kind.replace("_", " ") or "a hard rule").strip(),
+               "employee": emp or None, "shift_start": v.get("shift_start") or "", "parts": parts or None,
+               "week_key": tuple(v.get("id") or ()) or (kind, emp, v.get("bucket") or v.get("week") or "")}
 
 
 def _breach_from_id(bid) -> dict:
