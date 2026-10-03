@@ -471,7 +471,7 @@ def test_a_cut_slice_splits_again_down_to_departments_and_people_then_stops(monk
 def test_a_failure_partway_keeps_the_days_already_written(monkeypatch):
     _pin_week(monkeypatch)
     calls = []
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)          # two slices
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
     monkeypatch.setattr(labor, "generate_optimized_schedule", _gen([
         [_line(d, "Ana") for d in WEEK[:4]],
         ai_utils.AIProviderDown("down"),
@@ -516,7 +516,8 @@ def test_the_row_sizing_is_derived_from_the_ceiling_the_thinking_and_the_schema(
     assert se.SCHEDULE_TOKEN_CEILING == labor.SCHEDULE_MAX_TOKENS_THINKING
     by_tokens = (se.SCHEDULE_TOKEN_CEILING - se.THINKING_TOKENS_RESERVED - se.SUMMARY_TOKENS) // se.OUTPUT_TOKENS_PER_ROW
     assert se.ROWS_PER_CALL_BY_TOKENS == by_tokens
-    assert se.CHUNK_ROWS_PER_CALL == min(by_tokens, se.ROWS_PER_CALL_TIME_CAP)
+    assert se.ROWS_PER_CALL_BY_TIME == se.ROW_TOKENS_PER_CALL // se.OUTPUT_TOKENS_PER_ROW
+    assert se.CHUNK_ROWS_PER_CALL == min(by_tokens, se.ROWS_PER_CALL_BY_TIME)
     # OUTPUT_TOKENS_PER_ROW is what one row costs under labor.SCHEDULE_SCHEMA:
     # never under the row's serialized size (the calls would be cut), and
     # re-measured when the schema shrinks (the calls would be needlessly
@@ -527,21 +528,33 @@ def test_the_row_sizing_is_derived_from_the_ceiling_the_thinking_and_the_schema(
 
 def _row_tokens_estimate(schema) -> float:
     """Characters one more shift adds to an answer under `schema`, at ~3.2
-    characters a token: a sample answer with two shifts less one with one."""
+    characters a token: a sample answer with two shifts less one with one.
+    Only the array of shifts grows — a schema that groups shifts under each
+    date keeps one date — whether a shift is an object or a tuple."""
     samples = {"date": "2026-10-05", "day": "Wednesday", "employee": "Jamie Lopez", "name": "Jamie Lopez",
                "role": "Line Cook", "shift_start": "10:30am", "start": "10:30am", "shift_end": "10:30pm",
                "end": "10:30pm", "scheduled_hours": 7.5, "hours": 7.5, "notes": "staggered opener"}
+    row_keys = ("shift_start", "start", "employee", "name", "shift_end", "end")
+
+    def is_rows(node):
+        items = node.get("items") or {}
+        return (any(k in (items.get("properties") or {}) for k in row_keys)
+                or bool(items.get("prefixItems")) or (items.get("type") == "array"))
 
     def build(node, n, key=""):
-        t = node.get("type")
         if "enum" in node:
             return node["enum"][0]
+        if "const" in node:
+            return node["const"]
+        t = node.get("type")
+        if isinstance(t, list):
+            t = next((x for x in t if x != "null"), t[0])
         if t == "object":
             return {k: build(v, n, k) for k, v in (node.get("properties") or {}).items()}
         if t == "array":
-            items = node.get("items") or {}
-            count = n if key in ("shifts", "rows") or items.get("type") in ("object", "array") else 1
-            return [build(items, n, key) for _ in range(count)]
+            if node.get("prefixItems"):
+                return [build(x, n, key) for x in node["prefixItems"]]
+            return [build(node.get("items") or {}, n, key) for _ in range(n if is_rows(node) else 1)]
         return samples.get(key, 6 if t in ("number", "integer") else "Server")
     one, two = json.dumps(build(schema, 1)), json.dumps(build(schema, 2))
     return (len(two) - len(one)) / 3.2

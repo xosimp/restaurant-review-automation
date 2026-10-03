@@ -38,22 +38,22 @@ import demand_signals as _signals
 # one row under the output contract in force (labor.SCHEDULE_SCHEMA, eight
 # keys a row as JSON; the old figure, 60, was the CSV row's and undercounted
 # the JSON one); tests/test_schedule_b2_calls.py holds it to the schema, so a
-# schema change re-sizes the calls. A call's minutes grow with its rows as
-# well — and with its thinking — so the rows held per call
-# (ROWS_PER_CALL_TIME_CAP) stay at the slice size that finished well inside
-# the old 360-second timeout with the earlier, non-thinking model, rather
-# than where the tokens alone would let a call run (321 rows: about twice
-# the minutes). Every call logs its rows, characters written and seconds
-# (`slices`), so both figures can be re-read from the first real Opus weeks.
-# A wrong guess costs a split, not the week: a cut answer keeps its finished
-# days and the rest is written again smaller.
+# schema change re-sizes the calls. A call's minutes grow with what it writes
+# as well (and with its thinking), so the row tokens one call is held to,
+# ROW_TOKENS_PER_CALL, are what a 160-row slice of the old ~60-token rows
+# wrote inside the old 360-second timeout: 9,600 / 70 = 137 rows a call now,
+# and more as the rows get cheaper. Every call logs its rows, characters
+# written and seconds (`slices`), so both figures can be re-read from the
+# first real Opus weeks. A wrong guess costs a split, not the week: a cut
+# answer keeps its finished days and the rest is written again smaller.
 SCHEDULE_TOKEN_CEILING = 64000          # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
 THINKING_TOKENS_RESERVED = 40000        # adaptive thinking at effort "high", left room before rows
 SUMMARY_TOKENS = 1500                   # the three bullets and the JSON around the rows
 OUTPUT_TOKENS_PER_ROW = 70              # one row of labor.SCHEDULE_SCHEMA
+ROW_TOKENS_PER_CALL = 9600              # what one call is held to writing, for its minutes
 ROWS_PER_CALL_BY_TOKENS = (SCHEDULE_TOKEN_CEILING - THINKING_TOKENS_RESERVED - SUMMARY_TOKENS) // OUTPUT_TOKENS_PER_ROW
-ROWS_PER_CALL_TIME_CAP = 160
-CHUNK_ROWS_PER_CALL = min(ROWS_PER_CALL_BY_TOKENS, ROWS_PER_CALL_TIME_CAP)
+ROWS_PER_CALL_BY_TIME = ROW_TOKENS_PER_CALL // OUTPUT_TOKENS_PER_ROW
+CHUNK_ROWS_PER_CALL = min(ROWS_PER_CALL_BY_TOKENS, ROWS_PER_CALL_BY_TIME)
 # A cut or failed part is split again — its dates in halves, then a single
 # date by department, then a department's people in halves — at most this
 # many times, and a generation makes at most its planned calls plus

@@ -54,7 +54,7 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwri
     a backstop — and the five days already paid for are kept (schedule audit
     10/3/26 P-34: the whole week used to be thrown away)."""
     import labor
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)          # two slices
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],                    # Mon–Thu fine
@@ -74,7 +74,7 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwri
 
 def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
     import labor
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],
