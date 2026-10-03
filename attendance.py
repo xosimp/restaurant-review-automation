@@ -399,6 +399,12 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
             elif (out_m is not None and sched_end is not None and sched_end - out_m >= LEFT_EARLY_HOURS * 60
                   and out_m > (in_m or 0)):
                 outcome = "left_early"
+            # A shift that ran well past its end is learned too (schedule
+            # audit 10/3/26 L-16: which closes overrun never shaped the
+            # draft) — observed for the scheduling memory, read across
+            # midnight from the scheduled start; the same fact the nightly
+            # consolidation keys, so the two never count it twice.
+            _observe_stayed_late(restaurant_id, r, best, day, hid, db_path)
         else:
             if releases is None:
                 releases = _releases(restaurant_id, day, restaurant=restaurant, db_path=db_path)
@@ -408,6 +414,22 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
                   notice_minutes=notice, db_path=db_path):
             n += 1
     return {"watched": True, "recorded": n}
+
+
+def _observe_stayed_late(restaurant_id, row, punch, day, history_id=None, db_path=None) -> None:
+    """A scheduled shift whose punch ran schedule_memory.STAYED_LATE_MINUTES
+    or more past its scheduled end, into the observation log (kind
+    stayed_late, phase as_run). Never raises into the join."""
+    import schedule_memory
+    over = schedule_memory.minutes_past_end(row, punch)
+    if over is None or over < schedule_memory.STAYED_LATE_MINUTES:
+        return
+    schedule_memory.observe(
+        restaurant_id, "stayed_late", date=str(day)[:10], daypart=None, role=row.get("role"),
+        person=row.get("employee"), history_id=history_id,
+        value={"minutes": int(over), "scheduled_end": row.get("shift_end"), "punched_out": punch.get("shift_end")},
+        origin="system", phase="as_run", authority="system", source="schedule_vs_punch_join", db_path=db_path,
+        fact_key=f"stayed_late|{str(day)[:10]}|{_nk(row.get('employee'))}|{_minutes(row.get('shift_start'))}")
 
 
 def from_coverage_issues(restaurant_id, today=None, days=JOIN_DAYS, db_path=None) -> int:

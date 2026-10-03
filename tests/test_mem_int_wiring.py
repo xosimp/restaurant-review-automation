@@ -175,6 +175,13 @@ def _seed(monkeypatch):
     # marketing: measured post results (the deep reader, stubbed at its source).
     import marketing_signals
     monkeypatch.setattr(marketing_signals, "measured_lines", lambda r, **k: ["wing night posts: +12% sales, 3 posts"])
+    # schedule_memory (schedule audit 10/3/26 L-29): what the scheduling has
+    # learned — an opener the passes hold.
+    _x("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, role, day, daypart, "
+       "status, enforcement, confidence, value_json, text, opportunities, hits) VALUES "
+       "(?,?,?,?,?,?,?,?,'active','soft',0.8,?,?,6,6)",
+       (rid, "opener|server|Friday|ana b.", "opener", "ownership", "Ana B.", "server", "Friday", "night",
+        '{"start": "4:00pm", "role": "Server"}', "Ana B. opens Server on Fridays."))
     # conversation: the questions this login keeps asking.
     import ask_conversations
     monkeypatch.setattr(ask_conversations, "often_asks_line", lambda r, uid, db_path=None: {

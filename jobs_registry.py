@@ -152,6 +152,14 @@ JOBS = {
         cadence="Mon 4am CT", sla_minutes=_W, sends=False, runnable=True,
         label="Schedule outcomes", description="Record what each published week actually did, by daypart",
         target=("strategy_jobs", "run_schedule_outcomes"), max_minutes=30, retry=True),
+    "schedule_memory": dict(
+        # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
+        # sources, after people_nightly.
+        cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Scheduling memory",
+        description="Rebuild what each restaurant's scheduling has learned — habits, openers, sections, "
+                    "overtime, late closes, teams — with its confidence and status",
+        target=("strategy_jobs", "run_schedule_memory"), max_minutes=30, retry=True),
     "people_nightly": dict(
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="People memory",

@@ -14,7 +14,22 @@ being drafted.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports): the
+    bound import of get_conn and the database path pinned this module to the
+    file of whichever test imported it first, so a later test's time off was
+    read from another test's database (test_mem_m2_ask_reach after
+    test_kitchen_stations)."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
+
+
+def _path(db_path):
+    """The database a call means: the one named, else models' own path as it
+    is now — what the helpers this module hands a path to expect."""
+    return db_path if db_path is not None else _models_mod.DB_PATH
 
 MAX_RANGE_DAYS = 31
 MAX_AHEAD_DAYS = 180
@@ -96,7 +111,7 @@ def _today(restaurant_id, today=None):
     return restaurant_now_by_id(restaurant_id, naive=True).date()
 
 
-def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_path=DB_PATH, today=None,
+def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_path=None, today=None,
                      start_time=None, end_time=None, daypart=None):
     """The employee's own request. Returns (row, error). `start_time` /
     `end_time` / `daypart`: part of each day off ("until 4pm", "dinner") —
@@ -158,14 +173,14 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
         # reason rides too: it was stored and left out (COM-14).
         _sr._tell_managers(restaurant_id, "Time off request",
                            f"{name} asked for {span} off" + (f" — “{why}”" if why else "")
-                           + ". Approve or decline it in Labor.", db_path,
+                           + ". Approve or decline it in Labor.", _path(db_path),
                            req={"id": row["id"], "request_kind": "time_off"})
     except Exception as ex:
         print(f"[time_off] manager notice failed rid={restaurant_id}: {ex!r}")
     return dict(row), None
 
 
-def withdraw(restaurant_id, request_id, employee_name, db_path=DB_PATH) -> bool:
+def withdraw(restaurant_id, request_id, employee_name, db_path=None) -> bool:
     """The employee takes back their own request while it is still pending,
     so a mistyped range can be corrected — the overlap rule used to block
     the fix with no way out (MOD-EMP-7)."""
@@ -180,7 +195,7 @@ def withdraw(restaurant_id, request_id, employee_name, db_path=DB_PATH) -> bool:
         conn.close()
 
 
-def cancel_approved(restaurant_id, request_id, employee_name, db_path=DB_PATH, today=None):
+def cancel_approved(restaurant_id, request_id, employee_name, db_path=None, today=None):
     """The employee calls off approved time off they no longer need — before
     it starts. Direct, with a notice to the deciders rather than a second
     approval: giving days back only makes the person available again, it
@@ -209,13 +224,13 @@ def cancel_approved(restaurant_id, request_id, employee_name, db_path=DB_PATH, t
         from time_utils import mdy_range
         _sr._tell_managers(restaurant_id, "Time off cancelled",
                            f"{row['employee_name']} no longer needs {mdy_range(row['start_date'], row['end_date'])} off — "
-                           "they're available again for the next draft.", db_path)
+                           "they're available again for the next draft.", _path(db_path))
     except Exception as ex:
         print(f"[time_off] cancel notice failed rid={restaurant_id}: {ex!r}")
     return row, None
 
 
-def published_conflicts(restaurant_id, employee_name, start, end, db_path=DB_PATH, part=None) -> list:
+def published_conflicts(restaurant_id, employee_name, start, end, db_path=None, part=None) -> list:
     """[{date, day, shift_start, shift_end, role}] — this person's shifts on
     the live published weeks inside [start, end]. Approving time off over a
     week staff already have used to leave them scheduled with nobody told
@@ -277,7 +292,7 @@ def shift_hits_part(row, part) -> bool:
     return (lo is None or e > lo) and (hi is None or s < hi)
 
 
-def mine(restaurant_id, employee_name, db_path=DB_PATH, today=None):
+def mine(restaurant_id, employee_name, db_path=None, today=None):
     """This employee's requests, upcoming first; decided ones from the last
     60 days stay visible so the answer is not lost. An approved one still
     ahead carries `still_scheduled` — the published shifts inside it that
@@ -310,7 +325,7 @@ def mine(restaurant_id, employee_name, db_path=DB_PATH, today=None):
     return out
 
 
-def pending(restaurant_id, db_path=DB_PATH):
+def pending(restaurant_id, db_path=None):
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM staff_time_off WHERE restaurant_id=? AND status='pending' "
@@ -320,7 +335,7 @@ def pending(restaurant_id, db_path=DB_PATH):
     return [dict(r) for r in rows]
 
 
-def recent(restaurant_id, limit=30, db_path=DB_PATH, today=None):
+def recent(restaurant_id, limit=30, db_path=None, today=None):
     """Pending first, then everything decided that is still ahead or ended
     in the last 30 days — the manager's whole picture on one screen."""
     today = _today(restaurant_id, today)
@@ -337,7 +352,7 @@ def recent(restaurant_id, limit=30, db_path=DB_PATH, today=None):
     return [dict(dict(r), span_label=span_label(dict(r))) for r in rows]
 
 
-def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_path=DB_PATH):
+def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_path=None):
     """A manager's answer. Only a pending request can be decided; the
     decision is final (a changed mind is a new request)."""
     conn = get_conn(db_path)
@@ -358,7 +373,7 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
     return row
 
 
-def _tell_requester(restaurant_id, row, db_path=DB_PATH):
+def _tell_requester(restaurant_id, row, db_path=None):
     """The person who asked hears the answer — on the app, a text they
     agreed to, or email (people.tell). A decision used to reach nobody: the
     employee found out only if they opened the portal (F2-5). Never raises."""
@@ -388,12 +403,12 @@ def _tell_requester(restaurant_id, row, db_path=DB_PATH):
                 f"Your manager declined your time off request for {span}. Talk to them if that is a problem."]
         if row.get("decision_note"):
             lines.append(f"Their note: {row['decision_note']}")
-        people.tell(restaurant_id, row["employee_name"], title, lines, email_type="time_off", db_path=db_path)
+        people.tell(restaurant_id, row["employee_name"], title, lines, email_type="time_off", db_path=_path(db_path))
     except Exception as e:
         print(f"[time_off] decision notice failed rid={restaurant_id}: {e!r}")
 
 
-def _approved_rows(restaurant_id, start, end, db_path=DB_PATH):
+def _approved_rows(restaurant_id, start, end, db_path=None):
     s, e = _as_date(start), _as_date(end)
     conn = get_conn(db_path)
     try:
@@ -412,7 +427,7 @@ def _approved_rows(restaurant_id, start, end, db_path=DB_PATH):
     return out
 
 
-def approved_in_window(restaurant_id, start, end, db_path=DB_PATH, whole_days_only=False):
+def approved_in_window(restaurant_id, start, end, db_path=None, whole_days_only=False):
     """{employee_name: [iso dates]} of approved time off touching [start, end]
     — what the schedule draft must honour. A request for part of a day
     counts as its day here (the safe reading for a reader that only knows
@@ -426,7 +441,7 @@ def approved_in_window(restaurant_id, start, end, db_path=DB_PATH, whole_days_on
     return {k: sorted(set(v)) for k, v in out.items()}
 
 
-def approved_parts_in_window(restaurant_id, start, end, db_path=DB_PATH):
+def approved_parts_in_window(restaurant_id, start, end, db_path=None):
     """{employee_name: {iso date: [{"from", "until", "daypart", "words"}]}} —
     approved time off for PART of a day ("off until 4pm", "dinner") touching
     [start, end] (schedule audit 10/3/26 D-39): minutes past each date's
