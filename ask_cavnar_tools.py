@@ -4433,7 +4433,11 @@ _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 def _roster_names(restaurant_id) -> dict:
     """{lowercased name: name} of the people on this restaurant's roster —
-    the shifts on file and anyone with an availability row."""
+    the one roster (staff_settings.roster: shift history and the people the
+    owner added by hand, less anyone deactivated), the shifts on file and
+    anyone with an availability row. A hand-added hire with no shift yet was
+    "not on the roster" to every staffing card (schedule audit 10/3/26
+    PR-19)."""
     names = {}
     try:
         from models import load_shifts_for_restaurant_roles, get_staff_availability
@@ -4444,6 +4448,11 @@ def _roster_names(restaurant_id) -> dict:
             n = str(row.get("employee_name") or "").strip()
             if n:
                 names[n.lower()] = n
+        import staff_settings as _ss_roster
+        for e in _ss_roster.roster(restaurant_id) or []:
+            n = str(e.get("name") or "").strip()
+            if n:
+                names.setdefault(n.lower(), n)
     except Exception as e:
         log.warning("ask_cavnar roster names for rid=%s unavailable: %s", restaurant_id, e)
     return names

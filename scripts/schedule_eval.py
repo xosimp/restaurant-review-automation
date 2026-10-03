@@ -9,6 +9,14 @@ same rows, and (with --optimize) what the repair loop makes of it.
     python3 scripts/schedule_eval.py --restaurant 2
     python3 scripts/schedule_eval.py --ids 6953,6952 --optimize --detail
     python3 scripts/schedule_eval.py --restaurant 2 --solve      # the assignment solver (#47)
+    python3 scripts/schedule_eval.py --ids 7012 --calls           # the model calls behind the week
+
+--calls lists each stored model call the week was generated with
+(schedule_model_calls: model, effort, contract, stop reason, tokens,
+seconds, rows, output tokens a row) and scores the model's own answer
+before any repair — hard breaches, manager minutes missed, full-timers
+under their minimum, rows the backstops change. To replay a week on
+another model, effort or prompt, use scripts/schedule_model_eval.py.
 
 Reads the local database only. No model call is made and nothing is saved.
 """
@@ -38,7 +46,8 @@ def _dims(q: dict) -> dict:
     return {d["key"]: d["score"] for d in (q or {}).get("dimensions") or []}
 
 
-def evaluate(history_id: int, optimize: bool = False, solve: bool = False, seconds: float = None) -> dict:
+def evaluate(history_id: int, optimize: bool = False, solve: bool = False, seconds: float = None,
+             calls: bool = False) -> dict:
     from models import get_conn
     import schedule_versions as sv
     from schedule_engine import quality_inputs_from_db, _quality_signals
@@ -102,6 +111,23 @@ def evaluate(history_id: int, optimize: bool = False, solve: bool = False, secon
                          "nodes": st.get("nodes"), "infeasible": len(st.get("infeasible") or []),
                          "changes": [c.get("reason") for c in res.get("changes") or []]}
         out["dims_solved"] = _dims(res.get("quality"))
+    if calls:
+        # The model calls behind the week and the model's own answer scored
+        # before any repair (schedule audit 10/3/26 PR-31).
+        import schedule_output as so
+        stored = so.load_calls(history_id=row["id"])
+        out["calls"] = [{"model": x["model"], "effort": x["effort"], "contract": x["contract"],
+                         "stop_reason": x["stop_reason"], "outcome": x["outcome"], "seconds": x["seconds"],
+                         "rows": x["rows"], "input_tokens": (x["usage"] or {}).get("input_tokens"),
+                         "output_tokens": (x["usage"] or {}).get("output_tokens"),
+                         "tokens_per_row": (round((x["usage"] or {}).get("output_tokens", 0) / x["rows"], 1)
+                                            if x["rows"] else None)} for x in stored]
+        if stored:
+            from scripts import schedule_model_eval as sme
+            gen = {"generation_id": stored[0]["generation_id"], "restaurant_id": row["restaurant_id"],
+                   "week_start": stored[0]["week_start"] or row["week_start"], "history_id": row["id"]}
+            ctx = sme.week_context(gen, stored)
+            out["model_answer"] = sme.score_week(ctx, sme._merge_rows(stored, sme.production_result(stored)))
     return out
 
 
@@ -114,6 +140,8 @@ def main(argv=None):
     ap.add_argument("--detail", action="store_true", help="per-dimension scores")
     ap.add_argument("--solve", action="store_true", help="also run the assignment solver (schedule_solver)")
     ap.add_argument("--seconds", type=float, default=None, help="solver time budget per week")
+    ap.add_argument("--calls", action="store_true", help="the stored model calls behind each week, and the "
+                                                         "model's own answer scored before repair")
     args = ap.parse_args(argv)
 
     from models import get_conn
@@ -130,7 +158,8 @@ def main(argv=None):
     if not ids:
         ap.error("give --restaurant or --ids")
 
-    results = [evaluate(i, optimize=args.optimize, solve=args.solve, seconds=args.seconds) for i in sorted(set(ids))]
+    results = [evaluate(i, optimize=args.optimize, solve=args.solve, seconds=args.seconds, calls=args.calls)
+               for i in sorted(set(ids))]
     for r in results:
         if r.get("error"):
             print(f"{r['id']}: {r['error']}")
@@ -145,6 +174,18 @@ def main(argv=None):
                   f"{' (proved optimal)' if v['proved'] else ''}, {v['slots']} slots / {v['people']} people, "
                   f"{v['components_proved']}/{v['components']} parts proved, {v['nodes']} nodes, "
                   f"{v['search_seconds']}s search / {v['seconds']}s total, {v['infeasible']} set aside")
+        if args.calls:
+            for c in r.get("calls") or []:
+                print(f"    call: {c['model']} effort {c['effort'] or '-'} ({c['contract']}) {c['stop_reason']} "
+                      f"{c['outcome']}, {c['input_tokens']} in / {c['output_tokens']} out, {c['seconds']}s, "
+                      f"{c['rows']} rows, {c['tokens_per_row'] or '-'} tokens a row")
+            if not r.get("calls"):
+                print("    no stored model calls for this week (generated before schedule_model_calls existed)")
+            m = r.get("model_answer")
+            if m:
+                print(f"    model's answer before repair: {m['hard_before']} hard, {m['manager_minutes_before']} "
+                      f"manager minutes missed, {m['full_time_under_min']} full-timers under minimum; the "
+                      f"backstops change {m['rows_repaired']} rows")
         if args.detail:
             keys = sorted(set(r["dims_stored"]) | set(r["dims_now"]) | set(r.get("dims_opt") or {}))
             for k in keys:
