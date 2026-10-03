@@ -2335,13 +2335,15 @@ def _make_rule(restaurant_id, r, value, user, db_path) -> str:
 
 SUGGEST_DAYS = 56
 SUGGEST_MIN_TICKETS = 20          # service_performance.MIN_TICKETS: a slow Tuesday is not a trend
-# Sales per guest against the house at the same mealtime → a suggested score.
+# Sales per guest against the house at the same mealtime → a suggested score:
+# 20% or more above the house a 5, 7% above a 4, within 7% a 3, up to 20%
+# below a 2, further below a 1.
 SUGGEST_BANDS = ((1.20, 5), (1.07, 4), (0.93, 3), (0.80, 2))
 
 
 def _band(ratio) -> int:
     for floor, score in SUGGEST_BANDS:
-        if ratio >= floor if score in (5, 4) else ratio > floor:
+        if ratio >= floor:
             return score
     return 1
 
@@ -2465,3 +2467,38 @@ def ratings_waiting(restaurant_id, db_path=None) -> list:
     caps = models.get_capabilities(restaurant_id, attribute="overall", **({"db_path": db_path} if db_path else {}))
     since = {_nk(n) for n, c in caps.items() if str((c.get("overall") or {}).get("updated_at") or "") >= at}
     return [n for n in names if _nk(n) not in since]
+
+
+# ── the memory for other surfaces (memory_context provider) ───────────────
+
+def memory_lines(req) -> list:
+    """memory_context provider "schedule_memory" (the labor read and Ask —
+    never the schedule surface, which reads prompt_lines in its own learned
+    budget): each candidate or applied fact the memory holds, ranked by its
+    confidence and tied to its weekday (`labor:day:<weekday>`), the figures
+    as a trusted `measured` line under the fenced words (names are people's
+    words). The other learners' facts are left to their own providers (the
+    people memory's attendance), and a learned "keep apart" is the account
+    holders' alone."""
+    rid = req.restaurant_id
+    db = getattr(req, "db_path", None)
+    if not _learns(rid, db):
+        return []
+    out = []
+    for r in _rows(rid, ("candidate", "active", "rule"), db, kinds=PROMPT_KINDS + ("headcount_add", "headcount_cut")):
+        value = _loads(r.get("value_json")) or {}
+        if value.get("conflict"):
+            continue
+        conf = r.get("confidence")
+        held = r["status"] in ("active", "rule") and (r["kind"] in SIGNAL_KINDS or r["kind"] in BOUND_ELSEWHERE)
+        measured = (f"Measured: {int(r.get('hits') or 0)} of {int(r.get('opportunities') or 0)}"
+                    + (f", {_pct(conf)} sure" if conf is not None else "")
+                    + ("; held by the schedule's checks" if held else "; not held yet") + ".")
+        line = {"text": str(r.get("text") or _short(dict(r, value=value))), "date": r.get("last_seen"),
+                "source": "system", "subject": f"labor:day:{str(r.get('day') or '').lower()}" if r.get("day") else "labor",
+                "weight": float(conf or 0) + (1.0 if held else 0.0), "trusted": False, "module": "labor",
+                "audience": "team", "measured": measured if r.get("opportunities") else None}
+        if r["kind"] == "pair" and value.get("kind") == "avoid":
+            line["audience"] = "principals"
+        out.append(line)
+    return out

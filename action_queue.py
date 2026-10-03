@@ -169,7 +169,7 @@ def _calibration_applied_since(restaurant_id, suggestion, db_path=DB_PATH) -> bo
     at = str((suggestion or {}).get("updated_at") or (suggestion or {}).get("created_at") or "")
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT MAX(created_at) AS at FROM capability_changes WHERE restaurant_id=? AND kind IN "
+        row = conn.execute("SELECT MAX(changed_at) AS at FROM capability_changes WHERE restaurant_id=? AND kind IN "
                            "('quality_weights_applied', 'quality_profiles_applied')", (restaurant_id,)).fetchone()
     finally:
         conn.close()
