@@ -251,7 +251,13 @@ class Problem:
         scores = s.get("scores") or {}
         lscores = {_low(k): v for k, v in scores.items() if v is not None}
         self.score = [lscores.get(_low(n)) for n in self.names]
-        self.rated_any = bool(lscores)
+        # A person's score for one role, over the overall one, wherever a
+        # unit's role is known (schedule audit 10/3/26 D-12).
+        self.families = dict(s.get("role_families") or {})
+        lroles = {_low(k): {str(f): v for f, v in (fams or {}).items() if v is not None}
+                  for k, fams in (s.get("role_scores") or {}).items()}
+        self.role_score = [lroles.get(_low(n)) or {} for n in self.names]
+        self.rated_any = bool(lscores) or any(self.role_score)
         flags = s.get("leader_flags") or {}
         lflags = {_low(k): bool(v) for k, v in flags.items()}
         self.leader = [bool(lflags.get(_low(n))) for n in self.names]
@@ -884,7 +890,7 @@ class Problem:
         if u.date in self.pending.get(low, ()):
             out["pending"] = K_PENDING
         if self.rated_any:
-            s = self.score[p]
+            s = self._sc(p, u.roles)
             if s is None:
                 s = self._neutral(u)
             out["strength"] = K_STRENGTH * u.dw * max(0.0, 5.0 - float(s)) * (
@@ -923,11 +929,23 @@ class Problem:
         key = tuple(sorted(u.roles))
         cache = self.__dict__.setdefault("_neutral_cache", {})
         if key not in cache:
-            vals = [float(self.score[p]) for p in range(len(self.names))
-                    if self.score[p] is not None and (u.roles & self.roles[p])]
+            vals = [float(self._sc(p, u.roles)) for p in range(len(self.names))
+                    if self._sc(p, u.roles) is not None and (u.roles & self.roles[p])]
             vals = vals or [float(v) for v in self.score if v is not None] or [3.0]
             cache[key] = sum(vals) / len(vals)
         return cache[key]
+
+    def _sc(self, p, roles):
+        """Person p's score in `roles` (a unit's): their score for one of
+        those roles when the owner rated them in it — the best of them —
+        else their overall score (None: unrated)."""
+        mine = self.role_score[p] if p < len(self.role_score) else None
+        if mine:
+            got = [mine[f] for f in {sq.role_family(r, self.families) for r in (roles or ())} | set(roles or ())
+                   if f in mine]
+            if got:
+                return max(got)
+        return self.score[p]
 
     def static(self):
         if not hasattr(self, "_static"):
@@ -945,7 +963,7 @@ class Problem:
             if p is None:
                 continue
             u = self.units[i]
-            everyone.append(p)
+            everyone.append((p, u.roles))
             for role in u.roles:
                 people_by_role.setdefault(role, []).append(p)
         date, part = g["date"], g["part"]
@@ -955,7 +973,8 @@ class Problem:
         wn = self.wn
         pen = 0.0
         if key[0] == "L":
-            ok = any(self.leader[p] or (self.score[p] or 0) >= float(prof.leader_min_score) for p in everyone)
+            ok = any(self.leader[p] or (self._sc(p, roles) or 0) >= float(prof.leader_min_score)
+                     for p, roles in everyone)
             return 0.0 if ok else K_LEAD_PROFILE * dw * wn.get("leadership", 1)
         role = g["role"]
         pool = people_by_role.get(role, [])
@@ -966,23 +985,24 @@ class Problem:
             elif rule.get("min_score") is None:
                 found = len(pool)
             else:
-                found = sum(1 for p in pool if (self.score[p] or 0) >= float(rule["min_score"]))
+                found = sum(1 for p in pool if (self._sc(p, {role}) or 0) >= float(rule["min_score"]))
             if found < need:
                 pen += K_LEAD_RULE * (need - found) * dw * wn.get("leadership", 1)
         if self.rated_any and pool:
             target = next((float(v) for r, v in (prof.min_strength or {}).items() if _low(r) == role and v), None)
-            rated = [p for p in pool if self.score[p] is not None]
+            sc = {p: self._sc(p, {role}) for p in pool}
+            rated = [p for p in pool if sc[p] is not None]
             if target and rated:
-                strength = sum(float(self.score[p]) for p in pool if self.score[p] is not None)
+                strength = sum(float(sc[p]) for p in rated)
                 ratio = min(1.0, strength / target)
                 if ratio < 1.0:
                     pen += K_STRENGTH_GROUP * (1.0 - ratio) * dw * wn.get("operational_strength", 1)
                     if ratio < 0.55:
                         pen += K_STRENGTH_FLOOR * dw * wn.get("operational_strength", 1)
             if rated:
-                best = max(float(self.score[p]) for p in rated)
+                best = max(float(sc[p]) for p in rated)
                 for p in rated:
-                    if float(self.score[p]) <= 2 and best < float(self.score[p]) + 2:
+                    if float(sc[p]) <= 2 and best < float(sc[p]) + 2:
                         pen += K_TRAINING * wn.get("training_balance", 1)
         return pen
 

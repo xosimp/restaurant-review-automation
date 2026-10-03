@@ -7467,6 +7467,38 @@ CAPABILITY_ATTRIBUTES = {
 SCORE_LABELS = {1: "Very weak", 2: "Below average", 3: "Average",
                 4: "Strong", 5: "Excellent"}
 
+# An Operational Score for one role (schedule audit 10/3/26 D-12): a 5 as
+# Server counted the same on Bar. Kept as its own attribute, "role:<family>"
+# (shift_quality.role_family — "Server AM" and "Server PM" are one "server"),
+# beside the overall score it falls back to. No schema change: one row per
+# person per role, with the same provenance as every rating.
+ROLE_SCORE_PREFIX = "role:"
+# A rating older than this asks the owner "still right?" (D-12: a rating
+# from a year ago never faded). It keeps counting until they answer — an
+# owner's judgement is never dropped silently.
+RERATE_AFTER_DAYS = 90
+
+
+def role_score_attribute(role) -> str:
+    """"role:server" for "Server AM" — the attribute a per-role score is
+    kept under; "" for no role."""
+    from shift_quality import role_family
+    fam = role_family(str(role or "").strip())
+    return (ROLE_SCORE_PREFIX + fam) if fam else ""
+
+
+def capability_spec(attribute) -> dict:
+    """CAPABILITY_ATTRIBUTES' entry for `attribute`; a per-role score
+    ("role:<family>") is a score like "overall"."""
+    if attribute in CAPABILITY_ATTRIBUTES:
+        return CAPABILITY_ATTRIBUTES[attribute]
+    a = str(attribute or "")
+    if a.startswith(ROLE_SCORE_PREFIX) and a[len(ROLE_SCORE_PREFIX):].strip():
+        role = a[len(ROLE_SCORE_PREFIX):].strip()
+        return {"label": f"Operational Score as {role.title()}", "kind": "score", "v1": True,
+                "help": CAPABILITY_ATTRIBUTES["overall"]["help"], "role": role}
+    return None
+
 
 def init_staff_capabilities(db_path: str = DB_PATH):
     conn = get_conn(db_path)
@@ -7535,7 +7567,10 @@ def set_capability(restaurant_id: int, employee_name: str, attribute: str = "ove
     _write_attribution) is stored with it: updated_by_user_id, authority
     and via (PEOPLE-15).
     """
-    spec = CAPABILITY_ATTRIBUTES.get(attribute)
+    if str(attribute or "").startswith(ROLE_SCORE_PREFIX):
+        # One spelling per role family: "role:Server AM" is "role:server".
+        attribute = role_score_attribute(str(attribute)[len(ROLE_SCORE_PREFIX):]) or attribute
+    spec = capability_spec(attribute)
     if not spec:
         raise CapabilityError(f"{attribute!r} is not a capability this system knows about")
     name = (employee_name or "").strip()
@@ -7711,6 +7746,46 @@ def get_operational_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             and c.get("overall", {}).get("authority") != "admin"}
 
 
+def get_role_scores(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{employee_name: {role family: 1-5}} — the per-role Operational Scores
+    (D-12), counted by the same rule as get_operational_scores (an admin's
+    rating waits for the owner). The scorer and the solver read a person's
+    score for the role a shift is in from here, else their overall score."""
+    out = {}
+    for n, attrs in get_capabilities(restaurant_id, db_path=db_path).items():
+        for a, c in (attrs or {}).items():
+            if not str(a).startswith(ROLE_SCORE_PREFIX) or c.get("score") is None or c.get("authority") == "admin":
+                continue
+            out.setdefault(n, {})[str(a)[len(ROLE_SCORE_PREFIX):]] = c["score"]
+    return out
+
+
+def rating_ages(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
+    """{employee_name: {"rated_on", "rated_label", "days", "due", "due_text"}}
+    for everyone with a counted rating (overall or a role's), by their
+    newest one: `due` once it is RERATE_AFTER_DAYS old — the team page asks
+    "Rated 6/1/26 — still right?" (schedule audit 10/3/26 D-12)."""
+    from datetime import date as _d
+    from time_utils import mdy
+    today = today or _restaurant_today(restaurant_id)
+    out = {}
+    for n, attrs in get_capabilities(restaurant_id, db_path=db_path).items():
+        stamps = [str(c.get("updated_at") or "")[:10] for a, c in (attrs or {}).items()
+                  if (a == "overall" or str(a).startswith(ROLE_SCORE_PREFIX)) and c.get("score") is not None
+                  and c.get("authority") != "admin" and c.get("updated_at")]
+        if not stamps:
+            continue
+        newest = max(stamps)
+        try:
+            days = (today - _d.fromisoformat(newest)).days
+        except ValueError:
+            continue
+        due = days >= RERATE_AFTER_DAYS
+        out[n] = {"rated_on": newest, "rated_label": mdy(newest), "days": days, "due": due,
+                  "due_text": f"Rated {mdy(newest)} — still right?" if due else None}
+    return out
+
+
 def adopt_admin_ratings(restaurant_id: int, user: dict, db_path: str = DB_PATH) -> int:
     """An account holder counts, as their own, the ratings an admin entered
     (through view-as or support) — usually with the owner beside them. Only
@@ -7757,7 +7832,15 @@ def capability_coverage(restaurant_id: int, roster: list, db_path: str = DB_PATH
     except Exception:
         admin_keys = set()
     admin_set = [n for n in names if " ".join(str(n).split()).casefold() in admin_keys]
+    # Ratings old enough to ask about (D-12): still counted, still asked.
+    try:
+        ages = {" ".join(str(k).split()).casefold(): v for k, v in rating_ages(restaurant_id, db_path=db_path).items()}
+    except Exception:
+        ages = {}
+    due = [n for n in names if (ages.get(" ".join(str(n).split()).casefold()) or {}).get("due")]
     return {
+        "due_for_rerate": len(due),
+        "due_for_rerate_names": due[:20],
         "rated": len(rated),
         "admin_set": len(admin_set),
         "total": len(names),

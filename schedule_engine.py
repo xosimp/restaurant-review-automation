@@ -378,6 +378,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     from models import (get_operational_scores, get_role_strength_thresholds,
                         get_shift_leader_rules, get_shift_profiles)
     _op_scores = get_operational_scores(restaurant_id)
+    # A person's score for one role (D-12): the scorer and the solver read it
+    # for a shift in that role, their overall score otherwise.
+    try:
+        from models import get_role_scores as _grs
+        _role_scores = _grs(restaurant_id) or {}
+    except Exception as _sfx:
+        _soft_fail('role_scores', _sfx, restaurant_id)
+        _role_scores = {}
     _strength_thresholds = get_role_strength_thresholds(restaurant_id) if _op_scores else {}
     _leader_rules = get_shift_leader_rules(restaurant_id) if _op_scores else []
 
@@ -630,6 +638,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
+    result["role_scores"] = _role_scores
     # Which labor target the budget was built against — the owner's goal
     # ("your goal of 26% by 12/31/26") or the setting (memory audit 9/29/26,
     # owner_goals): both the revenue and the target name what applied.
@@ -2357,6 +2366,12 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     import shift_quality as _sq
 
     scores = get_operational_scores(restaurant_id)
+    try:
+        from models import get_role_scores as _grs
+        role_scores = _grs(restaurant_id) or {}
+    except Exception as _rx:
+        print(f"[schedule] role scores unavailable for {restaurant_id}: {_rx!r}")
+        role_scores = {}
     thresholds = get_role_strength_thresholds(restaurant_id) if scores else {}
     leader_rules = get_shift_leader_rules(restaurant_id) if scores else []
     stored = get_shift_profiles(restaurant_id)
@@ -2392,6 +2407,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
     out = {
         "elsewhere": {},
         "operational_scores": scores,
+        "role_scores": role_scores,
         "strength_thresholds": thresholds,
         "leader_rules": leader_rules,
         "shift_profiles": profiles,
@@ -2524,6 +2540,8 @@ def _quality_signals(restaurant_id, result, **extra):
                         get_quality_weights)
     signals = {
         "scores": result.get("operational_scores") or {},
+        # A score for the role a shift is in, over the overall one (D-12).
+        "role_scores": result.get("role_scores") or {},
         "leader_rules": result.get("leader_rules") or [],
         "daily_target_hours": result.get("daily_target_hours") or {},
         "demand_by_day": result.get("demand_by_day") or {},
@@ -2572,6 +2590,7 @@ def _quality_signals(restaurant_id, result, **extra):
         # the repair loop: the section count over the front-of-house roles.
         signals["section_cap"] = int(getattr(c, "section_cap", 0) or 0)
         signals["cap_roles"] = sorted(getattr(c, "foh_roles", None) or {"server"})
+        signals["role_families"] = dict(getattr(c, "role_families", None) or {})
     try:
         from models import get_restaurant as _gr_ct
         signals["cross_training_targets"] = _rules.role_cross_training(_gr_ct(restaurant_id))

@@ -1660,9 +1660,20 @@ def _do_roster_get(u):
     except Exception as _dx:
         print(f"[roster] dormancy unavailable for {rid}: {_dx!r}")
         _dormant = {}
+    try:
+        # Per-role scores and how old each rating is (D-12).
+        from models import get_role_scores, rating_ages
+        _role_sc, _ages = get_role_scores(rid), rating_ages(rid)
+    except Exception as _rx:
+        print(f"[roster] rating ages unavailable for {rid}: {_rx!r}")
+        _role_sc, _ages = {}, {}
     for e in _everyone:
+        age = _ages.get(e["name"]) or {}
         out.append({**e, "score": scores.get(e["name"]), "can_close": bool(closers.get(e["name"])),
-                    "reliability": rel.get(e["name"]), **_ss.dormancy_fields(e, _dormant)})
+                    "reliability": rel.get(e["name"]), **_ss.dormancy_fields(e, _dormant),
+                    "role_scores": {f.title(): v for f, v in (_role_sc.get(e["name"]) or {}).items()},
+                    "rated_label": age.get("rated_label"), "rating_due": bool(age.get("due")),
+                    "rating_due_text": age.get("due_text")})
     suggested = []
     try:
         import schedule_intel as _si

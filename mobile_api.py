@@ -4795,14 +4795,27 @@ def mobile_labor_team(current_user):
         shift_names = {n for n, e in seen.items() if not e["is_manual"]}
 
         caps = get_capabilities(rid)
+        # Per-role scores and how old each rating is (schedule audit
+        # 10/3/26 D-12): "Rated 6/1/26 — still right?" after 90 days.
+        from models import get_role_scores, rating_ages
+        try:
+            _role_sc = get_role_scores(rid)
+            _ages = rating_ages(rid)
+        except Exception as _rx:
+            print(f"[team] rating ages unavailable for {rid}: {_rx!r}")
+            _role_sc, _ages = {}, {}
         team = []
         for n, e in seen.items():
             c = (caps.get(n) or {}).get("overall") or {}
             closer = (caps.get(n) or {}).get("can_close") or {}
+            age = _ages.get(n) or {}
             team.append({
                 "name": n, "role": e["role"], "shifts": e["shifts"],
                 "dormant": e["dormant"], "last_worked_label": e["last_worked_label"],
                 "dormant_text": e["dormant_text"],
+                "role_scores": {f.title(): v for f, v in (_role_sc.get(n) or {}).items()},
+                "rated_label": age.get("rated_label"), "rating_due": bool(age.get("due")),
+                "rating_due_text": age.get("due_text"),
                 "score": c.get("score"),
                 # Authorized to close. A fact about a person that owes
                 # nothing to their rating, and the only way a leadership
@@ -4861,6 +4874,15 @@ def mobile_set_rating(current_user):
     who = current_user.get("username") or current_user.get("email")
     name = data.get("employee_name") or data.get("name") or ""
     attribute = data.get("attribute") or "overall"
+    if data.get("role") and attribute == "overall":
+        # A score for one role (schedule audit 10/3/26 D-12): {"role":
+        # "Bartender", "score": 4} rates them as a bartender; the overall
+        # score stays their fallback everywhere else.
+        from models import role_score_attribute
+        attribute = role_score_attribute(data.get("role")) or "overall"
+    elif str(attribute).startswith("role:"):
+        from models import role_score_attribute
+        attribute = role_score_attribute(str(attribute)[5:]) or attribute
     try:
         before = (get_capabilities(rid).get(name) or {}).get(attribute)
         out = set_capability(

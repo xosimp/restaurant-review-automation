@@ -2842,6 +2842,29 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
 
     splh_targets = signals.get("splh_targets") or {}
     daypart_sales = signals.get("daypart_sales") or {}
+    base_scores = signals.get("scores") or {}
+    role_scores = signals.get("role_scores") or {}
+    families = signals.get("role_families") or {}
+
+    def _scores_for(shift_rows):
+        """The scores this shift is judged on: each person's score for the
+        role their row is in when the owner rated them in it, else their
+        overall score (schedule audit 10/3/26 D-12 — a 5 as Server counted
+        the same on Bar)."""
+        if not role_scores:
+            return base_scores
+        out = dict(base_scores)
+        for r in shift_rows:
+            name = (r.get("employee") or "").strip()
+            mine = role_scores.get(name)
+            if not mine:
+                continue
+            role = (r.get("role") or "").strip()
+            for key in (role_family(role, families), role_family(role), role.lower()):
+                if key in mine and mine[key] is not None:
+                    out[name] = mine[key]
+                    break
+        return out
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
@@ -2878,7 +2901,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             elsewhere=signals.get("elsewhere") or {},
             constraints=signals.get("constraints") or {},
             flagged=signals.get("flagged") or set(),
-            scores=signals.get("scores") or {},
+            scores=_scores_for(shift_rows),
             tenure=signals.get("tenure") or {},
             leader_flags=signals.get("leader_flags") or {},
             leader_rules=signals.get("leader_rules") or [],
