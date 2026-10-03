@@ -1548,7 +1548,8 @@ def _who_could_take(restaurant_id, req, db_path) -> list:
             n = e["name"]
             if asker and c.key(n) == asker:
                 continue
-            if not c.fillable(n, day)[0] or not c.can_work(n, day)[0]:
+            if not c.fillable(n, day, daypart=_rules.daypart_of(row.get("shift_start") or ""))[0] \
+                    or not c.can_work(n, day)[0]:
                 continue
             if not _role_ok(restaurant_id, rows, row, n, db_path)[0]:
                 continue
