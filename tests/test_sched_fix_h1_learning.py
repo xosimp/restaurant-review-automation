@@ -998,5 +998,8 @@ def test_the_draft_is_retimed_to_the_owners_time_rules():
     import inspect
     import schedule_engine
     src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert "_rules.apply_role_times(preview_rows, _constraints, editable=_editable)" in src
+    # Once after the fill, trim and overtime passes, and once more on the
+    # finished rows after the solver and the optimizer.
+    assert src.count("_rules.apply_role_times(preview_rows, _constraints, editable=_editable)") == 2
+    assert src.index("apply_role_times") < src.index("_opt.optimize(") < src.rindex("apply_role_times")
     assert "role_times" in inspect.getsource(snr.apply_note_rules)

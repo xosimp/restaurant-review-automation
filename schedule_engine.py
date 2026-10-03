@@ -3557,6 +3557,22 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _mc["left"] = _mg2["left"]
             except Exception as _mgx:
                 print(f"[schedule] manager coverage pass failed: {_mgx}")
+            # The owner's start/end rules once more on the finished rows
+            # (schedule audit 10/3/26 L-33): the optimizer may stretch a shift
+            # after the first pass; a rule is the owner's word, so it has the
+            # last say on any start or end nothing ranked above it needs.
+            try:
+                _rt2 = _rules.apply_role_times(preview_rows, _constraints, editable=_editable)
+                if _rt2["retimed"]:
+                    preview_rows = _rt2["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _rt2["retimed"]:
+                        _fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
+                                       "to": _x["to"], "kind": "role_time", "reason": _x["reason"]})
+                    _viols = _rules.violations(preview_rows, _constraints)
+                    _price_week(preview_rows)
+            except Exception as _rtx2:
+                print(f"[schedule] role time rules not re-applied: {_rtx2}")
             # #47: the solver's changes lead "what Cavnar changed" (web and iOS read optimizer.changes).
             if (result.get("solver") or {}).get("ran"):
                 import schedule_solver as _solver_m
