@@ -747,11 +747,12 @@ def _same_rows(a_rows: list, b_rows: list) -> int:
 #   * the steps are the saves up to the FIRST publish (the pre-publish phase);
 #     later saves are reactions — the save route observes them as such
 #     (schedule_memory) and no habit is learned from them;
-#   * each change in the net diff is the work of the step that last touched
-#     its rows: Cavnar AI's (row_origins_json and its note tags), an admin's
-#     (view-as, support — unless the account holder adopted it), a change
-#     the owner said was this week only or a call-off (schedule_edit_answers),
-#     or the manager's;
+#   * each save's changes are told apart: Cavnar AI's (row_origins_json and
+#     its note tags), an admin's (view-as, support — unless the account
+#     holder adopted it), a change the owner said was this week only or a
+#     call-off (schedule_edit_answers), or the manager's — and the saves are
+#     replayed from the draft taking one kind at a time (_replay), so two
+#     kinds of change on one slot are never merged into one;
 #   * `final` is the draft with only the manager's own changes applied — what
 #     every preference learner reads; `final_owner` keeps Cavnar AI's kept
 #     changes too (what went out, less an admin's hand — the acceptance figure);
