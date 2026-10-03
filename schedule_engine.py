@@ -2756,13 +2756,20 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
                     continue
             kept.append(rec)
             # The kind travels with the text, so web and iOS never classify
-            # a sentence themselves (their copies of the prefix list drifted).
-            items.append({"text": rec, "kind": kind, "key": key, "rec_key": key, "advice_signature": sig})
+            # a sentence themselves (their copies of the prefix list drifted),
+            # and so do the points the week gains when it is done (schedule
+            # audit 10/3/26 SQ-28: shift_quality.recommendation_details).
+            items.append({"text": rec, "kind": kind, "key": key, "rec_key": key, "advice_signature": sig,
+                          "points": (quality.get("recommendation_points") or {}).get(rec)})
         # Both clients show at most SHOWN_RECOMMENDATIONS (the web panel's
         # loop, iOS's block); the list is cut here so what is served is what
         # is shown, on every client.
         quality["recommendations"] = kept[:SHOWN_RECOMMENDATIONS]
         quality["recommendation_items"] = items[:SHOWN_RECOMMENDATIONS]
+        if quality.get("recommendation_details") is not None:
+            shown = set(quality["recommendations"])
+            quality["recommendation_details"] = [d for d in quality["recommendation_details"]
+                                                 if d.get("text") in shown]
         # Each served item carries its K1 confidence (confidence audit):
         # evidence from this read's own measured completeness.
         try:

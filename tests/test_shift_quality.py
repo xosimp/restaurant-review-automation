@@ -126,12 +126,17 @@ def test_weights_renormalise_over_what_applied():
     assert shift["score"] == 100
 
 
-def test_an_unrated_employee_contributes_nothing_and_is_named():
+def test_an_unrated_employee_is_unknown_not_zero_and_is_named():
+    """Schedule audit 10/3/26 SQ-3: an unrated person used to count 0, so
+    Pat's 5 beside an unrated colleague read as a shortfall. Strength is
+    judged on the rated people and the unrated one is named."""
     rows = saturday({"Bartender": ["Pat", "Ghost"]})
     out = sq.score_rows(rows, profiles=profiles(), scores={"Pat": 5})
     shift = out["shifts"][0]
     strength = next(d for d in shift["dimensions"] if d["key"] == "operational_strength")
-    assert strength["facts"]["shortfalls"][0]["strength"] == 5
+    assert strength["facts"]["shortfalls"] == []
+    met = strength["facts"]["met"][0]
+    assert (met["strength"], met["rated"], met["on"]) == (5, 1, 2)
     assert any("Ghost" in b for b in shift["blind_spots"])
 
 
@@ -227,14 +232,16 @@ def test_someone_authorized_to_close_satisfies_the_profile_requirement():
                                 leader_flags={"Dana": True})
     a = next(d for d in without["shifts"][0]["dimensions"] if d["key"] == "leadership")
     b = next(d for d in with_closer["shifts"][0]["dimensions"] if d["key"] == "leadership")
-    assert a["score"] == 0 and b["score"] == 100
+    # Nobody able to run it scores the fixed miss level, not 0 (SQ-1).
+    assert a["score"] == sq.LEADER_MISS_SCORE and b["score"] == 100
 
 
 def test_leadership_is_not_judged_when_nothing_asks_for_it():
     """No rules and no profile requirement is a question this restaurant is
     not asking, which is different from failing it."""
     rows = [row(TUE, "Alex", "Bartender")]
-    out = sq.score_rows(rows, profiles=[sq.ShiftProfile()], scores={"Alex": 3})
+    out = sq.score_rows(rows, profiles=[sq.ShiftProfile()], scores={"Alex": 3},
+                        role_minimums={"Bartender": 1})
     assert "leadership" in out["shifts"][0]["not_applicable"]
 
 
@@ -242,7 +249,8 @@ def test_a_leader_rule_only_binds_the_shift_it_names():
     rules = [{"role": "Bartender", "days": ["Saturday"], "daypart": "night", "min_score": 5}]
     friday = [row(FRI, "Alex", "Bartender"), row(FRI, "Jamie", "Bartender")]
     out = sq.score_rows(friday, profiles=[sq.ShiftProfile()],
-                        scores={"Alex": 3, "Jamie": 3}, leader_rules=rules)
+                        scores={"Alex": 3, "Jamie": 3}, leader_rules=rules,
+                        role_minimums={"Bartender": 2})
     assert "leadership" in out["shifts"][0]["not_applicable"]
 
 
@@ -301,7 +309,7 @@ def test_a_game_day_profile_raises_the_bar_for_one_night_only():
     rows = [row(THU, "A", "Bartender"), row(THU, "B", "Bartender"),
             row(WED, "A", "Bartender"), row(WED, "B", "Bartender")]
     out = sq.score_rows(rows, profiles=[sq.ShiftProfile(), game_day],
-                        scores={"A": 4, "B": 4})
+                        scores={"A": 4, "B": 4}, role_minimums={"Bartender": 2})
     by_day = {s["day"]: s for s in out["shifts"]}
     assert by_day["Thursday"]["profile"]["label"] == "Game day"
     assert by_day["Wednesday"]["profile"]["label"] == "Standard shift"
@@ -351,7 +359,8 @@ def test_carrying_every_busy_shift_is_scored_against_you():
     heavy += [row(MON, "Workhorse", "Bartender"), row(TUE, "Workhorse", "Bartender")]
     busy = [sq.ShiftProfile(key="all_peak", demand="peak", label="Busy night",
                             daypart="night", source="restaurant")]
-    out = sq.score_rows(heavy, profiles=busy, scores={"Workhorse": 5, "Spare": 4})
+    out = sq.score_rows(heavy, profiles=busy, scores={"Workhorse": 5, "Spare": 4},
+                        role_minimums={"Bartender": 1})
     # Fatigue is a week-level measure now (#31): judged once, not per shift.
     fatigue = [d for d in out["week_dimensions"] if d["key"] == "fatigue"]
     assert fatigue and fatigue[0]["score"] < 100
@@ -487,7 +496,7 @@ def test_being_over_the_day_target_costs_more_than_being_under():
 
 def test_no_target_means_labor_efficiency_is_not_judged():
     out = sq.score_rows([row(SAT, "A", "Cook")], profiles=[sq.ShiftProfile()],
-                        scores={"A": 4})
+                        scores={"A": 4}, role_minimums={"Cook": 1})
     assert "labor_efficiency" in out["shifts"][0]["not_applicable"]
 
 
@@ -547,12 +556,21 @@ def test_every_confidence_penalty_states_its_reason():
 
 # ── What-if: alternatives from the same people ─────────────────────────────
 
+# Saturday's kitchen and floor are staffed, so the bar is what is wrong with
+# it: a missing leader holds a shift at the fixed miss level (10/3/26 SQ-1),
+# and a Saturday also missing four of its six positions is held lower still
+# by coverage, which no bartender swap can lift.
+SAT_KITCHEN_AND_FLOOR = [row(SAT, n, r) for n, r in (("Jo", "Cook"), ("Kim", "Cook"),
+                                                    ("Dana", "Server"), ("Lee", "Server"))]
+SAT_KITCHEN_SCORES = {"Jo": 4, "Kim": 4, "Dana": 4, "Lee": 4}
+
+
 def test_the_engine_finds_the_swap_that_fixes_eriks_saturday():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
-            row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
+            row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
     out = sq.compare_candidates(
         rows, profiles=profiles(),
-        scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2},
+        scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
                        "min_score": 5}])
     assert out["ran"] and out["improvement"] > 0
@@ -643,9 +661,9 @@ def test_finding_nothing_better_is_a_real_answer():
 
 def test_every_accepted_swap_says_which_dimensions_it_moved():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
-            row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
+            row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
     out = sq.compare_candidates(
-        rows, profiles=profiles(), scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2},
+        rows, profiles=profiles(), scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
                        "min_score": 5}])
     assert out["swaps"]
@@ -766,13 +784,17 @@ def test_a_corrupt_stored_profile_does_not_break_the_rest():
 
 def test_an_admin_can_make_a_dimension_count_for_more():
     """Demand match rather than a critical dimension, because a critical
-    one under its floor caps the shift and no weighting can move a cap."""
+    one under its floor caps the shift and no weighting can move a cap.
+    The restaurant's stronger bartenders are off, so the peak night is
+    staffed under its own level (demand match reads the restaurant's own
+    ratings since the 10/3/26 audit, SQ-12)."""
     busy = [sq.ShiftProfile(key="busy", label="Busy night", demand="peak",
                             min_strength={"Bartender": 6}, source="restaurant")]
     rows = saturday({"Bartender": ["A", "B"]})
-    scores = {"A": 3, "B": 3}
-    normal = sq.score_rows(rows, profiles=busy, scores=scores)
-    heavy = sq.score_rows(rows, profiles=busy, scores=scores,
+    scores = {"A": 3, "B": 3, "C": 5, "D": 5}
+    bar = {n: "Bartender" for n in "ABCD"}
+    normal = sq.score_rows(rows, profiles=busy, scores=scores, roster_roles=bar)
+    heavy = sq.score_rows(rows, profiles=busy, scores=scores, roster_roles=bar,
                           weights={"demand_match": 80})
     assert normal["shifts"][0]["capped_by"] is None
     assert heavy["score"] < normal["score"]
@@ -1246,7 +1268,7 @@ def test_leadership_is_judged_normally_once_anybody_is_rated():
                         leader_rules=[{"role": "Bartender", "days": ["Saturday"],
                                        "daypart": "night", "min_score": 5}])
     leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
-    assert leadership["score"] == 0
+    assert leadership["score"] == sq.LEADER_MISS_SCORE
     assert leadership["facts"]["misses"]
 
 
@@ -1258,7 +1280,7 @@ def test_a_headcount_only_leader_rule_is_answerable_without_ratings():
                         role_minimums={"Cook": 1},
                         leader_rules=[{"role": "Bartender", "count": 1}])
     leadership = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "leadership")
-    assert leadership["score"] == 0
+    assert leadership["score"] == sq.LEADER_MISS_SCORE
     assert leadership["facts"]["misses"][0]["rule"] == "1 bartender"
 
 
@@ -1534,11 +1556,12 @@ def test_a_closing_requirement_binds_the_closing_shift_and_no_other():
     rows = [lunch(SAT, "Morning", "Server"), row(SAT, "Night", "Server")]
     rule = [{"closing": True, "role": "Server", "attribute": "can_close", "count": 1}]
     out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
-                        scores={"Morning": 4, "Night": 4}, leader_rules=rule)
+                        scores={"Morning": 4, "Night": 4}, leader_rules=rule,
+                        role_minimums={"Server": 1})
     by_part = {s["daypart"]: s for s in out["shifts"]}
     assert "leadership" in by_part["morning"]["not_applicable"]
     night = next(d for d in by_part["night"]["dimensions"] if d["key"] == "leadership")
-    assert night["score"] == 0
+    assert night["score"] == sq.LEADER_MISS_SCORE
     assert "authorized to close" in night["facts"]["misses"][0]["rule"]
 
 
