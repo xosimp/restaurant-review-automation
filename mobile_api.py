@@ -918,19 +918,23 @@ def _home_weekly_receipts(rid, active_keys, inv):
                                  "text": "approved in your voice"})
     if "labor" in active_keys:
         sched = _home_query(f"""
-            SELECT week_start, hours_scheduled, hours_budget FROM schedule_history
+            SELECT week_start, hours_scheduled, hours_hourly, hours_budget FROM schedule_history
             WHERE restaurant_id=? AND julianday(generated_at) >= julianday({week_start})
             ORDER BY id DESC LIMIT 1
         """, (rid,))
         if sched:
-            hs = float(sched["hours_scheduled"] or 0)
+            # The budget is hourly: held against the hourly hours, never the
+            # salaried ones (schedule audit 10/3/26 E-7); "hrs scheduled"
+            # stays the whole week.
+            from models import history_hourly as _hh_rc
+            hs = float(_hh_rc(sched) or 0)
             hb = float(sched["hours_budget"] or 0)
             if hb and hs and hs < hb:
                 receipts.append({"module": "labor", "emphasis": "Next week's schedule",
                                  "text": f"built {int(round(hb - hs))} hrs under budget"})
-            elif hs:
+            elif float(sched["hours_scheduled"] or 0):
                 receipts.append({"module": "labor", "emphasis": "Next week's schedule",
-                                 "text": f"built — {int(round(hs))} hrs scheduled"})
+                                 "text": f"built — {int(round(float(sched['hours_scheduled'])))} hrs scheduled"})
     if "inventory" in active_keys:
         top = ((inv or {}).get("waste_items") or [None])[0]
         try:
@@ -3207,6 +3211,17 @@ def mobile_labor_insight(current_user):
                        insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
 
 
+def _schedule_wait(job_id, restaurant_id) -> int:
+    """How long a client should keep polling a generation it joined: the
+    time its own deadline leaves (ops.read_async_job's seconds_left), else
+    what a new generation is given (schedule audit 10/3/26 P-22)."""
+    import ops as _ops
+    import schedule_engine as _se
+    job = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+    left = job.get("seconds_left")
+    return int(left) + _ops.ASYNC_DEADLINE_GRACE_SECONDS if left is not None else _se.job_wait_seconds()
+
+
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_generate_schedule(current_user):
@@ -3214,8 +3229,14 @@ def mobile_generate_schedule(current_user):
     (_run_schedule_job plus ops.async_jobs) rather than building a second job
     system — the same async-generate-then-poll pattern the web Labor tab
     already relies on. The ONE body for both surfaces: the web route
-    /api/generate-schedule calls it (client_api.generate_schedule_json)."""
-    import threading
+    /api/generate-schedule calls it (client_api.generate_schedule_json).
+
+    Body: week_start; instruction (the owner's words for this draft); for a
+    redo of some days, dates + history_id; and, for a redo or a whole week
+    over an unsent draft, the owner's reason — reason_chip | reason (one of
+    schedule_engine.REDO_REASONS, or their own short label) and reason_text |
+    whats_wrong — which joins the instruction. The answer carries
+    wait_seconds: how long the job can run (schedule audit 10/3/26 P-22)."""
     import uuid
     from ai_utils import ai_rate_limited
 
@@ -3226,7 +3247,7 @@ def mobile_generate_schedule(current_user):
     import ops as _ops
     running = _ops.active_job("schedule", rid)
     if running:
-        return jsonify(ok=True, job_id=running, joined=True)
+        return jsonify(ok=True, job_id=running, joined=True, wait_seconds=_schedule_wait(running, rid))
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
@@ -3241,19 +3262,63 @@ def mobile_generate_schedule(current_user):
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
+    # What the owner asked for with this draft, in their words — Ask Cavnar's
+    # generate_schedule card posts it (schedule audit 10/3/26 PR-19). It
+    # reaches every model call of the generation, ranked with the Studio
+    # notes (priority 5). Why they are redoing some days, or throwing the
+    # draft away — a chip (schedule_engine.REDO_REASONS) and their own words,
+    # read from reason_chip / reason and reason_text / whats_wrong — rides the
+    # same field, so the prompt says the owner's words once (PR-18).
+    import schedule_engine as _se
+    instruction = " ".join(str(body.get("instruction") or "").split())[:500] or None
+    instruction = _se.with_redo_reason(instruction, _se.redo_reason_from(body))
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
     job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
     if joined:
-        return jsonify(ok=True, job_id=job_id, joined=True)
-    from schedule_engine import _run_schedule_job as _run_sched
-    # The owner who pressed Generate is the actor on every model call the job
-    # makes (the thread has no request to read it from, #148).
-    from ai_utils import attributed as _ai_attributed
-    t = threading.Thread(target=_ai_attributed(_run_sched), args=(job_id, rid),
-                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates)
+        return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
+    # The owner throwing a draft away is the strongest "no" there is, and it
+    # used to teach nothing (schedule audit 10/3/26 L-26): "redo these days"
+    # is kept with the owner's optional reason (a chip and their words —
+    # reason_chip / reason, reason_text / whats_wrong), and a whole week
+    # generated over a draft never sent is kept as that draft discarded —
+    # the draft in force read before the job can replace it.
+    _discarded = None
+    if not dates:
+        try:
+            import schedule_versions as _sv_open
+            from schedule_engine import _week_monday
+            from time_utils import restaurant_now_by_id
+            _discarded = _sv_open.open_draft_for_week(
+                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start).strftime("%Y-%m-%d"))
+        except Exception as _odx:
+            _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
+    _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
+    if instruction:
+        _job_kw["instruction"] = instruction
+    # On the bounded generation pool, not a thread of its own (schedule audit
+    # 10/3/26 P-39); the owner who pressed Generate stays the actor on every
+    # model call the job makes (submit_generation takes the attribution here,
+    # #148).
+    _se.submit_generation(job_id, rid, **_job_kw)
+    try:
+        import schedule_versions as _sv_rej
+        _chip = body.get("reason_chip") or body.get("reason")
+        _words = body.get("reason_text") or body.get("whats_wrong")
+        _chip = _chip if isinstance(_chip, str) else None
+        _words = _words if isinstance(_words, str) else None
+        if dates and base_history_id:
+            _sv_rej.record_rejection(rid, int(base_history_id), "redo_days", dates=dates, reason_chip=_chip,
+                                     reason_text=_words, user=current_user)
+        elif _discarded:
+            _sv_rej.record_rejection(rid, _discarded, "draft_discarded", reason_chip=_chip, reason_text=_words,
+                                     user=current_user)
+    except Exception as _rjx:
+        _ops.capture(_rjx, job="schedule_rejection", context=f"restaurant_id={rid}")
+    # How long the job can run (P-22): the client waits this long, not a
+    # guessed 15 minutes; a poll while it is pending says what is left.
+    return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
+                   wait_seconds=_se.job_wait_seconds())
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")
@@ -3267,7 +3332,9 @@ def mobile_schedule_status(job_id, current_user):
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
-        return jsonify(ok=True, status="pending")
+        # How long the job can still run, when it set its deadline (schedule
+        # audit 10/3/26 P-22) — the web twin says the same.
+        return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -4759,7 +4826,9 @@ def mobile_labor_team(current_user):
                 team.append({
                     "name": m["name"], "role": m["role"], "shifts": 0,
                     "score": c.get("score"),
-                    "can_close": bool(closer.get("flag")),
+                    # Counted only when it is the owner's (L-9).
+                    "can_close": bool(closer.get("flag")) and closer.get("authority") != "admin",
+                    "can_close_pending": bool(closer.get("flag")) and closer.get("authority") == "admin",
                     "score_label": SCORE_LABELS.get(c.get("score")) if c.get("score") else None,
                     "notes": c.get("notes"),
                     "updated_by": c.get("updated_by"),
@@ -4771,6 +4840,7 @@ def mobile_labor_team(current_user):
                            coverage=(capability_coverage(rid, [t["name"] for t in team])
                                     if team else None),
                            thresholds={}, leader_rules=[],
+                           leader_rule_defaults=dict(__import__("models").LEADER_RULE_DEFAULTS),
                            note=None if team else
                                 "Upload your shifts CSV under Account, or add your team by "
                                 "hand below, and they'll appear here to rate."), 200
@@ -4834,11 +4904,28 @@ def mobile_labor_team(current_user):
             })
         # Unrated first — that is the work in front of the owner.
         team.sort(key=lambda t: (t["score"] is not None, -t["shifts"], t["name"]))
+        # A closer flag entered through support waits on the owner like a
+        # rating does (L-9); leader rules load whether or not anyone is
+        # rated, and say when they judge nobody (D-10); a new rule's bar
+        # starts at 4, not 5 (D-11).
+        from models import admin_leader_flags, LEADER_RULE_DEFAULTS
+        _pending = set(admin_leader_flags(rid))
+        for t in team:
+            t["can_close_pending"] = t["name"] in _pending
+            if t["can_close_pending"]:
+                t["can_close"] = False
+        try:
+            import schedule_setup as _setup
+            _lrs = _setup.leader_rules_status(rid, [t["name"] for t in team])
+        except Exception:
+            _lrs = None
         return jsonify(
             ok=True, is_live=True, team=team,
             coverage=capability_coverage(rid, [t["name"] for t in team]),
             thresholds=get_role_strength_thresholds(rid),
             leader_rules=get_shift_leader_rules(rid),
+            leader_rule_defaults=dict(LEADER_RULE_DEFAULTS),
+            leader_rules_status=_lrs,
             scale={"min": SCORE_MIN, "max": SCORE_MAX, "labels": SCORE_LABELS},
             capability_version=__import__("models").capability_version(rid),
             attributes={k: v for k, v in CAPABILITY_ATTRIBUTES.items() if v.get("v1")},
@@ -4985,11 +5072,22 @@ def mobile_set_thresholds(current_user):
         warnings = validate_strength_thresholds(
             cleaned, get_operational_scores(rid), load_shifts_for_restaurant_roles(rid))
         fields = {"role_strength_json": _j.dumps(cleaned)}
+        rule_warnings = []
         if "leader_rules" in data:
-            rules = data.get("leader_rules") or []
-            if not isinstance(rules, list):
-                return jsonify(ok=False, error="leader_rules must be a list"), 400
+            # Each rule read the way the engine reads it, refused when it
+            # can't be, and checked against the team as it stands: "only 1
+            # Bartender AM scores 5 or above, so this rule can't be met on 6
+            # of its 7 shifts" — saved, and said, never dropped later in
+            # silence (schedule audit 10/3/26 D-11).
+            import schedule_setup as _setup
+            rules, errs = _setup.clean_leader_rules(data.get("leader_rules") or [])
+            if errs:
+                return jsonify(ok=False, error="; ".join(errs[:3])), 400
             fields["shift_leader_rules_json"] = _j.dumps(rules)
+            try:
+                rule_warnings = [w["text"] for w in _setup.leader_rule_warnings(rid, rules)]
+            except Exception as _we:
+                print(f"[team] leader rule check unavailable for {rid}: {_we!r}")
         from models import record_capability_change, get_role_strength_thresholds
         _before = get_role_strength_thresholds(rid)
         update_restaurant(rid, fields)
@@ -4998,7 +5096,8 @@ def mobile_set_thresholds(current_user):
             changed_by=current_user.get("username") or current_user.get("email"))
         # Unreachable targets are saved and warned about rather than
         # refused — an owner may be describing the team they intend to have.
-        return jsonify(ok=True, thresholds=cleaned, warnings=warnings), 200
+        return jsonify(ok=True, thresholds=cleaned, warnings=warnings + rule_warnings,
+                       leader_rule_warnings=rule_warnings), 200
     except (TypeError, ValueError) as ve:
         return jsonify(ok=False, error=f"Could not read those thresholds: {ve}"), 400
     except Exception as e:
@@ -7500,6 +7599,17 @@ def mobile_score_schedule(current_user):
                     c.roster_names = list(inputs["roster"])
                 violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)
+                # What the edited week misses, read from its rows as
+                # generation reads it, and the week's staffing asks re-read
+                # against them — saved with the review (schedule audit
+                # 10/3/26 PR-11).
+                try:
+                    import schedule_output as _so_rs
+                    review.update(_so_rs.week_review_extras(
+                        rid, rows, c, violations=violations, quality=quality,
+                        typical=inputs.get("typical_headcount"), history_id=data.get("history_id")))
+                except Exception as _ux:
+                    print(f"[schedule] unmet list unavailable rid={rid}: {_ux!r}")
             else:
                 violations = None
         except Exception:
@@ -7549,11 +7659,26 @@ def mobile_score_schedule(current_user):
             # cannot be written leaves the week as it was (SCHED-19).
             from models import get_conn as _gc2
             conn2 = _gc2()
+            _step, _was_published, _new_version = None, False, None
             try:
                 conn2.execute("BEGIN IMMEDIATE")
-                _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                             expected_version=(sent if latest else None),
-                             saved_authority=_sv.authority_of(current_user))
+                # Whose each changed row is (schedule audit 10/3/26 L-5): the
+                # client's `origin` flag on a row Cavnar AI handed back
+                # (apply fixes, Improve, the overtime move — with its
+                # `origin_sig`), `cavnar_changes` for rows Cavnar AI took out,
+                # and Cavnar AI's own note tags; and whether the week was
+                # already with staff (a change to it is a reaction, L-4).
+                _prev = _sv.latest_rows(conn2, hid)
+                _step = _sv.step_origins(_prev, _sv.rows_from_csv(csv_text), raw_rows,
+                                         data.get("cavnar_changes") if isinstance(data.get("cavnar_changes"), list)
+                                         else None)
+                _pub = conn2.execute("SELECT published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                     (hid, rid)).fetchone()
+                _was_published = bool(_pub and _pub[0])
+                _new_version = _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
+                                            expected_version=(sent if latest else None),
+                                            saved_authority=_sv.authority_of(current_user),
+                                            row_origins=_step["stored"])
                 conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
                               (json.dumps(review) if review else None, hid, rid))
                 conn2.commit()
@@ -7573,6 +7698,20 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
+            # What the save teaches, now it is stored (schedule audit
+            # 10/3/26): Cavnar AI's kept changes credit that move's trust and
+            # are never the manager's habit (L-5); a change to a week staff
+            # have is a reaction (L-4); in the first weeks a big change asks
+            # a one-tap why (L-35, `why_questions`).
+            try:
+                import schedule_learning as _sl_cap
+                _captured = _sl_cap.capture_save(rid, saved, _new_version, _step or {}, user=current_user,
+                                                 published=_was_published)
+                _why = _captured.get("why_questions") or []
+            except Exception as _cx:
+                import ops as _ops_cap
+                _ops_cap.capture(_cx, job="schedule_save_capture", context=f"restaurant_id={rid} history={saved}")
+                _why = []
             # A week staff were already sent: nobody is told from a save.
             # The save records the edit; the people whose shifts differ
             # from what they were last told come back as `unsent_changes`,
@@ -7610,6 +7749,11 @@ def mobile_score_schedule(current_user):
                        # never sent). Nobody has been told yet.
                        unsent_changes=locals().get("_resp_unsent"),
                        late_change_warning=locals().get("_late_warning"),
+                       # The one-tap "why" for a big change in the first weeks
+                       # (L-35): [{key, kind, text, options: [{answer, label}],
+                       # date, employee, role, daypart}] — answered at
+                       # POST labor/schedule/edit-why.
+                       why_questions=locals().get("_why") or [],
                        capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
@@ -7629,7 +7773,9 @@ def _mark_review_rows(rows, violations):
     blocker reads both). Only when the sweep ran; without it nothing moves."""
     if violations is None:
         return
-    still = {v["index"] for v in violations if v.get("hard") and v.get("index") is not None}
+    # A breach about a day (no manager on, a floor short) marks no row: it
+    # is pinned to one only so consumers have an index (E-13).
+    still = {v["index"] for v in violations if v.get("hard") and not v.get("day_level") and v.get("index") is not None}
     for i, r in enumerate(rows):
         if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()
@@ -7688,6 +7834,10 @@ def mobile_schedule_replacements(current_user):
         dates = sorted({r.get("date") for r in rows if r.get("date")})
         from datetime import datetime as _dtr
         c = _sr.build_constraints(rid, dates, [_dtr.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates])
+        # The week as it stands is swept once and availability read once for
+        # every candidate (schedule audit 10/3/26 P-40): each check used to
+        # re-sweep the unchanged week and re-read the table per person.
+        prepared = _se.prepare_replacements(rid, rows, constraints=c)
         role_low = (target.get("role") or "").strip().lower()
         roster = {e["name"].strip().lower(): (e["name"], e.get("role")) for e in _ss.roster(rid)}
         for r in rows:
@@ -7705,7 +7855,7 @@ def mobile_schedule_replacements(current_user):
                 known.discard("")
                 if known and role_low not in known:
                     continue
-            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c)
+            ok, _why = _se.replacement_is_legal(rid, rows, index, name, constraints=c, prepared=prepared)
             if not ok:
                 continue
             out.append({"name": name, "role": their_role or target.get("role"),
@@ -7784,10 +7934,12 @@ def mobile_shift_profiles(current_user):
     try:
         stored = get_shift_profiles(rid)
         scores = get_operational_scores(rid)
+        # Leader rules apply whether or not anyone is rated (schedule audit
+        # 10/3/26 P-18): a closing rule needs no score at all.
         resolved = _sq.profiles_from_config(
             [_sq.profile_from_dict(p) for p in stored] or None,
             default_strength=get_role_strength_thresholds(rid) if scores else {},
-            default_leader_rules=get_shift_leader_rules(rid) if scores else [])
+            default_leader_rules=get_shift_leader_rules(rid))
         return jsonify(
             ok=True,
             using_defaults=not stored,

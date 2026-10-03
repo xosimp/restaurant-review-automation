@@ -214,7 +214,19 @@ def test_the_watch_needs_the_feed_the_manager_and_a_reading(db, monkeypatch):
     c.execute("INSERT INTO pos_intraday (restaurant_id, business_date, captured_hour, weekday, net_sales, provider) "
               "VALUES (?, '2026-10-09', 18, 'Friday', 900, 'toast')", (rid,))
     c.commit(); c.close()
+    # A sales reading is not a watched night: the clock-in read may have
+    # failed, or no published week covered it (schedule audit 10/3/26 L-32).
+    # The check's own mark of a night it read the clock-ins for is.
+    assert si.watched_dates(rid, "2026-10-05", "2026-10-11", db_path=db) == set()
+    from dsr import store as dsr_store
+    dsr_store.mark_coverage_ran(rid, "2026-10-09", db_path=db)
     assert si.watched_dates(rid, "2026-10-05", "2026-10-11", db_path=db) == {"2026-10-09"}
+    # A night before that mark was kept still reads its sales reading.
+    c = models.get_conn(db)
+    c.execute("INSERT INTO pos_intraday (restaurant_id, business_date, captured_hour, weekday, net_sales, provider) "
+              "VALUES (?, '2026-09-18', 18, 'Friday', 900, 'toast')", (rid,))
+    c.commit(); c.close()
+    assert si.watched_dates(rid, "2026-09-14", "2026-10-11", db_path=db) == {"2026-09-18", "2026-10-09"}
 
 
 # ── A-26: the weekly suggestion is what Apply applies ────────────────────

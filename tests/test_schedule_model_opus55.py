@@ -8,6 +8,7 @@ streams the answer. Sonnet 5.5 refuses thinking={"type": "disabled"} with a
 400 — the default every other call gets — so its lowest setting is sent
 instead. A job deadline stops the retry loop starting attempts it cannot
 finish."""
+import time
 import types
 
 import pytest
@@ -96,8 +97,15 @@ def test_a_deadline_stops_retries_it_cannot_finish(monkeypatch):
     client = types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
     with pytest.raises(RuntimeError):
         ai_utils.create_with_retry(client, model="claude-sonnet-5", max_tokens=10, retries=2,
+                                   deadline=time.time() + 1, messages=[{"role": "user", "content": "x"}])
+    assert len(calls) == 1          # no retry fits before the deadline: none was started
+    calls.clear()
+    # Past the deadline no call is sent at all — it could only be cut, and a
+    # streamed one is billed for what it sent (schedule audit 10/3/26 P-22).
+    with pytest.raises(ai_utils.CallDeadlineExceeded):
+        ai_utils.create_with_retry(client, model="claude-sonnet-5", max_tokens=10, retries=2,
                                    deadline=0, messages=[{"role": "user", "content": "x"}])
-    assert len(calls) == 1          # past the deadline: no retry was started
+    assert calls == []
 
 
 def test_the_schedule_call_asks_opus_55_to_think_at_high_effort_and_streams(monkeypatch):

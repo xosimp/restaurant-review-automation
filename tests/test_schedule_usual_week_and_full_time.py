@@ -109,3 +109,18 @@ def test_the_owner_can_set_the_full_time_line_or_turn_it_off(rid):
     assert sr.build_constraints(rid, WEEK, list(sr.DAYS)).hours_limits["ana"] == (35.0, None)
     sr.save_compliance(rid, {"full_time_min_hours": 0})
     assert "ana" not in sr.build_constraints(rid, WEEK, list(sr.DAYS)).hours_limits
+
+
+def test_a_salaried_style_owner_is_never_held_to_the_full_time_line(rid):
+    """An Owner role is salaried-style unless marked paid by the hour (E-12);
+    their pay does not follow their hours either, so the restaurant's
+    full-time line is not their minimum (D-41)."""
+    import staff_settings
+    models.add_manual_team_member(rid, "Olive", role="Owner")
+    staff_settings.upsert(rid, "Olive", employment_type="full")
+    c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    assert "olive" in c.salaried_style and c.is_salaried("Olive")
+    assert "olive" not in c.full_time_default and "olive" not in c.hours_limits
+    staff_settings.upsert(rid, "Olive", paid_hourly=True)
+    c2 = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    assert "olive" not in c2.salaried_style and c2.hours_limits["olive"] == (30.0, None)

@@ -87,10 +87,13 @@ _K = {
                       "digest_day", "dsr_notify", "dsr_deadline_hour", "preshift_nudge_hour", "push_sound",
                       "login_notify", "staff_signin_notify", "marketing_emails_opt_out"),
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "delivery_pct", "foh_roles_json",
-              "patio_roles_json", "jurisdiction", "quality_weights_json", "role_arrival_json",
+              "patio_roles_json", "jurisdiction", "quality_weights_json", "quality_tuning_json", "role_arrival_json",
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
-              "section_count", "foh_sections_json", "sched_notes"),
+              "section_count", "foh_sections_json", "sched_notes",
+              # Role families, the roles with chosen closers, the salaried
+              # weekly cap (schedule audit 10/3/26 F1).
+              "role_families_json", "closer_roles_json", "salaried_cap"),
     "pay": ("hourly_rate", "role_rates_json", "salaried_staff_json", "person_rates_json"),
     "setting": ("name", "owner_email", "owner_name", "owner_phone", "mailing_address", "location_group",
                 "location_name", "timezone", "week_start_day", "fiscal_period_scheme", "fiscal_week_start_dow",

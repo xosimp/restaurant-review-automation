@@ -28,7 +28,31 @@ class StaffSettingsError(ValueError):
 
 # ── settings ───────────────────────────────────────────────────────────────
 
-CERTIFICATIONS = ("alcohol", "food_handler", "manager", "keyholder", "trainer", "allergen", "first_aid")
+CERTIFICATIONS = ("alcohol", "food_handler", "manager", "keyholder", "trainer", "allergen", "first_aid",
+                  "food_protection_manager")
+# How each certificate reads to the owner. "manager" used to read as plain
+# "Manager" beside "Food handler", so a line cook holding a Certified Food
+# Protection Manager card (required on site in Chicago) was given it — and
+# the certificate makes its holder a manager the every-minute rule counts
+# (schedule audit 10/3/26 E-15). It means a floor manager, somebody who can
+# run the shift; the food-safety card is its own certificate and never
+# makes anybody a manager. The stored keys stay what they were.
+CERTIFICATION_LABELS = {
+    "alcohol": "Alcohol", "food_handler": "Food handler", "manager": "Floor manager (can run the shift)",
+    "keyholder": "Keyholder", "trainer": "Trainer", "allergen": "Allergen", "first_aid": "First aid",
+    "food_protection_manager": "Food protection manager (food safety)",
+}
+# The certificate that makes its holder a floor manager (schedule_rules
+# build_constraints); FOOD_SAFETY_CERT never does.
+FLOOR_MANAGER_CERT = "manager"
+FOOD_SAFETY_CERT = "food_protection_manager"
+
+# Caps on the per-person lists below, so a client loop cannot store
+# thousands of entries on one person.
+MAX_STANDING_SHIFTS = 21
+MAX_ACTING_RANGES = 20
+MAX_CLOSES_FOR = 6
+STANDING_SHIFT_MAX_HOURS = 16
 
 
 def _json_field(r, key, default):
@@ -66,9 +90,34 @@ def _row(r):
         # Which minor rule table applies (schedule_rules.MINOR_BANDS); None
         # for an adult, or a minor whose age band was never set.
         "minor_age_band": (r["minor_age_band"] if "minor_age_band" in keys else None) or None,
+        # Who runs the floor (schedule audit 10/3/26 P-7, E-14): True or
+        # False as the owner set it; None is automatic (their role, a held
+        # role or a manager role worked in the last eight weeks, or the
+        # floor manager certificate — schedule_rules.manager_basis).
+        "floor_manager": (None if "floor_manager" not in keys or r["floor_manager"] is None
+                          else bool(r["floor_manager"])),
+        # An Owner-role person paid by the hour: held to the overtime line
+        # like anyone hourly. Unset, an Owner role is salaried-style (E-12).
+        "paid_hourly": bool(r["paid_hourly"]) if "paid_hourly" in keys and r["paid_hourly"] is not None else False,
+        # Dates they stand in as the manager on duty (E-13): [{from, until, note}].
+        "acting_manager": _json_list(r, "acting_manager", keys),
+        # The days and hours they always work (D-5): [{day, start, end, role}].
+        "standing_shifts": _json_list(r, "standing_shifts", keys),
+        # In training (D-16): {target_role, trainer, from, until} or None.
+        "trainee": (_json_field(r, "trainee", None) if "trainee" in keys else None) or None,
+        # The roles they close for when marked to close (D-9); empty is
+        # their own role.
+        "closes_for": [x for x in _json_list(r, "closes_for", keys) if isinstance(x, str)],
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
+
+
+def _json_list(r, key, keys) -> list:
+    if key not in keys:
+        return []
+    v = _json_field(r, key, [])
+    return list(v) if isinstance(v, list) else []
 
 
 def name_key(name) -> str:
@@ -181,15 +230,169 @@ def _flag(v) -> bool:
     return bool(v)
 
 
+# ── the owner's per-person scheduling facts (schedule audit 10/3/26 F1) ────
+#
+# Who runs the floor, who stands in as the manager on given dates, the days
+# and hours someone always works, who is in training and for what, which
+# roles a closer closes for. Each is validated here, stored on the
+# person's staff_settings row, recorded in the change history like every
+# other roster field, and read into the rules by
+# schedule_rules.build_constraints.
+
+AUTO = "auto"           # floor_manager: back to automatic
+
+
+def _clean_floor_manager(v):
+    """1, 0, or AUTO (clear: automatic) for what a client sent."""
+    if isinstance(v, bool):
+        return 1 if v else 0
+    s = str(v).strip().lower()
+    if s in ("", "auto", "automatic", "default", "null", "none"):
+        return AUTO
+    if s in ("1", "true", "yes", "on"):
+        return 1
+    if s in ("0", "false", "no", "off"):
+        return 0
+    raise StaffSettingsError("floor manager is yes, no or automatic")
+
+
+def _clean_date(raw, what) -> str:
+    """An ISO date from ISO or M/D/YY input; raises when it is not a date."""
+    from models import _iso_or_none
+    iso = _iso_or_none(raw)
+    if not iso:
+        raise StaffSettingsError(f"{what}: '{raw}' isn't a date — use M/D/YY")
+    return iso
+
+
+def _clean_acting(raw) -> list:
+    """[{from, until, note}] — the date ranges somebody stands in as the
+    manager on duty, sorted, each at most a year long."""
+    from datetime import date as _d
+    if not isinstance(raw, list):
+        raise StaffSettingsError("acting manager dates are a list of {from, until}")
+    if len(raw) > MAX_ACTING_RANGES:
+        raise StaffSettingsError(f"at most {MAX_ACTING_RANGES} acting-manager date ranges")
+    out = []
+    for e in raw:
+        if not isinstance(e, dict):
+            raise StaffSettingsError("acting manager dates are a list of {from, until}")
+        f = _clean_date(e.get("from"), "acting manager from")
+        u = _clean_date(e.get("until") or e.get("from"), "acting manager until")
+        if f > u:
+            raise StaffSettingsError("acting manager: the end date is before the start date")
+        if (_d.fromisoformat(u) - _d.fromisoformat(f)).days > 366:
+            raise StaffSettingsError("acting manager: a date range is at most a year")
+        entry = {"from": f, "until": u}
+        note = " ".join(str(e.get("note") or "").split())[:120]
+        if note:
+            entry["note"] = note
+        if entry not in out:
+            out.append(entry)
+    return sorted(out, key=lambda x: (x["from"], x["until"]))
+
+
+def _clean_standing(raw) -> list:
+    """[{day, start, end, role}] — the shifts somebody always works, one
+    weekday each (D-5: the owners' and managers' real floor days). Times in
+    the house form ("10:00am"); an end at or before the start crosses
+    midnight; two on the same day may not overlap."""
+    from schedule_rules import parse_minutes, _fmt_minutes
+    if not isinstance(raw, list):
+        raise StaffSettingsError("standing shifts are a list of {day, start, end}")
+    if len(raw) > MAX_STANDING_SHIFTS:
+        raise StaffSettingsError(f"at most {MAX_STANDING_SHIFTS} standing shifts")
+    out, spans = [], {}
+    for e in raw:
+        if not isinstance(e, dict):
+            raise StaffSettingsError("standing shifts are a list of {day, start, end}")
+        day = str(e.get("day") or "").strip().capitalize()
+        if day not in DAYS:
+            raise StaffSettingsError(f"'{e.get('day')}' is not a weekday")
+        s, t = parse_minutes(str(e.get("start") or "")), parse_minutes(str(e.get("end") or ""))
+        if s is None or t is None:
+            raise StaffSettingsError(f"{day}: give the start and end as times, like 10:00am and 6:00pm")
+        end = t if t > s else t + 24 * 60
+        if not 60 <= end - s <= STANDING_SHIFT_MAX_HOURS * 60:
+            raise StaffSettingsError(f"{day}: a standing shift runs 1 to {STANDING_SHIFT_MAX_HOURS} hours")
+        for os_, oe in spans.get(day, ()):
+            if s < oe and os_ < end:
+                raise StaffSettingsError(f"{day}: two standing shifts overlap")
+        spans.setdefault(day, []).append((s, end))
+        role = " ".join(str(e.get("role") or "").split())[:60]
+        entry = {"day": day, "start": _fmt_minutes(s), "end": _fmt_minutes(t), "role": role or None}
+        # Optional dates it holds between ("Tuesdays until 12/15/26").
+        f = _clean_date(e.get("from"), f"{day} from") if e.get("from") else None
+        u = _clean_date(e.get("until"), f"{day} until") if e.get("until") else None
+        if f and u and f > u:
+            raise StaffSettingsError(f"{day}: the standing shift ends before it starts")
+        if f:
+            entry["from"] = f
+        if u:
+            entry["until"] = u
+        out.append(entry)
+    return sorted(out, key=lambda x: (DAYS.index(x["day"]), parse_minutes(x["start"]) or 0))
+
+
+def _clean_trainee(raw, today=None):
+    """{target_role, trainer, from, until} or None (not in training). The
+    role they are learning and the date training ends are required: a
+    trainee with no end stayed one for good, and the headcount never came
+    back (D-16)."""
+    if raw in (None, False, "", {}, []):
+        return None
+    if not isinstance(raw, dict):
+        raise StaffSettingsError("training is {target_role, trainer, until}")
+    role = " ".join(str(raw.get("target_role") or raw.get("role") or "").split())[:60]
+    if not role:
+        raise StaffSettingsError("training: name the role they're learning")
+    until = _clean_date(raw.get("until"), "training ends")
+    if today is not None and until < today.isoformat():
+        raise StaffSettingsError("training: that end date has passed")
+    out = {"target_role": role, "until": until}
+    if raw.get("from"):
+        f = _clean_date(raw.get("from"), "training starts")
+        if f > until:
+            raise StaffSettingsError("training: the end date is before the start date")
+        out["from"] = f
+    trainer = " ".join(str(raw.get("trainer") or "").split())[:120]
+    if trainer:
+        out["trainer"] = trainer
+    return out
+
+
+def _clean_closes_for(raw) -> list:
+    """The roles a closer closes for ("Bartender", "Server"); empty means
+    their own role (D-9)."""
+    if not isinstance(raw, list):
+        raise StaffSettingsError("closes for is a list of roles")
+    out = []
+    for x in raw:
+        r = " ".join(str(x or "").split())[:60]
+        if r and r.casefold() not in {o.casefold() for o in out}:
+            out.append(r)
+    if len(out) > MAX_CLOSES_FOR:
+        raise StaffSettingsError(f"a closer closes for at most {MAX_CLOSES_FOR} roles")
+    return out
+
+
 def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_hours=None,
            max_hours=None, daypart_availability=None, is_minor=None, updated_by=None,
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
-           experienced=None, minor_age_band=None, db_path=DB_PATH) -> dict:
+           experienced=None, minor_age_band=None, floor_manager=None, paid_hourly=None,
+           acting_manager=None, standing_shifts=None, trainee=None, closes_for=None,
+           db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed.
 
     `minor_age_band` is "14-15", "16-17" or "" (clear). Setting a band marks
-    the person a minor; switching is_minor off clears the band (NS5 H4)."""
+    the person a minor; switching is_minor off clears the band (NS5 H4).
+
+    The owner's scheduling facts (schedule audit 10/3/26 F1): `floor_manager`
+    True / False / "auto"; `paid_hourly` (an Owner role held to overtime);
+    `acting_manager` [{from, until, note}]; `standing_shifts` [{day, start,
+    end, role}]; `trainee` {target_role, trainer, from, until} or {} to end
+    it; `closes_for` [role]. Each replaces what is stored."""
     if employee_name is not None and not isinstance(employee_name, str):
         raise StaffSettingsError("an employee name is required")
     name = (employee_name or "").strip()[:120]
@@ -245,6 +448,16 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             raise StaffSettingsError("desired hours must be a number")
         if desired_hours < 0 or desired_hours > 80:
             raise StaffSettingsError("desired hours must be between 0 and 80")
+    if floor_manager is not None:
+        floor_manager = _clean_floor_manager(floor_manager)
+    if acting_manager is not None:
+        acting_manager = _clean_acting(acting_manager)
+    if standing_shifts is not None:
+        standing_shifts = _clean_standing(standing_shifts)
+    if trainee is not None:
+        trainee = _clean_trainee(trainee, today=_today(restaurant_id)) or ""
+    if closes_for is not None:
+        closes_for = _clean_closes_for(closes_for)
     conn = get_conn(db_path)
     try:
         # The row this person already has, whatever case it was saved in:
@@ -258,7 +471,9 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         current = _row(cur) if cur else {"active": True, "employment_type": None, "min_hours": None,
                                          "max_hours": None, "daypart_availability": {}, "is_minor": False,
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
-                                         "desired_hours": None, "experienced": False, "minor_age_band": None}
+                                         "desired_hours": None, "experienced": False, "minor_age_band": None,
+                                         "floor_manager": None, "paid_hourly": False, "acting_manager": [],
+                                         "standing_shifts": [], "trainee": None, "closes_for": []}
         if time_windows is not None:
             time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
@@ -274,6 +489,13 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "desired_hours": ((desired_hours if desired_hours != "" else None) if desired_hours is not None else current.get("desired_hours")),
             "experienced": int(_flag(experienced)) if experienced is not None else int(bool(current.get("experienced"))),
             "minor_age_band": (minor_age_band or None) if minor_age_band is not None else current.get("minor_age_band"),
+            "floor_manager": ((None if floor_manager == AUTO else floor_manager) if floor_manager is not None
+                              else (None if current.get("floor_manager") is None else int(current["floor_manager"]))),
+            "paid_hourly": int(_flag(paid_hourly)) if paid_hourly is not None else int(bool(current.get("paid_hourly"))),
+            "acting_manager": acting_manager if acting_manager is not None else current.get("acting_manager") or [],
+            "standing_shifts": standing_shifts if standing_shifts is not None else current.get("standing_shifts") or [],
+            "trainee": (trainee or None) if trainee is not None else current.get("trainee"),
+            "closes_for": closes_for if closes_for is not None else current.get("closes_for") or [],
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -285,19 +507,25 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "max_hours": max_hours, "daypart_availability": daypart_availability, "is_minor": is_minor,
                  "time_windows": time_windows, "certifications": certifications,
                  "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours,
-                 "experienced": experienced, "minor_age_band": minor_age_band}
+                 "experienced": experienced, "minor_age_band": minor_age_band,
+                 "floor_manager": floor_manager, "paid_hourly": paid_hourly, "acting_manager": acting_manager,
+                 "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
-                            preferred_dayparts, desired_hours, experienced, minor_age_band, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            preferred_dayparts, desired_hours, experienced, minor_age_band, floor_manager,
+                            paid_hourly, acting_manager, standing_shifts, trainee, closes_for, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
                       json.dumps(new["time_windows"]), json.dumps(new["certifications"]),
                       json.dumps(new["preferred_dayparts"]), new["desired_hours"], new["experienced"],
-                      new["minor_age_band"], (updated_by or "").strip()[:120] or None))
+                      new["minor_age_band"], new["floor_manager"], new["paid_hourly"],
+                      json.dumps(new["acting_manager"]), json.dumps(new["standing_shifts"]),
+                      json.dumps(new["trainee"]) if new["trainee"] else None, json.dumps(new["closes_for"]),
+                      (updated_by or "").strip()[:120] or None))
         if time_windows is not None and time_windows != (current.get("time_windows") or {}):
             # The staff app edits these windows on its availability screen
             # and saves against that row's version (save_own_availability).
@@ -318,7 +546,10 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
 _ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum hours", "max_hours": "maximum hours",
                   "daypart_availability": "availability", "is_minor": "minor", "time_windows": "time windows",
                   "certifications": "certifications", "preferred_dayparts": "preferred dayparts",
-                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band"}
+                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band",
+                  "floor_manager": "floor manager", "paid_hourly": "paid hourly",
+                  "acting_manager": "acting manager dates", "standing_shifts": "standing shifts",
+                  "trainee": "training", "closes_for": "closes for"}
 
 
 def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):
@@ -341,8 +572,12 @@ def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PAT
                     change_log.record(restaurant_id, "roster", "left" if was else "added", was, now, subject=name,
                                       db_path=db)
                 continue
-            if field in ("is_minor", "experienced"):
+            if field in ("is_minor", "experienced", "paid_hourly"):
                 before, after = bool(before), bool(after)
+            if field == "floor_manager":
+                words = {None: "automatic", True: "yes", False: "no"}
+                before = words[None if before is None else bool(before)]
+                after = words[None if after is None else bool(after)]
             change_log.record(restaurant_id, "roster", _ROSTER_FIELDS.get(field, field), before, after, subject=name,
                               db_path=db)
     except Exception as e:
@@ -616,9 +851,12 @@ def dormant_people(restaurant_id, people=None, exempt=(), today=None, db_path=DB
             continue
         if k in lately:
             continue
+        # A manager of any kind — one who runs the floor, a department's, an
+        # owner, a lead — barely punches: their role is enough (schedule fix
+        # round 10/3/26, M). Not only the floor kind is_manager_role counts.
         try:
-            from schedule_rules import is_manager_role
-            if any(is_manager_role(r) for r in [e.get("role")] + list(e.get("recent_roles") or [])):
+            from schedule_rules import manager_role_kind
+            if any(manager_role_kind(r) for r in [e.get("role")] + list(e.get("recent_roles") or [])):
                 continue
         except Exception:
             pass
@@ -638,10 +876,18 @@ def dormancy_fields(entry, dormant: dict) -> dict:
             "dormant_text": f"Not worked since {mdy(last)} — deactivate?" if gone and last else None}
 
 
+# How far back (before the dormancy cutoff) a manager's published shifts
+# keep them on the team: managers barely punch, so the published weeks are
+# their record — a year of them.
+DORMANT_MANAGER_PUBLISHED_WEEKS = 52
+
+
 def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
     """name_keys with something on file that says they are still here: an
-    availability row updated since `cutoff`, time off still ahead, or a
-    shift on a live published week from `cutoff` on."""
+    availability row updated since `cutoff`, time off still ahead, a shift
+    on a live published week from `cutoff` on, or — managers barely punch —
+    a manager's shift (any manager role) on a live published week up to
+    DORMANT_MANAGER_PUBLISHED_WEEKS weeks before `cutoff`."""
     out = set()
     conn = get_conn(db_path)
     try:
@@ -659,18 +905,28 @@ def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
         except Exception:
             pass
         try:
+            from datetime import date as _date, timedelta as _td
+            mgr_cutoff = (_date.fromisoformat(cutoff) - _td(weeks=DORMANT_MANAGER_PUBLISHED_WEEKS)).isoformat()
+        except (TypeError, ValueError):
+            mgr_cutoff = cutoff
+        try:
             weeks = conn.execute(
                 "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-                "AND superseded_by IS NULL AND substr(week_end,1,10) >= ?", (restaurant_id, cutoff)).fetchall()
+                "AND superseded_by IS NULL AND substr(week_end,1,10) >= ?", (restaurant_id, mgr_cutoff)).fetchall()
         except Exception:
             weeks = []
     finally:
         conn.close()
     if weeks:
         from schedule_versions import rows_from_csv
+        try:
+            from schedule_rules import manager_role_kind
+        except Exception:
+            manager_role_kind = None
         for w in weeks:
             for r in rows_from_csv(w["schedule_csv"]):
-                if (r.get("date") or "") >= cutoff:
+                d = r.get("date") or ""
+                if d >= cutoff or (d >= mgr_cutoff and manager_role_kind and manager_role_kind(r.get("role"))):
                     out.add(name_key(r.get("employee")))
     try:
         ident = _person_index(restaurant_id, db_path)
@@ -706,6 +962,42 @@ def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
         out |= {r["role"].strip().lower() for r in _people.held_roles(restaurant_id, name) if r["role"].strip()}
     except Exception:
         pass
+    return out
+
+
+def worked_roles(restaurant_id, db_path=DB_PATH) -> dict:
+    """{name_key: {role: the last date they worked it}} — every role each
+    person has worked here, from the per-shift history (shift_facts) or,
+    for a restaurant whose history predates it, the stored shifts file. The
+    roster keeps only the most recent role; who a manager is, which roles
+    somebody holds and whether a row's role is theirs read every role
+    (schedule audit 10/3/26 E-14, D-15). Empty when nothing can be read."""
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        has = conn.execute("SELECT 1 FROM shift_facts WHERE restaurant_id=? LIMIT 1", (restaurant_id,)).fetchone()
+        rows = conn.execute(
+            "SELECT employee_key, role, MAX(business_date) AS last FROM shift_facts WHERE restaurant_id=? "
+            "AND role IS NOT NULL AND TRIM(role)<>'' GROUP BY employee_key, role", (restaurant_id,)).fetchall() if has else []
+    except Exception:
+        has, rows = None, []
+    finally:
+        conn.close()
+    if has:
+        for r in rows:
+            role = " ".join(str(r["role"] or "").split())
+            per = out.setdefault(r["employee_key"], {})
+            per[role] = max(per.get(role, ""), str(r["last"] or "")[:10])
+        return out
+    try:
+        from models import _cached_shifts
+        for sh in _cached_shifts(restaurant_id) or []:
+            n, role = name_key(sh.get("employee")), " ".join(str(sh.get("role") or "").split())
+            if n and role:
+                per = out.setdefault(n, {})
+                per[role] = max(per.get(role, ""), str(sh.get("date") or "")[:10])
+    except Exception:
+        return {}
     return out
 
 
@@ -812,49 +1104,186 @@ def recency_weight(day, today, half_life=RELIABILITY_HALF_LIFE_DAYS) -> float:
     return 0.5 ** (age / float(half_life))
 
 
-def weighted_attendance(events, today=None, min_shifts=6) -> dict:
-    """{name: {...}} from [(name, iso_date, outcome)] where outcome is
-    "worked", "no_show", "short" (and, from attendance_events, "late",
-    "called_out", "left_early", "covered") — the reliability every reader
-    shares. `shifts` / `no_shows` are the raw counts inside the window (what
-    is said: "missed 2 of 9"); `no_show_rate` is the recency-weighted rate
-    smoothed toward the restaurant's own weighted base rate (smoothed_rate);
-    a missed shift is a no-show or a call-out."""
+# ── the one attendance reader ──────────────────────────────────────────────
+#
+# Reliability, attendance by weekday, standby days and the schedule prompt's
+# no-show block all read attendance through here (schedule audit 10/3/26
+# L-17): one window (RELIABILITY_WINDOW_DAYS), one decay (recency_weight's
+# RELIABILITY_HALF_LIFE_DAYS), one smoothing toward this restaurant's own
+# base rate. Reliability used a 90-day half-life over 360 days, standby and
+# by-weekday an unweighted 360 days, the prompt an unweighted 26 weeks — so
+# the review, the prompt and the scorer disagreed about the same person and
+# day.
+#
+# Three rates, because they answer three questions:
+#   no_show_rate   reliability — who to rely on. A miss weighs by what it
+#                  cost the manager: an unannounced no-show 1, a call-out
+#                  less the more notice it gave (L-18: a sick call with a
+#                  day's notice counted the same as walking out on a shift).
+#   absence_rate   standby planning — the chance a body is missing, so a
+#                  call-out counts in full whatever its notice; call_out_rate
+#                  is its call-out part, kept separately (L-18).
+#   late_rate      lateness (D-44), read only on shifts whose arrival was
+#                  clocked, and only once LATE_MIN_SHIFTS of them exist.
+#
+# A shift somebody else took, or one a manager let them off (an approved
+# drop — attendance.NOT_OWED, E-5), was not theirs to work or miss: never
+# counted.
+
+# A call-out's weight against a no-show's 1, by the notice it gave: at least
+# a day's notice lets the manager cover it before service, two hours lets
+# them make calls; less, or unknown (a closer's "who didn't make it"), is
+# nearly a no-show.
+CALL_OUT_WEIGHTS = ((24 * 60, 0.25), (2 * 60, 0.5))
+CALL_OUT_WEIGHT_SHORT = 0.75
+# Clocked shifts needed before a late rate is said (the reliability floor's
+# own six), and the share late at which somebody is a lateness risk for the
+# shift that opens a role's day or the one that closes it (D-44).
+LATE_MIN_SHIFTS = 6
+LATE_RISK_RATE = 0.25
+_NOT_OWED = ("covered", "excused")
+
+
+def miss_weight(outcome, notice_minutes=None) -> float:
+    """What one shift's outcome counts as a miss against reliability: a
+    no-show 1, a call-out by its notice (CALL_OUT_WEIGHTS), anything else
+    0."""
+    if outcome == "no_show":
+        return 1.0
+    if outcome != "called_out":
+        return 0.0
+    try:
+        notice = None if notice_minutes is None else float(notice_minutes)
+    except (TypeError, ValueError):
+        notice = None
+    if notice is not None:
+        for at_least, weight in CALL_OUT_WEIGHTS:
+            if notice >= at_least:
+                return weight
+    return CALL_OUT_WEIGHT_SHORT
+
+
+def _event(e):
+    """(name, iso_date, outcome, notice_minutes, timed) from an event as
+    attendance.reliability_events gives it — (name, date, outcome), or with
+    a 4th {"notice_minutes", "timed"} — or a dict of the same keys. Without
+    the detail, a recorded on-time/late/left-early outcome reads as timed."""
+    if isinstance(e, dict):
+        name, day, outcome = e.get("name") or e.get("employee"), e.get("date"), e.get("outcome")
+        extra = e
+    else:
+        name, day, outcome = e[0], e[1], e[2]
+        extra = e[3] if len(e) > 3 and isinstance(e[3], dict) else None
+    timed = (extra or {}).get("timed")
+    if timed is None:
+        timed = outcome in ("on_time", "late", "left_early")
+    return name, day, outcome, (extra or {}).get("notice_minutes"), bool(timed)
+
+
+def _blank_tally() -> dict:
+    return {"shifts": 0, "no_show": 0, "called_out": 0, "short": 0, "late": 0, "timed": 0,
+            "w": 0.0, "w_miss": 0.0, "w_absent": 0.0, "w_callout": 0.0, "w_timed": 0.0, "w_late": 0.0,
+            "last_miss": None, "first": None, "last": None}
+
+
+def _add(t, day, outcome, notice, timed, w):
+    t["shifts"] += 1
+    t["w"] += w
+    mw = miss_weight(outcome, notice)
+    if outcome in ("no_show", "called_out"):
+        t["no_show"] += 1
+        t["w_miss"] += w * mw
+        t["w_absent"] += w
+        t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
+        if outcome == "called_out":
+            t["called_out"] += 1
+            t["w_callout"] += w
+    elif outcome in ("short", "left_early"):
+        t["short"] += 1
+    if timed:
+        t["timed"] += 1
+        t["w_timed"] += w
+        if outcome == "late":
+            t["late"] += 1
+            t["w_late"] += w
+    elif outcome == "late":
+        t["late"] += 1                     # said, but not a clocked reading
+    t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
+    t["last"] = max(t["last"] or "", str(day)[:10])
+
+
+def attendance_tally(events, today=None) -> dict:
+    """The recency-weighted tally every attendance reader starts from:
+    {name: {..counts and weights.., "days": {weekday: {...}}}}, inside
+    RELIABILITY_WINDOW_DAYS of `today`, shifts not owed left out."""
     from datetime import date as _date
-    from shift_quality import UNRELIABLE_RATE
     today = today or _date.today()
     tally = {}
-    for name, day, outcome in events or ():
+    for e in events or ():
+        name, day, outcome, notice, timed = _event(e)
         n = " ".join(str(name or "").split())
         w = recency_weight(day, today)
-        if not n or w <= 0:
+        if not n or w <= 0 or outcome in _NOT_OWED:
             continue
-        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0, "late": 0, "w": 0.0, "w_miss": 0.0,
-                                 "last_miss": None, "first": None, "last": None})
-        miss = outcome in ("no_show", "called_out")
-        t["shifts"] += 1
-        t["w"] += w
-        if miss:
-            t["no_show"] += 1
-            t["w_miss"] += w
-            t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
-        elif outcome in ("short", "left_early"):
-            t["short"] += 1
-        elif outcome == "late":
-            t["late"] += 1
-        t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
-        t["last"] = max(t["last"] or "", str(day)[:10])
-    weights = sum(t["w"] for t in tally.values())
-    base = (sum(t["w_miss"] for t in tally.values()) / weights) if weights else 0.0
+        t = tally.setdefault(n, dict(_blank_tally(), days={}))
+        _add(t, day, outcome, notice, timed, w)
+        try:
+            wd = _date.fromisoformat(str(day)[:10]).strftime("%A")
+        except (TypeError, ValueError):
+            wd = None
+        if wd:
+            _add(t["days"].setdefault(wd, _blank_tally()), day, outcome, notice, timed, w)
+    return tally
+
+
+def attendance_bases(tally) -> dict:
+    """This restaurant's own weighted base rates — the point every person's
+    rate is smoothed toward: {"miss", "absence", "call_out", "late"}."""
+    w = sum(t["w"] for t in (tally or {}).values())
+    wt = sum(t["w_timed"] for t in (tally or {}).values())
+    return {"miss": (sum(t["w_miss"] for t in tally.values()) / w) if w else 0.0,
+            "absence": (sum(t["w_absent"] for t in tally.values()) / w) if w else 0.0,
+            "call_out": (sum(t["w_callout"] for t in tally.values()) / w) if w else 0.0,
+            "late": (sum(t["w_late"] for t in tally.values()) / wt) if wt else 0.0}
+
+
+def _rates(t, base) -> dict:
+    late = (smoothed_rate(t["w_late"], t["w_timed"], base["late"]) if t["timed"] >= LATE_MIN_SHIFTS else None)
+    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"]),
+            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"]),
+            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"]),
+            "late_rate": late}
+
+
+def weighted_attendance(events, today=None, min_shifts=6) -> dict:
+    """{name: {...}} from attendance events (attendance.reliability_events,
+    plain or with detail) — the reliability every reader shares. `shifts` /
+    `no_shows` (no-shows and call-outs) / `called_out` / `late` are the raw
+    counts inside the window (what is said: "missed 2 of 9"); every rate is
+    recency-weighted and smoothed toward the restaurant's own base
+    (smoothed_rate): `no_show_rate` with each call-out weighed by its notice
+    (miss_weight), `absence_rate` / `call_out_rate` counting every absence in
+    full, `late_rate` over clocked shifts (None below LATE_MIN_SHIFTS) and
+    `late_risk` once it is at LATE_RISK_RATE."""
+    from shift_quality import UNRELIABLE_RATE
+    from datetime import date as _date
+    today = today or _date.today()
+    tally = attendance_tally(events, today=today)
+    base = attendance_bases(tally)
     out = {}
     for n, t in tally.items():
         if t["shifts"] < min_shifts:
             continue
-        rate = smoothed_rate(t["w_miss"], t["w"], base)
-        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "late": t["late"],
+        rates = _rates(t, base)
+        rate = rates["no_show_rate"]
+        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "called_out": t["called_out"], "late": t["late"],
                   "no_show_rate": rate,
                   "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
-                  "base_rate": round(base, 3), "no_show_threshold": UNRELIABLE_RATE,
+                  "absence_rate": rates["absence_rate"], "call_out_rate": rates["call_out_rate"],
+                  "late_rate": rates["late_rate"], "late_shifts": t["timed"],
+                  "late_risk": rates["late_rate"] is not None and rates["late_rate"] >= LATE_RISK_RATE,
+                  "late_threshold": LATE_RISK_RATE,
+                  "base_rate": round(base["miss"], 3), "no_show_threshold": UNRELIABLE_RATE,
                   "unreliable": rate >= UNRELIABLE_RATE,
                   "short_rate": round(t["short"] / t["shifts"], 2),
                   "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
@@ -862,10 +1291,79 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
     return out
 
 
+def weekday_attendance(events, today=None, min_shifts=4) -> dict:
+    """{name: {weekday: {"shifts", "no_shows", "no_show_rate",
+    "absence_rate", "call_out_rate"}}} — the same weighted tally as
+    reliability, per weekday, for weekdays with at least `min_shifts`
+    watched shifts. Rates here are recency-weighted shares of that
+    weekday's shifts (no smoothing: the floor stands in for it)."""
+    from datetime import date as _date
+    tally = attendance_tally(events, today=today or _date.today())
+    out = {}
+    for n, t in tally.items():
+        for wd in DAYS:
+            e = t["days"].get(wd)
+            if not e or e["shifts"] < min_shifts or not e["w"]:
+                continue
+            out.setdefault(n, {})[wd] = {"shifts": e["shifts"], "no_shows": e["no_show"],
+                                         "no_show_rate": round(e["w_miss"] / e["w"], 2),
+                                         "absence_rate": round(e["w_absent"] / e["w"], 2),
+                                         "call_out_rate": round(e["w_callout"] / e["w"], 2)}
+    return out
+
+
+def weekday_absence(events, today=None) -> dict:
+    """The restaurant's own absence per weekday, for the schedule prompt's
+    no-show risk block: {weekday: {"shifts", "misses", "rate"}} — `shifts`
+    and `misses` the raw counts, `rate` the recency-weighted share of
+    watched shifts somebody missed (a call-out counts in full: either way
+    the shift was short a person)."""
+    from datetime import date as _date
+    tally = attendance_tally(events, today=today or _date.today())
+    out = {}
+    for t in tally.values():
+        for wd, e in t["days"].items():
+            d = out.setdefault(wd, {"shifts": 0, "misses": 0, "w": 0.0, "w_absent": 0.0})
+            d["shifts"] += e["shifts"]
+            d["misses"] += e["no_show"]
+            d["w"] += e["w"]
+            d["w_absent"] += e["w_absent"]
+    return {wd: {"shifts": d["shifts"], "misses": d["misses"],
+                 "rate": round(d["w_absent"] / d["w"], 3) if d["w"] else 0.0} for wd, d in out.items()}
+
+
+def attendance_record(restaurant_id, today=None, db_path=DB_PATH) -> dict:
+    """{"tally", "base", "today"} — the weighted per-person, per-weekday
+    tally (attendance_tally) and this restaurant's base rates, from one read
+    of attendance_events: what standby planning ranks people by."""
+    today = today or _today(restaurant_id)
+    tally = attendance_tally(attendance_events(restaurant_id, today=today, db_path=db_path), today=today)
+    return {"tally": tally, "base": attendance_bases(tally), "today": today}
+
+
+def local_today(restaurant_id):
+    """The restaurant's own local date — the `today` every attendance
+    weight is measured from."""
+    return _today(restaurant_id)
+
+
+def attendance_events(restaurant_id, today=None, db_path=DB_PATH) -> list:
+    """Every watched shift inside the one window (RELIABILITY_WINDOW_DAYS of
+    the restaurant's own `today`), with each call-out's notice and whether
+    it was clocked — attendance.reliability_events(detail=True). The read
+    every attendance reader shares (L-17)."""
+    import attendance
+    from datetime import timedelta as _td_ev
+    today = today or _today(restaurant_id)
+    return attendance.reliability_events(restaurant_id, since=(today - _td_ev(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
+                                         db_path=None if db_path == DB_PATH else db_path, detail=True)
+
+
 def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dict:
-    """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n}}
-    for everyone with enough watched shifts to say anything — weighted by
-    recency (weighted_attendance).
+    """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n,
+    "late_rate", "absence_rate", "call_out_rate", ...}} for everyone with
+    enough watched shifts to say anything — the one weighted reader
+    (attendance_events → weighted_attendance).
 
     A scheduled shift with actual_hours of zero is a no-show; one worked
     at least an hour and a half short of schedule is a short shift. Only
@@ -879,11 +1377,8 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     # source with a real schedule. A POS row whose "scheduled" hours were its
     # actual hours copied (RPOWER, Square, Clover, Toast without a schedule)
     # can never show a no-show, and reading it made everyone "reliable".
-    import attendance
     today = today or _today(restaurant_id)
-    from datetime import timedelta as _td_rel
-    events = attendance.reliability_events(restaurant_id, since=(today - _td_rel(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
-                                           db_path=None if db_path == DB_PATH else db_path)
+    events = attendance_events(restaurant_id, today=today, db_path=db_path)
     # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
     # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
     # misses in six shifts read as a flat 33%, and the engine then treated

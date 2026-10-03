@@ -474,8 +474,15 @@ def test_no_category_no_sales_or_own_history_borrows_nothing(db):
     rid3 = _restaurant(db, name="Old Pizza", **_CONFIRMED)
     _sales(db, rid3, 14, amount=8000.0)
     _history(db, rid3, "2026-09-07", published=True)
-    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db)
+    # A family its own history gives a usual crew keeps it: nothing borrowed.
+    own = {("Saturday", "night"): {"Server": 3}}
+    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db, own_typical=own)
     assert out["available"] is False and out["own_history"] is True
+    # A published week with nobody in it is history, but no usual crew for
+    # servers: that family is borrowed, labelled — it used to be all or
+    # nothing per restaurant (schedule audit 10/3/26 L-2).
+    out = staffing.starting_headcount(rid3, roster_roles={"A": "Server"}, shifts=[], db_path=db)
+    assert out["available"] and out["own_history"] is True and out["families"] == ["server"]
 
 
 def test_borrowed_figures_fill_only_gaps_and_say_so_in_the_requirements():
@@ -733,4 +740,6 @@ def test_the_scorer_reads_the_generations_own_rotation_and_targets(monkeypatch):
     assert sig["splh_targets"]["Saturday"] == {"morning": 100.0, "night": 60.0}
     assert sig["daypart_sales"]["Saturday"]["night"] == 3000.0
     empty = se._learning_signals(9, {"rotation_plan": {}, "splh_objective": {"available": False}})
-    assert empty == {"rotation": {}, "splh_targets": {}, "daypart_sales": {}}
+    # (schedule audit 10/3/26: the scheduling memory and the published weeks
+    # before this one ride along too — empty here, with no week to read.)
+    assert empty == {"rotation": {}, "splh_targets": {}, "daypart_sales": {}, "learned": [], "load_ledger": {}}

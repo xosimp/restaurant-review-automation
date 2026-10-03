@@ -396,17 +396,22 @@ def _moves_for(problem, state: _State) -> list:
                     _swap_moves(state, i, moves, f"{where} needs somebody who can run it", want=ok)
 
     elif key == "operational_strength":
+        # Strength is about WHO works, never about adding people (the
+        # prompt's own rule): a shortfall is answered by a stronger person
+        # in the place of a weaker one, never by another body. The add move
+        # here let the search buy strength with hours up to the budget
+        # ceiling (schedule audit 10/3/26 SQ-5); the scorer now judges the
+        # role's average, so a body only ever helped by being stronger.
         for sf in facts.get("shortfalls") or []:
-            role = sf.get("role") or ""
-            idxs = sorted(state.role_rows(date, role, part),
+            roles = sf.get("roles") or [sf.get("role") or ""]
+            idxs = sorted({i for role in roles for i in state.role_rows(date, role, part)},
                           key=lambda i: state.scores.get(state.rows[i].get("employee")) or 0)
             for i in idxs[:2]:
                 cur = state.scores.get(state.rows[i].get("employee")) or 0
+                role = state.rows[i].get("role") or sf.get("role") or ""
                 stronger = lambda n, cur=cur: (state.scores.get(n) or 0) > cur
                 replace_in(i, stronger, f"{role} strength was under target on {where}")
                 _swap_moves(state, i, moves, f"{role} strength was under target on {where}", want=stronger)
-            add_person(role, f"{role} strength was under target on {where}",
-                       prefer=lambda n: state.scores.get(n) or 0)
 
     elif key == "training_balance":
         for text in facts.get("isolated_names") or []:

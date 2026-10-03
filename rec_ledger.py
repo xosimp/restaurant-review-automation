@@ -83,8 +83,9 @@ SUPERSEDE_DOLLAR_SHARE = 0.25
 SUPERSEDE_MIN_AGE_HOURS = 20
 # Kinds with only ever one live recommendation per restaurant: a newer key of
 # the kind replaces every other open one (a new labor target, a new Improve
-# with Cavnar proposal).
-REPLACING_KINDS = ("schedule_to_target", "optimizer")
+# with Cavnar proposal, a new Apply fixes proposal — schedule audit 10/3/26
+# L-5: the save that keeps its changes implements the newest).
+REPLACING_KINDS = ("schedule_to_target", "optimizer", "apply_fixes")
 
 
 def reason_label(code) -> str:

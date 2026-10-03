@@ -27,7 +27,10 @@ def _cross(out):
 
 ROWS = [_row("Ana", "Server"), _row("Bob", "Server"), _row("Cy", "Server"),
         _row("Dee", "Dishwasher"), _row("Eve", "Dishwasher")]
-FLEX = {"Ana": ["Server", "Bartender"]}
+# Zed (a dishwasher who also preps, off this shift) makes the dish crew a
+# role somebody who works it can flex: a role nobody in it can flex is not
+# judged at all (schedule audit 10/3/26 SQ-10).
+FLEX = {"Ana": ["Server", "Bartender"], "Zed": ["Dishwasher", "Prep Cook"]}
 KW = dict(profiles=[sq.ShiftProfile()], typical_headcount={("Saturday", "night"): {"Server": 3, "Dishwasher": 2}},
           cross_trained=FLEX)
 

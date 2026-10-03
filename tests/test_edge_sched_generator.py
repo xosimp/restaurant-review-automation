@@ -165,17 +165,32 @@ class _Msg:
         self.stop_reason = "end_turn"
 
 
+def _format_refusal():
+    """The API's own refusal of the structured contract: a 400
+    (invalid_request_error) naming the output format. Only this falls back —
+    the word "format" in any other error used to (schedule audit 10/3/26
+    PR-28)."""
+    import anthropic
+    import httpx
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return anthropic.BadRequestError(
+        "output_config.format: json_schema is not supported for this model",
+        response=httpx.Response(400, request=req),
+        body={"type": "error", "error": {"type": "invalid_request_error",
+                                         "message": "output_config.format: json_schema is not supported for this model"}})
+
+
 def _fallback_harness(monkeypatch):
     seen = []
 
     def fake_create(client, **kw):
         prompt = kw["messages"][0]["content"]
-        seen.append({"structured": "output_config" in kw,
+        seen.append({"structured": "format" in (kw.get("output_config") or {}),
                      "dates": re.findall(r"- (\d{4}-\d{2}-\d{2}): ", prompt),
                      "budget": re.search(r"→ ([\d.]+)h is the MAXIMUM", prompt),
                      "prior": "ALREADY WRITTEN FOR THE OTHER DAYS" in prompt})
-        if "output_config" in kw:
-            raise Exception("output_config.format: json_schema is not supported for this model")
+        if "format" in (kw.get("output_config") or {}):
+            raise _format_refusal()
         dates = re.findall(r"- (\d{4}-\d{2}-\d{2}): ", prompt)
         return _Msg(HEADER + "\n" + "\n".join(f"{d},X,Ana,Server,11:00am,3:00pm,4,x" for d in dates)
                     + "\n---SUMMARY---\n- a")
@@ -203,9 +218,10 @@ def test_the_csv_fallback_keeps_the_requested_week_and_its_budget(db, monkeypatc
     seen = _fallback_harness(monkeypatch)
     out = labor.generate_optimized_schedule(_ANALYSIS, [], roster=[("Ana", "Server")], week_start="2026-10-12",
                                             projected_revenue_override=50000, hourly_rate=20, labor_target=30)
-    assert len(seen) == 2 and not seen[1]["structured"]
-    assert seen[1]["dates"] == _OCT12
-    assert seen[1]["budget"] and seen[1]["budget"].group(1) == seen[0]["budget"].group(1)
+    # The generation's schema, then the plain shape, then the CSV contract.
+    assert len(seen) == 3 and seen[1]["structured"] and not seen[2]["structured"]
+    assert seen[2]["dates"] == _OCT12
+    assert seen[2]["budget"] and seen[2]["budget"].group(1) == seen[0]["budget"].group(1)
     assert out["week_dates"][0] == "2026-10-12" and out["hours_budget"]
 
 
@@ -215,8 +231,8 @@ def test_the_csv_fallback_of_a_slice_keeps_its_dates_and_prior_rows(db, monkeypa
     out = labor.generate_optimized_schedule(_ANALYSIS, [], roster=[("Ana", "Server")], week_start="2026-10-12",
                                             week_slice=["2026-10-15", "2026-10-16"], prior_rows=prior,
                                             projected_revenue_override=50000, hourly_rate=20, labor_target=30)
-    assert seen[1]["dates"] == ["2026-10-15", "2026-10-16"]
-    assert seen[1]["prior"] is True
+    assert seen[-1]["dates"] == ["2026-10-15", "2026-10-16"] and not seen[-1]["structured"]
+    assert seen[-1]["prior"] is True
     assert se._missing_dates(out["schedule_csv"], ["2026-10-15", "2026-10-16"]) == []
 
 

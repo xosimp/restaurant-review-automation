@@ -293,8 +293,11 @@ def test_the_ceiling_is_still_a_ceiling_and_a_days_target_is_the_aim_only_when_n
 
 def test_focus_reaches_the_prompt_only_when_given(monkeypatch):
     assert "SCORED WEAK ON" not in _prompt(monkeypatch)
-    prompt = _prompt(monkeypatch, focus=["Saturday dinner: no leader on", "S2 has 4 closes against a share of 2"])
-    assert "THE PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON:" in prompt
+    prompt = _prompt(monkeypatch, focus=["Saturday dinner: no leader on", "S2 has 4 closes against a share of 2"],
+                     week_slice=["2026-10-10"])
+    # The header names the dates it is about (schedule audit 10/3/26 PR-18:
+    # it said "THESE DAYS" and never named them).
+    assert "THE PREVIOUS DRAFT OF SATURDAY 2026-10-10 SCORED WEAK ON:" in prompt
     assert "  * Saturday dinner: no leader on" in prompt
 
 

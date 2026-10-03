@@ -277,6 +277,11 @@ def test_the_prompt_is_told_each_fact_under_the_roster_spelling(monkeypatch):
     monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: _dt.datetime(2026, 10, 1, 9, 0))
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+    # Sales fresh enough to plan by: the fixture's punches end 9/9/26, and the
+    # demand freshness gate (D-33) is not what this test is about.
+    monkeypatch.setattr(schedule_engine, "_demand_data_through",
+                        lambda *a, **k: {"date": "2026-09-30", "days_ago": 1, "trading_days_ago": 1, "blind": False,
+                                         "stale": False, "blocked": False, "line": None, "message": None})
     captured = {}
 
     def fake_parts(analysis, shifts, roster_pairs, kwargs):
@@ -287,3 +292,70 @@ def test_the_prompt_is_told_each_fact_under_the_roster_spelling(monkeypatch):
     schedule_engine._build_schedule_result(rid)
     assert [a["employee_name"] for a in captured["staff_availability"]] == ["Michael Smith"]
     assert captured["operational_scores"] == {"Michael Smith": 4}
+
+
+# ── the merge with the fix round (10/3/26): F1's per-person facts by key ────
+
+def test_a_closer_flag_and_a_held_role_under_an_old_spelling_are_the_persons():
+    """F1's closers per role and held roles are filed under the person's one
+    key (D-8): a flag or a role kept under the name before a POS rename is
+    the roster person's, never a stranger's."""
+    rid = _rid()
+    _renamed(rid)
+    models.set_capability(rid, "Mike Smith", attribute="can_close", flag=True)
+    conn = models.get_conn()
+    try:
+        conn.execute("INSERT INTO person_roles (restaurant_id, employee_name, employee_key, role, source, is_primary) "
+                     "VALUES (?,?,?,?,?,0)", (rid, "Mike Smith", "mike smith", "Bartender", "pos"))
+        conn.commit()
+    finally:
+        conn.close()
+    c = sr.build_constraints(rid, WEEK, DAYS)
+    assert "michael smith" in c.closer_flags and "mike smith" not in c.closer_flags
+    assert any("michael smith" in who for who in c.closers_by_role.values())
+    assert "bartender" in c.held_roles["michael smith"] and "bartender" in c.known_roles["michael smith"]
+    assert "mike smith" not in c.held_roles and "mike smith" not in c.known_roles
+    assert not [u for u in c.unmatched if u["source"] == "closers"]
+
+
+def test_attendance_and_the_daily_report_know_a_salaried_alias():
+    """attendance.salaried_keys and the DSR's labor block read every spelling
+    of a salaried person (models.salaried_keys): Gabe punching as "Gabe
+    Huerta" under a salaried entry typed "Gabriel Huerta" never owes a punch
+    and is never overtime."""
+    import types
+    import attendance
+    from dsr import block_labor
+    rid = _rid()
+    _gabe(rid)
+    conn = people._conn(None)
+    try:
+        idx = people._Index(conn, rid)
+        pid = next(iter(idx.for_key(people._nk("Gabe Huerta"))))
+        people._alias(conn, idx, pid, "manual", "Gabriel Huerta")
+        conn.commit()
+    finally:
+        conn.close()
+    models.update_restaurant(rid, {"salaried_staff_json": json.dumps([{"name": "Gabriel Huerta", "annual": 90000}])})
+    r = models.get_restaurant(rid)
+    assert "gabe huerta" in attendance.salaried_keys(r)
+    assert "gabe huerta" in block_labor._salaried_keys(types.SimpleNamespace(restaurant=r))
+
+
+def test_two_spellings_signals_are_merged_not_dropped():
+    """The scorer's per-person signals from two spellings of one person: a
+    stated preference under one and the learned slots under the other are
+    both kept, and the weeks behind them are one person's weeks."""
+    display = {"Mike": "Michael Smith", "Michael Smith": "Michael Smith"}.get
+    prefs = schedule_engine._rekey({"Mike": {"preferred_dayparts": ["night"], "desired_hours": 30},
+                                    "Michael Smith": {"learned": {"avoid": [["Monday", "morning"]]}}},
+                                   display, "merge")
+    assert prefs == {"Michael Smith": {"preferred_dayparts": ["night"], "desired_hours": 30,
+                                       "learned": {"avoid": [["Monday", "morning"]]}}}
+    weeks = schedule_engine._rekey(
+        {"Mike": [{"week": "2026-09-14", "hours": 20.0, "slots": [["Monday", "night"]], "role": "Server"}],
+         "Michael Smith": [{"week": "2026-09-07", "hours": 30.0, "slots": [], "role": "Server"},
+                           {"week": "2026-09-14", "hours": 10.0, "slots": [["Friday", "night"]], "role": "Bar"}]},
+        display, "weeks")["Michael Smith"]
+    assert [w["week"] for w in weeks] == ["2026-09-07", "2026-09-14"]
+    assert weeks[1]["hours"] == 30.0 and weeks[1]["role"] == "Server" and len(weeks[1]["slots"]) == 2

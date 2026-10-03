@@ -49,9 +49,12 @@ def _fake_generator(answers):
     return fake
 
 
-def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_fails(monkeypatch):
+def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwritten(monkeypatch):
+    """Twice empty, the days are named and left unwritten — never filled by
+    a backstop — and the five days already paid for are kept (schedule audit
+    10/3/26 P-34: the whole week used to be thrown away)."""
     import labor
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)          # two slices
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],                    # Mon–Thu fine
@@ -59,15 +62,19 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_fails(monk
         [(WEEK[4], "Ana")],                                # the retry misses again
     ])
     monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
-    with pytest.raises(ValueError) as e:
-        se._generate_in_parts({}, [], [("Ana", "Server")], {"tz_name": None})
-    assert "Saturday, Sunday" in str(e.value) and "not saved" in str(e.value)
+    out = se._generate_in_parts({}, [], [("Ana", "Server")], {"tz_name": None})
     assert len(fake.calls) == 3 and "WROTE NO SHIFTS FOR 2026-10-10, 2026-10-11" in fake.calls[2]["extra"]
+    assert fake.calls[2]["slice"] == [WEEK[5], WEEK[6]]               # only the empty days asked again
+    assert se._missing_dates(out["schedule_csv"], WEEK[:5]) == []
+    assert [u["date"] for u in out["unwritten_dates"]] == [WEEK[5], WEEK[6]]
+    assert {WEEK[5], WEEK[6]} <= set(out["closed_dates"])              # no backstop staffs them
+    note = out["generation_notes"][0]
+    assert note.startswith("⚠") and "Saturday 10/10/26 and Sunday 10/11/26" in note
 
 
 def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
     import labor
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],
@@ -82,26 +89,37 @@ def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
     assert out["slices"][1]["missing"] == [WEEK[5], WEEK[6]]
 
 
-def test_a_single_call_that_skips_a_day_goes_to_parts(monkeypatch):
+def test_a_single_call_that_skips_a_day_writes_only_that_day_again(monkeypatch):
+    """The six days the call wrote are kept and only Sunday is asked for,
+    with them in view (schedule audit 10/3/26 P-34: the answer used to be
+    thrown away and the whole week written again in two parts)."""
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 50)           # one call
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
+    seen = []
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:6]],                    # no Sunday
-        [(d, "Ana") for d in WEEK[:4]],
-        [(d, "Ana") for d in WEEK[4:]],
+        [(WEEK[6], "Bob")],
     ])
-    monkeypatch.setattr(labor, "generate_optimized_schedule", fake)
+
+    def spy(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
+        seen.append((week_slice, len(prior_rows or [])))
+        return fake(analysis, shifts, week_slice=week_slice, prior_rows=prior_rows, **kwargs)
+    monkeypatch.setattr(labor, "generate_optimized_schedule", spy)
     # Two people: a one-person roster may legitimately leave a day off
     # (SCHED-1), two can cover seven days, so a skipped Sunday is a miss.
     out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Bob", "Server")], {"tz_name": None})
     assert se._missing_dates(out["schedule_csv"], WEEK) == [] and out["chunked"] == 2
     assert out["slices"][0]["missing"] == [WEEK[6]]
+    assert seen == [(None, 0), ([WEEK[6]], 6)]                          # Sunday alone, Mon–Sat in view
+    assert "WROTE NO SHIFTS FOR 2026-10-11" in fake.calls[1]["extra"]
 
 
 def test_very_large_rosters_split_by_department_first(monkeypatch):
     import labor
-    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 900)
+    # Past three calls' worth of rows (schedule_engine.CHUNK_ROWS_PER_CALL —
+    # 320 a call since the compact output contract; a fixed 900 was).
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 4 * se.CHUNK_ROWS_PER_CALL)
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: __import__("datetime").datetime(2026, 10, 5))
     roster = [("Ana", "Server"), ("Bob", "Line Cook")]
     seen = []
@@ -128,10 +146,19 @@ def _no_avail(monkeypatch):
     monkeypatch.setattr(models, "get_staff_availability", lambda r, *a, **k: [])
 
 
+def _need(dates, n, part="night", role="Server"):
+    """SHIFT REQUIREMENTS rows: `n` of `role` on `part` of each date. "Thin"
+    is measured against these since schedule audit 10/3/26 P-20 — no longer
+    against the draft's own average."""
+    return [{"date": d, "day": DAYS[WEEK.index(d)], "daypart": part,
+             "roles": [{"role": role, "required": n, "floor": 0, "typical": n}]} for d in dates]
+
+
 def test_top_up_never_fills_a_day_the_model_left_empty(monkeypatch):
     _no_avail(monkeypatch)
     rows = [_row(d, n, "4:00pm", "10:00pm") for d in WEEK[:5] for n in ("Ana", "Bob", "Cy")]      # nothing Sat/Sun
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 280.0, 90.0, 1, {}, {}, constraints=_c())
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 280.0, 90.0, 1, {}, {}, constraints=_c(),
+                                             requirements=_need(WEEK, 3))
     assert dates == {} and added == 0
 
 
@@ -140,10 +167,14 @@ def test_top_up_thinks_in_dayparts_and_copies_that_dayparts_times(monkeypatch):
     rows = []
     for d in WEEK[:6]:
         rows += [_row(d, n, "11:00am", "3:00pm", hours=4) for n in ("Ana", "Bob")]                 # two lunch servers
-        rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Cy", "Dee", "Eve")]           # three dinner servers
+        # three dinner servers; Dee and Eve are off Wednesday, so a Sunday
+        # dinner is not anybody's seventh day in a row (P-2)
+        rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Cy", "Dee", "Eve") if d != WEEK[2] or n == "Cy"]
     rows += [_row(WEEK[6], "Ana", "11:00am", "3:00pm", hours=4), _row(WEEK[6], "Bob", "11:00am", "3:00pm", hours=4),
              _row(WEEK[6], "Cy", "4:00pm", "9:00pm", hours=5)]                                    # Sunday dinner is thin
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 200.0, 1, {}, {}, constraints=_c())
+    need = _need([WEEK[6]], 3) + _need([WEEK[6]], 2, part="morning")
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 200.0, 1, {}, {}, constraints=_c(),
+                                             requirements=need)
     new = [r for r in out if r["date"] == WEEK[6] and r not in rows]
     assert new and all(r["shift_start"] == "4:00pm" for r in new)          # dinner rows, not morning clones
     assert all(r["employee"] in ("Dee", "Eve") for r in new)
@@ -155,7 +186,10 @@ def test_top_up_is_capped_at_a_quarter_of_the_days_target(monkeypatch):
     for d in WEEK[:6]:
         rows += [_row(d, n, "4:00pm", "9:00pm", hours=5) for n in ("Ana", "Bob", "Cy", "Dee", "Eve", "Fay")]
     rows += [_row(WEEK[6], "Ana", "4:00pm", "9:00pm", hours=5)]                                    # Sunday: 1 of 6
-    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 185.0, 1, {}, {}, constraints=_c())
+    # Servers with no shift yet: everyone else would be on a seventh day (P-2)
+    c = _c(roster_roles={"Gus": "Server", "Hal": "Server", "Ivy": "Server", "Jo": "Server", "Kit": "Server"})
+    out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 185.0, 1, {}, {}, constraints=c,
+                                             requirements=_need([WEEK[6]], 6))
     sunday_added = sum(float(r["scheduled_hours"]) for r in out if r["date"] == WEEK[6] and r not in rows)
     assert 0 < sunday_added <= 10.0                                          # 25% of 40h, not the five missing shifts
 

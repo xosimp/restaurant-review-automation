@@ -373,6 +373,9 @@ class Restaurant:
     # salary (labor.salaried_summary), never by the hour: their punches leave hourly labor.
     salaried_staff_json: Optional[str]   = None
     person_rates_json: Optional[str]     = None   # {"Kailey Gordon": 16.5} an hourly rate for one person (person_rates)
+    # The owner's own labor standards (schedule audit 10/3/26 D-25): {family:
+    # {"all"|"morning"|"night": work per hour}} — labor_standards.overrides.
+    labor_standards_json: Optional[str]  = None
     kitchen_stations_json: Optional[str] = None   # kitchen_stations.normalise: roles, stations, needs, skills (9/30/26)
     # The owner gave the admin full control (9/30/26): until this UTC time an
     # admin's view-as changes count as the owner's (permissions.counts_as_owner).
@@ -395,6 +398,10 @@ class Restaurant:
     # Per-restaurant weighting of the Shift Quality dimensions. Empty means
     # the engine's own defaults, which is what almost every restaurant wants.
     quality_weights_json: Optional[str]   = None
+    # A calibration the owner applied to a built-in shift profile's bar and
+    # floors ({profile key: {"min_quality", "floors"}}) — schedule audit
+    # 10/3/26 SQ-22; shift_quality.profiles_from_config(tuning=...).
+    quality_tuning_json: Optional[str]    = None
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
     latitude: Optional[float]            = None   # geocoded once from google_place_id, cached
     longitude: Optional[float]           = None
@@ -613,6 +620,14 @@ class Restaurant:
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
     patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
     role_cross_training_json: Optional[str] = None  # {"Server": 40} % of a role on a shift able to cover a second station
+    # Schedule audit 10/3/26 F1: the owner's map of job codes to roles
+    # ({"Server AM": "Server"}; unset = the code with its daypart words
+    # taken off — shift_quality.role_family), the roles that have chosen
+    # closers (["Bartender", "Server"]; unset = every role a closer closes
+    # for), and a salaried person's weekly cap with no limit of their own.
+    role_families_json: Optional[str] = None
+    closer_roles_json: Optional[str] = None
+    salaried_cap: Optional[float]    = None  # hours; None reads as schedule_rules.SALARIED_CAP_DEFAULT (55)
     trim_to_budget: int              = 1     # the deterministic trim past the hours budget (schedule_economics)
     reservation_provider: Optional[str] = None  # reservation_feeds provider code
     reservation_api_key: Optional[str]  = None
@@ -1154,6 +1169,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("staff_time_off", "end_time", "TEXT"),
         ("staff_time_off", "daypart", "TEXT"),
         ("restaurants", "role_cross_training_json", "TEXT"),
+        # Role families, the roles with chosen closers and the salaried
+        # weekly cap (schedule audit 10/3/26 F1: D-13, D-9, E-12).
+        ("restaurants", "role_families_json", "TEXT"),
+        ("restaurants", "closer_roles_json", "TEXT"),
+        ("restaurants", "salaried_cap", "REAL"),
         ("restaurants", "trim_to_budget", "INTEGER DEFAULT 1"),
         ("restaurants", "reservation_provider", "TEXT"),
         ("restaurants", "reservation_api_key", "TEXT"),
@@ -1185,6 +1205,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # When a superseded draft's detail was thinned to its headline
         # (ops._thin_drafts; memory audit 9/29/26, "draft_thinning").
         ("schedule_history", "detail_thinned_at", "TEXT"),
+        # The week's hours split by pay: hourly hours are what the hourly
+        # budget is spent from, salaried hours never are (schedule audit
+        # 10/3/26 E-7, P-6). hours_scheduled stays the all-in total.
+        ("schedule_history", "hours_hourly", "REAL"),
+        ("schedule_history", "hours_salaried", "REAL"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -1222,6 +1247,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_rates_json", "TEXT"),
         ("restaurants", "salaried_staff_json", "TEXT"),
         ("restaurants", "person_rates_json", "TEXT"),
+        ("restaurants", "labor_standards_json", "TEXT"),
         ("restaurants", "kitchen_stations_json", "TEXT"),
         ("restaurants", "admin_control_until", "TEXT"),
         ("restaurants", "admin_control_note", "TEXT"),
@@ -1235,6 +1261,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_strength_json", "TEXT"),
         ("restaurants", "shift_leader_rules_json", "TEXT"),
         ("restaurants", "quality_weights_json", "TEXT"),
+        ("restaurants", "quality_tuning_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
         ("restaurants", "latitude", "REAL"),
         ("restaurants", "longitude", "REAL"),
@@ -4208,6 +4235,11 @@ def init_db(db_path: str = DB_PATH):
     # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
     from schedule_experiments import init_schedule_experiments
     init_schedule_experiments(db_path)
+    # Every schedule call's full input and answer, for replaying real weeks
+    # against another model, effort or prompt (schedule_output, schedule
+    # audit 10/3/26 PR-31).
+    from schedule_output import init_schedule_output
+    init_schedule_output(db_path)
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
@@ -4370,6 +4402,12 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
+    # after the column list above has added hours_hourly / hours_salaried.
+    try:
+        backfill_history_hours(db_path=db_path)
+    except Exception as e:
+        print(f"[schedule history] hours backfill skipped: {e}")
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
@@ -4691,7 +4729,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -4702,6 +4740,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json","cut_floor_default",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
+        "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
@@ -5342,6 +5381,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
         salaried_staff_json=row["salaried_staff_json"] if "salaried_staff_json" in row.keys() else None,
         person_rates_json=row["person_rates_json"] if "person_rates_json" in row.keys() else None,
+        labor_standards_json=row["labor_standards_json"] if "labor_standards_json" in row.keys() else None,
         kitchen_stations_json=row["kitchen_stations_json"] if "kitchen_stations_json" in row.keys() else None,
         admin_control_until=row["admin_control_until"] if "admin_control_until" in row.keys() else None,
         admin_control_note=row["admin_control_note"] if "admin_control_note" in row.keys() else None,
@@ -5438,6 +5478,9 @@ def _restaurant_from_row(row) -> Restaurant:
         foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
         patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
         role_cross_training_json=row["role_cross_training_json"] if "role_cross_training_json" in row.keys() else None,
+        role_families_json=row["role_families_json"] if "role_families_json" in row.keys() else None,
+        closer_roles_json=row["closer_roles_json"] if "closer_roles_json" in row.keys() else None,
+        salaried_cap=row["salaried_cap"] if "salaried_cap" in row.keys() else None,
         trim_to_budget=(row["trim_to_budget"] if row["trim_to_budget"] is not None else 1) if "trim_to_budget" in row.keys() else 1,
         reservation_provider=row["reservation_provider"] if "reservation_provider" in row.keys() else None,
         reservation_api_key=row["reservation_api_key"] if "reservation_api_key" in row.keys() else None,
@@ -5555,6 +5598,7 @@ def _restaurant_from_row(row) -> Restaurant:
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
         shift_leader_rules_json=row["shift_leader_rules_json"] if "shift_leader_rules_json" in row.keys() else None,
         quality_weights_json=row["quality_weights_json"] if "quality_weights_json" in row.keys() else None,
+        quality_tuning_json=row["quality_tuning_json"] if "quality_tuning_json" in row.keys() else None,
         sched_notes=row["sched_notes"]                if "sched_notes" in row.keys() else None,
         latitude=row["latitude"]                       if "latitude" in row.keys() else None,
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
@@ -7705,7 +7749,7 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
             profiles = (0, "")
         rest = conn.execute(
             "SELECT COALESCE(role_strength_json,'') || COALESCE(shift_leader_rules_json,'') "
-            "|| COALESCE(quality_weights_json,'') FROM restaurants WHERE id=?",
+            "|| COALESCE(quality_weights_json,'') || COALESCE(quality_tuning_json,'') FROM restaurants WHERE id=?",
             (restaurant_id,)).fetchone()
     finally:
         conn.close()
@@ -7895,7 +7939,14 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("preferred_dayparts", "TEXT"),    # the employee's own: ["night"]
                        ("desired_hours", "REAL"),         # the employee's own weekly wish
                        ("experienced", "INTEGER"),        # owner's word that they know the job, whatever the history shows
-                       ("minor_age_band", "TEXT")):       # '14-15' | '16-17' | NULL — which minor rule table (schedule_rules.MINOR_BANDS)
+                       ("minor_age_band", "TEXT"),        # '14-15' | '16-17' | NULL — which minor rule table (schedule_rules.MINOR_BANDS)
+                       # The owner's scheduling facts about a person (schedule audit 10/3/26 F1):
+                       ("floor_manager", "INTEGER"),      # 1 runs the floor, 0 never, NULL automatic (schedule_rules.manager_basis)
+                       ("paid_hourly", "INTEGER"),        # an Owner-role person paid by the hour (held to the overtime line)
+                       ("acting_manager", "TEXT"),        # [{"from", "until", "note"}] dates they stand in as the manager
+                       ("standing_shifts", "TEXT"),       # [{"day", "start", "end", "role"}] the shifts they always work
+                       ("trainee", "TEXT"),               # {"target_role", "trainer", "from", "until"} while in training
+                       ("closes_for", "TEXT")):           # ["Bartender"] the roles a closer closes for; [] = their own
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()
@@ -7968,6 +8019,20 @@ def init_schedule_versions(db_path: str = DB_PATH):
         except Exception as e:
             if "duplicate column" not in str(e).lower():
                 raise
+    # Whose each changed row is, and an admin's save the owner counted as
+    # theirs (schedule audit 10/3/26 L-5, L-8): row_origins_json is
+    # {"cavnar": {"date|employee|start": source}} for the rows this save's
+    # change came from Cavnar AI (apply-fixes, Improve, the overtime move);
+    # adopted_by / adopted_at mark an admin's (view-as) save the account
+    # holder adopted — the learners then read it as the owner's.
+    _sv_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
+    for _col in ("row_origins_json", "adopted_by", "adopted_at"):
+        if _col not in _sv_cols:
+            try:
+                conn.execute(f"ALTER TABLE schedule_versions ADD COLUMN {_col} TEXT")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
@@ -9065,6 +9130,23 @@ def get_quality_weights(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {}
 
 
+def get_quality_tuning(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """{profile key: {"min_quality": n, "floors": {dimension: n}}} — the
+    calibration an owner applied to a built-in shift profile (schedule
+    audit 10/3/26 SQ-22). Empty when none; a malformed blob reads as none,
+    and the engine bounds every number (shift_quality._apply_tuning)."""
+    import json as _j
+    r = get_restaurant(restaurant_id, db_path)
+    raw = getattr(r, "quality_tuning_json", None) if r else None
+    if not raw:
+        return {}
+    try:
+        parsed = _j.loads(raw) or {}
+    except Exception:
+        return {}
+    return {str(k): dict(v) for k, v in parsed.items() if isinstance(v, dict)} if isinstance(parsed, dict) else {}
+
+
 # ── Signals the Shift Quality Engine reads about people ────────────────────
 
 def _cached_shifts(restaurant_id: int) -> list:
@@ -9132,17 +9214,35 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {}
 
 
-def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+def get_leader_flags(restaurant_id: int, db_path: str = DB_PATH, include_admin: bool = False) -> dict:
     """{employee_name: True} for everyone marked authorized to close.
 
     Reads the capability layer's can_close attribute — registered since
     version one and surfaced for the first time here, which is the
     architecture claim actually paying off.
+
+    A flag an admin set (support, or anyone through view-as) is not the
+    owner's word, exactly as a rating is not (get_operational_scores,
+    PEOPLE-15): it counts once someone at the restaurant sets it or adopts
+    it (adopt_admin_ratings covers flags too). It used to count — closer
+    flags entered through view-as drove the closing rule, leader rules,
+    mentoring and could-hold while the same session's ratings did not
+    (schedule audit 10/3/26 L-9). `include_admin` keeps them, for a screen
+    that shows them awaiting confirmation.
     """
     caps = get_capabilities(restaurant_id, attribute="can_close", db_path=db_path)
     return {name: bool(attrs.get("can_close", {}).get("flag"))
             for name, attrs in caps.items()
-            if attrs.get("can_close", {}).get("flag")}
+            if attrs.get("can_close", {}).get("flag")
+            and (include_admin or attrs.get("can_close", {}).get("authority") != "admin")}
+
+
+def admin_leader_flags(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Names an admin marked to close (support, view-as) that do not count
+    until the account holder confirms them (get_leader_flags, L-9)."""
+    caps = get_capabilities(restaurant_id, attribute="can_close", db_path=db_path)
+    return sorted(n for n, a in caps.items()
+                  if (a.get("can_close") or {}).get("flag") and (a.get("can_close") or {}).get("authority") == "admin")
 
 
 def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
@@ -9396,6 +9496,13 @@ def load_shifts_for_restaurant_roles(restaurant_id: int, db_path: str = DB_PATH)
         return out
     except Exception:
         return {}
+
+
+# A new shift leader rule's bar when the owner picks none (schedule audit
+# 10/3/26 D-11): 5 on a 1-5 scale is "Excellent" only, rarely held by more
+# than one person in a role, so most rules at 5 could never be met. Both
+# clients take it from the team payload (`leader_rule_defaults`).
+LEADER_RULE_DEFAULTS = {"min_score": 4, "count": 1}
 
 
 def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
@@ -10642,17 +10749,100 @@ def backfill_labor_periods(db_path: str = DB_PATH, max_seconds: float = 20.0) ->
     return done
 
 
+def history_hours(restaurant_id: int, schedule_csv: str, restaurant=None, db_path: str = DB_PATH) -> dict:
+    """{"hourly", "salaried", "total"} hours of a stored week — its rows
+    through schedule_rules.hours_split (the one hourly-hours sum, schedule
+    audit 10/3/26 P-6), with the restaurant's salaried people
+    (salaried_staff) as the ones the hourly budget never pays. The deliberate
+    upward import: the split is the scheduler's rule, kept in one place."""
+    import csv as _csv_hh
+    import io as _io_hh
+    import schedule_rules as _sr_hh
+    rows = [r for r in _csv_hh.DictReader(_io_hh.StringIO(schedule_csv or "")) if (r.get("employee") or "").strip()]
+    if restaurant is None:
+        restaurant = get_restaurant(restaurant_id, db_path)
+    return _sr_hh.hours_split(rows, salaried=[s["name"] for s in salaried_staff(restaurant)])
+
+
+def history_hourly(row) -> float:
+    """The hourly hours of a schedule_history row as a reader compares them
+    to its hourly budget: hours_hourly, or — for a row from before it was
+    kept and not yet backfilled — the all-in hours_scheduled. None when
+    neither is known."""
+    for key in ("hours_hourly", "hours_scheduled"):
+        try:
+            value = row[key]
+        except (KeyError, IndexError, TypeError):
+            value = None
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def backfill_history_hours(db_path: str = DB_PATH, max_seconds: float = 10.0) -> int:
+    """At boot: hours_hourly / hours_salaried for weeks saved before they
+    were kept (schedule audit 10/3/26 E-7), from each week's own rows and the
+    restaurant's salaried people now. Idempotent and bounded by
+    `max_seconds`; whatever it did not reach, the next boot does."""
+    import time as _time_hh
+    conn = get_conn(db_path)
+    try:
+        todo = [(r[0], r[1], r[2]) for r in conn.execute(
+            "SELECT id, restaurant_id, schedule_csv FROM schedule_history WHERE hours_hourly IS NULL "
+            "AND schedule_csv IS NOT NULL AND schedule_csv != '' ORDER BY id DESC").fetchall()]
+    finally:
+        conn.close()
+    stop = _time_hh.monotonic() + float(max_seconds)
+    restaurants, done = {}, 0
+    for hid, rid, text in todo:
+        if _time_hh.monotonic() > stop:
+            break
+        try:
+            if rid not in restaurants:
+                restaurants[rid] = get_restaurant(rid, db_path)
+            split = history_hours(rid, text, restaurant=restaurants[rid], db_path=db_path)
+        except Exception as e:
+            print(f"[schedule history] hours split skipped for week {hid}: {e}")
+            continue
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE schedule_history SET hours_hourly=?, hours_salaried=? WHERE id=? "
+                         "AND hours_hourly IS NULL", (split["hourly"], split["salaried"], hid))
+            conn.commit()
+        finally:
+            conn.close()
+        done += 1
+    return done
+
+
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
-                           what_if: dict = None, db_path: str = DB_PATH) -> int:
+                           what_if: dict = None, db_path: str = DB_PATH,
+                           hours_hourly: float = None, hours_salaried: float = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
     regardless of any iOS view-state bug, rather than depending on getting
     every layer of client caching right. Returns the new row's id.
+
+    `hours_hourly` / `hours_salaried` are the week's hours split by pay
+    (schedule audit 10/3/26 E-7, P-6) — the generation passes the split it
+    priced with; without them they are worked out from the rows here
+    (history_hours), so no row is saved without them.
     """
     import json as _json_sh
+    if hours_hourly is None or hours_salaried is None:
+        try:
+            split = history_hours(restaurant_id, schedule_csv, db_path=db_path)
+            hours_hourly = split["hourly"] if hours_hourly is None else hours_hourly
+            hours_salaried = split["salaried"] if hours_salaried is None else hours_salaried
+        except Exception as e:
+            import ops as _ops_hh
+            _ops_hh.capture(e, job="schedule_history_hours", context=f"restaurant_id={restaurant_id}")
     conn = get_conn(db_path)
     # The Shift Quality verdict used to live only in the async job result,
     # which is deleted the first time it is polled — so the headline number
@@ -10664,13 +10854,14 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         INSERT INTO schedule_history
             (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
              labor_target, schedule_csv, summary_json, quality_json,
-             quality_score, quality_band, quality_confidence, what_if_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             quality_score, quality_band, quality_confidence, what_if_json,
+             hours_hourly, hours_salaried)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
           schedule_csv, _json_sh.dumps(summary or []),
           _json_sh.dumps(quality) if quality else None,
           q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
-          _json_sh.dumps(what_if) if what_if else None))
+          _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried))
     conn.commit()
     new_id = cur.lastrowid
     # Drafts of the same week that were never sent are superseded by this
@@ -10708,7 +10899,7 @@ def _ensure_history_columns(conn):
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
-                       ("detail_thinned_at", "TEXT")):
+                       ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -10759,7 +10950,7 @@ _HISTORY_BAND_LEAD = {"excellent": "Excellent week", "good": "Solid week",
                       "fair": "A few soft spots", "weak": "Needs attention"}
 
 
-def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_at) -> tuple:
+def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_at, hours_hourly=None) -> tuple:
     """One honest line for a Schedule History row.
 
     Built only from what the Shift Quality Engine (shift_quality.evaluate_
@@ -10770,8 +10961,15 @@ def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_a
     one is used verbatim rather than re-summarized into something new that
     could drift from what it actually found. Returns (line, tone) where
     tone is 'good' | 'warn' | 'info' for the row's status dot.
+
+    The budget is an hourly budget, so it is held against the HOURLY hours
+    (`hours_hourly`): salaried hours are never spent from it, and counting
+    them called a week "over budget" by about the salaried hours (schedule
+    audit 10/3/26 E-7). A row without the split uses the all-in figure.
     """
     q = quality or {}
+    if hours_hourly is not None:
+        hours_scheduled = hours_hourly
     if not q.get("checked"):
         # No quality read on this week (engine failed, or the row predates
         # this feature) — hours are the one thing always known.
@@ -10826,7 +11024,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
         _ensure_history_columns(conn)
         rows = conn.execute("""
             SELECT id, generated_at, week_start, week_end, hours_scheduled,
-                   hours_budget, labor_target,
+                   hours_hourly, hours_salaried, hours_budget, labor_target,
                    quality_json, quality_score, quality_band, quality_confidence,
                    edited_at, edited_by, published_at, published_by, superseded_by, republished_at
             FROM schedule_history WHERE restaurant_id=?
@@ -10851,7 +11049,7 @@ def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB
             d["quality_band"] = (q or {}).get("band")
         d["confidence"] = d.pop("quality_confidence", None) or ((q or {}).get("confidence") or {}).get("level")
         d["summary_line"], d["summary_tone"] = _history_summary_line(
-            q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"))
+            q, d.get("hours_scheduled"), d.get("hours_budget"), d.get("edited_at"), hours_hourly=d.get("hours_hourly"))
         out.append(d)
     return out
 
@@ -11126,9 +11324,13 @@ def salaried_matches(restaurant, roster_names=None, db_path=None) -> list:
     return out
 
 
-def open_days_per_week(restaurant) -> int:
-    """The weekdays the restaurant trades, from its open/close times (7
-    when none are set)."""
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def trading_weekdays(restaurant) -> set:
+    """{"Monday", ...} — the weekdays the restaurant trades, from its
+    open/close times; all seven when none are set. open_days_per_week is
+    its size."""
     import json as _json
     days = set()
     for field in ("open_times_json", "close_times_json"):
@@ -11138,8 +11340,45 @@ def open_days_per_week(restaurant) -> int:
             d = {}
         if isinstance(d, dict):
             days |= {str(k).strip().lower() for k, v in d.items() if str(v or "").strip()}
-    n = len(days & {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
-    return n or 7
+    got = {w for w in _WEEKDAY_NAMES if w.lower() in days}
+    return got or set(_WEEKDAY_NAMES)
+
+
+def open_days_per_week(restaurant) -> int:
+    """The weekdays the restaurant trades, from its open/close times (7
+    when none are set)."""
+    return len(trading_weekdays(restaurant))
+
+
+def salaried_week_share(restaurant, week_dates, closed_dates=()) -> dict:
+    """{"cost", "people", "trading_days", "per_day"} — the salaried staff's
+    share of one drafted week: salaried_day_share on each of its trading
+    days (a weekday the restaurant trades, not a closed date), the same
+    basis the all-in labor % the target judges is built on. None with
+    nobody salaried.
+
+    The schedule's hourly hours budget is the all-in target less this
+    (schedule audit 10/3/26 D-1): sized against the whole 35% with the
+    salaries landing on top, Simple EJ's ran 41-45% all-in while "under
+    budget". Salaries are the owner's alone — a caller that serves a
+    non-owner shows the hourly budget without this figure."""
+    from datetime import datetime as _dt
+    share = salaried_day_share(restaurant)
+    if not share:
+        return None
+    trades = trading_weekdays(restaurant)
+    closed = {str(d)[:10] for d in (closed_dates or ())}
+    days = 0
+    for d in week_dates or ():
+        iso = str(d)[:10]
+        try:
+            wd = _dt.strptime(iso, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        if iso not in closed and wd in trades:
+            days += 1
+    return {"cost": round(float(share) * days, 2), "people": len(salaried_staff(restaurant)),
+            "trading_days": days, "per_day": round(float(share), 2)}
 
 
 def viewer_sees_salaries() -> bool:
@@ -11192,15 +11431,19 @@ def get_close_times(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 def get_role_close_buffers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Per-role minutes a shift may run past close (e.g. {"Bartender": 60}
     for a stated "stay 1h after close" rule). Any role not present here
-    defaults to 0 — must end at or before close."""
-    import json as _json
+    defaults to 0 — must end at or before close.
+
+    One "stays until close + N min" setting per role (schedule audit
+    10/3/26 D-43): this is the cap side of it, the larger of the role's
+    stay (role_close_min_json) and its after-close allowance
+    (role_close_buffer_json) — a role told to stay an hour past close is
+    never clamped at close (schedule_rules.role_close_caps). Look a role up
+    with schedule_rules.role_minutes: "Bartender" holds for "Bartender PM"."""
     r = get_restaurant(restaurant_id, db_path)
-    if not r or not r.role_close_buffer_json:
+    if not r:
         return {}
-    try:
-        return {k: int(v) for k, v in _json.loads(r.role_close_buffer_json).items()}
-    except Exception:
-        return {}
+    from schedule_rules import role_close_caps
+    return role_close_caps(r)
 
 
 def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0) -> float:
@@ -11315,78 +11558,193 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     conn.close()
 
 
+# Year-over-year context (schedule audit 10/3/26 D-28, D-29, E-8).
+YOY_TREND_WEEKS = 8
+YOY_TREND_MIN_NIGHTS = 20                 # paired nights before last year is moved by this year's trend
+YOY_TREND_BOUNDS = (0.6, 1.6)             # a trend past these is read as a data break, held to them
+
+
+def _yoy_trend_dates(restaurant_id, today=None, weeks: int = YOY_TREND_WEEKS):
+    """(this year's trailing nights, the same nights a year back) — the two
+    windows yoy_trend compares, as ISO dates."""
+    from datetime import date as _date, timedelta as _td
+    # Callers pass the restaurant's own date; without it the server's date
+    # stands in — a day either way does not move an eight-week ratio, and
+    # the year-over-year read stays one query per store.
+    today = today or _date.today()
+    now = [(today - _td(days=i)).isoformat() for i in range(1, int(weeks) * 7 + 1)]
+    return now, [(_date.fromisoformat(d) - _td(days=364)).isoformat() for d in now]
+
+
+def yoy_trend(restaurant_id, today=None, weeks: int = YOY_TREND_WEEKS, db_path: str = DB_PATH,
+              series: dict = None) -> dict:
+    """{"ratio", "nights", "applied", "clamped", "basis"} — how this year is
+    running against last: the trailing `weeks` weeks' sales against the
+    same nights a year earlier (364 days back — the same weekdays), over
+    the nights BOTH years have a figure, each year on one basis
+    (canonical_facts.sales_history / one_basis). Last year's figures were
+    handed to the draft unadjusted, so a business 15% up was staffed to
+    last year's level (D-29). Not applied under YOY_TREND_MIN_NIGHTS paired
+    nights (ratio 1.0, `applied` False); held inside YOY_TREND_BOUNDS."""
+    from datetime import date as _date, timedelta as _td
+    import canonical_facts as _cf
+    now_dates, then_dates = _yoy_trend_dates(restaurant_id, today, weeks)
+    out = {"ratio": 1.0, "nights": 0, "applied": False, "clamped": False, "basis": None}
+    try:
+        if series is None:
+            series = _cf.net_series(restaurant_id, db_path=db_path, dates=now_dates + then_dates, pos=_cf.POS_ALL)
+        this = _cf.one_basis({d: series[d] for d in now_dates if d in series})
+        last = _cf.one_basis({d: series[d] for d in then_dates if d in series})
+    except Exception:
+        return out
+    now_sum = then_sum = 0.0
+    n = 0
+    for d, x in this.items():
+        ly = (_date.fromisoformat(d) - _td(days=364)).isoformat()
+        y = last.get(ly)
+        if not y or not x.get("net") or not y.get("net") or x["net"] <= 0 or y["net"] <= 0:
+            continue
+        now_sum += float(x["net"])
+        then_sum += float(y["net"])
+        n += 1
+    out["nights"] = n
+    if n < YOY_TREND_MIN_NIGHTS or then_sum <= 0:
+        out["basis"] = (f"only {n} night{'s' if n != 1 else ''} in the last {weeks} weeks have a figure both this "
+                        f"year and last (needs {YOY_TREND_MIN_NIGHTS}), so last year is not moved by a trend")
+        return out
+    raw = now_sum / then_sum
+    ratio = min(max(raw, YOY_TREND_BOUNDS[0]), YOY_TREND_BOUNDS[1])
+    pct = int(round((raw - 1) * 100))
+    out.update(ratio=round(ratio, 3), applied=True, clamped=ratio != raw,
+               basis=(f"the last {weeks} weeks ran {abs(pct)}% {'above' if pct >= 0 else 'below'} the same "
+                      f"{n} nights last year" + (", held to the trend's bounds" if ratio != raw else "")))
+    return out
+
+
 def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
-                              db_path: str = DB_PATH) -> list:
+                              db_path: str = DB_PATH, today=None) -> list:
     """
-    For each date in next_week_dates, find the same calendar day last year
-    (52 weeks back = same weekday). Returns a list of dicts with YoY data.
+    For each date in next_week_dates, the night last year it is read
+    against, and that night's figures:
+
+      holiday             a date that is a dining holiday reads last year's
+                          SAME holiday night — Christmas Eve 12/24/26 reads
+                          12/24/25 (a Wednesday), Thanksgiving reads last
+                          Thanksgiving — whatever weekday it fell on. The
+                          52-week alignment read Christmas Eve against last
+                          Christmas Day and New Year's Eve against New Year's
+                          Day, under a label saying "matched to" the holiday
+                          (schedule audit 10/3/26 E-8).
+      same_weekday        else 52 weeks back: the same weekday;
+      same_weekday_shift  else the same weekday a week either side, marked
+                          `yoy_substituted` — never another weekday: the
+                          ±3-day fallback read a Saturday from last year's
+                          Wednesday (D-28). A same-weekday night that was
+                          last year's holiday (July 4th, 2025, a Friday) is
+                          skipped for a date that is no holiday this year.
 
     Last year's SALES come from the one last-year reader
     (canonical_facts.sales_history — the night's report, then the owner's
     imported DSR workbook, then the POS sync's final day; memory audit
-    9/29/26, imported_year) and `yoy_source` names which: a client who
-    imported a year of workbooks but has 60 days of POS history had no
-    year-over-year context at all. Labor %, labor cost and hours come only
-    from the synced day (the import carries none) and are None when absent.
+    9/29/26, imported_year) and `yoy_source` names which. Labor %, labor
+    cost and hours come only from the synced day (the import carries none)
+    and are None when absent. `yoy_sales_adjusted` is last year's sales
+    moved by this year's trend (yoy_trend, D-29), and `yoy_trend` says by
+    how much; the draft reads it as secondary to the week's projection.
     """
     from datetime import datetime as _dt, timedelta as _td
     import canonical_facts as _cf
+    from schedule_economics import holiday_names, last_years_holiday_night, _APPROXIMATE
     conn = get_conn(db_path)
 
-    # Every candidate date across every requested date, fetched once.
-    #
-    # This was a query per offset per date — seven dates by a seven-day window
-    # is 49 round trips to answer one question about one restaurant's history
-    # (audit #17). The window and the tie-break below are unchanged; only the
-    # number of queries is.
+    def _names(day):
+        return [n for n in (holiday_names(day.year).get(day.isoformat()) or [])]
+
+    # Every candidate night across every requested date, fetched once —
+    # this was a query per offset per date (audit #17).
+    plans = {}
     wanted = set()
     for date_str in next_week_dates:
         try:
-            yoy_dt = _dt.strptime(date_str, "%Y-%m-%d") - _td(weeks=52)
+            dt = _dt.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             continue
-        for offset in range(-3, 4):
-            wanted.add((yoy_dt + _td(days=offset)).strftime("%Y-%m-%d"))
+        names = _names(dt)
+        cands = []
+        for n in names:
+            if n in _APPROXIMATE:
+                continue                    # the Super Bowl's date is the calendar's guess
+            ly = last_years_holiday_night(n, dt)
+            if ly:
+                cands.append((ly, "holiday", n))
+        base = dt - _td(weeks=52)
+        for d, kind in ((base, "same_weekday"), (base + _td(days=7), "same_weekday_shift"),
+                        (base - _td(days=7), "same_weekday_shift")):
+            # last year's holiday night is no ordinary weekday for a date
+            # that is not that holiday this year
+            ly_names = [n for n in _names(d) if n not in _APPROXIMATE]
+            if ly_names and not set(ly_names) & set(names):
+                continue
+            cands.append((d.isoformat(), kind, None))
+        plans[date_str] = (dt, names, cands)
+        wanted |= {c[0] for c in cands}
 
     by_date = {}
     canon = {}
-    if wanted:
-        marks = ",".join("?" * len(wanted))
-        for row in conn.execute(
-            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
-            f"AND {_cf.FINAL_SQL}",
-            (restaurant_id, *sorted(wanted))
-        ).fetchall():
-            by_date[row["date"]] = dict(row)
-        canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted), pos=_cf.POS_ALL)
+    # The trend's two windows ride on the same one read of each store.
+    now_dates, then_dates = _yoy_trend_dates(restaurant_id, today)
+    try:
+        if wanted:
+            marks = ",".join("?" * len(wanted))
+            for row in conn.execute(
+                f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+                f"AND {_cf.FINAL_SQL}",
+                (restaurant_id, *sorted(wanted))
+            ).fetchall():
+                by_date[row["date"]] = dict(row)
+            canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted | set(now_dates) | set(then_dates)),
+                                   pos=_cf.POS_ALL)
+    finally:
+        conn.close()
+    try:
+        trend = yoy_trend(restaurant_id, today=today, db_path=db_path, series=canon)
+    except Exception:
+        trend = {"ratio": 1.0, "nights": 0, "applied": False, "clamped": False, "basis": None}
 
     rows_out = []
     for date_str in next_week_dates:
-        try:
-            dt = _dt.strptime(date_str, "%Y-%m-%d")
-            yoy_dt = dt - _td(weeks=52)
-            order = [(yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4)]
-            # Prefer exact 52-week match, fall back to closest with data —
-            # walked in offset order, so the earliest date with data wins a
-            # tie, as before.
-            exact = yoy_dt.strftime("%Y-%m-%d")
-            pick = exact if exact in canon else next((d for d in order if d in canon), None)
-            sales = canon.get(pick) if pick else None
-            labor = by_date.get(pick) if pick else None
-            rows_out.append({
-                "next_week_date": date_str,
-                "next_week_dow": dt.strftime("%A"),
-                "yoy_date": pick,
-                "yoy_sales": sales["net"] if sales else None,
-                "yoy_source": sales["source"] if sales else None,
-                "yoy_basis": sales["basis"] if sales else None,
-                "yoy_labor_pct": labor["labor_pct"] if labor else None,
-                "yoy_labor_cost": labor["labor_cost"] if labor else None,
-                "yoy_hours": labor["total_hours"] if labor else None,
-            })
-        except Exception:
+        plan = plans.get(date_str)
+        if not plan:
             rows_out.append({"next_week_date": date_str, "yoy_date": None})
-    conn.close()
+            continue
+        dt, names, cands = plan
+        pick = next(((d, kind, n) for d, kind, n in cands if d in canon), None)
+        d, kind, matched = pick if pick else (None, None, None)
+        sales = canon.get(d) if d else None
+        labor = by_date.get(d) if d else None
+        adjusted = None
+        if sales and sales.get("net"):
+            adjusted = round(float(sales["net"]) * (trend["ratio"] if trend.get("applied") else 1.0), 2)
+        rows_out.append({
+            "next_week_date": date_str,
+            "next_week_dow": dt.strftime("%A"),
+            "yoy_date": d,
+            "yoy_dow": _dt.strptime(d, "%Y-%m-%d").strftime("%A") if d else None,
+            "yoy_match": kind,
+            "yoy_substituted": kind == "same_weekday_shift",
+            "is_holiday": bool([n for n in names if n not in _APPROXIMATE]),
+            "holiday_name": next((n for n in names if n not in _APPROXIMATE), None),
+            "holiday_names": names,
+            "holiday_matched": kind == "holiday",
+            "yoy_sales": sales["net"] if sales else None,
+            "yoy_sales_adjusted": adjusted,
+            "yoy_source": sales["source"] if sales else None,
+            "yoy_basis": sales["basis"] if sales else None,
+            "yoy_labor_pct": labor["labor_pct"] if labor else None,
+            "yoy_labor_cost": labor["labor_cost"] if labor else None,
+            "yoy_hours": labor["total_hours"] if labor else None,
+            "yoy_trend": trend,
+        })
     return rows_out
 
 

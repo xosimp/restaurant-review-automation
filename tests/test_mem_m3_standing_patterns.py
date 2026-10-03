@@ -79,8 +79,8 @@ def test_a_learned_move_outlives_the_eight_week_window_and_counts_what_kept_it()
     rid = _rid()
     everyone, without_bob = ["Ana", "Bob", "Cy"], ["Ana", "Cy"]
     # Weeks 1 and 3: the manager takes Bob off Tuesday dinner.
-    _week(rid, _tuesday(11), everyone, without_bob, age_days=77)
-    _week(rid, _tuesday(9), everyone, without_bob, age_days=63)
+    taught = [_week(rid, _tuesday(11), everyone, without_bob, age_days=77),
+              _week(rid, _tuesday(9), everyone, without_bob, age_days=63)]
     # The window still sees both edits only if they are recent: refresh while it does.
     conn = models.get_conn()
     conn.execute("UPDATE schedule_versions SET created_at=datetime('now', '-20 days') WHERE restaurant_id=?", (rid,))
@@ -91,9 +91,11 @@ def test_a_learned_move_outlives_the_eight_week_window_and_counts_what_kept_it()
     # Then eight weeks of drafts that already leave him off, published as drafted.
     for w in range(8, 0, -1):
         _week(rid, _tuesday(w), without_bob, without_bob, age_days=7 * w)
+    # The teaching weeks' saves fall out of the live window — 24 weeks since
+    # the schedule audit of 10/3/26 (L-27; it was 8).
     conn = models.get_conn()
-    conn.execute("UPDATE schedule_versions SET created_at=datetime('now', '-70 days') WHERE reason='edited' "
-                 "AND restaurant_id=?", (rid,))
+    conn.execute(f"UPDATE schedule_versions SET created_at=datetime('now', '-175 days') WHERE history_id IN "
+                 f"({','.join('?' for _ in taught)})", taught)
     conn.commit()
     conn.close()
     schedule_versions.refresh_standing_patterns(rid)

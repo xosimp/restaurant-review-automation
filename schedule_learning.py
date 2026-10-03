@@ -17,7 +17,16 @@ deterministic, and never calls a model.
   predict_row_edits            which rows of a draft the manager is likely
                                to change, from smoothed edit rates over their
                                own finished drafts (edit_prediction_backtest
-                               measures it on held-out weeks)
+                               measures it on held-out weeks); once the
+                               backtest has earned it, likely_edit_signals /
+                               likely_to_change put it to use (L-15)
+  learning_weeks / edited_weeks  every week a person finished with, read by
+                               schedule_versions.learning_weeks (the original
+                               draft, the manager's own pre-publish changes)
+  capture_save                 what a save teaches as it is made: Cavnar AI's
+                               kept changes credit that move, a change to a
+                               sent week is a reaction, the first weeks ask a
+                               one-tap why (answer_edit_question)
   calibrate_weights            the Shift Quality weights fitted to what
                                published shifts did (a joint ridge fit per
                                outcome, watched nights only for issues,
@@ -41,7 +50,12 @@ from models import DB_PATH
 
 log = logging.getLogger(__name__)
 
-EDIT_WEEKS = 8
+# How far back the edit learners read (schedule audit 10/3/26 L-27): 24
+# weeks, every week weighted by its age's half-life
+# (schedule_versions.HALF_LIFE_DAYS — a person on a slot 120 days, a role's
+# headcount or start 180) instead of a flat 8-week cliff. Within the
+# intermediate versions' retention floor (ops "schedule_versions", 168 days).
+EDIT_WEEKS = 24
 NEW_PATTERN_CAP = 8
 BUSY_NIGHTS = ("Friday", "Saturday")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -49,11 +63,28 @@ _PRETTY = {"morning": "lunch/day", "night": "dinner/night"}
 
 CALIBRATION_MIN_WEEKS = 8
 CALIBRATION_MIN_SHIFTS = 40
-CALIBRATION_MIN_PAIRS = 20        # per dimension per outcome, before a correlation is reported
+# More shifts per dimension (schedule audit 10/3/26 SQ-22): sixteen
+# dimensions were fitted together on as few as forty shifts. A dimension now
+# needs CALIBRATION_MIN_PAIRS shifts with the outcome before it is read at
+# all, and the joint fit carries at most one dimension per
+# CALIBRATION_SAMPLES_PER_DIMENSION shifts — the best-observed first; the
+# rest wait, and say so.
+CALIBRATION_MIN_PAIRS = 30        # per dimension per outcome, before a correlation is reported
+CALIBRATION_SAMPLES_PER_DIMENSION = 10
 CALIBRATION_MIN_EVIDENCE = 0.1    # |mean fitted effect| below this suggests no change
 CALIBRATION_MAX_NUDGE = 0.30      # the fitted weight never strays more than 30% from its default
 CALIBRATION_MAX_STEP = 0.10       # one Apply moves a weight at most 10% of its default
 CALIBRATION_RIDGE = 0.1           # ridge penalty, as a share of the shifts fitted (standardized)
+# Floors and bars, per shift profile (SQ-22): weights cannot lift a shift a
+# floor caps, so calibration also reads, for each profile with enough of
+# its own shifts on record, where its critical floors and its quality bar
+# sit against what those shifts did — the line under which shifts measurably
+# went worse — and suggests a bounded step toward it.
+CALIBRATION_MIN_PROFILE_SHIFTS = 30   # a profile's own shifts with an outcome, before its floors and bar are read
+CALIBRATION_MIN_SIDE = 10             # shifts on each side of a candidate line
+CALIBRATION_THRESHOLD_EVIDENCE = 0.5  # the outcome gap (in standard deviations) a line must show
+CALIBRATION_THRESHOLD_STEP = 5        # one Apply moves a floor or a bar at most this many points
+CALIBRATION_THRESHOLD_RANGE = 20      # lines are looked for within this many points of where it is now
 
 ATTENDANCE_MIN_WEEKDAY_SHIFTS = 4
 ATTENDANCE_MIN_OVERALL_SHIFTS = 6     # staff_settings.reliability's floor
@@ -97,8 +128,9 @@ def _plural(role):
     return role if role.lower().endswith("s") else role + "s"
 
 
-def _weeks_text(n):
-    return f"{n} recent week{'s' if n != 1 else ''}"
+def _weeks_text(n, of=None):
+    from schedule_versions import weeks_phrase
+    return weeks_phrase(n, of)
 
 
 def _display(counter: dict) -> str:
@@ -108,82 +140,58 @@ def _display(counter: dict) -> str:
 
 # ── the weeks the manager edited ──────────────────────────────────────────
 
+def learning_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
+    """Every week a person of the restaurant finished with in the last
+    `weeks` weeks — schedule_versions.learning_weeks: the ORIGINAL draft
+    (before any redo the owner asked for), the manager's own pre-publish
+    changes only (no reaction after the week went out, no change Cavnar AI
+    made, no admin's hand, no change the owner called a one-off), unedited
+    weeks included as the evidence a draft was kept. Each: {history_id,
+    week_start, base, final, diff, editor, edited, age_days, ...}."""
+    import schedule_versions as _sv
+    return _sv.learning_weeks(restaurant_id, weeks, db_path)
+
+
 def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
-    """One entry per calendar week the manager edited in the last `weeks`
-    weeks: the generated draft, the newest version, and the diff between
-    them. The net diff — not every intermediate save — is what the manager
-    settled on, so a shift removed and put back in one sitting teaches
-    nothing. Regenerated drafts of the same week count once (the newest)."""
-    from schedule_versions import diff, rows_from_csv
-    conn = get_conn(db_path)
-    try:
-        hist = conn.execute(
-            "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
-            "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason='edited' AND v.created_at >= datetime('now', ?) "
-            # A week support edited through view-as, or any admin's save in
-            # it, teaches nothing (memory audit 9/29/26, view_as: M1's
-            # SUPPORT_PREFIX, M3's saved_authority).
-            "AND COALESCE(v.saved_authority, '') <> 'admin' "
-            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
-            "OR sv.saved_authority = 'admin') "
-            "ORDER BY v.history_id DESC LIMIT 60",
-            (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
-        newest = {}
-        for h in hist:
-            wk = h["week_start"] or f"#{h['history_id']}"
-            if wk not in newest:
-                newest[wk] = h["history_id"]
-        ids = sorted(newest.values())
-        if not ids:
-            return []
-        marks = ",".join("?" for _ in ids)
-        # An admin's saves (view-as) are not the manager's: left out, so
-        # the net diff is what the restaurant's own people settled on.
-        versions = conn.execute(
-            f"SELECT history_id, version, reason, schedule_csv, saved_by FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
-            (restaurant_id, *ids)).fetchall()
-    finally:
-        conn.close()
-    by = {}
-    for v in versions:
-        by.setdefault(v["history_id"], []).append(v)
-    # One spelling per person (memory re-audit 9/29/26, INVENTORY-2): a week
-    # drafted before "Bob S." was renamed "Bob Smith" still reads as Bob
-    # Smith, so the patterns it teaches key on the person, not a spelling.
-    from schedule_versions import canonical_rows
-    canon = canonical_rows(restaurant_id, [rows_from_csv(v["schedule_csv"]) for v in versions], db_path=db_path,
-                           mapping_only=True)
-    out = []
-    for hid in ids:
-        vs = by.get(hid) or []
-        if len(vs) < 2:
-            continue
-        base = next((v for v in vs if v["reason"] == "generated"), vs[0])
-        # The manager's last word, not a staff swap or cover after it: those
-        # are the staff's choices, and read as the manager's they taught the
-        # draft "the manager keeps taking Bob off Saturday".
-        mgr = [v for v in vs if v["reason"] != "swap"]
-        final = mgr[-1] if mgr else vs[-1]
-        if final["version"] <= base["version"]:
-            continue
-        b = canonical_rows(restaurant_id, [rows_from_csv(base["schedule_csv"])], mapping=canon)[0]
-        f = canonical_rows(restaurant_id, [rows_from_csv(final["schedule_csv"])], mapping=canon)[0]
-        # Who settled on it (memory audit 9/29/26, standing_patterns): two
-        # GMs with opposite habits on alternate weeks blended into one
-        # "manager". The editor of the week's last manager save.
-        editor = (str(final["saved_by"] or "").strip() if "saved_by" in final.keys() else "") or None
-        out.append({"history_id": hid, "week_start": next((h["week_start"] for h in hist if h["history_id"] == hid), None),
-                    "base": b, "final": f, "diff": diff(b, f), "editor": editor})
-    return out
+    """The weeks of learning_weeks in which the manager changed something:
+    the generated draft, the week as they settled it before it went out, and
+    the diff between them. The net diff — not every intermediate save — is
+    what the manager settled on, so a shift removed and put back in one
+    sitting teaches nothing.
+
+    What it no longer counts (schedule audit 10/3/26): saves after the first
+    publish (L-4 — a replacement for a call-out is a reaction, not a habit),
+    Cavnar AI's changes the owner saved (L-5), an admin's changes through
+    view-as unless adopted — the rest of that week still counts (L-8) — and
+    the days an owner's redo replaced: the draft is the original one, so the
+    edits made before the redo are kept (L-26)."""
+    return [w for w in learning_weeks(restaurant_id, weeks, db_path) if w["edited"]]
+
+
+def _weight(w, kind) -> float:
+    from schedule_versions import recency_weight, half_life
+    return recency_weight(w.get("age_days") or 0, half_life(kind))
+
+
+def _strength(hits_w, opps_w) -> tuple:
+    from schedule_versions import _strength as _s
+    return _s(hits_w, opps_w)
 
 
 # ── retimes ───────────────────────────────────────────────────────────────
 
-def retime_patterns(week_edits: list, min_repeats=2) -> list:
+def _min_rate():
+    from schedule_versions import PATTERN_MIN_RATE
+    return PATTERN_MIN_RATE
+
+
+def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """Per role × weekday × daypart, the start or end the manager keeps
     moving shifts to — counted once per week, so three servers retimed on
-    one Friday is one week of evidence, not three."""
+    one Friday is one week of evidence, not three — in at least `min_rate`
+    of the weeks the draft had that role there at another time (L-6),
+    recent weeks weighing more (L-27)."""
+    min_rate = _min_rate() if min_rate is None else min_rate
     tally = {}
     for w in week_edits:
         for rt in (w["diff"].get("retimed") or []):
@@ -202,20 +210,44 @@ def retime_patterns(week_edits: list, min_repeats=2) -> list:
             if new_end and _clock(new_end) != _clock(old_end):
                 moves.append(("retime_end", _clock(new_end)))
             for kind, when in moves:
-                e = tally.setdefault((kind, role.lower(), day, part, when), {"weeks": set(), "role": {}})
-                e["weeks"].add(w["history_id"])
+                e = tally.setdefault((kind, role.lower(), day, part, when), {"weeks": {}, "role": {}})
+                e["weeks"][w["history_id"]] = (_weight(w, kind), str(w.get("week_start") or ""))
                 e["role"][role] = e["role"].get(role, 0) + 1
+    # Where each week's draft had each role, and at what times.
+    drafted = []
+    for w in week_edits:
+        at = {}
+        for r in w.get("base") or []:
+            role = (r.get("role") or "").strip().lower()
+            day, part = _weekday(r.get("date"), r.get("day")), _part(r.get("shift_start"))
+            if role and day and part != "unknown":
+                e = at.setdefault((role, day, part), {"starts": set(), "ends": set()})
+                e["starts"].add(_clock(r.get("shift_start")))
+                e["ends"].add(_clock(r.get("shift_end")))
+        drafted.append((w, at))
     out = []
-    for (kind, _rl, day, part, when), e in tally.items():
+    for (kind, rl, day, part, when), e in tally.items():
         n = len(e["weeks"])
         if n < min_repeats:
+            continue
+        opp_w, of = 0.0, 0
+        for w, at in drafted:
+            slot = at.get((rl, day, part))
+            hit = w["history_id"] in e["weeks"]
+            times = (slot or {}).get("starts" if kind == "retime_start" else "ends") or set()
+            if hit or (slot and times != {when}):
+                opp_w += _weight(w, kind)
+                of += 1
+        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        if rate < min_rate:
             continue
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
-                    "last_week": max(e["weeks"]),
+                    "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps {verb} {_plural(role)} on {day} {_PRETTY.get(part, part)} at {when} "
-                            f"({_weeks_text(n)}) — {'start' if kind == 'retime_start' else 'end'} them then in the draft."})
+                            f"({_weeks_text(n, of)}) — {'start' if kind == 'retime_start' else 'end'} them then in the draft."})
     return out
 
 
@@ -243,12 +275,16 @@ def _slot_heads(rows: list) -> tuple:
     return out, names
 
 
-def headcount_patterns(week_edits: list, min_repeats=2) -> list:
+def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """The net number of people per role × weekday × daypart the manager
     keeps adding to or taking off the draft. Needs `min_repeats` weeks
-    moving the same way, and more of them than weeks moving the other way;
+    moving the same way, more of them than weeks moving the other way, and
+    at least `min_rate` of the weeks that daypart traded (L-6: two adds in
+    eight Fridays is an occasion, not a habit — an unedited Friday is a
+    Friday the draft's count was kept), recent weeks weighing more (L-27);
     the size is the median of those weeks."""
-    tally, spellings = {}, {}
+    min_rate = _min_rate() if min_rate is None else min_rate
+    tally, spellings, traded = {}, {}, []
     for w in week_edits:
         before, sb = _slot_heads(w["base"])
         after, sa = _slot_heads(w["final"])
@@ -256,6 +292,8 @@ def headcount_patterns(week_edits: list, min_repeats=2) -> list:
             for rl, c in src.items():
                 for k, v in c.items():
                     spellings.setdefault(rl, {})[k] = spellings.get(rl, {}).get(k, 0) + v
+        # The weekday dayparts that traded this week (any shift on them).
+        traded.append((w, {(_weekday(d), part) for (d, part, _rl) in set(before) | set(after)}))
         per = {}
         for k in set(before) | set(after):
             delta = len(after.get(k, ())) - len(before.get(k, ()))
@@ -265,35 +303,49 @@ def headcount_patterns(week_edits: list, min_repeats=2) -> list:
                 per[slot] = per.get(slot, 0) + delta
         for slot, delta in per.items():
             if delta:
-                tally.setdefault(slot, []).append((delta, int(w.get("history_id") or 0)))
+                tally.setdefault(slot, []).append((delta, int(w.get("history_id") or 0), _weight(w, "headcount_add"),
+                                                   str(w.get("week_start") or "")))
     out = []
     for (day, part, rl), pairs in tally.items():
-        deltas = [d for d, _h in pairs]
+        deltas = [d for d, _h, _w, _s in pairs]
         ups = sorted(d for d in deltas if d > 0)
         downs = sorted(d for d in deltas if d < 0)
         side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
         if len(side) < min_repeats or len(side) <= len(other):
             continue
         delta = side[len(side) // 2]
+        hits = [p for p in pairs if (p[0] > 0) == (delta > 0)]
+        opp_w, of = 0.0, 0
+        for w, slots in traded:
+            if (day, part) in slots:
+                opp_w += _weight(w, "headcount_add")
+                of += 1
+        rate, conf = _strength(sum(p[2] for p in hits), opp_w)
+        if rate < min_rate:
+            continue
         role = _display(spellings.get(rl, {})) or rl.title()
         n = len(side)
         if delta > 0:
             text = (f"The manager has added {delta} {role if delta == 1 else _plural(role)} to {day} "
-                    f"{_PRETTY.get(part, part)} in {_weeks_text(n)} — draft {delta} more there.")
+                    f"{_PRETTY.get(part, part)} in {_weeks_text(n, of)} — draft {delta} more there.")
         else:
             text = (f"The manager has cut {-delta} {role if delta == -1 else _plural(role)} from {day} "
-                    f"{_PRETTY.get(part, part)} in {_weeks_text(n)} — draft {-delta} fewer there.")
+                    f"{_PRETTY.get(part, part)} in {_weeks_text(n, of)} — draft {-delta} fewer there.")
         out.append({"kind": "headcount_add" if delta > 0 else "headcount_cut", "employee": "", "role": role,
                     "day": day, "daypart": part, "delta": int(delta), "times": n, "text": text,
-                    "last_week": max((h for d, h in pairs if (d > 0) == (delta > 0)), default=0)})
+                    "opportunities": of, "rate": rate, "confidence": conf,
+                    "last_week": max((h for d, h, _w, _s in hits), default=0),
+                    "last_week_start": max((s_ for _d, _h, _w, s_ in hits), default="")})
     return out
 
 
 # ── role changes ──────────────────────────────────────────────────────────
 
-def role_change_patterns(week_edits: list, min_repeats=2) -> list:
+def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """The same person, date and start kept, a different role: per person ×
-    old role × new role × weekday × daypart, counted once per week."""
+    old role × new role × weekday × daypart, counted once per week, in at
+    least `min_rate` of the weeks the draft had them there in the old role."""
+    min_rate = _min_rate() if min_rate is None else min_rate
     tally = {}
     for w in week_edits:
         for rc in (w["diff"].get("role_changed") or []):
@@ -303,26 +355,38 @@ def role_change_patterns(week_edits: list, min_repeats=2) -> list:
             if not (name and new and day) or part == "unknown":
                 continue
             e = tally.setdefault((name.lower(), old.lower(), new.lower(), day, part),
-                                 {"weeks": set(), "name": {}, "old": {}, "new": {}})
-            e["weeks"].add(w["history_id"])
+                                 {"weeks": {}, "name": {}, "old": {}, "new": {}})
+            e["weeks"][w["history_id"]] = (_weight(w, "role_change"), str(w.get("week_start") or ""))
             for fld, val in (("name", name), ("old", old), ("new", new)):
                 e[fld][val] = e[fld].get(val, 0) + 1
     out = []
-    for (_n, _o, _w, day, part), e in tally.items():
+    for (nl, ol, _w, day, part), e in tally.items():
         n = len(e["weeks"])
         if n < min_repeats:
             continue
+        opp_w, of = 0.0, 0
+        for w in week_edits:
+            there = any((r.get("employee") or "").strip().lower() == nl and (r.get("role") or "").strip().lower() == ol
+                        and _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
+                        for r in w.get("base") or [])
+            if there or w["history_id"] in e["weeks"]:
+                opp_w += _weight(w, "role_change")
+                of += 1
+        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        if rate < min_rate:
+            continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
-                    "times": n, "last_week": max(e["weeks"]),
+                    "times": n, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps switching {name} from {old or 'no role'} to {new} on {day} "
-                            f"{_PRETTY.get(part, part)} ({_weeks_text(n)}) — draft them as {new} there."})
+                            f"{_PRETTY.get(part, part)} ({_weeks_text(n, of)}) — draft them as {new} there."})
     return out
 
 
 # ── leader substitutions on busy nights ───────────────────────────────────
 
-def _strength(restaurant_id, db_path=DB_PATH) -> tuple:
+def _strength_of_people(restaurant_id, db_path=DB_PATH) -> tuple:
     """(closers lower, {name lower: Operational Score}) — empty when unrated."""
     leaders, scores = set(), {}
     try:
@@ -335,10 +399,13 @@ def _strength(restaurant_id, db_path=DB_PATH) -> tuple:
     return leaders, scores
 
 
-def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repeats=2) -> list:
+
+def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repeats=2, min_rate=None) -> list:
     """A 'moved' edit on a Friday or Saturday night where the person the
     manager put in is a closer and the one taken off is not, or has the
-    higher Operational Score. Per weekday × role, once per week."""
+    higher Operational Score. Per weekday × role, once per week, in at least
+    `min_rate` of the weeks the draft had that role on that night."""
+    min_rate = _min_rate() if min_rate is None else min_rate
     tally = {}
     for w in week_edits:
         for m in (w["diff"].get("moved") or []):
@@ -355,40 +422,56 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
             if not stronger:
                 continue
             role = (m.get("role") or "").strip()
-            e = tally.setdefault((day, part, role.lower()), {"weeks": set(), "role": {}, "names": {}})
-            e["weeks"].add(w["history_id"])
+            e = tally.setdefault((day, part, role.lower()), {"weeks": {}, "role": {}, "names": {}})
+            e["weeks"][w["history_id"]] = (_weight(w, "leader_swap"), str(w.get("week_start") or ""))
             e["role"][role] = e["role"].get(role, 0) + 1
             e["names"][inc] = e["names"].get(inc, 0) + 1
     out = []
-    for (day, part, _rl), e in tally.items():
+    for (day, part, rl), e in tally.items():
         n = len(e["weeks"])
         if n < min_repeats:
+            continue
+        opp_w, of = 0.0, 0
+        for w in week_edits:
+            there = any((r.get("role") or "").strip().lower() == rl and _weekday(r.get("date"), r.get("day")) == day
+                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
+            if there or w["history_id"] in e["weeks"]:
+                opp_w += _weight(w, "leader_swap")
+                of += 1
+        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        if rate < min_rate:
             continue
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
-                    "names": names, "last_week": max(e["weeks"]),
+                    "names": names, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"On {day} {_PRETTY.get(part, part)} the manager keeps swapping a stronger hand onto "
                             f"{role or 'the floor'} — a closer or a higher Operational Score ({', '.join(names)}) — "
-                            f"in {_weeks_text(n)}. Draft a leader there."})
+                            f"in {_weeks_text(n, of)}. Draft a leader there."})
     return out
 
 
-def edit_patterns(restaurant_id, weeks=EDIT_WEEKS, min_repeats=2, db_path=DB_PATH, week_edits=None) -> list:
+def edit_patterns(restaurant_id, weeks=EDIT_WEEKS, min_repeats=2, db_path=DB_PATH, week_edits=None,
+                  min_rate=None) -> list:
     """Every new pattern kind, strongest first, capped at NEW_PATTERN_CAP.
     Same shape as schedule_versions.learned_patterns' own entries (kind,
-    employee, day, daypart, times, text) plus role / time / delta /
-    was_role, which schedule_intel.pattern_key folds into the key."""
-    week_edits = edited_weeks(restaurant_id, weeks, db_path) if week_edits is None else week_edits
+    employee, day, daypart, times, opportunities, rate, confidence, text)
+    plus role / time / delta / was_role, which schedule_intel.pattern_key
+    folds into the key. `week_edits` is every week the manager finished
+    with (learning_weeks), unedited ones included — they are the
+    denominator."""
+    week_edits = learning_weeks(restaurant_id, weeks, db_path) if week_edits is None else week_edits
     if not week_edits:
         return []
-    out = retime_patterns(week_edits, min_repeats) + headcount_patterns(week_edits, min_repeats) + \
-        role_change_patterns(week_edits, min_repeats)
+    out = retime_patterns(week_edits, min_repeats, min_rate) + headcount_patterns(week_edits, min_repeats, min_rate) + \
+        role_change_patterns(week_edits, min_repeats, min_rate)
     if any(w["diff"].get("moved") for w in week_edits):
-        leaders, scores = _strength(restaurant_id, db_path)
+        leaders, scores = _strength_of_people(restaurant_id, db_path)
         if leaders or scores:
-            out += leader_swap_patterns(week_edits, leaders, scores, min_repeats)
-    out.sort(key=lambda p: (-p["times"], p["kind"], p.get("day") or "", p.get("role") or "", p.get("employee") or ""))
+            out += leader_swap_patterns(week_edits, leaders, scores, min_repeats, min_rate)
+    out.sort(key=lambda p: (-p["times"], -(p.get("confidence") or 0), p["kind"], p.get("day") or "",
+                            p.get("role") or "", p.get("employee") or ""))
     return out[:NEW_PATTERN_CAP]
 
 
@@ -404,10 +487,11 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
     server again. An ACTIVE standing headcount row (schedule_versions.
     refresh_standing_patterns) now applies whenever the live window no
     longer shows it, and a live pattern its standing row has retired
-    (without newer evidence) no longer applies."""
+    (without newer evidence) no longer applies. One being re-tested
+    (status 'retest', L-30) is left out of the draft once on purpose."""
     from schedule_intel import dismissed_patterns, pattern_key
     import schedule_versions as _sv
-    pats = headcount_patterns(edited_weeks(restaurant_id, weeks, db_path), min_weeks)
+    pats = headcount_patterns(learning_weeks(restaurant_id, weeks, db_path), min_weeks)
     dismissed = dismissed_patterns(restaurant_id, db_path)
     try:
         standing = {s_["key"]: s_ for s_ in _sv.standing_patterns(restaurant_id, db_path=db_path)
@@ -530,7 +614,7 @@ def addressed_recommendations(recommendations: list, before_rows: list, after_ro
 # naive-Bayes log-odds (the strongest in full, the rest at half). Per restaurant, deterministic, no model call, no
 # library — and every flagged row names the rates that flagged it.
 
-PREDICT_WEEKS = 16               # drafts looked back over
+PREDICT_WEEKS = EDIT_WEEKS       # drafts looked back over, each weighted by its age (L-27)
 PREDICT_MIN_WEEKS = 3            # drafts with a manager's final word before anything is predicted
 PREDICT_MIN_ROWS = 60
 PREDICT_MIN_EDITED = 8
@@ -550,7 +634,10 @@ def _origin(notes: str) -> str:
     n = (notes or "").strip().lower()
     if not n:
         return "model"
-    if n.startswith("cavnar:") or " cavnar:" in n:
+    # "Cavnar AI:" is what the optimizer and the solver write now; "Cavnar:"
+    # an older draft's rows (schedule audit 10/3/26 L-5 — the AI tag used to
+    # fall through to "adjusted").
+    if n.startswith(("cavnar:", "cavnar ai:")) or " cavnar:" in n or " cavnar ai:" in n:
         return "optimizer"
     if n.startswith("added") or "top-up" in n or " floor" in n:
         return "fill"
@@ -611,70 +698,51 @@ def _edited_keys(d: dict) -> set:
 
 
 def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> list:
-    """One entry per calendar week whose draft reached the manager's final
-    word — edited, or published as it stood (a week sent out untouched is
-    evidence too: every row in it was kept). [{history_id, week_start,
-    rows, edited: [bool per row]}], oldest first. Staff swaps after the
-    manager's last save are not the manager's edits (edited_weeks' rule)."""
-    from schedule_versions import diff, rows_from_csv
-    conn = get_conn(db_path)
-    try:
-        hist = conn.execute(
-            "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
-            "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason IN ('edited','published') "
-            "AND v.created_at >= datetime('now', ?) AND COALESCE(v.saved_authority, '') <> 'admin' "
-            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
-            "OR sv.saved_authority = 'admin') "
-            "ORDER BY v.history_id DESC LIMIT 80",
-            (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
-        newest = {}
-        for h in hist:
-            wk = h["week_start"] or f"#{h['history_id']}"
-            if wk not in newest:
-                newest[wk] = (h["history_id"], wk)
-        ids = sorted(v[0] for v in newest.values())
-        if not ids:
-            return []
-        week_of = {v[0]: v[1] for v in newest.values()}
-        marks = ",".join("?" for _ in ids)
-        versions = conn.execute(
-            f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
-            (restaurant_id, *ids)).fetchall()
-    finally:
-        conn.close()
-    by = {}
-    for v in versions:
-        by.setdefault(v["history_id"], []).append(v)
-    # One spelling per person (memory re-audit 9/29/26, INVENTORY-2): a week
-    # drafted before "Bob S." was renamed "Bob Smith" still reads as Bob
-    # Smith, so the patterns it teaches key on the person, not a spelling.
-    from schedule_versions import canonical_rows
-    canon = canonical_rows(restaurant_id, [rows_from_csv(v["schedule_csv"]) for v in versions], db_path=db_path,
-                           mapping_only=True)
+    """One entry per calendar week whose draft reached a person's final
+    word — edited, or sent as it stood by a person (a week sent out
+    untouched is evidence too: every row in it was kept). [{history_id,
+    week_start, rows, edited: [bool per row], weight}], oldest first.
+
+    Read as schedule_versions.learning_weeks reads a week (schedule audit
+    10/3/26): the draft against the week as it was FIRST sent — a save after
+    that is a reaction (L-4); a change Cavnar AI made and the owner kept, an
+    admin's hand and a change the owner called a one-off are not the
+    manager changing a row (L-5, L-8, L-35); a week the automatic publish
+    sent with no edit is nobody keeping anything and is left out (L-7); and
+    the rows of the days an owner's redo threw away are rows the manager
+    changed — the strongest "no" there is (L-26). `weight` is the week's
+    recency (half-life PERSON_HALF_LIFE_DAYS, L-27)."""
+    import schedule_versions as _sv
     out = []
-    for hid in ids:
-        vs = by.get(hid) or []
-        base = next((v for v in vs if v["reason"] == "generated"), None)
-        if base is None:
+    for w in _sv.learning_weeks(restaurant_id, weeks, db_path):
+        if not w["base"]:
             continue
-        mgr = [v for v in vs if v["reason"] in ("edited", "published") and v["version"] > base["version"]]
-        if not mgr:
-            continue
-        b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(mgr[-1]["schedule_csv"])
-        if not b:
-            continue
-        keys = _edited_keys(diff(b, f))
-        out.append({"history_id": hid, "week_start": week_of.get(hid),
-                    "rows": b, "edited": [(r.get("date") or "", (r.get("employee") or "").strip().lower(),
-                                           r.get("shift_start") or "") in keys for r in b]})
+        keys = _edited_keys(w["diff"])
+        rej = list(w["rejected"])
+        rows = list(w["base"]) + rej
+        edited = [(r.get("date") or "", (r.get("employee") or "").strip().lower(), r.get("shift_start") or "") in keys
+                  for r in w["base"]] + [True] * len(rej)
+        # A rejected row's features are read in the draft it belonged to
+        # (its place in the person's week there), not beside its own redo.
+        feats = row_features(w["base"])
+        if rej:
+            redo = set(w["redo_dates"])
+            orig = [r for r in w["base"] if (r.get("date") or "")[:10] not in redo] + rej
+            feats += row_features(orig)[-len(rej):]
+        out.append({"history_id": w["history_id"], "week_start": w["week_start"], "rows": rows, "edited": edited,
+                    "features": feats, "rejected": len(rej),
+                    "weight": _sv.recency_weight(w["age_days"], _sv.PERSON_HALF_LIFE_DAYS)})
     out.sort(key=lambda w: (w["week_start"] or "", w["history_id"]))
     return out
 
 
 def fit_edit_model(weeks: list) -> dict:
     """Counts behind the predictor: overall and per feature value. Not
-    ready (with the reason) under the minimum history."""
+    ready (with the reason) under the minimum history. Each week counts by
+    its recency `weight` (L-27 — a draft from five months ago says less about
+    next week than last week's; 1.0 when a week carries none); every table
+    keeps the raw counts too ([weighted changed, weighted seen, changed,
+    seen]) for the words a flag is explained in."""
     n = sum(len(w["rows"]) for w in weeks)
     e = sum(sum(1 for x in w["edited"] if x) for w in weeks)
     need = (f"{PREDICT_MIN_WEEKS} drafts you've finished with, {PREDICT_MIN_ROWS} rows and "
@@ -684,17 +752,23 @@ def fit_edit_model(weeks: list) -> dict:
                 "reason": (f"{len(weeks)} draft{'s' if len(weeks) != 1 else ''} you've finished with, {n} row"
                            f"{'s' if n != 1 else ''}, {e} changed — predicting your edits needs at least {need}.")}
     tables = {f: {} for f in _FEATURES}
+    wn = we = 0.0
     for w in weeks:
-        for feats, hit in zip(row_features(w["rows"]), w["edited"]):
+        wt = float(w.get("weight", 1.0) or 0.0)
+        for feats, hit in zip(w.get("features") or row_features(w["rows"]), w["edited"]):
+            wn += wt
+            we += wt if hit else 0.0
             for f in _FEATURES:
                 v = feats.get(f)
                 if not v:
                     continue
-                c = tables[f].setdefault(v, [0, 0])
-                c[0] += 1 if hit else 0
-                c[1] += 1
+                c = tables[f].setdefault(v, [0.0, 0.0, 0, 0])
+                c[0] += wt if hit else 0.0
+                c[1] += wt
+                c[2] += 1 if hit else 0
+                c[3] += 1
     return {"ready": True, "weeks": len(weeks), "rows": n, "edited": e,
-            "base_rate": (e + 1.0) / (n + 2.0), "tables": tables}
+            "base_rate": (we + 1.0) / (wn + 2.0), "tables": tables}
 
 
 def _logit(p):
@@ -729,7 +803,7 @@ def _feature_phrase(feature, value, edits, seen, row) -> str:
     return f"{edits} of {seen}"
 
 
-def predict_edits(model: dict, rows: list, threshold=PREDICT_THRESHOLD, limit=PREDICT_MAX_FLAGS) -> list:
+def predict_edits(model: dict, rows: list, threshold=PREDICT_THRESHOLD, limit=PREDICT_MAX_FLAGS, features=None) -> list:
     """[{index, employee, date, role, shift_start, likelihood, reason, text}]
     for draft rows at or above the threshold (and clearly above the
     restaurant's overall edit rate), likeliest first, at most `limit`."""
@@ -738,16 +812,17 @@ def predict_edits(model: dict, rows: list, threshold=PREDICT_THRESHOLD, limit=PR
     base = model["base_rate"]
     lb = _logit(base)
     out = []
-    for i, (r, feats) in enumerate(zip(rows, row_features(rows))):
+    for i, (r, feats) in enumerate(zip(rows, features or row_features(rows))):
         contrib = []
         for f in _FEATURES:
             v = feats.get(f)
             c = (model["tables"].get(f) or {}).get(v) if v else None
             if not c:
                 continue
-            e, n = c
+            e, n = c[0], c[1]
+            raw_e, raw_n = (c[2], c[3]) if len(c) >= 4 else (c[0], c[1])
             rate = (e + PREDICT_SMOOTHING * base) / (n + PREDICT_SMOOTHING)
-            contrib.append((_logit(rate) - lb, f, v, e, n))
+            contrib.append((_logit(rate) - lb, f, v, int(raw_e), int(raw_n)))
         ranked = sorted(contrib, key=lambda c: (-abs(c[0]), c[1]))
         z = lb + sum(c[0] * (1.0 if k == 0 else PREDICT_SUPPORT) for k, c in enumerate(ranked))
         p = 1 / (1 + math.exp(-z))
@@ -833,7 +908,7 @@ def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
         if not model.get("ready"):
             skipped += 1
             continue
-        preds = predict_edits(model, w["rows"], threshold=threshold, limit=len(w["rows"]))
+        preds = predict_edits(model, w["rows"], threshold=threshold, limit=len(w["rows"]), features=w.get("features"))
         idx = {p["index"] for p in preds}
         h = sum(1 for j in idx if w["edited"][j])
         e = sum(1 for x in w["edited"] if x)
@@ -849,6 +924,446 @@ def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
             "recall": round(hits / edited, 3) if edited else None,
             "base_rate": round(edited / rows, 3) if rows else None,
             "per_week": per_week}
+
+
+# ── the predictor put to use (schedule audit 10/3/26 L-15) ────────────────
+#
+# The edit predictor was display-only: rows the manager changes at 50% or
+# more on their own backtest were written into the draft anyway. Once its
+# leave-one-out backtest on this restaurant's own drafts is right at least
+# PREDICT_ACTIONABLE_HIT_RATE of the time, its flags are (a) a pre-publish
+# "likely to change" review (strategy_routes._do_publish_check) and (b)
+# soft-cost signals for the solver, the optimizer and the scorer
+# (likely_edit_signals — the shape the next wave consumes).
+
+PREDICT_ACTIONABLE_HIT_RATE = 0.6
+
+
+def likely_edit_signals(restaurant_id, rows: list, db_path=DB_PATH, weeks=None) -> dict:
+    """{"ready", "reason", "hit_rate", "backtest_weeks", "base_rate",
+    "flags": [{index, employee, date, shift_start, shift_end, role,
+    likelihood, features, origin, weight, reason}]} for the draft `rows`.
+    `ready` only once the backtest covers PREDICT_MIN_BACKTEST_WEEKS weeks
+    and its hit rate is at least PREDICT_ACTIONABLE_HIT_RATE; below that
+    `flags` is empty and `reason` says what is missing. `weight` (0-1) is
+    the lift over the restaurant's own edit rate times the backtest hit rate
+    — what a soft cost scales by: keeping that person on that slot, or a
+    row of that origin, costs the week that much."""
+    weeks = prediction_weeks(restaurant_id, db_path=db_path) if weeks is None else weeks
+    model = fit_edit_model(weeks)
+    if not model.get("ready"):
+        return {"ready": False, "reason": model.get("reason"), "hit_rate": None, "backtest_weeks": 0, "flags": []}
+    bt = edit_prediction_backtest(weeks)
+    hr, n = bt.get("hit_rate"), int(bt.get("weeks") or 0)
+    if n < PREDICT_MIN_BACKTEST_WEEKS or hr is None or hr < PREDICT_ACTIONABLE_HIT_RATE:
+        why = (f"the edit predictor has been right {bt.get('hits') or 0} of {bt.get('flagged') or 0} times over "
+               f"{n} held-out draft{'s' if n != 1 else ''} — it steers the draft once it is right "
+               f"{int(PREDICT_ACTIONABLE_HIT_RATE * 100)}% of the time over at least {PREDICT_MIN_BACKTEST_WEEKS}")
+        return {"ready": False, "reason": why, "hit_rate": hr, "backtest_weeks": n, "flags": []}
+    base = bt.get("base_rate") or 0.0
+    feats = row_features(rows)
+    flags = []
+    for p in predict_edits(model, rows, limit=len(rows or [])):
+        r = rows[p["index"]]
+        flags.append({"index": p["index"], "employee": p["employee"], "date": p["date"],
+                      "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "role": r.get("role"),
+                      "likelihood": p["likelihood"], "features": p["features"], "origin": feats[p["index"]]["origin"],
+                      "weight": round(max(0.0, p["likelihood"] - base) * hr, 3), "reason": p["reason"],
+                      "text": p["text"]})
+    return {"ready": True, "reason": None, "hit_rate": hr, "backtest_weeks": n, "base_rate": base,
+            "hits": bt.get("hits"), "flagged": bt.get("flagged"), "flags": flags}
+
+
+def likely_to_change(restaurant_id, rows: list, db_path=DB_PATH, limit=PREDICT_MAX_FLAGS) -> dict:
+    """The pre-publish review (L-15): the rows the manager has been shown,
+    by their own backtest, to change — before staff are told. {ready,
+    reason, hit_rate, note, rows: [{employee, date, role, shift_start,
+    likelihood, text}]} (the likeliest `limit`)."""
+    sig = likely_edit_signals(restaurant_id, rows, db_path=db_path)
+    if not sig["ready"]:
+        return {"ready": False, "reason": sig["reason"], "hit_rate": sig["hit_rate"], "rows": []}
+    note = (f"flags like these were right {sig['hits']} of {sig['flagged']} times on your last "
+            f"{sig['backtest_weeks']} drafts")
+    top = sorted(sig["flags"], key=lambda f: (-f["likelihood"], f["index"]))[:limit]
+    return {"ready": True, "reason": None, "hit_rate": sig["hit_rate"], "note": note,
+            "rows": [{k: f[k] for k in ("employee", "date", "role", "shift_start", "likelihood", "text")} for f in top]}
+
+
+# ── what a save teaches, as it is made (schedule audit 10/3/26 L-4, L-5,
+#    L-35) ────────────────────────────────────────────────────────────────
+
+# The first weeks carry the most explicit intent and teach the learners
+# almost nothing (two edited weeks before a pattern, seven drafts before
+# the predictor). While a restaurant has fewer than this many weeks it
+# drafted with Cavnar AI and sent, a big change of the manager's own asks
+# one tap — always / just this week / they called off (L-35).
+COLD_START_WEEKS = 4
+WHY_MAX_QUESTIONS = 3
+WHY_RETIME_MIN_MINUTES = 30
+WHY_ANSWERS = ("always", "this_week", "call_off")
+WHY_LABELS = {"always": "Always", "this_week": "Just this week", "call_off": "They called off"}
+
+
+def in_cold_start(restaurant_id, db_path=DB_PATH) -> bool:
+    """Fewer than COLD_START_WEEKS weeks drafted with Cavnar AI and sent."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("SELECT COUNT(DISTINCT h.week_start) FROM schedule_history h WHERE h.restaurant_id=? AND "
+                         "h.published_at IS NOT NULL AND EXISTS (SELECT 1 FROM schedule_versions v WHERE "
+                         "v.history_id=h.id AND v.reason='generated')", (restaurant_id,)).fetchone()[0]
+    finally:
+        conn.close()
+    return int(n or 0) < COLD_START_WEEKS
+
+
+def _attendance_link(restaurant_id, name, day, db_path=DB_PATH):
+    """The attendance record for a person taken off a date, when there is
+    one: {id, outcome, source} — a call-out or no-show the reaction answered."""
+    try:
+        import staff_settings
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT id, outcome, source FROM attendance_events WHERE restaurant_id=? AND "
+                               "employee_key=? AND business_date=? ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, staff_settings.name_key(name), str(day or "")[:10])).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:                   # a read; the reaction is observed without it
+        log.warning("attendance link unavailable for %s: %s", restaurant_id, e)
+        return None
+    return dict(row) if row else None
+
+
+def _open_episode(restaurant_id, kind, db_path=DB_PATH):
+    """The key of the newest recommendation of `kind` still open (or taken
+    and not yet carried out), else None."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT key FROM rec_instances WHERE restaurant_id=? AND kind=? AND status IN "
+                               "('open', 'accepted') ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                               (restaurant_id, kind)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("open %s episode unreadable for %s: %s", kind, restaurant_id, e)
+        return None
+    return row["key"] if row else None
+
+
+def _who(user) -> str:
+    return ((user or {}).get("username") or (user or {}).get("email") or "").strip()[:120] if isinstance(user, dict) else ""
+
+
+def capture_save(restaurant_id, history_id, version, step, user=None, published=False, db_path=DB_PATH) -> dict:
+    """What a manager's save teaches, right after it is stored (the save
+    route calls it after its commit; `step` is schedule_versions.step_origins
+    of the save):
+      * Cavnar AI's changes the owner kept credit trust in that kind of move
+        — the apply-fixes, Improve and overtime-move recommendations are
+        implemented (rec_ledger) — and are observed as cavnar_change_saved,
+        never as the manager's habit (L-5);
+      * on a week staff already have every change is a reaction (phase
+        post_publish), observed with the attendance record of the person
+        taken off when there is one — the learners never read it as a habit
+        (L-4);
+      * in the first weeks, a big change of the manager's own asks a one-tap
+        why (L-35).
+    Returns {why_questions, reactions, cavnar_changes, credited}."""
+    import schedule_memory
+    import schedule_versions as _sv
+    from shift_quality import present_dayparts
+    auth = _sv.authority_of(user) if user else _sv.SYSTEM
+    who = _who(user) or None
+    phase = _sv.POST_PUBLISH if published else _sv.PRE_PUBLISH
+    out = {"why_questions": [], "reactions": 0, "cavnar_changes": 0, "credited": 0}
+    week_start = None
+    try:
+        conn = get_conn(db_path)
+        try:
+            h = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                             (history_id, restaurant_id)).fetchone()
+            week_start = h["week_start"] if h else None
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("week of history %s unreadable: %s", history_id, e)
+    by_source = {}
+    for ch in step.get("changes") or []:
+        it = ch["item"]
+        a, b = ch.get("after") or {}, ch.get("before") or {}
+        row = a or b or it
+        start = row.get("shift_start") or it.get("shift_start") or it.get("new_start") or ""
+        part = (present_dayparts({"shift_start": start, "shift_end": row.get("shift_end") or ""}) or ["unknown"])[0]
+        value = {"change": ch["kind"], "source": ch["source"]}
+        for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
+            if it.get(f):
+                value[f] = it[f]
+        person = it.get("employee") or it.get("from") or it.get("to")
+        if ch["origin"] == "cavnar":
+            out["cavnar_changes"] += 1
+            by_source.setdefault(ch["source"], []).append(ch)
+            schedule_memory.observe(restaurant_id, "cavnar_change_saved", week_start=week_start, date=it.get("date"),
+                                    daypart=part, role=row.get("role"), person=person, value=value, origin="cavnar",
+                                    phase=phase, authority=auth, editor=who, source=ch["source"],
+                                    history_id=history_id, db_path=db_path)
+        elif published:
+            off = it.get("from") if ch["kind"] == "moved" else (it.get("employee") if ch["kind"] == "removed" else None)
+            if off:
+                link = _attendance_link(restaurant_id, off, it.get("date"), db_path)
+                if link:
+                    value["attendance"] = link
+            out["reactions"] += 1
+            schedule_memory.observe(restaurant_id, "reaction", week_start=week_start, date=it.get("date"),
+                                    daypart=part, role=row.get("role"), person=person, value=value, origin="manager",
+                                    phase=phase, authority=auth, editor=who, source="save", history_id=history_id,
+                                    db_path=db_path)
+    # Trust in the move kind the owner kept (L-5): the recommendation that
+    # proposed it is implemented — once per save.
+    if by_source and auth != "admin":
+        try:
+            import rec_ledger as _rl
+            ref = f"schedule_save:{history_id}:{version}"
+            keys = []
+            for ch in by_source.get("overtime_move") or []:
+                it = ch["item"]
+                if ch["kind"] == "moved" and it.get("from"):
+                    keys.append(_rl.rec_key("overtime_move", f"{it['from']}:{it.get('date')}"))
+            for src, kind in (("optimize", "optimizer"), ("apply_fixes", "apply_fixes")):
+                if by_source.get(src):
+                    k = _open_episode(restaurant_id, kind, db_path)
+                    if k:
+                        keys.append(k)
+            if keys:
+                out["credited"] = _rl.implemented(restaurant_id, keys, "schedule_review",
+                                                  user_id=(user or {}).get("id") if isinstance(user, dict) else None,
+                                                  source_ref=ref, meta={"via": "schedule_save", "module": "schedule"},
+                                                  db_path=db_path)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
+    if in_cold_start(restaurant_id, db_path):
+        try:
+            out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")
+    return out
+
+
+def _day_label(iso) -> str:
+    from time_utils import mdy
+    return f"{_weekday(iso)[:3]} {mdy(iso)}".strip()
+
+
+def _meal(part) -> str:
+    return {"morning": "lunch", "night": "dinner"}.get(part, part or "")
+
+
+def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH) -> list:
+    """The one-tap "why" for the biggest of a save's own changes (L-35), at
+    most WHY_MAX_QUESTIONS, never one already asked about this week: a
+    person taken off a slot (moved or removed), more of a role on a slot,
+    a role's start or end moved WHY_RETIME_MIN_MINUTES or more, a role
+    change. Each is stored (schedule_edit_answers, answer NULL) and
+    returned as {key, kind, text, options: [{answer, label}], date, employee,
+    role, daypart} — "They called off" only on a week staff already have."""
+    import schedule_versions as _sv
+    from shift_quality import present_dayparts
+    from schedule_rules import parse_minutes
+    mine = [ch for ch in step.get("changes") or [] if ch["origin"] == "manager"]
+    if not mine:
+        return []
+    cands = []
+    moved_from = set()
+
+    def _part_of(r):
+        return (present_dayparts({"shift_start": r.get("shift_start") or "", "shift_end": r.get("shift_end") or ""})
+                or ["unknown"])[0]
+    for ch in mine:
+        it = ch["item"]
+        if ch["kind"] in ("moved", "removed"):
+            b = ch.get("before") or it
+            name = it.get("from") if ch["kind"] == "moved" else it.get("employee")
+            moved_from.add((it.get("date"), (name or "").strip().lower()))
+            part = _part_of(b)
+            subject = {"kind": "moved_off", "employee": name, "date": it.get("date"), "day": _weekday(it.get("date")),
+                       "daypart": part, "role": b.get("role") or it.get("role"), "shift_start": b.get("shift_start"),
+                       "replaced_by": it.get("to")}
+            text = (f"{it.get('to')} in for {name} on {_day_label(it.get('date'))} {_meal(part)}"
+                    if ch["kind"] == "moved" else f"{name} off {_day_label(it.get('date'))} {_meal(part)}")
+            cands.append((0, f"moved_off|{it.get('date')}|{(name or '').lower()}|{part}", subject, text, ch,
+                          f"Always keep {name} off {subject['day']} {_meal(part)}"))
+    adds = {}
+    for ch in mine:
+        if ch["kind"] != "added":
+            continue
+        a = ch["item"]
+        k = (a.get("date"), _part_of(a), (a.get("role") or "").strip())
+        adds.setdefault(k, []).append(ch)
+    for (d, part, role), chs in adds.items():
+        n = len(chs)
+        subject = {"kind": "headcount_add", "role": role, "date": d, "day": _weekday(d), "daypart": part, "delta": n}
+        word = role if n == 1 else _plural(role)
+        cands.append((1, f"headcount_add|{d}|{role.lower()}|{part}", subject,
+                      f"{n} more {word} on {_day_label(d)} {_meal(part)}",
+                      {"keys": set().union(*[c["keys"] for c in chs])},
+                      f"Always draft {n} more {word} on {_weekday(d)} {_meal(part)}"))
+    for ch in mine:
+        if ch["kind"] != "retimed":
+            continue
+        it = ch["item"]
+        for kind, old, new in (("retime_start", it.get("old_start"), it.get("new_start")),
+                               ("retime_end", it.get("old_end"), it.get("new_end"))):
+            mo, mn = parse_minutes(old or ""), parse_minutes(new or "")
+            if mo is None or mn is None or abs(mn - mo) < WHY_RETIME_MIN_MINUTES:
+                continue
+            part = _part(it.get("new_start"))
+            role = (it.get("role") or "").strip()
+            when = _clock(new)
+            verb = "starting" if kind == "retime_start" else "ending"
+            subject = {"kind": kind, "role": role, "date": it.get("date"), "day": _weekday(it.get("date")),
+                       "daypart": part, "time": when, "employee": it.get("employee")}
+            cands.append((2, f"{kind}|{it.get('date')}|{role.lower()}|{part}|{when}", subject,
+                          f"{_plural(role)} {verb} {when} on {_day_label(it.get('date'))} {_meal(part)}", ch,
+                          f"Always {'start' if kind == 'retime_start' else 'end'} {_plural(role)} then on "
+                          f"{subject['day']}s"))
+    for ch in mine:
+        if ch["kind"] != "role_changed":
+            continue
+        it = ch["item"]
+        part = _part(it.get("shift_start"))
+        subject = {"kind": "role_change", "employee": it.get("employee"), "role": it.get("new_role"),
+                   "was_role": it.get("old_role"), "date": it.get("date"), "day": _weekday(it.get("date")),
+                   "daypart": part}
+        cands.append((3, f"role_change|{it.get('date')}|{(it.get('employee') or '').lower()}|{part}", subject,
+                      f"{it.get('employee')} as {it.get('new_role')} on {_day_label(it.get('date'))} {_meal(part)}", ch,
+                      f"Always draft {it.get('employee')} as {it.get('new_role')} on {subject['day']} {_meal(part)}"))
+    if not cands:
+        return []
+    conn = get_conn(db_path)
+    try:
+        asked = {r[0] for r in conn.execute("SELECT question_key FROM schedule_edit_answers WHERE restaurant_id=? "
+                                            "AND history_id=?", (restaurant_id, history_id)).fetchall()}
+        out = []
+        for rank, key, subject, text, ch, always in sorted(cands, key=lambda c: (c[0], c[1])):
+            if key in asked or len(out) >= WHY_MAX_QUESTIONS:
+                continue
+            options = [{"answer": "always", "label": always}, {"answer": "this_week", "label": WHY_LABELS["this_week"]}]
+            if phase == _sv.POST_PUBLISH and subject["kind"] == "moved_off":
+                options.append({"answer": "call_off", "label": f"{subject['employee']} called off"})
+            keys = sorted(_sv.key_str(k) for k in (ch.get("keys") or set()))
+            conn.execute("INSERT OR IGNORE INTO schedule_edit_answers (restaurant_id, history_id, version, "
+                         "question_key, kind, subject_json, keys_json, phase) VALUES (?,?,?,?,?,?,?,?)",
+                         (restaurant_id, history_id, version, key, subject["kind"],
+                          json.dumps(dict(subject, options=[o["answer"] for o in options], text=text)),
+                          json.dumps(keys), phase))
+            asked.add(key)
+            out.append({"key": key, "kind": subject["kind"], "text": text, "options": options,
+                        "date": subject.get("date"), "employee": subject.get("employee"), "role": subject.get("role"),
+                        "daypart": subject.get("daypart")})
+        conn.commit()
+    finally:
+        conn.close()
+    return out
+
+
+def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_path=DB_PATH) -> dict:
+    """The owner's tap on a "why" (L-35). `always` makes the change a
+    standing pattern at once with their authority (and tells the
+    observation log — a candidate memory); `this_week` keeps it out of the
+    habits; `call_off` records the person's call-out (attendance, source
+    manual) and keeps it out of the habits. An admin's answer (view-as) is
+    kept and counts only once the account holder adopts it. Raises
+    ValueError with the owner's words."""
+    import schedule_memory
+    import schedule_versions as _sv
+    if answer not in WHY_ANSWERS:
+        raise ValueError("Pick always, just this week, or they called off.")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM schedule_edit_answers WHERE restaurant_id=? AND history_id=? AND "
+                           "question_key=?", (restaurant_id, history_id, str(key or "")[:200])).fetchone()
+        if row is None:
+            raise ValueError("That question isn't on this week any more.")
+        subject = json.loads(row["subject_json"] or "{}") or {}
+        if answer not in (subject.get("options") or WHY_ANSWERS[:2]):
+            raise ValueError("That answer doesn't fit this change.")
+        if row["answer"] and row["answer"] != answer:
+            raise ValueError("This one is already answered.")
+        auth = _sv.authority_of(user) if user else _sv.SYSTEM
+        conn.execute("UPDATE schedule_edit_answers SET answer=?, authority=?, answered_by=?, answered_at=datetime('now') "
+                     "WHERE id=?", (answer, auth, _who(user) or None, row["id"]))
+        conn.commit()
+        answer_id = row["id"]
+    finally:
+        conn.close()
+    schedule_memory.observe(restaurant_id, "edit_why", week_start=None, date=subject.get("date"),
+                            daypart=subject.get("daypart"), role=subject.get("role"), person=subject.get("employee"),
+                            value={"answer": answer, "question": subject.get("text"), "kind": subject.get("kind"),
+                                   "subject": {k: v for k, v in subject.items() if k not in ("options", "text")}},
+                            origin="manager", phase=row["phase"] or _sv.PRE_PUBLISH, authority=auth,
+                            editor=_who(user) or None, source="edit_why", history_id=history_id, db_path=db_path)
+    applied = {} if auth == "admin" else apply_edit_answer(restaurant_id, answer_id, db_path=db_path)
+    return {"ok": True, "key": key, "answer": answer, "counted": auth != "admin", "applied": applied}
+
+
+def _said_pattern(subject) -> dict:
+    """The learned-pattern shape of an answered question (pattern_key's
+    fields and the standing row's words)."""
+    kind, day, part = subject.get("kind"), subject.get("day"), subject.get("daypart")
+    meal = _PRETTY.get(part, part)
+    p = {"kind": kind, "employee": "", "role": subject.get("role") or "", "day": day, "daypart": part}
+    if kind == "moved_off":
+        p["employee"] = subject.get("employee") or ""
+        p["role"] = ""
+        p["text"] = (f"The owner said always: keep {p['employee']} off {day} {meal} — avoid scheduling them there.")
+    elif kind == "headcount_add":
+        p["delta"] = int(subject.get("delta") or 1)
+        p["text"] = (f"The owner said always: {p['delta']} more {_plural(p['role']) if p['delta'] != 1 else p['role']} "
+                     f"on {day} {meal} — draft {p['delta']} more there.")
+    elif kind in ("retime_start", "retime_end"):
+        p["time"] = subject.get("time")
+        verb = "start" if kind == "retime_start" else "end"
+        p["text"] = f"The owner said always: {verb} {_plural(p['role'])} on {day} {meal} at {p['time']} — {verb} them then."
+    elif kind == "role_change":
+        p["employee"] = subject.get("employee") or ""
+        p["was_role"] = subject.get("was_role") or ""
+        p["text"] = (f"The owner said always: {p['employee']} as {p['role']} on {day} {meal} — draft them as "
+                     f"{p['role']} there.")
+    return p
+
+
+def apply_edit_answer(restaurant_id, answer_id, db_path=DB_PATH) -> dict:
+    """What a counted answer does: `always` → the standing pattern
+    (schedule_versions.owner_said_pattern); `call_off` → the call-out in
+    attendance (source manual); `this_week` needs nothing — the learners
+    read the answer. Returns what was applied."""
+    import schedule_versions as _sv
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM schedule_edit_answers WHERE id=? AND restaurant_id=?",
+                           (answer_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row["answer"]:
+        return {}
+    subject = json.loads(row["subject_json"] or "{}") or {}
+    auth = row["authority"] if (row["authority"] or "") != "admin" else "principal"
+    if row["answer"] == "always":
+        p = _said_pattern(subject)
+        if not p.get("day") or p.get("daypart") in (None, "", "unknown"):
+            return {}
+        return {"pattern": _sv.owner_said_pattern(restaurant_id, p, auth, history_id=row["history_id"],
+                                                  who=row["answered_by"], db_path=db_path)}
+    if row["answer"] == "call_off" and subject.get("employee") and subject.get("date"):
+        import attendance
+        wrote = attendance.record(restaurant_id, subject["employee"], subject["date"], "called_out", "manual",
+                                  shift_start=subject.get("shift_start") or "", role=subject.get("role"),
+                                  history_id=row["history_id"], covered_by=subject.get("replaced_by"),
+                                  note="Marked a call-off when the schedule was edited", db_path=db_path)
+        return {"attendance": bool(wrote)}
+    return {}
 
 
 # ── outcome calibration ───────────────────────────────────────────────────
@@ -897,15 +1412,19 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     fit. A dimension a shift did not score is held at its mean there, so it
     neither helps nor hurts that shift. Joint rather than one correlation
     per dimension: coverage and the half-hour sweep move together, and
-    fitted one at a time each took the credit for the other."""
-    rows = [(dims, oc[outcome]) for dims, oc, _h in samples if oc.get(outcome) is not None]
+    fitted one at a time each took the credit for the other.
+
+    At most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts is
+    fitted (SQ-22), the best-observed first; the ones that did not fit are
+    returned as `crowded`."""
+    rows = [(s[0], s[1][outcome]) for s in samples if s[1].get(outcome) is not None]
     if len(rows) < min_pairs:
-        return {}, {}, len(rows)
+        return {}, {}, len(rows), []
     ys = [y for _d, y in rows]
     my = sum(ys) / len(ys)
     sy = math.sqrt(sum((y - my) ** 2 for y in ys) / len(ys))
     if sy <= 1e-9:
-        return {}, {}, len(rows)
+        return {}, {}, len(rows), []
     stats, seen = {}, {}
     for k in keys:
         vals = [d[k] for d, _y in rows if k in d]
@@ -916,9 +1435,11 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
         sd = math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals))
         if sd > 1e-9:
             stats[k] = (mu, sd)
-    used = sorted(stats)
+    room = max(0, len(rows) // CALIBRATION_SAMPLES_PER_DIMENSION)
+    ranked = sorted(stats, key=lambda k: (-seen[k], k))
+    used, crowded = sorted(ranked[:room]), sorted(ranked[room:])
     if not used:
-        return {}, seen, len(rows)
+        return {}, seen, len(rows), crowded
     xs = [[((d[k] - stats[k][0]) / stats[k][1]) if k in d else 0.0 for k in used] for d, _y in rows]
     yz = [(y - my) / sy for y in ys]
     n, p = len(xs), len(used)
@@ -928,10 +1449,10 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     xty = [sum(xs[r][i] * yz[r] for r in range(n)) for i in range(p)]
     beta = _solve(xtx, xty)
     if beta is None:
-        return {}, seen, len(rows)
+        return {}, seen, len(rows), crowded
     # Scaled so a lone dimension's coefficient is its correlation, which is
     # what CALIBRATION_MIN_EVIDENCE was written against.
-    return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows)
+    return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows), crowded
 
 
 # The outcomes a shift is judged by afterwards: +1 = a higher value is
@@ -944,9 +1465,12 @@ CALIBRATION_OUTCOMES = {
 
 
 def _calibration_samples(restaurant_id, db_path):
-    """[(dims, outcomes, history_id)] — one per recorded shift outcome that
-    has a stored score, plus the dates Cavnar was watching (None when the
-    restaurant cannot be watched at all)."""
+    """[(dims, outcomes, history_id, meta)] — one per recorded shift outcome
+    that has a stored score, plus the dates Cavnar was watching (None when
+    the restaurant cannot be watched at all). meta: the shift's profile key
+    and label, its score, the bar it was held to and each dimension's floor
+    on it (when the stored score kept them) — what the floors and bars are
+    read against (SQ-22)."""
     conn = get_conn(db_path)
     try:
         # The review rating a shift is judged on is only the reviews that
@@ -970,7 +1494,7 @@ def _calibration_samples(restaurant_id, db_path):
                 hist[h["id"]] = h
     finally:
         conn.close()
-    dims_by = {}
+    dims_by, meta_by = {}, {}
     for hid, h in hist.items():
         try:
             q = json.loads(h["quality_json"] or "null") or {}
@@ -979,8 +1503,14 @@ def _calibration_samples(restaurant_id, db_path):
         for s in q.get("shifts") or []:
             if not s.get("scored"):
                 continue
-            dims_by[(hid, s.get("date"), s.get("daypart"))] = {
+            key = (hid, s.get("date"), s.get("daypart"))
+            dims_by[key] = {
                 d["key"]: float(d["score"]) for d in s.get("dimensions") or [] if d.get("key") and d.get("score") is not None}
+            prof = s.get("profile") or {}
+            meta_by[key] = {"profile": prof.get("key"), "label": prof.get("label"),
+                            "score": s.get("score"), "bar": prof.get("min_quality"),
+                            "floors": {d["key"]: d["floor"] for d in s.get("dimensions") or []
+                                       if d.get("key") and d.get("floor") is not None}}
     # A coverage or no-show issue can only have been opened on a night the
     # coverage check was watching (schedule_intel.watched_dates). A quiet
     # night nobody watched is not a clean one, so the issues outcome counts
@@ -1005,7 +1535,8 @@ def _calibration_samples(restaurant_id, db_path):
             labor = float(o["labor_pct"]) - float(target)
         samples.append((dims, {"issues": float(o["issues"] or 0) if o["date"] in watched else None,
                                "review_rating": float(o["review_rating"]) if o["review_rating"] is not None else None,
-                               "labor_vs_target": labor}, o["history_id"]))
+                               "labor_vs_target": labor}, o["history_id"],
+                        meta_by.get((o["history_id"], o["date"], o["daypart"])) or {}))
     return samples, watched
 
 
@@ -1034,7 +1565,14 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
         score — the next suggestion takes the next step if the record
         still says so;
       * every dimension says which outcome drove its change, and how many
-        shifts that rests on. Deterministic."""
+        shifts that rests on. Deterministic.
+
+    Floors and bars too (schedule audit 10/3/26 SQ-22): weights cannot lift
+    a shift a critical floor caps, so each shift profile with
+    CALIBRATION_MIN_PROFILE_SHIFTS of its own shifts on record also has its
+    quality bar and each critical floor read against what those shifts did
+    (`profiles`, `suggested_profiles`; _profile_calibration). Apply writes
+    them (apply_profile_calibration)."""
     from shift_quality import DEFAULT_WEIGHTS
     samples, watched = _calibration_samples(restaurant_id, db_path)
     n_weeks = len({s[2] for s in samples})
@@ -1056,13 +1594,13 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     keys = list(DEFAULT_WEIGHTS)
     fits = {}
     for outcome in CALIBRATION_OUTCOMES:
-        coef, seen, used = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
-        fits[outcome] = {"coef": coef, "seen": seen, "shifts": used}
+        coef, seen, used, crowded = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
+        fits[outcome] = {"coef": coef, "seen": seen, "shifts": used, "crowded": crowded}
     report, suggested = {}, {}
     for key, default in DEFAULT_WEIGHTS.items():
         corr, pairs_n, coefs, contrib = {}, {}, {}, {}
         for outcome, (sign, _label, _good, _bad) in CALIBRATION_OUTCOMES.items():
-            pairs = [(dims[key], oc[outcome]) for dims, oc, _h in samples if key in dims and oc[outcome] is not None]
+            pairs = [(dims[key], oc[outcome]) for dims, oc, *_rest in samples if key in dims and oc[outcome] is not None]
             pairs_n[outcome] = len(pairs)
             r = _pearson(pairs) if len(pairs) >= CALIBRATION_MIN_PAIRS else None
             corr[outcome] = round(r, 3) if r is not None else None
@@ -1087,6 +1625,11 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                 driver = {"outcome": o, "label": CALIBRATION_OUTCOMES[o][1], "effect": round(same_way[o], 3),
                           "shifts": pairs_n[o]}
         explanation = _calibration_explanation(key, now, weight, target_nudge, ev, driver, contrib, pairs_n)
+        if not contrib and any(key in f["crowded"] for f in fits.values()):
+            fitted = max((len(f["coef"]) for f in fits.values()), default=0)
+            explanation = (f"{key.replace('_', ' ').capitalize()} was left out of this fit: the record carries "
+                           f"{fitted} dimension{'s' if fitted != 1 else ''} at {CALIBRATION_SAMPLES_PER_DIMENSION} "
+                           "shifts each, and the better-observed ones were read first.")
         report[key] = {"default": default, "current": round(now, 1), "suggested": weight,
                        "nudge_pct": int(round((weight / default - 1) * 100)) if default else 0,
                        "step_pct": int(round((weight - now) / default * 100)) if default else 0,
@@ -1101,13 +1644,201 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                     key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
     watch_note = ("" if base["watched_shifts"] else
                   " Coverage and no-show issues are not counted: none of these shifts fell on a night Cavnar AI was watching.")
+    profiles, suggested_profiles = _profile_calibration(samples, _profile_settings(restaurant_id, db_path))
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
-            "moving": moving,
-            "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"])} for o, f in fits.items()},
+            "moving": moving, "profiles": profiles, "suggested_profiles": suggested_profiles,
+            "moving_profiles": sorted(suggested_profiles),
+            "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"]), "left_out": f["crowded"]}
+                    for o, f in fits.items()},
             "limits": {"max_step_pct": int(CALIBRATION_MAX_STEP * 100), "max_total_pct": int(CALIBRATION_MAX_NUDGE * 100),
-                       "min_pairs": CALIBRATION_MIN_PAIRS, "min_evidence": CALIBRATION_MIN_EVIDENCE},
-            "note": ("Suggestions only — the engine keeps its current weights until someone applies them. One apply moves "
-                     f"a weight at most {int(CALIBRATION_MAX_STEP * 100)}% of its default." + watch_note)}
+                       "min_pairs": CALIBRATION_MIN_PAIRS, "min_evidence": CALIBRATION_MIN_EVIDENCE,
+                       "shifts_per_dimension": CALIBRATION_SAMPLES_PER_DIMENSION,
+                       "min_profile_shifts": CALIBRATION_MIN_PROFILE_SHIFTS,
+                       "max_floor_step": CALIBRATION_THRESHOLD_STEP},
+            "note": ("Suggestions only — the engine keeps its current weights, floors and bars until someone applies them. "
+                     f"One apply moves a weight at most {int(CALIBRATION_MAX_STEP * 100)}% of its default, and a floor or "
+                     f"a bar at most {CALIBRATION_THRESHOLD_STEP} points." + watch_note)}
+
+
+def _most_common(values):
+    counts = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    return max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if counts else None
+
+
+def _threshold_fit(points: list, current: float):
+    """(line, evidence, below, above) — of the candidate lines within
+    CALIBRATION_THRESHOLD_RANGE of `current` (every 5 points), the one that
+    best separates the shifts that went worse: for each outcome with data,
+    the gap between the shifts scoring at or over the line and those under
+    it, in standard deviations and signed so positive means the shifts over
+    it did better; evidence is the mean over the outcomes. A line needs
+    CALIBRATION_MIN_SIDE shifts on each side. None when no candidate has
+    them. Ties go to the line nearest `current`. Pure."""
+    best = None
+    lo = max(0, int(current) - CALIBRATION_THRESHOLD_RANGE)
+    hi = min(100, int(current) + CALIBRATION_THRESHOLD_RANGE)
+    for t in range(lo - lo % 5, hi + 1, 5):
+        effects = []
+        for outcome, (sign, *_words) in CALIBRATION_OUTCOMES.items():
+            over = [oc[outcome] for x, oc in points if oc.get(outcome) is not None and x >= t]
+            under = [oc[outcome] for x, oc in points if oc.get(outcome) is not None and x < t]
+            if len(over) < CALIBRATION_MIN_SIDE or len(under) < CALIBRATION_MIN_SIDE:
+                continue
+            ys = over + under
+            mu = sum(ys) / len(ys)
+            sd = math.sqrt(sum((y - mu) ** 2 for y in ys) / len(ys))
+            if sd <= 1e-9:
+                continue
+            effects.append(sign * (sum(over) / len(over) - sum(under) / len(under)) / sd)
+        if not effects:
+            continue
+        ev = sum(effects) / len(effects)
+        below = sum(1 for x, _oc in points if x < t)
+        if best is None or ev > best[1] + 1e-9 or (abs(ev - best[1]) <= 1e-9 and abs(t - current) < abs(best[0] - current)):
+            best = (t, ev, below, len(points) - below)
+    return best
+
+
+def _line_reading(name: str, points: list, current) -> dict:
+    """One floor's or bar's reading: {current, suggested, fitted, evidence,
+    below, above, shifts, explanation} — a bounded step toward the line the
+    record shows, or why it stays."""
+    current = int(round(float(current)))
+    out = {"current": current, "suggested": current, "fitted": None, "evidence": None, "shifts": len(points)}
+    fit = _threshold_fit(points, current)
+    if fit is None:
+        out["explanation"] = (f"{name} stays at {current}: not enough shifts on each side of any line near it "
+                              f"({CALIBRATION_MIN_SIDE} each side needed).")
+        return out
+    line, ev, below, above = fit
+    out.update(fitted=line, evidence=round(ev, 3), below=below, above=above)
+    if ev < CALIBRATION_THRESHOLD_EVIDENCE:
+        out["explanation"] = (f"{name} stays at {current}: shifts under no nearby line did clearly worse "
+                              f"(the best gap was {ev:.2f} standard deviations).")
+        return out
+    if line == current:
+        out["explanation"] = (f"{name} stays at {current}, already where the record puts it: the {below} shifts "
+                              f"under it did worse than the {above} at or over it.")
+        return out
+    step = max(-CALIBRATION_THRESHOLD_STEP, min(CALIBRATION_THRESHOLD_STEP, line - current))
+    out["suggested"] = current + step
+    out["explanation"] = (f"{name} {'up' if step > 0 else 'down'} to {current + step}: the {below} shifts under "
+                          f"{line} did worse than the {above} at or over it (a gap of {ev:.1f} standard deviations)"
+                          + ("" if current + step == line else f"; one apply moves it {CALIBRATION_THRESHOLD_STEP} "
+                                                                "points toward that line") + ".")
+    return out
+
+
+def _profile_settings(restaurant_id, db_path=DB_PATH) -> dict:
+    """{profile key: {"min_quality", "floors"}} the restaurant set itself —
+    its own profiles, and the tuning applied to a built-in — which is where
+    a floor or a bar stands now; a built-in nobody tuned is read from what
+    its shifts were held to."""
+    out = {}
+    try:
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        for p in _models_mod.get_shift_profiles(restaurant_id, **kw) or []:
+            out[str(p.get("key"))] = {"min_quality": p.get("min_quality"), "floors": dict(p.get("floors") or {})}
+        for k, t in (_models_mod.get_quality_tuning(restaurant_id, **kw) or {}).items():
+            e = out.setdefault(str(k), {"min_quality": None, "floors": {}})
+            if t.get("min_quality") is not None:
+                e["min_quality"] = t["min_quality"]
+            e["floors"].update(t.get("floors") or {})
+    except Exception as e:
+        log.warning("[calibration] profile settings unavailable for %s: %s", restaurant_id, e)
+    return out
+
+
+def _profile_calibration(samples: list, settings: dict = None) -> tuple:
+    """({profile key: reading}, {profile key: {"min_quality", "floors"}}) —
+    each profile's quality bar and critical floors read against what its
+    own shifts did (SQ-22), and the suggestions that move. A profile with
+    fewer than CALIBRATION_MIN_PROFILE_SHIFTS shifts on record is named and
+    left alone: a weekly profile is one shift a week, and its numbers are
+    not moved on a handful."""
+    from shift_quality import DIMENSION_LABELS
+    by_profile = {}
+    for sample in samples:
+        meta = sample[3] if len(sample) > 3 else {}
+        if (meta or {}).get("profile"):
+            by_profile.setdefault(meta["profile"], []).append((sample[0], sample[1], meta))
+    report, suggested = {}, {}
+    for key in sorted(by_profile):
+        items = by_profile[key]
+        label = _most_common([m.get("label") or key for _d, _o, m in items]) or key
+        entry = {"label": label, "shifts": len(items)}
+        report[key] = entry
+        if len(items) < CALIBRATION_MIN_PROFILE_SHIFTS:
+            entry["ready"] = False
+            entry["explanation"] = (f"{label}: {len(items)} of its shifts on record — its floors and bar are read "
+                                    f"from {CALIBRATION_MIN_PROFILE_SHIFTS} of its own.")
+            continue
+        entry["ready"] = True
+        own = (settings or {}).get(key) or {}
+        bars = [m.get("bar") for _d, _o, m in items if m.get("bar") is not None]
+        points = [(float(m["score"]), oc) for _d, oc, m in items if m.get("score") is not None]
+        if bars and points:
+            current = own.get("min_quality") if own.get("min_quality") is not None else _most_common(bars)
+            entry["bar"] = _line_reading(f"{label}'s quality bar", points, current)
+        floors = {}
+        for dim in sorted({d for _d, _o, m in items for d in (m.get("floors") or {})}):
+            recorded = [m["floors"][dim] for _d, _o, m in items if dim in (m.get("floors") or {})]
+            current = (own.get("floors") or {}).get(dim)
+            if current is None:
+                current = _most_common(recorded)
+            pts = [(float(d[dim]), oc) for d, oc, _m in items if dim in d]
+            name = f"{label}'s {DIMENSION_LABELS.get(dim, dim).lower()} floor"
+            floors[dim] = _line_reading(name, pts, current)
+        entry["floors"] = floors
+        move = {}
+        if entry.get("bar") and entry["bar"]["suggested"] != entry["bar"]["current"]:
+            move["min_quality"] = entry["bar"]["suggested"]
+        moved_floors = {d: e["suggested"] for d, e in floors.items() if e["suggested"] != e["current"]}
+        if moved_floors:
+            move["floors"] = moved_floors
+        if move:
+            suggested[key] = move
+    return report, suggested
+
+
+def apply_profile_calibration(restaurant_id, cal: dict = None, updated_by: str = None, db_path=DB_PATH) -> dict:
+    """Write the suggested floors and bars (calibrate_weights'
+    `suggested_profiles`) — the owner's Apply (SQ-22). A profile the
+    restaurant configured gets them in its own settings (save_shift_profile);
+    a built-in gets them in the tuning the engine lays over the built-ins
+    (restaurants.quality_tuning_json, shift_quality.profiles_from_config),
+    so the rest of the built-in set stays as it was. Returns
+    {"profiles": {key: what was written}, "before": tuning before} — {} of
+    profiles when there was nothing to write."""
+    cal = cal if cal is not None else calibrate_weights(restaurant_id, db_path=db_path)
+    moves = (cal or {}).get("suggested_profiles") or {}
+    kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+    before = _models_mod.get_quality_tuning(restaurant_id, **kw) or {}
+    if not moves:
+        return {"profiles": {}, "before": before}
+    own = {str(p.get("key")): p for p in (_models_mod.get_shift_profiles(restaurant_id, include_inactive=True, **kw) or [])}
+    tuning = {k: dict(v) for k, v in before.items()}
+    written = {}
+    for key, mv in sorted(moves.items()):
+        if key in own:
+            p = dict(own[key])
+            if mv.get("min_quality") is not None:
+                p["min_quality"] = int(mv["min_quality"])
+            if mv.get("floors"):
+                p["floors"] = {**(p.get("floors") or {}), **{k: int(v) for k, v in mv["floors"].items()}}
+            _models_mod.save_shift_profile(restaurant_id, p, updated_by=updated_by, **kw)
+        else:
+            t = tuning.setdefault(key, {})
+            if mv.get("min_quality") is not None:
+                t["min_quality"] = int(mv["min_quality"])
+            if mv.get("floors"):
+                t["floors"] = {**(t.get("floors") or {}), **{k: int(v) for k, v in mv["floors"].items()}}
+        written[key] = dict(mv)
+    if tuning != before:
+        _models_mod.update_restaurant(restaurant_id, {"quality_tuning_json": json.dumps(tuning, sort_keys=True)}, **kw)
+    return {"profiles": written, "before": before}
 
 
 def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs_n) -> str:
@@ -1131,40 +1862,21 @@ def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs
 
 # ── attendance by weekday ─────────────────────────────────────────────────
 
-def _attendance_tally(restaurant_id) -> dict:
-    """{name: {"all": [shifts, no_shows], weekday: [shifts, no_shows]}} from
-    the shifts somebody WATCHED — the same events staff_settings.reliability
-    reads (attendance.reliability_events; memory audit 9/29/26): recorded
-    outcomes, and shifts from a source with a real schedule. A no-show or a
-    call-out is a miss. A person nobody watched is absent (unknown)."""
-    import attendance
-    from datetime import date as _date_at, timedelta as _td_at
-    from staff_settings import RELIABILITY_WINDOW_DAYS
-    since = (_date_at.today() - _td_at(days=RELIABILITY_WINDOW_DAYS)).isoformat()
-    tally = {}
-    for n, day, outcome in attendance.reliability_events(restaurant_id, since=since):
-        wd = _weekday(day)
-        if not n or not wd:
-            continue
-        t = tally.setdefault(n, {"all": [0, 0]})
-        miss = 1 if outcome in attendance.MISSES else 0
-        for k in ("all", wd):
-            e = t.setdefault(k, [0, 0])
-            e[0] += 1
-            e[1] += miss
-    return tally
-
-
 def attendance_by_weekday(restaurant_id, min_shifts=ATTENDANCE_MIN_WEEKDAY_SHIFTS, db_path=DB_PATH) -> dict:
-    """{name: {weekday: {"shifts": n, "no_shows": k, "no_show_rate": r}}} —
-    only weekdays with at least `min_shifts` clocked shifts for that person."""
-    out = {}
-    for n, t in _attendance_tally(restaurant_id).items():
-        for wd in WEEKDAYS:
-            e = t.get(wd)
-            if e and e[0] >= min_shifts:
-                out.setdefault(n, {})[wd] = {"shifts": e[0], "no_shows": e[1], "no_show_rate": round(e[1] / e[0], 2)}
-    return out
+    """{name: {weekday: {"shifts": n, "no_shows": k, "no_show_rate": r,
+    "absence_rate", "call_out_rate"}}} — only weekdays with at least
+    `min_shifts` watched shifts for that person.
+
+    The one weighted attendance reader (staff_settings.weekday_attendance
+    over attendance_events): the same window, recency weighting and
+    notice-weighted call-outs as reliability (schedule audit 10/3/26 L-17,
+    L-18) — this read an unweighted 360 days of its own, so the review and
+    the scorer disagreed about the same person and day."""
+    import staff_settings
+    today = staff_settings.local_today(restaurant_id)
+    return staff_settings.weekday_attendance(staff_settings.attendance_events(restaurant_id, today=today,
+                                                                              db_path=db_path),
+                                             today=today, min_shifts=min_shifts)
 
 
 def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
@@ -1190,15 +1902,22 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     rows = _week_rows(restaurant_id, week_dates, db_path) if rows is None else rows
     if not rows:
         return []
-    tally = {k.strip().lower(): v for k, v in _attendance_tally(restaurant_id).items()}
+    # The one weighted attendance reader (staff_settings.attendance_record —
+    # schedule audit 10/3/26 L-17): the window and recency weighting
+    # reliability uses. Standby plans for a body missing, so it reads the
+    # ABSENCE rate — a call-out counts in full whatever its notice, kept
+    # apart from reliability's notice-weighted miss rate (L-18).
+    import staff_settings
+    rec = staff_settings.attendance_record(restaurant_id, db_path=db_path)
+    tally = {k.strip().lower(): v for k, v in rec["tally"].items()}
     # Calibration (fix I9, CA1 L16): every person's rate is smoothed toward
     # this restaurant's own base rate (staff_settings.smoothed_rate), and a
     # person with no clocked record counts AT that base rate rather than
     # being left out — leaving them out biased the chance low exactly when
     # the least was known. The combination assumes one person's no-show says
     # nothing about another's, and the payload says so.
-    from staff_settings import no_show_base_rate, smoothed_rate
-    base = no_show_base_rate(tally)
+    from staff_settings import smoothed_rate
+    base = rec["base"]["absence"]
     wanted = set(week_dates or [])
     by_date = {}
     for r in rows:
@@ -1213,11 +1932,11 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
         assumed = []
         for low, name in people.items():
             t = tally.get(low) or {}
-            day_e, all_e = t.get(wd), t.get("all")
-            if day_e and day_e[0] >= ATTENDANCE_MIN_WEEKDAY_SHIFTS:
-                risks.append((name, smoothed_rate(day_e[1], day_e[0], base), f"{wd}s"))
-            elif all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS:
-                risks.append((name, smoothed_rate(all_e[1], all_e[0], base), "overall"))
+            day_e = (t.get("days") or {}).get(wd)
+            if day_e and day_e["shifts"] >= ATTENDANCE_MIN_WEEKDAY_SHIFTS:
+                risks.append((name, smoothed_rate(day_e["w_absent"], day_e["w"], base), f"{wd}s"))
+            elif t and t["shifts"] >= ATTENDANCE_MIN_OVERALL_SHIFTS:
+                risks.append((name, smoothed_rate(t["w_absent"], t["w"], base), "overall"))
             else:
                 unknown += 1
                 assumed.append((name, round(base, 2), "no record — this restaurant's overall rate"))
@@ -1240,11 +1959,11 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     out.sort(key=lambda x: (-x["chance_of_a_no_show"], x["date"]))
     out = out[:limit]
     for day in out:
-        day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path)
+        day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path, base=base)
     return out
 
 
-def _standby_person(restaurant_id, day, rows, tally, db_path):
+def _standby_person(restaurant_id, day, rows, tally, db_path, base=0.0):
     """Who to put on call: somebody off that day in the role of the person
     most likely to miss, free and not on time off (labor_replacements'
     own checks), the most reliable first — a known low no-show rate before
@@ -1265,14 +1984,12 @@ def _standby_person(restaurant_id, day, rows, tally, db_path):
     if not fits:
         return None
 
-    from staff_settings import no_show_base_rate, smoothed_rate
-    _base = no_show_base_rate(tally)
+    from staff_settings import smoothed_rate
 
     def _rate(name):
         t = tally.get(name.strip().lower()) or {}
-        all_e = t.get("all")
-        return (smoothed_rate(all_e[1], all_e[0], _base)
-                if all_e and all_e[0] >= ATTENDANCE_MIN_OVERALL_SHIFTS else None)
+        return (smoothed_rate(t["w_absent"], t["w"], base)
+                if t and t.get("shifts", 0) >= ATTENDANCE_MIN_OVERALL_SHIFTS else None)
 
     ranked = sorted(fits, key=lambda f: (_rate(f["name"]) is None, _rate(f["name"]) or 0, -(f.get("score") or 0),
                                          f["name"]))

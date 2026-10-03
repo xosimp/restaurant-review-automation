@@ -1846,7 +1846,7 @@ def _fold(conn, store, keep, gone):
     conn.execute(f"DELETE FROM {table} WHERE rowid=?", (gone["rowid"],))
 
 
-_PATTERN_STATUS_RANK = {"ruled": 3, "active": 2, "dormant": 1, "retired": 0}
+_PATTERN_STATUS_RANK = {"ruled": 3, "active": 2, "retest": 1.5, "dormant": 1, "retired": 0}
 
 
 def _repoint_patterns(conn, rid, store, keys, from_pid, into_name, into_pid) -> dict:
@@ -1895,6 +1895,13 @@ def _repoint_patterns(conn, rid, store, keys, from_pid, into_name, into_pid) -> 
                               if "times_confirmed" in row.keys() else 0, int(row["times_overridden"] or 0),
                               row["first_learned"], row["last_confirmed"], int(row["checked_through"] or 0), status,
                               row["rule_note"], row["ruled_by"], keep["rowid"]))
+                # The evidence adds too (schedule audit 10/3/26 L-6, L-30): the
+                # weeks that tested and kept it, and the newer hand confirmation.
+                if "opportunities" in row.keys():
+                    conn.execute("UPDATE schedule_standing_patterns SET opportunities=COALESCE(opportunities,0)+?, "
+                                 "hits=COALESCE(hits,0)+?, last_hand=MAX(COALESCE(last_hand,''), ?) WHERE rowid=?",
+                                 (int(row["opportunities"] or 0), int(row["hits"] or 0), row["last_hand"] or "",
+                                  keep["rowid"]))
                 conn.execute("DELETE FROM schedule_standing_patterns WHERE rowid=?", (row["rowid"],))
                 continue
             was = {"employee": old_name, "pattern_key": row["pattern_key"], "text": row["text"]}

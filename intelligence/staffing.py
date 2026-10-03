@@ -187,23 +187,67 @@ def _own_sales_by_weekday(restaurant_id: int, restaurant=None, db_path: str = DB
     return {}, None
 
 
+def own_families(restaurant_id: int, own_typical: dict = None, shifts: list = None, db_path: str = DB_PATH) -> set:
+    """The role families the restaurant's OWN history gives a usual crew to
+    (a family with people in any weekday and daypart of its typical
+    headcount): `own_typical` when the caller has the staffing baseline
+    (labor.staffing_baseline), else the punches and published weeks read
+    here the same way."""
+    typical = own_typical
+    if typical is None:
+        try:
+            import labor
+            if shifts is None:
+                shifts = labor.load_shifts_for_restaurant(restaurant_id) or []
+            pub = labor.published_rows_for_baseline(restaurant_id) if db_path in (None, DB_PATH) else []
+            typical = labor.historical_patterns(shifts, published_rows=pub).get("typical_headcount") or {}
+        except Exception:
+            typical = {}
+    out = set()
+    for _slot, roles in (typical or {}).items():
+        for role, n in (roles or {}).items():
+            try:
+                if int(n or 0) > 0:
+                    fam = family_of(role)
+                    if fam:
+                        out.add(fam)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict = None, shifts: list = None,
-                       db_path: str = DB_PATH) -> dict:
-    """Borrowed people per role and daypart for a restaurant with no history
-    of its own. {available: True, borrowed: True, cohort, cohort_label, n,
-    ratios, by_slot, headcount, basis, note} or {available: False, reason}.
+                       db_path: str = DB_PATH, own_typical: dict = None) -> dict:
+    """Borrowed people per role and daypart, for each role family on the
+    roster the restaurant's own history has no usual crew for. {available:
+    True, borrowed: True, cohort, cohort_label, n, ratios, by_slot,
+    headcount, basis, note, families, own_history} or {available: False,
+    reason}.
+
+    It was all or nothing per restaurant: two weeks of shifts or one
+    published week and nothing was borrowed, so a family absent from the
+    restaurant's own record — Simple EJ's managers, who barely punch — got
+    no prior even where the peer engine had one (schedule audit 10/3/26
+    L-2). A family with its own usual crew always keeps it; `families` are
+    the ones borrowed, and merge_into_typical marks each borrowed slot.
 
     roster_roles: {name: role} — the roles to plan, in this restaurant's own
-    spelling (the most common spelling of each family wins)."""
+    spelling (the most common spelling of each family wins). own_typical:
+    the staffing baseline's typical headcount, when the caller has it."""
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id) if db_path in (None, DB_PATH) else get_restaurant(restaurant_id, db_path)
-    if has_own_history(restaurant_id, shifts=shifts, db_path=db_path):
-        return {"available": False, "own_history": True,
-                "reason": "This restaurant staffs from its own history — nothing is borrowed."}
+    own_history = has_own_history(restaurant_id, shifts=shifts, db_path=db_path)
+    covered = own_families(restaurant_id, own_typical=own_typical, shifts=shifts, db_path=db_path) if own_history else set()
+    if own_history:
+        wanted = {family_of(r) for r in (roster_roles or {}).values()} - {None}
+        if not (wanted - covered):
+            return {"available": False, "own_history": True,
+                    "reason": "This restaurant staffs every role family on its roster from its own history — "
+                              "nothing is borrowed."}
     prof = categories.profile_for(restaurant) if restaurant is not None else None
     if not prof or not prof.get("confirmed"):
-        return {"available": False, "own_history": False,
+        return {"available": False, "own_history": own_history,
                 "reason": "No restaurant profile is confirmed yet, so there is no group of similar restaurants to "
                           "borrow a starting headcount from. Confirm it under Account → Restaurant profile and the "
                           "first draft can start from theirs."}
@@ -230,11 +274,11 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
     roles = {}
     for _n, role in (roster_roles or {}).items():
         fam = family_of(role)
-        if fam:
+        if fam and fam not in covered:
             roles.setdefault(fam, {}).setdefault((role or "").strip(), 0)
             roles[fam][(role or "").strip()] += 1
     if not roles:
-        return {"available": False, "own_history": False,
+        return {"available": False, "own_history": own_history,
                 "reason": "The roster has no roles yet, so there is nothing to borrow a headcount for."}
     org = viewer_org(restaurant_id, db_path=db_path)
     ratios = []
@@ -249,7 +293,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
             cohort, label = rung, cohort_label(rung)
             break
     if not ratios:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar ai', '').replace(' on cavnar', '')}) "
                            f"from at least {privacy.MIN_ORGS} separate owners have their staffing measured yet, so no "
                            f"starting headcount is borrowed — the first draft works from your floors alone.")}
@@ -257,7 +301,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
                                             "n": min(r["n"] for r in ratios), "ratios": ratios})
     sales, basis = _own_sales_by_weekday(restaurant_id, restaurant, db_path)
     if not sales:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": ("Similar restaurants' staffing is on file, but it is measured per $1k of sales and this "
                            "restaurant has no sales of its own on file yet to scale it by — connect the POS or set a "
                            "revenue target.")}
@@ -275,12 +319,15 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
             headcount.setdefault((wd, r["daypart"]), {})[role] = people
             by_slot.append({"day": wd, "daypart": r["daypart"], "role": role, "people": people})
     if not headcount:
-        return {"available": False, "own_history": False, "cohort_label": label,
+        return {"available": False, "own_history": own_history, "cohort_label": label,
                 "reason": "Similar restaurants' ratios, scaled to your sales, come to under one person per shift — nothing borrowed."}
+    fams = sorted({r["role_family"] for r in ratios if r["role_family"] in roles})
+    which = (" for " + ", ".join(FAMILY_LABELS.get(f, f) for f in fams)
+             + " (your own history has none)") if own_history else ""
     return {"available": True, "borrowed": True, **cohort_part, "headcount": headcount, "by_slot": by_slot,
-            "basis": basis,
-            "note": (f"Borrowed: the median of {cohort_part['n']}+ {label[0].lower() + label[1:]} — people on the "
-                     f"floor per $1k of sales, scaled to {basis}"
+            "basis": basis, "families": fams, "own_history": own_history,
+            "note": (f"Borrowed{which}: the median of {cohort_part['n']}+ {label[0].lower() + label[1:]} — people on "
+                     f"the floor per $1k of sales, scaled to {basis}"
                      + ". A starting point until your own weeks replace it.")}
 
 
@@ -306,8 +353,15 @@ def merge_into_typical(typical: dict, borrowed: dict):
 def prompt_block(start: dict) -> str:
     if not start or not start.get("available"):
         return ""
-    return ("\n\nBORROWED STARTING HEADCOUNT — this restaurant has no schedule history of its own yet. The figures "
-            "marked \"(borrowed)\" in SHIFT REQUIREMENTS come from " + start["note"][len("Borrowed: "):].rstrip(".")
+    src = start["note"].split(": ", 1)[1] if ": " in start["note"] else start["note"]
+    if start.get("own_history"):
+        fams = ", ".join(FAMILY_LABELS.get(f, f) for f in start.get("families") or [])
+        head = (f"BORROWED STARTING HEADCOUNT — this restaurant's own history has no usual crew for {fams}. Those "
+                "figures, marked \"(borrowed)\" in SHIFT REQUIREMENTS, come from ")
+    else:
+        head = ("BORROWED STARTING HEADCOUNT — this restaurant has no schedule history of its own yet. The figures "
+                "marked \"(borrowed)\" in SHIFT REQUIREMENTS come from ")
+    return ("\n\n" + head + src.rstrip(".")
             + ". Treat them as a sensible first guess, below the owner's floors and anything the owner has said.")
 
 

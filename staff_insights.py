@@ -50,6 +50,9 @@ _CAL_HASH_PREFIX = "sha256:"
 OUTCOME_LABELS = {
     "on_time": "On time", "late": "Late", "no_show": "No-show", "called_out": "Called out",
     "left_early": "Left early", "short": "Left early", "covered": "Covered", "worked": "Worked",
+    # A drop your manager approved that nobody picked up (schedule audit
+    # 10/3/26 E-5) — not a miss.
+    "excused": "Drop approved",
 }
 CERT_LABELS = {
     "alcohol": "Alcohol service", "food_handler": "Food handler", "manager": "Manager",
@@ -386,9 +389,10 @@ def my_earnings(restaurant_id, name, days=EARNINGS_DEFAULT_DAYS, today=None, db_
 
 def _salaried(restaurant_id, name, db_path=None) -> bool:
     try:
-        from models import salaried_staff, salaried_name_key
+        from models import salaried_keys, salaried_name_key
         r = _models_mod.get_restaurant(restaurant_id, _db(db_path))
-        return salaried_name_key(name) in {salaried_name_key(s["name"]) for s in salaried_staff(r)}
+        # Every spelling of every salaried person (D-7, people's identity).
+        return salaried_name_key(name) in salaried_keys(r, db_path=_db(db_path))
     except Exception:
         return False
 

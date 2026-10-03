@@ -958,6 +958,28 @@ def default_thinking(model, kwargs=None):
     return None
 
 
+# The effort a call on a model whose thinking cannot be turned off gets when
+# its caller names neither thinking nor an effort: the nearest thing to the
+# "off" every other call site was written for. Claude Opus 5.5 thinks at
+# medium effort by default and its thinking shares max_tokens, so a call
+# site written for 500-1,600 tokens and moved to it by a *_MODEL override
+# could spend the whole budget thinking and answer nothing (schedule audit
+# 10/3/26 PR-29). A call that wants more says so (the schedule: high).
+ALWAYS_THINKING_DEFAULT_EFFORT = "low"
+
+
+def default_effort(model, kwargs=None):
+    """The output_config.effort a call gets when its caller set none: low on
+    a model whose thinking is always on (when the caller named no thinking
+    either), else None — the model's own default."""
+    kw = kwargs or {}
+    if "thinking" in kw or _effort_of(kw):
+        return None
+    if (model or "").lower().startswith(_THINKING_ALWAYS_ON_PREFIXES):
+        return ALWAYS_THINKING_DEFAULT_EFFORT
+    return None
+
+
 def model_for(purpose: str) -> str:
     """The model a call site uses: its env override if set, else its default."""
     env, default = MODELS[purpose]
@@ -1272,7 +1294,7 @@ def classify_error(exc):
     status = getattr(exc, "status_code", None)
     name = type(exc).__name__
     text = str(exc).lower()
-    if isinstance(exc, anthropic.APITimeoutError):
+    if isinstance(exc, (anthropic.APITimeoutError, CallDeadlineExceeded)):
         return "timeout"
     if isinstance(exc, anthropic.APIConnectionError):
         return "connection"
@@ -1326,14 +1348,59 @@ def _note_provider_error(provider, reason, exc):
                "or the *_MODEL variables on Railway."])
 
 
-def _send(client, kwargs, stream=False):
+class CallDeadlineExceeded(TimeoutError):
+    """A call stopped because the job that made it ran out of its wall-clock
+    time (create_with_retry's `deadline`; schedule audit 10/3/26 P-22). A
+    streamed answer's timeout is the longest silence between events, so a
+    call that kept streaming could run past any deadline — the schedule's
+    up to ~18 minutes a slice. `partial` is the Message as far as it had
+    streamed (None when nothing had), for a caller that can keep what was
+    already written; `call_id` is the ledger row it was filed under."""
+
+    def __init__(self, message="the call ran past its deadline", partial=None):
+        super().__init__(message)
+        self.partial = partial
+        self.call_id = None
+
+
+def _attempt_timeout(client, deadline):
+    """The timeout one attempt gets under a deadline: the client's own read
+    timeout, never past the time left (P-22: "each call's timeout =
+    min(360, time remaining)"). Connecting keeps its own short limit."""
+    left = float(deadline) - time.time()
+    t = getattr(client, "timeout", None)
+    read = getattr(t, "read", t)
+    try:
+        cap = float(read)
+    except (TypeError, ValueError):
+        cap = DEFAULT_AI_TIMEOUT
+    secs = max(1.0, min(cap, left))
+    return anthropic.Timeout(secs, connect=min(AI_CONNECT_TIMEOUT, secs))
+
+
+def _send(client, kwargs, stream=False, deadline=None):
     """One attempt: messages.create, or messages.stream collected into the
     finished Message when the caller asked to stream. A test double with no
-    stream() is called the ordinary way."""
+    stream() is called the ordinary way.
+
+    With a `deadline` a stream is read event by event and cut when the time
+    is up: its timeout only bounds the silence between events, so a call
+    that kept writing used to run on regardless (P-22). The cut raises
+    CallDeadlineExceeded carrying what had streamed."""
     if stream:
         streamer = getattr(getattr(client, "messages", None), "stream", None)
         if callable(streamer):
             with streamer(**kwargs) as s:
+                if deadline is None:
+                    return s.get_final_message()
+                for _event in s:
+                    if time.time() >= float(deadline):
+                        try:
+                            partial = s.current_message_snapshot
+                        except Exception:
+                            partial = None
+                        s.close()
+                        raise CallDeadlineExceeded(partial=partial)
                 return s.get_final_message()
     return client.messages.create(**kwargs)
 
@@ -1378,6 +1445,9 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
         log_blocked(restaurant_id, action, model, "data_not_ready",
                     detail=str(readiness.get("reason") or readiness.get("decision"))[:200], **attribution)
         raise DataNotReady(readiness)
+    _effort = default_effort(kwargs.get("model"), kwargs)
+    if _effort:
+        kwargs["output_config"] = dict(kwargs.get("output_config") or {}, effort=_effort)
     if "thinking" not in kwargs:
         _thinking = default_thinking(kwargs.get("model"), kwargs)
         if _thinking is not None:
@@ -1390,13 +1460,24 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     stream = bool(kwargs.pop("stream", False))
     # A job with a wall-clock limit of its own (the schedule generation:
     # schedule audit 10/3/26 P-22) passes `deadline` (a time.time() value):
-    # no retry starts past it, so one slice can never outlast the job.
+    # no retry starts past it, each attempt's timeout is the time left at
+    # most, a timed-out attempt is not sent again as it was (its caller
+    # re-plans it smaller), and a stream still writing at the deadline is
+    # cut (CallDeadlineExceeded, carrying what it had written) — so one slice
+    # can never outlast the job.
     deadline = kwargs.pop("deadline", None)
     # anthropic>=0.105 (what Railway installs) rejects `temperature` outright
     # — TypeError before the request is even made — and current Sonnet
     # models refuse it server-side anyway. Strip it here so no caller can
     # take production down with a parameter that never mattered.
     kwargs.pop("temperature", None)
+    # Past the job's deadline no call is sent at all (P-22): it could only be
+    # cut, and a streamed call is billed for the input it sent. A zero-cost
+    # 'blocked' row, like the budget and the breaker.
+    if deadline is not None and time.time() >= float(deadline):
+        log_blocked(restaurant_id, action, model, "deadline", detail="the job's time ran out before the call",
+                    **attribution)
+        raise CallDeadlineExceeded("no time was left for this call")
     # One positional argument: callers and tests replace this function with
     # their own; it reads the trigger itself (an admin's call answers only
     # to the global pool, #148).
@@ -1421,10 +1502,27 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     started = time.time()
     while True:
         try:
-            message = _send(client, kwargs, stream)
+            if deadline is not None:
+                # Each attempt waits at most the time left (P-22).
+                kwargs["timeout"] = _attempt_timeout(client, deadline)
+            message = _send(client, kwargs, stream, deadline=deadline)
+        except CallDeadlineExceeded as e:
+            # The job's own clock, not the provider: never a breaker failure,
+            # and what streamed before the cut is billed, so it is filed with
+            # its tokens as a truncated answer (#52).
+            e.call_id = call_id
+            latency = int((time.time() - started) * 1000)
+            _log_cut_safe(e.partial, model, restaurant_id, action, latency, attempt + 1, call_id, attribution)
+            _record_trace_safe(call_id, kwargs, e.partial, restaurant_id, action, "truncated", attribution,
+                               attempts=attempt + 1, latency_ms=latency)
+            _breaker_release_probe("anthropic")
+            raise
         except Exception as e:
             reason = classify_error(e)
-            if _is_retryable(e):
+            # Under a deadline a timed-out call is not sent again as it was:
+            # the same call would time out again in less time, and the caller
+            # re-plans it smaller (the schedule splits it; P-22).
+            if _is_retryable(e) and not (deadline is not None and reason == "timeout"):
                 attempt += 1
                 if attempt <= retries and (deadline is None or time.time() + backoff ** attempt < float(deadline)):
                     time.sleep(backoff ** attempt)
@@ -1578,11 +1676,13 @@ def _status_for(outcome):
 
 
 def outcome_of(message):
-    """'ok', 'refused' or 'truncated' from a returned message's stop_reason."""
+    """'ok', 'refused' or 'truncated' from a returned message's stop_reason.
+    Running into the model's context window cuts an answer short exactly as
+    max_tokens does (schedule audit 10/3/26 PR-30) — it read as 'ok'."""
     stop = getattr(message, "stop_reason", None)
     if stop == "refusal":
         return "refused"
-    if stop == "max_tokens":
+    if stop in ("max_tokens", "model_context_window_exceeded"):
         return "truncated"
     return "ok"
 
@@ -1676,6 +1776,10 @@ _MODEL_PRICING = {
     "claude-sonnet-5": (2.00, 10.00),
     # invoices.py reads prices off photos with the most capable model.
     "claude-opus-5": (5.00, 25.00),
+    # The week's schedule (schedule audit 10/3/26), and the budget tier its
+    # evaluation runs against (scripts/schedule_model_eval.py).
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     # Perplexity sonar, per million tokens. Audit #7 found this vendor was
     # entirely outside the ledger and the budget — the $10/day and
     # $1,500/month ceilings bound Claude only, while AI visibility could fire
@@ -1832,6 +1936,27 @@ def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None, atte
         return None
 
 
+def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, call_id, attribution):
+    """The ledger row for a call cut at its caller's deadline
+    (CallDeadlineExceeded): what had streamed is billed, so it is filed with
+    its tokens as 'truncated', stop_reason 'deadline' — never as a free error
+    the AI budget would not count (schedule audit 10/3/26 P-22)."""
+    try:
+        usage = getattr(partial, "usage", None)
+        att = attribution or {}
+        log_ai_usage(
+            restaurant_id, action or "unspecified", model,
+            getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0,
+            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            latency_ms=latency_ms, outcome="truncated", stop_reason="deadline", attempts=attempts,
+            reason="timeout", request_id=getattr(partial, "id", None),
+            trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
+            correlation_id=att.get("correlation_id"), call_id=call_id)
+    except Exception:
+        pass
+
+
 def _log_failure_safe(exc, model, restaurant_id, action, attempts=None, reason=None, latency_ms=None,
                       call_id=None, attribution=None):
     try:
@@ -1919,7 +2044,8 @@ _blocked_lock = threading.Lock()
 def log_blocked(restaurant_id, action, model, reason, detail=None, vendor=None, trigger=None,
                 actor_user_id=None, correlation_id=None):
     """A call refused before it reached its provider (#48): budget,
-    breaker, data_not_ready (the readiness gate), rate_limited, no_key.
+    breaker, data_not_ready (the readiness gate), rate_limited, no_key,
+    deadline (its job's wall clock had run out, schedule audit 10/3/26 P-22).
     Zero cost; `reason` is machine-readable, `detail` says which ceiling or
     why. Never raises."""
     try:
@@ -2615,6 +2741,23 @@ AI_TRACE_DAYS = int(os.getenv("AI_TRACE_DAYS", "30"))
 AI_TRACE_KEEP_PER_ACTION = int(os.getenv("AI_TRACE_KEEP_PER_ACTION", "10"))
 AI_TRACE_PROMPT_CHARS = int(os.getenv("AI_TRACE_PROMPT_CHARS", "40000"))
 AI_TRACE_OUTPUT_CHARS = int(os.getenv("AI_TRACE_OUTPUT_CHARS", "12000"))
+# Actions whose trace keeps more than the default: the week's schedule — a
+# 60-person restaurant's prompt is 55-70k characters and its answer tens of
+# thousands, so the 40k/12k caps cut every real week (schedule audit
+# 10/3/26 PR-31). Still only the newest AI_TRACE_KEEP_PER_ACTION per
+# restaurant keep their text; every schedule call's full input is also kept
+# for replay in schedule_model_calls (schedule_output.record_call).
+AI_TRACE_ACTION_CHARS = {
+    "labor_schedule": (int(os.getenv("AI_TRACE_SCHEDULE_PROMPT_CHARS", "400000")),
+                       int(os.getenv("AI_TRACE_SCHEDULE_OUTPUT_CHARS", "300000"))),
+}
+
+
+def _trace_caps(action):
+    """(prompt chars, output chars) an action's trace keeps."""
+    return AI_TRACE_ACTION_CHARS.get(action or "", (AI_TRACE_PROMPT_CHARS, AI_TRACE_OUTPUT_CHARS))
+
+
 # The ai_calls rows themselves (hashes, ids, stop reason) — as long as the
 # ledger rows they belong to.
 AI_CALLS_RETAIN_DAYS = int(os.getenv("AI_CALLS_RETAIN_DAYS", "120"))
@@ -2777,6 +2920,7 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
         names = guest_names_in(prompt)
         usage = getattr(message, "usage", None)
         att = attribution or {}
+        prompt_cap, output_cap = _trace_caps(action)
         row = (call_id, restaurant_id, action or "unspecified", "anthropic", kwargs.get("model"),
                att.get("trigger"), att.get("actor_user_id"), att.get("correlation_id"), caller,
                template_hash, _sha(prompt),
@@ -2785,8 +2929,8 @@ def _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome,
                _sha(output) if output else None,
                getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None),
                latency_ms, attempts, usage_id,
-               zlib.compress(redact_pii(prompt[:AI_TRACE_PROMPT_CHARS], names).encode("utf-8", "replace")),
-               zlib.compress(redact_pii(output[:AI_TRACE_OUTPUT_CHARS], names).encode("utf-8", "replace"))
+               zlib.compress(redact_pii(prompt[:prompt_cap], names).encode("utf-8", "replace")),
+               zlib.compress(redact_pii(output[:output_cap], names).encode("utf-8", "replace"))
                if output else None)
         conn = _conn()
         try:

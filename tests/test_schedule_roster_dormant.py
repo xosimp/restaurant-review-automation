@@ -208,3 +208,53 @@ def test_the_open_shift_notice_skips_the_dormant_and_rotates(monkeypatch):
     # Abe has never been told but already works that week; still first:
     # the turn is notices first, hours second.
     assert got == ["Abe", "Di", "Cy"]
+
+
+# ── the merge with the fix round (10/3/26): managers barely punch ──────────
+
+def _published_week(rid, rows, start):
+    """A live published week holding `rows` [(date, name, role)]."""
+    csv_text = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "".join(
+        f"{d},{dt.date.fromisoformat(d).strftime('%A')},{n},{r},4:00pm,10:00pm,6,\n" for d, n, r in rows)
+    conn = models.get_conn()
+    try:
+        models._ensure_history_columns(conn)
+        conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, summary_json, "
+                     "published_at) VALUES (?,?,?,?,'[]',datetime('now'))",
+                     (rid, start.isoformat(), (start + dt.timedelta(days=6)).isoformat(), csv_text))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_manager_of_any_kind_who_barely_punches_is_never_dormant():
+    """A department's manager is not who runs the floor (is_manager_role says
+    no to "Kitchen Manager"), but managers barely punch: a manager role of
+    any kind keeps them on the team, and so does a manager's shift on a
+    published week from before the six weeks. Anybody else's old published
+    shift does not."""
+    rid = _rid()
+    working = [(d, n, "Server") for d in _days_back(14) for n in ("Ana", "Ben")]
+    old = _days_back(100)[-1]
+    _shifts(rid, working + [(old, "Kim", "Kitchen Manager"), (old, "Mo", "Server"), (old, "Sal", "Server")]
+            + [(d, "June", "Server") for d in _days_back(120)[90:]])
+    wk = TODAY - dt.timedelta(weeks=10)
+    _published_week(rid, [(wk.isoformat(), "Mo", "MOD"), (wk.isoformat(), "Sal", "Server")], wk)
+    assert sr.manager_role_kind("Kitchen Manager") == "department" and not sr.is_manager_role("Kitchen Manager")
+    assert set(ss.dormant_people(rid)) == {"june", "sal"}
+    c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    assert set(c.dormant) == {"june", "sal"}
+    for n in ("Kim", "Mo", "Ana"):
+        assert c.fillable(n, WEEK[2])[0], n
+
+
+def test_a_gap_with_no_published_week_never_suggests_someone_dormant():
+    """labor_replacements.for_gap with no published week to check the gap
+    against (an Ask "who could cover Wednesday?") still leaves out somebody
+    who has stopped working."""
+    import labor_replacements
+    rid = _rid()
+    _world(rid)
+    fits = labor_replacements.for_gap(rid, "Server", "Wednesday", on_date=WEEK[2], limit=10)
+    names = [f["name"] for f in fits]
+    assert "June" not in names and "Ana" in names, names

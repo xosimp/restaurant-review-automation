@@ -573,7 +573,7 @@ def init_ops(db_path=None):
         conn.executemany("INSERT OR IGNORE INTO job_expected_since (job) VALUES (?)",
                          [(job,) for job in EXPECTED_JOBS])
         for table, columns in (("job_runs", _RUNS_COLUMNS), ("job_failures", _FAILURE_COLUMNS),
-                               ("scheduler_lease", _LEASE_COLUMNS)):
+                               ("scheduler_lease", _LEASE_COLUMNS), ("async_jobs", _ASYNC_JOB_COLUMNS)):
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
             for col, typ in columns:
                 if col not in have:
@@ -955,8 +955,13 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     restaurant_id INTEGER,
     status        TEXT NOT NULL,
     result_json   TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    deadline_at   TEXT
 )"""
+# Added after the table shipped; init_ops adds it to an older database.
+# deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
+# when the job set one (set_async_job_deadline; schedule audit 10/3/26 P-22).
+_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"),)
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -973,10 +978,17 @@ def _async_conn():
     return get_conn()
 
 
-# The longest a generation can plausibly run: a very large roster is written
-# in a dozen or more calls of a minute or two each. A job still pending past
-# this is dead, whatever process owned it.
+# The longest any job can plausibly run. A schedule generation now sets its
+# own, shorter deadline as soon as its calls are planned (at most
+# schedule_engine.SCHEDULE_JOB_MAX_SECONDS, which a test holds under this;
+# schedule audit 10/3/26 P-22), and is read dead past that; this ceiling is
+# for a job that set none. A job still pending past it is dead, whatever
+# process owned it.
 JOB_MAX_MINUTES = 45
+
+# How long past its own deadline (set_async_job_deadline) a job may still be
+# writing its result before a poll calls it dead.
+ASYNC_DEADLINE_GRACE_SECONDS = 90
 
 
 def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
@@ -1010,6 +1022,12 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
         return 0
 
 
+# A pending job past its own deadline (set_async_job_deadline, P-22) is dead
+# whatever its age: never joined, never counted as the one running.
+_NOT_PAST_DEADLINE = ("AND (deadline_at IS NULL OR deadline_at >= datetime('now', '-%d seconds'))"
+                      % ASYNC_DEADLINE_GRACE_SECONDS)
+
+
 def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
     """The job_id of a pending job of this kind for this restaurant, started
     within `max_age_minutes`, or None. Two owners pressing Generate at once
@@ -1021,7 +1039,7 @@ def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         conn.close()
         return row["job_id"] if row else None
@@ -1040,7 +1058,7 @@ def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 1",
+            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         if row:
             conn.rollback()
@@ -1079,7 +1097,12 @@ def start_async_job(job_id, kind, restaurant_id):
 
 
 def finish_async_job(job_id, status, result):
-    """Store a finished job's payload. `status` is 'done' or 'error'."""
+    """Store a finished job's payload. `status` is 'done' or 'error'.
+
+    Only a job still pending is written: one already failed — swept at boot,
+    or read past its own deadline (read_async_job) — keeps that verdict. A
+    generation that ran on past it used to overwrite "didn't finish" with a
+    draft the owner had been told never came (schedule audit 10/3/26 P-22)."""
     import json
     try:
         payload = json.dumps(result)
@@ -1088,13 +1111,61 @@ def finish_async_job(job_id, status, result):
     try:
         conn = _async_conn()
         conn.execute(
-            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=?",
+            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND status='pending'",
             (status, payload, str(job_id)),
         )
         conn.commit()
         conn.close()
     except Exception as e:
         log.error(f"finish_async_job({job_id}) failed: {e}")
+
+
+def rewrite_async_result(job_id, result) -> None:
+    """Replace a FINISHED job's stored result, keeping its status — the
+    admin console removing a read-once value (the review account's new
+    password) after its first read. finish_async_job writes only a pending
+    job now (P-22), so this rewrite has its own door."""
+    import json
+    try:
+        payload = json.dumps(result)
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET result_json=? WHERE job_id=? AND status<>'pending'",
+                     (payload, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"rewrite_async_result({job_id}) failed: {e}")
+
+
+def set_async_job_deadline(job_id, deadline_ts) -> None:
+    """Record the wall-clock time (a time.time() value) by which a job will
+    have finished or failed (schedule audit 10/3/26 P-22). Past it, plus
+    ASYNC_DEADLINE_GRACE_SECONDS, a poll reports the job dead rather than
+    waiting out JOB_MAX_MINUTES. Raises nothing: a job whose deadline cannot
+    be written still runs, and is judged by JOB_MAX_MINUTES as before."""
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        at = _dt.fromtimestamp(float(deadline_ts), tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET deadline_at=? WHERE job_id=? AND status='pending'", (at, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"set_async_job_deadline({job_id}) failed: {e}")
+
+
+def job_still_pending(job_id) -> bool:
+    """Whether the job's row still reads pending — False once a poll has
+    called it dead (read_async_job) or the boot sweep failed it. A job that
+    finds itself failed does not save what it was building. True when the
+    row cannot be read (never stop a job over a bookkeeping failure)."""
+    try:
+        conn = _async_conn()
+        row = conn.execute("SELECT status FROM async_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+        conn.close()
+        return True if row is None else row["status"] == "pending"
+    except Exception:
+        return True
 
 
 def read_async_job(job_id, restaurant_id=None):
@@ -1116,8 +1187,11 @@ def read_async_job(job_id, restaurant_id=None):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id, restaurant_id, status, result_json, "
-            "created_at < datetime('now', ?) AS overdue FROM async_jobs WHERE job_id=?",
-            (f"-{JOB_MAX_MINUTES} minutes", str(job_id)),
+            "created_at < datetime('now', ?) AS overdue, "
+            "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
+            "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
+            "FROM async_jobs WHERE job_id=?",
+            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds", str(job_id)),
         ).fetchone()
         if not row:
             conn.close()
@@ -1129,15 +1203,31 @@ def read_async_job(job_id, restaurant_id=None):
             conn.close()
             return None
         status = row["status"]
-        if status == "pending" and row["overdue"]:
-            # Past any real generation: its result was never stored (the
-            # write failed, or the process died after the boot sweep ran).
-            # Polling 'pending' forever helps nobody (DATA-9).
+        if status == "pending" and (row["overdue"] or row["past_deadline"]):
+            # Past any real generation (or past the job's own deadline): its
+            # result was never stored (the write failed, or the process died
+            # after the boot sweep ran). Polling 'pending' forever helps
+            # nobody (DATA-9). Written, once, so a job still running cannot
+            # later overwrite this verdict with a draft (P-22): it sees the
+            # row failed and saves nothing (job_still_pending).
+            failed = {"ok": False, "error": "The schedule didn't finish in the time a generation is given, so "
+                                            "nothing was saved. Try again."}
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(failed), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the overdue job: {e}")
             conn.close()
-            return {"status": "error", "result": {"ok": False, "error": "Generation didn't finish — please try again."}}
+            return {"status": "error", "result": failed}
         if status == "pending":
             conn.close()
-            return {"status": "pending", "result": None}
+            out = {"status": "pending", "result": None}
+            if row["seconds_left"] is not None:
+                # How long the job can still run, when it set its deadline:
+                # a client waits that long rather than a guessed 15 minutes.
+                out["seconds_left"] = max(0, int(row["seconds_left"]))
+            return out
         conn.close()
         try:
             result = json.loads(row["result_json"]) if row["result_json"] else None
@@ -1490,6 +1580,7 @@ EXPECTED_JOBS = jobs_registry.expected_hours()
 HEARTBEAT_ALERT_MINUTES = jobs_registry.HEARTBEAT_STALE_MINUTES
 # One out-of-band alert per this many minutes, however many requests see it.
 PLATFORM_ALERT_COOLDOWN_MINUTES = 60
+PLATFORM_WARN_COOLDOWN_MINUTES = 24 * 60
 
 
 def jobs_overdue(now=None, db_path=None) -> list:
@@ -1574,6 +1665,19 @@ def _dsr_missing(db_path=None):
         return []
 
 
+def _has_urgent(out, state, write_ok=True) -> bool:
+    """Whether check_platform_sla's problems include one that cannot wait a
+    day: the scheduler dead or stuck, a job past its SLA, the volume almost
+    full, the database refusing writes."""
+    hb = out.get("heartbeat_minutes")
+    disk = out.get("disk") or {}
+    return bool((hb is not None and hb > HEARTBEAT_ALERT_MINUTES)
+                or state.get("wedged") or state.get("loop_stalled")
+                or out.get("jobs_overdue")
+                or disk.get("state") == "critical"
+                or not write_ok)
+
+
 def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     """The scheduler's watchdog, run from a REQUEST thread: {heartbeat_minutes,
     loop_minutes, running_job, jobs_overdue, disk, write_ok, backup,
@@ -1637,6 +1741,11 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             log.warning(f"messaging health unavailable to the platform check: {e}")
 
     problems = []
+    # Kinds that can wait a day: a volume filling (not full), a stale
+    # backup, a late DSR, a messaging channel. Anything else is urgent.
+    # 10/3/26: "Volume filling up - 239 MB free" texted Will every hour
+    # for a day because every problem shared one 60-minute cooldown.
+    warn_kinds = set()
     hb = out["heartbeat_minutes"]
     if hb is not None and hb > HEARTBEAT_ALERT_MINUTES:
         problems.append(f"Scheduler heartbeat is {int(hb)} minutes old — nothing scheduled is running.")
@@ -1650,17 +1759,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"{j['job']}: no successful run in {j['hours_since']:g}h (expected within {j['max_hours']}h)")
     disk = out["disk"] or {}
     if disk.get("state") in ("low", "critical"):
+        if disk["state"] == "low":
+            warn_kinds.add("disk_low")
         problems.append(f"Volume {'almost full' if disk['state'] == 'critical' else 'filling up'} — "
                         f"{disk.get('free_mb', '?')} MB free ({disk.get('pct_free', '?')}%).")
     if not out["write_ok"]:
         problems.append(f"The database refuses writes: {write_err or 'write probe failed'}.")
     b = out["backup"] or {}
     if b.get("state") in ("stale", "failed", "no_offsite"):
+        warn_kinds.add("backup")
         problems.append(b.get("summary") or "The nightly backup is not healthy.")
     if out["dsr_missing"]:
+        warn_kinds.add("dsr_missing")
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
                         f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+    if out["messaging"]:
+        warn_kinds.add("messaging")
     problems.extend(f"Messaging: {m}" for m in out["messaging"])
     out["problems"] = problems
     if not problems or not send:
@@ -1671,7 +1786,15 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
             return out
     except Exception:
         return out
-    res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    # An urgent problem pages hourly. Only warnings: once a day for the same
+    # set, sooner when a new kind joins it (the key names the set).
+    urgent = _has_urgent(out, state, write_ok=out["write_ok"])
+    if urgent:
+        res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
+    else:
+        res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),
+                            "Cavnar AI: the platform needs you", problems,
+                            cooldown_minutes=PLATFORM_WARN_COOLDOWN_MINUTES)
     out["alerted"] = bool(res.get("sent"))
     return out
 
@@ -2121,6 +2244,12 @@ _RETENTION_DAYS = {
     # dismissed; a year is plenty to know which kinds an owner ignores
     # (SCHED-27).
     "schedule_recommendation_events": int(os.getenv("RETAIN_SCHED_RECS_DAYS", "365")),
+    # The owner's redos and discarded drafts, and the one-tap "why" for a
+    # big edit in the first weeks (schedule audit 10/3/26 L-26, L-35): the
+    # learners read 24 weeks (schedule_versions.LEARN_DAYS); a year and a
+    # month keeps last year's same weeks.
+    "schedule_rejections": int(os.getenv("RETAIN_SCHED_REJECTIONS_DAYS", "400")),
+    "schedule_edit_answers": int(os.getenv("RETAIN_SCHED_EDIT_ANSWERS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2263,6 +2392,10 @@ _RETENTION_DAYS = {
     # The website's daily figures (web_analytics): two years, so a year-on-year
     # comparison stays possible.
     "web_analytics_daily": int(os.getenv("RETAIN_WEB_ANALYTICS_DAYS", "800")),
+    # Every schedule call's full input and answer (schedule_output, schedule
+    # audit 10/3/26 PR-31): half a year of real weeks to replay a model,
+    # effort or prompt change against (scripts/schedule_model_eval.py).
+    "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "180")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2297,6 +2430,8 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
+    "schedule_model_calls": "created_at",
+    "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2359,6 +2494,8 @@ _RETENTION_FLOOR_DAYS = {
     "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
     "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
     "schedule_recommendation_events": 180, "job_period_claims": 35, "alert_holds": 7,
+    # The schedule learners read 24 weeks of redos and answers (L-26, L-35).
+    "schedule_rejections": 168, "schedule_edit_answers": 168,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2399,6 +2536,9 @@ _RETENTION_FLOOR_DAYS = {
     # the model-confidence check read a year; Ask reads up to 180 days of
     # reads. Every closed quarter is summarised first (the rollup below).
     "ai_reads": 365, "ai_claims": 365,
+    # The schedule-call record: the measured tokens a row reads 60 days, and
+    # a replay wants a quarter of real weeks at the least.
+    "schedule_model_calls": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2470,7 +2610,14 @@ _RETENTION_READERS = {
                           # every food-cost reader's loader — the seasonal re-check
                           # (outcomes.expected_for → metrics → cogs) included
                           ("waste_trend.load_waste_history", None, "inventory_summary_weeks")),
-    "schedule_versions": (("schedule_learning.edited_weeks", 56, None),),
+    # Every schedule learner reads a week through schedule_versions.
+    # learning_weeks: 24 weeks, weighted by half-life (schedule audit
+    # 10/3/26 L-27), inside the intermediate versions' floor.
+    "schedule_versions": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.edited_weeks", "schedule_versions.LEARN_DAYS", None),
+                          ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
+    "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
@@ -2480,8 +2627,11 @@ _RETENTION_READERS = {
                     ("schedule_intel.mentoring", "schedule_intel.MENTOR_WINDOW_DAYS", None),
                     ("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                     ("shift_facts.tenure", None, "person_quarters")),
+    # One weighted reader for every attendance consumer (schedule audit
+    # 10/3/26 L-17): reliability, by-weekday, standby and the prompt's
+    # no-show block all read staff_settings.attendance_events.
     "attendance_events": (("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
-                          ("schedule_learning._attendance_tally", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("staff_settings.attendance_events", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
                           ("attendance.summary_lines", 84, None)),
     "person_signals": (("people.cover_record", 180, None),
                        ("people.get_person", "people.PERSON_MENTION_DAYS", None),
@@ -2501,6 +2651,9 @@ _RETENTION_READERS = {
                   ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
     # The after-shift pulse: the owner's summary reads 90 days at most.
     "staff_shift_pulse": (("staff_insights.pulse_summary", 90, None),),
+    # What a schedule row really costs in output tokens (P-35), from the
+    # last 60 days of calls.
+    "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
@@ -2547,8 +2700,8 @@ VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
 REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
 # The prunes that are not one table's rows by one stamp, with the same
-# floor rule: {name: (current days, floor)}. The schedule learner reads the
-# last 8 weeks of edits (schedule_learning.EDIT_WEEKS); the waste trend,
+# floor rule: {name: (current days, floor)}. The schedule learners read the
+# last 24 weeks of edits (schedule_versions.LEARN_DAYS); the waste trend,
 # price trends and food cost % bucket inventory by ISO week; the seasonal
 # baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
 # and the seasonal re-check further, from the weekly summary.
@@ -2556,7 +2709,9 @@ def _special_retention():
     return {
         "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
         "inventory_daily_detail": (INVENTORY_DAILY_DAYS, 28),
-        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 60),
+        # The learners read 24 weeks of a week's saves (schedule_versions.
+        # LEARN_DAYS, 168 — schedule audit 10/3/26 L-27); they used to read 8.
+        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 168),
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
         "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),

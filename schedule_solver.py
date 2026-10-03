@@ -237,13 +237,34 @@ class Problem:
                 for role in rls or []:
                     if str(role).strip():
                         self.roles[p].add(_low(str(role)))
-        for r in self.rows:
-            p = self.pidx.get(_low(r.get("employee")))
-            if p is not None and (r.get("role") or "").strip():
-                self.roles[p].add(_low(r.get("role")))
-                if not self.primary_role[p]:
-                    self.primary_role[p] = _low(r.get("role"))
-        self.flexible = [len({_low(str(x)) for x in (cross.get(n) or [])}) > 1 for n in self.names]
+        # The roles a person holds or has worked here (Constraints
+        # .known_roles: roster, people.held_roles — trained, promoted, the
+        # POS job list — and history), and a trainee the role they are
+        # learning. Never the roles the draft's own rows gave them: a role
+        # the model wrongly wrote for somebody was treated as one they hold
+        # (schedule audit 10/3/26 D-15). Each held role brings every job
+        # code of its family in use here — "Server AM" and "Server PM" are
+        # one role (D-13). The rows only name the codes in use.
+        for k, rls in ((getattr(c, "known_roles", None) or {}) if c is not None else {}).items():
+            p = self.pidx.get(k)
+            if p is not None:
+                self.roles[p] |= {_low(x) for x in rls or () if str(x).strip()}
+        for k, t in ((getattr(c, "trainees", None) or {}) if c is not None else {}).items():
+            p = self.pidx.get(k)
+            if p is not None and (t or {}).get("target_role"):
+                self.roles[p].add(_low(t["target_role"]))
+        codes = {_low(r.get("role")) for r in self.rows if (r.get("role") or "").strip()}
+        for rls in self.roles:
+            codes |= rls
+        fam = (lambda role: c.family(role)) if c is not None and hasattr(c, "family") else \
+            (lambda role: sq.role_family(role))
+        by_family = {}
+        for code in codes:
+            by_family.setdefault(fam(code), set()).add(code)
+        for p in range(P):
+            for f in {fam(x) for x in self.roles[p]}:
+                self.roles[p] |= by_family.get(f, set())
+        self.flexible = [len({fam(x) for x in (cross.get(n) or [])}) > 1 for n in self.names]
         self.constrained = {_low(n) for n, note in (s.get("constraints") or {}).items()
                             if n and str(note or "").strip()}
         pend = pending if pending is not None else (getattr(self.c, "pending_off", None) or {})

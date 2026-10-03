@@ -5250,7 +5250,9 @@ def admin_api_admin_job(job_id, current_user):
     scrub = [k for k in (result.pop("_scrub", None) or []) if isinstance(k, str)]
     if scrub:
         if current_user.get("is_admin"):
-            _ops.finish_async_job(job_id, job["status"], {k: v for k, v in result.items() if k not in scrub})
+            # Rewritten in place (ops.rewrite_async_result): finish_async_job
+            # writes only a pending job since the schedule audit (P-22).
+            _ops.rewrite_async_result(job_id, {k: v for k, v in result.items() if k not in scrub})
         else:
             for k in scrub:
                 result.pop(k, None)

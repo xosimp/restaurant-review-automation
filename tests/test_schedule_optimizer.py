@@ -152,10 +152,13 @@ def test_learned_headcount_moves_the_requirement_both_ways(monkeypatch):
 
 def test_the_budget_trim_spares_the_row_the_score_needs_most():
     import schedule_economics as econ
-    rows = [row(SAT, n, "Server", start="5:00pm", end="10:00pm", hours=5) for n in ("Keep", "Drop", "Third")]
-    rows += [row(FRI, "Keep", "Server"), row(FRI, "Drop", "Server"), row(FRI, "Third", "Server")]
+    # Four-hour shifts: no tail to end early (the trim ends tails first since
+    # schedule audit 10/3/26 P-27), so a whole shift goes and the score
+    # chooses which.
+    rows = [row(SAT, n, "Server", start="5:00pm", end="9:00pm", hours=4) for n in ("Keep", "Drop", "Third")]
+    rows += [row(FRI, n, "Server", start="5:00pm", end="9:00pm", hours=4) for n in ("Keep", "Drop", "Third")]
     score = lambda rs: 1.0 if any(r["employee"] == "Keep" and r["date"] == SAT for r in rs) else 0.0
-    out, trimmed, _h = econ.trim_to_budget([dict(r) for r in rows], 27, {}, score_fn=score)
+    out, trimmed, _h = econ.trim_to_budget([dict(r) for r in rows], 20, {}, score_fn=score)
     assert trimmed and all(not (t["employee"] == "Keep" and t["date"] == SAT) for t in trimmed)
 
 
@@ -206,13 +209,17 @@ def test_the_busiest_measured_hour_needs_most_of_the_usual_crew():
 
 
 def test_stated_preferences_are_scored_lightly_and_only_when_stated():
+    """Judged once for the week now (schedule audit 10/3/26 SQ-24), not on
+    each shift: the week-level measure, silent when nobody stated anything."""
     rows = [row(SAT, "Ann", "Server"), row(SAT, "Bob", "Server")]
     kw = dict(profiles=[sq.ShiftProfile()], typical_headcount={("Saturday", "night"): {"Server": 2}})
     none = sq.score_rows(rows, **kw)
-    assert "preferences" in none["shifts"][0]["not_applicable"]
+    assert not any(d["key"] == "preferences" for d in none["week_dimensions"])
     out = sq.score_rows(rows, preferences={"Ann": {"preferred_dayparts": ["morning"]}}, **kw)
-    pref = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "preferences")
+    assert not any(d["key"] == "preferences" for s in out["shifts"] for d in s["dimensions"])
+    pref = next(d for d in out["week_dimensions"] if d["key"] == "preferences")
     assert pref["score"] == 0 and "Ann prefers days" in pref["weaknesses"][0]
+    assert pref["weight"] == sq.DEFAULT_WEIGHTS["preferences"]
 
 
 def test_a_row_the_manager_keeps_removing_is_flagged():

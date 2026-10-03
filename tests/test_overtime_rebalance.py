@@ -100,7 +100,8 @@ def test_the_week_is_priced_after_the_overtime_pass_and_again_on_its_final_rows(
 
 
 def test_a_night_nobody_closes_keeps_a_keyholder_on_to_close():
-    c = _c(keyholders={"jade"}, close_times={"Thursday": "12:00am"})
+    # Closers are per role (schedule audit 10/3/26 D-9): Jade closes the bar.
+    c = _c(keyholders={"jade"}, closers_by_role={"bartender": {"jade"}}, close_times={"Thursday": "12:00am"})
     rows = [_row(3, "Jade", "3:00pm", "11:30pm", 8.5, role="Bartender"),
             _row(3, "Ray", "3:00pm", "11:30pm", 8.5)]
     assert {v["kind"] for v in sr.violations(rows, c)} >= {"nobody_at_close", "keyholder_until_close"}
@@ -111,7 +112,7 @@ def test_a_night_nobody_closes_keeps_a_keyholder_on_to_close():
 
 
 def test_close_out_never_pushes_a_keyholder_into_overtime():
-    c = _c(keyholders={"jade"}, close_times={"Thursday": "12:00am"})
+    c = _c(keyholders={"jade"}, closers_by_role={"bartender": {"jade"}}, close_times={"Thursday": "12:00am"})
     rows = [_row(i, "Jade", "3:00pm", "11:30pm", 8, role="Bartender") for i in range(5)]
     rows[3]["scheduled_hours"] = "8"
     out = sr.close_out_gaps(rows, c)
