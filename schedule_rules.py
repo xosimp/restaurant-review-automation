@@ -1837,9 +1837,10 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     # The shifts they always work (D-5), in their own role unless the
     # standing shift names one.
     if st.get("standing_shifts"):
-        c.standing_shifts[key] = [{"day": x.get("day"), "start": x.get("start"), "end": x.get("end"),
-                                   "role": x.get("role") or (c.managers.get(key) if key in c.managers else None)
-                                   or roster_role}
+        c.standing_shifts[key] = [dict({"day": x.get("day"), "start": x.get("start"), "end": x.get("end"),
+                                        "role": x.get("role") or (c.managers.get(key) if key in c.managers else None)
+                                        or roster_role},
+                                       **{k: x[k] for k in ("from", "until") if x.get(k)})
                                   for x in st["standing_shifts"] if isinstance(x, dict)]
     # In training (D-16), while it lasts this week.
     t = st.get("trainee") or None

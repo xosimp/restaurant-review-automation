@@ -320,7 +320,17 @@ def _clean_standing(raw) -> list:
                 raise StaffSettingsError(f"{day}: two standing shifts overlap")
         spans.setdefault(day, []).append((s, end))
         role = " ".join(str(e.get("role") or "").split())[:60]
-        out.append({"day": day, "start": _fmt_minutes(s), "end": _fmt_minutes(t), "role": role or None})
+        entry = {"day": day, "start": _fmt_minutes(s), "end": _fmt_minutes(t), "role": role or None}
+        # Optional dates it holds between ("Tuesdays until 12/15/26").
+        f = _clean_date(e.get("from"), f"{day} from") if e.get("from") else None
+        u = _clean_date(e.get("until"), f"{day} until") if e.get("until") else None
+        if f and u and f > u:
+            raise StaffSettingsError(f"{day}: the standing shift ends before it starts")
+        if f:
+            entry["from"] = f
+        if u:
+            entry["until"] = u
+        out.append(entry)
     return sorted(out, key=lambda x: (DAYS.index(x["day"]), parse_minutes(x["start"]) or 0))
 
 

@@ -173,7 +173,11 @@ def test_standing_shifts_are_stored_validated_and_read_into_the_rules():
     assert c.standing_shifts["jim"] == [
         {"day": "Tuesday", "start": "10:00am", "end": "6:00pm", "role": "Owner"},
         {"day": "Friday", "start": "4:00pm", "end": "1:00am", "role": "Owner"}]
+    ss.upsert(rid, "Jim", standing_shifts=[{"day": "Monday", "start": "9:00am", "end": "3:00pm", "until": "12/15/26"}])
+    assert _c(rid).standing_shifts["jim"] == [{"day": "Monday", "start": "9:00am", "end": "3:00pm", "role": "Owner",
+                                               "until": "2026-12-15"}]
     for bad in ([{"day": "Funday", "start": "1:00pm", "end": "5:00pm"}],
+                [{"day": "Monday", "start": "1:00pm", "end": "5:00pm", "from": "12/1/26", "until": "11/1/26"}],
                 [{"day": "Monday", "start": "1:00pm", "end": "1:30pm"}],
                 [{"day": "Monday", "start": "9:00am", "end": "5:00pm"},
                  {"day": "Monday", "start": "4:00pm", "end": "10:00pm"}]):
