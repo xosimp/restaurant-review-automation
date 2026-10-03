@@ -4861,6 +4861,7 @@ def mobile_labor_team(current_user):
                 continue
             seen[e["name"]] = {"name": e["name"], "role": e.get("role"), "shifts": e.get("shifts") or 0,
                                "last": e.get("last_worked") or "", "is_manual": bool(e.get("is_manual")),
+                               "recent_roles": list(e.get("recent_roles") or []),
                                **_ss_team.dormancy_fields(e, _dormant)}
         shift_names = {n for n, e in seen.items() if not e["is_manual"]}
 
@@ -4883,6 +4884,10 @@ def mobile_labor_team(current_user):
                 "name": n, "role": e["role"], "shifts": e["shifts"],
                 "dormant": e["dormant"], "last_worked_label": e["last_worked_label"],
                 "dormant_text": e["dormant_text"],
+                # The roles they worked over their last eight weeks, most
+                # worked first — what a per-role rating is picked from
+                # (schedule audit 10/3/26 D-12, D-17).
+                "recent_roles": e["recent_roles"],
                 "role_scores": {f.title(): v for f, v in (_role_sc.get(n) or {}).items()},
                 "rated_label": age.get("rated_label"), "rating_due": bool(age.get("due")),
                 "rating_due_text": age.get("due_text"),
@@ -4919,10 +4924,19 @@ def mobile_labor_team(current_user):
             _lrs = _setup.leader_rules_status(rid, [t["name"] for t in team])
         except Exception:
             _lrs = None
+        _thr = get_role_strength_thresholds(rid)
+        try:
+            # Each strength target's full crew and what it asks of each
+            # person, as the scorer judges it (schedule audit 10/3/26 SQ-4):
+            # "8 across your largest bartender crew of 2 — about 4 a person".
+            _crews = _setup.strength_crews_view(rid, _thr) if _thr else {}
+        except Exception as _cx:
+            print(f"[team] strength crews unavailable for {rid}: {_cx!r}")
+            _crews = {}
         return jsonify(
             ok=True, is_live=True, team=team,
             coverage=capability_coverage(rid, [t["name"] for t in team]),
-            thresholds=get_role_strength_thresholds(rid),
+            thresholds=_thr, strength_crews=_crews,
             leader_rules=get_shift_leader_rules(rid),
             leader_rule_defaults=dict(LEADER_RULE_DEFAULTS),
             leader_rules_status=_lrs,
@@ -5094,10 +5108,16 @@ def mobile_set_thresholds(current_user):
         record_capability_change(
             rid, "threshold", subject="per-role targets", before=_before, after=cleaned,
             changed_by=current_user.get("username") or current_user.get("email"))
+        try:
+            import schedule_setup as _setup_c
+            crews = _setup_c.strength_crews_view(rid, cleaned) if cleaned else {}
+        except Exception as _cx:
+            print(f"[team] strength crews unavailable for {rid}: {_cx!r}")
+            crews = {}
         # Unreachable targets are saved and warned about rather than
         # refused — an owner may be describing the team they intend to have.
         return jsonify(ok=True, thresholds=cleaned, warnings=warnings + rule_warnings,
-                       leader_rule_warnings=rule_warnings), 200
+                       leader_rule_warnings=rule_warnings, strength_crews=crews), 200
     except (TypeError, ValueError) as ve:
         return jsonify(ok=False, error=f"Could not read those thresholds: {ve}"), 400
     except Exception as e:
@@ -7942,22 +7962,28 @@ def mobile_shift_profiles(current_user):
     """
     from models import (get_shift_profiles, get_quality_weights,
                         get_role_strength_thresholds, get_shift_leader_rules,
-                        get_operational_scores)
+                        get_operational_scores, get_quality_tuning)
     import shift_quality as _sq
     rid = current_user["restaurant_id"]
     try:
         stored = get_shift_profiles(rid)
         scores = get_operational_scores(rid)
         # Leader rules apply whether or not anyone is rated (schedule audit
-        # 10/3/26 P-18): a closing rule needs no score at all.
+        # 10/3/26 P-18): a closing rule needs no score at all. A built-in a
+        # calibration tuned is shown with what it set (SQ-22's tuning layer,
+        # `tuned` on the profile), as every draft judges it.
         resolved = _sq.profiles_from_config(
             [_sq.profile_from_dict(p) for p in stored] or None,
             default_strength=get_role_strength_thresholds(rid) if scores else {},
-            default_leader_rules=get_shift_leader_rules(rid))
+            default_leader_rules=get_shift_leader_rules(rid), tuning=get_quality_tuning(rid))
         return jsonify(
             ok=True,
             using_defaults=not stored,
             profiles=[_sq.profile_to_dict(p) for p in resolved],
+            # The critical floors a profile's own `floors` stand over (SQ-23):
+            # the editor shows each dimension's default beside its box, and 0
+            # in a box means that dimension never caps the profile's shifts.
+            critical_floors=dict(_sq.CRITICAL_FLOORS, stations=_sq.STATIONS_FLOOR),
             weights=get_quality_weights(rid) or _sq.DEFAULT_WEIGHTS,
             default_weights=_sq.DEFAULT_WEIGHTS,
             dimensions=[{"key": k, "label": _sq.DIMENSION_LABELS.get(k) or k.replace("_", " ").capitalize(),

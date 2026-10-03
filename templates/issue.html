@@ -30,6 +30,13 @@
   textarea{width:100%;min-height:90px;background:var(--paper);border:1px solid var(--line);border-radius:8px;
            padding:11px 13px;color:var(--ink);font-family:inherit;font-size:15px;resize:vertical}
   .ok{color:var(--green);font-size:15px;font-weight:600}
+  .gap{padding:12px 0;border-top:1px solid var(--line)}
+  .gap:first-of-type{border-top:none;padding-top:4px}
+  .gap .who{font-size:15px;line-height:1.5;color:var(--ink2)}
+  .gap .who b{color:var(--ink);font-weight:600}
+  .gap .st{font-weight:600}
+  .gap .st.ok{color:var(--green)}
+  .gap .st.bad{color:var(--red)}
 </style>
 </head>
 <body>
@@ -60,7 +67,35 @@
     </div>
   {% endif %}
 
-  {% if issue.kind == 'coverage' and issue.status != 'resolved' and issue.meta and issue.meta.covers %}
+  {# A call-off of several people (schedule audit 10/3/26 E-31): each gap
+     with where it stands, and one cover to ask per gap still open —
+     issues.cover_gaps, the list Home and the phone read too. #}
+  {% if gaps and gaps|length > 1 %}
+    <div class="card">
+      <p class="meta" style="margin-top:0">Each shift, and who to ask for it. One tap sends them the request; nothing on the schedule changes until you decide.</p>
+      {% for g in gaps %}
+        <div class="gap">
+          <div class="who"><b>{{ g.employee }}</b> — {{ g.shift_start or 'today' }},
+            {% if g.status == 'covered' %}<span class="st ok">covered{% if g.covered_by %} by {{ g.covered_by }}{% endif %}</span>
+            {% elif g.status == 'arrived' %}<span class="st ok">arrived</span>
+            {% elif g.status == 'missing' %}<span class="st bad">missing</span>
+            {% else %}<span class="st">{{ g.status }}</span>{% endif %}
+          </div>
+          {% if g.asked %}<div class="meta" style="margin-top:4px">Asked: {{ g.asked|join(', ') }}.</div>{% endif %}
+          {% if g.cover and issue.status != 'resolved' %}
+            {% set first = (g.cover.name.split(' ')|first) %}
+            {% set whose = (g.employee.split(' ')|first) ~ "'s" ~ ((' ' ~ g.shift_start) if g.shift_start else ' shift') %}
+            <form method="post" action="/i/{{ token }}" style="margin:10px 0 0">
+              <input type="hidden" name="action" value="ask_cover">
+              <input type="hidden" name="name" value="{{ g.cover.name }}">
+              <button type="submit" class="cbtn cbtn-primary">{% if g.cover.kind == 'stay' %}Ask {{ first }} to stay on for {{ whose }}{% else %}Ask {{ first }} to cover {{ whose }}{% endif %}</button>
+            </form>
+            {% if g.cover.how %}<div class="meta" style="margin-top:6px">{{ g.cover.how }}</div>{% endif %}
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% elif issue.kind == 'coverage' and issue.status != 'resolved' and issue.meta and issue.meta.covers %}
     {% set asked_names = (issue.meta.asked or [])|map(attribute='name')|list %}
     <div class="card">
       <p class="meta" style="margin-top:0">Free today and suggested to cover. One tap sends them the request; nothing on the schedule changes until you decide.</p>

@@ -5069,7 +5069,10 @@ svg:hover .hb-xh{opacity:1}
   // link to the fifth landed on no row (re-audit F1-15).
   function hbIssueRows(iss){
     var h='';
-    for(var j=0;j<iss.length;j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+(j>=4?' hb-iss-more':'')+'" data-issue-id="'+(+x.id)+'"'+(j>=4?' hidden':'')+'><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>';}
+    // A call-off of several people lists each gap with where it stands and
+    // one cover to ask per gap still open (schedule audit 10/3/26 E-31,
+    // the server's cover_gaps — the same list the /i/ page and the phone read).
+    for(var j=0;j<iss.length;j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+(j>=4?' hb-iss-more':'')+'" data-issue-id="'+(+x.id)+'"'+(j>=4?' hidden':'')+'><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>'+(window.sfw2GapsHtml?sfw2GapsHtml(x,j>=4):'');}
     if(iss.length>4)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-iss-more="'+(iss.length-4)+'" aria-expanded="false">+'+(iss.length-4)+' more</button>';
     return h;
   }
@@ -6271,6 +6274,9 @@ svg:hover .hb-xh{opacity:1}
   function hbCoverButtons(x){
     var m=x.meta||{},covers=m.covers||[],asked={},h='',n=0;
     if(x.status==='resolved'||!covers.length)return '';
+    // Several gaps: one button each, under the row (sfw2GapsHtml); the
+    // row keeps only the "did they take it?" answers.
+    if((x.cover_gaps||[]).length>1)return window.memCoverAsks?memCoverAsks(x):'';
     for(var a=0;a<(m.asked||[]).length;a++)asked[String(m.asked[a].name||'').toLowerCase()]=1;
     for(var i=0;i<covers.length&&n<2;i++){var nm=String(covers[i].name||'');if(!nm||asked[nm.toLowerCase()])continue;n++;
       h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cover-issue="'+(+x.id)+'" data-cover-name="'+esc(nm)+'"'+(window.memCoverTitle?memCoverTitle(covers[i]):'')+'>Ask '+esc(nm.split(' ')[0])+' to cover</button>';}
@@ -11647,7 +11653,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
   <details class="hb-results lb2-team" id="lb2-team" open>
-    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, events, open shifts, what the record says, task sheets</span></summary>
+    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, closers, events, open shifts, what the record says, task sheets</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
        nights per day, under 18. Each change is one POST and one toast. -->
@@ -11757,13 +11763,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
         <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper3)">
           <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Shift strength targets</div>
-          <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">The combined score of everyone in a role on one shift. Two people at 5 make 10 — so do a 5, a 3 and a 2, which is a weaker team, and the scheduler prefers fewer stronger people when both clear the bar. Leave a role blank for no target.</div>
+          <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">What a full crew of the role scores together on your busiest shift for it. Each shift is judged per person against that share: a target of 8 for a crew of two bartenders asks for about 4 a person, so a lunch with one bartender is held to about 4, not 8 — and adding a body never buys strength. Unrated people aren’t counted either way. Leave a role blank for no target.</div>
           <div id="team-thresholds" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"></div>
           <div id="team-threshold-warnings" style="margin-top:8px"></div>
 
           <div style="font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin:16px 0 6px">Shift leader requirements</div>
           <div style="font-size:15px;color:var(--ink3);margin-bottom:10px">Stricter than a target: this names one person who has to be on that shift.</div>
           <div id="team-rules" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+          <div id="team-rules-status"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
             <div>
               <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Role</div>
@@ -11788,7 +11795,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div>
               <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Minimum score</div>
               <select id="lr-min" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">
-                <option value="5">5</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">1</option>
+                <option value="5">5</option><option value="4" selected>4</option><option value="3">3</option><option value="2">2</option><option value="1">1</option>
               </select>
             </div>
             <div>
@@ -11845,6 +11852,26 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="lb2-avail">
         <div class="lb2-intro">A blank field keeps the default shown in it.</div>
         <div id="rules-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  {# Closers (schedule audit 10/3/26 D-9, L-9): who closes for which role.
+     A closer is the one person chosen to close for their role — on until
+     close and the last of their role out — and 47 of 64 were marked at
+     Simple EJ's. The one-time cleanup: the roles that close, who closes
+     for each now, the suggestion from eight weeks of punches with one
+     Apply, and the flags entered through support. Loads when opened
+     (cav-sfw2 loadClosers); data-nav="labor/closers" is the review's link. #}
+  <div class="lb2-srow s10" data-nav="labor/closers">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleClosersPanel)">
+      <div class="lb2-subsection-title">Closers <span id="closers-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleClosersPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="closers-toggle-btn">Review ↓</button>
+    </div>
+    <div id="closers-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">One closer per role: stays until close, the last of their role to leave. Pick the roles that close, then keep, unmark or add from what the punches show.</div>
+        <div id="closers-body" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading the closers"><i></i></div></div>
       </div>
     </div>
   </div>
@@ -20696,8 +20723,10 @@ function lb2LoadTimeOff(){
     // top of the page. This tile is the count and the record - a pending
     // row says where it is answered, with no buttons of its own.
     if(pend)h+='<div class="ac-row"><div class="l"><b>'+pend+' waiting on you</b><span>answered in Waiting on you, at the top of Labor</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="var w=document.getElementById(\'lb2-wait\');if(w&&!w.hidden)w.scrollIntoView({behavior:\'smooth\',block:\'start\'})">Answer →</button></div></div>';
-    for(var i=0;i<rows.length;i++){var q=rows[i];if(q.status==='pending')continue;var when=q.start_date===q.end_date?mdy(q.start_date):(mdy(q.start_date)+' \u2013 '+mdy(q.end_date));
-      h+='<div class="ac-row"><div class="l"><b>'+esc(q.employee_name)+'</b><span>'+esc(when)+(q.reason?' \u00b7 '+esc(q.reason):'')+'</span></div><div class="c">';
+    // "10/7/26, until 4:00pm": the part of the day when it is only part
+    // (schedule audit 10/3/26 D-39, the server's span_label).
+    for(var i=0;i<rows.length;i++){var q=rows[i];if(q.status==='pending')continue;var when=q.span_label||(q.start_date===q.end_date?mdy(q.start_date):(mdy(q.start_date)+' \u2013 '+mdy(q.end_date)));
+      h+='<div class="ac-row"><div class="l"><b>'+esc(q.employee_name)+'</b><span>'+(window.memNum?memNum(when):esc(when))+(q.reason?' \u00b7 '+esc(q.reason):'')+'</span></div><div class="c">';
       h+='<span class="ac-chip sm'+(q.status==='approved'?' good':'')+'">'+esc(q.status)+'</span>';
       h+='</div></div>';}
     el.innerHTML=h;
@@ -21064,8 +21093,14 @@ function _schedHandleResult(data) {
     var absDiff   = Math.abs(diff);
     var proj      = data.projected_revenue ? '$' + Math.round(data.projected_revenue).toLocaleString() : '—';
     var budgetDol = data.labor_budget_dollars ? '$' + Math.round(data.labor_budget_dollars).toLocaleString() : '—';
+    // The budget is the hourly crew's — the all-in target less the
+    // salaried pay (schedule audit 10/3/26 D-1) — said in its own words,
+    // never "$X at 35%"; a wage it had to assume says so (E-24).
+    var pbb = data.budget_basis || null;
     parText.innerHTML = 'Projected revenue: <strong class="hb-num">' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
-      + 'Labor budget (<span class="hb-num">' + (data.labor_target || 30) + '%</span>): <strong class="hb-num">' + budgetDol + '</strong><br>'
+      + 'Hourly budget: <strong class="hb-num">' + budgetDol + '</strong><br>'
+      + (window.sfw2BudgetNote ? memNum(sfw2BudgetNote(pbb, data.labor_target)) + '<br>' : '')
+      + (pbb && pbb.caveat ? memNum(pbb.caveat) + '<br>' : '')
       + 'PAR target: <strong class="hb-num">' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
       + 'This schedule: <strong class="hb-num">' + scheduled + 'h</strong>';
     if (diff > 0) {
@@ -21148,6 +21183,10 @@ var _dimensionList = [];
 var _demandLevels = ['low', 'normal', 'high', 'peak'];
 var _profileEditing = null;
 var _DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+// The critical floors a profile's own stand over (schedule audit 10/3/26
+// SQ-23), from the profiles payload: each dimension's default beside its box.
+var _critFloors = {};
+var _FLOOR_KEYS = ['coverage', 'operational_strength', 'leadership', 'coverage_curve', 'stations'];
 
 function loadShiftProfiles() {
   fetch('/api/labor/profiles').then(apiJson).then(function (d) {
@@ -21156,6 +21195,7 @@ function loadShiftProfiles() {
     _profileWeights = d.weights || {};
     _defaultWeights = d.default_weights || {};
     _dimensionList = d.dimensions || [];
+    _critFloors = d.critical_floors || {};
     if (d.demand_levels && d.demand_levels.length) _demandLevels = d.demand_levels;
     var src = document.getElementById('sp-source');
     if (src) src.textContent = d.using_defaults ? 'Using Cavnar AI defaults' : 'Your own profiles';
@@ -21180,9 +21220,14 @@ function renderProfileList() {
     var bits = [when, part, (p.demand || 'normal') + ' demand', 'quality ' + (p.min_quality || 70)];
     if (p.requires_leader) bits.push('needs a leader');
     if (p.training_allowed) bits.push('training allowed');
+    // Its own floors (SQ-23): "coverage floor 65", "strength never caps".
+    var pf = p.floors || {}, fk;
+    for (fk in pf) if (pf.hasOwnProperty(fk)) bits.push(_spDimLabel(fk).toLowerCase() + (+pf[fk] ? ' floor ' + pf[fk] : ' never caps'));
+    // A built-in a calibration changed says so (SQ-22's tuning layer).
+    var tn = p.tuned || {}, tuned = tn.min_quality != null || (tn.floors && _hasKeys(tn.floors));
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;'
       + 'background:var(--paper);border:1px solid var(--paper3);border-radius:6px;flex-wrap:wrap">'
-      + '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + '</div>'
+      + '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(p.label || p.key) + (tuned ? ' ' + memPill('Tuned by calibration', 'neutral') : '') + '</div>'
       + '<div style="font-size:13.5px;color:var(--ink3)">' + _escHtml(bits.join(' \u00B7 ')) + '</div></div>'
       + '<div style="display:flex;gap:6px">'
       + '<button class="cbtn cbtn-text cbtn-inline" type="button" data-profile-edit="' + _escAttr(p.key) + '">Edit</button>'
@@ -21214,6 +21259,7 @@ function _profileEditor(p, index) {
     + '<input id="sp-training" type="checkbox"' + (p.training_allowed ? ' checked' : '') + '> Training shift</label>'
     + '</div>'
     + _spRoleGrid(p)
+    + _spFloors(p)
     + '<div style="margin-top:12px">'
     + '<button type="button" data-profile-save="' + _escAttr(p.key) + '" class="cbtn cbtn-primary">Save profile</button>'
     + '<button type="button" data-profile-cancel="1" class="cbtn cbtn-secondary" style="margin-left:6px">Cancel</button>'
@@ -21221,6 +21267,22 @@ function _profileEditor(p, index) {
   return html;
 }
 
+function _hasKeys(o) { for (var k in (o || {})) if (o.hasOwnProperty(k)) return true; return false; }
+function _spDimLabel(key) {
+  for (var i = 0; i < _dimensionList.length; i++) if (_dimensionList[i].key === key) return _dimensionList[i].label;
+  return String(key || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+}
+/* A floor per critical dimension (SQ-23): a shift scoring under it is
+   capped at that score. Blank keeps the default shown; 0 never caps. */
+function _spFloors(p) {
+  var f = 'font-size:15px;padding:6px 9px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit';
+  var out = '<div class="sfw2-floors"><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Floors <span style="font-weight:400">(a shift under one is capped at that score · blank keeps the default · 0 never caps)</span></div><div class="grid" id="sp-floors">', i;
+  for (i = 0; i < _FLOOR_KEYS.length; i++) {
+    var k = _FLOOR_KEYS[i], own = (p.floors || {})[k], def = _critFloors[k];
+    out += '<label class="f">' + _escHtml(_spDimLabel(k)) + '<input type="number" min="0" max="100" step="1" data-sp-floor="' + k + '" value="' + (own === undefined || own === null ? '' : own) + '" placeholder="' + (def == null ? '' : def) + '" style="' + f + '"><small>' + (def == null ? 'no default' : 'default ' + def) + '</small></label>';
+  }
+  return out + '</div></div>';
+}
 function _spField(label, control) {
   return '<div><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">'
     + _escHtml(label) + '</div>' + control + '</div>';
@@ -21313,8 +21375,21 @@ function collectShiftProfile(key) {
     training_allowed: document.getElementById('sp-training').checked,
     min_strength: strength,
     critical_positions: positions,
+    floors: _spCollectFloors(existing),
     priority: (existing && existing.priority) || 3
   };
+}
+function _spCollectFloors(existing) {
+  // A floor on a dimension this editor doesn't show (a calibration may set
+  // one on any, SQ-22) rides along, so a save never drops it.
+  var out = {}, ins = document.querySelectorAll('#sp-floors [data-sp-floor]'), i, k, was = (existing && existing.floors) || {};
+  for (k in was) if (was.hasOwnProperty(k) && _FLOOR_KEYS.indexOf(k) === -1) out[k] = was[k];
+  for (i = 0; i < ins.length; i++) {
+    var v = String(ins[i].value || '').replace(/^\s+|\s+$/g, '');
+    if (v === '' || isNaN(+v)) continue;
+    out[ins[i].getAttribute('data-sp-floor')] = Math.max(0, Math.min(100, Math.round(+v)));
+  }
+  return out;
 }
 
 function saveShiftProfile(key) {
@@ -23324,6 +23399,13 @@ function loadTeamPanel() {
     _teamRules = d.leader_rules || [];
     _teamThresholds = d.thresholds || {};
     _teamRoles = _rolesFromTeam(_teamRows);
+    // A new leader rule's bar starts at the server's default, 4 (schedule
+    // audit 10/3/26 D-11: 5 was rarely meetable); each strength target's
+    // crew (SQ-4); and whether the leader rules judge anyone yet (D-10).
+    _teamCrews = d.strength_crews || {};
+    _teamRuleStatus = d.leader_rules_status || null;
+    var lrMin = document.getElementById('lr-min'), lrd = d.leader_rule_defaults || {};
+    if (lrMin && lrd.min_score != null) lrMin.value = String(lrd.min_score);
     renderTeamList();
     renderTeamThresholds();
     renderTeamRules();
@@ -23821,6 +23903,7 @@ document.addEventListener('click', function (ev) {
   }
 });
 
+var _teamCrews = {}, _teamRuleStatus = null, _teamDue = 0;
 function renderTeamCoverage(cov) {
   var chip = document.getElementById('team-coverage-chip');
   if (!chip) return;
@@ -23835,9 +23918,12 @@ function renderTeamCoverage(cov) {
       + ' <button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-left:6px" onclick="teamAdoptRatings(this)">Count them as mine</button>';
   }
   if (!cov || !cov.total) { chip.textContent = ''; return; }
-  chip.textContent = cov.rated === cov.total
+  // A rating 90+ days old is asked about, never dropped (D-12).
+  var due = cov.due_for_rerate != null ? +cov.due_for_rerate || 0 : _teamDue;
+  _teamDue = due;
+  chip.textContent = (cov.rated === cov.total
     ? '· all ' + cov.total + ' rated'
-    : '· ' + cov.rated + ' of ' + cov.total + ' rated';
+    : '· ' + cov.rated + ' of ' + cov.total + ' rated') + (due ? ' · ' + due + ' to check again' : '');
 }
 
 function teamAdoptRatings(btn) {
@@ -23892,10 +23978,59 @@ function renderTeamList() {
            + 'data-team-remove="' + i + '" title="Remove ' + _escAttr(m.name) + '" '
            + 'aria-label="Remove ' + _escAttr(m.name) + '">✕</button>';
     }
-    html += '</div></div>';
+    html += '</div>' + _teamRoleRows(m, i) + '</div>';
   }
   list.innerHTML = html;
 }
+/* Under the overall score (schedule audit 10/3/26 D-12): when it was rated,
+   asked again after 90 days ("Rated 6/1/26 — still right?" — an old rating
+   keeps counting until the owner answers), and a score per role for someone
+   who works more than one — "As Bartender" is how strong they are behind
+   the bar; the overall score stays their fallback everywhere else. */
+function _teamRoleRows(m, idx) {
+  var h = '', roles = [], seen = {}, rs = m.role_scores || {}, k, j, v;
+  if (m.score && m.rating_due_text) h += '<div class="sfw2-due">' + memNum(m.rating_due_text) + ' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-still="' + idx + '">Still right</button></div>';
+  else if (m.score && m.rated_label) h += '<div class="sfw2-rated">' + memNum('Rated ' + m.rated_label) + '</div>';
+  function add(r) { r = String(r || '').replace(/^\s+|\s+$/g, ''); if (!r || seen[r.toLowerCase()]) return; seen[r.toLowerCase()] = 1; roles.push(r); }
+  for (k in rs) if (rs.hasOwnProperty(k)) add(k);
+  /* Their recent job codes as roles (a Server AM and a Server PM are one
+     server): offered only when that is two roles or more. */
+  var rec = m.recent_roles || [], fams = [], fseen = {};
+  for (j = 0; j < rec.length; j++) { var fr = String(rec[j] || '').replace(/\s+(AM|PM)$/i, ''); if (fr && !fseen[fr.toLowerCase()]) { fseen[fr.toLowerCase()] = 1; fams.push(fr); } }
+  if (fams.length > 1) for (j = 0; j < fams.length; j++) add(fams[j]);
+  if (roles.length) {
+    h += '<div class="sfw2-roles" data-sfw2-roles="' + idx + '">';
+    for (j = 0; j < roles.length; j++) {
+      var cur = null;
+      for (k in rs) if (rs.hasOwnProperty(k) && k.toLowerCase() === roles[j].toLowerCase()) cur = rs[k];
+      h += '<div class="sfw2-rr"><span class="r">As ' + _escHtml(roles[j]) + '</span><span class="s chip-tog">';
+      for (v = 1; v <= 5; v++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (cur === v ? ' on' : '') + '" data-sfw2-rr="' + idx + '" data-role="' + _escAttr(roles[j]) + '" data-sfw2-score="' + v + '" aria-pressed="' + (cur === v ? 'true' : 'false') + '" aria-label="' + _escAttr(m.name + ' as ' + roles[j] + ': ' + v) + '">' + v + '</button>';
+      h += '</span>' + (cur == null ? '<span style="color:var(--ink3);font-size:13px">uses their overall score</span>' : '') + '</div>';
+    }
+    h += '</div>';
+  }
+  return h;
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-rr],[data-sfw2-still]') : null;
+  if (!t || t.disabled) return;
+  var still = t.hasAttribute('data-sfw2-still'), m = _teamRows[+t.getAttribute(still ? 'data-sfw2-still' : 'data-sfw2-rr')];
+  if (!m) return;
+  var body = {employee_name: m.name}, done = window.cbtnBusy ? cbtnBusy(t, '') : function () {};
+  if (still) body.score = m.score;
+  else {
+    var role = t.getAttribute('data-role'), v = +t.getAttribute('data-sfw2-score'), cur = null, k;
+    for (k in (m.role_scores || {})) if (m.role_scores.hasOwnProperty(k) && k.toLowerCase() === role.toLowerCase()) cur = m.role_scores[k];
+    body.role = role; body.score = cur === v ? null : v;
+  }
+  fetch('/api/labor/team/rating', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(apiJson).then(function (d) {
+      done();
+      if (!d || !d.ok) { toast((d && d.error) || 'That rating didn\u2019t save', 'error'); return; }
+      toast(still ? m.name + '\u2019s rating stands — asked again in 90 days' : (body.score == null ? m.name + ' as ' + body.role + ' uses their overall score again' : m.name + ' as ' + body.role + ': ' + body.score), 'success');
+      loadTeamPanel();
+    }).catch(function () { done(); toast('That rating didn\u2019t save \u2014 check your connection.', 'error'); });
+});
 
 // GET /api/labor/ratings/unmatched → one row per rating whose name is on
 // nobody's roster: a one-tap confirm when one roster name clearly fits,
@@ -24095,10 +24230,26 @@ function renderTeamThresholds() {
     var best = _reachable(role);
     html += '<div><div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">' + _escHtml(role);
     if (best !== null) html += ' <span style="font-weight:400">max ' + best + '</span>';
-    html += '</div><input type="number" min="0" step="1" data-role-threshold="' + i + '" value="' + (current === null ? '' : current) + '" placeholder="—" style="font-size:15.5px;font-weight:700;padding:6px 8px;width:74px;text-align:center;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit"></div>';
+    html += '</div><input type="number" min="0" step="1" data-role-threshold="' + i + '" value="' + (current === null ? '' : current) + '" placeholder="—" style="font-size:15.5px;font-weight:700;padding:6px 8px;width:74px;text-align:center;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit">'
+      + '<span class="sfw2-crew" data-sfw2-crew="' + i + '">' + _teamCrewLine(role, current) + '</span></div>';
   }
   wrap.innerHTML = html;
 }
+/* A target judged per person against the role's largest crew (schedule
+   audit 10/3/26 SQ-3/4/5): "8 across your largest bartender crew of 2 —
+   about 4 a person", from the server's own reading (strength_crews), and
+   moved as a new figure is typed. */
+function _teamCrewLine(role, target) {
+  if (target === null || target === undefined || target === '' || !(+target > 0)) return '';
+  var c = null, k;
+  for (k in (_teamCrews || {})) if (_teamCrews.hasOwnProperty(k) && k.toLowerCase() === String(role).toLowerCase()) c = _teamCrews[k];
+  return memNum(sfw2CrewLine(role, +target, c ? c.crew : Math.max(1, Math.ceil(+target / 5)), !!(c && c.known)));
+}
+document.addEventListener('input', function (ev) {
+  var t = ev.target; if (!t || !t.getAttribute || t.getAttribute('data-role-threshold') === null) return;
+  var i = t.getAttribute('data-role-threshold'), out = document.querySelector('[data-sfw2-crew="' + i + '"]');
+  if (out) out.innerHTML = _teamCrewLine(_teamRoles[+i], t.value);
+});
 
 function _thresholdFor(role) {
   var want = role.toLowerCase();
@@ -24131,6 +24282,14 @@ function renderTeamRules() {
     sel.innerHTML = opts || '<option value="">No roles yet</option>';
   }
   if (!wrap) return;
+  // Whether the leader rules judge anyone yet (D-10): "1 leader rule that
+  // needs a rating is inactive: nobody on the roster is rated …".
+  var stEl = document.getElementById('team-rules-status');
+  if (stEl) {
+    var sl = (_teamRuleStatus && _teamRuleStatus.lines) || [], sh = '', q;
+    for (q = 0; q < sl.length; q++) sh += '<div class="sr-line warn"><span class="d"></span><span>' + memNum(sl[q]) + '</span></div>';
+    stEl.innerHTML = sh;
+  }
   if (!_teamRules.length) {
     wrap.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No requirements yet.</div>';
     return;
@@ -24207,7 +24366,14 @@ function saveTeamTargets(btn) {
     if (!d.ok) { if (note) note.textContent = d.error || 'Could not save those targets.'; return; }
     _teamThresholds = d.thresholds || thresholds;
     if (note) note.textContent = 'Saved.';
-    renderTeamWarnings(d.warnings || []);
+    // The crews the saved targets are judged against (SQ-4), and a leader
+    // rule the team can't meet, said under the rules it is about (D-11).
+    if (d.strength_crews) { _teamCrews = d.strength_crews; renderTeamThresholds(); }
+    var lrw = d.leader_rule_warnings || [], tw = [], q;
+    for (q = 0; q < (d.warnings || []).length; q++) if (lrw.indexOf(d.warnings[q]) === -1) tw.push(d.warnings[q]);
+    renderTeamWarnings(tw);
+    var stEl = document.getElementById('team-rules-status');
+    if (stEl) { var wh = ''; for (q = 0; q < lrw.length; q++) wh += '<div class="sr-line warn"><span class="d"></span><span>' + memNum(lrw[q]) + '</span></div>'; stEl.innerHTML = wh; }
     setTimeout(function(){ if (note) note.textContent = ''; }, 2500);
   }).catch(function(){
     if (btn) { btn.disabled = false; btn.textContent = 'Save targets'; }
@@ -24223,7 +24389,7 @@ function renderTeamWarnings(warnings) {
   if (!warnings.length) { wrap.innerHTML = ''; return; }
   var html = '';
   for (var i = 0; i < warnings.length; i++) {
-    html += '<div style="font-size:11px;color:var(--amber);margin-top:3px">' + _escHtml(warnings[i]) + '</div>';
+    html += '<div class="sr-line warn"><span class="d"></span><span>' + _escHtml(warnings[i]) + '</span></div>';
   }
   wrap.innerHTML = html;
 }
@@ -24491,7 +24657,9 @@ function swFill(data) {
   // week; a new or reopened draft only makes it re-read (blind audit).
   if (fc && data) _ssFcKey = null;
   var par = document.getElementById('sw-par');
-  if (par && data && data.hours_budget) par.innerHTML = 'This week’s PAR: <span class="hb-num">' + _schedHrs(data.hours_budget) + 'h</span>' + (data.labor_budget_dollars ? ' · <span class="hb-num">' + _schedMoney(data.labor_budget_dollars) + '</span> at <span class="hb-num">' + _escHtml(String(data.labor_target || '')) + '%</span>' : '')
+  // The hourly crew's budget (D-1): "hourly budget $X", its basis in its
+  // own words when the draft carries it — never "$X at 35%".
+  if (par && data && data.hours_budget) par.innerHTML = 'This week’s PAR: <span class="hb-num">' + _schedHrs(data.hours_budget) + 'h</span>' + (data.labor_budget_dollars ? ' · hourly budget <span class="hb-num">' + _schedMoney(data.labor_budget_dollars) + '</span>' + (data.budget_basis && data.budget_basis.text ? ' — ' + (window.memNum ? memNum(data.budget_basis.text) : _escHtml(data.budget_basis.text)) : '') : '')
     // Whose target the budget was built against (M2 owner goals): "your goal
     // of 26% by 12/31/26", "your target" or Cavnar AI's starting one.
     + (data.labor_target_label ? ' — ' + (window.memNum ? memNum(data.labor_target_label) : _escHtml(data.labor_target_label)) : '') + '. A ceiling, not a quota.';
@@ -25038,8 +25206,16 @@ function ssForecastHtml(d) {
   h += '<div class="ssf-head">'
     + '<div><div class="k">Forecast sales</div><div class="v">' + (d.projected_revenue ? _schedMoney(d.projected_revenue) : '—') + '</div><div class="n">' + _numText(d.projected_revenue_source || '') + '</div></div>'
     + '<div><div class="k">PAR hours</div><div class="v">' + (d.hours_budget ? _schedHrs(d.hours_budget) + 'h' : '—') + '</div><div class="n">the ceiling the draft stays under</div></div>'
-    + '<div><div class="k">Labor budget</div><div class="v">' + (d.labor_budget_dollars ? _schedMoney(d.labor_budget_dollars) : '—') + '</div><div class="n">at ' + tgt + (d.labor_target_label ? ' — ' + _numText(d.labor_target_label) : '') + '</div></div>'
+    // The budget is the HOURLY crew's (schedule audit 10/3/26 D-1): the
+    // all-in target less the salaried pay — its own sentence says which,
+    // never "$X at 35%"; the salaries' dollars only for the owner.
+    + '<div><div class="k">Hourly budget</div><div class="v">' + (d.labor_budget_dollars ? _schedMoney(d.labor_budget_dollars) : '—') + '</div><div class="n">' + _numText(sfw2BudgetNote(d.budget_basis, d.labor_target)) + (d.labor_target_label ? ' — ' + _numText(d.labor_target_label) : '') + '</div></div>'
     + '</div>';
+  var bb = d.budget_basis || {}, sal = sfw2SalaryNote(bb);
+  if (sal) h += '<div class="sw-note" style="margin:-6px 0 10px">' + _numText(sal) + '</div>';
+  // A wage the budget had to assume (E-24): said, with the way to fix it.
+  if (bb.caveat) h += '<div class="sw-flag' + (bb.trim_ok === false ? ' bad' : '') + '" style="margin:0 0 12px">' + _numText(bb.caveat) + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set pay rates</button></div>';
+  if (bb.salaries_exceed_target) h += '<div class="sw-flag bad" style="margin:0 0 12px">' + _numText(bb.text || 'The salaried pay reaches the whole labor target — no hourly hours fit under it.') + '</div>';
   h += '<div class="ssf-cols"><span>Day</span><span>Sales</span><span>Hours the forecast calls for</span><span>Hours</span></div>';
   for (i = 0; i < days.length; i++) {
     var x = days[i], hrs = +x.hours || 0, pct = mx > 0 ? Math.round(hrs / mx * 100) : 0;
@@ -25049,10 +25225,19 @@ function ssForecastHtml(d) {
       + '<span class="s">' + sales + '</span><span class="tr"><i style="width:' + (x.closed ? 0 : pct) + '%"></i></span>'
       + '<span class="h">' + (x.closed || !hrs ? '—' : '<span class="hb-num">' + _schedHrs(hrs) + 'h</span>') + '</span></div>';
     if (x.effects && x.effects.length) h += '<div class="ssf-day" style="padding:0"><span></span><span class="ssf-ev">' + _escHtml(x.effects.join(' · ')) + '</span></div>';
+    // How far the date sits from a typical one and why (D-23, D-30), and
+    // why its hours moved off its weekday's (D-24).
+    var dmt = x.closed ? '' : sfw2DemandLine(x.demand ? {pct: x.demand.pct, reasons: x.demand.reasons, weekday: x.weekday} : null);
+    var tr = (d.daily_target_reasons || {})[x.date] || [];
+    if (dmt || tr.length) h += '<div class="ssf-day" style="padding:0"><span></span><span class="ssf-dm">' + (dmt ? '<span class="' + ((+x.demand.pct) > 0 ? 'up' : 'down') + '">' + _numText(dmt) + '</span>' : '')
+      + (tr.length && !dmt ? _numText('Hours moved: ' + tr.join('; ')) : '') + '</span></div>';
   }
   if (miss.length) h += '<div class="sw-note" style="margin-top:10px">No sales forecast for ' + miss.join(', ') + (why ? ' — ' + _escHtml(why) : '') + '.</div>';
+  // How fresh the sales are (D-33): the read's own sentence; a stale one
+  // stops Generate, and says so here first.
   var ddt = d.demand_data_through;
-  if (ddt && ddt.blind) h += '<div class="sw-flag bad">' + (ddt.date ? 'No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>' : 'No sales on file') + ': the forecast cannot see recent weeks.</div>';
+  if (ddt && (ddt.message || ddt.line)) h += '<div class="sw-flag' + (ddt.blocked || ddt.blind ? ' bad' : '') + '">' + _numText(ddt.message || ddt.line) + '</div>';
+  else if (ddt && ddt.blind) h += '<div class="sw-flag bad">' + (ddt.date ? 'No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>' : 'No sales on file') + ': the forecast cannot see recent weeks.</div>';
   return h;
 }
 document.addEventListener('change', function (ev) {
@@ -27745,7 +27930,11 @@ function loadMemory() {
           + (f.can_set_scope ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-scope="' + esc(f.id) + '" data-scope="' + (f.scope === 'org' ? 'location' : 'org') + '">' + (f.scope === 'org' ? 'This location only' : 'Every location') + '</button>' : '')
           + (f.can_pin ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pin-fact="' + esc(f.id) + '" data-pin-on="' + (f.pinned ? '0' : '1') + '">' + (f.pinned ? 'Unpin' : 'Pin') + '</button>' : '')
           + (f.can_forget === false ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button>');
-        h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + memMeta(f) + '</span></div>'
+        /* How the schedule checks it, beside each of the owners' staffing
+           rules (schedule audit 10/3/26 D-14, D-38): an owner-only rule it
+           can't read had no surface anywhere. */
+        var chk = (d.schedule_checks || {})[String(f.id)];
+        h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + memMeta(f) + '</span>' + (chk && window.sfw2MemCheckHtml ? sfw2MemCheckHtml(chk) : '') + '</div>'
           + (btns ? '<div class="c">' + btns + '</div>' : '') + '</div>';
       }
       if (+d.others_private) h += '<div class="ac-row"><div class="l"><span>' + num(d.others_private + (+d.others_private === 1 ? ' private note' : ' private notes') + ' kept by teammates for themselves — not shown here.') + '</span></div></div>';
@@ -27841,6 +28030,9 @@ function acctRemember(btn) {
       /* A full lane makes room by moving its least-used fact of that kind
          to "Left on its own" - said, so nothing leaves unseen. */
       var msg = d && d.ok ? (d.private_default ? 'Remembered for owners only — it is about someone’s job or pay. “Share with the team” on it changes that' : d.confirmed ? 'Already remembered — noted you said it too' : ('Remembered' + (d.replaced ? ' — it replaced “' + d.replaced + '”' : '') + (d.evicted ? ' — the least-used ' + (MEM_KIND[d.kind] || 'fact').toLowerCase() + ' made room, and can be put back' : ''))) : ((d && d.error) || 'Could not save');
+      /* A staffing rule is said back as every draft will check it, or that
+         it can't be (schedule audit 10/3/26 D-14) — here and under the rule. */
+      if (d && d.ok && d.schedule_rule && d.schedule_rule.text) msg += '. ' + d.schedule_rule.text;
       if (typeof toast === 'function') toast(msg, d && d.ok ? 'success' : 'error');
       /* A note that looks like one already kept: does this replace it? */
       var sim = d && d.ok && d.similar && d.similar.length ? d.similar[0] : null;
@@ -33482,7 +33674,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // the group so a delegated click knows what to save.
   // A certification's stored key reads as words on screen (owner, 9/26/26):
   // food_handler -> "Food handler". The key stays the value sent back.
-  function _certLabel(c){c=String(c||'').replace(/_/g,' ');return c.charAt(0).toUpperCase()+c.slice(1);}
+  // The roster and rules payloads say how each reads (certification_labels,
+  // schedule audit 10/3/26 E-15): "Floor manager (can run the shift)" apart
+  // from the food-safety card. Words from the key only for an older server.
+  var _certLabels={};
+  function _certLabel(c){if(_certLabels[c])return _certLabels[c];c=String(c||'').replace(/_/g,' ');return c.charAt(0).toUpperCase()+c.slice(1);}
   function _chipTog(choices,picked,attr,ro,label){
     var o='',i,on={};for(i=0;i<(picked||[]).length;i++)on[String(picked[i]).toLowerCase()]=1;
     for(i=0;i<choices.length;i++){var c=String(choices[i]);o+='<button type="button" class="cbtn cbtn-secondary cbtn-sm ct'+(on[c.toLowerCase()]?' on':'')+(ro?' ro':'')+'" '+attr+'="'+esc(c)+'" aria-pressed="'+(on[c.toLowerCase()]?'true':'false')+'"'+(ro?' disabled':'')+'>'+esc(label?label(c):c)+'</button>';}
@@ -33565,13 +33761,21 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var el=document.getElementById('roster-learned');if(!el)return;
     var d=_learned;if(!d){el.innerHTML='<div class="hb-skel" style="width:50%;height:12px"></div>';return;}
     var ps=d.patterns||[],ro=!d.can_edit,i,h='',kept=window.memLearnedHtml?memLearnedHtml(d,ro):'';
-    if(!ps.length){el.innerHTML='<div class="hb-empty">Nothing learned yet — a change you make to two drafts in a row becomes a standing preference here.</div>'+kept;return;}
+    // Edits support made through view-as teach nothing until the account
+    // holder counts them (schedule audit 10/3/26 L-8).
+    var head=window.sfw2LearnedHead?sfw2LearnedHead(d):'';
+    if(!ps.length){el.innerHTML=head+'<div class="hb-empty">Nothing learned yet — a change you make to two drafts in a row becomes a standing preference here.</div>'+kept;return;}
     for(i=0;i<ps.length;i++){var p=ps[i];
-      h+='<div class="lrn-row'+(p.dismissed?' off':'')+'" data-lrn="'+esc(p.key)+'"><span class="tx">'+num(p.text||'')+'</span>'
-        +'<span class="n'+(p.active?' on':'')+'">'+(p.dismissed?'not used':(p.active?'in use':'seen once'))+'</span>'
+      // How often and how sure (L-6): "2 of 3 weeks · 61% confidence", "—"
+      // under two weeks it could have happened in; a dismissal support
+      // made counts once the account holder takes it (L-10).
+      var ev=window.sfw2PatternEvidence?sfw2PatternEvidence(p):'',st=p.dismissed?'not used':(p.dismissed_by_admin?'not counted':(p.active?'in use':(p.times>=2?'not often enough':'seen once')));
+      h+='<div class="lrn-row'+(p.dismissed?' off':'')+'" data-lrn="'+esc(p.key)+'"><span class="tx">'+num(p.text||'')+(ev?'<span class="sfw2-ev">'+num(ev)+'</span>':'')
+        +(p.dismissed_by_admin?'<span class="sfw2-ev">Dismissed through Cavnar AI support — not counted'+(d.can_adopt?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-adopt-dis="1">Count as mine</button>':'')+'</span>':'')+'</span>'
+        +'<span class="n'+(p.active?' on':'')+'">'+st+'</span>'
         +(ro?'':'<button type="button" class="cbtn cbtn-text cbtn-sm'+(p.dismissed?'':' cbtn-muted')+'" data-lrn-set="'+(p.dismissed?'0':'1')+'">'+(p.dismissed?'Use again':'Stop using this')+'</button>')+'</div>';
     }
-    el.innerHTML=h+kept;
+    el.innerHTML=head+h+kept;
   }
   document.addEventListener('click',function(ev){
     var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&t.getAttribute('data-lrn-set')!==null))t=t.parentNode;
@@ -33580,8 +33784,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var key=row.getAttribute('data-lrn'),dis=t.getAttribute('data-lrn-set')==='1',done=busy(t,'…');
     jsend('/api/labor/learned-patterns',{key:key,dismissed:dis},function(d){
       done();if(!d.ok){toast(d.error||'Could not change that','error');return;}
-      var ps=(_learned&&_learned.patterns)||[],i;for(i=0;i<ps.length;i++)if(ps[i].key===key){ps[i].dismissed=dis;ps[i].active=!dis&&ps[i].times>=2;}
-      _lrnRender();toast(dis?'The draft will stop using that':'The draft will use that again','success');
+      // The server says what is in use now (its weeks, its rate, whose
+      // dismissal counts — L-6, L-10), so the list is read again.
+      loadLearnedPatterns();
+      toast(dis?(d.counted===false?'Saved for the owner to confirm':'The draft will stop using that'):'The draft will use that again','success');
     });
   });
   function _rstActive(e){var st=e.settings||{};return st.active!==false&&e.active!==false;}
@@ -33600,11 +33806,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // misses in six shifts don't read as a flat 33%; the title says both.
     var raw=(r.no_shows!=null)?(r.no_shows+' of '+r.shifts+' shift'+(r.shifts===1?'':'s')+' missed'+(r.raw_no_show_rate!=null?' ('+Math.round(r.raw_no_show_rate*100)+'% raw)':'')):(r.shifts+' shift'+(r.shifts===1?'':'s')+' on record');
     var smooth=(r.base_rate!=null)?' · smoothed toward this restaurant\u2019s '+Math.round(r.base_rate*1000)/10+'% overall rate':'';
-    return '<span class="rst-rel '+(bad?'bad':(pct===0?'good':''))+'" title="'+esc(raw+smooth+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+' · flagged at '+Math.round(thr*100)+'%')+'">'+pct+'% no-show</span>';
+    // Call-outs apart and lateness over clocked shifts (schedule audit
+    // 10/3/26 L-18, D-44) ride in the title; the open row says them in full.
+    var more=(r.called_out?' · called out '+r.called_out+' time'+(r.called_out===1?'':'s'):'')+(r.late_shifts!=null?' · late to '+(r.late||0)+' of '+r.late_shifts+' clocked shift'+(r.late_shifts===1?'':'s')+(r.late_rate==null?'':' ('+Math.round(r.late_rate*100)+'%)'):'');
+    return '<span class="rst-rel '+(bad?'bad':(pct===0?'good':''))+'" title="'+esc(raw+smooth+more+(r.short_rate?' · '+Math.round(r.short_rate*100)+'% cut short':'')+' · flagged at '+Math.round(thr*100)+'%')+'">'+pct+'% no-show</span>';
   }
   window.renderRoster=function(){
     var d=_roster,el=document.getElementById('roster-body');if(!d||!el)return;
     var ro=!d.can_edit,list=d.roster||[],ch=d.choices||{},i,active=0;
+    // The person facts in the open row read the roster through this
+    // (schedule fix round 10/3/26, cav-sfw2); "Set standing shifts" on the
+    // rules screen opens the person it names.
+    window._sfw2Roster=d;if(ch.certification_labels)_certLabels=ch.certification_labels;
+    if(window._sfw2OpenPerson){_rosterOpen[window._sfw2OpenPerson]=true;window._sfw2OpenPerson=null;}
+    var ceiling=(_rules&&_rules.rules&&+_rules.rules.weekly_hours_ceiling)||40,ownerRo=!d.can_edit_owner_facts;
     var days=ch.days||_RV_DAYS,types=ch.employment_type||['full','part'],dps=ch.daypart||['any','morning','night','off'];
     for(i=0;i<list.length;i++)if(_rstActive(list[i]))active++;
     var chip=document.getElementById('roster-chip');if(chip)chip.textContent=list.length?active+' on the roster':'';
@@ -33614,18 +33829,23 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     for(i=0;i<list.length;i++){
       var e=list[i],st=e.settings||{},on=_rstActive(e),open=!!_rosterOpen[e.name],nm=esc(e.name);
       h+='<tr class="'+(on?'':'off')+(open?' open':'')+'" data-rst="'+nm+'">'
-        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span> <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+nm+'">Details</button><small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+'</small></td>'
+        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span> <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+nm+'">Details</button>'+(window.sfw2RosterPills?sfw2RosterPills(e):'')+'<small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+(window.sfw2RosterAlso?sfw2RosterAlso(e):'')+'</small></td>'
         +'<td>'+(e.score?'<span class="rst-score" title="Operational Score">'+esc(e.score)+'</span>':'<span class="rst-score none" title="Not rated yet">—</span>')+'</td>'
         +'<td>'+_rstRel(e.reliability)+'</td>'
         +'<td>'+_lbSw('active',on,ro)+'</td>'
         +'<td><select class="ac-select" data-rst-f="employment_type" aria-label="Employment type"'+(ro?' disabled':'')+'>'+_lbOpts(types,st.employment_type||types[0],_EMP_LABELS)+'</select></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="min_hours" min="0" max="80" step="1" value="'+(st.min_hours==null?'':esc(st.min_hours))+'" placeholder="—" aria-label="Minimum hours"'+(ro?' disabled':'')+'></td>'
-        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
+        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'>'
+        // A maximum past the weekly ceiling is the owner allowing the hours,
+        // overtime included (schedule audit 10/3/26 P-12).
+        +(window.sfw2MaxNote&&sfw2MaxNote(st.max_hours,ceiling)?'<small class="sfw2-ot">'+esc(sfw2MaxNote(st.max_hours,ceiling))+'</small>':'')+'</td>'
         +'<td><span class="rst-minor">'+_lbSw('is_minor',!!st.is_minor,ro)
         /* Which minor rule table applies (NS5 H4): 14-15 carries the federal
            school-day limits, 16-17 the restaurant's own minor rule. */
         +(st.is_minor?'<select class="ac-select" data-rst-f="minor_age_band" aria-label="Age band" title="Age band sets which minor limits are checked"'+(ro?' disabled':'')+'>'+_lbOpts(['','14-15','16-17'],st.minor_age_band||'',{'':'Age?','14-15':'14\u201315','16-17':'16\u201317'})+'</select>':'')
         +'</span></td></tr>';
+      // Not worked in six weeks: Deactivate or Still here (E-3).
+      if(window.sfw2RosterAfter)h+=sfw2RosterAfter(e,ro);
       if(open){
         var av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],j;
         h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
@@ -33637,6 +33857,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         for(j=0;j<days.length;j++){var w=tw[days[j]]||{};h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="earliest" value="'+esc(w.earliest||'')+'" placeholder="from" aria-label="'+esc(days[j])+' earliest start" maxlength="8"'+(ro?' disabled':'')+'><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="latest" value="'+esc(w.latest||'')+'" placeholder="until" aria-label="'+esc(days[j])+' latest finish" maxlength="8"'+(ro?' disabled':'')+'></div>';}
         h+='</div><div class="rst-cap">Earliest start and latest finish, like 10:00am and 9:00pm. Blank means any time.</div>';
         h+='<div class="rst-more">';
+        // Who runs the floor and who stands in, the days they always work,
+        // training, the roles they close for and their reliability
+        // (schedule audit 10/3/26 F1, G; cav-sfw2).
+        if(window.sfw2RosterFacts)h+=sfw2RosterFacts(e,ro,ownerRo);
         // Experienced: the owner's word for it, counted by Experience
         // balance without waiting for twenty shifts of history on file.
         h+='<div><div class="k">Experience</div><div class="rul-sw" style="border-top:none;padding-top:2px">'+_lbSw('experienced',!!st.experienced,ro)+'<span class="t">Experienced — knows the job<small>Counts as an experienced hand without waiting for 20 shifts on file.</small></span></div></div>';
@@ -33728,13 +33952,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
     ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
     ['max_consecutive_days','Days in a row, at most','days'],
-    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days \u2014 a week inside it is held']];
+    ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days \u2014 a week inside it is held'],
+    // The shortest shift (schedule audit 10/3/26 A2 E-16; blank is no rule)
+    // and what full time means for anyone with no minimum of their own
+    // (F2 D-41; 0 is no minimum, blank the default shown).
+    ['min_shift_hours','Shortest shift','hours, 1\u201312 \u2014 blank: no shortest'],
+    ['full_time_min_hours','Full-time means at least','hours a week \u2014 0: no minimum']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
       var el=document.getElementById('rules-body');if(!el)return;
       if(!d.ok){el.innerHTML='<div class="hb-empty">'+esc(d.error||'Could not load the rules.')+'</div>';return;}
-      _rules=d;
+      _rules=d;window._sfw2Rules=d;if(d.certification_labels)_certLabels=d.certification_labels;
       // The per-role rows need the roster's roles; render once both are in.
       if(!_roster)jget('/api/labor/roster',function(r){if(r.ok)_roster=r;renderRules();});
       else renderRules();
@@ -33885,6 +34114,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var ro=!d.can_edit,rules=d.rules||{},defs=d.defaults||{},floors=d.role_floors||{},roles=_rulRoles(),i,h='';
     var chip=document.getElementById('rules-chip');if(chip){var set=0,k;for(k in rules)if(rules.hasOwnProperty(k)&&rules[k]!=null&&rules[k]!==''&&String(rules[k])!==String(defs[k]))set++;chip.textContent=set?set+' of your own':'defaults';}
     if(ro)h+='<div class="lb2-ro">Only the account owner can change the scheduling rules.</div>';
+    // Who runs the floor, said back to confirm (schedule audit 10/3/26 F1
+    // P-7, E-14): "Managers: …", who was left out, who stands in.
+    if(window.sfw2RulesTop)h+=sfw2RulesTop(d,ro);
     // Jurisdiction: a pack of starting values applied under the owner's
     // own. Its notes are caveats, not legal advice.
     var pack=d.pack||null,packs=d.packs||[],applied=(pack&&pack.applied)||{};
@@ -33918,7 +34150,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     for(i=0;i<cdates.length;i++)h+=_rulClosedChip(cdates[i],ro);
     h+='</div>';
     if(!ro)h+='<div class="lb2-form"><div class="ac-field"><label>Closed on a date</label><input type="date" class="ac-input" id="rul-cdate-new" aria-label="A date you are closed"></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="addClosedDate()">Add date</button></div>';
-    h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div><div id="rul-floors">';
+    // A trading day with no close time checks nobody at close (D-43).
+    if(window.sfw2RulesClosed)h+=sfw2RulesClosed(d);
+    // Which job codes are one role (D-13), before the floors that use them.
+    if(window.sfw2RulesFamilies)h+=sfw2RulesFamilies();
+    h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div>'+(window.sfw2RulesFloorsHead?sfw2RulesFloorsHead(d,ro):'')+'<div id="rul-floors">';
     if(!roles.length)h+='<div class="hb-empty">Roles appear once your shifts carry one, or add one below.</div>';
     for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
     h+='</div>';
@@ -33926,7 +34162,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // The cut floor for a role with no floor above (schedule_rules.cut_floor):
     // the fewest people a send-home suggestion may leave on. Cuts only.
     var cutMax=d.cut_floor_max||10,cutN=d.cut_floor_default==null?2:d.cut_floor_default;
-    h+='<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="rul-cut-floor">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="rul-cut-floor" min="1" max="'+cutMax+'" step="1" value="'+esc(cutN)+'" aria-label="Never cut a role below this many people"'+(ro?' disabled':'')+'>people<small>Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.</small></div></div>';
+    // One "stays until close + N" per role (D-43) and the salaried cap (E-12).
+    var cutHtml='<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="rul-cut-floor">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="rul-cut-floor" min="1" max="'+cutMax+'" step="1" value="'+esc(cutN)+'" aria-label="Never cut a role below this many people"'+(ro?' disabled':'')+'>people<small>Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.</small></div></div>';
+    h+=cutHtml;
+    if(window.sfw2RulesStays)h+=sfw2RulesStays(d);
+    if(window.sfw2RulesSalaried)h+='<div class="lb2-sub">Salaried staff<small>the weekly hours code schedules a salaried person for</small></div>'+sfw2RulesSalaried(d,ro);
     // Arrivals: how many minutes before their OWN shift start each role
     // clocks in (attendance.clock_in_leads) — never "before open", and it
     // never moves a shift. A role whose people are all salaried doesn't
@@ -33971,9 +34211,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+='</select></div><div class="ac-field w"><label>API key</label><input class="ac-input" id="rul-res-key" type="password" autocomplete="off" placeholder="'+(rf.configured?'on file — leave blank to keep it':'paste the key from your account')+'"'+(ro?' disabled':'')+'></div>'
       +(ro?'':'<button type="button" class="cbtn cbtn-secondary" onclick="syncReservations(this)">Sync now</button>')+'</div>'
       +'<div class="msg'+(rf.live?' live':'')+'" id="rul-res-msg">'+esc(rf.message||'')+'</div></div>';
+    // Labor standards save one role at a time, apart from Save rules (D-25).
+    if(window.sfw2RulesStandards)h+=sfw2RulesStandards();
     if(!ro)h+='<div class="sr-actions" style="margin-top:16px"><button type="button" class="cbtn cbtn-primary" onclick="saveRules(this)">Save rules</button><span class="ac-status" id="rules-status"></span></div>';
     el.innerHTML=h;
+    if(window.sfw2RulesAfter)sfw2RulesAfter(d,ro);
   };
+  // A role the floors suggestion names that has no row yet (cav-sfw2).
+  window.sfw2AddFloorRow=function(role){var box=document.getElementById('rul-floors');if(!box)return null;box.insertAdjacentHTML('beforeend',_rulFloorHtml(role,{},false));return box.lastElementChild;};
   // Chip toggles inside the rules card flip locally; Save writes them.
   document.addEventListener('click',function(ev){
     var t=ev.target;while(t&&t!==document.body&&!(t.getAttribute&&(t.getAttribute('data-cert')!==null||t.getAttribute('data-foh')!==null||t.getAttribute('data-patio')!==null||t.getAttribute('data-closed')!==null)))t=t.parentNode;
@@ -34021,7 +34266,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   });
   window.saveRules=function(btn){
     var rules={},floors={},ins=document.querySelectorAll('#rules-body [data-rule]'),i;
-    for(i=0;i<ins.length;i++){var v=ins[i].value.trim();rules[ins[i].getAttribute('data-rule')]=v===''?null:(ins[i].getAttribute('data-rule')==='minor_latest_end'?v:+v);}
+    // A blank field keeps the default shown in it: it is left out of the
+    // save, so the server's default stands. Sent as null it read as "not
+    // tracked", and a blank rest or weekly-ceiling box turned that rule off
+    // (schedule fix round 10/3/26). The shortest shift is the one setting a
+    // save that leaves it out keeps (schedule_rules._KEPT_WHEN_NOT_SENT), so
+    // its blank — no shortest — is sent.
+    for(i=0;i<ins.length;i++){var v=ins[i].value.trim(),rk=ins[i].getAttribute('data-rule');if(v===''){if(rk==='min_shift_hours')rules[rk]=null;continue;}rules[rk]=rk==='minor_latest_end'?v:+v;}
     var fls=document.querySelectorAll('#rules-body .rul-floor');
     for(i=0;i<fls.length;i++){
       var mEl=fls[i].querySelector('[data-floor="morning"]'),nEl=fls[i].querySelector('[data-floor="night"]');
@@ -34063,6 +34314,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Closed dates are not sent: each saved when it was added or removed.
     var prov=document.getElementById('rul-res-prov'),key=document.getElementById('rul-res-key');
     if(prov){body.reservation_provider=prov.value||null;if(key&&key.value.trim())body.reservation_api_key=key.value.trim();}
+    // Stays until close + N, one per role (D-43): sent only once the roles
+    // have loaded, so a screen that couldn't read them never clears them.
+    var stays=document.querySelectorAll('#rules-body [data-sfw2-stay]');
+    if(stays.length){var sm={};for(i=0;i<stays.length;i++){var sv=stays[i].value.trim();if(sv==='')continue;sm[stays[i].getAttribute('data-sfw2-stay')]=Math.max(0,Math.min(240,Math.round(+sv)));}body.role_close_mins=sm;}
+    // The salaried weekly cap (E-12): blank is the default.
+    var sc=document.getElementById('sfw2-salcap');
+    if(sc&&!sc.disabled){var scv=sc.value.trim(),lo=+(sc.getAttribute('min')||20),hi=+(sc.getAttribute('max')||84);
+      if(scv!==''&&(!(+scv>=lo)||!(+scv<=hi))){toast('The salaried cap is '+lo+' to '+hi+' hours, or blank','error');sc.focus();return;}
+      body.salaried_cap=scv===''?null:+scv;}
     var done=busy(btn,'Saving…'),st=document.getElementById('rules-status');
     jsend('/api/labor/rules',body,function(d){
       done();
@@ -34122,7 +34382,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<div class="ac-field n"><label>Covers</label><input type="number" class="ac-input ac-num" id="sg-covers" min="0" step="1" placeholder="—"></div>'
       +'<div class="ac-field n"><label>Lift %</label><input type="number" class="ac-input ac-num" id="sg-lift" min="-100" max="500" step="5" placeholder="—"></div>'
       +'<button type="button" class="cbtn cbtn-secondary" onclick="addSignal(this)">Add date</button></div>'
-      +'<details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="sg-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px;margin-top:8px" placeholder="date,covers&#10;'+_isoPlus(7)+',180"></textarea><div class="fc2-count-ft"><span class="ac-status" id="sg-csv-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="importSignals(this)">Import</button></div></details>';
+      +'<details class="fc2-import"><summary>Paste a CSV (date,covers), or your reservation system\u2019s booking export</summary><textarea id="sg-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px;margin-top:8px" placeholder="date,covers&#10;'+_isoPlus(7)+',180"></textarea><div class="fc2-count-ft"><span class="ac-status" id="sg-csv-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="importSignals(this)">Import</button></div>'
+      // A booking export as it comes from OpenTable, Resy, Tock or
+      // SevenRooms: one row per booking, summed per date, cancelled and
+      // no-shows left out (schedule audit 10/3/26 D-31).
+      +'<div class="lb2-form" style="margin-top:12px"><div class="ac-field w"><label for="sg-export">Import your reservation system\u2019s booking export</label><input type="file" class="ac-input" id="sg-export" accept=".csv,.tsv,.txt,text/csv,text/plain"></div></div><div class="ac-status" id="sg-export-status" style="margin-top:6px">A date and a party size per booking; cancelled and no-show bookings are left out.</div></details>';
     el.innerHTML=h;
   };
   // Calendars Cavnar AI follows for this location (Event Intelligence
@@ -34191,7 +34455,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jsend('/api/labor/demand-signals',{csv:ta.value},function(d){
       done();
       if(!d.ok){if(st)st.textContent=d.error||'Could not import.';return;}
-      if(st)st.innerHTML=_sgResult(d);
+      // A pasted booking export says what it read (D-31).
+      if(st)st.innerHTML=(d.report&&window.sfw2ExportReport?num(sfw2ExportReport(d.report))+' ':'')+_sgResult(d);
       if(d.written){ta.value='';loadSignals();}
     });
   };
@@ -34394,11 +34659,39 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(k in dims)if(dims.hasOwnProperty(k)){var dm=dims[k],cur=(dm.current!==undefined&&dm.current!==null)?dm.current:dm.default;
         rows+='<div class="w"><b>'+esc(k.replace(/_/g,' '))+'</b><span><span class="hb-num">'+esc(cur)+'</span> → <span class="hb-num">'+esc(dm.suggested)+'</span>'+(dm.nudge_pct?' (<span class="hb-num">'+(dm.nudge_pct>0?'+':'')+esc(dm.nudge_pct)+'%</span> vs default)':'')+'</span></div>'
           +'<div class="ac-note" style="margin:-2px 0 6px">'+num(dm.explanation||dm.reading||'')+'</div>';}
-      h+='<div class="int-cal">'+rows+'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div>'
-        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" onclick="applySuggestedWeights(this)">Apply suggested weights</button></div>';
+      /* Floors and bars per shift profile (schedule audit 10/3/26 SQ-22):
+         each profile's quality bar and critical floors, current →
+         suggested, why, on how many of its shifts; a profile with too few
+         says so. And the dimensions this fit left out, per outcome. */
+      var pr=cal.profiles||{},pk,prows='',moves=(cal.moving_profiles||[]).length;
+      for(pk in pr)if(pr.hasOwnProperty(pk)){var pe=pr[pk];
+        prows+='<div class="sfw2-cal-p"><div class="hd">'+esc(pe.label||pk)+'<small>'+num((pe.shifts||0)+' shift'+(pe.shifts===1?'':'s')+' on record')+'</small></div>';
+        if(!pe.ready){prows+='<div class="ac-note" style="margin:4px 0 0">'+num(pe.explanation||'')+'</div></div>';continue;}
+        if(pe.bar)prows+='<div class="w"><b>Quality bar</b><span><span class="hb-num">'+esc(sfw2CalMove(pe.bar))+'</span><span class="ac-note" style="display:block;margin:2px 0 0">'+num(pe.bar.explanation||'')+'</span></span></div>';
+        var fl=pe.floors||{},fk;
+        for(fk in fl)if(fl.hasOwnProperty(fk))prows+='<div class="w"><b>'+esc(fk.replace(/_/g,' ').replace(/^./,function(c){return c.toUpperCase();}))+' floor</b><span><span class="hb-num">'+esc(sfw2CalMove(fl[fk]))+'</span><span class="ac-note" style="display:block;margin:2px 0 0">'+num(fl[fk].explanation||'')+'</span></span></div>';
+        prows+='</div>';}
+      var fit=cal.fit||{},fo,left=[];
+      for(fo in fit)if(fit.hasOwnProperty(fo)&&(fit[fo].left_out||[]).length)left.push('<div class="sr-line"><span class="d"></span><span>'+num('Left out of the '+fo.replace(/_/g,' ')+' fit: '+fit[fo].left_out.map(function(x){return x.replace(/_/g,' ');}).join(', ')+' — the fit reads one dimension per 10 shifts, the best-observed first ('+(fit[fo].shifts||0)+' shifts).')+'</span></div>');
+      h+='<div class="int-cal">'+rows+(prows?'<div class="lb2-sub" style="margin-top:12px">Floors and bars<small>per shift profile, against what its own shifts did</small></div>'+prows:'')+(left.length?'<div style="margin-top:8px">'+left.join('')+'</div>':'')
+        +'<div class="ac-note" style="margin-top:6px">'+esc(cal.note||'Suggestions only — the engine keeps its current weights until someone changes them.')+'</div>'
+        +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" data-sfw2-cal-apply="1">'+(moves?'Apply the weights, floors and bars':'Apply suggested weights')+'</button></div>';
     }
     return h;
   }
+  /* Apply writes the weights and, in the same tap, each profile's floors
+     and bars (SQ-22) — said back, then the record is read again. */
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('[data-sfw2-cal-apply]'):null;if(!t||t.disabled)return;
+    var done=busy(t,'Applying…');
+    jsend('/api/labor/quality/calibration/apply',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not apply them','error');return;}
+      var np=0,k;for(k in (d.profiles||{}))if(d.profiles.hasOwnProperty(k))np++;
+      toast('Applied — the next score uses these weights'+(np?' and the floors and bars of '+np+' profile'+(np===1?'':'s'):''),'success');
+      loadIntel(null,true);
+    });
+  });
   // The offer's button turns on the same setting Account → Automation
   // does (POST /api/labor/auto-publish). The undo window still applies.
   window.acceptAutoPublishOffer=function(btn){
@@ -34474,14 +34767,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var ledgerLine=function(list,key,word){var top=list.slice(0,3),bot=list.length>3?list.slice(-3).reverse():[],t=[],b=[],q;for(q=0;q<top.length;q++)t.push('<b>'+esc(top[q])+'</b> <span class="hb-num">'+(ledger[top[q]][key]||0)+'</span>');for(q=0;q<bot.length;q++)b.push('<b>'+esc(bot[q])+'</b> <span class="hb-num">'+(ledger[bot[q]][key]||0)+'</span>');return '<div class="int-ledger"><span class="most">Most '+word+':</span> '+t.join(', ')+(b.length?'<br><span class="most">Fewest:</span> '+b.join(', '):'')+'</div>';};
       h+=ledgerLine(wk,'weekend','weekend shifts')+'<div style="height:8px"></div>'+ledgerLine(cl,'closing','closes');
       var hol=names.filter(function(n){return ledger[n].holiday;});if(hol.length){var hh=[];for(i=0;i<Math.min(hol.length,4);i++)hh.push('<b>'+esc(hol[i])+'</b> <span class="hb-num">'+ledger[hol[i]].holiday+'</span>');h+='<div class="int-ledger" style="margin-top:8px"><span class="most">Holidays:</span> '+hh.join(', ')+'</div>';}
-      h+='<div class="ac-note" style="margin-top:8px">Over the last '+weeks+' published week'+(weeks===1?'':'s')+'. The draft spreads the next ones.</div>';
+      // Weeks with no published schedule are read from the time clock
+      // (schedule audit 10/3/26 D-21), and said to be.
+      var fromP=+(ledger[names[0]].from_punches||0);
+      h+='<div class="ac-note" style="margin-top:8px">Over the last '+weeks+' week'+(weeks===1?'':'s')+(fromP?' ('+fromP+' from punches — the time clock, not a published schedule)':' of published schedules')+'. The draft spreads the next ones.</div>';
     }
     /* Who is next: the multi-week rotation plan (schedule_intel.rotation_plan). */
     var rot=d.rotation||{},rl=rot.lines||[];
     if(rl.length){
       h+='<div class="int-ledger" style="margin-top:10px"><span class="most">Up next:</span></div>';
       for(i=0;i<rl.length;i++)h+='<div class="int-say">'+num(rl[i])+'</div>';
-      h+='<div class="ac-note" style="margin-top:4px">The draft follows this where the rules allow, and fairness is scored against it.</div>';
+      h+='<div class="ac-note" style="margin-top:4px">The draft follows this where the rules allow, and fairness is scored against it.'+(+rot.from_punches?' '+rot.from_punches+' of its weeks are from punches — the time clock, not a published schedule.':'')+'</div>';
     }
     h+='</div>';
     // What staff keep dropping and claiming.
@@ -35394,8 +35690,9 @@ window.cavPalette = cavPalette;
     }
     for (i = 0; i < (_wait.offs || []).length; i++) {
       var q = _wait.offs[i]; if (q.status !== 'pending') continue;
-      var when = q.start_date === q.end_date ? md(q.start_date) : (md(q.start_date) + ' – ' + md(q.end_date));
-      h += '<div class="ac-row" data-wait-key="time_off-' + e(q.id) + '"><div class="l"><b>' + e(q.employee_name) + ' asked for time off</b><span><span class="hb-num">' + e(when) + '</span>' + (q.reason ? ' · ' + e(q.reason) : '') + '</span></div>'
+      // The part of the day too, when it is only part (D-39).
+      var when = q.span_label || (q.start_date === q.end_date ? md(q.start_date) : (md(q.start_date) + ' – ' + md(q.end_date)));
+      h += '<div class="ac-row" data-wait-key="time_off-' + e(q.id) + '"><div class="l"><b>' + e(q.employee_name) + ' asked for time off</b><span>' + (window.memNum ? memNum(when) : e(when)) + (q.reason ? ' · ' + e(q.reason) : '') + '</span></div>'
          + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-timeoff="' + e(q.id) + '" data-decision="deny">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-timeoff="' + e(q.id) + '" data-decision="approve">Approve</button></div></div>';
       n++;
     }
@@ -35527,6 +35824,10 @@ window.cavPalette = cavPalette;
     h += '</select></div>'
        + '<div class="ac-field"><label for="pp-min">Min h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-min" data-pp="min_hours" value="' + e(hr.min_hours == null ? '' : hr.min_hours) + '"' + dis + '></div>'
        + '<div class="ac-field"><label for="pp-max">Max h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-max" data-pp="max_hours" value="' + e(hr.max_hours == null ? '' : hr.max_hours) + '"' + dis + '></div></div>';
+    /* A maximum past the weekly ceiling is the owner allowing the hours,
+       overtime included (schedule audit 10/3/26 P-12). */
+    var otn = window.sfw2MaxNote ? sfw2MaxNote(hr.max_hours, (window._sfw2Rules && window._sfw2Rules.rules && +window._sfw2Rules.rules.weekly_hours_ceiling) || 40) : '';
+    if (otn) h += '<div class="sr-note" style="color:var(--amber)">' + e(otn) + '.</div>';
     if (hr.desired_hours || (p.availability && (p.availability.preferred_dayparts || []).length)) h += '<div class="sr-note">They asked for ' + (hr.desired_hours ? '<span class="hb-num">' + e(hr.desired_hours) + 'h</span> a week' : '') + ((p.availability.preferred_dayparts || []).length ? (hr.desired_hours ? ', ' : '') + e(p.availability.preferred_dayparts.join(' and ')) : '') + '.</div>';
     var days = ch.days || [], dps = ch.daypart || ['any', 'morning', 'night', 'off'], av = (p.availability || {}).dayparts || {};
     h += '<div class="sr-k">Availability</div><div class="ps-grid">';
@@ -35547,7 +35848,10 @@ window.cavPalette = cavPalette;
     h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
     for (i = 0; i < certs.length; i++) {
       var on = have.indexOf(certs[i]) !== -1;
-      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(certs[i].charAt(0).toUpperCase() + certs[i].slice(1).replace(/_/g, ' ')) + '</button>';
+      /* Each certificate in its own words (schedule audit 10/3/26 E-15):
+         "Floor manager (can run the shift)" apart from the food-safety card. */
+      var cl = (ch.certification_labels || {})[certs[i]] || (certs[i].charAt(0).toUpperCase() + certs[i].slice(1).replace(/_/g, ' '));
+      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(cl) + '</button>';
     }
     h += '</div>';
     var pr = p.pay_rate;
@@ -35774,11 +36078,18 @@ window.cavPalette = cavPalette;
   function tgRenderSalaried(t) {
     var box = $id('as-tg-sal'), wrap = $id('as-tg-sal-wrap'); if (!box) return;
     if (wrap) wrap.hidden = !(_tg && _tg.can_edit);
-    var sal = t.salaried || [], h = '', i;
+    var sal = t.salaried || [], h = '', i, warned = (t.salaried_warnings || []).length;
     if (!sal.length) h = '<div class="sr-note">Nobody yet. Add the people paid a salary and Labor shows their pay beside hourly labor.</div>';
+    /* A name that matches nobody on the roster can't be placed by the
+       schedule, and their punches are paid by the hour (schedule audit
+       10/3/26 D-7): said under the entry, with the roster name to check as
+       one tap — the entry re-saved under it, the old spelling removed. */
+    if (warned) h += '<div class="ts-note warn" style="margin-top:0">' + e(warned === 1 ? '1 salaried name matches nobody on your roster.' : warned + ' salaried names match nobody on your roster.') + ' Link each to the name they punch under.</div>';
     for (i = 0; i < sal.length; i++) {
-      h += '<div class="ac-row"><div class="l"><b>' + e(sal[i].name) + '</b><span><span class="hb-num">' + tgMoney(sal[i].annual) + '</span> a year &middot; <span class="hb-num">' + tgMoney(sal[i].per_day) + '</span> a trading day</span></div>'
-        + '<div class="c"><button type="button" class="cbtn cbtn-ghost cbtn-sm" data-tg-sal-rm="' + e(sal[i].name) + '">Remove</button></div></div>';
+      var w = sal[i].warning ? '<small class="tg-need" style="margin-top:4px">' + e(sal[i].warning) + '</small>' : '';
+      h += '<div class="ac-row"><div class="l"><b>' + e(sal[i].name) + '</b><span><span class="hb-num">' + tgMoney(sal[i].annual) + '</span> a year &middot; <span class="hb-num">' + tgMoney(sal[i].per_day) + '</span> a trading day</span>' + w + '</div>'
+        + '<div class="c">' + (sal[i].suggestion ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-tg-sal-link="' + e(sal[i].name) + '" data-to="' + e(sal[i].suggestion) + '" data-annual="' + e(sal[i].annual) + '">Link to ' + e(sal[i].suggestion) + '</button>' : '')
+        + '<button type="button" class="cbtn cbtn-ghost cbtn-sm" data-tg-sal-rm="' + e(sal[i].name) + '">Remove</button></div></div>';
     }
     box.innerHTML = h;
     var dl = $id('as-tg-sal-names'), names = t.salaried_names || [], o = '';
@@ -35796,6 +36107,8 @@ window.cavPalette = cavPalette;
     var t = ev.target; if (!t || !t.closest || !_tg) return;
     var rm = t.closest('[data-tg-sal-rm]');
     if (rm) { tgSalSave({salaried_remove: rm.getAttribute('data-tg-sal-rm')}); return; }
+    var lk = t.closest('[data-tg-sal-link]');
+    if (lk) { tgSalSave({salaried_remove: lk.getAttribute('data-tg-sal-link'), salaried_add: {name: lk.getAttribute('data-to'), annual: +lk.getAttribute('data-annual')}}); return; }
     if (!t.closest('#as-tg-sal-addbtn')) return;
     var n = $id('as-tg-sal-name'), a = $id('as-tg-sal-annual');
     if (!n.value.replace(/\s/g, '')) { status('as-tg-status', 'Add a name', true); return; }
@@ -36087,6 +36400,12 @@ function memMentionLine(m) {
 function memAttendanceLine(a) {
   if (!a || a.known === false) return 'Not watched yet';
   var s = memPlural(+a.shifts || 0, 'shift') + ' watched · ' + (+a.missed || 0) + ' missed · ' + (+a.late || 0) + ' late';
+  /* Call-outs apart, and lateness over the CLOCKED shifts only with its
+     rate — "—" until enough are clocked (schedule audit 10/3/26 L-18,
+     D-44). An older server sends neither and reads as before. */
+  if (a.late_shifts != null) s = memPlural(+a.shifts || 0, 'shift') + ' watched · ' + (+a.missed || 0) + ' missed'
+    + (a.called_out != null ? ' (' + (+a.called_out ? memPlural(+a.called_out, 'call-out') : 'no call-outs') + ')' : '')
+    + ' · late to ' + (+a.late || 0) + ' of ' + memPlural(+a.late_shifts, 'clocked shift') + ' · late rate ' + (a.late_rate == null ? '\u2014' : Math.round(+a.late_rate * 100) + '%');
   if (a.no_show_rate != null && isFinite(+a.no_show_rate)) s += ' · ' + Math.round(+a.no_show_rate * 100) + '% no-show rate';
   if (a.last_miss) s += ' · last missed ' + memMdy(a.last_miss);
   return s;
@@ -36122,6 +36441,7 @@ function memStandingState(s) {
   if (!s) return '';
   if (s.status === 'ruled') return 'a rule';
   if (s.status === 'retired') return 'retired';
+  if (s.status === 'retest') return 'being re-tested';
   return 'standing';
 }
 /* The Studio: a soft requirement the draft was asked to meet (M3), with
@@ -36735,13 +37055,23 @@ function memRetagBody(was, now) {
         + (!ro && off && on ? '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-lrn-keep="' + memEsc(off.key) + '" data-lrn-drop="' + memEsc(on.key) + '">Keep them off</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-lrn-keep="' + memEsc(on.key) + '" data-lrn-drop="' + memEsc(off.key) + '">Keep them on</button></div>' : '') + '</div>';
     }
     for (i = 0; i < st.length; i++) {
-      var s = st[i], state = memStandingState(s);
+      var s = st[i], state = memStandingState(s), evs = window.sfw2StandingEvidence ? sfw2StandingEvidence(s) : [], k, acts = '';
+      /* Its evidence and how sure (schedule audit 10/3/26 L-6, L-30): "You
+         said always", re-tested since a date, N of M weeks with its
+         confidence, last confirmed by hand, why it was retired. */
+      var evH = '';
+      for (k = 0; k < evs.length; k++) evH += ln(memNum(evs[k]), evs[k].indexOf('Left out') === 0 ? 'warn' : '');
+      if (!ro && s.status === 'retest') acts += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-keep="1" data-key="' + memEsc(s.key) + '">Keep it</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-keep="0" data-key="' + memEsc(s.key) + '">Let it go</button>';
+      /* A person's habit becomes their availability; more of a role on a
+         slot a role floor, a start or end moved a role time rule (L-33) —
+         those are the account owner's, and the route says so to anyone else. */
+      if (!ro && s.can_be_rule) acts += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-lrn-rule="' + memEsc(s.key) + '">Make it a rule</button>';
       h += '<div class="it' + (s.status === 'retired' ? ' off' : '') + '"><div class="top"><span class="tx">' + memNum(s.text || '') + '</span>'
-        + memPill(state === 'standing' ? 'Standing' : (state === 'a rule' ? 'A rule' : 'Retired'), state === 'a rule' ? 'good' : 'neutral') + '</div>'
-        + ln(memNum(memStandingMeta(s)))
-        + (s.status === 'ruled' && s.rule ? ln(memNum('Now part of ' + (s.employee || 'their') + '’s availability' + (s.rule.by ? ', set by ' + s.rule.by : ''))) : '')
-        + (s.status === 'retired' ? ln('Stopped after it was undone twice') : '')
-        + (!ro && s.can_be_rule ? '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-lrn-rule="' + memEsc(s.key) + '">Make it a rule</button></div>' : '') + '</div>';
+        + memPill(state === 'standing' ? 'Standing' : (state === 'a rule' ? 'A rule' : (state === 'being re-tested' ? 'Being re-tested' : 'Retired')), state === 'a rule' ? 'good' : (state === 'being re-tested' ? '' : 'neutral')) + '</div>'
+        + ln(memNum(memStandingMeta(s))) + evH
+        + (s.status === 'ruled' && s.rule ? ln(memNum(s.rule.note ? 'Now a rule: ' + s.rule.note + (s.rule.by ? ', set by ' + s.rule.by : '') : 'Now part of ' + (s.employee || 'their') + '’s availability' + (s.rule.by ? ', set by ' + s.rule.by : ''))) : '')
+        + (s.status === 'retired' && !s.retired_reason ? ln('Stopped after it was undone twice') : '')
+        + (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div>';
     }
     return h ? '<div class="lb2-sub">What the draft keeps<small>standing preferences, and where your editors disagree</small></div><div class="mem-lrn">' + h + '</div>' : '';
   };
@@ -36753,7 +37083,9 @@ function memRetagBody(was, now) {
       postJ('/api/labor/learned-patterns', {key: t.getAttribute('data-lrn-rule'), rule: true}, function (d) {
         done();
         if (!d.ok) { say(d.error || 'Couldn’t make that a rule', 'error'); return; }
-        say('Now a rule in their availability');
+        /* The rule in its own words: a role floor or a role time is the
+           restaurant's, a person's habit their availability (L-33). */
+        say(d.rule ? 'Now a rule: ' + d.rule : 'Now a rule in their availability');
         if (window.loadLearnedPatterns) loadLearnedPatterns();
       });
       return;
@@ -37818,6 +38150,959 @@ document.addEventListener('click', function (e) {
       }
     };
   }
+})();
+</script>
+<!-- ════ Schedule fix round, UI W2 (10/3/26) ════
+     The owner's scheduling setup, said back and set where they work:
+     who runs the floor and who stands in (Team → Roster, the rules), the
+     days the managers always work, who is training, who closes for which
+     role (Team → Closers), job codes as roles, the floors history
+     suggests, labor standards, the person's reliability and ratings by
+     role, what the draft learned and how sure it is, the calibration's
+     floors and bars, the hourly budget on the Forecast tab, a booking
+     export, the salaried names that match nobody, how each staffing rule
+     is checked, and a call-off's gaps with one cover each. Every line is
+     the payload's own words or figures; dates read M/D/YY. ES5 only.
+     DESIGN_SYSTEM.md → "Scheduling setup (schedule fix round, 10/3/26)". -->
+<style id="cav-sfw2-css">
+/* A choice of one, said with its reason: Yes / No / Automatic. The chip-tog
+   chips, exclusive; the reason under them in ink3. */
+.sfw2-tri{display:flex;flex-direction:column;gap:6px}
+.sfw2-tri .why{font-size:13px;line-height:1.5;color:var(--ink3)}
+.sfw2-tri .why b{color:var(--ink2);font-weight:600}
+/* A person's dated facts: removable chips (.rul-ov), then the add row. */
+.sfw2-facts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:26px}
+.sfw2-facts .none{font-size:13px;color:var(--ink3)}
+.sfw2-add{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.sfw2-add .ac-input,.sfw2-add .ac-select{width:auto;max-width:150px}
+.sfw2-add .ac-input.d{max-width:150px}
+.sfw2-add[hidden]{display:none}
+.sfw2-err{font-size:13px;line-height:1.45;color:var(--red);margin-top:6px}
+.sfw2-err:empty{display:none}
+/* The row under a person who has stopped working: muted, two answers. */
+.rst-tbl tr.sfw2-dorm td{padding:0 8px 10px 0;border-bottom:1px solid var(--hb-line2)}
+.sfw2-dorm-in{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;border-radius:10px;background:var(--sf-recess);font-size:13.5px;color:var(--ink2);box-shadow:inset 3px 0 0 var(--hb-line)}
+.sfw2-dorm-in .t{flex:1 1 220px;min-width:0}
+.rst-tbl .nm .sfw2-also{display:block;font-size:12px;color:var(--ink3);font-weight:400}
+.rst-tbl .nm .mem-pill{margin-left:6px}
+.rst-tbl small.sfw2-ot{display:block;font-size:11.5px;line-height:1.35;color:var(--amber);margin-top:3px;white-space:normal;max-width:120px}
+.rst-more .sfw2-rel{font-size:13.5px;line-height:1.55;color:var(--ink2)}
+.rst-more .sfw2-rel .dim{color:var(--ink3)}
+/* Ratings by role, under the overall score (Operational Score list). */
+.sfw2-roles{flex-basis:100%;display:flex;flex-direction:column;gap:6px;padding-top:6px;margin-top:2px;border-top:1px solid var(--hb-line2)}
+.sfw2-rr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px;color:var(--ink2)}
+.sfw2-rr .r{flex:0 0 150px;font-weight:600;color:var(--ink)}
+.sfw2-rr .s{display:flex;gap:4px}
+.sfw2-rr .s .cbtn{min-width:30px;padding:0 8px}
+.sfw2-due{flex-basis:100%;font-size:13px;color:var(--amber);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sfw2-rated{flex-basis:100%;font-size:12.5px;color:var(--ink3)}
+.sfw2-crew{display:block;font-size:12.5px;font-weight:400;color:var(--ink3);margin-top:3px;max-width:150px;line-height:1.35}
+/* The rules screen's own read-backs: managers, closers, conflicts. */
+.sfw2-mgr{display:flex;flex-direction:column;gap:2px}
+.sfw2-mgr .line{font-size:15px;line-height:1.5;color:var(--ink)}
+.sfw2-mgr .line .k{font-weight:600}
+.sfw2-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:14px;color:var(--ink2);line-height:1.45}
+.sfw2-row:first-child{border-top:none}
+.sfw2-row .w{flex:1 1 260px;min-width:0}
+.sfw2-row .w b{color:var(--ink);font-weight:600}
+.sfw2-row .w small{display:block;font-size:12.5px;color:var(--ink3)}
+.sfw2-row .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sfw2-row.off .w{color:var(--ink3)}
+.sfw2-list{margin-top:6px}
+.sfw2-warn{margin:10px 0 0}
+.sfw2-caps{font-size:13.5px;line-height:1.55;color:var(--ink2);margin-top:4px}
+/* Closers: one card per role, the suggestions with a choice each. */
+.sfw2-cl-roles{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.sfw2-cl-role{padding:10px 14px;border-radius:12px;background:var(--sf-recess);font-size:14px;line-height:1.5;color:var(--ink2)}
+.sfw2-cl-role b{color:var(--ink);font-weight:600;margin-right:6px}
+.sfw2-sug .pick{flex:none}
+.sfw2-sug .pick input{width:18px;height:18px;accent-color:var(--ember);margin:0}
+.sfw2-sug .kd{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--sf-recess);color:var(--ink2)}
+.sfw2-sug .kd.unmark{background:var(--amber-bg);color:var(--amber)}
+.sfw2-sug .kd.add{background:var(--hb-tint2);color:var(--ember)}
+.sfw2-sug .kd.keep{background:var(--green-bg);color:var(--hb-good)}
+/* Job codes as roles: one row per code, the role it belongs to. */
+.sfw2-fam{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--hb-line2);font-size:14px}
+.sfw2-fam:first-child{border-top:none}
+.sfw2-fam .code{flex:0 0 160px;font-weight:600;color:var(--ink)}
+.sfw2-fam .ac-input{max-width:200px}
+.sfw2-fam .src{font-size:12.5px;color:var(--ink3)}
+/* Labor standards: a family per row, the measured figure and yours. */
+.sfw2-std{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--hb-line2);font-size:14px;color:var(--ink2);line-height:1.5}
+.sfw2-std:first-child{border-top:none}
+.sfw2-std .fam{flex:0 0 130px;font-weight:600;color:var(--ink)}
+.sfw2-std .tx{flex:1 1 280px;min-width:0}
+.sfw2-std .tx small{display:block;font-size:12.5px;color:var(--ink3)}
+.sfw2-std .ed{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sfw2-std .ed .ac-input{width:84px;text-align:center}
+/* Learned patterns: how often, how sure. */
+.lrn-row .sfw2-ev{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
+.lrn-row .sfw2-ev .hb-num{color:var(--ink2)}
+.sfw2-adopt{margin:0 0 12px}
+/* Calibration: a profile's bar and floors, current → suggested. */
+.sfw2-cal-p{margin-top:10px;padding:10px 14px;border-radius:12px;background:var(--sf-recess)}
+.sfw2-cal-p .hd{font-size:14.5px;font-weight:600;color:var(--ink)}
+.sfw2-cal-p .hd small{font-weight:400;color:var(--ink3);margin-left:6px}
+.sfw2-cal-p .w{display:flex;gap:10px;padding:5px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
+.sfw2-cal-p .w:first-of-type{border-top:none}
+.sfw2-cal-p .w b{flex:0 0 150px;font-weight:600;color:var(--ink)}
+/* Profile floors: a box per critical dimension, its default beside it. */
+.sfw2-floors{margin-top:12px}
+.sfw2-floors .grid{display:flex;gap:12px;flex-wrap:wrap}
+.sfw2-floors .f{display:flex;flex-direction:column;gap:3px;font-size:13.5px;color:var(--ink2)}
+.sfw2-floors .f input{width:78px;text-align:center}
+.sfw2-floors .f small{font-size:12px;color:var(--ink3)}
+/* Forecast tab: each day's demand and why. */
+.ssf-dm{grid-column:2/-1;font-size:13px;line-height:1.4;color:var(--ink2);margin-top:-4px}
+.ssf-dm .up{color:var(--hb-good)}.ssf-dm .down{color:var(--hb-bad)}
+/* Account → memory: how the schedule checks a staffing rule. */
+.sfw2-chk{margin-top:6px;padding:7px 11px;border-radius:9px;background:var(--sf-recess);font-size:13.5px;line-height:1.45;color:var(--ink2);box-shadow:inset 3px 0 0 var(--hb-line)}
+.sfw2-chk.ok{box-shadow:inset 3px 0 0 var(--hb-good)}.sfw2-chk.ok strong{color:var(--hb-good);font-weight:600}
+.sfw2-chk.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}.sfw2-chk.warn strong{color:var(--hb-warn);font-weight:600}
+.ac-row .l .sfw2-chk span{display:inline;margin:0;font-size:inherit;color:inherit;line-height:inherit}
+/* Home: a call-off's gaps, one cover each. */
+.hb-gaps{flex-basis:100%;display:flex;flex-direction:column;gap:6px;margin:2px 0 10px 18px}
+.hb-gap{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;color:var(--ink2)}
+.hb-gap .w{flex:1 1 220px;min-width:0}
+.hb-gap .w b{color:var(--ink);font-weight:600}
+.hb-gap .st.miss{color:var(--hb-bad)}.hb-gap .st.ok{color:var(--hb-good)}
+.hb-gaps[hidden]{display:none}
+@media (max-width:640px){.sfw2-rr .r,.sfw2-std .fam,.sfw2-fam .code{flex-basis:100%}.sfw2-cal-p .w b{flex-basis:110px}}
+</style>
+<script id="cav-sfw2">
+/* ── Pure helpers: payload in, owner-facing words out. Global so the
+   renders reach them and the tests run them under node (they lean on the
+   memory round's memEsc / memNum / memMdy, defined above). ── */
+function sfw2Esc(v) { return memEsc(v); }
+function sfw2Num(v) { return memNum(v); }
+function sfw2Mdy(x) { return memMdy(x); }
+function sfw2Plural(n, one, many) { return memPlural(n, one, many); }
+function sfw2And(list) {
+  var a = [], i;
+  for (i = 0; i < (list || []).length; i++) if (String(list[i] || '').replace(/\s/g, '')) a.push(String(list[i]));
+  if (a.length < 2) return a.join('');
+  return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+}
+function sfw2First(name) { return String(name || '').replace(/^\s+/, '').split(/\s+/)[0] || ''; }
+/* Who runs the floor (schedule audit 10/3/26 P-7, E-14): the owner's word
+   ("set" true / false) or what automatic reads, with its reason. */
+function sfw2FloorState(fm) {
+  var s = fm ? fm.set : null;
+  return s === true ? 'yes' : (s === false ? 'no' : 'auto');
+}
+function sfw2FloorWhy(fm) {
+  if (!fm) return '';
+  var st = sfw2FloorState(fm), why = String(fm.why || '');
+  if (st === 'yes') return 'You set them to run the floor — they count as the manager on duty.';
+  if (st === 'no') return 'You set them as not a floor manager — they never count as the manager on duty.';
+  if (fm.counts) return 'Automatic: counts' + (why ? ' — ' + why : '') + '.';
+  return 'Automatic: doesn’t count' + (why ? ' — ' + why : '') + '.';
+}
+/* A date range somebody stands in as the manager (E-13): "10/7/26 –
+   10/9/26 · Erik away", one date when it is a day. */
+function sfw2RangeLabel(a) {
+  if (!a || !a.from) return '';
+  var t = (a.until && a.until !== a.from) ? sfw2Mdy(a.from) + ' – ' + sfw2Mdy(a.until) : sfw2Mdy(a.from);
+  return t + (a.note ? ' · ' + a.note : '');
+}
+/* A standing shift (D-5): "Mon 10:00am–6:00pm · Manager FOH · until 12/15/26". */
+function sfw2StandingLabel(s) {
+  if (!s || !s.day) return '';
+  var t = String(s.day).slice(0, 3) + ' ' + (s.start || '') + '–' + (s.end || '');
+  if (s.role) t += ' · ' + s.role;
+  if (s.from && s.until) t += ' · ' + sfw2Mdy(s.from) + ' – ' + sfw2Mdy(s.until);
+  else if (s.from) t += ' · from ' + sfw2Mdy(s.from);
+  else if (s.until) t += ' · until ' + sfw2Mdy(s.until);
+  return t;
+}
+/* In training (D-16): "Training as Bartender until 11/1/26, with Ana". */
+function sfw2TraineeActive(t, todayIso) {
+  if (!t || !t.target_role) return false;
+  return !t.until || !todayIso || String(t.until).slice(0, 10) >= String(todayIso).slice(0, 10);
+}
+function sfw2TraineeLine(t) {
+  if (!t || !t.target_role) return '';
+  return 'Training as ' + t.target_role + (t.until ? ' until ' + sfw2Mdy(t.until) : '')
+    + (t.trainer ? ', with ' + t.trainer : '') + (t.from ? ' (from ' + sfw2Mdy(t.from) + ')' : '')
+    + ' — their ' + t.target_role + ' shifts don’t count toward headcount.';
+}
+/* Reliability (schedule audit 10/3/26 D-44, L-18): missed N of M watched
+   shifts, the call-outs among them, and lateness over CLOCKED shifts only —
+   its rate "—" until there are enough clocked shifts to say. */
+function sfw2ReliabilityLine(r) {
+  if (!r || !r.shifts) return 'Not watched yet — attendance shows once a published week is checked against the clock.';
+  var miss = r.no_shows != null ? +r.no_shows : (r.missed != null ? +r.missed : 0), bits = [];
+  bits.push('Missed ' + miss + ' of ' + sfw2Plural(+r.shifts, 'watched shift'));
+  if (r.called_out != null) bits.push(+r.called_out ? 'called out ' + sfw2Plural(+r.called_out, 'time') : 'never called out');
+  if (r.late_shifts != null) {
+    bits.push('late to ' + (+r.late || 0) + ' of ' + sfw2Plural(+r.late_shifts, 'clocked shift'));
+    bits.push('late rate ' + (r.late_rate == null ? '—' : Math.round(+r.late_rate * 100) + '%'));
+  }
+  return bits.join(' · ');
+}
+/* A maximum past the weekly ceiling is the owner allowing the hours
+   (A2 P-12): "Overtime allowed up to 45h" past 40, else past the ceiling. */
+function sfw2MaxNote(max, ceiling) {
+  var m = +max, c = +ceiling || 40;
+  if (!(m > 0) || m <= c && m <= 40) return '';
+  if (m > 40) return 'Overtime allowed up to ' + m + 'h';
+  return 'Past your ' + c + 'h ceiling, up to ' + m + 'h';
+}
+/* A strength target per person (D1a SQ-3/4/5): the target is a full crew's
+   total, judged per person against the role's largest crew. */
+function sfw2PerPerson(target, crew) {
+  var t = +target, c = +crew || 1;
+  if (!(t > 0)) return null;
+  return Math.round(Math.max(1, Math.min(5, t / c)) * 10) / 10;
+}
+function sfw2CrewLine(role, target, crew, known) {
+  var t = +target, c = +crew || 1, per = sfw2PerPerson(t, c);
+  if (per === null) return '';
+  var r = String(role || 'that role').toLowerCase();
+  if (!known) return 'about ' + per + ' a person on a crew of ' + c + ' — the fewest who could reach ' + t;
+  return t + ' across your largest ' + r + ' crew of ' + c + ' — about ' + per + ' a person';
+}
+/* Closers (D-9): where the rule holds and why. */
+var SFW2_CLOSER_BASIS = {yours: 'your choice', history: 'from your punches — choose the roles that close to make it yours', all: 'every role somebody is marked to close for — choose the roles that close'};
+function sfw2CloserBasis(basis, roles) {
+  if (!(roles || []).length) return 'Nobody is marked to close yet, so the closer rule checks nothing.';
+  return 'The closer rule holds for ' + sfw2And(roles) + ' — ' + (SFW2_CLOSER_BASIS[basis] || 'as the punches show') + '.';
+}
+var SFW2_SUG_WORD = {keep: 'Keep', unmark: 'Unmark', add: 'Add'};
+function sfw2SuggestionLine(s) {
+  if (!s) return '';
+  return (s.role ? s.role + ': ' : '') + (s.reason || '');
+}
+/* What the draft learned (L-6, L-30): how often and how sure. */
+function sfw2PatternEvidence(p) {
+  if (!p) return '';
+  var opp = +p.opportunities || 0, times = +p.times || 0, bits = [];
+  if (opp) bits.push(times + ' of ' + sfw2Plural(opp, 'week'));
+  else if (times) bits.push(sfw2Plural(times, 'week'));
+  bits.push((opp < 2 || p.confidence == null) ? 'confidence —' : Math.round(+p.confidence * 100) + '% confidence');
+  return bits.join(' · ');
+}
+var SFW2_RETIRED = {reversed: 'reversed by hand', retest: 'not put back when tested', decayed: 'faded, never confirmed', owner: 'you set it aside'};
+function sfw2RetiredWords(reason) { return SFW2_RETIRED[reason] || ''; }
+function sfw2StandingEvidence(s) {
+  if (!s) return [];
+  var out = [];
+  if (s.source === 'owner_said') out.push('You said always');
+  if (s.status === 'retest') out.push('Left out of the next draft to check you still want it' + (s.retest_since ? ' (since ' + sfw2Mdy(s.retest_since) + ')' : ''));
+  if (s.opportunities) out.push(sfw2PatternEvidence({opportunities: s.opportunities, times: s.hits, confidence: s.confidence}));
+  if (s.last_hand) out.push('last confirmed by hand ' + sfw2Mdy(s.last_hand));
+  if (s.status === 'retired' && sfw2RetiredWords(s.retired_reason)) out.push('Retired — ' + sfw2RetiredWords(s.retired_reason) + (s.retired_at ? ' ' + sfw2Mdy(s.retired_at) : ''));
+  return out;
+}
+/* Calibration (D1b SQ-22): a bar or a floor, current → suggested. */
+function sfw2CalMove(e) {
+  if (!e || e.current == null) return '';
+  return e.suggested != null && e.suggested !== e.current ? e.current + ' → ' + e.suggested : e.current + ' — stays';
+}
+/* The hourly budget (E D-1, D-2, E-24): never "$X at 35%". */
+function sfw2BudgetNote(bb, target) {
+  if (bb && bb.text) return bb.text;
+  return target != null ? 'Your ' + target + '% labor target, for the hourly crew' : 'For the hourly crew';
+}
+function sfw2SalaryNote(bb) {
+  if (!bb || bb.salaried_week_cost == null || bb.target_dollars == null) return '';
+  return 'Your target is ' + memMoney(bb.target_dollars) + ' for the week; the salaried pay, ' + memMoney(bb.salaried_week_cost) + ', comes off it first.';
+}
+/* A date's demand against a typical one, and why (D-23, D-30). */
+function sfw2DemandLine(dm) {
+  if (!dm || dm.pct == null || !isFinite(+dm.pct) || Math.round(+dm.pct) === 0) return '';
+  var p = Math.round(+dm.pct), t = (p > 0 ? '+' : '−') + Math.abs(p) + '% against a typical ' + (dm.weekday || 'night');
+  var why = (dm.reasons || []).join('; ');
+  return t + (why ? ' — ' + why : '');
+}
+/* A booking export's import (D-31): what was read and what was left out. */
+function sfw2ExportReport(r) {
+  if (!r) return '';
+  var t = 'Read ' + sfw2Plural(+r.bookings || 0, 'booking') + ' — ' + (+r.covers || 0).toLocaleString('en-US') + ' covers on ' + sfw2Plural(+r.dates || 0, 'date');
+  var left = [];
+  if (+r.skipped_status) left.push(sfw2Plural(+r.skipped_status, 'cancelled or no-show booking') + ' left out');
+  if (+r.skipped_unreadable) left.push(sfw2Plural(+r.skipped_unreadable, 'row') + ' unreadable');
+  var late = 0, k;
+  for (k in (r.late_covers || {})) if (r.late_covers.hasOwnProperty(k)) late += (+r.late_covers[k] || 0);
+  if (late) left.push(late + ' covers booked for 10pm or later');
+  return t + (left.length ? '; ' + left.join(', ') : '') + '.';
+}
+/* A call-off's gaps (E-31): each person, where they stand, one cover. */
+function sfw2GapStatus(g) {
+  if (!g) return '';
+  if (g.status === 'covered') return 'covered' + (g.covered_by ? ' by ' + g.covered_by : '');
+  if (g.status === 'arrived') return 'arrived';
+  if (g.status === 'missing') return 'missing';
+  return String(g.status || '');
+}
+function sfw2CoverLabel(g) {
+  var c = g && g.cover; if (!c || !c.name) return '';
+  var whose = sfw2First(g.employee) + '’s ' + (g.shift_start || 'shift');
+  return c.kind === 'stay' ? 'Ask ' + sfw2First(c.name) + ' to stay on for ' + whose : 'Ask ' + sfw2First(c.name) + ' to cover ' + whose;
+}
+/* Rules screen conflicts. */
+var SFW2_PART = {morning: 'lunch', night: 'dinner'};
+function sfw2CapConflictLine(c) {
+  if (!c) return '';
+  var roles = (c.roles || []).join(' and ') || 'front-of-house roles';
+  return (c.day || '') + ' ' + (SFW2_PART[c.daypart] || c.daypart || '') + ': your floors ask for ' + c.floor + ' (' + roles + ') but you have '
+    + c.cap + ' sections — no schedule can hold both. Lower a floor or raise the section count.';
+}
+function sfw2CloseConflictLine(c) {
+  if (!c) return '';
+  return c.role + ': stays ' + c.stays + ' minutes after close, may run ' + c.may_run + ' — pick one below and Save rules writes both.';
+}
+/* A labor standard (D-25): yours over the measured one. */
+var SFW2_FAMILY = {server: 'Server', runner: 'Runner', busser: 'Busser', host: 'Host', bartender: 'Bartender', barback: 'Barback', line_cook: 'Line cook', cashier: 'Cashier', barista: 'Barista'};
+function sfw2FamilyLabel(f) { return SFW2_FAMILY[f] || String(f || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
+/* A staffing rule as the schedule checks it (D-14, D-38). */
+function sfw2RuleCheck(chk) {
+  if (!chk) return '';
+  return chk.checked ? (chk.text || ('Checked on every draft as: ' + (chk.reads_as || '') + '.'))
+    : 'Not checked by the schedule — a draft is asked to follow it, and the review reminds you to check the week against it.';
+}
+
+/* ── Behaviour ── */
+(function () {
+  function $id(id) { return document.getElementById(id); }
+  function e(v) { return sfw2Esc(v); }
+  function n(v) { return sfw2Num(v); }
+  function jget(url, cb) { fetch(url, {credentials: 'same-origin'}).then(apiJson).then(cb).catch(function () { cb({ok: false, error: 'Network error — check your connection.'}); }); }
+  function jpost(url, body, cb) {
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(apiJson).then(cb).catch(function () { cb({ok: false, error: 'Network error — check your connection.'}); });
+  }
+  function say(msg, kind) { if (typeof toast === 'function') toast(msg, kind || 'success'); }
+  function busy(btn, label) { return (btn && typeof cbtnBusy === 'function') ? cbtnBusy(btn, label || '') : function () {}; }
+  function todayIso() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  var DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  function opts(list, cur, labels) {
+    var o = '', i;
+    for (i = 0; i < list.length; i++) o += '<option value="' + e(list[i]) + '"' + (String(list[i]) === String(cur == null ? '' : cur) ? ' selected' : '') + '>' + e((labels || {})[list[i]] || list[i]) + '</option>';
+    return o;
+  }
+  /* A job code without its daypart words ("Server PM" → "Server"): the
+     role a closer closes for (schedule_rules reads it by family). */
+  function roleOf(code) { return String(code || '').replace(/\s+(AM|PM)$/i, '').replace(/^\s+|\s+$/g, ''); }
+
+  // ── Team → Roster: the person's scheduling facts ───────────────────────
+  function rosterData() { return window._sfw2Roster || null; }
+  function entry(name) {
+    var d = rosterData(), list = (d && d.roster) || [], i;
+    for (i = 0; i < list.length; i++) if (list[i].name === name) return list[i];
+    return null;
+  }
+  function rosterRoles(withFamilies) {
+    var d = rosterData(), list = (d && d.roster) || [], seen = {}, out = [], i, j;
+    function add(r) { r = withFamilies ? roleOf(r) : String(r || '').replace(/^\s+|\s+$/g, ''); if (!r || seen[r.toLowerCase()]) return; seen[r.toLowerCase()] = 1; out.push(r); }
+    for (i = 0; i < list.length; i++) { add(list[i].role); for (j = 0; j < (list[i].recent_roles || []).length; j++) add(list[i].recent_roles[j]); }
+    out.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+    return out;
+  }
+  function activeNames(except) {
+    var d = rosterData(), list = (d && d.roster) || [], out = [], i;
+    for (i = 0; i < list.length; i++) if (list[i].active !== false && (list[i].settings || {}).active !== false && list[i].name !== except) out.push(list[i].name);
+    return out;
+  }
+  /* The name cell's extras: pills for training and running the floor, and
+     the other roles they worked lately under the role they work most
+     (D-17: "Also: Host"). */
+  window.sfw2RosterPills = function (r) {
+    var st = r.settings || {}, h = '';
+    if (sfw2TraineeActive(st.trainee, todayIso())) h += memPill('Training', 'neutral');
+    if (r.floor_manager && r.floor_manager.counts) h += memPill('Runs the floor', 'neutral');
+    return h;
+  };
+  window.sfw2RosterAlso = function (r) {
+    var also = [], i, main = String(r.role || '').toLowerCase();
+    for (i = 0; i < (r.recent_roles || []).length; i++) if (String(r.recent_roles[i]).toLowerCase() !== main) also.push(r.recent_roles[i]);
+    return also.length ? '<span class="sfw2-also">Also: ' + e(also.slice(0, 3).join(', ')) + '</span>' : '';
+  };
+  /* The row under somebody who has stopped working (F2 E-3): when, and the
+     two answers — Deactivate, or Still here (six more weeks). */
+  window.sfw2RosterAfter = function (r, ro) {
+    if (!r.dormant || !r.dormant_text) return '';
+    return '<tr class="sfw2-dorm" data-rst="' + e(r.name) + '"><td colspan="8"><div class="sfw2-dorm-in">' + memPill('Not working lately', 'neutral')
+      + '<span class="t">' + n(r.dormant_text) + ' Cavnar AI leaves them off new drafts until you say.</span>'
+      + (ro ? '' : '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-dorm="off" data-name="' + e(r.name) + '">Deactivate</button>'
+        + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-dorm="here" data-name="' + e(r.name) + '">Still here</button>')
+      + '</div></td></tr>';
+  };
+  /* The person's scheduling facts in their open row. */
+  window.sfw2RosterFacts = function (r, ro, ownerRo) {
+    var st = r.settings || {}, nm = e(r.name), h = '', i;
+    var fm = r.floor_manager || {}, fs = sfw2FloorState(fm);
+    // Runs the floor — the owner's word, else automatic (P-7, E-14).
+    h += '<div><div class="k">Runs the floor</div><div class="sfw2-tri">'
+      + '<div class="chip-tog" role="group" aria-label="Runs the floor">';
+    var tri = [['yes', 'Yes'], ['no', 'No'], ['auto', 'Automatic']];
+    for (i = 0; i < tri.length; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (fs === tri[i][0] ? ' on' : '') + (ownerRo ? ' ro' : '') + '" data-sfw2-fm="' + tri[i][0] + '" data-name="' + nm + '" aria-pressed="' + (fs === tri[i][0] ? 'true' : 'false') + '"' + (ownerRo ? ' disabled' : '') + '>' + tri[i][1] + '</button>';
+    h += '</div><div class="why">' + e(sfw2FloorWhy(fm)) + (ownerRo ? ' Only the account owner sets this.' : '') + '</div><div class="sfw2-err" data-sfw2-err="fm"></div></div></div>';
+    // Stands in as the manager on these dates (E-13), the owner's.
+    var acts = st.acting_manager || [];
+    h += '<div><div class="k">Stands in as the manager</div><div class="sfw2-facts">';
+    for (i = 0; i < acts.length; i++) h += '<span class="rul-ov">' + n(sfw2RangeLabel(acts[i])) + (ownerRo ? '' : '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-sfw2-act-x="' + i + '" data-name="' + nm + '" title="Remove" aria-label="Remove these dates">✕</button>') + '</span>';
+    if (!acts.length) h += '<span class="none">No dates — they count as the manager only if they run the floor.</span>';
+    h += '</div>';
+    if (!ownerRo) h += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-open="act">+ Dates they stand in</button>'
+      + '<div class="sfw2-add" data-sfw2-form="act" hidden><input type="date" class="ac-input d is-empty" data-f="from" aria-label="First day" oninput="cavDateEmpty(this)"><input type="date" class="ac-input d is-empty" data-f="until" aria-label="Last day" oninput="cavDateEmpty(this)"><input class="ac-input" data-f="note" maxlength="120" placeholder="Note (optional)" aria-label="Note"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw2-act-add="1" data-name="' + nm + '">Add</button></div>';
+    h += '<div class="sfw2-err" data-sfw2-err="act"></div></div>';
+    // Always works (D-5): the days and hours they always work.
+    var ss = st.standing_shifts || [], roles = rosterRoles(false);
+    h += '<div><div class="k">Always works</div><div class="sfw2-facts">';
+    for (i = 0; i < ss.length; i++) h += '<span class="rul-ov">' + n(sfw2StandingLabel(ss[i])) + (ro ? '' : '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-sfw2-st-x="' + i + '" data-name="' + nm + '" title="Remove" aria-label="Remove this standing shift">✕</button>') + '</span>';
+    if (!ss.length) h += '<span class="none">No standing shifts — the draft places them by their availability.</span>';
+    h += '</div>';
+    if (!ro) h += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-open="st">+ A shift they always work</button>'
+      + '<div class="sfw2-add" data-sfw2-form="st" hidden><select class="ac-select" data-f="day" aria-label="Day">' + opts(DAYS, 'Monday') + '</select>'
+      + '<select class="ac-select" data-f="start" aria-label="Starts">' + cavTimeOptions('') + '</select><select class="ac-select" data-f="end" aria-label="Ends">' + cavTimeOptions('') + '</select>'
+      + '<select class="ac-select" data-f="role" aria-label="Role"><option value="">Their role</option>' + opts(roles, '') + '</select>'
+      + '<input type="date" class="ac-input d is-empty" data-f="from" aria-label="From (optional)" title="From (optional)" oninput="cavDateEmpty(this)"><input type="date" class="ac-input d is-empty" data-f="until" aria-label="Until (optional)" title="Until (optional)" oninput="cavDateEmpty(this)">'
+      + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw2-st-add="1" data-name="' + nm + '">Add</button></div>';
+    h += '<div class="sfw2-err" data-sfw2-err="st"></div></div>';
+    // In training (D-16): the role they're learning, with whom, until when.
+    var tr = st.trainee, live = sfw2TraineeActive(tr, todayIso());
+    h += '<div><div class="k">In training</div>';
+    if (tr && tr.target_role) h += '<div class="said">' + n(sfw2TraineeLine(tr)) + (live ? '' : '<small>Training ended — they count toward headcount again.</small>') + '</div>'
+      + (ro ? '' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-tr-end="1" data-name="' + nm + '">End training</button>');
+    else {
+      h += '<div class="sfw2-facts"><span class="none">Not in training.</span></div>';
+      if (!ro) h += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-open="tr">+ Start training</button>'
+        + '<div class="sfw2-add" data-sfw2-form="tr" hidden><select class="ac-select" data-f="role" aria-label="Role they are learning"><option value="">Learning…</option>' + opts(roles, '') + '</select>'
+        + '<select class="ac-select" data-f="trainer" aria-label="Trainer"><option value="">Trainer (optional)</option>' + opts(activeNames(r.name), '') + '</select>'
+        + '<input type="date" class="ac-input d is-empty" data-f="until" aria-label="Training ends" title="Training ends" oninput="cavDateEmpty(this)"><input type="date" class="ac-input d is-empty" data-f="from" aria-label="Starts (optional)" title="Starts (optional)" oninput="cavDateEmpty(this)">'
+        + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw2-tr-add="1" data-name="' + nm + '">Start</button></div>';
+    }
+    h += '<div class="sfw2-err" data-sfw2-err="tr"></div></div>';
+    // Closes for (D-9): only someone marked to close.
+    if (r.can_close || r.can_close_pending) {
+      var fam = rosterRoles(true), cf = st.closes_for || [];
+      h += '<div><div class="k">Closes for</div>' + (r.can_close_pending && !r.can_close ? '<div class="said">Marked to close through Cavnar AI support — it counts once you take it as yours in Team → Closers.</div>' : '')
+        + '<div class="chip-tog" data-sfw2-cf-box="' + nm + '">' + _sfw2ChipTog(fam, cf, ro) + '</div><div class="said"><small>' + (cf.length ? 'The last of these roles to leave, until close.' : 'Nothing picked: their own role.') + '</small></div><div class="sfw2-err" data-sfw2-err="cf"></div></div>';
+    }
+    // Reliability (D-44, L-18): missed, called out, late over clocked shifts.
+    h += '<div><div class="k">Reliability</div><div class="sfw2-rel">' + n(sfw2ReliabilityLine(r.reliability)) + '</div></div>';
+    return h;
+  };
+  function _sfw2ChipTog(choices, picked, ro) {
+    var on = {}, o = '', i;
+    for (i = 0; i < (picked || []).length; i++) on[roleOf(picked[i]).toLowerCase()] = 1;
+    for (i = 0; i < choices.length; i++) {
+      var c = choices[i], lit = !!on[c.toLowerCase()];
+      o += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (lit ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-cf="' + e(c) + '" aria-pressed="' + (lit ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + e(c) + '</button>';
+    }
+    return o || '<span class="none">No roles on the roster yet.</span>';
+  }
+  function errBox(btn, key) {
+    var td = btn && btn.closest ? btn.closest('td') : null;
+    return td ? td.querySelector('[data-sfw2-err="' + key + '"]') : null;
+  }
+  function saveFacts(name, patch, btn, key, after) {
+    patch.employee_name = name;
+    var done = busy(btn, ''), box = errBox(btn, key);
+    if (box) box.textContent = '';
+    jpost('/api/labor/staff-settings', patch, function (d) {
+      done();
+      if (!d.ok) { if (box) box.textContent = d.error || 'Couldn’t save that.'; else say(d.error || 'Couldn’t save that', 'error'); return; }
+      say(after || 'Saved — the next draft keeps it');
+      if (window.loadRoster) window.loadRoster();
+    });
+  }
+  function formVals(btn) {
+    var f = btn.closest ? btn.closest('.sfw2-add') : null, out = {}, els = f ? f.querySelectorAll('[data-f]') : [], i;
+    for (i = 0; i < els.length; i++) out[els[i].getAttribute('data-f')] = String(els[i].value || '').replace(/^\s+|\s+$/g, '');
+    return out;
+  }
+  document.addEventListener('click', function (ev) {
+    var body = $id('roster-body'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dorm],[data-sfw2-open]') : null;
+    if (!t || !body || !body.contains(t) || t.disabled) return;
+    var cfBox = t.closest('[data-sfw2-cf-box]'), name = t.getAttribute('data-name') || (cfBox ? cfBox.getAttribute('data-sfw2-cf-box') : '');
+    var r = entry(name), st = (r && r.settings) || {}, v, list, i;
+    if (t.hasAttribute('data-sfw2-open')) {
+      var cell = t.parentNode, form = cell ? cell.querySelector('[data-sfw2-form="' + t.getAttribute('data-sfw2-open') + '"]') : null;
+      if (form) { form.hidden = !form.hidden; if (!form.hidden) { var first = form.querySelector('select,input'); if (first) first.focus(); } }
+      return;
+    }
+    if (!r) return;
+    if (t.hasAttribute('data-sfw2-fm')) {
+      var val = t.getAttribute('data-sfw2-fm'), box = errBox(t, 'fm'), fin = busy(t, '');
+      if (box) box.textContent = '';
+      jpost('/api/labor/managers', {name: name, floor_manager: val === 'yes' ? true : (val === 'no' ? false : 'auto')}, function (d) {
+        fin();
+        if (!d.ok) { if (box) box.textContent = d.error || 'Couldn’t save that.'; return; }
+        say(val === 'auto' ? 'Back to automatic' : (val === 'yes' ? name + ' runs the floor' : name + ' doesn’t count as the manager on duty'));
+        if (window.loadRoster) window.loadRoster();
+        if (window._sfw2Rules && window.loadRules) window.loadRules();
+      });
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-act-x')) {
+      list = (st.acting_manager || []).slice(); list.splice(+t.getAttribute('data-sfw2-act-x'), 1);
+      saveFacts(name, {acting_manager: list}, t, 'act', 'Removed');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-act-add')) {
+      v = formVals(t);
+      if (!v.from) { var b1 = errBox(t, 'act'); if (b1) b1.textContent = 'Pick the first day they stand in.'; return; }
+      list = (st.acting_manager || []).slice(); list.push({from: v.from, until: v.until || v.from, note: v.note || undefined});
+      saveFacts(name, {acting_manager: list}, t, 'act', 'Saved — they count as the manager on those dates');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-st-x')) {
+      list = (st.standing_shifts || []).slice(); list.splice(+t.getAttribute('data-sfw2-st-x'), 1);
+      saveFacts(name, {standing_shifts: list}, t, 'st', 'Removed');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-st-add')) {
+      v = formVals(t);
+      if (!v.start || !v.end) { var b2 = errBox(t, 'st'); if (b2) b2.textContent = 'Pick when the shift starts and ends.'; return; }
+      list = (st.standing_shifts || []).slice();
+      var s = {day: v.day, start: v.start, end: v.end};
+      if (v.role) s.role = v.role; if (v.from) s.from = v.from; if (v.until) s.until = v.until;
+      list.push(s);
+      saveFacts(name, {standing_shifts: list}, t, 'st', 'Saved — every draft starts from it');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-tr-add')) {
+      v = formVals(t);
+      var b3 = errBox(t, 'tr');
+      if (!v.role) { if (b3) b3.textContent = 'Pick the role they are learning.'; return; }
+      if (!v.until) { if (b3) b3.textContent = 'Pick the day training ends — a trainee with no end never counts toward headcount.'; return; }
+      var tr = {target_role: v.role, until: v.until};
+      if (v.trainer) tr.trainer = v.trainer; if (v.from) tr.from = v.from;
+      saveFacts(name, {trainee: tr}, t, 'tr', 'Saved — their training shifts don’t count toward headcount');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-tr-end')) { saveFacts(name, {trainee: {}}, t, 'tr', 'Training ended — they count toward headcount again'); return; }
+    if (t.hasAttribute('data-sfw2-cf')) {
+      var role = t.getAttribute('data-sfw2-cf'), cur = st.closes_for || [], next = [], had = false;
+      for (i = 0; i < cur.length; i++) { if (roleOf(cur[i]).toLowerCase() === role.toLowerCase()) had = true; else next.push(cur[i]); }
+      if (!had) next.push(role);
+      saveFacts(name, {closes_for: next}, t, 'cf', next.length ? 'Saved — they close for ' + sfw2And(next) : 'Saved — they close for their own role');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-dorm')) {
+      var off = t.getAttribute('data-sfw2-dorm') === 'off', fin2 = busy(t, '');
+      jpost('/api/labor/staff-settings', {employee_name: name, active: !off}, function (d) {
+        fin2();
+        if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
+        say(off ? name + ' is off the roster — Still here on their row brings them back' : name + ' stays on the roster — asked again if six more weeks pass with no shift');
+        if (window.loadRoster) window.loadRoster();
+      });
+    }
+  });
+
+  // ── Team → Scheduling rules: who runs the floor, the setup said back ──
+  /* "Managers: Erik (Owner), Jim (Owner), Anthony (Manager FOH)" with why
+     each counts and who was left out; each name the owner can set (P-7,
+     E-14, E-13, D-5). */
+  window.sfw2RulesTop = function (d, ro) {
+    var ms = d.managers || null, h = '', i, m;
+    if (!ms) return '';
+    var ownerRo = !d.can_edit;
+    h += '<div class="lb2-sub" style="margin-top:0;padding-top:0;border-top:none">Who runs the floor<small>a manager or owner on every minute anyone works — the rule above all the others</small></div><div class="sfw2-mgr">';
+    h += '<div class="line">' + n(ms.line || d.managers_line || '') + '</div><div class="sfw2-list" id="sfw2-mgr-list">';
+    for (i = 0; i < (ms.managers || []).length; i++) {
+      m = ms.managers[i];
+      var mine = m.basis === 'set';
+      h += '<div class="sfw2-row"><div class="w"><b>' + e(m.name) + '</b> · ' + e(m.role || '') + '<small>' + e(mine ? 'You set them to run the floor' : ('Counts — ' + (m.why || 'automatic'))) + ((m.standing_shifts || []).length ? ' · always works ' + n((m.standing_shifts || []).map(sfw2StandingLabel).join('; ')) : '') + '</small></div>'
+        + (ownerRo ? '' : '<div class="acts">' + (mine ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-mgr="auto" data-name="' + e(m.name) + '">Back to automatic</button>' : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-mgr="no" data-name="' + e(m.name) + '">Not a floor manager</button>') + '</div>') + '</div>';
+    }
+    for (i = 0; i < (ms.not_counted || []).length; i++) {
+      m = ms.not_counted[i];
+      h += '<div class="sfw2-row off"><div class="w"><b>' + e(m.name) + '</b> · ' + e(m.role || '') + '<small>Not counted — ' + e(m.why || '') + '</small></div>'
+        + (ownerRo ? '' : '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-mgr="yes" data-name="' + e(m.name) + '">Runs the floor</button>'
+          + (m.basis === 'set_not' ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-mgr="auto" data-name="' + e(m.name) + '">Back to automatic</button>' : '') + '</div>') + '</div>';
+    }
+    h += '</div>';
+    if ((ms.acting || []).length) {
+      var a = [];
+      for (i = 0; i < ms.acting.length; i++) a.push(e(ms.acting[i].name) + ' ' + n(ms.acting[i].label || ''));
+      h += '<div class="sr-line"><span class="d"></span><span>Standing in as the manager: ' + a.join('; ') + '</span></div>';
+    }
+    if (ms.ask_standing) h += '<div class="ts-note warn sfw2-warn">' + n(ms.ask_standing) + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-goto-roster="' + e((ms.missing_standing || [])[0] || '') + '">Set standing shifts</button></div>';
+    h += '<div class="sfw2-err" id="sfw2-mgr-err"></div></div>';
+    return h;
+  };
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-mgr],[data-sfw2-goto-roster]') : null;
+    if (!t || t.disabled) return;
+    if (t.hasAttribute('data-sfw2-goto-roster')) {
+      var who = t.getAttribute('data-sfw2-goto-roster');
+      var p = $id('roster-panel');
+      if (p && p.style.display === 'none' && window.toggleRosterPanel) window.toggleRosterPanel();
+      window._sfw2OpenPerson = who || null;
+      if (window._sfw2Roster && window.renderRoster) window.renderRoster();
+      var rp = $id('roster-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'});
+      return;
+    }
+    var name = t.getAttribute('data-name'), v = t.getAttribute('data-sfw2-mgr'), done = busy(t, ''), box = $id('sfw2-mgr-err');
+    if (box) box.textContent = '';
+    jpost('/api/labor/managers', {name: name, floor_manager: v === 'yes' ? true : (v === 'no' ? false : 'auto')}, function (d) {
+      done();
+      if (!d.ok) { if (box) box.textContent = d.error || 'Couldn’t save that.'; return; }
+      say(v === 'auto' ? name + ' is back to automatic' : (v === 'yes' ? name + ' runs the floor' : name + ' doesn’t count as the manager on duty'));
+      if (window.loadRules) window.loadRules();
+      if (window._sfw2Roster && window.loadRoster) window.loadRoster();
+    });
+  });
+  /* Close times every trading day needs (D-43): the days with none. */
+  window.sfw2RulesClosed = function (d) {
+    var miss = d.close_times_missing || [];
+    if (!miss.length) return '';
+    return '<div class="ts-note warn sfw2-warn">No close time for ' + e(sfw2And(miss)) + ' — nobody at close, the closers and stays after close aren’t checked on '
+      + (miss.length === 1 ? 'that day' : 'those days') + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set the hours</button></div>';
+  };
+  /* Floors: the history's suggestion (D-42) and the section-count clash
+     (A1 P-29). */
+  window.sfw2RulesFloorsHead = function (d, ro) {
+    var h = '', cf = d.floor_cap_conflicts || [], i;
+    for (i = 0; i < cf.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(sfw2CapConflictLine(cf[i])) + '</span></div>';
+    if (!ro) h += '<div class="sfw2-add" style="margin:4px 0 8px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-floors-suggest="1">Suggest from history</button><span class="ac-status" id="sfw2-floors-note"></span></div>';
+    return h;
+  };
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-floors-suggest]') : null; if (!t || t.disabled) return;
+    var done = busy(t, 'Reading…'), note = $id('sfw2-floors-note');
+    jget('/api/labor/floors/suggest', function (d) {
+      done();
+      if (!d.ok) { if (note) note.textContent = d.error || 'The history couldn’t be read.'; return; }
+      var fl = d.floors || {}, box = $id('rul-floors'), filled = [], k;
+      if (!box) return;
+      for (k in fl) if (fl.hasOwnProperty(k)) {
+        var row = null, rows = box.querySelectorAll('.rul-floor'), i;
+        for (i = 0; i < rows.length; i++) if (String(rows[i].getAttribute('data-floor-role')).toLowerCase() === k.toLowerCase()) row = rows[i];
+        if (!row) {
+          var empty = box.querySelector('.hb-empty'); if (empty) empty.parentNode.removeChild(empty);
+          if (window.sfw2AddFloorRow) row = window.sfw2AddFloorRow(k);
+        }
+        if (!row) continue;
+        var m = row.querySelector('[data-floor="morning"]'), nt = row.querySelector('[data-floor="night"]');
+        if (m && fl[k].morning != null && m.type !== 'hidden') m.value = String(fl[k].morning);
+        if (nt && fl[k].night != null && nt.type !== 'hidden') nt.value = String(fl[k].night);
+        filled.push(k);
+      }
+      if (note) note.innerHTML = filled.length ? n(d.note || '') + ' <b>Not saved yet</b> — Save rules keeps them.' : 'Not enough history to suggest a floor yet.';
+    });
+  });
+  /* Stays until close + N minutes, one per role (D-43), from the role
+     families; and the salaried weekly cap with each person's (E-12). */
+  window.sfw2RulesStays = function (d) {
+    var h = '', cf = d.role_close_conflicts || [], i;
+    h += '<div class="lb2-sub">Stays after close<small>how long each role stays once the doors close; the closers of that role stay at least this long</small></div>';
+    for (i = 0; i < cf.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(sfw2CloseConflictLine(cf[i])) + '</span></div>';
+    return h + '<div id="sfw2-stays"><div class="dr-pulse" role="status" aria-label="Loading the roles"><i></i></div></div>';
+  };
+  window.sfw2RulesSalaried = function (d, ro) {
+    var cap = d.salaried_cap, def = d.salaried_cap_default || 55, b = d.salaried_cap_bounds || [20, 84], h = '', i;
+    var shown = (cap == null || +cap === +def) ? '' : String(cap);
+    h += '<div class="rul-sw" style="margin-top:8px"><div class="t"><label for="sfw2-salcap">A salaried person works at most</label><input type="number" class="ac-input ac-num n" id="sfw2-salcap" min="' + b[0] + '" max="' + b[1] + '" step="1" value="' + e(shown) + '" placeholder="' + e(def) + '" aria-label="Salaried weekly cap, hours"' + (ro ? ' disabled' : '') + '>hours a week<small>Cavnar AI never schedules a salaried person past this unless their own maximum says more. Blank is ' + e(def) + '.</small></div></div>';
+    var caps = d.salaried_caps || null;
+    if (caps && caps.length) {
+      var lines = [];
+      for (i = 0; i < caps.length; i++) lines.push(e(caps[i].name) + ' <span class="hb-num">' + e(caps[i].cap) + 'h</span>' + (caps[i].own ? ' (their own maximum)' : ''));
+      h += '<div class="sfw2-caps">' + lines.join(' · ') + '</div>';
+    } else if (caps) h += '<div class="sfw2-caps">Nobody on the roster is salaried — set salaries in Account → Targets &amp; pay.</div>';
+    return h;
+  };
+  window.sfw2RulesFamilies = function () {
+    return '<div class="lb2-sub">Roles and job codes<small>job codes for halves of the day are one role — every rule about a role holds for each of its codes</small></div><div id="sfw2-fam"><div class="dr-pulse" role="status" aria-label="Loading the roles"><i></i></div></div>';
+  };
+  window.sfw2RulesStandards = function () {
+    return '<div class="lb2-sub">Labor standards<small>the work one person carries an hour — measured here, or your own figure, which resizes that role’s shifts</small></div><div id="sfw2-std"><div class="dr-pulse" role="status" aria-label="Loading the labor standards"><i></i></div></div>';
+  };
+  /* After the rules render: the role families (for the editor and the
+     stays-after-close rows) and the labor standards, each from its route. */
+  window.sfw2RulesAfter = function (d, ro) {
+    jget('/api/labor/role-families', function (f) { window._sfw2Families = f.ok ? f : null; renderFamilies(f, d); renderStays(f, d, ro); });
+    jget('/api/labor/labor-standards', function (s) { renderStandards(s); });
+  };
+  function famOf(code, f) {
+    var low = String(code || '').toLowerCase().replace(/^\s+|\s+$/g, ''), i, j, fams = (f && f.families) || [];
+    for (i = 0; i < fams.length; i++) {
+      if (String(fams[i].label || '').toLowerCase() === low || String(fams[i].family || '').toLowerCase() === low) return fams[i].family;
+      for (j = 0; j < (fams[i].roles || []).length; j++) if (String(fams[i].roles[j]).toLowerCase() === low) return fams[i].family;
+    }
+    return roleOf(low).toLowerCase();
+  }
+  function renderStays(f, d, ro) {
+    var el = $id('sfw2-stays'); if (!el) return;
+    if (!f || !f.ok) { el.innerHTML = '<div class="hb-empty">' + e((f && f.error) || 'The roles couldn’t be read — the stays-after-close settings are kept as they are.') + '</div>'; return; }
+    var stored = d.role_close_mins || {}, rows = [], byFam = {}, i, k;
+    for (i = 0; i < (f.families || []).length; i++) { var fam = f.families[i]; byFam[fam.family] = {label: fam.label, value: null}; rows.push(fam.family); }
+    for (k in stored) if (stored.hasOwnProperty(k)) {
+      var fk = famOf(k, f);
+      if (!byFam[fk]) { byFam[fk] = {label: k, value: null}; rows.push(fk); }
+      if (byFam[fk].value == null || +stored[k] > +byFam[fk].value) byFam[fk].value = stored[k];
+    }
+    if (!rows.length) { el.innerHTML = '<div class="hb-empty">Roles appear once your shifts carry one.</div>'; return; }
+    var h = '';
+    for (i = 0; i < rows.length; i++) {
+      var r = byFam[rows[i]];
+      h += '<div class="rul-row"><span class="role">' + e(r.label) + '</span><span class="lbl">stays until close +</span><input type="number" class="ac-input ac-num n" data-sfw2-stay="' + e(r.label) + '" min="0" max="240" step="5" value="' + (r.value == null ? '' : e(r.value)) + '" placeholder="0" aria-label="' + e(r.label) + ' minutes after close"' + (ro ? ' disabled' : '') + '><span class="lbl">minutes</span></div>';
+    }
+    el.innerHTML = h;
+  }
+  /* The role families editor (D-13): each job code and the role it is,
+     the owner's map or the suggestion; one Save sends the whole map. */
+  function renderFamilies(f, d) {
+    var el = $id('sfw2-fam'); if (!el) return;
+    if (!f || !f.ok) { el.innerHTML = '<div class="hb-empty">' + e((f && f.error) || 'The job codes couldn’t be read.') + '</div>'; return; }
+    var fams = f.families || [], ro = !f.can_edit, h = '', i, j;
+    if (!fams.length) { el.innerHTML = '<div class="hb-empty">Job codes appear once your shifts carry one.</div>'; return; }
+    for (i = 0; i < fams.length; i++) for (j = 0; j < (fams[i].roles || []).length; j++) {
+      var code = fams[i].roles[j];
+      h += '<div class="sfw2-fam"><span class="code">' + e(code) + '</span><input class="ac-input" data-sfw2-fam="' + e(code) + '" value="' + e(fams[i].label || '') + '" maxlength="60" aria-label="' + e(code) + ' is the role"' + (ro ? ' disabled' : '') + '>'
+        + '<span class="src">' + (fams[i].source === 'yours' ? 'yours' : 'suggested from the job names') + '</span></div>';
+    }
+    if (!ro) h += '<div class="sfw2-add"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-fam-save="1">Save roles</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-fam-reset="1">Back to the suggestion</button><span class="ac-status" id="sfw2-fam-status"></span></div>';
+    else h += '<div class="lb2-ro">Only the account owner can change which job codes are one role.</div>';
+    el.innerHTML = h;
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fam-save],[data-sfw2-fam-reset]') : null; if (!t || t.disabled) return;
+    var st = $id('sfw2-fam-status'), map = {}, ins = document.querySelectorAll('#sfw2-fam [data-sfw2-fam]'), i;
+    if (t.hasAttribute('data-sfw2-fam-save')) {
+      for (i = 0; i < ins.length; i++) {
+        var v = String(ins[i].value || '').replace(/^\s+|\s+$/g, '');
+        if (!v) { if (st) { st.textContent = 'Name the role ' + ins[i].getAttribute('data-sfw2-fam') + ' belongs to.'; st.style.color = 'var(--red)'; } return; }
+        map[ins[i].getAttribute('data-sfw2-fam')] = v;
+      }
+    }
+    var done = busy(t, 'Saving…');
+    jpost('/api/labor/role-families', {families: map}, function (d) {
+      done();
+      if (!d.ok) { if (st) { st.textContent = d.error || 'Couldn’t save the roles.'; st.style.color = 'var(--red)'; } return; }
+      say(t.hasAttribute('data-sfw2-fam-reset') ? 'Back to the suggestion from the job names' : 'Roles saved — every rule about a role holds for each of its codes');
+      if (window.loadRules) window.loadRules();
+    });
+  });
+  /* Labor standards (D-25): the measured figure, yours over it; one role
+     family set or cleared at a time. */
+  function renderStandards(s) {
+    var el = $id('sfw2-std'); if (!el) return;
+    if (!s || !s.ok) { el.innerHTML = '<div class="hb-empty">' + e((s && s.error) || 'The labor standards couldn’t be read.') + '</div>'; return; }
+    var std = s.standards || {}, fams = s.families || [], ro = !s.can_edit, units = s.units || {}, h = '', i, any = false;
+    for (i = 0; i < fams.length; i++) {
+      var f = fams[i], one = std[f] || {}, lunch = one.morning, dinner = one.night;
+      if (!lunch && !dinner && ro) continue;
+      any = true;
+      var lines = [];
+      if (lunch) lines.push(n(lunch.text));
+      if (dinner) lines.push(n(dinner.text));
+      var mine = (lunch && lunch.source === 'yours') || (dinner && dinner.source === 'yours');
+      h += '<div class="sfw2-std"><span class="fam">' + e(sfw2FamilyLabel(f)) + '</span><div class="tx">' + (lines.length ? lines.join('<br>') : '<span style="color:var(--ink3)">Not measured yet — it takes six shifts of a lunch or a dinner on the ticket archive.</span>')
+        + '<small>' + e(units[f] || '') + ' per person per hour</small></div>'
+        + (ro ? '' : '<div class="ed" data-sfw2-std="' + e(f) + '"><input type="number" class="ac-input ac-num" data-p="lunch" min="0.5" max="500" step="0.5" placeholder="lunch" value="' + (lunch && lunch.source === 'yours' ? e(lunch.per_hour) : '') + '" aria-label="' + e(sfw2FamilyLabel(f)) + ' at lunch, your standard">'
+          + '<input type="number" class="ac-input ac-num" data-p="dinner" min="0.5" max="500" step="0.5" placeholder="dinner" value="' + (dinner && dinner.source === 'yours' ? e(dinner.per_hour) : '') + '" aria-label="' + e(sfw2FamilyLabel(f)) + ' at dinner, your standard">'
+          + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-std-save="1">Set</button>'
+          + (mine ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-std-clear="1">Use measured</button>' : '') + '</div>') + '</div>';
+    }
+    if (!any) h = '<div class="hb-empty">No standard measured yet — it takes the ticket archive and six shifts of a role at lunch or dinner.</div>';
+    el.innerHTML = h + '<div class="ac-status" id="sfw2-std-status"></div>';
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-std-save],[data-sfw2-std-clear]') : null; if (!t || t.disabled) return;
+    var row = t.closest('[data-sfw2-std]'), fam = row ? row.getAttribute('data-sfw2-std') : '', body = {family: fam}, st = $id('sfw2-std-status');
+    if (t.hasAttribute('data-sfw2-std-clear')) body.remove = true;
+    else {
+      var l = row.querySelector('[data-p="lunch"]').value, dn = row.querySelector('[data-p="dinner"]').value;
+      if (l === '' && dn === '') { if (st) { st.textContent = 'Give a lunch or a dinner figure first.'; st.style.color = 'var(--red)'; } return; }
+      if (l !== '') body.lunch = +l; if (dn !== '') body.dinner = +dn;
+    }
+    var done = busy(t, '');
+    jpost('/api/labor/labor-standards', body, function (d) {
+      done();
+      if (!d.ok) { if (st) { st.textContent = d.error || 'Couldn’t save that.'; st.style.color = 'var(--red)'; } return; }
+      say(body.remove ? sfw2FamilyLabel(fam) + ' uses the measured standard again' : 'Saved — ' + sfw2FamilyLabel(fam) + ' shifts are sized to it');
+      jget('/api/labor/labor-standards', function (s) { renderStandards(s); });
+    });
+  });
+
+  // ── Team → Closers: the one-time cleanup (D-9, L-9) ───────────────────
+  var _cl = null, _clRoles = null;
+  window.toggleClosersPanel = function () {
+    var p = $id('closers-panel'), b = $id('closers-toggle-btn'); if (!p) return;
+    var open = p.style.display === 'none'; p.style.display = open ? '' : 'none';
+    if (b) b.textContent = open ? 'Close ↑' : 'Review ↓';
+    if (open) window.loadClosers();
+  };
+  window.loadClosers = function () {
+    var el = $id('closers-body'); if (!el) return;
+    el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading the closers"><i></i></div>';
+    jget('/api/labor/closers', function (d) {
+      if (!d.ok) { if (typeof loadFailed === 'function') loadFailed(el, d); else el.innerHTML = '<div class="load-err">' + e(d.error || 'The closers couldn’t be read.') + '</div>'; return; }
+      _cl = d; _clRoles = null;
+      renderClosers();
+      jget('/api/labor/role-families', function (f) { if (f.ok) { _clRoles = f; renderClosers(); } });
+    });
+  };
+  function closerRoleChoices() {
+    var out = [], seen = {}, i;
+    function add(r) { r = String(r || '').replace(/^\s+|\s+$/g, ''); if (!r || seen[r.toLowerCase()]) return; seen[r.toLowerCase()] = 1; out.push(r); }
+    var fams = (_clRoles && _clRoles.families) || [];
+    for (i = 0; i < fams.length; i++) add(fams[i].label);
+    for (i = 0; i < ((_cl && _cl.by_role) || []).length; i++) add(_cl.by_role[i].role);
+    for (i = 0; i < ((_cl && _cl.closer_roles) || []).length; i++) add(_cl.closer_roles[i]);
+    return out;
+  }
+  function renderClosers() {
+    var el = $id('closers-body'), d = _cl; if (!el || !d) return;
+    var ro = !d.can_edit, h = '', i;
+    var chip = $id('closers-chip'); if (chip) chip.textContent = d.roster ? d.flagged + ' of ' + d.roster + ' marked' : '';
+    if (d.warning) h += '<div class="ts-note warn" style="margin-top:0">' + n(d.warning) + '</div>';
+    h += '<div class="lb2-intro" style="margin-bottom:6px">' + e(sfw2CloserBasis(d.closer_roles_basis, d.closer_roles_in_force || [])) + '</div>';
+    // Which roles close here: the owner's choice, sent with Apply.
+    h += '<div class="lb2-sub" style="margin-top:6px">The roles that close<small>a closer of each stays until close, the last of their role to leave</small></div>'
+      + '<div class="chip-tog" id="sfw2-cl-rolepick">' + _sfw2Pick(closerRoleChoices(), d.closer_roles || [], ro) + '</div>';
+    if (!(d.closer_roles || []).length) h += '<div class="ac-note" style="margin:6px 0 0">None chosen yet — pick them, then Apply.</div>';
+    // Who closes for each role now.
+    h += '<div class="lb2-sub">Closers by role<small>as every draft reads them today</small></div><div class="sfw2-cl-roles">';
+    for (i = 0; i < (d.by_role || []).length; i++) h += '<div class="sfw2-cl-role"><b>' + e(d.by_role[i].role) + '</b>' + e((d.by_role[i].closers || []).join(', ')) + '</div>';
+    if (!(d.by_role || []).length) h += '<div class="hb-empty">Nobody counts as a closer yet.</div>';
+    h += '</div>';
+    if ((d.outside_roles || []).length) h += '<div class="sr-line warn"><span class="d"></span><span>Marked to close, but in no role that closes: ' + e(sfw2And(d.outside_roles)) + '. They close nothing until their role closes, or you mark what they close for in Roster.</span></div>';
+    if ((d.pending_admin || []).length) h += '<div class="ts-note warn">Marked to close through Cavnar AI support — not counted until you take them as yours: ' + e(sfw2And(d.pending_admin)) + '.'
+      + (ro ? '' : ' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-cl-adopt="1">Count them as mine</button>') + '</div>';
+    // Suggestions from eight weeks of punches: keep / unmark / add.
+    var sug = d.suggestions || [], moves = 0;
+    h += '<div class="lb2-sub">From your punches<small>who was the last of their role out — a suggestion only; nothing changes until you Apply</small></div>';
+    if (!sug.length) h += '<div class="hb-empty">Nothing to suggest — the punches agree with who is marked.</div>';
+    for (i = 0; i < sug.length; i++) {
+      var s = sug[i], change = s.action === 'unmark' || s.action === 'add';
+      if (change) moves++;
+      h += '<div class="sfw2-row sfw2-sug">' + (change && !ro ? '<span class="pick"><input type="checkbox" data-sfw2-cl-pick="' + i + '" checked aria-label="' + e((SFW2_SUG_WORD[s.action] || s.action) + ' ' + s.name) + '"></span>' : '')
+        + '<span class="kd ' + e(s.action) + '">' + e(SFW2_SUG_WORD[s.action] || s.action) + '</span><div class="w"><b>' + e(s.name) + '</b><small>' + n(sfw2SuggestionLine(s)) + '</small></div></div>';
+    }
+    if (!ro) h += '<div class="sr-actions" style="margin-top:14px"><button type="button" class="cbtn cbtn-primary" data-sfw2-cl-apply="1">Apply</button><span class="ac-status" id="sfw2-cl-status">' + (moves ? moves + ' change' + (moves === 1 ? '' : 's') + ' suggested' : '') + '</span></div>';
+    else h += '<div class="lb2-ro">Only the account owner can choose the closers.</div>';
+    el.innerHTML = h;
+  }
+  function _sfw2Pick(choices, picked, ro) {
+    var on = {}, o = '', i;
+    for (i = 0; i < (picked || []).length; i++) on[String(picked[i]).toLowerCase()] = 1;
+    for (i = 0; i < choices.length; i++) {
+      var lit = !!on[choices[i].toLowerCase()];
+      o += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (lit ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-cl-role="' + e(choices[i]) + '" aria-pressed="' + (lit ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + e(choices[i]) + '</button>';
+    }
+    return o || '<span class="ac-note" style="margin:0">No roles yet.</span>';
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-cl-role],[data-sfw2-cl-apply],[data-sfw2-cl-adopt]') : null;
+    if (!t || t.disabled || !_cl) return;
+    if (t.hasAttribute('data-sfw2-cl-role')) {
+      var on = t.className.indexOf(' on') < 0;
+      t.className = on ? t.className + ' on' : t.className.replace(' on', ''); t.setAttribute('aria-pressed', on ? 'true' : 'false');
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-cl-adopt')) {
+      var fin = busy(t, 'Counting…');
+      jpost('/api/labor/team/ratings/adopt', {}, function (d) {
+        fin();
+        if (!d.ok) { say(d.error || 'Couldn’t count them', 'error'); return; }
+        say((d.adopted || 0) + ' entered through support now count as yours'); window.loadClosers();
+      });
+      return;
+    }
+    var picks = document.querySelectorAll('#closers-body [data-sfw2-cl-pick]'), changes = [], i, sug = _cl.suggestions || [];
+    for (i = 0; i < picks.length; i++) if (picks[i].checked) {
+      var s = sug[+picks[i].getAttribute('data-sfw2-cl-pick')];
+      if (s && (s.action === 'unmark' || s.action === 'add')) changes.push({name: s.name, can_close: s.action === 'add'});
+    }
+    var lit = document.querySelectorAll('#sfw2-cl-rolepick .ct.on'), roles = [];
+    for (i = 0; i < lit.length; i++) roles.push(lit[i].getAttribute('data-sfw2-cl-role'));
+    var before = (_cl.closer_roles || []).join('|').toLowerCase(), body = {changes: changes};
+    if (roles.join('|').toLowerCase() !== before) body.closer_roles = roles;
+    var st = $id('sfw2-cl-status');
+    if (!changes.length && !body.closer_roles) { if (st) st.textContent = 'Nothing picked to change.'; return; }
+    var done = busy(t, 'Applying…');
+    jpost('/api/labor/closers', body, function (d) {
+      done();
+      if (!d.ok) { if (st) { st.textContent = d.error || 'Couldn’t apply that.'; st.style.color = 'var(--red)'; } return; }
+      d.can_edit = _cl.can_edit; _cl = d; renderClosers();
+      say((d.applied || 0) + ' closer change' + (d.applied === 1 ? '' : 's') + ' applied' + (body.closer_roles ? ' — the closing roles are yours now' : ''));
+      if (window._sfw2Roster && window.loadRoster) window.loadRoster();
+    });
+  });
+
+  // ── What the draft learned: support's work counted as yours (L-8, L-10),
+  //    and a standing habit kept or set aside (L-30) ────────────────────────
+  window.sfw2LearnedHead = function (d) {
+    var h = '', sv = (d && d.admin_saves) || {};
+    if (d && d.can_adopt && +sv.versions > 0)
+      h += '<div class="ts-note warn sfw2-adopt">' + n(sfw2Plural(+sv.versions, 'edit') + ' made through Cavnar AI support' + (+sv.weeks ? ' on ' + sfw2Plural(+sv.weeks, 'week') : '') + ' don’t teach the draft yet — count them as yours?')
+        + ' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-adopt-saves="1">Count them as mine</button></div>';
+    return h;
+  };
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-adopt-saves],[data-sfw2-adopt-dis],[data-sfw2-keep]') : null;
+    if (!t || t.disabled) return;
+    var done = busy(t, '');
+    if (t.hasAttribute('data-sfw2-adopt-saves')) {
+      jpost('/api/labor/schedule/adopt-admin-saves', {}, function (d) {
+        done();
+        if (!d.ok) { say(d.error || 'Couldn’t count those edits', 'error'); return; }
+        say(sfw2Plural(+d.versions || 0, 'edit') + ' now teach the draft as yours');
+        if (window.loadLearnedPatterns) window.loadLearnedPatterns();
+      });
+      return;
+    }
+    if (t.hasAttribute('data-sfw2-adopt-dis')) {
+      jpost('/api/labor/learned-patterns/adopt', {}, function (d) {
+        done();
+        if (!d.ok) { say(d.error || 'Couldn’t count those', 'error'); return; }
+        say(sfw2Plural(+d.adopted || 0, 'dismissal') + ' made through support now count as yours');
+        if (window.loadLearnedPatterns) window.loadLearnedPatterns();
+      });
+      return;
+    }
+    var keep = t.getAttribute('data-sfw2-keep') === '1';
+    jpost('/api/labor/learned-patterns', {key: t.getAttribute('data-key'), keep: keep}, function (d) {
+      done();
+      if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
+      say(keep ? 'Kept — the draft uses it again' : 'Let go — the draft stops using it');
+      if (window.loadLearnedPatterns) window.loadLearnedPatterns();
+    });
+  });
+
+  // ── Account → memory: how the schedule checks each staffing rule ──────
+  window.sfw2MemCheckHtml = function (chk) {
+    if (!chk) return '';
+    return '<div class="sfw2-chk ' + (chk.checked ? 'ok' : 'warn') + '">' + (chk.checked ? '<strong>Checked on every draft</strong> ' + n('as: ' + (chk.reads_as || '') + '.') : '<strong>Not checked by the schedule.</strong> A draft is asked to follow it, and the review reminds you to check the week against it.') + '</div>';
+  };
+
+  // ── Events & reservations: a reservation system's booking export ──────
+  document.addEventListener('change', function (ev) {
+    var t = ev.target; if (!t || t.id !== 'sg-export') return;
+    var f = t.files && t.files[0], st = $id('sg-export-status'); if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { if (st) { st.textContent = 'That file is over 4 MB — export a shorter date range.'; st.style.color = 'var(--red)'; } t.value = ''; return; }
+    if (typeof FileReader === 'undefined') { if (st) st.textContent = 'This browser can’t read the file — paste it into the box instead.'; return; }
+    var rd = new FileReader();
+    if (st) { st.innerHTML = '<span class="dr-pulse" role="status" aria-label="Importing"><i></i></span>'; st.style.color = ''; }
+    rd.onload = function () {
+      jpost('/api/labor/demand-signals', {csv: String(rd.result || '')}, function (d) {
+        t.value = '';
+        if (!d.ok) { if (st) { st.textContent = d.error || 'That file couldn’t be read.'; st.style.color = 'var(--red)'; } return; }
+        if (st) st.innerHTML = n((d.report ? sfw2ExportReport(d.report) + ' ' : '') + (d.written ? sfw2Plural(+d.written, 'date') + ' on the calendar now.' : 'Nothing new written.'));
+        if (d.written && window.loadSignals) window.loadSignals();
+      });
+    };
+    rd.onerror = function () { if (st) { st.textContent = 'That file couldn’t be opened.'; st.style.color = 'var(--red)'; } };
+    rd.readAsText(f);
+  });
+
+  // ── Home: a call-off's gaps, one cover each (E-31) ─────────────────────
+  window.sfw2GapsHtml = function (x, hidden) {
+    var gs = (x && x.cover_gaps) || [], h = '', i;
+    if (gs.length < 2 || x.status === 'resolved') return '';
+    for (i = 0; i < gs.length; i++) {
+      var g = gs[i], miss = g.status === 'missing';
+      h += '<div class="hb-gap"><span class="w"><b>' + e(g.employee) + '</b> — ' + n(g.shift_start || 'today') + ', <span class="st ' + (miss ? 'miss' : (g.status === 'covered' || g.status === 'arrived' ? 'ok' : '')) + '">' + e(sfw2GapStatus(g)) + '</span>'
+        + ((g.asked || []).length ? ' · asked ' + e(g.asked.join(', ')) : '') + '</span>'
+        + (g.cover ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cover-issue="' + (+x.id) + '" data-cover-name="' + e(g.cover.name) + '"' + (g.cover.how ? ' title="' + e(g.cover.how) + '"' : '') + '>' + e(sfw2CoverLabel(g)) + '</button>' : '') + '</div>';
+    }
+    return '<div class="hb-gaps' + (hidden ? ' hb-iss-more' : '') + '" data-issue-gaps="' + (+x.id) + '"' + (hidden ? ' hidden' : '') + '>' + h + '</div>';
+  };
 })();
 </script>
 </body>
