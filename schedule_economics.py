@@ -1354,10 +1354,12 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
         return {"morning": "lunch", "night": "dinner"}.get(p, p or "")
     bits = []
     if held.get("requirement"):
+        from shift_quality import role_words
         x = _first("requirement")
         what = ""
         if x and x.get("required"):
-            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} {x['role']}"
+            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} "
+                    f"{role_words(x.get('role'), int(x['required']), 'people')}"
                     + (f" at {x['at']}" if x.get("at") else ""))
         bits.append("what the shifts need (your usual staffing, floors and demand" + what + ")")
     if held.get("learned"):
@@ -1370,11 +1372,15 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
                     else "dayparts that have gone wrong before")
     if held.get("rule"):
         x = _first("rule")
-        bits.append("the rules" + (f" ({x['label']})" if x and x.get("label") else ""))
+        bits.append("the rules" + (f" — {x['label']}" if x and x.get("label") else ""))
     if held.get("floor") or held.get("last_of_role") or held.get("station"):
         bits.append("your floors and the last of each role")
     if held.get("min_hours") or held.get("only_shift"):
         bits.append("minimum hours and people's only shifts")
+    if held.get("kept"):
+        bits.append("the days you kept as they were")
+    if conflict.get("timed_out"):
+        bits.insert(0, "its time limit")
     if not bits:
         return ""
     return (f"The trim stopped {over:,.0f}h over the {b:,.0f}h budget: the rest is held by "

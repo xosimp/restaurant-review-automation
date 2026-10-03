@@ -195,7 +195,7 @@ def test_the_trim_never_cuts_under_the_requirement_and_names_the_conflict():
     conflict = report["conflict"]
     assert conflict["over_by"] == 12 and conflict["held"]["requirement"] == 6
     line = econ.budget_conflict_line(conflict)
-    assert "12h over the 12h budget" in line and "dinner needs 3 Server" in line
+    assert "12h over the 12h budget" in line and "Thursday dinner needs 3 servers" in line
     assert "Raise the hours budget" in line
     # without the requirement the old floors-only trim removes them
     out2, trimmed2, _ = econ.trim_to_budget([dict(r) for r in rows], 12, {}, constraints=_c())
@@ -604,3 +604,47 @@ def test_a_stagger_never_opens_a_manager_gap():
     out, changes = econ.stagger_same_starts([dict(r) for r in rows], curve, constraints=c)
     assert all(ch["employee"] != "Max" for ch in changes) or not _kinds(out, c, "no_manager")
     assert not _kinds(out, c, "no_manager")
+
+
+# ── the job end to end: requirements built, the trim held, said once ─────
+
+@pytest.fixture
+def db(db_path, monkeypatch):
+    real = models.get_conn
+
+    def conn(*a, **k):
+        return real(db_path)
+    for mod in list(sys.modules.values()):
+        bound = getattr(mod, "get_conn", None) if mod is not None else None
+        if bound is real or str(getattr(bound, "__module__", "")).startswith(("test_", "tests.", "conftest")):
+            monkeypatch.setattr(mod, "get_conn", conn)
+    monkeypatch.setattr(models, "get_conn", conn)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
+    return db_path
+
+
+def test_the_job_trims_to_the_requirement_and_says_the_conflict_once(db, monkeypatch):
+    from models import Restaurant, create_restaurant
+    rid = create_restaurant(Restaurant(name="Trim Co", owner_email="trim@x.com"), db_path=db)
+    header = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+    lines = [f"{d},{DAYS[WEEK.index(d)]},{n},Server,4:00pm,11:00pm,7," for d in (THU, FRI) for n in ("Ana", "Bob", "Cy")]
+    base = {"ok": True, "schedule_csv": header + "\n" + "\n".join(lines), "week_dates": list(WEEK),
+            "week_days": list(DAYS), "summary": [], "hours_budget": 20, "daily_target_hours": {THU: 10, FRI: 10},
+            "labor_target": 30, "blended_rate": 20.0,
+            # what the model was told each night needs: three servers
+            "typical_headcount": {("Thursday", "night"): {"Server": 3}, ("Friday", "night"): {"Server": 3}}}
+    monkeypatch.setattr(se, "_build_schedule_result", lambda r, week_start=None: dict(base))
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda job_id, status, result: finished.update(status=status, result=result))
+    se._run_schedule_job("trim-job", rid)
+    assert finished["status"] == "done", finished
+    res = finished["result"]
+    for d in (THU, FRI):
+        assert sum(1 for r in res["preview_rows"] if r["date"] == d) == 3, "every server is what the night needs"
+    assert all(t["kind"] == "cut" for t in res["trimmed"]), res["trimmed"]
+    lines = res["review"]["lines"]
+    assert lines[0].startswith("⚠") and "over the ceiling" in lines[0]
+    assert sum(1 for x in lines if x.startswith("The trim stopped")) == 1
+    assert "needs 3 servers" in lines[1]
+    assert res["review"]["budget_conflict"]["held"]["requirement"]
