@@ -5,7 +5,7 @@ import csv, json, math, re, time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from ai_utils import create_with_retry, extract_text, get_client, model_for
+from ai_utils import CallDeadlineExceeded, create_with_retry, extract_text, get_client, model_for
 import response_validation as rv
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
@@ -586,10 +586,13 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
 
 
 def _without_salaried(restaurant_id, shifts):
-    """(the shifts less the salaried people's punches, their hours)."""
+    """(the shifts less the salaried people's punches, their hours). Every
+    spelling of a salaried person counts (models.salaried_keys — people's
+    identity): punches as "Gabe Huerta" for a salaried "Gabriel Huerta"
+    stayed in the hourly analysis (schedule audit 10/3/26 D-7)."""
     try:
-        from models import get_restaurant, salaried_staff, salaried_name_key
-        names = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+        from models import get_restaurant, salaried_keys, salaried_name_key
+        names = salaried_keys(get_restaurant(restaurant_id))
     except Exception:
         names = set()
     if not names:
@@ -3528,9 +3531,10 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
         shifts = load_shifts_for_restaurant(restaurant_id) or []
     salaried = set()
     try:
-        from models import get_restaurant, salaried_staff, salaried_name_key, get_close_times
+        from models import get_restaurant, salaried_keys, get_close_times
         r = get_restaurant(restaurant_id)
-        salaried = {salaried_name_key(s["name"]) for s in salaried_staff(r)}
+        # Every spelling of every salaried person (D-7, people's identity).
+        salaried = set(salaried_keys(r))
         if close_times is None:
             close_times = get_close_times(restaurant_id)
     except Exception as e:
@@ -3990,7 +3994,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  held_roles: dict = None,
                                  generation_id: str = None,
                                  instruction: str = None,
-                                 schema_enums: bool = True) -> dict:
+                                 schema_enums: bool = True,
+                                 deadline: float = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -4021,7 +4026,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     leader_flags  — models.get_leader_flags: who is authorized to close.
     focus         — named weaknesses of the previous draft of these days,
                     for a regeneration of chosen dates (schedule_requirements
-                    .focus_block).
+                    .focus_block), which names those dates.
     structured    — ask for JSON against the schema built for this
                     generation (schedule_output.schedule_schema); when the
                     API refuses that schema it is asked once more against
@@ -4061,6 +4066,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     folded into SHIFT REQUIREMENTS with their reasons (PR-7).
     labor_standards — labor_standards.for_requirements: the owner's own
                     guests-per-server-hour style standards (D-25).
+    deadline      — the job's time.time() by which this call must have
+                    returned (schedule_engine.GenerationClock, schedule
+                    audit 10/3/26 P-22): each attempt waits at most the
+                    time left, and an answer still streaming then is cut
+                    and returned as truncated (stop_reason "deadline"),
+                    its complete days kept by the caller.
 
     Returns, beyond the week's figures: `schedule_csv` (the CSV rows the
     pipeline reads), `truncated` (the answer stopped at max_tokens or the
@@ -4527,7 +4538,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if restaurant_id:
         try:
             import time_off as _to
-            for _emp, _days in sorted(_to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1]).items()):
+            # Whole days here; part of a day off ("until 4pm", D-39) is in the
+            # rules' PER-PERSON block, with the rest of that day workable.
+            # Each under the spelling the roster uses (people's identity, D-8).
+            _offs = _to.approved_in_window(restaurant_id, week_dates[0], week_dates[-1], whole_days_only=True)
+            try:
+                import people as _people_to
+                _canon = _people_to.canonical_names(restaurant_id, list(_offs))
+            except Exception:
+                _canon = {}
+            for _emp, _days in sorted(((_canon.get(e) or e), d) for e, d in _offs.items()):
                 _named = ", ".join(f"{_d} ({datetime.strptime(_d, '%Y-%m-%d').strftime('%A')})" for _d in _days)
                 _time_off_lines.append(f"  {_emp}: APPROVED TIME OFF on {_named} — do not schedule")
         except Exception:
@@ -4823,7 +4843,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _names_here = [n for n, _r in employees if n]
     _experience_block = _req.experience_block(tenure, _names_here, leader_flags, experienced)
     _pattern_block = _req.usual_pattern_block(prior_pattern, _names_here)
-    _focus_block = _req.focus_block(focus)
+    _focus_block = _req.focus_block(focus, dates=_gen_dates)
     _presence_rule = _req.presence_rule()
     # A manager every minute is the owner's highest rule (owner, 10/2/26). It
     # sat 70% of the way down the prompt, named in no PRIORITIES item, and
@@ -4937,22 +4957,31 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _sched_now = datetime.now(ZoneInfo(tz_name or 'America/Chicago'))
     except Exception:
         _sched_now = datetime.now(ZoneInfo('America/Chicago'))
-    _sched_window_line = labor_window_line(analysis, _sched_now)[0]
-    # The window's labor % is the hourly crew's alone (the analysis leaves
-    # the salaried out); beside the all-in target it read as under target
-    # at a restaurant running 41-45% with salaries (D-1).
-    _labor_vs_target = (f"hourly staff only (target: {labor_target}%, which counts the salaried staff too — "
-                        f"the hours budget below is what that leaves for hourly labor)"
-                        if _budget_basis.get("kind") == "all_in_less_salaries" else f"(target: {labor_target}%)")
-    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}{_manager_block}
-
-CONTEXT:
-{_sched_window_line}
+    if analysis.get("no_history"):
+        # A restaurant with no shifts of its own (schedule audit 10/3/26 E-30):
+        # no labor figures to quote, and none of the sample's to borrow.
+        _history_lines = ("- No shift history of its own yet: there are no labor figures, typical headcount or "
+                          "patterns for this restaurant. Staff the week from SHIFT REQUIREMENTS (the owner's floors "
+                          "and any borrowed starting headcount) and the rules below; never invent a history.\n"
+                          f"- Blended hourly rate: ${hourly_rate}/hr")
+    else:
+        _sched_window_line = labor_window_line(analysis, _sched_now)[0]
+        # The window's labor % is the hourly crew's alone (the analysis leaves
+        # the salaried out); beside the all-in target it read as under target
+        # at a restaurant running 41-45% with salaries (D-1).
+        _labor_vs_target = (f"hourly staff only (target: {labor_target}%, which counts the salaried staff too — "
+                            f"the hours budget below is what that leaves for hourly labor)"
+                            if _budget_basis.get("kind") == "all_in_less_salaries" else f"(target: {labor_target}%)")
+        _history_lines = (f"""{_sched_window_line}
 - Overall labor over that window: {analysis["overall_labor_pct"]}% {_labor_vs_target}
 - Blended hourly rate: ${hourly_rate}/hr
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
-- Recent labor % by day of week: {dow}
+- Recent labor % by day of week: {dow}""")
+    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.{_priority_block}{_manager_block}
+
+CONTEXT:
+{_history_lines}
 - Active staff ({len(employees)} people, by role — use these exact names and nobody else):
 {_roster_block}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_requirements_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_strength_block}{_profile_block}{_experience_block}{_pattern_block}{_avail_block}{_sched_notes_block}{extra_blocks or ""}{_focus_block}
 
@@ -5039,6 +5068,9 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         # Minutes of output under thinking: streamed, one Message back.
         stream=True,
     )
+    if deadline is not None:
+        # The job's one wall clock (schedule audit 10/3/26 P-22).
+        _call["deadline"] = deadline
     _oc = {}
     if _thinks:
         # The week is a constraint problem (presence per half hour, weekly
@@ -5052,13 +5084,24 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         _oc["format"] = {"type": "json_schema", "schema": _schema}
     if _oc:
         _call["output_config"] = _oc
+    _cut = None
     _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
     _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
-        # streamed events, not the whole call.
+        # streamed events, not the whole call; the job's deadline bounds the
+        # whole call (create_with_retry cuts a stream still writing then).
         msg = create_with_retry(get_client(timeout=360.0), readiness=_ready_sched, **_call)
+    except CallDeadlineExceeded as _dx:
+        # Out of the job's time mid-answer (P-22): what streamed is read
+        # like a truncated answer — the engine keeps its finished days and
+        # writes the rest again, smaller. Nothing streamed: nothing to keep.
+        if _dx.partial is None:
+            _record_schedule_call(restaurant_id, _call, _call_args, None, None, outcome="error", error=_dx,
+                                  seconds=round(time.time() - _t0, 1), **_rec)
+            raise
+        msg, _cut = _dx.partial, "deadline"
     except Exception as _e:
         _record_schedule_call(restaurant_id, _call, _call_args, None, None, outcome="error", error=_e,
                               seconds=round(time.time() - _t0, 1), **_rec)
@@ -5084,11 +5127,11 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         raise
     _seconds = round(time.time() - _t0, 1)
     raw = extract_text(msg).strip()
-    _stop = getattr(msg, "stop_reason", None)
-    # Cut short — at max_tokens, or at the context window — the answer is
-    # salvaged to its complete rows and the caller rewrites what is missing
-    # (schedule audit 10/3/26 PR-28, PR-30).
-    _truncated = _stop in ("max_tokens", "model_context_window_exceeded")
+    _stop = _cut or getattr(msg, "stop_reason", None)
+    # Cut short — at max_tokens, at the context window, or at the job's
+    # deadline (P-22) — the answer is salvaged to its complete rows and the
+    # caller rewrites what is missing (schedule audit 10/3/26 PR-28, PR-30).
+    _truncated = _stop in ("max_tokens", "model_context_window_exceeded", "deadline")
     print(f"[schedule] raw length={len(raw)} stop_reason={_stop} seconds={_seconds}")
     import re as _re_sched
     if _stop == "refusal":

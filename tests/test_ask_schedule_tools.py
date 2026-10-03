@@ -138,15 +138,10 @@ def test_the_route_hands_the_owners_words_to_the_job(db, monkeypatch):
     rid = _rid(db)
     monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: False)
     started = []
-
-    class _Thread:
-        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
-            started.append(dict(kwargs or {}))
-
-        def start(self):
-            pass
-    import threading
-    monkeypatch.setattr(threading, "Thread", _Thread)
+    # The job goes on the bounded generation pool (schedule audit 10/3/26
+    # P-39), never a thread of the route's own: what the pool is handed is
+    # what the job runs with.
+    monkeypatch.setattr(se, "submit_generation", lambda job_id, rid, **kw: started.append(dict(kw)))
     client = _app().test_client()
     r = client.post("/mobile/api/labor/generate-schedule", headers=_bearer(db, rid),
                     json={"instruction": "  give Maria  Sunday lunch "})

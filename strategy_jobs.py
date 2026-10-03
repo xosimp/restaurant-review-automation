@@ -1248,7 +1248,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
             _bump("skipped")               # attempted earlier today — never a second paid try
             return
         try:
-            _draft_one(r, db_path, _se, _bump)
+            _draft_one(r, db_path, _se, _bump, period=local[r.id][1])
         except Exception:
             _bump("failed")
             raise
@@ -1263,12 +1263,27 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                    drafted=counts["drafted"], complete=not ran_out)
 
 
-def _draft_one(r, db_path, _se, _bump):
-    """One restaurant's auto-draft and, when it saved, the owner's nudge."""
+def _draft_one(r, db_path, _se, _bump, period=None):
+    """One restaurant's auto-draft and, when it saved, the owner's nudge.
+
+    Claimed like an owner's press (ops.claim_async_job): it used to start a
+    job of its own beside one the owner had running for the same restaurant
+    — two paid generations of the same week, the later one superseding the
+    other (schedule audit 10/3/26 P-39). When the owner's is running, theirs
+    is the draft; today's claim is handed back so a later pass can try again
+    if theirs fails. And it takes a slot of the bounded generation pool
+    (schedule_engine.generation_scope) like any generation, with the same
+    wall clock."""
     import ops
-    job_id = f"auto-{uuid.uuid4().hex[:12]}"
-    ops.start_async_job(job_id, "schedule", r.id)
-    _se._run_schedule_job(job_id, r.id)
+    from schedule_engine import generation_scope
+    job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id)
+    if joined:
+        if period:
+            ops.release_period(f"auto_draft:{r.id}", period)
+        _bump("skipped")
+        return
+    with generation_scope(job_id):
+        _se._run_schedule_job(job_id, r.id)
     # _run_schedule_job reports its own failures into the job row rather
     # than raising, so the push below must wait on that verdict — telling
     # an owner a draft is waiting when none was saved is worse than silence.
@@ -1294,10 +1309,16 @@ def _draft_one(r, db_path, _se, _bump):
         # included — the case this audience exists to prevent (F2-11).
         if not audience:
             return
-        push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
-                       "Review it and publish when it looks right — nothing has gone to "
-                       "your staff yet.", data={}, db_path=db_path,
-                       user_ids=audience)
+        # A week with days the generation could not write is saved with the
+        # rest kept (schedule audit 10/3/26 P-34) — said here too, never
+        # announced as a finished draft.
+        gaps = ((state.get("result") or {}).get("unwritten_dates") or []) if isinstance(state.get("result"), dict) else []
+        body = ("Review it and publish when it looks right — nothing has gone to your staff yet." if not gaps else
+                f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
+                f"{'it' if len(gaps) == 1 else 'them'} before you publish. Nothing has gone to your staff yet.")
+        push.fire_push(r.id, "schedule_drafted",
+                       "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
+                       body, data={}, db_path=db_path, user_ids=audience)
     except Exception as e:
         ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
 

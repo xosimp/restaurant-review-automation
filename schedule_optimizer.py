@@ -659,6 +659,9 @@ class _State:
         low = _low(name)
         if not low or row.get("date") in self.pending.get(low, ()):
             return False
+        if self.constraints is not None and hasattr(self.constraints, "key") and \
+                row.get("date") in (self.constraints.pending_off.get(self.constraints.key(name)) or ()):
+            return False
         c = self.constraints
         if c is None:
             if not self.index.person_fits(name, row):
@@ -1466,17 +1469,19 @@ def overtime_created(before_rows, after_rows, c) -> list:
         return []
     import schedule_rules as _rules
 
+    key = c.key if hasattr(c, "key") else (lambda n: (n or "").strip().lower())
+
     def per(rs):
         out = {}
         for r in rs or []:
             n = (r.get("employee") or "").strip()
             if not n or not r.get("date"):
                 continue
-            k = (n.lower(), c.bucket(r["date"]))
+            k = (key(n), c.bucket(r["date"]))
             out[k] = out.get(k, 0.0) + _rules.row_hours(r)
         return out
     a, b = per(before_rows), per(after_rows)
-    names = {(r.get("employee") or "").strip().lower(): (r.get("employee") or "").strip() for r in after_rows or []}
+    names = {key((r.get("employee") or "").strip()): (r.get("employee") or "").strip() for r in after_rows or []}
     out = []
     for (low, bucket), hours in b.items():
         was = a.get((low, bucket), 0.0)

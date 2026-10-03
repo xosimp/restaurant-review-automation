@@ -204,6 +204,9 @@ class Problem:
         self.draft_overcommitted = set()
         self.draft_days_off = set()
         self.c = constraints
+        # One person, one key, as the rules file them (Constraints.key:
+        # spacing folded, the roster's spelling of an alias — D-8).
+        self.key = constraints.key if (constraints is not None and hasattr(constraints, "key")) else _low
         self.signals = signals = dict(signals or {})
         self.profiles = sq.profile_set(profiles, signals.get("demand_by_day"))
         w = dict(sq.DEFAULT_WEIGHTS)
@@ -220,7 +223,7 @@ class Problem:
         if constraints is not None:
             per_person = {"over_max_hours", "long_run", "rest_gap", "overlap", "double_booked"}
             for v in _rules.violations(self.rows, constraints):
-                p = self.pidx.get(_low(v.get("employee")))
+                p = self.pidx.get(self.key(v.get("employee")))
                 if v.get("hard") and v["kind"] in per_person and p is not None:
                     self.draft_overcommitted.add(p)
                 if v["kind"] == "days_off" and p is not None:
@@ -260,7 +263,7 @@ class Problem:
                 names.append(n)
         self.names, self.pidx = [], {}
         for n in names:
-            k = _low(n)
+            k = self.key(n)
             if k and k not in self.pidx:
                 self.pidx[k] = len(self.names)
                 self.names.append(n.strip())
@@ -269,12 +272,12 @@ class Problem:
         self.roles = [set() for _ in range(P)]
         self.primary_role = [""] * P
         for n, role in (roster_roles or {}).items():
-            p = self.pidx.get(_low(n))
+            p = self.pidx.get(self.key(n))
             if p is not None and (role or "").strip():
                 self.roles[p].add(_low(role))
                 self.primary_role[p] = _low(role)
         for n, rls in cross.items():
-            p = self.pidx.get(_low(n))
+            p = self.pidx.get(self.key(n))
             if p is not None:
                 for role in rls or []:
                     if str(role).strip():
@@ -308,48 +311,48 @@ class Problem:
         # Flexible: two or more role FAMILIES among the roles worked here,
         # held and on the roster (SQ-10, D1b) — "Server AM" and "Server PM"
         # are one station.
-        held = {_low(k): set(v or ()) for k, v in ((getattr(c, "held_roles", None) if c is not None else None)
+        held = {self.key(k): set(v or ()) for k, v in ((getattr(c, "held_roles", None) if c is not None else None)
                                                  or s.get("held_roles") or {}).items()}
         self.fams_of = []
         for p, n in enumerate(self.names):
             f = {fam(x) for x in (cross.get(n) or []) if str(x).strip()}
-            f |= {fam(x) for x in held.get(_low(n)) or ()}
+            f |= {fam(x) for x in held.get(self.key(n)) or ()}
             if self.primary_role[p]:
                 f.add(fam(self.primary_role[p]))
             self.fams_of.append({x for x in f if x})
         self.flexible = [len(f) > 1 for f in self.fams_of]
         self.cross_on = bool(cross or held)
-        self.constrained = {_low(n) for n, note in (s.get("constraints") or {}).items()
+        self.constrained = {self.key(n) for n, note in (s.get("constraints") or {}).items()
                             if n and str(note or "").strip()}
         pend = pending if pending is not None else (getattr(self.c, "pending_off", None) or {})
-        self.pending = {_low(k): set(v or ()) for k, v in (pend or {}).items()}
+        self.pending = {self.key(k): set(v or ()) for k, v in (pend or {}).items()}
         scores = s.get("scores") or {}
-        lscores = {_low(k): v for k, v in scores.items() if v is not None}
-        self.score = [lscores.get(_low(n)) for n in self.names]
+        lscores = {self.key(k): v for k, v in scores.items() if v is not None}
+        self.score = [lscores.get(self.key(n)) for n in self.names]
         # A person's score for one role, over the overall one, wherever a
         # unit's role is known (schedule audit 10/3/26 D-12, F2's per-role
         # ratings): {family: score}.
-        lroles = {_low(k): {str(f).strip().lower(): v for f, v in (fams or {}).items() if v is not None}
+        lroles = {self.key(k): {str(f).strip().lower(): v for f, v in (fams or {}).items() if v is not None}
                   for k, fams in (s.get("role_scores") or {}).items()}
-        self.role_score = [lroles.get(_low(n)) or {} for n in self.names]
+        self.role_score = [lroles.get(self.key(n)) or {} for n in self.names]
         self.rated_any = bool(lscores) or any(self.role_score)
         flags = s.get("leader_flags") or {}
-        lflags = {_low(k): bool(v) for k, v in flags.items()}
-        self.leader = [bool(lflags.get(_low(n))) for n in self.names]
+        lflags = {self.key(k): bool(v) for k, v in flags.items()}
+        self.leader = [bool(lflags.get(self.key(n))) for n in self.names]
         self.blind = not lscores and not any(lflags.values())
         rel = s.get("reliability") or {}
-        lrel = {_low(k): v for k, v in rel.items()}
+        lrel = {self.key(k): v for k, v in rel.items()}
         self.no_show, self.late_risk, self.rel_known = [], [], []
         for n in self.names:
-            r = lrel.get(_low(n)) or {}
+            r = lrel.get(self.key(n)) or {}
             try:
                 self.no_show.append(float(r.get("no_show_rate") or 0))
             except (TypeError, ValueError):
                 self.no_show.append(0.0)
             self.late_risk.append(bool(r.get("late_risk")))
-            self.rel_known.append(_low(n) in lrel)
-        tenure = {_low(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
-        marked = {_low(n) for n in (s.get("experienced") or ()) if n}
+            self.rel_known.append(self.key(n) in lrel)
+        tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
+        marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
         # Managers, acting managers and salaried people are experienced by
         # default (D-6) — they never turn the measure on by themselves.
         by_default = {sq.name_key(n) for n in (s.get("experienced_default") or ()) if n}
@@ -357,24 +360,24 @@ class Problem:
             by_default = sq.experienced_by_default(getattr(c, "managers", None), getattr(c, "acting_managers", None),
                                                    getattr(c, "salaried", None))
         self.experience_on = sq.experience_judged(tenure, marked)
-        self.exp_known = [(_low(n) in tenure) or (_low(n) in marked) or (sq.name_key(n) in by_default)
+        self.exp_known = [(self.key(n) in tenure) or (self.key(n) in marked) or (sq.name_key(n) in by_default)
                           for n in self.names]
-        self.veteran = [(_low(n) in marked) or (sq.name_key(n) in by_default)
-                        or tenure.get(_low(n), 0) >= sq.EXPERIENCE_SHIFTS for n in self.names]
-        pp = {_low(k): v or {} for k, v in (s.get("prior_pattern") or {}).items()}
+        self.veteran = [(self.key(n) in marked) or (sq.name_key(n) in by_default)
+                        or tenure.get(self.key(n), 0) >= sq.EXPERIENCE_SHIFTS for n in self.names]
+        pp = {self.key(k): v or {} for k, v in (s.get("prior_pattern") or {}).items()}
         self.pattern = []
         for n in self.names:
-            pat = pp.get(_low(n))
+            pat = pp.get(self.key(n))
             if pat:
                 self.pattern.append(({_low(d) for d in (pat.get("days") or [])},
                                      {_low(x) for x in (pat.get("dayparts") or [])}))
             else:
                 self.pattern.append(None)
-        prefs = {_low(k): v or {} for k, v in (s.get("preferences") or {}).items()}
-        learned_prefs = {_low(k): v or {} for k, v in (s.get("learned_preferences") or {}).items()}
+        prefs = {self.key(k): v or {} for k, v in (s.get("preferences") or {}).items()}
+        learned_prefs = {self.key(k): v or {} for k, v in (s.get("learned_preferences") or {}).items()}
         self.pref_parts, self.desired, self.l_avoid, self.l_prefer, self.l_weight = [], [], [], [], []
         for n in self.names:
-            p = prefs.get(_low(n)) or {}
+            p = prefs.get(self.key(n)) or {}
             self.pref_parts.append({x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")})
             try:
                 self.desired.append(float(p.get("desired_hours")) if p.get("desired_hours") else None)
@@ -383,7 +386,7 @@ class Problem:
             # What they keep dropping and picking up (schedule_intel.
             # behaviour_preferences), weighed as the scorer weighs it:
             # LEARNED_PREFERENCE_WEIGHT of a stated preference (L-19, D-36).
-            avoid, prefer, wt = sq._learned(learned_prefs.get(_low(n)) or p.get("learned") or {})
+            avoid, prefer, wt = sq._learned(learned_prefs.get(self.key(n)) or p.get("learned") or {})
             self.l_avoid.append(avoid)
             self.l_prefer.append(prefer)
             self.l_weight.append(wt)
@@ -396,21 +399,21 @@ class Problem:
         self.avoid_pairs, self.prefer_pairs = [], []
         for kind, out in (("avoid", self.avoid_pairs), ("prefer", self.prefer_pairs)):
             for pair in (pairs.get(kind) or ()):
-                members = [self.pidx.get(_low(x)) for x in pair]
+                members = [self.pidx.get(self.key(x)) for x in pair]
                 if len(members) == 2 and None not in members and members[0] != members[1]:
                     out.append(tuple(members))
         for a, b in self.avoid_pairs:
             self.avoid[a].add(b)
             self.avoid[b].add(a)
-        self.unavailable = {_low(k): set(v or ()) for k, v in (s.get("availability") or {}).items()}
+        self.unavailable = {self.key(k): set(v or ()) for k, v in (s.get("availability") or {}).items()}
         # The multi-week rotation (schedule_intel.rotation_plan), per role:
         # who is due a weekend off, who should rest from closing — what
         # fairness now judges a week against.
         self.rot_weekend, self.rot_rest = {}, {}
         for role, plan in (((s.get("rotation") or {}).get("roles")) or {}).items():
             key = _low(role)
-            self.rot_weekend[key] = {self.pidx[_low(n)] for n in (plan.get("weekend_due") or []) if _low(n) in self.pidx}
-            self.rot_rest[key] = {self.pidx[_low(n)] for n in (plan.get("rest_from_close") or []) if _low(n) in self.pidx}
+            self.rot_weekend[key] = {self.pidx[self.key(n)] for n in (plan.get("weekend_due") or []) if self.key(n) in self.pidx}
+            self.rot_rest[key] = {self.pidx[self.key(n)] for n in (plan.get("rest_from_close") or []) if self.key(n) in self.pidx}
         c = self.c
         self.maxh = [float(c.max_hours(n)) if c is not None else sq.WEEKLY_HOURS_CEILING for n in self.names]
         self.line = []
@@ -420,11 +423,11 @@ class Problem:
             except Exception:
                 self.line.append(sq.WEEKLY_HOURS_CEILING)
         self.salaried = [bool(c is not None and c.is_salaried(n)) for n in self.names]
-        self.base_hours = [dict((getattr(c, "base_hours", None) or {}).get(_low(n)) or {}) for n in self.names]
+        self.base_hours = [dict((getattr(c, "base_hours", None) or {}).get(self.key(n)) or {}) for n in self.names]
         self.base_dates, self.base_ords = [], []
         for n in self.names:
             ds = set()
-            for r in (getattr(c, "base_rows", None) or {}).get(_low(n)) or []:
+            for r in (getattr(c, "base_rows", None) or {}).get(self.key(n)) or []:
                 if r.get("date"):
                     ds.add(r["date"])
             self.base_dates.append(ds)
@@ -443,7 +446,7 @@ class Problem:
         except (TypeError, ValueError):
             self.daily_line = 0.0
         self.min_hours = [c.min_hours(n) if c is not None else None for n in self.names]
-        self.employment = [(getattr(c, "employment", None) or {}).get(_low(n)) for n in self.names]
+        self.employment = [(getattr(c, "employment", None) or {}).get(self.key(n)) for n in self.names]
         self.days_off_rule = (comp.get("min_consecutive_days_off"), comp.get("part_time_days_off"))
         self.week_dates = list(getattr(c, "week_dates", None) or [])
         # Labor dollars (P-32): each person's own rate, else the role's, the
@@ -473,7 +476,7 @@ class Problem:
         self.likely = {}
         for f in s.get("likely_edits") or []:
             if isinstance(f, dict) and _num(f.get("weight")):
-                self.likely[(_low(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")] = float(f["weight"])
+                self.likely[(self.key(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")] = float(f["weight"])
         self.overrun = {}
         for it in self.learned:
             if it["kind"] == "overrun":
@@ -484,7 +487,7 @@ class Problem:
         # shifts this week, and the hours, at which somebody's last weeks
         # make them strained.
         self.sustained_busy_at, self.sustained_hours_at = {}, {}
-        ledger = {_low(k): v for k, v in (s.get("load_ledger") or {}).items()}
+        ledger = {self.key(k): v for k, v in (s.get("load_ledger") or {}).items()}
         if ledger:
             busy_slots = set()
             for d in sq._WEEKDAYS:
@@ -493,7 +496,7 @@ class Problem:
                                                                     s.get("demand_by_day") or {}).demand}):
                         busy_slots.add((d, part))
             for p, n in enumerate(self.names):
-                past = ledger.get(_low(n)) or []
+                past = ledger.get(self.key(n)) or []
                 if not past:
                     continue
                 busy = [sum(1 for x in (w.get("slots") or []) if tuple(x) in busy_slots) for w in past][-(sq.SUSTAINED_WINDOW - 1):]
@@ -544,7 +547,7 @@ class Problem:
         groups, order = {}, []
         for i, r in enumerate(self.rows):
             name = (r.get("employee") or "").strip()
-            key = (_low(name), r.get("date")) if name else (f"#{i}", r.get("date"))
+            key = (self.key(name), r.get("date")) if name else (f"#{i}", r.get("date"))
             if key not in groups:
                 groups[key] = []
                 order.append(key)
@@ -636,7 +639,7 @@ class Problem:
                             for r, p in zip(rs, u.primary))
             u.weekend = u.day in ("Friday", "Saturday", "Sunday")
             name = (rs[0].get("employee") or "").strip()
-            u.draft = self.pidx.get(_low(name)) if name else None
+            u.draft = self.pidx.get(self.key(name)) if name else None
             u.sig = (u.date, tuple(sorted(u.roles)),
                      tuple(sorted((r.get("shift_start") or "", r.get("shift_end") or "") for r in rs)))
             if any(r.get("_pinned") for r in rs):
@@ -645,7 +648,7 @@ class Problem:
                 u.fixed, u.why_fixed = True, "pinned"
             elif editable is not None and u.date not in editable:
                 u.fixed, u.why_fixed = True, "a day the owner kept"
-            elif name and _low(name) in self.constrained:
+            elif name and self.key(name) in self.constrained:
                 u.fixed, u.why_fixed = True, "has a written note the solver cannot read"
             elif c is not None and name and any(c.training_row(r) for r in rs):
                 u.fixed, u.why_fixed = True, "a training shift, placed beside a trainer by the owner"
@@ -689,11 +692,11 @@ class Problem:
                 cap = min(self.maxh[p], max(self.line[p], draft[p].get(b, 0.0)))
                 if c is not None and not self.salaried[p]:
                     tail = c.bucket_tail(b) if b else []
-                    has_tail_rows = any(r.get("date") in tail for r in (c.base_rows.get(_low(n)) or []))
+                    has_tail_rows = any(r.get("date") in tail for r in (c.base_rows.get(self.key(n)) or []))
                     if len(tail) >= _rules.TAIL_RESERVE_MIN_DAYS and not has_tail_rows:
                         cap = min(cap, max(self.line[p] - 0.06, draft[p].get(b, 0.0)))
-                if c is not None and _low(n) in c.minors:
-                    br = _rules.minor_rules(c.minor_bands.get(_low(n)), c.jurisdiction)
+                if c is not None and self.key(n) in c.minors:
+                    br = _rules.minor_rules(c.minor_bands.get(self.key(n)), c.jurisdiction)
                     wk = br.get("max_weekly_school_week")
                     if wk:
                         cap = min(cap, max(float(wk), draft[p].get(b, 0.0)))
@@ -763,7 +766,7 @@ class Problem:
         """None when person p may legally work unit u on their own; else the
         reason, in the rule sweep's words."""
         c, name = self.c, self.names[p]
-        low = _low(name)
+        low = self.key(name)
         if not u.roles <= self.roles[p]:
             return "does not work " + "/".join(sorted(u.roles))
         if low in self.constrained and u.draft != p:
@@ -1374,7 +1377,7 @@ class Problem:
         and for saying why a change was made."""
         wn = self.wn
         out = {}
-        low = _low(self.names[p])
+        low = self.key(self.names[p])
         if u.date in self.pending.get(low, ()):
             out["pending"] = K_PENDING
         for (d, part) in u.parts:
@@ -1437,9 +1440,9 @@ class Problem:
                 continue
             if it["daypart"] and all(it["daypart"] != x for _d, x in u.parts):
                 continue
-            if it["kind"] == "off" and it["person"] == low:
+            if it["kind"] == "off" and self.key(it["person"]) == low:
                 out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
-            elif it["kind"] in ("opener", "closer") and it["person"] != low and \
+            elif it["kind"] in ("opener", "closer") and self.key(it["person"]) != low and \
                     ("opens" if it["kind"] == "opener" else "closes") in u.edges and \
                     (not it["role"] or self.family(it["role"]) in u.fams):
                 out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
@@ -1455,6 +1458,7 @@ class Problem:
 
     def _dom_of(self, u):
         return self.dom[u.id] if getattr(self, "dom", None) and u.id < len(self.dom) else set()
+
 
     def static(self):
         if not hasattr(self, "_static"):
@@ -1666,14 +1670,15 @@ class Problem:
         # The scheduling memory on this slot: somebody who is always on it,
         # two people kept apart or together.
         if g.get("learned"):
-            on = {_low(self.names[p]) for p in people}
+            on = {self.key(self.names[p]) for p in people}
             cost = 0.0
             for it in g["learned"]:
-                if it["kind"] == "on" and it["person"] not in on:
+                who, other = self.key(it["person"]), self.key(it["other"]) if it["other"] else ""
+                if it["kind"] == "on" and who not in on:
                     cost += self.k_learned * it["weight"] * dw
-                elif it["kind"] == "avoid" and it["person"] in on and it["other"] in on:
+                elif it["kind"] == "avoid" and who in on and other in on:
                     cost += self.k_learned * it["weight"] * dw
-                elif it["kind"] == "prefer" and (it["person"] in on) != (it["other"] in on):
+                elif it["kind"] == "prefer" and (who in on) != (other in on):
                     cost += self.k_learned * it["weight"] * dw
             if cost:
                 out["learned"] = cost
@@ -2619,7 +2624,7 @@ def _describe(prob, before_rows, after_rows, before_q, after_q, gain) -> list:
         i0 = u.idx[0]
         old = (before_rows[i0].get("employee") or "").strip()
         new = (after_rows[i0].get("employee") or "").strip()
-        if _low(old) != _low(new):
+        if prob.key(old) != prob.key(new):
             changed.append((u, old, new))
     for idx_u, old, new in changed:
         for i in idx_u.idx:
@@ -2635,13 +2640,13 @@ def _describe(prob, before_rows, after_rows, before_q, after_q, gain) -> list:
             + (f": {', '.join(ups)}" if ups else "") + ".")
     out = [{"kind": "solve", "reason": head, "gain": round(gain, 1)}]
     st = _State(prob)
-    after_assign = [prob.pidx.get(_low(after_rows[u.idx[0]].get("employee"))) for u in prob.units]
+    after_assign = [prob.pidx.get(prob.key(after_rows[u.idx[0]].get("employee"))) for u in prob.units]
     for u in prob.units:
         if after_assign[u.id] is not None:
             st.add(u, after_assign[u.id])
     for u, old, new in changed[:MAX_LISTED_CHANGES]:
         r = after_rows[u.idx[0]]
-        why = _why(prob, u, prob.pidx.get(_low(old)), prob.pidx.get(_low(new)), st)
+        why = _why(prob, u, prob.pidx.get(prob.key(old)), prob.pidx.get(prob.key(new)), st)
         out.append({"kind": "reassign",
                     "reason": f"Put {new} on {_where(u.day, u.primary[0])} {u.role_label} "
                               f"({r.get('shift_start')}–{r.get('shift_end')}) instead of {old or 'nobody'} — {why}.",

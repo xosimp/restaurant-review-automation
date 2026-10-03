@@ -149,9 +149,13 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
     if day is not None:
         rows, idx = _gap_row(restaurant_id, day, role, excluded, shift, db_path)
     if rows is None:
-        return out[:limit]
+        # No published week to check the gap against: still never somebody
+        # who has stopped working (schedule audit 10/3/26 E-3).
+        return _not_dormant(restaurant_id, out, constraints, db_path)[:limit]
     import schedule_engine as _se
     c = constraints if constraints is not None else _week_constraints(restaurant_id, rows)
+    if c is None:
+        out = _not_dormant(restaurant_id, out, None, db_path)
     legal = []
     for m in out:
         if len(legal) >= limit:
@@ -164,6 +168,23 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
         if ok:
             legal.append(m)
     return legal
+
+
+def _not_dormant(restaurant_id, people, constraints=None, db_path=DB_PATH) -> list:
+    """`people` ([{"name", ...}]) less anybody who has stopped working — no
+    shift in staff_settings.DORMANT_WEEKS weeks (schedule audit 10/3/26
+    E-3): the week's Constraints.dormant when they are at hand, else
+    staff_settings.dormant_people (managers, salaried people and standing
+    shifts never are). A failure to read it drops nobody."""
+    try:
+        if constraints is not None and getattr(constraints, "dormant", None) is not None:
+            gone = constraints.dormant or {}
+            return [m for m in people if constraints.key(m["name"]) not in gone]
+        import staff_settings as _ss
+        gone = _ss.dormant_people(restaurant_id, db_path=db_path) or {}
+        return [m for m in people if _ss.name_key(m["name"]) not in gone]
+    except Exception:
+        return list(people)
 
 
 def _week_constraints(restaurant_id, rows):

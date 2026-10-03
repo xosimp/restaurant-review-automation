@@ -36,6 +36,13 @@ def _variants():
     c.closed_dates = {WEEK[0]}
     c.compliance = dict(c.compliance, min_consecutive_days_off=2)
     yield "acting+closed", rows, c
+    # one person under two spellings, and two roster people an open "same
+    # person?" question joins (D-8, E-25): the sweep reads each as one week
+    rows, c, _sig = big_week(seed=8)
+    c.aliases = {"pete": "p07"}
+    c.linked = {"p11": "p11", "p12": "p11"}
+    rows += [dict(r, employee="Pete") for r in rows if r["employee"] == "P07"][:2]
+    yield "aliases+linked", rows, c
 
 
 def _mutate(rng, rows):

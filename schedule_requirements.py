@@ -599,21 +599,50 @@ def usual_pattern_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHA
             continue
         parts = _parts_label(p.get("dayparts") or [])
         groups.setdefault((days, parts), []).append(n)
-    if not groups:
-        return ""
-    lines, used, dropped = [], 0, 0
-    for (days, parts), people in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        line = f"  {days}{', ' + parts if parts else ''}: " + ", ".join(sorted(people))
-        if used + len(line) > cap:
-            dropped += len(people)
+    out = ""
+    if groups:
+        lines, used, dropped = [], 0, 0
+        for (days, parts), people in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            line = f"  {days}{', ' + parts if parts else ''}: " + ", ".join(sorted(people))
+            if used + len(line) > cap:
+                dropped += len(people)
+                continue
+            lines.append(line)
+            used += len(line) + 1
+        if dropped:
+            lines.append(f"  ({dropped} more people not listed.)")
+        out = ("\n\nUSUAL PATTERN — the weekdays and dayparts each person has worked here. Schedule stability "
+               "is scored: a person on a weekday and daypart they usually work counts as familiar. Keep people "
+               "on their pattern unless a higher priority needs the move:\n" + "\n".join(lines))
+    return out + usual_hours_block(prior_pattern, names, cap=cap)
+
+
+def usual_hours_block(prior_pattern: dict, names: list, cap: int = PATTERN_CHAR_CAP) -> str:
+    """Each regular's usual hours a week and start times (models.
+    usual_pattern avg_hours / starts — schedule audit 10/3/26 D-37): a
+    32h-a-week regular cut to 12h was a change nothing said. Most hours
+    first, within `cap` characters."""
+    rows = []
+    for n in names or []:
+        p = (prior_pattern or {}).get(n) or {}
+        if not p.get("avg_hours"):
             continue
-        lines.append(line)
-        used += len(line) + 1
-    if dropped:
-        lines.append(f"  ({dropped} more people not listed.)")
-    return ("\n\nUSUAL PATTERN — the weekdays and dayparts each person has worked here. Schedule stability "
-            "is scored: a person on a weekday and daypart they usually work counts as familiar. Keep people "
-            "on their pattern unless a higher priority needs the move:\n" + "\n".join(lines))
+        st = p.get("starts") or {}
+        when = "/".join(st[k] for k in ("morning", "night") if st.get(k))
+        rows.append((-float(p["avg_hours"]), n, f"{n} ~{float(p['avg_hours']):g}h" + (f" (starts {when})" if when else "")))
+    if not rows:
+        return ""
+    bits, used, dropped = [], 0, 0
+    for _h, _n, text in sorted(rows):
+        if used + len(text) > cap:
+            dropped += 1
+            continue
+        bits.append(text)
+        used += len(text) + 2
+    line = "  " + ", ".join(bits) + (f" ({dropped} more not listed.)" if dropped else "")
+    return ("\n\nUSUAL HOURS — about how many hours a week each regular has worked over their recent weeks, and "
+            "when they usually start. Keep a regular near their usual hours and start unless demand, the budget "
+            "or a rule needs otherwise; schedule stability is scored against it:\n" + line)
 
 
 def _row_parts(row: dict) -> set:
@@ -699,10 +728,22 @@ def seam_lines(prior_rows: list, busy: set = None) -> list:
     return out
 
 
-def focus_block(focus: list) -> str:
+def _dates_named(dates: list) -> str:
+    """'Saturday 2026-10-10 and Sunday 2026-10-11' — the dates as the rest
+    of the prompt writes them."""
+    named = [f"{_day_name(d, d)} {d}" for d in sorted(set(dates or []))]
+    if len(named) <= 1:
+        return "".join(named)
+    return ", ".join(named[:-1]) + " and " + named[-1]
+
+
+def focus_block(focus: list, dates: list = None) -> str:
     """What the previous draft of these days was scored weak on, named, so
     a regeneration of chosen dates fixes those things rather than
-    reshuffling at random."""
+    reshuffling at random — with the dates it is about (schedule audit
+    10/3/26 PR-18: the header said "THESE DAYS" and never named them). The
+    owner's own reason for a redo is their `instruction` (labor), said once
+    at priority 5, never here as well."""
     items = []
     for f in focus or []:
         text = " ".join(str(f or "").split())[:FOCUS_MAX_CHARS]
@@ -712,6 +753,7 @@ def focus_block(focus: list) -> str:
             break
     if not items:
         return ""
-    return ("\n\nTHE PREVIOUS DRAFT OF THESE DAYS SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
+    which = _dates_named(dates).upper() if dates else "THESE DAYS"
+    return (f"\n\nTHE PREVIOUS DRAFT OF {which} SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
             + "\n  Fix these specifically in this draft, within the PRIORITIES order — never by breaking "
             "anything ranked above the thing being fixed.")
