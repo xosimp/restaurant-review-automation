@@ -115,3 +115,53 @@ def test_generation_runs_the_backstop_and_checks_the_finished_rows_again():
     assert src.count("_rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)") == 2
     assert src.index("_rules.close_out_gaps(") < src.index("_rules.cover_manager_gaps(")
     assert src.index("_opt.optimize(") < src.rindex("_rules.cover_manager_gaps(")
+
+
+# ── the person breaches the replace pass left (Erik's first week, 10/2/26) ──
+
+def test_a_minor_past_the_limit_is_cut_to_it():
+    c = _c(managers={}, minors={"alesx"}, minor_bands={"alesx": "16-17"})
+    rows = [_row(3, "Alesx", "4:30pm", "10:30pm", 6, role="Busser PM")]
+    assert "minor_late" in _kinds(rows, c)
+    out = sr.fix_person_breaches(rows, c)
+    assert out["fixes"] and out["rows"][0]["shift_end"] == "10:00pm" and out["rows"][0]["scheduled_hours"] == "5.5"
+    assert "minor_late" not in _kinds(out["rows"], c)
+
+
+def test_seven_days_in_a_row_hands_one_to_a_teammate_with_room():
+    c = _c(managers={})
+    c.compliance["max_consecutive_days"] = 6
+    rows = [_row(i, "Jose", "8:30am", "2:30pm", 6, role="Dishwasher") for i in range(7)]
+    rows += [_row(0, "Cesar", "4:00pm", "10:00pm", 6, role="Dishwasher")]
+    assert "long_run" in _kinds(rows, c)
+    out = sr.fix_person_breaches(rows, c, roster_roles={"Jose": "Dishwasher", "Cesar": "Dishwasher"})
+    assert out["fixes"] and out["fixes"][0]["to"] == "Cesar"
+    assert "long_run" not in _kinds(out["rows"], c)
+    assert sum(1 for r in out["rows"] if r["employee"] == "Jose") == 6
+
+
+def test_a_run_nobody_can_take_stays_flagged():
+    c = _c(managers={})
+    c.compliance["max_consecutive_days"] = 6
+    rows = [_row(i, "Jose", "8:30am", "2:30pm", 6, role="Dishwasher") for i in range(7)]
+    out = sr.fix_person_breaches(rows, c, roster_roles={"Jose": "Dishwasher"})
+    assert not out["fixes"] and "long_run" in _kinds(out["rows"], c)
+
+
+def test_days_off_in_a_row_are_no_rule_whatever_was_stored():
+    """Owner, 10/2/26: "owners dont care about people not getting multiple
+    days off in a row" — off by default and a stored value is ignored."""
+    from models import Restaurant
+    assert sr.DEFAULTS["min_consecutive_days_off"] is None and sr.DEFAULTS["part_time_days_off"] is None
+    r = Restaurant(name="X", owner_email="o@x.test", compliance_json='{"min_consecutive_days_off": 2, "part_time_days_off": 3}')
+    comp = sr.compliance(r)
+    assert comp["min_consecutive_days_off"] is None and comp["part_time_days_off"] is None
+    rows = [_row(i, "Ann", "11:00am", "3:00pm", 4, role="Server") for i in range(6)]
+    assert "days_off" not in _kinds(rows, _c(managers={}, compliance=comp))
+
+
+def test_a_leader_rule_on_an_am_or_pm_job_keeps_to_its_half_of_the_day():
+    import models
+    assert models.leader_rule_daypart("Host AM") == "morning"
+    assert models.leader_rule_daypart("Server PM") == "night"
+    assert models.leader_rule_daypart("Bartender") is None

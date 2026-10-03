@@ -3353,6 +3353,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                           "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
                 result["manager_coverage"] = {"extended": len(_mg["extended"]), "added": len(_mg["added"]),
                                               "left": _mg["left"]}
+                # A minor past their limit is cut to it; a run of days past
+                # the rule hands one of its shifts to a teammate (10/2/26:
+                # both stayed hard flags in Erik's first week).
+                _pb = _rules.fix_person_breaches(preview_rows, _constraints,
+                                                 roster_roles=result.get("roster_roles") or {}, editable=_editable)
+                if _pb["fixes"]:
+                    preview_rows = _pb["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    _ot_fixes.extend(_pb["fixes"])
                 result["overtime_rebalance"] = {"over_before": _ot["over_before"], "moved": len(_ot["moves"]),
                                                 "trimmed": len(_ot["trims"]), "left": _ot["left"]}
                 print(f"[schedule] overtime pass: {len(_ot['moves'])} moved, {len(_ot['trims'])} trimmed, "

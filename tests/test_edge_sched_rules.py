@@ -118,6 +118,7 @@ def test_a_window_that_ends_before_it_starts_on_the_same_day_is_still_refused():
 def test_seven_shifts_with_a_fourteen_day_run_limit_still_breach_the_days_off_rule():
     c = _c()
     c.compliance["max_consecutive_days"] = 14
+    c.compliance["min_consecutive_days_off"] = 2    # the dormant check, set by hand (retired 10/2/26)
     rows = [_row(d, "Ana", "11:00am", "3:00pm", 4) for d in WEEK]
     kinds = {v["kind"] for v in sr.violations(rows, c)}
     assert "days_off" in kinds

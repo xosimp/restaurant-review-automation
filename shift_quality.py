@@ -685,6 +685,11 @@ def dim_leadership(ctx: ShiftContext) -> DimensionResult | None:
             qualified = list(pool)
         else:
             qualified = [n for n in pool if (ctx.scores.get(n) or 0) >= float(min_score)]
+        # A bar on the role's people never asks for more of them than the
+        # role has on the shift: "4 Server PM scoring 5" with 3 Server PM on
+        # means all 3 (owner, 10/2/26). A plain headcount rule is not capped.
+        if (attribute or min_score is not None) and pool:
+            need = min(need, len(pool))
         label = (f"{need} {role_words(role, need)}" +
                  (" authorized to close" if attribute
                   else (f" scoring {float(min_score):g} or above" if min_score is not None else "")))

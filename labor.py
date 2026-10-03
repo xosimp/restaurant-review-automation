@@ -1905,13 +1905,15 @@ def _check_leader_rule(rule: dict, buckets: dict, scores: dict, close_times: dic
             continue
         if min_score is not None:
             qualified = [m for m in b["members"] if m["score"] >= float(min_score)]
-            if len(qualified) < need:
+            # Never more than the role has on the shift: "4 top-rated Server
+            # PM" on a night with 3 Server PM on means all 3 (owner, 10/2/26).
+            need_here = min(need, max(1, len(b["members"])))
+            if len(qualified) < need_here:
                 misses.append({
                     "date": date, "day": b.get("day"), "daypart": part, "role": role,
-                    "rule": f"at least {need} {_role_words(role, need)}"
-                            f"{'' if need == 1 else 's'} scoring {min_score:g} or above",
+                    "rule": f"at least {need_here} {_role_words(role, need_here)} scoring {min_score:g} or above",
                     "found": len(qualified),
-                    "reason": _leader_reason(date, part, role, need, min_score,
+                    "reason": _leader_reason(date, part, role, need_here, min_score,
                                              qualified, b),
                 })
     return misses

@@ -17,6 +17,10 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 def _c(**kw):
     c = sr.Constraints(restaurant_id=1, week_dates=WEEK, week_days=DAYS)
     c.compliance = dict(sr.DEFAULTS)
+    # Days off in a row are no rule a restaurant can set any more (owner,
+    # 10/2/26 — compliance() returns None for both); the check and its fix
+    # stay, dormant, so they are exercised with the old values set by hand.
+    c.compliance.update(min_consecutive_days_off=2, part_time_days_off=3)
     for k, v in kw.items():
         setattr(c, k, v)
     return c

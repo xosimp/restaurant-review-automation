@@ -36,8 +36,6 @@ struct ScheduleRulesSheet: View {
         ("daily_ot_hours", "Daily overtime after", "hours"),
         ("meal_break_after_hours", "Meal break after", "hours"),
         ("weekly_hours_ceiling", "Hours a week, at most", "hours"),
-        ("min_consecutive_days_off", "Consecutive days off, at least", "days"),
-        ("part_time_days_off", "Part-time days off a week", "days"),
         ("max_consecutive_days", "Days in a row, at most", "days"),
         ("notice_days", "Notice before the week starts", "days — a week inside it is held"),
         ("minor_latest_end", "Minors finish by", "time"),
@@ -187,11 +185,13 @@ struct ScheduleRulesSheet: View {
 
     private var managerSection: some View {
         AccountSection(kicker: "Leadership") {
-            AccountSwitchRow(label: "Manager on duty",
-                             detail: "Every shift needs a manager or keyholder on it. Flagged as a hard break when nobody is.",
-                             isOn: $managerOnDuty, showsDivider: true)
-            AccountSwitchRow(label: "Keyholder until close",
-                             detail: "Someone who can close stays until close every open day. Checked once anyone is marked a keyholder or closer.",
+            // Not a setting (owner, 10/2/26): every minute anybody is on, a
+            // manager or owner is too; the server enforces it.
+            AccountKVRow(label: "A manager on the floor") {
+                Text("Always").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+            }
+            AccountSwitchRow(label: "A closer until close",
+                             detail: "Somebody marked to close stays until close every open day, the last of their role to leave.",
                              isOn: $keyholderUntilClose, showsDivider: false)
         }
     }
@@ -716,7 +716,7 @@ struct ScheduleRulesSheet: View {
     /// key as the whole value, and the sheet is its source of truth.
     private func patch() -> ScheduleSetupViewModel.RulesPatch {
         var rules = parsedRules()
-        rules["manager_on_duty"] = .bool(managerOnDuty)
+        rules["manager_on_duty"] = .bool(false)
         rules["keyholder_until_close"] = .bool(keyholderUntilClose)
         var arrivalMinutes: [String: Int] = [:]
         for (role, text) in arrivals {

@@ -167,7 +167,9 @@ def test_a_role_floor_is_a_hard_rule(db_path, rid):
 
 
 def test_a_keyholder_stays_until_close_by_default(db_path, rid):
-    ss.upsert(rid, "Mgr", certifications=["keyholder"], db_path=db_path)
+    # A closer is somebody marked to close, not a certificate (10/2/26).
+    import models as _m
+    _m.set_capability(rid, "Mgr", attribute="can_close", flag=True, db_path=db_path)
     csv_text = HEADER + (f"{WEEK[5]},Saturday,Mgr,Manager,2:00pm,8:00pm,6.0,\n"
                          f"{WEEK[5]},Saturday,Cook1,Cook,4:00pm,11:30pm,7.5,\n")
     v = [x for x in _sweep(rid, csv_text) if x["kind"] == "keyholder_until_close"]

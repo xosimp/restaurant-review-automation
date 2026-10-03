@@ -3371,7 +3371,11 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-chk.critical .d{background:var(--hb-bad);color:var(--hb-bad)}.hb-chk.important .d{background:var(--hb-warn);color:var(--hb-warn)}
 .hb-chk .t{flex:1;min-width:0;font-size:16px;font-weight:600;color:var(--ink);line-height:1.45}
 .hb-chk .t .m{display:block;font-size:13.5px;color:var(--ink3);font-weight:400;margin-top:2px}
-.hb-chk .a{display:flex;gap:4px;flex-shrink:0;align-items:center}
+.hb-chk .a{display:flex;gap:0;flex-shrink:0;align-items:center}
+/* The row's actions read as one set (owner, 10/2/26): the house divider
+   (.rec-ans) between each, the same space either side of it. */
+.hb-chk .a>.cbtn-inline{margin:0;padding:2px 0}
+.hb-chk .a>.cbtn+.cbtn{margin-left:12px;padding-left:12px;border-left:1px solid var(--hb-line);border-radius:0}
 /* staggered reveal — entrance only, 420ms, no overshoot (DESIGN_SYSTEM §11) */
 .hb-rise{opacity:0;transform:translateY(6px);animation:hbRise .42s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*70ms)}
 @keyframes hbRise{to{opacity:1;transform:none}}
@@ -10228,6 +10232,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Team & rules and the Staffing review in the Studio (10/2/26): the stage
    heading names them, so their disclosure line is hidden and they stay open. */
 .ss-side>details>summary{display:none}
+/* The Team inbox keeps its own line in the Team step: it folds, and its
+   summary carries the unread count (10/2/26). */
+.ss-side>details.lb2-inbox>summary{display:flex}
+.ss-side>details.lb2-inbox{margin:18px 0 26px}
 .ss-side>details{margin-top:22px;border-top:none}
 .ss-pub-sub{font-size:16px;color:var(--ink3);margin:0 0 26px;max-width:62ch}
 .ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
@@ -11056,7 +11064,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
     </section>
   </div>
-  {# Details and the Team inbox sit under Time off and Covers (owner, 10/2/26). #}
+  {# Details sit under Time off and Covers (owner, 10/2/26). #}
   {# Proof under the read (density round #26, #44): where the labor
      dollars go by role, and how the percentage is measured against the
      target and the industry mark - collapsed, one summary line. #}
@@ -11086,30 +11094,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
       <div class="cap"><span>{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}the gap in the header is weekly × 52 ÷ 12 from a {{ _days }}-day window — available, not captured · {% endif %}overtime at 0.5× on hours over 40</span></div></div>
   </div>
-  </details>
-  {# Team inbox (employee audit fix B5, staff_comms): what staff say from
-     the app - running late, a message to the manager on duty - and the
-     announcements you send them, each with who has tapped Got it. One
-     quiet disclosure like Team & rules; its summary carries the unread
-     count. Loads when Labor shows it (lb2InboxLoad). #}
-  <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
-    <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
-    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
-    <div id="lb2-inbox-late" class="ac-rows" hidden></div>
-    <div class="hb-kicker" style="margin-top:18px">Messages</div>
-    <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
-    <div class="hb-kicker" style="margin-top:26px">Announcements</div>
-    <div class="lb2-form" id="lb2-ann-form">
-      <div class="ac-field w"><label for="lb2-ann-title">Title</label><input class="ac-input" id="lb2-ann-title" type="text" maxlength="120" placeholder="Closing at 9 tonight"></div>
-      <div class="ac-field"><label for="lb2-ann-aud">To</label><select class="ac-select" id="lb2-ann-aud" onchange="lb2AnnAudience()"><option value="all">Everyone</option><option value="role">One role</option><option value="shift_date">One day's schedule</option></select></div>
-      <div class="ac-field" id="lb2-ann-role-f" hidden><label for="lb2-ann-role">Role</label><select class="ac-select" id="lb2-ann-role"></select></div>
-      <div class="ac-field" id="lb2-ann-date-f" hidden><label for="lb2-ann-date">Day</label><input class="ac-input is-empty" id="lb2-ann-date" type="date" oninput="cavDateEmpty(this)"></div>
-      <div class="ac-field"><label for="lb2-ann-pri">Priority</label><select class="ac-select" id="lb2-ann-pri"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></div>
-      <div class="ac-field"><label for="lb2-ann-exp">Last day <small>optional</small></label><input class="ac-input is-empty" id="lb2-ann-exp" type="date" oninput="cavDateEmpty(this)"></div>
-    </div>
-    <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
-    <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
-    <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
   </details>
   <div id="lb2-cov-modal" class="lb2-cov-modal" style="display:none" aria-labelledby="lb2-cov-modal-t">
     <div class="box">
@@ -11631,6 +11615,32 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-side" id="ss-team">
         <div class="ss-kick">Team &amp; rules</div>
         <h1>Your team, and the rules every draft keeps</h1>
+  {# Team inbox (employee audit fix B5, staff_comms): what staff say from
+     the app - running late, a message to the manager on duty - and the
+     announcements you send them, each with who has tapped Got it. One
+     quiet disclosure like Team & rules; its summary carries the unread
+     count. Loads when it shows (lb2InboxLoad). It lives in the Studio's Team
+     step (owner, 10/2/26: on Labor it "makes no sense" — it is the team's
+     side of the schedule); labor/inbox links open the Studio there. #}
+  <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
+    <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
+    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
+    <div id="lb2-inbox-late" class="ac-rows" hidden></div>
+    <div class="hb-kicker" style="margin-top:18px">Messages</div>
+    <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
+    <div class="hb-kicker" style="margin-top:26px">Announcements</div>
+    <div class="lb2-form" id="lb2-ann-form">
+      <div class="ac-field w"><label for="lb2-ann-title">Title</label><input class="ac-input" id="lb2-ann-title" type="text" maxlength="120" placeholder="Closing at 9 tonight"></div>
+      <div class="ac-field"><label for="lb2-ann-aud">To</label><select class="ac-select" id="lb2-ann-aud" onchange="lb2AnnAudience()"><option value="all">Everyone</option><option value="role">One role</option><option value="shift_date">One day's schedule</option></select></div>
+      <div class="ac-field" id="lb2-ann-role-f" hidden><label for="lb2-ann-role">Role</label><select class="ac-select" id="lb2-ann-role"></select></div>
+      <div class="ac-field" id="lb2-ann-date-f" hidden><label for="lb2-ann-date">Day</label><input class="ac-input is-empty" id="lb2-ann-date" type="date" oninput="cavDateEmpty(this)"></div>
+      <div class="ac-field"><label for="lb2-ann-pri">Priority</label><select class="ac-select" id="lb2-ann-pri"><option value="normal">Normal</option><option value="urgent">Urgent</option></select></div>
+      <div class="ac-field"><label for="lb2-ann-exp">Last day <small>optional</small></label><input class="ac-input is-empty" id="lb2-ann-exp" type="date" oninput="cavDateEmpty(this)"></div>
+    </div>
+    <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
+    <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
+    <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
+  </details>
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
@@ -24576,8 +24586,8 @@ function swLoadLeft() {
     if (r.max_shift_hours) lines.push('Shifts up to <span class="hb-num">' + r.max_shift_hours + 'h</span>');
     if (r.min_rest_hours) lines.push('<span class="hb-num">' + r.min_rest_hours + 'h</span> between shifts');
     if (r.max_consecutive_days) lines.push('At most <span class="hb-num">' + r.max_consecutive_days + '</span> days in a row');
-    if (r.keyholder_until_close !== false) lines.push('A keyholder until close');
-    if (r.manager_on_duty) lines.push('A manager on every shift');
+    lines.push('A manager on the floor every minute');
+    if (r.keyholder_until_close !== false) lines.push('A closer until close');
     if ((cl.closed_weekdays || []).length) lines.push('Closed ' + _escHtml((cl.closed_weekdays || []).join(', ')));
     for (k in fl) if (fl.hasOwnProperty(k)) nf++;
     if (nf) lines.push('Minimums set for <span class="hb-num">' + nf + '</span> role' + (nf === 1 ? '' : 's'));
@@ -33717,7 +33727,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     ['min_rest_hours','Rest between shifts','hours'],['max_shift_hours','Longest shift','hours'],
     ['daily_ot_hours','Daily overtime after','hours'],['meal_break_after_hours','Meal break after','hours'],
     ['minor_latest_end','Minors finish by','time, e.g. 10:00pm'],['minor_max_daily_hours','Minors per day','hours'],
-    ['min_consecutive_days_off','Days off in a row','days'],['part_time_days_off','Part-time days off','days'],['max_consecutive_days','Days in a row, at most','days'],
+    ['max_consecutive_days','Days in a row, at most','days'],
     ['weekly_hours_ceiling','Weekly ceiling','hours'],['notice_days','Schedule notice','days \u2014 a week inside it is held']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
@@ -33893,10 +33903,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="ac-field"><label>'+esc(f[1])+'<small'+(fromPack?' class="rul-from"':'')+'>'+(fromPack?'from the '+esc(pack.label)+' pack':esc(f[2]))+'</small></label><input class="ac-input'+(isTime?'':' ac-num')+'" data-rule="'+f[0]+'" value="'+((v==null||fromPack)?'':esc(v))+'" placeholder="'+(fromPack?esc(applied[f[0]]):(dv==null?'not tracked':esc(dv)))+'"'+(isTime?' maxlength="8"':' type="number" step="0.5" min="0"')+(ro?' disabled':'')+'></div>';
     }
     h+='</div>';
-    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-mod"'+(rules.manager_on_duty?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Manager on duty<small>Every shift needs a manager or keyholder on it; the rules check names the ones without.</small></div></div>';
-    /* On by default (NS5 M8): once anyone is a keyholder or closer, one of
-       them stays until close every open day. */
-    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Keyholder until close<small>Someone who can close stays until close every open day. Checked once anyone is marked a keyholder or closer.</small></div></div>';
+    // Not a setting (owner, 10/2/26): stated, never switched.
+    h+='<div class="rul-sw"><div class="t">A manager on the floor, always<small>Every minute anybody is on, a manager or owner is on too. Drafts are built to it and a gap blocks Publish.</small></div></div>';
+    /* On by default (NS5 M8): once anyone is marked a closer, one of them
+       stays until close every open day. A closer is chosen to close (the
+       last of their role to leave), not a key holder (owner, 10/2/26). */
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">A closer until close<small>Somebody marked to close stays until close every open day, the last of their role to leave. Checked once anyone is marked a closer.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
     // Closed days: weekdays and dates the restaurant does not trade. The
     // draft writes no shifts on them and the week is not failed for it.
@@ -34021,7 +34033,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(anyDay)spec.days=days;
       if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
     }
-    var mod=document.getElementById('rul-mod');if(mod)rules.manager_on_duty=!!mod.checked;
+    rules.manager_on_duty=false;
     var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
     var body={rules:rules,role_floors:floors};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;

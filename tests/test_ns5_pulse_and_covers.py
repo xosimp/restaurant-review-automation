@@ -73,7 +73,10 @@ def test_the_only_keyholder_is_never_the_one_sent_home(db):
     rid = _rest(db, "A", **ONE)
     for n in ("Bob", "Ana"):
         models.add_manual_team_member(rid, n, role="Server", db_path=db)
-    ss.upsert(rid, "Ana", certifications=["keyholder", "food_handler"], db_path=db)
+    # A closer is somebody marked to close, not a certificate (10/2/26).
+    ss.upsert(rid, "Ana", certifications=["food_handler"], db_path=db)
+    import models as _m
+    _m.set_capability(rid, "Ana", attribute="can_close", flag=True, db_path=db)
     sr.save_compliance(rid, {"manager_on_duty": True}, db_path=db)
     _published(db, rid, HEADER + _row(DAY, "Bob", "Server", "3:00pm", "10:00pm", 7.0)
                + _row(DAY, "Ana", "Server", "5:00pm", "11:30pm", 6.5))

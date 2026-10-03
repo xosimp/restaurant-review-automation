@@ -28,8 +28,11 @@ DEFAULTS = {
     "meal_break_after_hours": None,  # e.g. 5 or 6; None = not tracked
     "minor_latest_end": "10:00pm",
     "minor_max_daily_hours": 8.0,
-    "min_consecutive_days_off": 2,
-    "part_time_days_off": 3,
+    # Days off in a row are not a rule (owner, 10/2/26: "owners dont care about
+    # people not getting multiple days off in a row"). Off for everyone, a
+    # stored value included (DAYS_OFF_RETIRED); the checks below stay dormant.
+    "min_consecutive_days_off": None,
+    "part_time_days_off": None,
     "weekly_hours_ceiling": 40.0,
     "max_consecutive_days": 6,       # a longer run is a hard breach (the tail of the published week counts)
     "notice_days": None,             # predictive-scheduling notice: a week published with less is held (notice_shortfall)
@@ -84,7 +87,7 @@ LABELS = {
     "minor_week_hours": "a minor over the weekly hours limit",
     "minor_age_unknown": "a minor with no age band set — only the generic minor rule is checked",
     "coverage_floor": "fewer people on than the staffing floor for that role",
-    "keyholder_until_close": "no keyholder on until close",
+    "keyholder_until_close": "no closer on until close",
     "nobody_at_close": "nobody scheduled until close",
     "notice_short": "less notice than the schedule notice rule",
     "owner_rule": "fewer on than a standing rule the owner set",
@@ -278,10 +281,17 @@ def compliance(restaurant) -> dict:
     for k in ("min_consecutive_days_off", "part_time_days_off", "max_consecutive_days"):
         if out.get(k) is not None:
             out[k] = int(out[k])
-    out["manager_on_duty"] = bool(data.get("manager_on_duty"))
+    for k in DAYS_OFF_RETIRED:
+        out[k] = None
+    # Superseded by the manager-every-minute rule, which is not a setting
+    # (owner, 10/2/26); the old per-daypart switch stays off.
+    out["manager_on_duty"] = False
     if "keyholder_until_close" in data:
         out["keyholder_until_close"] = bool(data["keyholder_until_close"])
     return _with_pack(out, restaurant, data)
+
+
+DAYS_OFF_RETIRED = ("min_consecutive_days_off", "part_time_days_off")
 
 
 def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
@@ -291,9 +301,12 @@ def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
         return out
     try:
         import compliance_packs
-        return compliance_packs.apply(out, code, owner_set or {})
+        out = compliance_packs.apply(out, code, owner_set or {})
     except Exception:
         return out
+    for k in DAYS_OFF_RETIRED:
+        out[k] = None
+    return out
 
 
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -1014,8 +1027,10 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 gone = expired.get(_ss.name_key(e["name"]), set())
                 c.certifications[key] = {cert_key(x) for x in st["certifications"] if str(x).strip()
                                          and cert_key(x) not in gone}
-                if c.certifications[key] & {"manager", "keyholder"}:
-                    c.keyholders.add(key)
+                # A closer is a person the owner marked to close (stays until
+                # close, the last of their role to leave), not a key holder
+                # (owner, 10/2/26) — a manager or keyholder certificate no
+                # longer makes anyone a closer; get_leader_flags below does.
                 if "manager" in c.certifications[key] and e["active"]:
                     c.managers.setdefault(key, (e.get("role") or "").strip())
             if st.get("preferred_dayparts") or st.get("desired_hours"):
@@ -1693,7 +1708,7 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                           if (r.get("employee") or "").strip().lower() in c.keyholders)
             if not covered:
                 out.append(_v("keyholder_until_close", i_last, r_last,
-                              f"no keyholder or closer on {day} until {'close' if close_m is not None else 'the last shift ends'}"
+                              f"no closer on {day} until {'close' if close_m is not None else 'the last shift ends'}"
                               f" ({_fmt_minutes(target % (24 * 60))})"))
     return out
 
@@ -1891,7 +1906,8 @@ def prompt_block(c: Constraints) -> str:
     if comp.get("manager_on_duty"):
         lines.append("- Every open daypart has somebody authorized to close or holding a manager/keyholder certification on it.")
     if comp.get("keyholder_until_close", True) and c.keyholders:
-        lines.append("- Every open day has somebody authorized to close or holding a manager/keyholder certification on until close.")
+        lines.append("- Every open day, one of the people marked as a closer works until close and is the last of their "
+                     "role to leave. A closer is somebody chosen to close, not somebody with keys.")
     if c.role_floors:
         lines.append("- The staffing floors below are hard: a day under a floor is flagged to the owner.")
     pack = comp.get("_pack") or {}
@@ -2237,6 +2253,128 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
             hours[k] = hours.get(k, 0.0) + add
             break
     return {"rows": rows, "extended": extended}
+
+
+def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None, editable=None,
+                        line: float = None) -> dict:
+    """The two hard breaches the replace-the-person pass kept leaving in a
+    draft (Erik's first week, 10/2/26: a 16-17 minor until 11pm three nights,
+    two cooks seven days in a row), repaired where the repair is obvious:
+
+    - a minor past their latest end (or before their earliest start): the
+      shift is cut to the limit, when two hours or more are left of it;
+    - a run of days past the rule: one of the run's shifts goes to a
+      same-role teammate who is off that day, can work it, stays under the
+      overtime line, and adds no hard breach — fewest hours first.
+
+    Each change is kept only when the sweep shows no new hard breach; what
+    could not be repaired stays flagged. Returns {rows, fixes: [{index,
+    from, to, kind, reason}]}."""
+    rows = [dict(r) for r in rows]
+    fixes = []
+    base = _hard_keys(rows, c)
+
+    def _ok(trial, gone):
+        keys = _hard_keys(trial, c)
+        return (keys - base) == set() and gone not in keys, keys
+
+    # 1. minors: cut to the limit
+    for v in [x for x in violations(rows, c) if x["kind"] in ("minor_late", "minor_early")]:
+        i = v["index"]
+        r = rows[i]
+        if editable is not None and r.get("date") not in editable:
+            continue
+        key = (r.get("employee") or "").strip().lower()
+        band_rules = minor_rules(c.minor_bands.get(key), c.jurisdiction)
+        s0, e0 = parse_minutes(r.get("shift_start", "")), end_minutes(r)
+        if s0 is None or e0 is None:
+            continue
+        if v["kind"] == "minor_late":
+            latest = parse_minutes(c.compliance.get("minor_latest_end") or "")
+            band_latest = band_rules.get("latest_end_summer" if is_summer(r.get("date", "")) else "latest_end_school")
+            if band_latest and (latest is None or parse_minutes(band_latest) < latest):
+                latest = parse_minutes(band_latest)
+            if latest is None:
+                continue
+            ns, ne = s0, latest
+        else:
+            earliest = parse_minutes(band_rules.get("earliest_start") or "")
+            if earliest is None:
+                continue
+            ns, ne = earliest, e0
+        if ne - ns < 120:
+            continue
+        trial = [dict(x) for x in rows]
+        trial[i]["shift_start"] = _fmt_minutes(ns % (24 * 60))
+        trial[i]["shift_end"] = _fmt_minutes(ne % (24 * 60))
+        trial[i]["scheduled_hours"] = str(round((ne - ns) / 60.0, 2)).rstrip("0").rstrip(".")
+        good, keys = _ok(trial, (i, v["kind"]))
+        if not good:
+            continue
+        fixes.append({"index": i, "from": f"{r.get('employee')} {r.get('shift_start')}–{r.get('shift_end')}",
+                      "to": f"{trial[i]['shift_start']}–{trial[i]['shift_end']}", "kind": "minor",
+                      "reason": f"{r.get('employee')} is a minor: {v['detail']} — the shift now ends inside the limit."})
+        rows, base = trial, keys
+
+    # 2. too many days in a row: one of the run's shifts to a teammate
+    by_role = {}
+    for n, role in (roster_roles or {}).items():
+        if n:
+            by_role.setdefault((role or "").strip().lower(), []).append(n)
+    hours = {}
+    for r in rows:
+        low = (r.get("employee") or "").strip().lower()
+        if low and r.get("date"):
+            k = (low, c.bucket(r["date"]))
+            hours[k] = hours.get(k, 0.0) + row_hours(r)
+    for low, per in (c.base_hours or {}).items():
+        for b, h in (per or {}).items():
+            hours[(low, b)] = hours.get((low, b), 0.0) + float(h or 0)
+    for v in [x for x in violations(rows, c) if x["kind"] == "long_run"]:
+        who = (v.get("employee") or "").strip()
+        if not who:
+            continue
+        mine = sorted(((i, r) for i, r in enumerate(rows) if (r.get("employee") or "").strip().lower() == who.lower()
+                       and (editable is None or r.get("date") in editable)), key=lambda t: t[1].get("date") or "")
+        done = False
+        # the middle of the run first: it splits the run in two
+        mid = len(mine) // 2
+        order = sorted(range(len(mine)), key=lambda j: abs(j - mid))
+        for j in order:
+            i, r = mine[j]
+            d = r.get("date")
+            role = (r.get("role") or "").strip().lower()
+            on_day = {(x.get("employee") or "").strip().lower() for x in rows if x.get("date") == d}
+            mates = []
+            for n in by_role.get(role, []):
+                nl = n.strip().lower()
+                if nl == who.lower() or nl in on_day:
+                    continue
+                if not c.can_work(n, d, daypart_of(r.get("shift_start", "")))[0]:
+                    continue
+                if not c.window_ok(n, d, r.get("shift_start", ""), r.get("shift_end", ""))[0]:
+                    continue
+                k = (nl, c.bucket(d))
+                if hours.get(k, 0.0) + row_hours(r) > overtime_line(c, n, line) + 0.05:
+                    continue
+                mates.append((hours.get(k, 0.0), n))
+            for _h, n in sorted(mates):
+                trial = [dict(x) for x in rows]
+                trial[i]["employee"] = n
+                keys = _hard_keys(trial, c)
+                if (keys - base) or any(kk[1] == "long_run" and (trial[kk[0]].get("employee") or "").strip().lower() == who.lower()
+                                        for kk in keys if kk[0] < len(trial)):
+                    continue
+                fixes.append({"index": i, "from": who, "to": n, "kind": "long_run",
+                              "reason": f"{who} was on {v['detail'].split(' —')[0]}; {n} takes "
+                                        f"{datetime.strptime(d, '%Y-%m-%d').strftime('%A')} {r.get('shift_start')}–{r.get('shift_end')}."})
+                hours[(n.strip().lower(), c.bucket(d))] = hours.get((n.strip().lower(), c.bucket(d)), 0.0) + row_hours(r)
+                rows, base = trial, keys
+                done = True
+                break
+            if done:
+                break
+    return {"rows": rows, "fixes": fixes}
 
 
 MANAGER_MIN_SHIFT_MIN = 4 * 60

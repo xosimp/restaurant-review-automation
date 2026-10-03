@@ -8945,9 +8945,28 @@ def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
         return []
     try:
         raw = _j.loads(r.shift_leader_rules_json)
-        return [x for x in (raw or []) if isinstance(x, dict) and x.get("role")]
+        out = [dict(x) for x in (raw or []) if isinstance(x, dict) and x.get("role")]
     except Exception:
         return []
+    # A rule on an AM or PM job with no daypart applies to that job's own
+    # half of the day: "Host AM" at dinner is nobody's rule (owner, 10/2/26 —
+    # "Sunday dinner needs a level-5 Host AM").
+    for x in out:
+        if not x.get("daypart"):
+            part = leader_rule_daypart(x.get("role"))
+            if part:
+                x["daypart"] = part
+    return out
+
+
+def leader_rule_daypart(role):
+    """'morning' for a role named "... AM", 'night' for "... PM", else None."""
+    words = str(role or "").strip().lower().split()
+    if words and words[-1] == "am":
+        return "morning"
+    if words and words[-1] == "pm":
+        return "night"
+    return None
 
 
 def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:

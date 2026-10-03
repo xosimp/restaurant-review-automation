@@ -237,7 +237,9 @@ def test_settings_carry_windows_certifications_and_wishes_into_the_constraints(d
     row = ss.get_all(rid, db_path=db_path)["Ana"]
     assert row["certifications"] == ["alcohol", "manager"] and row["preferred_dayparts"] == ["night"] and row["desired_hours"] == 30
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
-    assert "ana" in c.keyholders and c.certifications["ana"] == {"alcohol", "manager"}
+    # A manager certificate makes Ana a manager for the every-minute rule,
+    # not a closer: a closer is somebody marked to close (10/2/26).
+    assert "ana" in c.managers and "ana" not in c.keyholders and c.certifications["ana"] == {"alcohol", "manager"}
     assert c.time_windows["ana"]["Monday"] == (sr.parse_minutes("10:00am"), sr.parse_minutes("9:00pm"))
     assert ss.stated_preferences(rid, db_path=db_path)["Ana"]["desired_hours"] == 30
     block = intel.preferences_block({}, ss.stated_preferences(rid, db_path=db_path))
